@@ -34,6 +34,7 @@ from services.rag.events.lifecycle import (
     rag_watch_reindex_complete,
     rag_watch_started,
     rag_watch_stopped,
+    rag_watchers_registered,
 )
 
 if TYPE_CHECKING:
@@ -139,6 +140,7 @@ class WatcherManager:
         self._scope_repair_debounce_s = max(1.0, scope_repair_debounce_s)
         self._watchers: list[HotReloadWatcher] = []
         self._watch_configs: list[WatchDirectory] = []
+        self._initial_reindex_tasks: list[asyncio.Task[None]] = []
         self._reconcile_task: asyncio.Task[None] | None = None
         self._repair_debounce_task: asyncio.Task[None] | None = None
         self._pending_repair_scopes: set[str] = set()
@@ -148,7 +150,13 @@ class WatcherManager:
         )
 
     async def start(self, config: RagConfig) -> None:
-        """Start watchers and background reconciliation for all configured directories."""
+        """Start watchers for all configured directories.
+
+        Watcher registration (inotify fd setup) runs concurrently for all
+        directories. Initial reindexes are fired as background tasks so this
+        method returns as soon as watchers are live. Use
+        ``wait_for_initial_indexing()`` to block until reindexes finish.
+        """
         if self._reconcile_task is not None:
             raise RuntimeError(
                 "WatcherManager.start() called while already running; call stop() first"
@@ -156,19 +164,45 @@ class WatcherManager:
         self._rag_config = config
         self._watchers = []
         self._watch_configs = []
+        self._initial_reindex_tasks = []
         self._baseline_extensions = (
             _normalize_extensions(config.baseline_extensions)
             or self._baseline_extensions
         )
-        for watch_directory in config.watch_directories:
-            await self._start_one(watch_directory)
+
+        registrations = await asyncio.gather(
+            *[self._register_one(wd) for wd in config.watch_directories]
+        )
+
+        if self._watch_configs:
+            await self._emit(
+                rag_watchers_registered(
+                    count=len(self._watch_configs),
+                    paths=[
+                        str(Path(wd.path).expanduser().resolve())
+                        for wd in self._watch_configs
+                    ],
+                )
+            )
+
+        for result in registrations:
+            if result is not None:
+                watch_path, watch_directory, effective_extensions = result
+                task = asyncio.create_task(
+                    self._initial_reindex(
+                        watch_path, watch_directory, effective_extensions
+                    ),
+                    name=f"rag-initial-reindex:{watch_path.name}",
+                )
+                self._initial_reindex_tasks.append(task)
+
         if self._watch_configs and self._reconcile_interval_s > 0:
             self._reconcile_task = asyncio.create_task(
                 self._reconcile_loop(), name="rag-watcher-reconcile"
             )
 
     async def stop(self) -> None:
-        """Stop all watchers and the reconciliation loop."""
+        """Stop all watchers, background reindexes, and the reconciliation loop."""
         if self._repair_debounce_task is not None:
             self._repair_debounce_task.cancel()
             try:
@@ -177,13 +211,18 @@ class WatcherManager:
                 pass
             self._repair_debounce_task = None
         self._pending_repair_scopes.clear()
+        tasks_to_cancel: list[asyncio.Task[None]] = []
         if self._reconcile_task is not None:
             self._reconcile_task.cancel()
-            try:
-                await self._reconcile_task
-            except asyncio.CancelledError:
-                pass
-            self._reconcile_task = None
+            tasks_to_cancel.append(self._reconcile_task)
+        for task in self._initial_reindex_tasks:
+            if not task.done():
+                task.cancel()
+            tasks_to_cancel.append(task)
+        if tasks_to_cancel:
+            await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
+        self._reconcile_task = None
+        self._initial_reindex_tasks = []
         count = len(self._watchers)
         for watcher in self._watchers:
             await watcher.stop()
@@ -227,17 +266,23 @@ class WatcherManager:
         )
         self._schedule_scope_freshness_repair(scope)
 
-    async def _start_one(self, watch_directory: WatchDirectory) -> None:
+    async def _register_one(
+        self, watch_directory: WatchDirectory
+    ) -> tuple[Path, WatchDirectory, tuple[str, ...]] | None:
+        """Register a single inotify watcher without running initial reindex.
+
+        Returns ``(watch_path, watch_directory, effective_extensions)`` on
+        success, or ``None`` if the directory is missing or the watcher failed.
+        """
         watch_path = Path(watch_directory.path).expanduser().resolve()
         if not watch_path.exists() or not watch_path.is_dir():
             logger.warning("Watch directory missing; skipping: %s", watch_path)
             await self._emit(rag_watch_directory_missing(path=str(watch_path)))
-            return
+            return None
 
         effective_extensions = _effective_extensions(
             watch_directory, self._baseline_extensions
         )
-        await self._initial_reindex(watch_path, watch_directory, effective_extensions)
         chunk_tokens = watch_directory.chunk_tokens
 
         async def on_change(file_path: str) -> None:
@@ -272,19 +317,43 @@ class WatcherManager:
                     recursive=watch_directory.recursive,
                 )
             )
+            return watch_path, watch_directory, effective_extensions
+        return None
 
     async def register_directory(self, watch_directory: WatchDirectory) -> bool:
         """Add a new watch directory at runtime (no restart required).
 
-        Returns True if the watcher was started successfully, False if the
-        directory is missing or the watcher failed to start.
+        Registers the inotify watcher and fires the initial reindex as a
+        background task. Returns True if the watcher started successfully.
         """
-        await self._start_one(watch_directory)
-        return any(
-            str(Path(wd.path).expanduser().resolve())
-            == str(Path(watch_directory.path).expanduser().resolve())
-            for wd in self._watch_configs
+        result = await self._register_one(watch_directory)
+        if result is None:
+            return False
+        watch_path, wd, effective_extensions = result
+        task = asyncio.create_task(
+            self._initial_reindex(watch_path, wd, effective_extensions),
+            name=f"rag-initial-reindex:{watch_path.name}",
         )
+        self._initial_reindex_tasks.append(task)
+        return True
+
+    async def wait_for_initial_indexing(self, timeout: float | None = None) -> bool:
+        """Block until all background initial reindex tasks complete.
+
+        Returns True if all completed within *timeout*, False on timeout.
+        Passing ``timeout=None`` waits indefinitely.
+        """
+        pending = [t for t in self._initial_reindex_tasks if not t.done()]
+        if not pending:
+            return True
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*pending, return_exceptions=True),
+                timeout=timeout,
+            )
+            return True
+        except TimeoutError:
+            return False
 
     async def _reconcile_loop(self) -> None:
         """Periodically re-sweep watched directories to recover missed files.
@@ -294,6 +363,8 @@ class WatcherManager:
         were recovered (outstanding work likely remains), full
         reconcile_interval_s when idle.
         """
+        if self._initial_reindex_tasks:
+            await asyncio.gather(*self._initial_reindex_tasks, return_exceptions=True)
         while True:
             ext_sets = [
                 frozenset(_effective_extensions(wd, self._baseline_extensions))
@@ -346,9 +417,7 @@ class WatcherManager:
             for fp in walker
             if fp.is_file()
             and fp.suffix.lower() in extensions
-            and not matches_watch_exclude(
-                fp, watch_root=watch_path, patterns=exclude
-            )
+            and not matches_watch_exclude(fp, watch_root=watch_path, patterns=exclude)
         ]
         if not file_paths:
             return 0
@@ -533,7 +602,13 @@ class WatcherManager:
             for i in range(n_workers)
         ]
 
-        await queue.join()
+        try:
+            await queue.join()
+        except asyncio.CancelledError:
+            for w in workers:
+                w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
 
         for _ in workers:
             queue.put_nowait(None)

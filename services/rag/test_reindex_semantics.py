@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -79,3 +80,42 @@ async def test_index_directory_contents_passes_operation_to_indexer() -> None:
     assert totals.indexed == 1
     assert totals.unchanged == 0
     assert totals.files == 1
+
+
+@pytest.mark.asyncio
+async def test_index_directory_contents_respects_max_concurrency() -> None:
+    active = 0
+    peak = 0
+
+    async def _index_file(
+        path: Path,
+        metadata_overrides: dict[str, str | int | float | bool] | None = None,
+        *,
+        force: bool = False,
+        operation_id: str | None = None,
+        operation: str | None = None,
+    ) -> IndexResult:
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return IndexResult(
+            indexed=1,
+            deleted=0,
+            unchanged=False,
+            file=str(path),
+        )
+
+    totals = await index_directory_contents(
+        file_paths=[Path(f"/tmp/doc-{i}.md") for i in range(6)],
+        index_file=_index_file,
+        metadata_overrides=None,
+        on_index_error=lambda _path, _exc: None,
+        operation="reindex",
+        max_concurrency=2,
+    )
+
+    assert peak == 2
+    assert totals.indexed == 6
+    assert totals.files == 6

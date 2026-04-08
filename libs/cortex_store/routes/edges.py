@@ -114,11 +114,11 @@ def list_edges(
 @router.get("/traverse", response_model=EdgeList)
 def traverse(
     node: str,
-    hops: int = Query(1, ge=1, le=2),
+    hops: int = Query(1, ge=1, le=10),
     edge_type: str | None = None,
     min_strength: float = Query(0.0, ge=0.0, le=1.0),
 ) -> EdgeList:
-    """Traverse one or two hops from a node with type and strength filters."""
+    """Traverse up to 10 hops from a node with type and strength filters."""
     conn = cortex_conn()
     tc = " AND e.edge_type = ?" if edge_type else ""
     p1: list[str | float] = [min_strength, node, node]
@@ -133,24 +133,39 @@ def traverse(
     rows = query(conn, q1, tuple(p1))
     if hops < 2 or not rows:
         return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
-    nbrs: set[str] = set()
+    visited: set[str] = {node}
+    frontier: set[str] = set()
     for r in rows:
         fn, tn = r["from_node"], r["to_node"]
-        nbrs.add(tn if fn == node else fn)
-    nbrs.discard(node)
-    if not nbrs:
-        return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
-    ph = ",".join("?" for _ in nbrs)
-    p2: list[str | float] = [min_strength, *nbrs, *nbrs, node, node]
-    if edge_type:
-        p2.append(edge_type)
-    w2 = (
-        f"e.valid_until IS NULL AND e.strength >= ? AND "
-        f"(e.from_node IN ({ph}) OR (e.to_node IN ({ph}) AND NOT t.directional)) AND "
-        f"e.from_node != ? AND e.to_node != ?{tc}"
-    )
-    q2 = f"SELECT {_EDGE_SELECT_E} FROM {j} WHERE {w2} ORDER BY e.strength DESC, e.created_at DESC"
-    rows.extend(query(conn, q2, tuple(p2)))
+        frontier.add(tn if fn == node else fn)
+    frontier.discard(node)
+    for _ in range(hops - 1):
+        if not frontier:
+            break
+        visited |= frontier
+        ph = ",".join("?" for _ in frontier)
+        excl = visited | {node}
+        excl_ph = ",".join("?" for _ in excl)
+        p2: list[str | float] = [min_strength, *frontier, *frontier, *excl, *excl]
+        if edge_type:
+            p2.append(edge_type)
+        w2 = (
+            f"e.valid_until IS NULL AND e.strength >= ? AND "
+            f"(e.from_node IN ({ph}) OR (e.to_node IN ({ph}) AND NOT t.directional)) AND "
+            f"e.from_node NOT IN ({excl_ph}) AND e.to_node NOT IN ({excl_ph}){tc}"
+        )
+        q2 = f"SELECT {_EDGE_SELECT_E} FROM {j} WHERE {w2} ORDER BY e.strength DESC, e.created_at DESC"
+        hop_rows = query(conn, q2, tuple(p2))
+        if not hop_rows:
+            break
+        rows.extend(hop_rows)
+        next_frontier: set[str] = set()
+        for r in hop_rows:
+            fn, tn = r["from_node"], r["to_node"]
+            for n in (fn, tn):
+                if n not in visited and n != node:
+                    next_frontier.add(n)
+        frontier = next_frontier
     return EdgeList(items=[EdgeItem(**r) for r in rows], count=len(rows))
 
 

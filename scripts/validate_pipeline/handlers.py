@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import sys
 from pathlib import Path
 
 
@@ -151,6 +152,8 @@ def validate_all_handler_packages(
     all_step_types: set[str] = set()
     all_valid = True
 
+    all_step_types.update(load_runtime_builtin_step_types())
+
     handler_dirs = discover_handler_packages(root_dir)
 
     for handler_dir in handler_dirs:
@@ -161,3 +164,28 @@ def validate_all_handler_packages(
         all_step_types.update(step_types)
 
     return (all_valid, all_errors, all_step_types)
+
+
+def load_runtime_builtin_step_types() -> set[str]:
+    """Load generic handler step types from Stargate's runtime registry.
+
+    The validation script statically scans pipeline-local `handlers/__init__.py`
+    packages, which misses built-in generic handlers registered inside
+    `services/universal-stargate/systems/pipeline/core/handlers/`. Import the
+    runtime registry once so validation sees the same built-ins Stargate does.
+    """
+
+    project_root = Path(__file__).resolve().parents[2]
+    stargate_path = project_root / "services" / "universal-stargate"
+
+    if stargate_path.is_dir():
+        stargate_path_str = str(stargate_path)
+        if stargate_path_str not in sys.path:
+            sys.path.insert(0, stargate_path_str)
+
+    try:
+        from systems.pipeline.core.handlers.registry import HandlerRegistry
+    except ImportError:
+        return set()
+
+    return set(HandlerRegistry.list_types())

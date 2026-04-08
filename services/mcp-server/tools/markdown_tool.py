@@ -30,6 +30,8 @@ from markdown_sections import (
 )
 from mcp_events import record
 
+from ._file_helpers import extract_text_content, is_converted_format
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -74,13 +76,14 @@ def _resolve_sandbox(sandbox: str, path: str) -> tuple[Path, bool]:
 
 
 def _load_text(resolved: Path) -> tuple[str | None, str | None]:
+    """Load text content, using format-specific extraction for PDF/DOCX/etc."""
     try:
         if not resolved.exists():
             return None, f"File not found: {resolved.name}"
         if not resolved.is_file():
             return None, f"Not a file: {resolved.name}"
-        return resolved.read_text(encoding="utf-8", errors="replace"), None
-    except OSError as e:
+        return extract_text_content(resolved), None
+    except Exception as e:
         return None, str(e)
 
 
@@ -90,6 +93,11 @@ def _write_file(resolved: Path, text: str) -> None:
 
 
 def _mutate_document(resolved: Path, transform: Callable[[str], str]) -> str | None:
+    if is_converted_format(resolved):
+        return (
+            f"Cannot modify {resolved.suffix} files via section ops — "
+            "converted formats are read-only (use md_list / md_read)"
+        )
     text, err = _load_text(resolved)
     if err:
         return err
@@ -135,6 +143,11 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         Section path from list_sections; "" = preamble. from_dict: content is JSON.
         Prefer over whole-file context/files/project for long structured docs.
         Use project sandbox for tmp/ files (debrief log, phase docs, handoff docs).
+
+        PDF, DOCX, ODT, and EML files are auto-converted to markdown for
+        read ops (list_sections, read_section, to_dict). Write ops
+        (replace/append/delete/from_dict) are text-only — converted formats
+        are rejected.
         """
         if not op:
             return {"error": "'op' is required"}
@@ -243,6 +256,13 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                 lambda t: md_delete_section(t, section),
             )
         if op == "from_dict":
+            if is_converted_format(resolved):
+                return {
+                    "error": (
+                        f"Cannot write to {resolved.suffix} files — "
+                        "converted formats are read-only"
+                    )
+                }
             if not content:
                 return {"error": "'content' (JSON) is required for from_dict"}
             try:

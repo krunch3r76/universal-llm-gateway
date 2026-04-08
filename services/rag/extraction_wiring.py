@@ -86,6 +86,12 @@ class ExtractionResult:
     batch_start_ts: str | None = None
     processing_seconds: float | None = None
     queue_wait_seconds: float | None = None
+    attempted_chunks: int = 0
+    failed_chunks: int = 0
+    failure_category: str | None = None
+    failure_detail: str | None = None
+    finish_reason: str | None = None
+    top_failure_reasons: list[str] = field(default_factory=list)
 
 
 def build_property_entries(
@@ -260,6 +266,7 @@ async def run_extraction(
     """
     result = ExtractionResult()
     id_to_idx = {chunk_id: i for i, chunk_id in enumerate(ids)}
+    result.attempted_chunks = len(ids)
 
     # --- Permanent failure gate ---
     max_attempts = config.max_extraction_attempts
@@ -285,6 +292,10 @@ async def run_extraction(
                         max_attempts=max_attempts,
                     ),
                 )
+            result.failed_chunks = skipped_count
+            result.failure_category = "permanent"
+            result.failure_detail = "max_extraction_attempts_exhausted"
+            result.top_failure_reasons = ["max_attempts_exhausted"]
             return result
         logger.warning(
             "Extraction for %s: skipping %d permanently-failed chunks"
@@ -337,6 +348,7 @@ async def run_extraction(
                 chunk_id=chunk_id,
                 source=file,
                 error=timeout_error,
+                parse_failure_reason=None,
                 permanent=False,
                 increment_attempt=False,
             )
@@ -358,6 +370,10 @@ async def run_extraction(
                     duration_seconds=duration,
                 ),
             )
+        result.failed_chunks = len(ids)
+        result.failure_category = "timeout"
+        result.failure_detail = f"batch_timeout_{int(exc.timeout_seconds)}s"
+        result.top_failure_reasons = ["batch_timeout"]
         return result
     duration = time.monotonic() - start
     if not isinstance(extract_return, tuple) or len(extract_return) != 2:
@@ -377,6 +393,7 @@ async def run_extraction(
                 chunk_id=chunk_id,
                 source=file,
                 error="invalid extraction response shape",
+                parse_failure_reason="invalid_return_shape",
                 permanent=False,
             )
             if event_bus is not None:
@@ -387,6 +404,10 @@ async def run_extraction(
                     error="invalid extraction response shape",
                     failure_reason="invalid_return_shape",
                 )
+        result.failed_chunks = len(ids)
+        result.failure_category = "parse"
+        result.failure_detail = "invalid_return_shape"
+        result.top_failure_reasons = ["invalid_return_shape"]
         return result
     knowledge_list, timing = extract_return
     if not isinstance(knowledge_list, list):
@@ -406,6 +427,7 @@ async def run_extraction(
                 chunk_id=chunk_id,
                 source=file,
                 error="invalid extraction list payload",
+                parse_failure_reason="invalid_list_payload",
                 permanent=False,
             )
             if event_bus is not None:
@@ -416,6 +438,10 @@ async def run_extraction(
                     error="invalid extraction list payload",
                     failure_reason="invalid_list_payload",
                 )
+        result.failed_chunks = len(ids)
+        result.failure_category = "parse"
+        result.failure_detail = "invalid_list_payload"
+        result.top_failure_reasons = ["invalid_list_payload"]
         return result
     if isinstance(timing, dict):
         processing_seconds = timing.get("processing_seconds")
@@ -439,6 +465,8 @@ async def run_extraction(
     successful = len(staged)
     _record_batch_outcome(all_failed=(successful == 0 and len(ids) > 0))
     finish_reason = timing.get("finish_reason") if isinstance(timing, dict) else None
+    if isinstance(finish_reason, str) and finish_reason:
+        result.finish_reason = finish_reason
     is_infrastructure_failure = isinstance(timing, dict) and (
         "stargate_error" in timing
         or "model_unavailable" in timing
@@ -468,6 +496,14 @@ async def run_extraction(
     failure_counts_snapshot = property_index.get_failure_counts(file)
 
     if failed_ids:
+        parse_failure_reason_counts: dict[str, int] = {}
+        if isinstance(timing, dict):
+            for chunk_id in failed_ids:
+                parse_reason = _get_chunk_failure_reason(timing, chunk_id=chunk_id)
+                if parse_reason:
+                    parse_failure_reason_counts[parse_reason] = (
+                        parse_failure_reason_counts.get(parse_reason, 0) + 1
+                    )
         if is_infrastructure_failure:
             if is_structural:
                 await _emit_extraction_debug(
@@ -567,6 +603,15 @@ async def run_extraction(
                 chunk_id=chunk_id,
                 source=file,
                 error=error_msg,
+                parse_failure_reason=(
+                    None
+                    if is_infrastructure_failure
+                    else (
+                        _get_chunk_failure_reason(timing, chunk_id=chunk_id)
+                        if isinstance(timing, dict)
+                        else None
+                    )
+                ),
                 permanent=is_permanent,
                 increment_attempt=not is_infrastructure_failure or is_structural,
             )
@@ -598,6 +643,27 @@ async def run_extraction(
                     )
 
     should_write = not failed_ids or accept_partial
+    if not should_write and failed_ids:
+        result.failed_chunks = len(failed_ids)
+        if is_infrastructure_failure:
+            result.failure_category = (
+                "structural" if is_structural else "infrastructure"
+            )
+            result.failure_detail = _describe_infrastructure_failure(timing)
+        elif finish_reason and finish_reason != "stop":
+            result.failure_category = "parse"
+            result.failure_detail = f"finish_reason={finish_reason}"
+        else:
+            result.failure_category = "parse"
+            result.failure_detail = "missing_or_invalid_result_after_batch_parsing"
+        top_reasons = sorted(
+            parse_failure_reason_counts.items(),
+            key=lambda kv: (-kv[1], kv[0]),
+        )
+        if top_reasons:
+            result.top_failure_reasons = [name for name, _ in top_reasons[:3]]
+        elif result.finish_reason:
+            result.top_failure_reasons = [result.finish_reason]
     if should_write and staged:
         all_property_entries: list[tuple[str, str, str, str]] = []
         for chunk_id, knowledge in staged.items():

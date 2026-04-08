@@ -2,12 +2,18 @@
 
 ResourceTracker provides comprehensive tracking of:
 - VRAM/RAM usage per model
-- Model loading/unloading states
+- Model loading/unloading states via per-variant state machines
 - Inference start/stop times
 - System resource availability
 
+Key spaces:
+- tracking_key (preserves -hybrid): state machines, ModelResourceInfo, events
+- process_key (strips -hybrid): ProcessState supervisors, sockets, PIDs
+
+The VariantRegistry bridges the two key spaces so unloads check all variants
+sharing a physical process before tearing it down.
+
 Thread Safety: Not needed. All access from single-threaded async event loop.
-Dict operations are atomic under GIL.
 """
 
 import asyncio
@@ -65,48 +71,50 @@ from .types import (
     ModelStatus,
     SystemResourceInfo,
 )
+from .variant_registry import VariantRegistry
 
 logger = get_logger(__name__)
 
+_IN_USE_STATES = frozenset({WorkerState.BUSY, WorkerState.LOADING})
 
-def _normalize_key(model_id: str | ModelId) -> str:
-    """Get normalized string key for dict lookup.
-    Normalization: strips -hybrid suffix, preserves -cpu.
-    'model-8192-hybrid' → 'model-8192'
-    'model-8192-cpu' → 'model-8192-cpu'
-    """
+
+def _tracking_key(model_id: str | ModelId) -> str:
+    """Per-variant key preserving -hybrid for state machines and ModelResourceInfo."""
     if isinstance(model_id, ModelId):
-        return model_id.normalized
-    return ModelId.parse(model_id).normalized
+        return model_id.tracking_key
+    return ModelId.parse(model_id).tracking_key
+
+
+def _process_key(model_id: str | ModelId) -> str:
+    """Shared-process key stripping -hybrid for supervisor/socket/PID lookups."""
+    if isinstance(model_id, ModelId):
+        return model_id.process_key
+    return ModelId.parse(model_id).process_key
 
 
 class ResourceTracker:
     """Resource tracking for model lifecycle and resource consumption.
 
-    Keys in _models and _state_machines are normalized strings for consistent
-    lookups across -hybrid variants.
+    Keys in _models and _state_machines are tracking_keys (preserve -hybrid)
+    so each variant has independent lifecycle state. The _variant_registry
+    maps process_keys → tracking_keys for unload gating.
     """
 
     def __init__(self, event_bus: Any | None = None):
-        """Initialize the resource tracker."""
         self.logger = get_logger(__name__)
         self._models: dict[str, ModelResourceInfo] = {}
         self._state_machines: dict[str, WorkerStateMachine] = {}
+        self._variant_registry = VariantRegistry()
         self._system_info: SystemResourceInfo | None = None
         self._initialized = False
         self.event_bus = event_bus
         self._initialize_system_resources()
 
     def set_event_bus(self, event_bus: Any) -> None:
-        """Set the EventBus for publishing events.
-
-        Args:
-            event_bus: The event bus instance to use for emitting events.
-        """
+        """Set the EventBus for publishing events."""
         self.event_bus = event_bus
 
     def _initialize_system_resources(self) -> None:
-        """Initialize system resource information."""
         try:
             ram_info = get_ram_info()
             vram_info = get_vram_info()
@@ -132,12 +140,7 @@ class ResourceTracker:
         to_status: ModelStatus,
         error_message: str | None,
     ) -> None:
-        """Schedule async emission of model.state.changed event.
-
-        Non-blocking: uses create_task to schedule the emission on the running
-        event loop. Silently skips if no event loop is running (test context)
-        or the loop is shutting down.
-        """
+        """Schedule async emission of model.state.changed event (non-blocking)."""
         try:
             loop = asyncio.get_running_loop()
             if loop.is_closed():
@@ -183,10 +186,8 @@ class ResourceTracker:
     ) -> None:
         """Handle bookkeeping and event emission after a state machine transition.
 
-        Centralizes side effects previously scattered in status mutation: updates
-        last_updated, clears error_message when leaving ERROR, sets load_time on
-        first transition to LOADED, and emits model.state.changed when derived
-        ModelStatus changes.
+        Uses tracking_key for _models lookup. Events use the original model_id
+        string so external consumers see the full ID including -hybrid.
         """
         if key in self._models:
             m = self._models[key]
@@ -211,13 +212,14 @@ class ResourceTracker:
     # -------------------------------------------------------------------------
 
     def register_model(self, model_id: str | ModelId) -> None:
-        """Register a new model for tracking with state machine.
+        """Register a new model variant for tracking with its own state machine.
 
-        Wires the SM on_transition callback and co-locates the SM on
-        ModelResourceInfo so status is derived.
+        Creates a per-variant SM keyed by tracking_key and registers the
+        variant under its process_key in the VariantRegistry.
         """
-        key = _normalize_key(model_id)
-        if key not in self._models:
+        tkey = _tracking_key(model_id)
+        pkey = _process_key(model_id)
+        if tkey not in self._models:
             model_str = str(model_id)
 
             def _on_transition(
@@ -227,7 +229,7 @@ class ResourceTracker:
                 meta: dict | None,
             ) -> None:
                 self._on_sm_transition(
-                    key, model_str, from_state, to_state, reason, meta
+                    tkey, model_str, from_state, to_state, reason, meta
                 )
 
             sm = WorkerStateMachine(
@@ -237,16 +239,36 @@ class ResourceTracker:
             )
             info = ModelResourceInfo(model_id=model_str)
             info._sm = sm
-            self._models[key] = info
-            self._state_machines[key] = sm
-            self.logger.info(f"Registered model for tracking: {model_id}")
+            self._models[tkey] = info
+            self._state_machines[tkey] = sm
+            self._variant_registry.register(pkey, tkey)
+            self.logger.info(f"Registered model for tracking: {model_id} (tkey={tkey})")
 
     def unregister_model(self, model_id: str | ModelId) -> None:
-        """Unregister a model from tracking."""
-        key = _normalize_key(model_id)
-        self._models.pop(key, None)
-        self._state_machines.pop(key, None)
+        """Unregister a model variant from tracking."""
+        tkey = _tracking_key(model_id)
+        self._models.pop(tkey, None)
+        self._state_machines.pop(tkey, None)
+        self._variant_registry.unregister(tkey)
         self.logger.info(f"Unregistered model from tracking: {model_id}")
+
+    # -------------------------------------------------------------------------
+    # Process-level queries (for unload gating)
+    # -------------------------------------------------------------------------
+
+    def is_process_in_use(self, model_id: str | ModelId) -> bool:
+        """True if any variant sharing this model's worker process is busy/loading."""
+        pkey = _process_key(model_id)
+        return self._variant_registry.is_process_in_use(
+            pkey, self._state_machines, _IN_USE_STATES
+        )
+
+    def describe_busy_variants(self, model_id: str | ModelId) -> list[str]:
+        """Human-readable list of busy variants on this model's process."""
+        pkey = _process_key(model_id)
+        return self._variant_registry.describe_busy_variants(
+            pkey, self._state_machines, _IN_USE_STATES
+        )
 
     # -------------------------------------------------------------------------
     # Model Status Management
@@ -255,90 +277,95 @@ class ResourceTracker:
     def set_model_loading(self, model_id: str | ModelId) -> bool:
         """Mark a model as loading. Resets ERROR state automatically.
 
-        Clears ERROR via SM clear_error (status auto-derives to NOT_LOADED),
-        then transitions SM to LOADING (status auto-derives to LOADING).
-
         Returns:
             False if the state machine rejected transition to LOADING (abort load).
         """
         model_str = str(model_id)
-        key = _normalize_key(model_id)
+        tkey = _tracking_key(model_id)
         handle_error_state_recovery(
             self._state_machines,
             self._models,
-            key,
+            tkey,
             model_str,
         )
-        if key not in self._models:
+        if tkey not in self._models:
             self.register_model(model_id)
-        return transition_to_loading(self._state_machines, key, model_str)
+        return transition_to_loading(self._state_machines, tkey, model_str)
 
     def set_model_loaded(
         self, model_id: str | ModelId, process_pid: int | None = None
     ) -> None:
         """Mark model loaded; records hardware VRAM when pid is available.
 
-        SM callback sets load_time and emits state event. When process_pid is
-        provided, measures per-process GPU memory via pynvml and stores it as
-        measured_vram_mb for accurate VRAM accounting in the reconciler.
+        Also propagates LOADED to sibling variants that are in LOADING state
+        (they share the same physical worker process).
         """
-        key = _normalize_key(model_id)
-        if key in self._state_machines:
-            self._state_machines[key].transition(
+        tkey = _tracking_key(model_id)
+        pkey = _process_key(model_id)
+        if tkey in self._state_machines:
+            self._state_machines[tkey].transition(
                 WorkerState.LOADED, reason="model_loaded_successfully"
             )
-        if key in self._models:
+        if tkey in self._models:
             if process_pid:
-                self._models[key].process_pid = process_pid
+                self._models[tkey].process_pid = process_pid
                 measured = get_process_gpu_memory(process_pid)
                 if measured is not None and measured > 0:
-                    self._models[key].measured_vram_mb = measured
+                    self._models[tkey].measured_vram_mb = measured
                     self.logger.info(
                         "Measured VRAM for %s: %dMB (catalog estimate: %dMB)",
                         model_id,
                         measured,
-                        self._models[key].vram_usage_mb,
+                        self._models[tkey].vram_usage_mb,
                     )
+
+        for sibling_tkey in self._variant_registry.get_variants(pkey):
+            if sibling_tkey == tkey:
+                continue
+            sm = self._state_machines.get(sibling_tkey)
+            if sm is not None and sm.current_state == WorkerState.LOADING:
+                sm.transition(WorkerState.LOADED, reason="sibling_loaded")
 
     async def set_model_busy(
         self, model_id: str | ModelId, request_id: str = ""
     ) -> None:
-        """Mark a model as busy (processing inference).
+        """Mark a model variant as busy (processing inference).
 
-        Emits INFERENCE_STARTED (model-scoped) and REQUEST_INFERENCE_STARTED
-        (request-scoped, when request_id provided) to notify Stargate.
+        Emits INFERENCE_STARTED and REQUEST_INFERENCE_STARTED events.
+        Raises RuntimeError if the variant's SM cannot transition to BUSY
+        (e.g. process is unloading) so track_inference can abort.
         """
-        key = _normalize_key(model_id)
+        tkey = _tracking_key(model_id)
         model_str = str(model_id)
-        if key in self._state_machines:
-            success = self._state_machines[key].transition(
+        if tkey in self._state_machines:
+            success = self._state_machines[tkey].transition(
                 WorkerState.BUSY,
                 reason="inference_started",
                 guard=lambda: (
-                    self._state_machines[key].current_state == WorkerState.LOADED
+                    self._state_machines[tkey].current_state == WorkerState.LOADED
                 ),
             )
             if not success:
-                self.logger.warning(
-                    f"Cannot mark {model_id} as busy - invalid transition"
+                current = self._state_machines[tkey].current_state.value
+                msg = (
+                    f"Cannot mark {model_id} as busy — variant SM in {current}, "
+                    f"expected LOADED"
                 )
-                return
-        if key in self._models:
-            self._models[key].current_inference_start = time.time()
+                self.logger.warning(msg)
+                raise RuntimeError(msg)
+        if tkey in self._models:
+            self._models[tkey].current_inference_start = time.time()
             self.logger.debug(f"Model {model_id} marked as busy")
             await emit_inference_started(self.event_bus, model_str, request_id)
 
     async def set_model_idle(self, model_id: str | ModelId) -> None:
-        """Mark a model as idle (finished inference or cancelled).
-
-        Emits INFERENCE_COMPLETED event to notify Stargate.
-        """
-        key = _normalize_key(model_id)
+        """Mark a model variant as idle (finished inference or cancelled)."""
+        tkey = _tracking_key(model_id)
         model_str = str(model_id)
-        transition_to_idle(self._state_machines, key, model_str)
+        transition_to_idle(self._state_machines, tkey, model_str)
         await update_model_idle_status_async(
             self._models,
-            key,
+            tkey,
             model_str,
             self.event_bus,
         )
@@ -347,11 +374,11 @@ class ResourceTracker:
         self, model_id: str | ModelId, inference_state: str
     ) -> None:
         """Set inference state ('token_counting' or 'generating')."""
-        key = _normalize_key(model_id)
-        if key in self._models:
-            if self._models[key].status == ModelStatus.BUSY:
-                self._models[key].inference_state = inference_state
-                self._models[key].last_updated = time.time()
+        tkey = _tracking_key(model_id)
+        if tkey in self._models:
+            if self._models[tkey].status == ModelStatus.BUSY:
+                self._models[tkey].inference_state = inference_state
+                self._models[tkey].last_updated = time.time()
                 self.logger.debug(
                     f"Model {model_id} inference state: {inference_state}"
                 )
@@ -362,39 +389,37 @@ class ResourceTracker:
 
     def set_model_error(self, model_id: str | ModelId, error_message: str) -> None:
         """Mark a model as having an error."""
-        key = _normalize_key(model_id)
-        if key not in self._models:
+        tkey = _tracking_key(model_id)
+        if tkey not in self._models:
             self.register_model(model_id)
-        current_info = self._models[key]
+        current_info = self._models[tkey]
         if current_info.status == ModelStatus.ERROR:
             self.logger.warning(
-                f"Model {model_id} already in ERROR. Updating error message from '{current_info.error_message}' to '{error_message}'"
+                f"Model {model_id} already in ERROR. Updating error message from "
+                f"'{current_info.error_message}' to '{error_message}'"
             )
-            # Continue to update the error message
-        if key in self._state_machines:
-            self._state_machines[key].set_error(error_message)
-        self._models[key].error_message = error_message
+        if tkey in self._state_machines:
+            self._state_machines[tkey].set_error(error_message)
+        self._models[tkey].error_message = error_message
 
     def get_model_error(self, model_id: str | ModelId) -> str | None:
-        """Get the error message for a model when its status is ERROR.
-
-        Returns:
-            The error message string if the model is in ERROR state, else None.
-        """
-        key = _normalize_key(model_id)
-        if key in self._models:
-            info = self._models[key]
+        """Get the error message for a model when its status is ERROR."""
+        tkey = _tracking_key(model_id)
+        if tkey in self._models:
+            info = self._models[tkey]
             if info.status == ModelStatus.ERROR:
                 return info.error_message
         return None
 
     def set_model_unloading(self, model_id: str | ModelId) -> None:
-        """Mark a model as unloading. Syncs SM transition from LOADED/BUSY/ERROR."""
-        key = _normalize_key(model_id)
-        if key not in self._models:
-            self.register_model(model_id)
-        if key in self._state_machines:
-            sm = self._state_machines[key]
+        """Mark all variants sharing the physical process as unloading."""
+        pkey = _process_key(model_id)
+        for vkey in self._variant_registry.get_variants(pkey):
+            if vkey not in self._models:
+                continue
+            if vkey not in self._state_machines:
+                continue
+            sm = self._state_machines[vkey]
             if sm.current_state in (
                 WorkerState.LOADED,
                 WorkerState.BUSY,
@@ -405,23 +430,21 @@ class ResourceTracker:
                 ):
                     self.logger.warning(
                         "Failed to transition %s to UNLOADING (SM=%s)",
-                        model_id,
+                        vkey,
                         sm.current_state.value,
                     )
 
     def set_model_not_loaded(self, model_id: str | ModelId, reason: str) -> None:
-        """Mark model as not loaded. Syncs SM, clears stale session data.
+        """Mark all variants on this process as not loaded.
 
-        Prefers valid SM transitions (UNLOADING→UNLOADED, ERROR→UNLOADED)
-        before falling back to force_unloaded. SM callback handles event
-        emission and error_message clearing. Clears load_time, process_pid,
-        and inference fields to prevent cross-session data leaks.
+        Clears load_time, process_pid, and inference fields to prevent
+        cross-session data leaks.
         """
-        key = _normalize_key(model_id)
-        if key not in self._models:
-            self.register_model(model_id)
-        if key in self._state_machines:
-            sm = self._state_machines[key]
+        pkey = _process_key(model_id)
+        for vkey in self._variant_registry.get_variants(pkey):
+            if vkey not in self._state_machines:
+                continue
+            sm = self._state_machines[vkey]
             if sm.current_state == WorkerState.ERROR:
                 if not sm.clear_error(reason):
                     sm.force_unloaded(reason)
@@ -433,25 +456,24 @@ class ResourceTracker:
                 WorkerState.UNLOADED,
             ):
                 sm.force_unloaded(reason)
-        if key in self._models:
-            self._models[key].load_time = None
-            self._models[key].process_pid = None
-            self._models[key].current_inference_start = None
-            self._models[key].error_message = None
-            self._models[key].measured_vram_mb = None
+
+            if vkey in self._models:
+                m = self._models[vkey]
+                m.load_time = None
+                m.process_pid = None
+                m.current_inference_start = None
+                m.error_message = None
+                m.measured_vram_mb = None
 
     async def force_model_idle(self, model_id: str | ModelId, reason: str) -> bool:
-        """Force a model to idle state (for cancellation).
-
-        Emits INFERENCE_COMPLETED event to notify Stargate.
-        """
-        key = _normalize_key(model_id)
+        """Force a model to idle state (for cancellation)."""
+        tkey = _tracking_key(model_id)
         model_str = str(model_id)
         sm_success = False
-        if key in self._state_machines:
-            sm_success = self._state_machines[key].force_idle(reason)
-        if key in self._models:
-            m = self._models[key]
+        if tkey in self._state_machines:
+            sm_success = self._state_machines[tkey].force_idle(reason)
+        if tkey in self._models:
+            m = self._models[tkey]
             m.last_inference_end = m.last_inference_time = time.time()
             m.current_inference_start = m.inference_state = None
             self.logger.info(
@@ -472,11 +494,9 @@ class ResourceTracker:
     async def track_inference(self, model_id: str | ModelId, request_id: str = ""):
         """Context manager to track inference lifecycle.
 
-        Args:
-            model_id: Model performing inference.
-            request_id: Request identifier — when provided, emits
-                REQUEST_INFERENCE_STARTED so Stargate can distinguish
-                queued-vs-executing.
+        Raises RuntimeError at entry if the variant SM cannot transition to
+        BUSY (e.g. shared process is unloading). The caller should catch this
+        and return 503 to the client.
         """
         t0 = time.monotonic()
         self.logger.info(
@@ -501,27 +521,21 @@ class ResourceTracker:
         self, model_id: str | ModelId, vram_mb: int, ram_mb: int
     ) -> None:
         """Update resource usage for a model."""
-        key = _normalize_key(model_id)
-        if key not in self._models:
+        tkey = _tracking_key(model_id)
+        if tkey not in self._models:
             self.register_model(model_id)
-        self._models[key].vram_usage_mb = vram_mb or 0
-        self._models[key].ram_usage_mb = ram_mb or 0
-        self._models[key].last_updated = time.time()
+        self._models[tkey].vram_usage_mb = vram_mb or 0
+        self._models[tkey].ram_usage_mb = ram_mb or 0
+        self._models[tkey].last_updated = time.time()
         self.logger.debug(f"Updated {model_id}: VRAM={vram_mb}MB, RAM={ram_mb}MB")
 
     def update_model_last_inference_time(
         self, model_id: str | ModelId, ts: float | None = None
     ) -> None:
-        """Update the last inference time for a model.
-
-        Args:
-            model_id: The model to update.
-            ts: Unix timestamp for last inference end; if None, uses current time.
-        """
-        key = _normalize_key(model_id)
-        if key in self._models:
-            self._models[key].last_inference_time = ts or time.time()
-            self._models[key].last_updated = time.time()
+        tkey = _tracking_key(model_id)
+        if tkey in self._models:
+            self._models[tkey].last_inference_time = ts or time.time()
+            self._models[tkey].last_updated = time.time()
 
     def measure_and_update_model_resources(
         self,
@@ -586,16 +600,10 @@ class ResourceTracker:
         return _get_operations_in_progress(self)
 
     def get_state_machine(self, model_id: str | ModelId) -> WorkerStateMachine | None:
-        """Get the state machine for a model, if registered.
-
-        Returns:
-            The WorkerStateMachine for the model, or None if not registered.
-        """
-        return self._state_machines.get(_normalize_key(model_id))
+        return self._state_machines.get(_tracking_key(model_id))
 
     def get_state_machine_state(self, model_id: str | ModelId) -> str:
-        """Get current state machine state as a string, or 'none' if unregistered."""
-        sm = self._state_machines.get(_normalize_key(model_id))
+        sm = self._state_machines.get(_tracking_key(model_id))
         return sm.current_state.value if sm else "none"
 
     def get_state_machine_status(self, model_id: str | ModelId) -> dict | None:

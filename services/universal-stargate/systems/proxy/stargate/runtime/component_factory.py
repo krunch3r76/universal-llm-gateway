@@ -426,6 +426,7 @@ def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> Non
             old_count, new_count = await asyncio.to_thread(
                 proxy.pipeline_registry.reload_pipelines
             )
+            proxy.pipeline_catalog_synced = True
             logger.info(
                 "🔄 Pipelines reloaded after gateway connected: %d → %d pipelines",
                 old_count,
@@ -464,6 +465,7 @@ def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
             old_count, new_count = await asyncio.to_thread(
                 proxy.pipeline_registry.reload_pipelines
             )
+            proxy.pipeline_catalog_synced = True
 
             if new_count != old_count:
                 gateway_id = event.payload.get("gateway_id", "unknown")
@@ -609,6 +611,7 @@ def _subscribe_profile_refresh_on_catalog_change(proxy: StargateProxy) -> None:
 
 async def initialize_pipeline_system(proxy: StargateProxy) -> None:
     """Initialize the pipeline registry/executor if available."""
+    proxy.pipeline_catalog_synced = False
     try:
         from systems.pipeline.executor import PipelineExecutor
         from systems.pipeline.registry import PipelineRegistry
@@ -680,6 +683,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             healthy_gateway = proxy.gateway_manager.get_gateway()
             if healthy_gateway:
                 _old, _new = proxy.pipeline_registry.reload_pipelines()
+                proxy.pipeline_catalog_synced = True
                 logger.info(
                     f"🔄 Pipelines reloaded after initialization: {_old} → {_new} "
                     "(local gateway already connected)"
@@ -704,6 +708,9 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                 registry=proxy.pipeline_registry,
                 debounce_ms=hot_reload_config.get("debounce_ms", 2000),
                 enabled=True,
+                on_reload_success=lambda _old, _new: setattr(
+                    proxy, "pipeline_catalog_synced", True
+                ),
             )
 
             if await proxy.pipeline_hot_reload.start():
@@ -724,3 +731,4 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
         proxy.pipeline_registry = None
         proxy.pipeline_executor = None
         proxy.pipeline_hot_reload = None
+        proxy.pipeline_catalog_synced = False

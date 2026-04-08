@@ -7,4 +7,3 @@
 models:
   judge8b:
     model: qwen2-5-7b-instruct-q8-0-32768
-    system_prompt: ""

@@ -87,14 +87,15 @@ async def index_directory_contents(
     on_index_error: OnIndexErrorFn,
     force: bool = False,
     operation: str | None = None,
+    max_concurrency: int | None = None,
 ) -> DirectoryIndexTotals:
     totals = DirectoryIndexTotals()
 
     if not file_paths:
         return totals
 
-    # Stargate's capacity gate (32 slots) provides natural back-pressure — no semaphore needed.
-    # ∀ file_path: per-source asyncio.Lock in _index_file prevents double-indexing.
+    # Bound admin-triggered directory fanout so large reindex runs do not exhaust the
+    # local HTTP client pool before Stargate's own capacity queue can absorb pressure.
     async def _process(fp: Path) -> IndexResult | None:
         try:
             return await index_file(
@@ -107,7 +108,32 @@ async def index_directory_contents(
             on_index_error(fp, exc)
             return None
 
-    results = await asyncio.gather(*(_process(fp) for fp in file_paths))
+    concurrency = (
+        len(file_paths)
+        if max_concurrency is None
+        else max(1, min(max_concurrency, len(file_paths)))
+    )
+    results: list[IndexResult | None] = [None] * len(file_paths)
+    queue: asyncio.Queue[tuple[int, Path] | None] = asyncio.Queue()
+    for idx, fp in enumerate(file_paths):
+        queue.put_nowait((idx, fp))
+
+    async def _worker() -> None:
+        while True:
+            item = await queue.get()
+            try:
+                if item is None:
+                    return
+                idx, fp = item
+                results[idx] = await _process(fp)
+            finally:
+                queue.task_done()
+
+    workers = [asyncio.create_task(_worker()) for _ in range(concurrency)]
+    await queue.join()
+    for _ in workers:
+        queue.put_nowait(None)
+    await asyncio.gather(*workers)
 
     for result in results:
         if result is None:

@@ -1,10 +1,11 @@
 """Workspace root detection for unified workspace."""
 
 import os
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 
 from universal_logging import get_logger
+
 logger = get_logger(__name__)
 
 
@@ -15,7 +16,7 @@ def get_workspace_root() -> Path:
 
     Searches upward from current directory for workspace root indicators:
     - .git directory (git repository root)
-    - config/model_catalog.yaml (workspace-level catalog)
+    - config/models/ static catalog directory (or legacy config/model_catalog.yaml)
     - Combination of services/ and libs/ directories
 
     Returns:
@@ -39,15 +40,15 @@ def get_workspace_root() -> Path:
         print(
             f"[ERROR] WORKSPACE_ROOT env var points to invalid workspace root: {workspace_override}\n"
             + f"  Resolved path: {path}\n"
-            + f"  The path exists but doesn't satisfy workspace markers.\n"
-            + f"  Falling back to current directory search...",
+            + "  The path exists but doesn't satisfy workspace markers.\n"
+            + "  Falling back to current directory search...",
             flush=True,
         )
         logger.error(
             f"WORKSPACE_ROOT env var points to invalid workspace root: {workspace_override}\n"
             + f"Resolved path: {path}\n"
-            + f"The path exists but doesn't satisfy workspace markers (see debug logs above).\n"
-            + f"Falling back to current directory search..."
+            + "The path exists but doesn't satisfy workspace markers (see debug logs above).\n"
+            + "Falling back to current directory search..."
         )
 
     current = Path.cwd().resolve()
@@ -68,7 +69,7 @@ def get_workspace_root() -> Path:
     raise RuntimeError(
         "Cannot determine workspace root. Expected markers:\n"
         + "  - .git directory\n"
-        + "  - config/model_catalog.yaml\n"
+        + "  - config/models/ directory (or legacy config/model_catalog.yaml)\n"
         + "  - services/ and libs/ directories\n"
         + f"Searched from: {Path.cwd().resolve()}"
     )
@@ -80,7 +81,7 @@ def _is_workspace_root(path: Path) -> bool:
 
     Must satisfy at least 2 of 3 criteria:
     1. Contains .git directory
-    2. Contains config/model_catalog.yaml (deterministic marker)
+    2. Contains config/models/ (or legacy config/model_catalog.yaml)
     3. Contains both services/ and libs/ directories
     """
     markers_found = 0
@@ -94,13 +95,22 @@ def _is_workspace_root(path: Path) -> bool:
     else:
         markers_status.append("❌ .git")
 
-    # Marker 2: Catalog at expected location (most deterministic)
-    catalog_exists = (path / "config" / "model_catalog.yaml").exists()
+    # Marker 2: Static catalog layout (prefer split catalog; accept legacy monolith)
+    models_dir_exists = (path / "config" / "models").is_dir()
+    legacy_catalog_exists = (path / "config" / "model_catalog.yaml").exists()
+    catalog_exists = models_dir_exists or legacy_catalog_exists
     if catalog_exists:
         markers_found += 1
-        markers_status.append("✅ config/model_catalog.yaml")
+        if models_dir_exists and legacy_catalog_exists:
+            markers_status.append(
+                "✅ config/models/ (legacy config/model_catalog.yaml also present)"
+            )
+        elif models_dir_exists:
+            markers_status.append("✅ config/models/")
+        else:
+            markers_status.append("✅ legacy config/model_catalog.yaml")
     else:
-        markers_status.append("❌ config/model_catalog.yaml")
+        markers_status.append("❌ config/models/ (or legacy config/model_catalog.yaml)")
 
     # Marker 3: Workspace structure (services/ and libs/)
     services_exists = (path / "services").is_dir()

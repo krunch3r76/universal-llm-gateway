@@ -196,6 +196,15 @@ def rag_watch_reconcile_complete(
 
 
 @event_factory
+def rag_watchers_registered(*, count: int, paths: list[str]) -> Event:
+    """Emitted when all inotify watchers are registered (fast path, before initial reindex)."""
+    return Event(
+        signal="rag.watchers.registered",
+        payload={"count": count, "paths": paths},
+    )
+
+
+@event_factory
 def rag_watch_stopped(*, watchers: int) -> Event:
     """Emit watcher shutdown with the count of stopped observers."""
     return Event(signal="rag.watch.stopped", payload={"watchers": watchers})

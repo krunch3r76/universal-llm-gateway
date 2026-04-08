@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from mcp_events import record
 
-from ._file_helpers import build_binary_read_result
+from ._file_helpers import build_binary_read_result, extract_text_content
 from .file_editor import perform_edit
 
 if TYPE_CHECKING:
@@ -315,7 +315,7 @@ def register_context_tools(mcp: FastMCP) -> None:
             )
             return result
 
-        content = target.read_text(encoding="utf-8", errors="replace")
+        content = extract_text_content(target)
         logger.info("read_context_file: %s (%d chars)", path, len(content))
         record(
             "mcp.tool.context.file.read", path=path, chars=len(content), binary=False

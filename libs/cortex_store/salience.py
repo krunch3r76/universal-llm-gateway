@@ -186,7 +186,7 @@ def compute_all_salience(
         entities = query(
             conn,
             "SELECT id, type, name, attributes FROM entities "
-            "WHERE NOT ("
+            "WHERE status != 'reaped' AND NOT ("
             "  type = 'todo' "
             "  AND json_extract(attributes, '$.status') != 'open'"
             ")",

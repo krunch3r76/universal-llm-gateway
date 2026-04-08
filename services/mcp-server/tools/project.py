@@ -9,8 +9,9 @@ multi-repo roots (PROJECT_ROOT contains multiple git repos as children).
 
 File listing walks the real filesystem by default so all files are visible
 (including gitignored directories like tmp/). Pass include_untracked=False
-to restrict to git-tracked files. Binary files are excluded from listing
-and rejected from reading.
+to restrict to git-tracked files. Binary assets are excluded from default
+listing, but text-oriented document formats handled by the shared file reader
+(`.pdf`, `.docx`, `.odt`, `.eml`, `.html`) can be read in text mode.
 
 Write tools (write_project_file, edit_project_file) are gated by
 PROJECT_READ_ONLY (default true). Toggle via project_access in mcp.yaml.
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from mcp_events import record
 
-from ._file_helpers import build_binary_read_result
+from ._file_helpers import read_file_result
 from .file_editor import perform_edit
 
 if TYPE_CHECKING:
@@ -324,8 +325,10 @@ def register_project_tools(mcp: FastMCP) -> None:
     def read_project_file(path: str, binary: bool = False) -> dict[str, Any]:
         """Read a file from the project directory.
 
-        Use the default text mode for source files and docs. Use
-        ``binary=True`` when another tool needs base64 bytes instead of text
+        Use the default text mode for source files, Markdown, and supported
+        document formats. Project reads share the same extraction helpers as the
+        files sandbox, so PDFs, DOCX, ODT, EML, and HTML can be read as text.
+        Use ``binary=True`` when another tool needs base64 bytes instead of text
         decoding.
 
         Args:
@@ -341,22 +344,16 @@ def register_project_tools(mcp: FastMCP) -> None:
             raise FileNotFoundError(f"File not found: {path!r}")
         if not src.is_file():
             raise ValueError(f"Path is not a file: {path!r}")
+
+        result = read_file_result(path, root=_PROJECT_ROOT, binary=binary)
+        result["path"] = path
         if binary:
-            result = build_binary_read_result(src, path_value=path)
             logger.info(
                 "read_project_file: %s (%d bytes, binary)", path, result["bytes"]
             )
-            return result
-        if _is_binary(src):
-            raise ValueError(
-                f"Binary file type {src.suffix!r} cannot be read. "
-                "Only text files are supported."
-            )
-
-        content = src.read_text(encoding="utf-8", errors="replace")
-        rel = str(src.relative_to(_PROJECT_ROOT.resolve()))
-        logger.info("read_project_file: %s (%d chars)", rel, len(content))
-        return {"content": content, "path": rel}
+        else:
+            logger.info("read_project_file: %s (%d chars)", path, len(result["content"]))
+        return result
 
     @mcp.tool()
     def move_project_file(path: str, target: str) -> dict[str, str]:
@@ -396,9 +393,10 @@ def register_project_tools(mcp: FastMCP) -> None:
         parent directories needed for navigation.
 
         All file types are listed (including PDFs and other binary files).
-        Binary files will be rejected if you try to read them — use
-        read_project_file to read text content. Use max_depth to limit
-        recursion depth (default 3, where 1 = immediate children only).
+        Text-mode reads support source files plus extracted document formats
+        like PDF, DOCX, ODT, EML, and HTML. Use ``binary=True`` for raw bytes.
+        Use max_depth to limit recursion depth (default 3, where 1 = immediate
+        children only).
 
         Supports multi-repo project roots: if the project root contains
         multiple git repos, files are listed across all of them with

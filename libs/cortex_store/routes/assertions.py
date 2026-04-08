@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
+from .. import embeddings as cortex_embeddings
+from .. import vector_store
 from ..assertion_quality import validate_assertion
 from ..claim_hash import compute_claim_hash
 from ..db import cortex_conn, decode_row, json_encode, query
+from ..enrichment import (
+    enrich_assertion,
+    enrich_background,
+    enrich_old_assertion_events,
+    reindex_assertion_fts,
+)
+from ..entrenchment import compute_entrenchment
+from ..graph_utils import check_contradictions
 from ..models import (
     AssertionCreate,
     AssertionCreateResponse,
     AssertionItem,
     AssertionList,
+    AssertionSearchItem,
+    AssertionSearchResult,
     AssertionUpdate,
+    EnrichRequest,
+    EnrichResponse,
     NearDuplicateWarning,
     SupersedeRequest,
     SupersedeResponse,
@@ -20,6 +35,72 @@ from ..models import (
 from ..near_dup import check_near_duplicate, record_near_duplicate
 
 logger = logging.getLogger("cortex-api.assertions")
+
+
+def _log_search_access(items: list) -> None:
+    """Batch-log access for entities touched by search results (TTL reset for ephemeral)."""
+    entity_ids = {getattr(item, "entity_id", None) or item.get("entity_id") for item in items if item}
+    entity_ids.discard(None)
+    if not entity_ids:
+        return
+    try:
+        with cortex_conn() as conn:
+            conn.executemany(
+                "INSERT INTO entity_access_log "
+                "(entity_id, agent, operation, source) VALUES (?, 'system', 'search', 'search')",
+                [(eid,) for eid in entity_ids],
+            )
+            conn.commit()
+    except Exception:
+        logger.debug("Batch access log insert failed for search results")
+
+
+def _embed_assertion_background(assertion_id: int, assertion_row: dict) -> None:
+    """Compute and upsert assertion embedding in a daemon thread.
+
+    Non-blocking: failures are logged and swallowed. The assertion remains
+    valid and FTS-searchable even if embedding fails.
+    """
+    import threading
+
+    if not cortex_embeddings.is_configured() or not vector_store.is_initialized():
+        return
+
+    def _run() -> None:
+        try:
+            text = vector_store.assertion_embedding_text(assertion_row)
+            embeddings = cortex_embeddings.embed_texts([text])
+            if embeddings:
+                meta: dict = {}
+                if assertion_row.get("entity_id"):
+                    meta["entity_id"] = assertion_row["entity_id"]
+                if assertion_row.get("confidence"):
+                    meta["confidence"] = assertion_row["confidence"]
+                if assertion_row.get("derivation_type"):
+                    meta["derivation_type"] = assertion_row["derivation_type"]
+                if assertion_row.get("entrenchment_score") is not None:
+                    meta["entrenchment_score"] = float(
+                        assertion_row["entrenchment_score"]
+                    )
+                if assertion_row.get("observed_at"):
+                    meta["observed_at"] = assertion_row["observed_at"]
+                vector_store.upsert_assertion_embedding(
+                    assertion_id=assertion_id,
+                    text=text,
+                    embedding=embeddings[0],
+                    metadata=meta,
+                )
+        except Exception:
+            logger.warning(
+                "Background embedding failed for assertion %d",
+                assertion_id,
+                exc_info=True,
+            )
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+
 router = APIRouter(prefix="/assertions", tags=["assertions"])
 
 _JSON_FIELDS = frozenset({"evidence_uris"})
@@ -31,7 +112,9 @@ _ASSERTION_COLS = (
     "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
     "observed_at, valid_from, valid_until, superseded_by, "
     "review_status, reviewer, reviewed_at, review_notes, "
-    "resolution_status, fulfillment_assertion_id, quality_score, created_at"
+    "resolution_status, fulfillment_assertion_id, quality_score, "
+    "prospective_summary, events_json, artifact_uri, artifact_storage, "
+    "entrenchment_score, created_at"
 )
 
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}
@@ -125,6 +208,228 @@ def list_assertions(
     return AssertionList(items=items)
 
 
+_SEARCH_COLS = (
+    "a.id, a.entity_id, a.claim, a.confidence, a.confidence_score, "
+    "a.evidence, a.evidence_uris, a.seeded_by, a.derivation_type, "
+    "a.prospective_summary, a.events_json, a.superseded_by, "
+    "a.entrenchment_score, a.observed_at, a.created_at"
+)
+
+# FTS5 special characters that cause parse errors when present in user queries.
+# Colon is a column-filter operator (term:column), parentheses alter grouping,
+# hyphens are interpreted as NOT-minus, caret/tilde/star alter matching.
+# We also strip the boolean keyword operators to prevent accidental SQL injection
+# into the query grammar (e.g. bare "AND" triggers an operator parse error).
+_FTS5_OPERATORS = re.compile(r"[+\-*^~:()\"]")
+_FTS5_KEYWORDS = re.compile(r"\b(AND|OR|NOT|NEAR)\b", re.IGNORECASE)
+
+
+def _sanitize_fts_query(raw: str) -> str:
+    """Sanitize a user-supplied string for safe use in an FTS5 MATCH clause.
+
+    Replaces FTS5 operator characters and reserved keywords with spaces so
+    that any input can be passed to MATCH without triggering a parse error.
+    Space-separated terms are treated as implicit AND by FTS5.
+    """
+    step1 = _FTS5_KEYWORDS.sub(" ", raw)
+    step2 = _FTS5_OPERATORS.sub(" ", step1)
+    # Collapse runs of whitespace to a single space and strip edges.
+    return re.sub(r"\s+", " ", step2).strip()
+
+
+_SEARCH_COLS_WITH_ENTITY = _SEARCH_COLS + ", e.name AS entity_name"
+
+
+def _fts_search(
+    conn: object,
+    sanitized: str,
+    superseded: bool,
+    entity_type: str | None,
+    limit: int,
+) -> list[dict]:
+    """Run the FTS5 branch of hybrid search."""
+    clauses: list[str] = ["f.indexed_text MATCH ?"]
+    params: list[str | int] = [sanitized]
+
+    if not superseded:
+        clauses.append("a.superseded_by IS NULL")
+    if entity_type:
+        clauses.append("e.type = ?")
+        params.append(entity_type)
+
+    where = " AND ".join(clauses)
+    sql = (
+        f"SELECT {_SEARCH_COLS_WITH_ENTITY}, rank "
+        "FROM assertions_fts f "
+        "JOIN assertions a ON a.id = f.assertion_id "
+        "JOIN entities e ON a.entity_id = e.id "
+        f"WHERE {where} "
+        "ORDER BY rank "
+        "LIMIT ?"
+    )
+    params.append(limit)
+    return query(conn, sql, tuple(params))  # type: ignore[arg-type]
+
+
+def _vector_search(query_text: str, n_results: int) -> list[dict]:
+    """Run the vector branch of hybrid search. Returns [] on failure."""
+    if not cortex_embeddings.is_configured() or not vector_store.is_initialized():
+        return []
+    try:
+        query_embedding = cortex_embeddings.embed_query(query_text)
+        return vector_store.search_similar(query_embedding, n_results=n_results)
+    except Exception:
+        logger.warning("Vector search failed — degrading to FTS-only", exc_info=True)
+        return []
+
+
+def _combmax_fuse(
+    fts_rows: list[dict],
+    vector_results: list[dict],
+    limit: int,
+) -> tuple[list[dict], str]:
+    """Fuse FTS5 and vector results via CombMAX score fusion.
+
+    Returns (merged_items, search_mode) where search_mode is 'hybrid' or 'fulltext'.
+    """
+    if not vector_results:
+        max_abs_rank = (
+            max((abs(r.get("rank", 0)) for r in fts_rows), default=1.0) or 1.0
+        )
+        items: list[dict] = []
+        for row in fts_rows:
+            raw_rank = row.get("rank", 0)
+            bm25_norm = abs(raw_rank) / max_abs_rank
+            items.append(
+                {
+                    **{k: v for k, v in row.items() if k != "rank"},
+                    "rank": raw_rank,
+                    "bm25_score": round(bm25_norm, 4),
+                    "cosine_similarity": None,
+                    "combmax_score": round(bm25_norm, 4),
+                    "retrieval_source": "fts",
+                }
+            )
+        return items[:limit], "fulltext"
+
+    max_abs_rank = max((abs(r.get("rank", 0)) for r in fts_rows), default=1.0) or 1.0
+
+    merged: dict[int, dict] = {}
+
+    for row in fts_rows:
+        aid = row["id"]
+        raw_rank = row.get("rank", 0)
+        bm25_norm = abs(raw_rank) / max_abs_rank
+        merged[aid] = {
+            **{k: v for k, v in row.items() if k != "rank"},
+            "rank": raw_rank,
+            "bm25_score": round(bm25_norm, 4),
+            "cosine_similarity": None,
+            "combmax_score": round(bm25_norm, 4),
+            "retrieval_source": "fts",
+        }
+
+    for vr in vector_results:
+        aid = vr["assertion_id"]
+        cosine_sim = vr.get("cosine_similarity", 0.0)
+        if aid in merged:
+            existing = merged[aid]
+            existing["cosine_similarity"] = round(cosine_sim, 4)
+            existing["combmax_score"] = round(
+                max(existing.get("bm25_score", 0.0), cosine_sim), 4
+            )
+            existing["retrieval_source"] = "both"
+        else:
+            merged[aid] = {
+                "id": aid,
+                "entity_id": vr.get("entity_id"),
+                "entity_name": None,
+                "bm25_score": None,
+                "cosine_similarity": round(cosine_sim, 4),
+                "combmax_score": round(cosine_sim, 4),
+                "retrieval_source": "vector",
+                "rank": None,
+            }
+
+    sorted_items = sorted(
+        merged.values(),
+        key=lambda x: x.get("combmax_score", 0.0),
+        reverse=True,
+    )
+    return sorted_items[:limit], "hybrid"
+
+
+@router.get("/search", response_model=AssertionSearchResult)
+def search_assertions(
+    q: str = Query(..., min_length=1, description="Search query"),
+    superseded: bool = Query(False, description="Include superseded assertions"),
+    entity_type: str | None = Query(None, description="Filter to entity type"),
+    limit: int = Query(20, ge=1, le=100),
+) -> AssertionSearchResult:
+    """Hybrid search: FTS5 + vector similarity with CombMAX score fusion.
+
+    Falls back to FTS5-only when the embedding model is unavailable.
+    """
+    sanitized = _sanitize_fts_query(q)
+    if not sanitized:
+        return AssertionSearchResult(query=q, items=[], total=0, search_mode="fulltext")
+
+    with cortex_conn() as conn:
+        fts_rows = _fts_search(conn, sanitized, superseded, entity_type, limit * 2)
+
+    vector_results = _vector_search(q, n_results=limit * 2)
+
+    fused, search_mode = _combmax_fuse(fts_rows, vector_results, limit)
+
+    vector_only_ids: set[int] = set()
+    if search_mode == "hybrid":
+        vector_only_ids = {
+            item["id"] for item in fused if item.get("retrieval_source") == "vector"
+        }
+
+    if vector_only_ids:
+        with cortex_conn() as conn:
+            placeholders = ",".join("?" for _ in vector_only_ids)
+            sql = (
+                f"SELECT {_SEARCH_COLS_WITH_ENTITY} "
+                "FROM assertions a "
+                "JOIN entities e ON a.entity_id = e.id "
+                f"WHERE a.id IN ({placeholders})"
+            )
+            hydrated = query(conn, sql, tuple(vector_only_ids))
+            hydrated_map = {r["id"]: r for r in hydrated}
+            for item in fused:
+                if item["id"] in hydrated_map:
+                    row = hydrated_map[item["id"]]
+                    for key, val in row.items():
+                        if key not in (
+                            "bm25_score",
+                            "cosine_similarity",
+                            "combmax_score",
+                            "retrieval_source",
+                            "rank",
+                        ):
+                            item[key] = val
+
+    items: list[AssertionSearchItem] = []
+    for item in fused:
+        decoded = decode_row(item, _JSON_FIELDS)
+        try:
+            items.append(AssertionSearchItem(**decoded))
+        except Exception:
+            logger.warning(
+                "Skipping assertion %s — deserialization failed",
+                item.get("id"),
+                exc_info=True,
+            )
+
+    _log_search_access(items)
+
+    return AssertionSearchResult(
+        query=q, items=items, total=len(items), search_mode=search_mode
+    )
+
+
 @router.post("", response_model=AssertionCreateResponse)
 def create_assertion(
     body: AssertionCreate, response: Response
@@ -182,13 +487,24 @@ def create_assertion(
                 detail=f"Entity not found: {body.entity_id}",
             )
 
+        entrenchment = compute_entrenchment(
+            confidence=body.confidence,
+            derivation_type=body.derivation_type or "inference",
+            observed_at=body.observed_at,
+            created_at=None,
+            entity_id=body.entity_id,
+            conn=conn,
+        )
+
         cur = conn.execute(
             "INSERT OR IGNORE INTO assertions ("
             "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
             "  chunk_id, derivation_type, reasoning_summary, observed_at,"
             "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
-            "  resolution_status, fulfillment_assertion_id, quality_score, review_status"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
+            "  prospective_summary, events_json, artifact_uri, artifact_storage,"
+            "  entrenchment_score"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.entity_id,
                 body.claim,
@@ -210,6 +526,11 @@ def create_assertion(
                 body.fulfillment_assertion_id,
                 validation.quality_score,
                 review_status,
+                body.prospective_summary,
+                body.events_json,
+                body.artifact_uri,
+                body.artifact_storage,
+                entrenchment,
             ),
         )
         conn.commit()
@@ -239,6 +560,25 @@ def create_assertion(
                 near_dup_warning = NearDuplicateWarning(
                     existing_id=match.existing_id, score=match.score
                 )
+
+            contradiction = check_contradictions(conn, body.entity_id, body.claim)
+            if contradiction.flagged:
+                conn.execute(
+                    "UPDATE assertions SET review_status = ?, review_notes = ? WHERE id = ?",
+                    ("flagged", contradiction.review_notes, new_id),
+                )
+                conn.commit()
+                rows = query(
+                    conn,
+                    f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+                    (new_id,),
+                )
+                logger.info(
+                    "Assertion %d flagged: contradiction with %s via edge #%s",
+                    new_id,
+                    contradiction.contradicting_entity,
+                    contradiction.edge_id,
+                )
     finally:
         conn.close()
 
@@ -262,6 +602,23 @@ def create_assertion(
             body.entity_id,
             item.id,
         )
+    else:
+        reindex_assertion_fts(item.id)
+        enrich_background(item.id, body.claim, body.entity_id, body.confidence)
+        _embed_assertion_background(
+            item.id,
+            {
+                "claim": body.claim,
+                "entity_id": body.entity_id,
+                "confidence": body.confidence,
+                "derivation_type": body.derivation_type or "inference",
+                "entrenchment_score": entrenchment,
+                "observed_at": body.observed_at,
+                "prospective_summary": body.prospective_summary,
+                "events_json": body.events_json,
+            },
+        )
+
     return AssertionCreateResponse(
         was_new=was_new,
         item=item,
@@ -390,11 +747,20 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 detail=f"Entity not found: {body.entity_id}",
             )
 
+        entrenchment = compute_entrenchment(
+            confidence=body.confidence,
+            derivation_type=body.derivation_type or "inference",
+            observed_at=now,
+            created_at=None,
+            entity_id=body.entity_id,
+            conn=conn,
+        )
+
         cur = conn.execute(
             "INSERT INTO assertions ("
             "  entity_id, claim, confidence, evidence, evidence_uris,"
-            "  derivation_type, observed_at, valid_from"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "  derivation_type, observed_at, valid_from, entrenchment_score"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.entity_id,
                 body.claim,
@@ -404,6 +770,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 body.derivation_type or "inference",
                 now,
                 body.valid_from,
+                entrenchment,
             ),
         )
         new_id = cur.lastrowid
@@ -430,6 +797,8 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         )
         conn.commit()
 
+        enrich_old_assertion_events(conn, body.old_assertion_id)
+
         old_result = query(
             conn,
             f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
@@ -447,7 +816,116 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             detail="Supersession committed but could not read back results",
         )
 
+    reindex_assertion_fts(new_id)
+    enrich_background(new_id, body.claim, body.entity_id, body.confidence)
+
+    vector_store.delete_assertion_embedding(body.old_assertion_id)
+    _embed_assertion_background(
+        new_id,
+        {
+            "claim": body.claim,
+            "entity_id": body.entity_id,
+            "confidence": body.confidence,
+            "derivation_type": body.derivation_type or "inference",
+            "entrenchment_score": entrenchment,
+            "observed_at": now,
+            "prospective_summary": None,
+            "events_json": None,
+        },
+    )
+
     return SupersedeResponse(
         old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),
         new=AssertionItem(**decode_row(new_result[0], _JSON_FIELDS)),
+    )
+
+
+@router.get("/entrenchment", response_model=AssertionList)
+def list_assertions_by_entrenchment(
+    entity_id: str = Query(..., description="Entity to list assertions for"),
+    superseded: bool = Query(False, description="Include superseded assertions"),
+    limit: int = Query(50, ge=1, le=500),
+) -> AssertionList:
+    """List assertions ordered by entrenchment score (descending).
+
+    Returns the belief base for an entity ordered by resistance to contraction.
+    K÷7 (Superexpansion): lower-entrenchment beliefs contract first.
+    """
+    clauses: list[str] = ["entity_id = ?"]
+    params: list[str | int] = [entity_id]
+
+    if not superseded:
+        clauses.append("superseded_by IS NULL")
+
+    where = " AND ".join(clauses)
+    sql = (
+        f"SELECT {_ASSERTION_COLS} FROM assertions "
+        f"WHERE {where} "
+        "ORDER BY COALESCE(entrenchment_score, 0.0) DESC LIMIT ?"
+    )
+    params.append(limit)
+
+    with cortex_conn() as conn:
+        rows = query(conn, sql, tuple(params))
+
+    items: list[AssertionItem] = []
+    for row in rows:
+        try:
+            items.append(AssertionItem(**decode_row(row, _JSON_FIELDS)))
+        except Exception:
+            logger.error(
+                "Skipping assertion %s — deserialization failed",
+                row.get("id"),
+                exc_info=True,
+            )
+    return AssertionList(items=items)
+
+
+@router.post("/{assertion_id}/enrich", response_model=EnrichResponse)
+def enrich_assertion_endpoint(
+    assertion_id: int, body: EnrichRequest | None = None
+) -> EnrichResponse:
+    """Explicitly trigger enrichment on an existing assertion.
+
+    Accepts an optional list of enrichment kinds (``prospective``, ``events``).
+    Defaults to all available enrichments. Runs synchronously and updates the
+    assertion row before returning.
+    """
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+            (assertion_id,),
+        )
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assertion not found: {assertion_id}",
+        )
+
+    row = decode_row(rows[0], _JSON_FIELDS)
+    kinds = {"prospective", "events"}
+    if body and body.enrichments:
+        kinds = set(body.enrichments)
+
+    results = enrich_assertion(
+        assertion_id,
+        row["claim"],
+        row["entity_id"],
+        row["confidence"],
+        kinds=kinds,
+    )
+
+    with cortex_conn() as conn:
+        updated_rows = query(
+            conn,
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+            (assertion_id,),
+        )
+
+    item = AssertionItem(**decode_row(updated_rows[0], _JSON_FIELDS))
+    return EnrichResponse(
+        item=item,
+        enrichments_run=sorted(kinds),
+        results=results,
     )

@@ -79,6 +79,14 @@ agent_bus(tool="reply", arguments='{{"thread": "THREAD_ID", "to": "TARGET", "sub
 ```
 After implementing a work order, request confirmation from the requesting agent."""
 
+_AGENT_BUS_LARGE_PAYLOADS = """\
+### Large Payload Navigation
+When fetch returns a stored-reference (e.g. `rs_XXXX`), don't skip the content. Options in order of preference:
+1. Narrow the window: `last=3`, `compact=true`, or fetch individual turns via `get`.
+2. `retrieve(id="rs_XXXX")` to pull the full payload if narrowing isn't sufficient.
+3. For turns containing large structured content (specs, code, directives): write to a markdown sidecar via `fs(op="write")`, then navigate with `md_list` / `md_read` for section-level access.
+Never treat "too large" as "skip" — it means "navigate differently.\""""
+
 _JOURNALING_PROTOCOL = """\
 ## Session Journaling
 Every session MUST produce a journal. Write throughout, not just at the end.
@@ -106,6 +114,15 @@ _THREAD_LIFECYCLE = """\
 **Thread close**: (1) write thread summary, (2) seed Cortex assertions for decisions, (3) mark todos done.
 **Session end**: (1) seed outstanding assertions, (2) reflect on session edges, (3) write session journal.
 After implementing a work order from another agent, post a confirmation turn before closing."""
+
+_SESSION_CLOSE_MARKDOWN_AUDIT = """\
+## Session Close — Markdown Audit
+Before writing the session journal, enumerate markdown documents relevant to this session's work. For each:
+1. Was it updated this session to reflect decisions, new facts, or status changes?
+2. Does it accurately reflect current state?
+3. Were any decisions made in conversation that did NOT land in a persistent document?
+
+Surface gaps to the user before closing. Only write the journal once gaps are confirmed or explicitly declined."""
 
 _DEADLINES_PROTOCOL = f"""\
 ## Deadlines
@@ -138,10 +155,19 @@ def _build_shared_vocabulary() -> str:
 
 _SHARED_VOCABULARY = _build_shared_vocabulary()
 
+_ASSERTION_SEARCH = """\
+## Assertion Search (FTS5)
+`cortex(tool="search", arguments='{"query": "...", "limit": 20}')` — fulltext search over assertions.
+Indexes claim text + prospective_summary + flattened events + entity_id. Finds assertions by vocabulary NOT in the original claim (e.g. terms only in enrichment).
+Optional: `entity_type` (filter to entity type), `superseded` (include superseded, default false).
+Prefer `search` over `assertions` list when you have a natural-language query. Use `assertions` for exact entity_id / confidence filters."""
+
 _TOOL_REFERENCE_POINTERS = """\
 ## Tool Reference
-Full tool schemas: `fs(sandbox="files", op="read", path="notes/system/shared/mcp-tool-reference.md")`
-Dispatch catalog: `fs(sandbox="files", op="read", path="notes/system/shared/tool-discovery.md")`
+Browse the canonical MCP docs: `fs(sandbox="project", op="md_list", path="universal-llm-gateway/docs/tool-reference.md")`
+Read the primary file tool docs: `fs(sandbox="project", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="fs")`
+For large Markdown docs, prefer section ops over whole-file reads: `md_list` to inspect the tree, `md_read` to load one section, and `md_replace` / `md_append` / `md_delete` to edit one section without loading the full document.
+Dispatch catalog: `fs(sandbox="project", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")`
 Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by` linkage is internal to the assertions table."""
 
 
@@ -201,11 +227,54 @@ Boot axis: `none` (no context) · `mcp` (persona seed + MCP tools) · `team` (su
 Default to neutral reasoning models unless you specifically need a persona's team-lead context or tool mastery enforcement.
 Any model can override the default persona with explicit `boot_ref`."""
 
+_CORTEX_RETRIEVAL_WORKFLOWS = """\
+## Retrieval Workflows (Cortex)
+
+**Generic retrieval** (default for any Cortex query):
+1. `cortex(tool="search", arguments='{"query": "…"}')` → hybrid FTS5+vector, CombMAX fusion
+2. Extract entity_ids from results → `cortex(tool="activate", arguments='{"entity_ids": [...], "exclude_ids": [...]}')` for associative context
+3. Rank by `entrenchment_score` (recency × access × confidence × derivation). Use `combmax_score` and `retrieval_source` for selection.
+4. Check `cortex(tool="tag_resolve", …)` for pinned canonical assertions (`current` tag)
+
+**Personal facts** (employment, financial, legal, medical):
+1. ALWAYS search Cortex before answering — never use parametric knowledge for personal facts
+2. Check temporal bounds (`valid_from`/`valid_until`) — assertions may have expired
+3. Check supersession chains — only non-superseded assertions are current beliefs
+4. For cross-entity topics, use `cortex(tool="activate", …)` or `cortex(tool="impact", …)` to traverse connections
+
+**Belief revision** (new information contradicts existing):
+1. Search for existing assertions on the entity
+2. Use `cortex(tool="supersede", …)` — never just assert the new claim alongside the old
+3. Write-path contradiction detection auto-flags cross-entity conflicts
+4. For high-stakes domains (legal, financial), route to staging rather than auto-committing"""
+
+_BEHAVIORAL_RULES = """\
+## Proactive Posture (Non-Negotiable)
+1. **Never ask for what's in Cortex** — search first, always. Personal facts, employment, legal, financial: hit Cortex before responding.
+2. **Never describe what you could do — do it.** Low-risk, clearly beneficial actions execute immediately.
+3. **Recommend, don't present menus.** The user hired an advisor. Recommend with reasoning; offer alternatives only if rejected.
+4. **Pre-fetch on boot.** When open items surface, pull Cortex context for them before the user picks one.
+5. **Pull context on first mention.** The moment a domain appears, search Cortex for everything relevant. Don't wait for the second message.
+6. **Surface risks proactively.** Deadlines, blockers, stale leads, financial constraints — raise them, don't wait to be asked.
+7. **Anticipate the next action.** After completing work, propose the logical next step. Sessions should have momentum."""
+
+_NOTES_TO_SELF = """\
+## Notes to Self (Session Close)
+Before writing the journal, seed 2-5 observations about your own session effectiveness using `cortex(tool="observe", …)`:
+- Context you needed but didn't have at boot
+- Workflows that worked well or failed
+- Corrections the user made that future instances should know
+- Patterns you noticed that aren't captured as assertions
+- Things you'd tell your next instance to save them time
+Target the relevant entity (`service:cortex`, `service:mcp-server`, `decision:*`, etc.). These accumulate entrenchment and surface in future boots when relevant — this is how the boot improves itself."""
+
 _ON_DEMAND_POINTERS = """\
 ## On-Demand Modules (load when needed)
 - Cortex full schema: `fs(sandbox="files", op="read", path="notes/system/cortex-spec-index.md")`
 - Infrastructure session: `agent_bus(tool="threads", …)` + `cortex(tool="entities", arguments='{"type": "decision"}')` + open todos
-- Frontier intelligence: `fs(sandbox="files", op="read", path="notes/system/shared/frontier-intelligence.md")`"""
+- Frontier intelligence: `fs(sandbox="files", op="read", path="notes/system/shared/frontier-intelligence.md")`
+
+Note: `notes/system/shared/operational-lessons.md` (full capability reference) loads automatically at boot via post_files."""
 
 
 def render_operational_context(
@@ -223,8 +292,12 @@ def render_operational_context(
     sections.append(_AGENT_BUS_COMPACT.format(**subs))
     if unread_count > 0:
         sections.append(_AGENT_BUS_EXAMPLES.format(**subs))
+    sections.append(_AGENT_BUS_LARGE_PAYLOADS)
     sections.append(_JOURNALING_PROTOCOL.format(**subs))
     sections.append(_THREAD_LIFECYCLE)
+    # Web Claude is the user-facing closer, so the markdown audit belongs there.
+    if agent == "web":
+        sections.append(_SESSION_CLOSE_MARKDOWN_AUDIT)
     if flags.get("deadlines"):
         sections.append(_DEADLINES_PROTOCOL)
     if flags.get("review_queue"):
@@ -236,7 +309,11 @@ def render_operational_context(
         sections.append(rq)
     if flags.get("confirm_and_proceed"):
         sections.append(_CONFIRM_AND_PROCEED)
+    sections.append(_CORTEX_RETRIEVAL_WORKFLOWS)
+    sections.append(_BEHAVIORAL_RULES)
     sections.append(_render_observe_and_search(agent))
+    sections.append(_ASSERTION_SEARCH)
+    sections.append(_NOTES_TO_SELF)
     sections.append(_SHARED_VOCABULARY)
     sections.append(_FRONTIER_MODEL_ROUTING)
     sections.append(_TOOL_REFERENCE_POINTERS)

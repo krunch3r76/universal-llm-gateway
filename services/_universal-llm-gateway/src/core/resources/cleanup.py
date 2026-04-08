@@ -47,8 +47,8 @@ def cleanup_stale_models(tracker: "ResourceTracker") -> list[str]:
     for model_id in stale_models:
         if model_id in tracker._models:
             del tracker._models[model_id]
-            # Also clean up state machine if it exists
             tracker._state_machines.pop(model_id, None)
+            tracker._variant_registry.unregister(model_id)
             cleaned_up.append(model_id)
             logger.info(f"Cleaned up stale model: {model_id}")
 

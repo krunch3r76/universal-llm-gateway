@@ -207,12 +207,10 @@ class GenericGenerateHandler(BaseHandler):
 
         if executor_override:
             model_id = executor_override
-            model_system_prompt = None
             model_profile = None
             primary_resolution = None
         elif runtime_override:
             model_id = runtime_override
-            model_system_prompt = None
             model_profile = None
             primary_resolution = ResolvedTargetModel.build(
                 model_id,
@@ -275,7 +273,6 @@ class GenericGenerateHandler(BaseHandler):
                     f"the /v1/models/select endpoint may be temporarily unavailable)."
                 )
             model_id = candidates[0]
-            model_system_prompt = None
             model_profile = None
             primary_resolution = ResolvedTargetModel.build(
                 model_id,
@@ -296,7 +293,6 @@ class GenericGenerateHandler(BaseHandler):
                     search_path=context.pipeline.source_search_path,
                 )
                 model_id = model_config.model
-                model_system_prompt = model_config.system_prompt
                 model_profile = model_config.profile
                 primary_resolution = ResolvedTargetModel.build(
                     model_id,
@@ -306,7 +302,6 @@ class GenericGenerateHandler(BaseHandler):
                 )
             except KeyError:
                 model_id = step.model_ref
-                model_system_prompt = None
                 model_profile = None
                 primary_resolution = ResolvedTargetModel.build(
                     model_id,
@@ -326,7 +321,6 @@ class GenericGenerateHandler(BaseHandler):
                 context,
                 prompt_config,
                 model_id,
-                model_system_prompt,
                 user_prompt,
                 source_provenance,
                 model_profile=model_profile,
@@ -385,7 +379,6 @@ class GenericGenerateHandler(BaseHandler):
         context: PipelineContext,
         prompt_config: PromptConfig,
         model_id: str,
-        model_system_prompt: str | None,
         user_prompt: str,
         source_provenance: dict[str, Any] | None,
         *,
@@ -398,7 +391,6 @@ class GenericGenerateHandler(BaseHandler):
             step,
             prompt_config,
             model_id,
-            model_system_prompt,
             context,
         )
 
@@ -437,17 +429,16 @@ class GenericGenerateHandler(BaseHandler):
         step: StepConfig,
         prompt_config: PromptConfig,
         model_id: str,
-        model_system_prompt: str | None,
         context: PipelineContext,
     ) -> dict[str, Any]:
         """Resolve execution configuration for a specific model.
 
-        System prompt hierarchy: prompt > model > "".
+        System prompt hierarchy: step > prompt > "".
         System prompt is rendered with the same template context as the user prompt
         so placeholders (e.g. {corpus_hints}, {scope_options}) are substituted.
         Generation parameters hierarchy: step > token_defaults > dynamic.
         """
-        system_prompt_raw = prompt_config.system_prompt or model_system_prompt or ""
+        system_prompt_raw = step.system_prompt or prompt_config.system_prompt or ""
         if system_prompt_raw:
             prompt_context = self._build_prompt_context(step, context)
             system_prompt = self._prompt_builder.render_safe(

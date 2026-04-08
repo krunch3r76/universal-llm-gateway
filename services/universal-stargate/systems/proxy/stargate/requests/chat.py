@@ -70,7 +70,7 @@ async def process_chat_completion(
 
     target_model_for_pipeline_check = effective_model_override or chat_request.model
     is_pipeline = (
-        proxy.pipeline_registry is not None
+        proxy.is_pipeline_system_ready
         and target_model_for_pipeline_check is not None
         and proxy.pipeline_registry.is_pipeline(target_model_for_pipeline_check)
     )

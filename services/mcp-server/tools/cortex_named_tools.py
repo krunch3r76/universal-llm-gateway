@@ -44,19 +44,19 @@ def _extract_entity_ids(sessions: list[dict[str, Any]]) -> list[str]:
 
 _BOOT_PROFILES: dict[str, dict[str, Any]] = {
     "cursor": {
-        "include_deadlines": False,
+        "include_deadlines": True,
         "include_review_queue": False,
         "include_investigations": False,
         "include_session_edges": True,
         "session_agent_filter": "cursor",
-        "entity_type_exclude": "legal_matter,person,property,organization",
+        "entity_type_exclude": "property",
         "session_limit": 3,
         "assertion_limit": 50,
         "continuation_decision_limit": 5,
         "continuation_service_limit": 3,
-        "boot_section_max_full": 3,
-        "boot_section_max_oneline": 10,
-        "boot_section_type_exclude": "legal_matter,person,property,organization",
+        "boot_section_max_full": 5,
+        "boot_section_max_oneline": 15,
+        "boot_section_type_exclude": "property",
         "session_edges_hours": 48,
         "session_edges_limit": 15,
     },
@@ -131,13 +131,216 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
 }
 
 
+_DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    "employment": [
+        "pharmacy",
+        "pharmacist",
+        "job",
+        "employment",
+        "hired",
+        "fired",
+        "terminated",
+        "resume",
+        "interview",
+        "lead",
+        "position",
+        "salary",
+    ],
+    "legal": [
+        "legal",
+        "attorney",
+        "lawyer",
+        "lawsuit",
+        "demand",
+        "osaic",
+        "arbitration",
+        "deadline",
+        "filing",
+        "court",
+        "settlement",
+    ],
+    "financial": [
+        "financial",
+        "money",
+        "debt",
+        "payment",
+        "budget",
+        "income",
+        "savings",
+        "insurance",
+        "mortgage",
+        "rent",
+        "expense",
+    ],
+}
+
+
+def _detect_boot_domains(
+    sessions: list[dict[str, Any]],
+    continuation_decisions: list[dict[str, Any]],
+    todos: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    """Detect life domains relevant to this session from continuation context.
+
+    Returns domain depth hints: list of {domain, reason, dispatch_query} that
+    the calling agent can use to dispatch subagents for domain-specific depth.
+    """
+    text_pool: list[str] = []
+    if sessions:
+        latest = sessions[0]
+        for item in latest.get("open_items", []):
+            text_pool.append(str(item))
+        text_pool.append(latest.get("summary", ""))
+    for d in continuation_decisions:
+        text_pool.append(d.get("claim", ""))
+    for t in todos:
+        text_pool.append(t.get("title", ""))
+
+    combined = " ".join(text_pool).lower()
+    hints: list[dict[str, str]] = []
+    for domain, keywords in _DOMAIN_KEYWORDS.items():
+        matched = [kw for kw in keywords if kw in combined]
+        if matched:
+            hints.append(
+                {
+                    "domain": domain,
+                    "reason": f"Continuation context mentions: {', '.join(matched[:3])}",
+                    "dispatch_query": f"Full {domain} context: all entities, assertions, deadlines, and open items related to {domain}",
+                }
+            )
+    return hints
+
+
+def _boot_activation_pass(
+    boot_sections: dict[str, Any] | None,
+    sessions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Post-fetch: spreading activation from boot entities + hybrid search from continuation.
+
+    Discovers structurally connected assertions (via C3 activation) and
+    continuation-relevant assertions (via hybrid search on open_items)
+    that salience-based entity ranking alone wouldn't surface.
+    """
+    seed_entities: list[str] = []
+    if boot_sections:
+        for entity in boot_sections.get("full", []):
+            eid = entity.get("entity_id")
+            if eid:
+                seed_entities.append(eid)
+
+    results: list[dict[str, Any]] = []
+
+    if seed_entities:
+        activate_qs = urlencode(
+            {
+                "entity_ids": ",".join(seed_entities),
+                "depth": 1,
+                "max_results": 10,
+            }
+        )
+        activation_raw = _cx("GET", f"/assertions/activate?{activate_qs}")
+        if isinstance(activation_raw, dict):
+            for a in activation_raw.get("activated", []):
+                results.append(
+                    {
+                        "source": "activation",
+                        "entity_id": a.get("entity_id"),
+                        "claim": a.get("claim"),
+                        "confidence": a.get("confidence"),
+                        "entrenchment_score": a.get("entrenchment_score"),
+                        "activation_score": a.get("activation_score"),
+                        "hop_distance": a.get("hop_distance"),
+                    }
+                )
+
+    search_query = ""
+    if sessions:
+        open_items = sessions[0].get("open_items", [])
+        if open_items:
+            search_query = " ".join(str(item) for item in open_items[:3])
+
+    if search_query:
+        search_qs = urlencode({"q": search_query, "limit": 10})
+        search_raw = _cx("GET", f"/assertions/search?{search_qs}")
+        seen_eids = {r.get("entity_id") for r in results}
+        if isinstance(search_raw, dict):
+            for item in search_raw.get("items", []):
+                if item.get("entity_id") not in seen_eids:
+                    results.append(
+                        {
+                            "source": "hybrid_search",
+                            "entity_id": item.get("entity_id"),
+                            "claim": item.get("claim"),
+                            "confidence": item.get("confidence"),
+                            "entrenchment_score": item.get("entrenchment_score"),
+                            "combmax_score": item.get("combmax_score"),
+                        }
+                    )
+
+    return results
+
+
+def _resolve_transcript(
+    transcript_id: str,
+) -> dict[str, Any] | None:
+    """Verify transcript entity exists, load markdown, traverse continues chain.
+
+    Returns a continuation dict on success, or a dict with 'error' key on failure.
+    None if transcript_id is empty.
+    """
+    if not transcript_id:
+        return None
+
+    clean_id = transcript_id.removeprefix("transcript:")
+    entity_key = f"transcript:{clean_id}"
+
+    entity_raw = _cx("GET", f"/entities/{quote(entity_key, safe=':')}")
+    if "error" in entity_raw:
+        return {
+            "error": "transcript_not_found",
+            "transcript_id": clean_id,
+            "transcript_entity_id": entity_key,
+            "detail": f"Entity {entity_key} not found in Cortex. Typo or stale reference?",
+        }
+
+    source_uri = entity_raw.get("source_uri") or ""
+    transcript_md = ""
+    if source_uri:
+        md_results = read_files_batch([source_uri])
+        md_content = md_results.get(source_uri)
+        if isinstance(md_content, str):
+            transcript_md = md_content
+
+    chain_qs = urlencode({"node": entity_key, "edge_type": "continues", "hops": 5})
+    chain_raw = _cx("GET", f"/edges/traverse?{chain_qs}")
+    chain_edges: list[dict[str, Any]] = []
+    if isinstance(chain_raw, dict):
+        chain_edges = chain_raw.get("items", [])
+
+    return {
+        "transcript_id": clean_id,
+        "entity_id": entity_key,
+        "name": entity_raw.get("name", clean_id),
+        "description": entity_raw.get("description", ""),
+        "source_uri": source_uri,
+        "markdown": transcript_md,
+        "assertions": entity_raw.get("assertions", []),
+        "chain": chain_edges,
+    }
+
+
 def run_cortex_boot(
     agent: str = "web",
     pre_files: str = "",
     post_files: str = "",
+    transcript_id: str = "",
 ) -> dict[str, Any]:
     """Build a persona-scoped Cortex boot briefing for internal callers and MCP."""
     from concurrent.futures import ThreadPoolExecutor
+
+    transcript_continuation = _resolve_transcript(transcript_id)
+    if transcript_continuation and "error" in transcript_continuation:
+        return transcript_continuation
 
     t_boot = datetime.now(UTC)
     session_id = f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
@@ -152,6 +355,11 @@ def run_cortex_boot(
     post_list = (
         [p.strip() for p in post_files.split(",") if p.strip()] if post_files else []
     )
+    # Web boot skips auto-loading operational-lessons.md (~15-20k tokens).
+    # A reference card + on-demand md_list/md_read note is injected into the narrative instead.
+    _default_post = "notes/system/shared/operational-lessons.md"
+    if agent != "web" and _default_post not in post_list:
+        post_list.append(_default_post)
     pre_file_results = read_files_batch(pre_list) if pre_list else {}
     unread_turns_qs = urlencode(
         {"to": agent, "unread": "true", "last": 10, "compact": "true"}
@@ -224,6 +432,8 @@ def run_cortex_boot(
     todo_qs_parts: dict[str, Any] = {"limit": todo_limit}
     if agent == "cursor":
         todo_qs_parts["context"] = "code"
+    elif agent == "web":
+        todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
     futures_spec["todos"] = (
         _cx,
         "GET",
@@ -266,6 +476,8 @@ def run_cortex_boot(
         "entity_type_exclude", ""
     ):
         futures_spec["legal_contacts"] = (_cx, "GET", "/boot-legal-contacts")
+
+    activity_journal_limit = profile.get("activity_journal_limit", 7)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
@@ -320,6 +532,20 @@ def run_cortex_boot(
         temporal_raw.get("upcoming", []) if isinstance(temporal_raw, dict) else []
     )
 
+    activity_journal: list[dict[str, Any]] = []
+    if activity_journal_limit > 0:
+        journal_thread_id: str | None = None
+        for t in threads:
+            if t.get("slug") == "agent-activity-journal":
+                journal_thread_id = t.get("id")
+                break
+        if journal_thread_id:
+            journal_qs = urlencode(
+                {"thread": journal_thread_id, "last": activity_journal_limit}
+            )
+            journal_raw = _relay("agent-bus", "GET", f"/turns?{journal_qs}")
+            activity_journal = safe_list(journal_raw, "turns")
+
     suspected = []
     hypothesized = []
     low_conf_unreviewed = []
@@ -344,6 +570,21 @@ def run_cortex_boot(
         temporal_active,
     )
 
+    activated_context = _boot_activation_pass(boot_sections, sessions)
+
+    capability_ref_note = (
+        "*Capability reference available on demand: "
+        "`fs(sandbox='files', op='md_list', path='notes/system/shared/operational-lessons.md')` "
+        "then `md_read` by section.*\n"
+        "*Core tools: `cortex(tool=...)` — entity/assertion ops | "
+        "`fs(sandbox=..., op=...)` — file I/O | "
+        "`pipeline(...)` — run pipeline | "
+        "`dispatch(tool=...)` — extended tools | "
+        "`observability(operation=...)` — event queries*"
+        if agent == "web"
+        else None
+    )
+
     narrative = render_boot_narrative(
         boot_sections=boot_sections,
         deadlines=deadlines if profile.get("include_deadlines", True) else None,
@@ -363,8 +604,14 @@ def run_cortex_boot(
         gated_entities=gated_entities or None,
         edges_supersedes=edges_supersedes or None,
         edges_reasoning=edges_reasoning or None,
+        activated_context=activated_context or None,
         commitments=commitments or None,
         legal_contacts=legal_contacts or None,
+        domain_depth_hints=_detect_boot_domains(sessions, cont_decisions, todos)
+        or None,
+        transcript_continuation=transcript_continuation,
+        recent_activity=activity_journal or None,
+        capability_ref_note=capability_ref_note,
     )
 
     logger.info(
@@ -394,6 +641,7 @@ def run_cortex_boot(
                     "unread": t.get("unread_count", 0),
                 }
                 for t in threads
+                if t.get("unread_count", 0) > 0
             ],
             "unread_turns": unread_turns,
         },
@@ -403,6 +651,18 @@ def run_cortex_boot(
         "operational_context": ops_context,
         "operational_context_version": "v2.0",
     }
+
+    if transcript_continuation:
+        result["continuation_transcript_id"] = transcript_continuation["transcript_id"]
+        result["transcript_continuation"] = {
+            "entity_id": transcript_continuation["entity_id"],
+            "name": transcript_continuation["name"],
+            "description": transcript_continuation["description"],
+            "source_uri": transcript_continuation["source_uri"],
+            "assertions": transcript_continuation["assertions"],
+            "chain": transcript_continuation["chain"],
+            "markdown_loaded": bool(transcript_continuation.get("markdown")),
+        }
 
     if profile.get("include_deadlines", True):
         result["deadlines"] = deadlines
@@ -435,6 +695,10 @@ def run_cortex_boot(
             "supersession_chains": edges_supersedes,
             "reasoning_edges": edges_reasoning,
         }
+
+    domain_hints = _detect_boot_domains(sessions, cont_decisions, todos)
+    if domain_hints:
+        result["domain_depth_hints"] = domain_hints
 
     return result
 
@@ -618,9 +882,19 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         agent: str = "web",
         pre_files: str = "",
         post_files: str = "",
+        transcript_id: str = "",
     ) -> dict[str, Any]:
         """Persona-scoped boot briefing for session start (web, cursor, api, grok).
 
+        When transcript_id is provided, boot verifies the transcript entity exists,
+        loads its markdown, traverses the continues chain, and injects continuation
+        context into the narrative. Returns transcript_not_found error if invalid.
+
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="cortex_boot")
         """
-        return run_cortex_boot(agent=agent, pre_files=pre_files, post_files=post_files)
+        return run_cortex_boot(
+            agent=agent,
+            pre_files=pre_files,
+            post_files=post_files,
+            transcript_id=transcript_id,
+        )

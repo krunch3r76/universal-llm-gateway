@@ -196,19 +196,6 @@ class CatalogManager:
                 name=str(entry.get("name", entry.get("display_name", mid))),
             )
             models.append(base_model)
-            if config.mcp_server_url and not mid.endswith("-mcp"):
-                mcp_id = f"{mid}-mcp"
-                models.append(
-                    CatalogModel(
-                        id=mcp_id,
-                        provider=config.provider,
-                        max_concurrent=config.max_concurrent,
-                        prompt_cost_per_m=base_model.prompt_cost_per_m,
-                        completion_cost_per_m=base_model.completion_cost_per_m,
-                        context_length=base_model.context_length,
-                        name=f"{base_model.name} (MCP)" if base_model.name else mcp_id,
-                    )
-                )
 
         self._catalogs[config.provider] = ProviderCatalog(
             provider=config.provider,

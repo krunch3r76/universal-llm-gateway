@@ -1,0 +1,35 @@
+catalog_schema: 4
+schema: llama-cpp
+metadata:
+  name: gemma-4-26B-A4B-it-Q4_K_M
+  format: gguf
+  arch: gemma4
+  quant: Q4_K_M
+  parameters_m: 3211
+  capabilities:
+    input_schema: messages
+    modalities:
+      input:
+        - text
+        - vision
+      output:
+        - text
+      vision_architecture: gemma4
+    interaction:
+      chat_template: true
+    reasoning:
+      supports_thinking: true
+    limits:
+      max_context_length: 262144
+    provenance: {}
+loader:
+  clip_model_path: mmproj-gemma-4-26B-A4B-it-f16.gguf
+  vision_architecture: gemma4
+download:
+  huggingface:
+    repo: ggml-org/gemma-4-26B-A4B-it-GGUF
+    file: gemma-4-26B-A4B-it-Q4_K_M.gguf
+    verified: false
+    local_subdir: gemma-4-26B-A4B-it-GGUF
+  size_bytes: 16796010720
+  sha256: 23c6997912cb7fa36147fe05877de73ddbb2a80ff69b18ff171b354dccf2b5b5

@@ -122,6 +122,30 @@ def _read_eml(path: Path) -> str:
     return "\n".join(lines)
 
 
+_FORMAT_READERS: dict[str, object] = {
+    ".docx": _read_docx,
+    ".odt": _read_odt,
+    ".eml": _read_eml,
+    ".pdf": _read_pdf,
+}
+
+
+def extract_text_content(path: Path) -> str:
+    """Extract text from *path* using format-specific readers when available.
+
+    Falls back to plain UTF-8 read for unrecognized suffixes.  PDF is converted
+    to markdown via ``pymupdf4llm``; DOCX/ODT produce plain paragraphs; EML
+    extracts headers + body + PDF attachments.
+    """
+    reader = _FORMAT_READERS.get(path.suffix.lower(), _read_plain)
+    return reader(path)  # type: ignore[operator]
+
+
+def is_converted_format(path: Path) -> bool:
+    """True when *path* requires format conversion (not natively UTF-8 text)."""
+    return path.suffix.lower() in _FORMAT_READERS
+
+
 def resolve_files_path(relative: str, root: Path = FILES_ROOT) -> Path:
     """Resolve *relative* inside *root*, rejecting traversal attempts."""
     clean = relative.lstrip("/")
@@ -176,14 +200,7 @@ def read_file_result(
             f"Allowed: {', '.join(sorted(ALLOWED_READ_SUFFIXES))}"
         )
 
-    read_handlers = {
-        ".docx": _read_docx,
-        ".odt": _read_odt,
-        ".eml": _read_eml,
-        ".pdf": _read_pdf,
-    }
-    read_handler = read_handlers.get(suffix, _read_plain)
-    content = read_handler(src)
+    content = extract_text_content(src)
     return {"content": content, "path": str(src)}
 
 

@@ -52,8 +52,9 @@ class ScopeDefinition:
 class KnowledgeExtractionConfig:
     """LLM-based knowledge extraction at index time.
 
-    Extraction is integral to indexing — ∀ indexed file: extraction runs.
-    To skip extraction entirely, disable indexing (automatic_indexing_enabled: false).
+    Extraction is integral to indexing except for explicitly excluded scopes.
+    Use ``exclude_scopes`` for corpora like Persian poetry where the extraction
+    prompts are known to be a bad fit.
     Per-batch HTTP timeouts scale with chunk count to fail fast under model
     saturation when multiple index workers fan out to the same backend.
     """
@@ -71,6 +72,11 @@ class KnowledgeExtractionConfig:
     # How long extraction workers wait for model.loaded before giving up.
     # Must exceed cold model load time (14B model: ~2-5 min). Default: 10 min.
     model_load_wait_s: float = 600.0
+    exclude_scopes: list[str] = field(default_factory=list)
+
+    def should_extract_scope(self, scope: str) -> bool:
+        """Return whether extraction should run for the resolved scope."""
+        return scope not in self.exclude_scopes
 
 
 DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
@@ -349,6 +355,12 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         0.0, float(raw.get("batch_timeout_overhead_s", 30.0))
     )
     model_load_wait_s = max(30.0, float(raw.get("model_load_wait_s", 600.0)))
+    raw_exclude_scopes = raw.get("exclude_scopes", [])
+    exclude_scopes = (
+        [str(scope).strip() for scope in raw_exclude_scopes if str(scope).strip()]
+        if isinstance(raw_exclude_scopes, list)
+        else []
+    )
     return KnowledgeExtractionConfig(
         pipeline=str(pipeline),
         schema_version=int(schema_version),
@@ -358,6 +370,7 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
         per_chunk_timeout_s=per_chunk_timeout_s,
         batch_timeout_overhead_s=batch_timeout_overhead_s,
         model_load_wait_s=model_load_wait_s,
+        exclude_scopes=exclude_scopes,
     )
 
 

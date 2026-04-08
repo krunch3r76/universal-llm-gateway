@@ -857,6 +857,7 @@ def WorkerCrashDetected(
     error_message: str,
     socket_path: str,
     process_pid: int | None = None,
+    exit_code: int | None = None,
 ) -> Event:
     """
     Create WORKER_CRASH_DETECTED event.
@@ -866,6 +867,7 @@ def WorkerCrashDetected(
         error_message: Error message describing the crash
         socket_path: Path to the orphaned socket file
         process_pid: Optional PID of crashed process
+        exit_code: Optional process exit code captured by process_ipc
 
     Returns:
         Event with WorkerCrashDetected signal
@@ -877,6 +879,7 @@ def WorkerCrashDetected(
             "error_message": error_message,
             "socket_path": socket_path,
             "process_pid": process_pid,
+            "exit_code": exit_code,
         },
     )
 

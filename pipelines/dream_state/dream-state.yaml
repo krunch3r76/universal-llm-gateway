@@ -1,0 +1,138 @@
+# Dream State Consolidation Pipeline — Kumiho K*7 automated contraction
+#
+# Batch-assesses Cortex assertions for relevance, deprecation, enrichment,
+# and relationship identification. Three-tier safety: AUTO_APPLY, RECOMMEND,
+# PROTECT. Dry-run by default — first 3 runs MUST be dry-run.
+#
+# Flow:
+#   load_cursor → collect_assertions → enrich_context →
+#   assess_batch (LLM, parallel map) → guarded_apply →
+#   save_cursor → audit_report
+
+schema_version: 6
+id: dream-state
+version: "1.0"
+type: dream_state
+description: >
+  Kumiho-inspired consolidation pipeline. Batch-assesses Cortex assertions
+  for relevance, deprecation, enrichment, and relationship identification.
+  Safety-hardened with circuit breaker, published-item protection, and
+  dry-run default.
+output: audit_report
+
+options:
+  timeout_seconds: 1800
+  dry_run: true
+  batch_size: 20
+  max_concurrency: 3
+  min_success_threshold: 0.5
+  auto_apply_threshold:
+    relevance_below: 0.2
+    entrenchment_below: 0.3
+    cascade_below: 5
+  save_execution_summary: true
+  summary_format: detailed
+  include_step_stats: true
+
+steps:
+  - name: load_cursor
+    type: dream_state_cursor_v1
+
+  - name: collect_assertions
+    type: dream_state_collect_v1
+    reads_from:
+      - step: load_cursor
+        fields: [json]
+
+  - name: enrich_context
+    type: dream_state_enrich_v1
+    reads_from:
+      - step: collect_assertions
+        fields: [json]
+
+  - name: assess_batch
+    type: generate
+    model_ref: claude_sonnet
+    prompt_ref: dream_state.assess
+    map_over:
+      batch: enrich_context.json.enriched_batches
+    map_inputs:
+      batch_data: mapNs.iteration.value
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 8000
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            assessments:
+              type: array
+              items:
+                type: object
+                properties:
+                  assertion_id:
+                    type: integer
+                  relevance_score:
+                    type: number
+                  should_deprecate:
+                    type: boolean
+                  deprecation_reason:
+                    anyOf:
+                      - type: string
+                      - type: "null"
+                  enrichment_suggestions:
+                    type: object
+                    properties:
+                      tags:
+                        type: array
+                        items:
+                          type: string
+                      metadata_updates:
+                        type: object
+                  relationships:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        target_assertion_id:
+                          type: integer
+                        type:
+                          type: string
+          required:
+            - assessments
+    fail_fast: true
+    min_success_threshold: 0.5
+    max_concurrency: 3
+    timeout_seconds: 300
+    inference_timeout_seconds: 120
+
+  - name: guarded_apply
+    type: dream_state_apply_v1
+    reads_from:
+      - step: assess_batch
+        fields: [json]
+      - step: collect_assertions
+        fields: [json]
+
+  - name: save_cursor
+    type: dream_state_cursor_save_v1
+    reads_from:
+      - step: collect_assertions
+        fields: [json]
+      - step: guarded_apply
+        fields: [json]
+
+  - name: audit_report
+    type: dream_state_report_v1
+    reads_from:
+      - step: load_cursor
+        fields: [json]
+      - step: collect_assertions
+        fields: [json]
+      - step: assess_batch
+        fields: [json]
+      - step: guarded_apply
+        fields: [json]
+      - step: save_cursor
+        fields: [json]

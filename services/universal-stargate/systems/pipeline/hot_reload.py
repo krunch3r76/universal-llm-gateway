@@ -5,6 +5,7 @@ Watches pipeline search paths and triggers reload when YAML files change.
 Uses universal_hot_reload.HotReloadWatcher for pure async file monitoring.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ class PipelineHotReload:
         registry: "PipelineRegistry",
         debounce_ms: int = 2000,
         enabled: bool = True,
+        on_reload_success: Callable[[int, int], None] | None = None,
     ):
         """
         Initialize pipeline hot-reload.
@@ -38,10 +40,12 @@ class PipelineHotReload:
             registry: PipelineRegistry to reload
             debounce_ms: Debounce delay (2s default for pipeline stability)
             enabled: Whether hot-reload is enabled
+            on_reload_success: Optional callback after successful reload
         """
         self.registry = registry
         self.debounce_ms = debounce_ms
         self.enabled = enabled
+        self.on_reload_success = on_reload_success
         self._watchers: list[HotReloadWatcher] = []
 
     async def start(self) -> bool:
@@ -110,6 +114,8 @@ class PipelineHotReload:
         try:
             # reload_pipelines() returns (old_count, new_count) to avoid race condition
             old_count, new_count = self.registry.reload_pipelines()
+            if self.on_reload_success is not None:
+                self.on_reload_success(old_count, new_count)
 
             logger.info(
                 f"🔄 Pipeline reload ({Path(file_path).name}): "

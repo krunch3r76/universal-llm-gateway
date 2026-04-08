@@ -350,9 +350,11 @@ class ProxyClient:
             step_id: Pipeline step ID (for tracing)
             skip_token_counting: Skip pre-request token counting
                 (default: False — token counting runs for slot-aware max_tokens)
-            disable_profile: Suppress model-assigned profile injection (default: True).
-                Pipelines manage their own generation parameters; automatic profile
-                application (e.g. "creative" on qwen2-5) is counterproductive.
+            disable_profile: Suppress model-assigned profile injection (default: True
+                for this method — caller should pass the effective value resolved from
+                step/pipeline options, which defaults to False). Set True to skip all
+                profile logic; set False (default pipeline behavior) to allow the
+                model's assigned profile (e.g. "gemma4-instruct") to apply.
             profile: Explicit profile to apply (overrides model assignment).
                 Passed as ?filter= query param. Takes effect only when
                 disable_profile=False, or forces the named profile when set.

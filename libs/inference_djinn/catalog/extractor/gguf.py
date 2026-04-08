@@ -106,7 +106,11 @@ def extract_gguf(path: Path) -> CatalogMetadata:
             meta = GGUFMetadataLite.from_gguf(reader)
             meta_dict = meta.to_dict()
         finally:
-            reader.close()
+            # Some gguf package versions expose no explicit close(); only call it
+            # when present so metadata extraction stays compatible across versions.
+            close = getattr(reader, "close", None)
+            if callable(close):
+                close()
 
         arch = meta_dict.get("architecture")
         if arch and arch != "unknown":
@@ -120,7 +124,8 @@ def extract_gguf(path: Path) -> CatalogMetadata:
         if quant is None:
             quant = _resolve_file_type(meta_dict.get("file_type"))
 
-        has_chat_template = bool(meta_dict.get("chat_template"))
+        chat_template: str = meta_dict.get("chat_template") or ""
+        has_chat_template = bool(chat_template)
         if has_chat_template:
             input_schema = "messages"
         elif "instruct" in path.stem.lower() or "chat" in path.stem.lower():
@@ -128,11 +133,17 @@ def extract_gguf(path: Path) -> CatalogMetadata:
         else:
             input_schema = "prompt"
 
+        # Detect thinking capability from the Jinja chat template.
+        # Models that support toggleable thinking (Gemma 4, Qwen3, etc.) embed
+        # `enable_thinking` as a template variable; this is more reliable than
+        # checking architecture names, which vary across GGUF builds.
+        supports_thinking = "enable_thinking" in chat_template
+
         capabilities: dict[str, Any] = {
             "input_schema": input_schema,
             "modalities": {"input": ["text"], "output": ["text"]},
             "interaction": {"chat_template": has_chat_template},
-            "reasoning": {"supports_thinking": False},
+            "reasoning": {"supports_thinking": supports_thinking},
             "limits": {},
             "provenance": {},
         }

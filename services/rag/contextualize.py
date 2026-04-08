@@ -11,8 +11,9 @@ because their context prefixes anchor them to different documents.
 
 Architecture:
   - Sends each chunk to a small LLM (e.g. qwen3-5-9b) via Stargate
-  - Stargate queues requests based on the model's parallel_slots —
-    no application-level concurrency control needed
+  - Stargate queues requests against the model's parallel_slots
+  - X-Request-Timeout header enforces per-chunk inference deadline from
+    the moment Stargate acquires the slot, not from enqueue time
   - Returns context strings; empty string on per-chunk failure (graceful)
 """
 
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 
 STARGATE_URL = "http://localhost:9999"
 
+# TODO: Detect Persian/Arabic-script chunks and request Farsi context prefixes.
+# Mixed-language prefixes are acceptable for now because embedding quality remains
+# good enough for scoped retrieval, but poetry corpora should not stay English-led.
 _CONTEXT_SYSTEM_PROMPT = (
     "You are a search indexing assistant. Given a chunk from a document "
     "and surrounding context, write a short succinct context (2-3 sentences, "
@@ -95,7 +99,9 @@ async def contextualize_chunks(
         chunks: Chunks to contextualize.
         source: Source file path (included in the prompt for document identity).
         model: Model ID for context generation (e.g. qwen3-5-9b-q8-0-262144).
-        timeout_s: Per-chunk timeout in seconds.
+        timeout_s: Per-chunk inference timeout in seconds, enforced server-side
+            via X-Request-Timeout (starts when Stargate acquires the model slot,
+            not when the request is enqueued).
 
     Returns:
         List of context strings (one per chunk). Empty string on per-chunk failure.
@@ -111,9 +117,7 @@ async def contextualize_chunks(
             context = await _call_llm(user_msg, model, timeout_s)
             results[idx] = context
         except Exception:
-            logger.warning(
-                "Contextualization failed for chunk %d of %s", idx, source
-            )
+            logger.warning("Contextualization failed for chunk %d of %s", idx, source)
 
     tasks = [asyncio.create_task(_generate_one(i)) for i in range(len(chunks))]
     await asyncio.gather(*tasks)
@@ -129,7 +133,11 @@ async def contextualize_chunks(
     return results
 
 
-_CLIENT = httpx.AsyncClient(timeout=60.0)
+# Outer httpx timeout: queue wait + inference headroom. The actual inference
+# deadline is enforced server-side via X-Request-Timeout (starts when Stargate
+# acquires the model slot, not when the HTTP request is sent).
+_QUEUE_HEADROOM_S = 300.0
+_CLIENT = httpx.AsyncClient(timeout=_QUEUE_HEADROOM_S)
 
 # Anthropic research: 50-100 token prefixes are the sweet spot for 1024-token chunks.
 _MAX_CONTEXT_TOKENS = 150
@@ -142,10 +150,15 @@ async def _call_llm(
 ) -> str:
     """Call the contextualization LLM for a single chunk.
 
+    timeout_s is passed as X-Request-Timeout so Stargate starts the clock when
+    inference begins, not when the request enters the queue. The httpx client
+    timeout is a wide ceiling covering queue wait + inference time.
+
     Returns the context string, or empty string on failure.
     """
     response = await _CLIENT.post(
         f"{STARGATE_URL}/v1/chat/completions",
+        headers={"X-Request-Timeout": str(timeout_s)},
         json={
             "model": model,
             "messages": [
@@ -155,7 +168,6 @@ async def _call_llm(
             "max_tokens": _MAX_CONTEXT_TOKENS,
             "temperature": 0.1,
         },
-        timeout=timeout_s,
     )
     response.raise_for_status()
     data = response.json()

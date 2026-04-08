@@ -551,12 +551,23 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
             state._dependency_activation.waiting_on = "extraction"
             await wait_until_extraction_ready(config.knowledge_extraction.pipeline)
 
+            state._dependency_activation.waiting_on = "watcher_registration"
             await _start_watcher_runtime(config)
             state._dependency_activation.phase = "ready"
             state._dependency_activation.waiting_on = None
             await state._event_bus.publish_async(
                 rag_dependencies_activated(
                     dependencies=["stargate", "embeddings", "extraction"]
+                )
+            )
+            # Scope freshness repair sends LLM requests to Stargate (vocabulary
+            # classification). On cold restart the local model is still loading,
+            # so these requests 504/timeout for several minutes. Fire it as a
+            # background task now that the critical path (phase: ready) is done.
+            _track_background_task(
+                asyncio.create_task(
+                    _run_startup_scope_freshness_repair(config),
+                    name="rag-startup-scope-freshness-repair",
                 )
             )
             return
@@ -585,6 +596,19 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
                         error=error,
                     )
                 )
+        except Exception as exc:
+            # Any unexpected exception from _start_watcher_runtime (e.g. RuntimeError
+            # from a double-start on WatcherManager) must not escape the loop — that
+            # would freeze the phase at "watcher_registration" with no recovery path.
+            waiting_on = state._dependency_activation.waiting_on or "dependencies"
+            error = str(exc)
+            logger.error(
+                "Unexpected error during dependency activation (attempt %d, phase %s): %s",
+                attempt,
+                state._dependency_activation.phase,
+                error,
+                exc_info=True,
+            )
 
         delay = min(
             _DEPENDENCY_RETRY_MAX_S,
@@ -682,8 +706,6 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
                 )
             if config.post_index_enforcement != "warn":
                 state._post_index_stale = True
-
-    await _run_startup_scope_freshness_repair(config)
 
     for coro, name in (
         (_reconcile_pending(config), "rag-reconcile-pending"),

@@ -114,9 +114,18 @@ class PipelineLoader:
                 for part in namespace_parts[:-1]:
                     if part not in current:
                         current[part] = {}
+                    elif not isinstance(current[part], dict):
+                        current[part] = {}
                     current = current[part]
 
-                current[namespace_parts[-1]] = prompts_data
+                key = namespace_parts[-1]
+                if key in current and isinstance(current[key], dict):
+                    # Merge prompts into existing entry to preserve sub-namespaces
+                    # that may have been registered by child directories loaded first
+                    # (sorted order: child paths sort before parent prompts.yaml).
+                    current[key].update(prompts_data)
+                else:
+                    current[key] = prompts_data
                 logger.info(
                     f"    📄 Loaded {len(prompts_data)} prompt group(s) "
                     f"from {namespace}/prompts.yaml"

@@ -29,7 +29,7 @@ router = APIRouter(tags=["models"])
 
 def _get_pipeline_ids(proxy: StargateProxy) -> list[str]:
     """Get sorted pipeline IDs from registry."""
-    if not proxy.pipeline_registry:
+    if not proxy.is_pipeline_system_ready or not proxy.pipeline_registry:
         return []
     return sorted(proxy.pipeline_registry.pipelines.keys())
 

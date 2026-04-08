@@ -45,7 +45,12 @@ config/env/*.local
 !.env.example
 !.env.*.example
 tmp/
-docs/*
+docs/engram/
+docs/prompts/
+docs/research/
+docs/thirdparty/
+docs/vision/
+
 !docs/architecture/
 !docs/architecture/*.md
 !docs/architecture/appendices/
@@ -122,4 +127,5 @@ snapshots/
 
 # SQL files (may contain private/sensitive data — never commit)
 **/*.sql
-!libs/cortex_store/migrations/013_session_edges.sql
+# Migration DDL is schema, not data — safe to commit
+!libs/cortex_store/migrations/*.sql

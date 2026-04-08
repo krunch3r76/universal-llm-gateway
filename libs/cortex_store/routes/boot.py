@@ -17,6 +17,13 @@ logger = logging.getLogger("cortex-api.boot")
 router = APIRouter(tags=["boot"])
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    rows = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone()
+    return rows is not None
+
+
 def _relative_time(iso_str: str | None, now: datetime) -> str:
     """Format an ISO timestamp as a human-readable relative time."""
     if not iso_str:
@@ -42,6 +49,7 @@ def _render_full_section(
     assertions: list[dict[str, Any]],
     relationships: list[dict[str, Any]],
     now: datetime,
+    tags: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render a full entity section as Markdown."""
     last_active = "unknown"
@@ -59,9 +67,23 @@ def _render_full_section(
         "",
     ]
 
+    non_current_tags = [t for t in (tags or []) if t["tag_name"] != "current"]
+    if non_current_tags:
+        tag_parts = [
+            f"{t['tag_name']} (assertion #{t['assertion_id']})"
+            for t in non_current_tags
+        ]
+        lines.append(f"**Tags**: {', '.join(tag_parts)}")
+        lines.append("")
+
     for a in assertions:
         conf = a.get("confidence", "?")
-        lines.append(f"- [{conf}] {a.get('claim', '')}")
+        ent_score = a.get("entrenchment_score")
+        score_suffix = f" (e={ent_score:.2f})" if ent_score else ""
+        lines.append(f"- [{conf}]{score_suffix} {a.get('claim', '')}")
+        prospective = a.get("prospective_summary")
+        if prospective:
+            lines.append(f"  *Prospective*: {prospective}")
 
     if relationships:
         connected: list[str] = []
@@ -77,22 +99,62 @@ def _render_full_section(
     return "\n".join(lines)
 
 
+def _resolve_current_assertion_id(
+    conn: sqlite3.Connection, entity_id: str
+) -> int | None:
+    """Check for a 'current' tag; return its assertion_id or None to fall back."""
+    rows = db_query(
+        conn,
+        "SELECT assertion_id FROM tag_assignments "
+        "WHERE tag_name = 'current' AND entity_id = ?",
+        (entity_id,),
+    )
+    return rows[0]["assertion_id"] if rows else None
+
+
 def _build_full_sections(
     conn: sqlite3.Connection,
     results: list[SalienceResult],
     now: datetime,
 ) -> list[dict[str, Any]]:
     """Fetch assertions/relationships and render full sections."""
+    _has_tags_table = _table_exists(conn, "tag_assignments")
+
     sections: list[dict[str, Any]] = []
     for r in results:
-        assertions = db_query(
-            conn,
-            "SELECT entity_id, claim, confidence, evidence, "
-            "observed_at, created_at FROM assertions "
-            "WHERE entity_id = ? AND superseded_by IS NULL "
-            "ORDER BY created_at DESC LIMIT 5",
-            (r.entity_id,),
-        )
+        current_aid: int | None = None
+        if _has_tags_table:
+            current_aid = _resolve_current_assertion_id(conn, r.entity_id)
+
+        if current_aid is not None:
+            assertions = db_query(
+                conn,
+                "SELECT entity_id, claim, confidence, evidence, "
+                "prospective_summary, entrenchment_score, observed_at, created_at "
+                "FROM assertions WHERE id = ?",
+                (current_aid,),
+            )
+        else:
+            assertions = db_query(
+                conn,
+                "SELECT entity_id, claim, confidence, evidence, "
+                "prospective_summary, entrenchment_score, observed_at, created_at "
+                "FROM assertions "
+                "WHERE entity_id = ? AND superseded_by IS NULL "
+                "ORDER BY COALESCE(entrenchment_score, 0.0) DESC, created_at DESC "
+                "LIMIT 5",
+                (r.entity_id,),
+            )
+
+        entity_tags: list[dict[str, Any]] = []
+        if _has_tags_table:
+            entity_tags = db_query(
+                conn,
+                "SELECT tag_name, assertion_id FROM tag_assignments "
+                "WHERE entity_id = ? ORDER BY tag_name",
+                (r.entity_id,),
+            )
+
         rel_rows = db_query(
             conn,
             "SELECT r.from_entity, r.to_entity, r.type, "
@@ -114,7 +176,9 @@ def _build_full_sections(
                 "salience_score": round(r.salience_score, 3),
                 "surprise": round(r.surprise, 3),
                 "domain": r.domain,
-                "section_markdown": _render_full_section(r, assertions, rel_rows, now),
+                "section_markdown": _render_full_section(
+                    r, assertions, rel_rows, now, tags=entity_tags
+                ),
             }
         )
     return sections
@@ -338,6 +402,7 @@ _BOOT_TODOS_SQL = """
     WHERE e.type = 'todo'
     AND json_extract(e.attributes, '$.status') = 'open'
     {context_filter}
+    {domain_filter}
     ORDER BY
         CASE json_extract(e.attributes, '$.priority')
             WHEN 'high' THEN 1
@@ -355,11 +420,15 @@ def get_boot_todos(
     context: str | None = Query(
         None, description="Filter by context (e.g. 'code'). None = all."
     ),
+    domain_exclude: str | None = Query(
+        None,
+        description="Comma-separated domains to exclude (e.g. 'infra,rag,pipeline').",
+    ),
 ) -> dict[str, Any]:
     """Open todo entities for boot briefings, priority-ordered.
 
     Cursor boot passes context=code to exclude personal/financial/legal todos.
-    Web boot passes no context to see everything.
+    Web boot passes domain_exclude to filter out infra/rag/pipeline/mcp todos.
     """
     params: list[str | int] = []
     if context:
@@ -367,9 +436,23 @@ def get_boot_todos(
         params.append(context)
     else:
         context_filter = ""
+
+    domain_filter = ""
+    if domain_exclude:
+        excluded = [d.strip() for d in domain_exclude.split(",") if d.strip()]
+        if excluded:
+            placeholders = ",".join("?" * len(excluded))
+            domain_filter = (
+                f"AND (json_extract(e.attributes, '$.domain') IS NULL "
+                f"OR json_extract(e.attributes, '$.domain') NOT IN ({placeholders}))"
+            )
+            params.extend(excluded)
+
     params.append(limit)
 
-    sql = _BOOT_TODOS_SQL.format(context_filter=context_filter)
+    sql = _BOOT_TODOS_SQL.format(
+        context_filter=context_filter, domain_filter=domain_filter
+    )
     conn = cortex_conn()
     try:
         rows = db_query(conn, sql, tuple(params))

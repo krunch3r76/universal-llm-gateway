@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import HTTPException
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status
 
@@ -34,6 +35,26 @@ if TYPE_CHECKING:
     from .routing.forward import FederatedRequestForwarder
 
 logger = get_logger(__name__)
+
+
+async def _emit_federation_load_debug(
+    step: str,
+    gateway_id: str,
+    model_id: str,
+    request_id: str,
+    **extra: Any,
+) -> None:
+    await emit_debug_event(
+        "debug.federation.load.master",
+        {
+            "step": step,
+            "gateway_id": gateway_id,
+            "model_id": model_id,
+            "request_id": request_id,
+            **extra,
+        },
+        source="stargate",
+    )
 
 
 def _format_elapsed_ms(elapsed_ms: float) -> str:
@@ -291,6 +312,14 @@ class FederatedLoadOrchestrator:
         load_succeeded = False
 
         try:
+            await _emit_federation_load_debug(
+                "ensure_enter",
+                gateway.gateway_id,
+                str(model_id),
+                request_id,
+                sticky=sticky,
+                remote_id=gateway.remote_stargate_id,
+            )
             # PHASE 4: Check telemetry hint BEFORE acquiring lock
             #
             # NOTE:
@@ -300,6 +329,12 @@ class FederatedLoadOrchestrator:
             # that bounded risk here to suppress redundant load storms when fresh
             # telemetry already confirms the model is resident.
             if await self._should_skip_load_per_telemetry(gateway, model_id):
+                await _emit_federation_load_debug(
+                    "telemetry_skip",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                )
                 logger.info(
                     f"📊 Telemetry confirms {model_id} loaded on "
                     f"{gateway.gateway_id} - skipping"
@@ -310,6 +345,12 @@ class FederatedLoadOrchestrator:
             # Single-flight: check-and-insert is atomic (no await between them).
             if load_key in self._pending_loads:
                 existing_future = self._pending_loads[load_key]
+                await _emit_federation_load_debug(
+                    "coalesced_wait",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                )
                 if self._metrics:
                     self._metrics.record_coalesced_caller()
                 logger.debug(f"⏳ Coalescing with existing load: {load_key}")
@@ -319,6 +360,12 @@ class FederatedLoadOrchestrator:
                 )
                 self._pending_loads[load_key] = future
                 existing_future = None
+                await _emit_federation_load_debug(
+                    "primary_begin",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                )
                 if self._metrics:
                     self._metrics.record_primary_caller()
                 logger.debug(f"🔄 Primary loader for: {load_key}")
@@ -354,9 +401,22 @@ class FederatedLoadOrchestrator:
                         )
                     )
 
+                await _emit_federation_load_debug(
+                    "remote_call_start",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                )
                 await self._call_remote_load(gateway, model_id, sticky, request_id)
                 duration = time.monotonic() - start_time
                 duration_ms = int(duration * 1000)
+                await _emit_federation_load_debug(
+                    "remote_call_done",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    duration_ms=duration_ms,
+                )
                 if self._metrics:
                     self._metrics.record_load_operation_success(duration)
                 logger.info(f"✅ Model {model_id} loaded on {gateway.gateway_id}")
@@ -396,6 +456,15 @@ class FederatedLoadOrchestrator:
                     f"❌ Failed to load {model_id} on {gateway.gateway_id}: {e}"
                 )
 
+                await _emit_federation_load_debug(
+                    "remote_call_failed",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    duration_ms=duration_ms,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                )
                 # Emit load failed event
                 if self._event_bus:
                     from src.scheduling.events import FederationLoadFailed
@@ -427,8 +496,20 @@ class FederatedLoadOrchestrator:
                 ):
                     # Task failed or was cancelled - clear loading state
                     if self._gateway_manager:
+                        await _emit_federation_load_debug(
+                            "clear_loading_start",
+                            gateway.gateway_id,
+                            str(model_id),
+                            request_id,
+                        )
                         await self._gateway_manager.clear_model_loading(
                             gateway.gateway_id, model_id
+                        )
+                        await _emit_federation_load_debug(
+                            "clear_loading_done",
+                            gateway.gateway_id,
+                            str(model_id),
+                            request_id,
                         )
 
                 # TTL eviction: keep completed future for stampede protection
@@ -488,13 +569,33 @@ class FederatedLoadOrchestrator:
         NOTE: shield() does NOT prevent the outer wait_for timeout from firing.
         """
         try:
+            await _emit_federation_load_debug(
+                "coalesced_wait_start",
+                load_key[0],
+                str(model_id),
+                "coalesced",
+            )
             result = await asyncio.wait_for(
                 asyncio.shield(future),
                 timeout=self._config.coalesce_wait_timeout,  # Use config
             )
+            await _emit_federation_load_debug(
+                "coalesced_wait_done",
+                load_key[0],
+                str(model_id),
+                "coalesced",
+                result=result,
+            )
             logger.debug(f"✅ Coalesced load completed: {load_key}")
             return result
         except TimeoutError:
+            await _emit_federation_load_debug(
+                "coalesced_wait_timeout",
+                load_key[0],
+                str(model_id),
+                "coalesced",
+                timeout_s=self._config.coalesce_wait_timeout,
+            )
             logger.warning(
                 f"⏱️ Follower timed out waiting for {load_key}, primary continues"
             )
@@ -507,6 +608,14 @@ class FederatedLoadOrchestrator:
         except HTTPException:
             raise
         except Exception as e:
+            await _emit_federation_load_debug(
+                "coalesced_wait_failed",
+                load_key[0],
+                str(model_id),
+                "coalesced",
+                error_type=type(e).__name__,
+                error=str(e),
+            )
             logger.error(f"❌ Coalesced load failed for {model_id}: {e}")
             raise _load_error(
                 ErrorCode.RESOURCE_UNAVAILABLE,
@@ -577,6 +686,14 @@ class FederatedLoadOrchestrator:
         for attempt_index in range(1, max_attempts + 1):
             attempt_start = time.monotonic()
             try:
+                await _emit_federation_load_debug(
+                    "attempt_start",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    max_attempts=max_attempts,
+                )
                 logger.info(
                     f"🔄 Load attempt {attempt_index}/{max_attempts}: "
                     f"{gateway.remote_stargate_url} for {model_id}",
@@ -599,6 +716,16 @@ class FederatedLoadOrchestrator:
                 )
 
                 elapsed_ms = (time.monotonic() - attempt_start) * 1000
+                await _emit_federation_load_debug(
+                    "attempt_response",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    status=result.get("status"),
+                    status_code=result.get("status_code"),
+                )
                 logger.debug(f"📥 Remote load response: {result}")
 
                 # Forwarder returns structured dict; check for failure status
@@ -613,6 +740,15 @@ class FederatedLoadOrchestrator:
                         )
                         if self._metrics:
                             self._metrics.record_load_operation_failure(elapsed_ms)
+                        await _emit_federation_load_debug(
+                            "attempt_client_error",
+                            gateway.gateway_id,
+                            str(model_id),
+                            request_id,
+                            attempt=attempt_index,
+                            status_code=status_code,
+                            message=result.get("message", "unknown"),
+                        )
                         raise _load_error(
                             ErrorCode.INVALID_REQUEST,
                             f"Remote load failed: {result.get('message', 'unknown')}",
@@ -639,6 +775,15 @@ class FederatedLoadOrchestrator:
                         )
                         if self._metrics:
                             self._metrics.record_retry()
+                        await _emit_federation_load_debug(
+                            "attempt_retry",
+                            gateway.gateway_id,
+                            str(model_id),
+                            request_id,
+                            attempt=attempt_index,
+                            status_code=status_code,
+                            delay_s=delay,
+                        )
                         await asyncio.sleep(delay)
                         continue
                     else:
@@ -659,12 +804,27 @@ class FederatedLoadOrchestrator:
                 )
                 if self._metrics:
                     self._metrics.record_load_operation_success(elapsed_ms)
+                await _emit_federation_load_debug(
+                    "attempt_success",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                )
                 return result
 
             except asyncio.CancelledError:
                 # CRITICAL: Never swallow cancellation (BaseException)
                 # Let it propagate; single-flight cleanup happens in the caller's
                 # finally block.
+                await _emit_federation_load_debug(
+                    "attempt_cancelled",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                )
                 logger.warning(
                     f"🚫 Load cancelled for {model_id} (attempt {attempt_index})"
                 )
@@ -704,6 +864,15 @@ class FederatedLoadOrchestrator:
                         if not exhaustion_recorded:
                             self._metrics.record_retries_exhausted()
                             exhaustion_recorded = True
+                    await _emit_federation_load_debug(
+                        "attempt_inner_timeout",
+                        gateway.gateway_id,
+                        str(model_id),
+                        request_id,
+                        attempt=attempt_index,
+                        elapsed_ms=int(elapsed_ms),
+                        inner_error=inner_summary,
+                    )
                     break
 
                 if "remote_call" in locals():
@@ -736,6 +905,15 @@ class FederatedLoadOrchestrator:
                     if not exhaustion_recorded:
                         self._metrics.record_retries_exhausted()
                         exhaustion_recorded = True
+                await _emit_federation_load_debug(
+                    "attempt_wall_timeout",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    timeout_budget_s=self._config.load_timeout,
+                )
                 break  # No retry for wall-clock timeout
 
             except httpx.TimeoutException as e:
@@ -749,6 +927,15 @@ class FederatedLoadOrchestrator:
                     gateway.gateway_id,
                 )
                 logger.warning(f"⏱️ HTTP phase timeout loading {model_id}: {e}")
+                await _emit_federation_load_debug(
+                    "attempt_http_timeout",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    error=str(e),
+                )
 
                 if attempt_index < max_attempts:
                     retry_index = attempt_index
@@ -777,6 +964,15 @@ class FederatedLoadOrchestrator:
                     gateway.gateway_id,
                 )
                 logger.error(f"🔌 Connection error loading {model_id}: {e}")
+                await _emit_federation_load_debug(
+                    "attempt_request_error",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    error=str(e),
+                )
 
                 if attempt_index < max_attempts:
                     retry_index = attempt_index
@@ -798,6 +994,15 @@ class FederatedLoadOrchestrator:
                 logger.error(
                     f"🐛 Programming error loading {model_id}: {type(e).__name__}: {e}"
                 )
+                await _emit_federation_load_debug(
+                    "attempt_programming_error",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    error_type=type(e).__name__,
+                    error=str(e),
+                )
                 raise  # Re-raise to crash loudly
 
             except HTTPException:
@@ -817,6 +1022,16 @@ class FederatedLoadOrchestrator:
                 )
                 logger.error(
                     f"❌ Unexpected error loading {model_id}: {type(e).__name__}: {e}"
+                )
+                await _emit_federation_load_debug(
+                    "attempt_unexpected_error",
+                    gateway.gateway_id,
+                    str(model_id),
+                    request_id,
+                    attempt=attempt_index,
+                    elapsed_ms=int(elapsed_ms),
+                    error_type=type(e).__name__,
+                    error=str(e),
                 )
                 if self._metrics:
                     self._metrics.record_load_operation_failure(elapsed_ms)

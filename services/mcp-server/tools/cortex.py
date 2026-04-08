@@ -184,6 +184,12 @@ def _op_assert(
     observed_at: str | None = None,
     valid_from: str | None = None,
     chunk_id: int | None = None,
+    reasoning_summary: str | None = None,
+    # v3: Kumiho grounding
+    prospective_summary: str | None = None,
+    events_json: str | None = None,
+    artifact_uri: str | None = None,
+    artifact_storage: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {
@@ -218,6 +224,12 @@ def _op_assert(
         ("observed_at", observed_at),
         ("valid_from", valid_from),
         ("chunk_id", chunk_id),
+        ("reasoning_summary", reasoning_summary),
+        # v3: Kumiho grounding
+        ("prospective_summary", prospective_summary),
+        ("events_json", events_json),
+        ("artifact_uri", artifact_uri),
+        ("artifact_storage", artifact_storage),
     ]:
         if val is not None:
             body[key] = val
@@ -597,6 +609,169 @@ def _op_assert_from_chunk(
     return result
 
 
+def _op_search(
+    query: str | None = None,
+    limit: int | None = None,
+    superseded: bool | None = None,
+    entity_type: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Fulltext search over assertions (claim + prospective summary + events).
+
+    Use when looking for assertions by semantic content — especially terms that
+    appear only in enrichment columns (prospective_summary, events_json), not
+    the original claim text.  Prefer over ``assertions`` list when you have a
+    natural-language query rather than exact entity_id / confidence filters.
+    """
+    if not query:
+        return {"error": "query is required"}
+    params: dict[str, object] = {"q": query, "limit": limit or 20}
+    if superseded is not None:
+        params["superseded"] = str(superseded).lower()
+    if entity_type is not None:
+        params["entity_type"] = entity_type
+    return _cx("GET", f"/assertions/search?{urlencode(params)}")
+
+
+def _op_resolve(
+    uri: str | None = None, tag: str | None = None, **_: object
+) -> dict[str, Any]:
+    """Resolve a cortex:// URI to entity + optional assertion data.
+
+    When *tag* is provided, resolve to the assertion pointed to by that tag
+    instead of the latest non-superseded assertion.
+    """
+    if not uri:
+        return {"error": "uri is required (e.g. cortex://decision/rag-phased-rollout)"}
+    qs = f"uri={uri}"
+    if tag is not None:
+        qs += f"&tag={tag}"
+    return _cx("GET", f"/resolve?{qs}")
+
+
+def _op_tag_assign(
+    tag_name: str | None = None,
+    entity_id: str | None = None,
+    assertion_id: int | None = None,
+    agent: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Assign or move a named tag pointer to a specific assertion on an entity.
+
+    Upsert: if the tag already exists for this entity, the pointer moves.
+    Use for named states: 'approved', 'initial', 'disputed', 'v1'.
+    """
+    for field, val in [
+        ("tag_name", tag_name),
+        ("entity_id", entity_id),
+        ("assertion_id", assertion_id),
+        ("agent", agent),
+    ]:
+        if not val and val != 0:
+            return {"error": f"{field} is required"}
+    body = {
+        "tag_name": tag_name,
+        "entity_id": entity_id,
+        "assertion_id": assertion_id,
+        "assigned_by": agent,
+    }
+    result = _cx("PUT", "/tags", body)
+    if "error" not in result:
+        logger.info(
+            "cortex tag_assign: %s → assertion %s on %s",
+            tag_name,
+            assertion_id,
+            entity_id,
+        )
+        record(
+            "mcp.cortex.tag.assigned",
+            tag_name=tag_name,
+            entity_id=entity_id,
+            assertion_id=assertion_id,
+        )
+    return result
+
+
+def _op_tag_list(entity_id: str | None = None, **_: object) -> dict[str, Any]:
+    """List all tag assignments for an entity."""
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    return _cx("GET", f"/tags?entity_id={entity_id}")
+
+
+def _op_tag_resolve(
+    tag_name: str | None = None,
+    entity_id: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Resolve a tag to the assertion it points at.
+
+    Shorthand for resolve(uri=cortex://TYPE/SLUG, tag=TAG).
+    """
+    if not tag_name:
+        return {"error": "tag_name is required"}
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    parts = entity_id.split(":", 1)
+    if len(parts) != 2:
+        return {
+            "error": f"Invalid entity_id format: {entity_id!r} (expected TYPE:SLUG)"
+        }
+    uri = f"cortex://{parts[0]}/{parts[1]}"
+    return _cx("GET", f"/resolve?uri={uri}&tag={tag_name}")
+
+
+def _op_impact(
+    entity_id: str | None = None,
+    depth: int | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Transitive impact analysis — BFS over dependency edges from an entity.
+
+    Surfaces all downstream entities whose beliefs depend on the seed entity.
+    Use after superseding an assertion to understand revision cascade scope.
+    """
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    params: dict[str, object] = {"entity_id": entity_id}
+    if depth is not None:
+        params["depth"] = depth
+    return _cx("GET", f"/edges/impact?{urlencode(params)}")
+
+
+def _op_activate(
+    entity_ids: list[str] | None = None,
+    depth: int | None = None,
+    max_results: int | None = None,
+    exclude_ids: list[int] | None = None,
+    suppress_hubs: bool | None = None,
+    decay_factor: float | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Spreading activation — walk the graph from seed entities to find related assertions.
+
+    Call after hybrid search to pull in structurally connected assertions the
+    query wouldn't find directly.  Pass entity_ids from search results, and
+    optionally exclude_ids (assertion IDs already retrieved).
+    """
+    if not entity_ids:
+        return {"error": "entity_ids is required (list of seed entity IDs)"}
+    params: dict[str, object] = {"entity_ids": ",".join(entity_ids)}
+    if depth is not None:
+        params["depth"] = depth
+    if max_results is not None:
+        params["max_results"] = max_results
+    if exclude_ids:
+        params["exclude_ids"] = ",".join(str(i) for i in exclude_ids)
+    if suppress_hubs is not None:
+        params["suppress_hubs"] = str(suppress_hubs).lower()
+    if decay_factor is not None:
+        params["decay_factor"] = decay_factor
+    from urllib.parse import urlencode as _urlencode
+
+    return _cx("GET", f"/assertions/activate?{_urlencode(params)}")
+
+
 def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     lim = limit or 30
     flagged_resp = _cx(
@@ -670,10 +845,56 @@ _OPS: dict[str, Any] = {
     "edge_traverse": _op_edge_traverse,
     "edge_retire": _op_edge_retire,
     "edge_types": _op_edge_types,
+    "impact": _op_impact,
+    "activate": _op_activate,
+    "resolve": _op_resolve,
+    "search": _op_search,
+    "tag_assign": _op_tag_assign,
+    "tag_list": _op_tag_list,
+    "tag_resolve": _op_tag_resolve,
 }
 
 
 # ── registration ─────────────────────────────────────────────────────────
+
+
+_CORTEX_FORMAT_HINT = (
+    "arguments must be a JSON string, not a bare object. "
+    'Example: cortex(tool="entity_get", arguments=\'{"entity_id": "service:mcp-server"}\')'
+)
+
+_CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
+    "search_assertions": "search",
+    "search_entities": "entities",
+    "get_entity": "entity_get",
+    "entity_search": "search",
+    "assert_entity": "assert",
+    "create_entity": "entity_create",
+    "update_entity": "entity_update",
+}
+
+
+def _parse_cortex_arguments(arguments: object, tool: str) -> dict[str, Any] | None:
+    """Return parsed arguments dict, or None with side-effect logging on failure."""
+    import json as _json
+
+    if isinstance(arguments, dict):
+        logger.warning(
+            "cortex %r: arguments passed as dict (object), not a JSON string — "
+            "format violation. Accepting for compatibility but callers should fix.",
+            tool,
+        )
+        return arguments
+    if isinstance(arguments, str):
+        try:
+            result = _json.loads(arguments)
+        except _json.JSONDecodeError as exc:
+            logger.warning("cortex %r: arguments JSON parse failed: %s", tool, exc)
+            return None
+        if not isinstance(result, dict):
+            return None
+        return result
+    return None
 
 
 def register_cortex_tools(mcp: FastMCP) -> None:
@@ -685,11 +906,26 @@ def register_cortex_tools(mcp: FastMCP) -> None:
 
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="cortex")
         """
-        import json as _json
-
         handler = _OPS.get(tool)
         if handler is None:
-            return {"error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}"}
-        parsed = _json.loads(arguments)
+            suggestion = _CORTEX_HALLUCINATED_TOOLS.get(tool)
+            hint = f"Did you mean {suggestion!r}?" if suggestion else None
+            return {
+                "error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}",
+                **({"hint": hint} if hint else {}),
+                "format_example": (
+                    'cortex(tool="entity_get", arguments=\'{"entity_id": "type:slug"}\')'
+                ),
+            }
+
+        parsed = _parse_cortex_arguments(arguments, tool)
+        if parsed is None:
+            return {
+                "error": _CORTEX_FORMAT_HINT,
+                "format_example": (
+                    f'cortex(tool="{tool}", arguments=\'{{"entity_id": "type:slug"}}\')'
+                ),
+            }
+
         record("mcp.cortex.dispatch", tool=tool)
         return handler(**parsed)

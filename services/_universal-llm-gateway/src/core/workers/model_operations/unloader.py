@@ -140,7 +140,20 @@ class ModelUnloader:
                     reason=f"model_{current_info.status.value}",
                 )
 
-            # If forcing on active model, log prominently
+            # Gate: check if *any* variant on the shared process is busy
+            if not force and resource_tracker.is_process_in_use(model_id):
+                busy = resource_tracker.describe_busy_variants(model_id)
+                logger.warning(
+                    "⏳ Skipping unload for %s — sibling variants busy: %s",
+                    model_id,
+                    busy,
+                )
+                return UnloadResult(
+                    success=False,
+                    skipped=True,
+                    reason=f"sibling_busy:{','.join(busy)}",
+                )
+
             if force and current_info and is_model_active(current_info.status):
                 logger.warning(
                     f"⚡ FORCE unloading active model {model_id} "

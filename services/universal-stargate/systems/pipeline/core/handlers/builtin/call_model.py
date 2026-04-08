@@ -206,7 +206,8 @@ async def call_model(
 
     # Resolve profile control.
     # Resolution order: step → model (ModelRef.profile) → pipeline options.
-    # disable_profile defaults True in PipelineOptions — pipelines own their params.
+    # disable_profile defaults False in PipelineOptions — model-assigned profiles apply
+    # unless the pipeline or step explicitly opts out.
     # Exception: when model_profile is set and the step doesn't explicitly
     # disable profiles, override the default so the model-level profile is applied.
     effective_disable_profile = step.disable_profile

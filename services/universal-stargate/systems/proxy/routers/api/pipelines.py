@@ -32,6 +32,8 @@ PipelinesResponse = dict[str, dict[str, PipelineSummary]]
 
 def _require_pipeline_registry(proxy: StargateProxy):
     """Return the pipeline registry or raise when unavailable."""
+    if not proxy.is_pipeline_system_ready:
+        raise HTTPException(status_code=503, detail="Pipeline execution unavailable")
     registry = proxy.pipeline_registry
     if registry is None:
         raise HTTPException(status_code=503, detail="Pipeline registry unavailable")

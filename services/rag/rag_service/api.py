@@ -244,6 +244,7 @@ def get_failed_extractions(source: str | None = None) -> FailedExtractionRespons
                 chunk_id=r.chunk_id,
                 source=r.source,
                 error=r.error,
+                parse_failure_reason=r.parse_failure_reason,
                 attempt_count=r.attempt_count,
                 recorded_at=r.recorded_at,
             )

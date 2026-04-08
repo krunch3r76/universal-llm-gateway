@@ -24,7 +24,8 @@ class _EntityCommon(BaseModel):
     content_hash: str | None = None
 
 
-EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated"]
+EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated", "reaped"]
+RetentionPolicy = Literal["permanent", "ephemeral", "archival"]
 
 
 class EntityCreate(_EntityCommon):
@@ -33,6 +34,8 @@ class EntityCreate(_EntityCommon):
     name: str
     description: str | None = None
     status: EntityStatus | None = None
+    retention_policy: RetentionPolicy | None = None
+    retention_ttl_days: int | None = None
 
 
 class EntitySummary(BaseModel):
@@ -66,6 +69,8 @@ class EntityUpdate(BaseModel):
     description: str | None = None
     status: EntityStatus | None = None
     content_hash: str | None = None
+    retention_policy: RetentionPolicy | None = None
+    retention_ttl_days: int | None = None
 
 
 class EntityList(BaseModel):
@@ -109,6 +114,11 @@ class AssertionCreate(BaseModel):
     is_decontextualized: bool = True
     resolution_status: ResolutionStatus | None = None
     fulfillment_assertion_id: int | None = None
+    # v3: Kumiho grounding — BYO-storage + consolidation enrichment
+    prospective_summary: str | None = None
+    events_json: str | None = None
+    artifact_uri: str | None = None
+    artifact_storage: str = "inline"
 
 
 ReviewStatus = Literal["committed", "flagged", "staged", "rejected"]
@@ -139,6 +149,12 @@ class AssertionItem(BaseModel):
     resolution_status: str | None = None
     fulfillment_assertion_id: int | None = None
     quality_score: float | None = None
+    # v3: Kumiho grounding — BYO-storage + consolidation enrichment
+    prospective_summary: str | None = None
+    events_json: str | None = None
+    artifact_uri: str | None = None
+    artifact_storage: str | None = None
+    entrenchment_score: float | None = None
     created_at: str
 
 
@@ -186,6 +202,63 @@ class AssertionCreateResponse(BaseModel):
 
 class AssertionList(BaseModel):
     items: list[AssertionItem]
+
+
+class AssertionSearchItem(BaseModel):
+    """Assertion search result with hybrid retrieval scores."""
+
+    id: int
+    entity_id: str | None = None
+    entity_name: str | None = None
+    claim: str
+    confidence: AssertionConfidence
+    confidence_score: float | None = None
+    evidence: str | None = None
+    evidence_uris: list[str] | None = None
+    seeded_by: str | None = None
+    derivation_type: DerivationType | None = None
+    prospective_summary: str | None = None
+    events_json: str | None = None
+    superseded_by: int | None = None
+    entrenchment_score: float | None = None
+    observed_at: str | None = None
+    bm25_score: float | None = Field(None, description="Normalized BM25 score (0-1)")
+    cosine_similarity: float | None = Field(
+        None, description="Cosine similarity from vector search (0-1)"
+    )
+    combmax_score: float | None = Field(
+        None, description="CombMAX fused score: max(bm25_norm, cosine_sim)"
+    )
+    retrieval_source: str = Field(
+        "fts", description="Retrieval branch: 'fts', 'vector', or 'both'"
+    )
+    rank: float | None = Field(
+        None, description="Raw FTS5 BM25 rank (lower = better match)"
+    )
+    created_at: str
+
+
+class AssertionSearchResult(BaseModel):
+    query: str
+    items: list[AssertionSearchItem]
+    total: int
+    search_mode: str = Field(
+        "hybrid", description="'hybrid' when vector is available, 'fulltext' otherwise"
+    )
+
+
+class EnrichRequest(BaseModel):
+    enrichments: list[str] | None = Field(
+        None,
+        description='Enrichment kinds to run: "prospective", "events". '
+        "Defaults to all if omitted.",
+    )
+
+
+class EnrichResponse(BaseModel):
+    item: AssertionItem
+    enrichments_run: list[str]
+    results: dict[str, str | None]
 
 
 # --- Relationships ---

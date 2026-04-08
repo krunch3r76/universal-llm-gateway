@@ -28,7 +28,6 @@ models:
     # model: phi-4-q4-k-m-16384
     model: phi-3-5-mini-instruct-q8-0-32768
 
-    system_prompt: ""
     # 3.8B | 128K context | multilingual | logical reasoning
 #    execution:
 #      chunk_size: 3           # Statements per batch (default: 10)
@@ -38,7 +37,6 @@ models:
     model: phi-4-q4-k-m-16384
     # model: microsoft/phi-4
 
-    system_prompt: ""
     # 3.8B | 128K context | multilingual | logical reasoning
     #execution:
       #chunk_size: 4           # Statements per batch (default: 10)
@@ -47,7 +45,6 @@ models:
   qwen:
     model: qwen2-5-7b-instruct-q8-0-32768
     # model: qwen/qwen-2.5-7b-instruct
-    system_prompt: ""
     # 7B | fast inference | scalable | multilingual
     # Alias for qwen2_5_7b
     #execution:
@@ -56,7 +53,6 @@ models:
 
   frank:
     model: uncensored-frank-llama-3-8b-q4-k-m-8192
-    system_prompt: ""
     # 8B | uncensored | creative | llama3 base
 
   # ==========================================================================
@@ -65,19 +61,16 @@ models:
 
   qwen2_5_7b:
     model: qwen2-5-7b-instruct-q8-0-32768
-    system_prompt: ""
     # 7B | MMLU 74.2% | MATH 75.5% | fast inference
     # USE FOR: Answer generation, verification (balanced quality/speed)
 
   qwen2_5_14b:
     model: qwen2-5-14b-instruct-q4-k-m-32768-cpu
-    system_prompt: ""
     # 14B | MMLU 78%+ | MATH 82%+ | best reasoning
     # USE FOR: Answer generation, verification (highest quality)
 
   ministral_3_8b:
     model: ministral-3-8b-instruct-2512-q6-k-32768
-    system_prompt: ""
     execution:
       chunk_size: 1           # Ministral nests reasoning as JSON trees, exhausting token budget on batches
     # 8B | MMLU 74.2% | MATH 75.5% | fast inference
@@ -85,7 +78,6 @@ models:
 
   gemma3_12b:
     model: gemma-3-12b-it-q4-k-m-32768
-    system_prompt: ""
     # execution:
       # chunk_size: 1           # Statements per batch (default: 10)
 #      max_concurrent: 3       # Max parallel chunks (default: unlimited)
@@ -112,7 +104,6 @@ models:
   gemma_2_9b:
     model: gemma-2-9b-it-q4-k-m-8192
     # model: google/gemma-2-9b-it
-    system_prompt: ""
     # 7B | Falcon H1 | fast inference
     # USE FOR: General QA, sentiment analysis
     #execution:
@@ -128,7 +119,6 @@ models:
   llama_3_1_8b:
     model: llama-3-1-supernova-lite-q8-0-32768
     #model: meta-llama/llama-3.1-8b-instruct
-    system_prompt: ""
     # 8B | Llama 3.1 | Q8 quantization
     # KNOWN ISSUE: Produces contradictory reasoning in batch mode
     # SOLUTION: execution.chunk_size=1 enables isolation mode
@@ -141,7 +131,6 @@ models:
 
   mistral_7b:
     model: mistral-7b-instruct-v0-3-q8-0-16384
-    system_prompt: ""
     # 7B | structured output | fast inference | Mistral AI
     # USE FOR: Verification, JSON generation, diverse architecture
     #execution:
@@ -184,7 +173,6 @@ models:
 
   zyphra_math:
     model: zyphra-zr1-1-5b-q8-0-16384
-    system_prompt: ""
   #   # 1.5B Q8_0 | mathematical reasoning | equation solving | arithmetic
   #   # USE FOR: Single authority on domain="mathematics" claims
   #   # Rationale: Specialized math model catches computational errors general LLMs miss
@@ -196,13 +184,11 @@ models:
 
   gemma_writer:
     model: gemma-the-writer-10b-d-au-q4-k-m-8192
-    system_prompt: ""
     # 10B | Prose-optimized | Brainstorm 5x | Reduced GPT-isms
     # USE FOR: Natural prose synthesis, creative writing, reduced cliches
 
   minicpm:
     model: minicpm-v-4-q8-0-32768
-    system_prompt: ""
   #   # 4B | resource efficient | English/Chinese | lightweight
   #   # USE FOR: Efficient synthesis, resource-constrained environments
 
@@ -228,13 +214,11 @@ models:
 
   embedding:
     model: nomic-embed-text-v1-5-q8-0-2048-cpu
-    system_prompt: ""
     # 141M | 768-dim | 2K context | semantic similarity
     # USE FOR: Lightweight dedup (threshold 0.95+ for topically dense claims)
 
   bge_large:
     model: bge-m3-q8-0-8192-cpu   # TODO: confirm GGUF model ID on gateway
-    system_prompt: ""
   #   # 335M | 1024-dim | 512 context | MTEB top-tier at size
   #   # USE FOR: Drop-in upgrade from nomic with better discrimination
 

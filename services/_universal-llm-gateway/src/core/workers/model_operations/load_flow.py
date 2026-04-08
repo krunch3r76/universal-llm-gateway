@@ -58,6 +58,39 @@ async def _emit_load_flow_debug(step: str, model_id: str, **extra: Any) -> None:
     )
 
 
+def _classify_load_failure(error_message: str) -> tuple[str, str]:
+    """Normalize failure text and derive a stable reason code."""
+    normalized = (error_message or "Unknown error").strip()
+    lower = normalized.lower()
+
+    if normalized.startswith("OOM:"):
+        return normalized, "oom"
+    if normalized.startswith("RESOURCE:"):
+        return normalized, "insufficient_resources"
+    if _is_oom_error(lower):
+        return f"OOM:{normalized}", "oom"
+    if _is_resource_error(lower):
+        return f"RESOURCE:{normalized}", "insufficient_resources"
+    if "timeout" in lower or "timed out" in lower:
+        return normalized, "timeout"
+    if "not found" in lower or "no such file" in lower:
+        return normalized, "missing_file"
+    if "config" in lower or "invalid" in lower:
+        return normalized, "config_error"
+    return normalized, "unknown"
+
+
+def _resolve_load_failure(model_id: str, fallback: str) -> tuple[str, str]:
+    """Prefer any recorded tracker error before falling back to a generic failure."""
+    model_info = _get_resource_tracker().get_model_info(model_id)
+    existing_error = (
+        model_info.error_message
+        if model_info is not None and model_info.error_message
+        else fallback
+    )
+    return _classify_load_failure(existing_error)
+
+
 def is_model_cleanup_in_progress(model_id: str) -> bool:
     """True while cleanup_failed_worker is running for this model_id."""
     return model_id in _cleanup_in_progress
@@ -75,14 +108,17 @@ async def emit_loading_event(
     event bus. Does not handle the "loaded" status - MODEL_LOADED is emitted
     by finalize_load() after resource measurement.
     """
-    model_load_failed, model_loaded, model_loading_started = _get_event_classes()
-    event_map = {
-        "started": model_loading_started(model_id=model_id),
-        "failed": model_load_failed(
-            model_id=model_id, error_message=error or "Unknown"
-        ),
-    }
-    event_to_publish = event_map.get(status)
+    model_load_failed, _, model_loading_started = _get_event_classes()
+    event_to_publish = None
+    if status == "started":
+        event_to_publish = model_loading_started(model_id=model_id)
+    elif status == "failed":
+        classified_error, failure_reason = _classify_load_failure(error or "Unknown")
+        event_to_publish = model_load_failed(
+            model_id=model_id,
+            error_message=classified_error,
+            failure_reason=failure_reason,
+        )
     if event_to_publish:
         await _publish_event(controller.event_bus, event_to_publish)
 
@@ -180,8 +216,10 @@ async def start_worker_if_needed(controller: "WorkerController", model_id: str) 
     started = await start_worker(controller, model_id)
     await _emit_load_flow_debug("worker_start_done", model_id, started=started)
     if not started:
-        logger.error(f"❌ Failed to start worker for {model_id}")
-        resource_tracker.set_model_error(model_id, "Failed to start worker")
+        error_msg, _ = _resolve_load_failure(model_id, "Failed to start worker")
+        logger.error("❌ Failed to start worker for %s: %s", model_id, error_msg)
+        resource_tracker.set_model_error(model_id, error_msg)
+        await emit_loading_event(controller, model_id, "failed", error_msg)
         await cleanup_failed_worker(controller, model_id, "Worker start failed")
         return False
     return True
@@ -225,8 +263,13 @@ async def send_model_config(
 
     supervisor = controller._process_state.get_supervisor(model_id)
     if not supervisor:
-        logger.error(f"No supervisor for {model_id} during model config send.")
-        # According to docstring, return None on failure
+        error_msg, _ = _resolve_load_failure(
+            model_id, "No supervisor available during model config send"
+        )
+        logger.error("No supervisor for %s during model config send: %s", model_id, error_msg)
+        _get_resource_tracker().set_model_error(model_id, error_msg)
+        await emit_loading_event(controller, model_id, "failed", error_msg)
+        await cleanup_failed_worker(controller, model_id, "Model config send failed")
         return None
 
     return await controller._communication_manager.send_model_config(
@@ -242,8 +285,10 @@ async def verify_model_responsive(
     alive = await controller.is_process_alive(model_id)
     await _emit_load_flow_debug("verify_process_alive", model_id, alive=alive)
     if not alive:
-        logger.error(f"❌ Model {model_id} not responsive")
-        _get_resource_tracker().set_model_error(model_id, "Model not responsive")
+        error_msg, _ = _resolve_load_failure(model_id, "Model not responsive")
+        logger.error("❌ Model %s not responsive: %s", model_id, error_msg)
+        _get_resource_tracker().set_model_error(model_id, error_msg)
+        await emit_loading_event(controller, model_id, "failed", error_msg)
         await cleanup_failed_worker(controller, model_id, "Unresponsive process")
         return False
     return True
@@ -513,54 +558,22 @@ async def handle_load_exception(
     controller: "WorkerController", model_id: str, e: Exception
 ):
     """Handle exception during model loading with error classification."""
-    # Classify error type for client visibility and telemetry
-    if (
-        isinstance(e, MemoryError) or _is_oom_error(str(e).lower())
-    ):  # Keep string check as fallback if specific OOM exceptions aren't caught higher up
-        error_msg = f"OOM:{str(e)}"  # Prefix for detection by Stargate
-        failure_reason = "oom"
+    error_msg, failure_reason = _classify_load_failure(str(e))
+    if failure_reason == "oom":
         logger.error(f"❌ OOM error loading {model_id}: {e}")
-    elif _is_resource_error(str(e).lower()):
-        error_msg = f"RESOURCE:{str(e)}"
-        failure_reason = "insufficient_resources"
+    elif failure_reason == "insufficient_resources":
         logger.error(f"❌ Resource error loading {model_id}: {e}")
-    elif isinstance(e, TimeoutError):  # Use specific exception if available
-        error_msg = str(e)
-        failure_reason = "timeout"
+    elif failure_reason == "timeout":
         logger.error(f"❌ Timeout loading {model_id}: {e}")
-    elif (
-        isinstance(e, FileNotFoundError)
-        or "not found" in str(e).lower()
-        or "no such file" in str(e).lower()
-    ):
-        error_msg = str(e)
-        failure_reason = "missing_file"
+    elif failure_reason == "missing_file":
         logger.error(f"❌ File not found loading {model_id}: {e}")
-    # Add more specific exception types for config errors if they exist
-    elif "config" in str(e).lower() or "invalid" in str(e).lower():
-        error_msg = str(e)
-        failure_reason = "config_error"
+    elif failure_reason == "config_error":
         logger.error(f"❌ Configuration error loading {model_id}: {e}")
     else:
-        error_msg = str(e)
-        failure_reason = "unknown"
         logger.error(f"❌ Error loading {model_id}: {e}")
 
     _get_resource_tracker().set_model_error(model_id, error_msg)
 
-    # Emit event with failure reason for observability (Recommendation #7)
-    from src.core.events.types import ModelLoadFailed
-
-    if controller.event_bus:
-        await controller.event_bus.publish_async_nowait(
-            ModelLoadFailed(
-                model_id=model_id,
-                error_message=error_msg,
-                failure_reason=failure_reason,
-            )
-        )
-
-    # Also emit for Stargate WebSocket notification (backward compat)
     await emit_loading_event(controller, model_id, "failed", error_msg)
     await cleanup_failed_worker(controller, model_id, "Load exception")
 

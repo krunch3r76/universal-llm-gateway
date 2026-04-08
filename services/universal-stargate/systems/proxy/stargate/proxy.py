@@ -241,6 +241,7 @@ class StargateProxy:
         self.pipeline_registry = None
         self.pipeline_executor = None
         self.pipeline_hot_reload = None
+        self.pipeline_catalog_synced: bool = False
         self.aggregate_availability_emitter = None
         self.profile_watcher = None
         self.intelligence_profile_store: IntelligenceProfileStore | None = None
@@ -315,6 +316,15 @@ class StargateProxy:
         else:  # edge, standalone
             # Edge: passive container that proxies Gateway
             return True
+
+    @property
+    def is_pipeline_system_ready(self) -> bool:
+        """True iff execution is initialized and catalog-backed sync completed."""
+        if self.pipeline_registry is None or self.pipeline_executor is None:
+            return False
+        if self.gateway_manager is None and self.federated_manager is None:
+            return True
+        return self.pipeline_catalog_synced
 
     @property
     def is_execution_capable(self) -> bool:

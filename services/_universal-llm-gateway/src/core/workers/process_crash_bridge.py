@@ -78,6 +78,7 @@ class ProcessCrashBridge:
             ),
             socket_path=event.payload.get("socket_path"),
             process_pid=event.payload.get("pid"),
+            exit_code=event.payload.get("exit_code"),
         )
 
         try:

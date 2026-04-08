@@ -13,6 +13,32 @@ from src.core.events import WORKER_CRASH_DETECTED, Event, EventBus
 logger = get_logger(__name__)
 
 
+def _classify_crash_error(
+    error_message: str,
+    exit_code: int | None,
+) -> tuple[str, str]:
+    """Normalize crash text so load-time crashes surface as definitive failures."""
+    normalized = (error_message or "Worker crashed").strip()
+    lower = normalized.lower()
+    oom_indicators = (
+        "out of memory",
+        "cuda out of memory",
+        "cuda oom",
+        "memory allocation failed",
+        "cannot allocate",
+        "oom",
+    )
+    if normalized.startswith("OOM:"):
+        return normalized, "oom"
+    if exit_code not in (None, 0):
+        if exit_code in (137, 143):
+            return f"OOM:{normalized} (exit_code={exit_code})", "oom"
+        return f"{normalized} (exit_code={exit_code})", "unknown"
+    if any(indicator in lower for indicator in oom_indicators):
+        return f"OOM:{normalized}", "oom"
+    return normalized, "unknown"
+
+
 class ResourceTrackerCrashHandler:
     """
     Event-driven handler for resource tracker updates on worker crashes.
@@ -63,6 +89,7 @@ class ResourceTrackerCrashHandler:
         """
         model_id = event.payload.get("model_id")
         error_message = event.payload.get("error_message", "Worker crashed")
+        exit_code = event.payload.get("exit_code")
 
         if not model_id:
             logger.warning("Worker crash event missing model_id")
@@ -76,13 +103,21 @@ class ResourceTrackerCrashHandler:
         try:
             # Import resource tracker (lazy import to avoid circular dependencies)
             from src.core.resources import resource_tracker
+            from src.core.resources.types import ModelStatus
 
             # Get current model state for debugging
             current_info = resource_tracker.get_model_info(model_id)
+            crashed_while_loading = False
             if current_info:
                 logger.debug(
                     f"Model {model_id} crashed in state: {current_info.status}"
                 )
+                crashed_while_loading = current_info.status == ModelStatus.LOADING
+
+            classified_error, failure_reason = _classify_crash_error(
+                error_message,
+                exit_code,
+            )
 
             # Set model to ERROR state so Stargate can poll and see the crash
             # The error message persists until explicitly cleared, allowing proper error reporting
@@ -90,8 +125,27 @@ class ResourceTrackerCrashHandler:
                 f"🧹 [crash_handler] Setting crashed model {model_id} to ERROR state"
             )
             resource_tracker.set_model_error(
-                model_id, f"Worker crashed: {error_message}"
+                model_id,
+                classified_error if crashed_while_loading else f"Worker crashed: {error_message}",
             )
+
+            if crashed_while_loading:
+                from src.core.events.types import ModelLoadFailed
+
+                await self.event_bus.publish_async_nowait(
+                    ModelLoadFailed(
+                        model_id=model_id,
+                        error_message=classified_error,
+                        failure_reason=failure_reason,
+                    )
+                )
+                logger.info(
+                    "📡 Emitted MODEL_LOAD_FAILED for crashed loading worker %s: %s "
+                    "(exit_code=%s)",
+                    model_id,
+                    classified_error,
+                    exit_code,
+                )
 
             logger.info(f"✅ Resource tracker updated for crashed worker {model_id}")
 

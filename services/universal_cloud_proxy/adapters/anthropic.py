@@ -50,19 +50,6 @@ _STREAM_HEARTBEAT_INTERVAL_S = float(
     os.getenv("CLOUDPROXY_ANTHROPIC_STREAM_HEARTBEAT_S", "15")
 )
 
-_MCP_ALWAYS_LOADED: frozenset[str] = frozenset(
-    {
-        "read_project_file",
-        "list_project_files",
-        "search_project_files",
-        "read_file",
-        "write_file",
-        "edit_file",
-        "web_search",
-        "web_fetch",
-    }
-)
-
 _MCP_SERVER_NAME = "vortex"
 
 _MCP_V2_TOOL_TYPES = frozenset({"mcp_toolset", "tool_search_tool_bm25_20251119"})
@@ -116,7 +103,7 @@ class AnthropicAdapter:
         return f"anthropic/{raw_model_id}"
 
     def to_upstream_model_id(self, catalog_model_id: str) -> str:
-        """Strip anthropic/ prefix and ``-mcp`` — Anthropic API expects bare model names."""
+        """Strip anthropic/ prefix — Anthropic API expects bare model names."""
         return ModelId.parse(catalog_model_id).api_model_id
 
     def _headers(
@@ -138,25 +125,6 @@ class AnthropicAdapter:
                 else _ANTHROPIC_BETA_MCP_V1
             )
         return headers
-
-    @staticmethod
-    def _build_mcp_v2_tools(server_name: str) -> list[dict[str, Any]]:
-        """Build tool_search_tool + mcp_toolset for defer_loading."""
-        return [
-            {
-                "type": "tool_search_tool_bm25_20251119",
-                "name": "tool_search",
-            },
-            {
-                "type": "mcp_toolset",
-                "mcp_server_name": server_name,
-                "default_config": {"defer_loading": True},
-                "configs": {
-                    name: {"defer_loading": False}
-                    for name in sorted(_MCP_ALWAYS_LOADED)
-                },
-            },
-        ]
 
     @staticmethod
     def _finish_reason(stop_reason: str | None) -> str | None:
@@ -310,23 +278,6 @@ class AnthropicAdapter:
 
         if bool(request_body.get("stream", False)):
             payload["stream"] = True
-
-        # Remote MCP only when model id ends with -mcp and provider has MCP URL.
-        inject_mcp = (
-            self._config.mcp_server_url and parsed.is_mcp and tool_choice_in != "none"
-        )
-        if inject_mcp:
-            payload["mcp_servers"] = [
-                {
-                    "type": "url",
-                    "name": _MCP_SERVER_NAME,
-                    "url": self._config.mcp_server_url,
-                    "authorization_token": self._config.mcp_auth_token,
-                }
-            ]
-            if self._config.mcp_v2:
-                mcp_tools = self._build_mcp_v2_tools(_MCP_SERVER_NAME)
-                payload.setdefault("tools", []).extend(mcp_tools)
 
         return payload
 

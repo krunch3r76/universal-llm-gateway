@@ -147,6 +147,12 @@ def rag_file_retry_deferred(
     *,
     file: str,
     reason: str,
+    failed_chunks: int | None = None,
+    attempted_chunks: int | None = None,
+    failure_category: str | None = None,
+    failure_detail: str | None = None,
+    finish_reason: str | None = None,
+    top_failure_reasons: list[str] | None = None,
     operation_id: str | None = None,
     operation: str | None = None,
 ) -> Event:
@@ -156,6 +162,10 @@ def rag_file_retry_deferred(
     did not complete but the file was NOT marked as indexed — the watcher will
     re-attempt it automatically. Common reasons: extraction_incomplete (below quality
     threshold), infrastructure_unavailable (extraction model not loaded, model capacity).
+
+    Optional diagnostics provide immediate root-cause context for operators:
+    failed/attempted chunk counts, high-level category, finish_reason, and top
+    parser failure hints.
     """
     return Event(
         signal="rag.file.retry.deferred",
@@ -165,6 +175,12 @@ def rag_file_retry_deferred(
             **{
                 key: value
                 for key, value in {
+                    "failed_chunks": failed_chunks,
+                    "attempted_chunks": attempted_chunks,
+                    "failure_category": failure_category,
+                    "failure_detail": failure_detail,
+                    "finish_reason": finish_reason,
+                    "top_failure_reasons": top_failure_reasons,
                     "operation_id": operation_id,
                     "operation": operation,
                 }.items()

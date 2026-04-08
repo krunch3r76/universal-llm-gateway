@@ -16,6 +16,7 @@ import asyncio
 import logging
 import random
 import re
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -258,6 +259,13 @@ def _max_batch_tokens_for_model(model_id: str) -> int:
 _EMBED_RETRY_ATTEMPTS = 3
 _EMBED_RETRY_BACKOFF_S = 1.0
 
+# Rewarm budget: used when the model is evicted mid-index. Probes are sent
+# outside the main httpx connection so the 120s client timeout only covers
+# actual inference — not eviction+load (which can take up to 300s).
+_REWARM_TIMEOUT_S = 360.0
+_REWARM_PROBE_TIMEOUT_S = 30.0
+_REWARM_POLL_INTERVAL_S = 10.0
+
 # Query-path retry tuning — shorter budget than index-path because
 # each query is latency-sensitive (pipeline fan-out of 5 queries).
 _QUERY_RETRY_ATTEMPTS = 4
@@ -399,6 +407,63 @@ def _fallback_to_zero_vector(text_len: int) -> list[list[float]] | None:
     return [[0.0] * _embed_dim]
 
 
+async def _wait_for_model_ready(timeout_s: float = _REWARM_TIMEOUT_S) -> bool:
+    """Wait for the embedding model to be loaded by probing until a probe succeeds.
+
+    Called after receiving a 503/504 (model evicted or load timeout) so that
+    the next embedding retry only begins once the model is confirmed in memory.
+    Probes run outside the main httpx connection: the 120s client timeout on
+    `_post_embeddings` therefore only measures actual inference latency.
+
+    Returns True if the model responded successfully within timeout_s,
+    False if the deadline expired.
+    """
+    deadline = time.monotonic() + timeout_s
+    probe = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            logger.warning(
+                "Embedding model rewarm timed out after %.0fs (model=%s)",
+                timeout_s,
+                _embed_model,
+            )
+            return False
+        probe += 1
+        probe_timeout = min(_REWARM_PROBE_TIMEOUT_S, remaining)
+        try:
+            response = await _client.post(
+                f"{GATEWAY_URL}/v1/embeddings",
+                json=_probe_payload,
+                timeout=probe_timeout,
+            )
+            if response.status_code == 200:
+                logger.info(
+                    "Embedding model ready after %d rewarm probe(s) (model=%s)",
+                    probe,
+                    _embed_model,
+                )
+                return True
+            if response.status_code not in _TRANSIENT_STATUS_CODES:
+                logger.warning(
+                    "Rewarm probe returned non-transient %d (model=%s); stopping",
+                    response.status_code,
+                    _embed_model,
+                )
+                return False
+        except (httpx.ConnectError, httpx.TimeoutException):
+            pass
+        wait = min(_REWARM_POLL_INTERVAL_S, deadline - time.monotonic())
+        if wait > 0:
+            logger.debug(
+                "Rewarm probe %d got transient response; retrying in %.0fs (model=%s)",
+                probe,
+                wait,
+                _embed_model,
+            )
+            await asyncio.sleep(wait)
+
+
 async def _post_embeddings(batch: list[str]) -> list[list[float]]:
     """POST a single batch to the embedding endpoint with retry and fallback.
 
@@ -445,6 +510,22 @@ async def _post_embeddings(batch: list[str]) -> list[list[float]]:
             if exc.response.status_code not in _TRANSIENT_STATUS_CODES:
                 raise
             last_exc = exc
+            if exc.response.status_code in {503, 504}:
+                # Model was evicted or load timed out. Wait outside the httpx
+                # connection so the 120s client timeout doesn't race against
+                # eviction+load (which takes up to 300s). Retry immediately
+                # after rewarm — the model is confirmed loaded by then.
+                logger.warning(
+                    "Embedding got %d (model=%s, batch_size=%d, attempt %d/%d); "
+                    "waiting for model to reload before retry",
+                    exc.response.status_code,
+                    _embed_model,
+                    len(batch),
+                    attempt + 1,
+                    _EMBED_RETRY_ATTEMPTS,
+                )
+                await _wait_for_model_ready()
+                continue
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             last_exc = exc
         base_delay = _EMBED_RETRY_BACKOFF_S * (2**attempt)

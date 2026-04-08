@@ -121,6 +121,18 @@ def _derive_subdirectory(source: str, config: RagConfig) -> str:
     return ""
 
 
+async def _clear_extraction_state_for_source(
+    source: str,
+    chunk_ids: list[str],
+) -> None:
+    """Purge extraction-derived metadata while preserving chunks and FTS rows."""
+    prop_index = state._property_index
+    if prop_index is None:
+        return
+    await prop_index.remove_properties_for_chunks(chunk_ids)
+    await prop_index.clear_failures_for(source)
+
+
 async def _index_file(
     file_path: Path,
     metadata_overrides: dict[str, str | int | float | bool] | None = None,
@@ -363,18 +375,22 @@ async def _index_file_impl(
                     )
 
                 scope = state._config.get_scope_for_path(source)
-                await prop_index.mark_pending(source)
-                pending_marked = True
-                ext_result = await recover_missing_extraction(
-                    collection=collection,
-                    source=source,
-                    existing_ids=existing_ids,
-                    existing_metadatas=existing_metadatas,
-                    config=state._config.knowledge_extraction,
-                    property_index=prop_index,
-                    event_bus=state._event_bus,
-                    scope=scope,
-                )
+                if state._config.knowledge_extraction.should_extract_scope(scope):
+                    await prop_index.mark_pending(source)
+                    pending_marked = True
+                    ext_result = await recover_missing_extraction(
+                        collection=collection,
+                        source=source,
+                        existing_ids=existing_ids,
+                        existing_metadatas=existing_metadatas,
+                        config=state._config.knowledge_extraction,
+                        property_index=prop_index,
+                        event_bus=state._event_bus,
+                        scope=scope,
+                    )
+                else:
+                    await _clear_extraction_state_for_source(source, existing_ids)
+                    ext_result = ExtractionResult(success=True)
                 if ext_result is not None and ext_result.success:
                     # Invariant: upsert_indexed_source only after chunks exist
                     # in ChromaDB. ¬write on extraction failure paths.
@@ -560,25 +576,29 @@ async def _index_file_impl(
         ext_result: ExtractionResult | None = None
         if state._config is not None and prop_index is not None:
             scope = state._config.get_scope_for_path(source)
-            extract_indices = [
-                i for i, m in enumerate(metadatas) if not chunk_metadata_is_noise(m)
-            ]
-            extract_ids = [ids[i] for i in extract_indices]
-            extract_chunks = [chunks[i] for i in extract_indices]
-            extract_metadatas = [metadatas[i] for i in extract_indices]
-            if extract_ids:
-                ext_result = await run_extraction(
-                    file=source,
-                    ids=extract_ids,
-                    chunks=extract_chunks,
-                    metadatas=extract_metadatas,
-                    config=state._config.knowledge_extraction,
-                    property_index=prop_index,
-                    event_bus=state._event_bus,
-                    apply_property_index=False,
-                    scope=scope,
-                )
+            if state._config.knowledge_extraction.should_extract_scope(scope):
+                extract_indices = [
+                    i for i, m in enumerate(metadatas) if not chunk_metadata_is_noise(m)
+                ]
+                extract_ids = [ids[i] for i in extract_indices]
+                extract_chunks = [chunks[i] for i in extract_indices]
+                extract_metadatas = [metadatas[i] for i in extract_indices]
+                if extract_ids:
+                    ext_result = await run_extraction(
+                        file=source,
+                        ids=extract_ids,
+                        chunks=extract_chunks,
+                        metadatas=extract_metadatas,
+                        config=state._config.knowledge_extraction,
+                        property_index=prop_index,
+                        event_bus=state._event_bus,
+                        apply_property_index=False,
+                        scope=scope,
+                    )
+                else:
+                    ext_result = ExtractionResult(success=True)
             else:
+                await _clear_extraction_state_for_source(source, ids)
                 ext_result = ExtractionResult(success=True)
             extraction_entities = ext_result.entities
             extraction_topics = ext_result.topics
@@ -604,6 +624,20 @@ async def _index_file_impl(
                         rag_file_retry_deferred(
                             file=source,
                             reason="extraction_incomplete",
+                            failed_chunks=getattr(ext_result, "failed_chunks", None),
+                            attempted_chunks=getattr(
+                                ext_result, "attempted_chunks", None
+                            ),
+                            failure_category=getattr(
+                                ext_result, "failure_category", None
+                            ),
+                            failure_detail=getattr(
+                                ext_result, "failure_detail", None
+                            ),
+                            finish_reason=getattr(ext_result, "finish_reason", None),
+                            top_failure_reasons=getattr(
+                                ext_result, "top_failure_reasons", None
+                            ),
                             operation_id=correlation_id,
                             operation=operation,
                         )

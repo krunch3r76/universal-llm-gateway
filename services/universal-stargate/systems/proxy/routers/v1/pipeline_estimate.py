@@ -44,8 +44,8 @@ async def estimate_pipeline_batches(
     """Estimate source token usage and batches for a pipeline."""
     del current_user  # auth dependency side effect only
 
-    if proxy.pipeline_registry is None:
-        raise HTTPException(status_code=503, detail="Pipeline registry unavailable")
+    if not proxy.is_pipeline_system_ready or proxy.pipeline_registry is None:
+        raise HTTPException(status_code=503, detail="Pipeline execution unavailable")
 
     try:
         pipeline = proxy.pipeline_registry.get_pipeline(payload.pipeline)

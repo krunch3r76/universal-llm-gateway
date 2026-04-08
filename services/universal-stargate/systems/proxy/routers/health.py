@@ -20,6 +20,13 @@ async def health_check(
     _current_user: dict[str, str] = Depends(get_optional_auth_dependency),
 ):
     """Health check showing proxy and gateway status."""
+    pipeline_ready = proxy.is_pipeline_system_ready
+    pipeline_count = (
+        len(proxy.pipeline_registry.pipelines)
+        if proxy.pipeline_registry is not None
+        else 0
+    )
+
     # Router-only master: forward_request goes through model-routing which
     # requires catalog (T0: ¬catalog). Check federation liveness directly via
     # heartbeat — independent of catalog state.
@@ -31,18 +38,28 @@ async def health_check(
         ]
         if live:
             gw = live[0]
-            return {
-                "status": "healthy",
+            status = "healthy" if pipeline_ready else "stargate_proxy_healthy"
+            response = {
+                "status": status,
                 "gateway_status": "available",
+                "pipeline_system_ready": pipeline_ready,
+                "pipeline_count": pipeline_count,
                 "gateways_connected": len(live),
                 "vram_free_mb": gw.vram_free_mb,
                 "vram_total_mb": gw.vram_total_mb,
                 "timestamp": int(time.time()),
                 "version": "1.0.0",
             }
+            if not pipeline_ready:
+                response["message"] = (
+                    "Stargate proxy is running but pipeline execution is not ready yet"
+                )
+            return response
         return {
             "status": "stargate_proxy_healthy",
             "gateway_status": "unavailable",
+            "pipeline_system_ready": pipeline_ready,
+            "pipeline_count": pipeline_count,
             "message": "Stargate proxy is running but no gateway connected",
             "timestamp": int(time.time()),
             "version": "1.0.0",
@@ -56,13 +73,37 @@ async def health_check(
             headers=dict(request.headers),
             params=dict(request.query_params),
         )
-        return gateway_response
+        if hasattr(gateway_response, "body"):
+            try:
+                payload = gateway_response.json()
+            except Exception:  # pragma: no cover - defensive parsing
+                payload = {}
+            if isinstance(payload, dict):
+                payload["pipeline_system_ready"] = pipeline_ready
+                payload["pipeline_count"] = pipeline_count
+                if payload.get("status") == "healthy" and not pipeline_ready:
+                    payload["status"] = "stargate_proxy_healthy"
+                    payload["message"] = (
+                        "Gateway is healthy but Stargate pipeline "
+                        "execution is not ready yet"
+                    )
+                return payload
+        return {
+            "status": "healthy" if pipeline_ready else "stargate_proxy_healthy",
+            "gateway_status": "available",
+            "pipeline_system_ready": pipeline_ready,
+            "pipeline_count": pipeline_count,
+            "timestamp": int(time.time()),
+            "version": "1.0.0",
+        }
     except asyncio.CancelledError:
         raise
     except Exception:
         return {
             "status": "stargate_proxy_healthy",
             "gateway_status": "unavailable",
+            "pipeline_system_ready": pipeline_ready,
+            "pipeline_count": pipeline_count,
             "message": "Stargate proxy is running but gateway is temporarily "
             "unavailable",
             "timestamp": int(time.time()),

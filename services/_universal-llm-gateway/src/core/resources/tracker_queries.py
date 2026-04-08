@@ -23,21 +23,21 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _normalize_model_key(model_id: str | ModelId) -> str:
-    """Normalize model IDs using tracker canonical key logic."""
-    from src.core.resources.tracker import _normalize_key
+def _tracking_key(model_id: str | ModelId) -> str:
+    """Per-variant key for state machines and ModelResourceInfo."""
+    from src.core.resources.tracker import _tracking_key
 
-    return _normalize_key(model_id)
+    return _tracking_key(model_id)
 
 
 def get_model_info(
     tracker: ResourceTracker, model_id: str | ModelId
 ) -> ModelResourceInfo | None:
-    """Get resource information for a specific model.
+    """Get resource information for a specific model variant.
 
-    Uses normalized string key for consistent lookups.
+    Uses tracking_key (preserves -hybrid) for per-variant lookup.
     """
-    return tracker._models.get(_normalize_model_key(model_id))
+    return tracker._models.get(_tracking_key(model_id))
 
 
 def get_all_models_info(tracker: ResourceTracker) -> dict[str, ModelResourceInfo]:
@@ -81,14 +81,12 @@ def get_operations_in_progress(tracker: ResourceTracker) -> dict[str, list[str]]
 def get_state_machine_status(
     tracker: ResourceTracker, model_id: str | ModelId
 ) -> dict[str, Any] | None:
-    """Get state machine status for a model."""
-    key = _normalize_model_key(model_id)
+    """Get state machine status for a model variant."""
+    key = _tracking_key(model_id)
 
-    # Exact match first
     if key in tracker._state_machines:
         return tracker._state_machines[key].get_status()
 
-    # Fallback: find by routing key
     from model_id import ModelId as RuntimeModelId
 
     model = RuntimeModelId.parse(model_id) if isinstance(model_id, str) else model_id

@@ -5,6 +5,7 @@ from typing import Any
 
 from process_ipc import ProcessSupervisor
 from process_ipc.core.exceptions import ProcessError
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from ....errors import (
@@ -28,6 +29,24 @@ from .health_checks import run_preflight_checks, validate_load_response
 from .rpc_client import send_init_config_command, send_load_model_command
 
 logger = get_logger(__name__)
+
+
+async def _emit_gateway_load_handshake_debug(
+    step: str,
+    model_id: str,
+    correlation_id: str | None,
+    **extra: Any,
+) -> None:
+    await emit_debug_event(
+        "debug.gateway.load.handshake",
+        {
+            "step": step,
+            "model_id": model_id,
+            "correlation_id": correlation_id,
+            **extra,
+        },
+        source="gateway",
+    )
 
 
 async def execute_model_loading_flow(
@@ -67,6 +86,11 @@ async def execute_model_loading_flow(
         model_registry,
         gateway_config,
     )
+    await _emit_gateway_load_handshake_debug(
+        "config_built",
+        model_id,
+        correlation_id,
+    )
 
     logger.info(f"📤 Sending config to worker {model_id}: {config_to_send}")
 
@@ -74,10 +98,26 @@ async def execute_model_loading_flow(
 
     # Step 2: Preflight checks
     socket_path = get_universal_protocol_socket_path(model_id)
+    await _emit_gateway_load_handshake_debug(
+        "preflight_start",
+        model_id,
+        correlation_id,
+        socket_path=socket_path,
+    )
     await run_preflight_checks(supervisor, socket_path, model_id)
+    await _emit_gateway_load_handshake_debug(
+        "preflight_done",
+        model_id,
+        correlation_id,
+    )
 
     # Step 3: Send init_config command
     try:
+        await _emit_gateway_load_handshake_debug(
+            "init_config_start",
+            model_id,
+            correlation_id,
+        )
         config_result = await send_init_config_command(
             supervisor,
             config_to_send,
@@ -85,7 +125,19 @@ async def execute_model_loading_flow(
             correlation_id,
             timeout=30.0,
         )
+        await _emit_gateway_load_handshake_debug(
+            "init_config_done",
+            model_id,
+            correlation_id,
+            has_error="error" in config_result,
+        )
     except ProcessError as e:
+        await _emit_gateway_load_handshake_debug(
+            "init_config_process_error",
+            model_id,
+            correlation_id,
+            error=str(e),
+        )
         log_process_error(e, model_id, "init_config")
         raise create_worker_error_from_process_error(
             e,
@@ -94,6 +146,12 @@ async def execute_model_loading_flow(
             "config_send",
         )
     except TimeoutError:
+        await _emit_gateway_load_handshake_debug(
+            "init_config_timeout",
+            model_id,
+            correlation_id,
+            timeout_s=30.0,
+        )
         raise create_timeout_error(
             model_id,
             {"command_type": "init_config", "config": config_to_send},
@@ -104,6 +162,12 @@ async def execute_model_loading_flow(
     # Check config step result
     if "error" in config_result:
         error_msg = config_result["error"]
+        await _emit_gateway_load_handshake_debug(
+            "init_config_failed",
+            model_id,
+            correlation_id,
+            error=error_msg,
+        )
         logger.error(
             f"❌ Failed to initialize config in worker {model_id}: {error_msg}"
         )
@@ -122,13 +186,31 @@ async def execute_model_loading_flow(
 
     # Step 4: Send load_model command
     try:
+        await _emit_gateway_load_handshake_debug(
+            "load_model_start",
+            model_id,
+            correlation_id,
+            timeout_s=timeout,
+        )
         load_result = await send_load_model_command(
             supervisor,
             model_id,
             correlation_id,
             timeout=timeout,
         )
+        await _emit_gateway_load_handshake_debug(
+            "load_model_done",
+            model_id,
+            correlation_id,
+            has_error=isinstance(load_result, dict) and "error" in load_result,
+        )
     except ProcessError as e:
+        await _emit_gateway_load_handshake_debug(
+            "load_model_process_error",
+            model_id,
+            correlation_id,
+            error=str(e),
+        )
         log_process_error(e, model_id, "load_model")
         raise create_worker_error_from_process_error(
             e,
@@ -137,6 +219,12 @@ async def execute_model_loading_flow(
             "model_load",
         )
     except TimeoutError:
+        await _emit_gateway_load_handshake_debug(
+            "load_model_timeout",
+            model_id,
+            correlation_id,
+            timeout_s=timeout,
+        )
         raise create_timeout_error(
             model_id,
             {"command_type": "load_model"},
@@ -145,6 +233,13 @@ async def execute_model_loading_flow(
         )
     except Exception as e:
         # Catch other exceptions (connection errors, etc.)
+        await _emit_gateway_load_handshake_debug(
+            "load_model_unexpected_error",
+            model_id,
+            correlation_id,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
         logger.error(
             f"❌ Unexpected error loading model in worker {model_id}: {e}",
             exc_info=True,
@@ -165,6 +260,15 @@ async def execute_model_loading_flow(
     # Step 5: Validate load response
     success, context_size, engine_pid, error_msg = validate_load_response(
         load_result, model_id
+    )
+    await _emit_gateway_load_handshake_debug(
+        "load_model_validated",
+        model_id,
+        correlation_id,
+        success=success,
+        context_size=context_size,
+        engine_pid=engine_pid,
+        error=error_msg,
     )
 
     return success, context_size, engine_pid, error_msg

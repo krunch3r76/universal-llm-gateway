@@ -15,11 +15,16 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 
-def _normalize_key(model_id: str | ModelId) -> str:
-    """Get normalized string key for dict lookup."""
+def _process_key(model_id: str | ModelId) -> str:
+    """Shared-process key: strips -hybrid so hybrid and non-hybrid share resources.
+
+    Hybrid and non-hybrid variants are the same llama-server process with
+    different GPU offload ratios. Supervisors, sockets, and PIDs are keyed by
+    process_key (= ModelId.process_key = ModelId.normalized).
+    """
     if isinstance(model_id, ModelId):
-        return model_id.normalized
-    return ModelId.parse(model_id).normalized
+        return model_id.process_key
+    return ModelId.parse(model_id).process_key
 
 
 @dataclass
@@ -30,13 +35,13 @@ class ProcessState:
     This state is owned by WorkerController (or ProcessManager during transition)
     and shared with all component managers via constructor injection.
 
-    All model_id parameters accept str or ModelId. Keys are normalized strings:
-    'model-8192-hybrid' and 'model-8192' are treated as the same key since
-    -hybrid suffix is informational.
+    All model_id parameters accept str or ModelId. Keys are process_keys:
+    'model-8192-hybrid' and 'model-8192' map to the same key since they
+    share one worker process.
 
     Attributes:
-        supervisors: ProcessSupervisor instances per model (keyed by normalized string)
-        socket_paths: IPC socket paths per model (keyed by normalized string)
+        supervisors: ProcessSupervisor instances per model (keyed by process_key)
+        socket_paths: IPC socket paths per model (keyed by process_key)
         failed_workers: Set of model names that have failed
     """
 
@@ -54,45 +59,45 @@ class ProcessState:
 
     def has_supervisor(self, model_id: str | ModelId) -> bool:
         """Check if supervisor exists for model."""
-        return _normalize_key(model_id) in self.supervisors
+        return _process_key(model_id) in self.supervisors
 
     def get_supervisor(self, model_id: str | ModelId) -> ProcessSupervisor | None:
         """Get supervisor for model, or None if not found."""
-        return self.supervisors.get(_normalize_key(model_id))
+        return self.supervisors.get(_process_key(model_id))
 
     def set_supervisor(
         self, model_id: str | ModelId, supervisor: ProcessSupervisor
     ) -> None:
         """Set supervisor for model."""
-        self.supervisors[_normalize_key(model_id)] = supervisor
+        self.supervisors[_process_key(model_id)] = supervisor
 
     def remove_supervisor(self, model_id: str | ModelId) -> ProcessSupervisor | None:
         """Remove and return supervisor for model, or None if not found."""
-        return self.supervisors.pop(_normalize_key(model_id), None)
+        return self.supervisors.pop(_process_key(model_id), None)
 
     def get_socket_path(self, model_id: str | ModelId) -> str | None:
         """Get socket path for model, or None if not found."""
-        return self.socket_paths.get(_normalize_key(model_id))
+        return self.socket_paths.get(_process_key(model_id))
 
     def set_socket_path(self, model_id: str | ModelId, path: str) -> None:
         """Set socket path for model."""
-        self.socket_paths[_normalize_key(model_id)] = path
+        self.socket_paths[_process_key(model_id)] = path
 
     def remove_socket_path(self, model_id: str | ModelId) -> str | None:
         """Remove and return socket path for model, or None if not found."""
-        return self.socket_paths.pop(_normalize_key(model_id), None)
+        return self.socket_paths.pop(_process_key(model_id), None)
 
     def get_engine_pid(self, model_id: str | ModelId) -> int | None:
         """Get engine subprocess PID for model, or None if not known."""
-        return self.engine_pids.get(_normalize_key(model_id))
+        return self.engine_pids.get(_process_key(model_id))
 
     def set_engine_pid(self, model_id: str | ModelId, pid: int) -> None:
         """Store engine subprocess PID reported by worker after load."""
-        self.engine_pids[_normalize_key(model_id)] = pid
+        self.engine_pids[_process_key(model_id)] = pid
 
     def remove_engine_pid(self, model_id: str | ModelId) -> int | None:
         """Remove and return engine PID for model, or None if not found."""
-        return self.engine_pids.pop(_normalize_key(model_id), None)
+        return self.engine_pids.pop(_process_key(model_id), None)
 
     @staticmethod
     def _is_pid_running(pid: int | None) -> bool:
@@ -131,9 +136,7 @@ class ProcessState:
             try:
                 info = supervisor.get_worker_info()
             except Exception as e:
-                logger.warning(
-                    "Failed to get worker info for supervisor: %s", e
-                )
+                logger.warning("Failed to get worker info for supervisor: %s", e)
                 continue
             pid = getattr(info, "pid", None)
             if isinstance(pid, int) and self._is_pid_running(pid):

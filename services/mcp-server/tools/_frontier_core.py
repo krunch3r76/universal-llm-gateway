@@ -1,7 +1,7 @@
 """Shared helpers for frontier generation tools (grok_generate, claude_generate, frontier_generate).
 
-Handles boot context assembly, system prompt composition, adapter resolution,
-Stargate HTTP calls, response parsing, and event recording.
+Handles Stargate HTTP calls, client-side tool resolution loop, response parsing,
+and event recording. Boot context assembly lives in _frontier_boot.
 """
 
 from __future__ import annotations
@@ -14,22 +14,28 @@ import httpx
 from llm_adapters import (
     FrontierRequest,
     effective_provider_for_model,
-    mcp_config_from_env,
     resolve_llm_adapter,
 )
 from mcp_events import monotonic_now, record
 from model_id import ModelId
 from universal_logging import get_logger
 
-from ._file_helpers import read_file_result
-from .cortex_named_tools import run_cortex_boot
+from ._agent_tools import TOOL_DEFINITIONS, execute_tool
+from ._frontier_boot import (
+    assemble_boot_context,
+    compose_system_prompt,
+    normalize_boot_level,
+    resolve_inject_mcp_default,
+)
 
 logger = get_logger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
-_BOOT_SEPARATOR = "\n\n---\n\n"
-_VALID_BOOT_LEVELS = {"none", "mcp", "minimal", "full", "team"}
+_DEFAULT_READ_TIMEOUT = 600.0
+_TIMEOUT = httpx.Timeout(
+    connect=10.0, read=_DEFAULT_READ_TIMEOUT, write=30.0, pool=10.0
+)
+_MAX_TOOL_TURNS = 10
 
 _PROVIDER_NATIVE_PATHS: dict[str, str] = {
     "anthropic": "/api/v1/providers/anthropic/messages",
@@ -43,106 +49,59 @@ XAI_SERVER_TOOL_MAP: dict[str, dict[str, str]] = {
     "code_execution": {"type": "code_interpreter"},
 }
 
-
-def _compose_system_prompt(boot_context: str, caller_system: str) -> str:
-    if not boot_context:
-        return caller_system
-    if not caller_system:
-        return boot_context
-    return f"{boot_context}{_BOOT_SEPARATOR}{caller_system}"
+_MCP_TOOL_NAMES: set[str] = {
+    td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS
+}
 
 
-def _read_boot_ref(boot_ref: str) -> str:
-    if not boot_ref.startswith("notes/"):
-        raise ValueError("boot_ref must point into the notes/ tree")
-    result = read_file_result(boot_ref)
-    return str(result["content"])
+def _execute_tool_calls(
+    tool_calls: list[dict[str, Any]],
+    provider_key: str,
+    turn: int,
+) -> list[dict[str, Any]]:
+    """Execute MCP tool calls locally and return results for the adapter."""
+    results: list[dict[str, Any]] = []
+    for tc in tool_calls:
+        tc_name = tc.get("name", "")
+        tc_args = tc.get("input")
+        if tc_args is None:
+            raw_args = tc.get("arguments", "{}")
+            tc_args = (
+                json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+            )
 
-
-def _normalize_boot_level(boot: str) -> str:
-    boot_level = (boot or "none").strip().lower()
-    if boot_level not in _VALID_BOOT_LEVELS:
-        raise ValueError(
-            f"Invalid boot {boot!r}. Must be one of: {sorted(_VALID_BOOT_LEVELS)}"
+        logger.info("frontier tool [%s] turn %d: %s", provider_key, turn, tc_name)
+        record(
+            "mcp.frontier.tool.executed",
+            tool=tc_name,
+            turn=turn,
+            provider=provider_key,
         )
-    if boot_level == "minimal":
-        return "mcp"
-    return boot_level
+
+        result_str = execute_tool(tc_name, tc_args)
+        results.append({"id": tc.get("id"), "name": tc_name, "content": result_str})
+    return results
 
 
-_SUBAGENT_PREAMBLE = """\
-You are a team member consulted by the system owner.
-Apply your own epistemic standards fully — if you identify errors or gaps in the supplied framing, flag them. Do not defer.
+def _handle_error_response(
+    resp: httpx.Response,
+    model: str,
+    provider_key: str,
+) -> dict[str, Any]:
+    """Parse and record an HTTP error response from Stargate."""
+    detail_text = resp.text[:500]
+    error_key = f"upstream_{resp.status_code}"
+    error_msg = f"Upstream error ({resp.status_code})"
 
-Cortex is the team's shared knowledge graph. When Cortex excerpts appear in context:
-- Entities: typed nodes (`type:slug`). Assertions: claims with confidence (confirmed/believed/suspected/hypothesized).
-- Absence of assertion ≠ negation — it means the information was not supplied.
-- Parametric knowledge (from training) is not Cortex-grounded. Label the source when using both.
-
-For this invocation, your Cortex grounding is the context supplied in this conversation. \
-If you cannot ground a claim in the supplied context, mark it [UNGROUNDED] and note what query would resolve it.
-
-Shared vocabulary: "Cortex" = the knowledge graph, not the service · \
-"directive" = implement now · "ticket" = deferred work."""
-
-
-_MCP_GROUNDING_GUARD = """\
-Source discipline (invariant):
-∀ factual claim about people, decisions, entities, or events: ground in Cortex \
-via tool or tag [PARAMETRIC]. If Cortex has no data, state absence before \
-offering parametric knowledge. No unmarked parametric claims."""
-
-
-def _default_mcp_brief() -> str:
-    lines = [
-        "You are a frontier subagent dispatched by another frontier model.",
-        "Operate only on the context supplied by the caller. "
-        "If the task needs missing state, say so explicitly instead of assuming it.",
-        "",
-        "Tool surface orientation:",
-        "- Use the direct primary tools when they are available.",
-        "- Use dispatch(tool=..., arguments='{}') to reach non-primary MCP tools.",
-        "",
-        "Call conventions:",
-        "- Dynamic project, journal, entity, and session context is caller-injected.",
-        "- Do not assume hidden continuity beyond what the caller supplied.",
-    ]
-    return "\n".join(lines)
-
-
-def _resolve_inject_mcp_default(boot_level: str, inject_mcp: bool | None) -> bool:
-    if inject_mcp is not None:
-        return inject_mcp
-    return boot_level != "none"
-
-
-def _assemble_boot_context(boot: str, boot_ref: str | None) -> str:
-    boot_level = _normalize_boot_level(boot)
-    if boot_level == "none":
-        if boot_ref:
-            raise ValueError("boot_ref requires boot='mcp' (legacy alias: 'minimal')")
-        return ""
-    if boot_level == "mcp":
-        if boot_ref:
-            seed_content = _read_boot_ref(boot_ref)
-            return f"{_MCP_GROUNDING_GUARD}{_BOOT_SEPARATOR}{seed_content}"
-        return _default_mcp_brief()
-    if boot_level == "team":
-        parts = [_SUBAGENT_PREAMBLE]
-        if boot_ref:
-            parts.append(_read_boot_ref(boot_ref))
-        return _BOOT_SEPARATOR.join(parts)
-    result = run_cortex_boot(agent="subagent")
-    if "error" in result:
-        raise RuntimeError(str(result["error"]))
-    narrative = result.get("boot_narrative")
-    if not isinstance(narrative, str) or not narrative.strip():
-        raise RuntimeError("cortex_boot returned no boot_narrative")
-    parts = [_SUBAGENT_PREAMBLE]
-    if boot_ref:
-        parts.append(_read_boot_ref(boot_ref))
-    parts.append(narrative)
-    return _BOOT_SEPARATOR.join(parts)
+    logger.warning(
+        "Frontier upstream %d for model=%s provider=%s: %s",
+        resp.status_code,
+        model,
+        provider_key,
+        error_key,
+    )
+    record("mcp.frontier.generate.error", error=error_key, provider=provider_key)
+    return {"error": error_msg, "detail": detail_text}
 
 
 def execute_frontier(
@@ -151,8 +110,19 @@ def execute_frontier(
     req: FrontierRequest,
     include_raw: bool = False,
     tool_name: str = "frontier_generate",
+    timeout: float | None = None,
 ) -> dict[str, Any]:
-    """Resolve adapter, POST to Stargate provider-native endpoint, parse response."""
+    """Resolve adapter, POST to Stargate, and run client-side tool loop if needed.
+
+    When ``req.mcp_tool_loop`` is True, the function implements a multi-turn
+    tool resolution loop: POST → detect tool_use → execute locally → POST
+    results → repeat, up to ``_MAX_TOOL_TURNS``.  This replaces the former
+    MCP Connector pattern (injecting ``mcp_servers`` for provider-side callback).
+
+    ``timeout`` overrides the default read timeout (seconds). Downstream hops
+    (Stargate → cloud-proxy → provider) allow up to 1800s, so callers may
+    request up to that ceiling for long-running subagent dispatches.
+    """
     parsed = ModelId.parse(model)
     provider_key = effective_provider_for_model(parsed.provider)
     api_model = parsed.api_model_id
@@ -166,6 +136,7 @@ def execute_frontier(
         has_tools=req.tools is not None,
         has_conversation_id=req.conversation_id is not None,
         boot_level=req.boot,
+        mcp_tool_loop=req.mcp_tool_loop,
     )
 
     native_path = _PROVIDER_NATIVE_PATHS.get(provider_key)
@@ -191,87 +162,79 @@ def execute_frontier(
         )
         return {"error": f"Provider {provider_key} does not support frontier requests"}
 
-    mcp_cfg = mcp_config_from_env()
-    _url, _headers, json_body = adapter.build_frontier_request(
-        req, mcp_cfg if mcp_cfg else None
-    )
-    has_mcp_servers = bool(json_body.get("mcp_servers"))
-    if has_mcp_servers:
-        record(
-            "mcp.frontier.generate.mcp.injected",
-            model=model,
-            tool=tool_name,
-            provider=provider_key,
-        )
+    _url, _headers, json_body = adapter.build_frontier_request(req)
 
     stargate_url = f"{_STARGATE_URL}{native_path}"
+    effective_timeout = _TIMEOUT
+    if timeout is not None:
+        clamped = min(max(timeout, 30.0), 1800.0)
+        effective_timeout = httpx.Timeout(
+            connect=10.0, read=clamped, write=30.0, pool=10.0
+        )
+
+    max_turns = _MAX_TOOL_TURNS if req.mcp_tool_loop else 1
+    tool_calls_total = 0
+    result: dict[str, Any] = {}
+    raw: dict[str, Any] = {}
+
     try:
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.post(
-                stargate_url,
-                json=json_body,
-                headers={"Content-Type": "application/json"},
-            )
+        with httpx.Client(timeout=effective_timeout) as http:
+            for turn in range(max_turns):
+                resp = http.post(
+                    stargate_url,
+                    json=json_body,
+                    headers={"Content-Type": "application/json"},
+                )
+
+                if resp.status_code >= 400:
+                    return _handle_error_response(resp, model, provider_key)
+
+                try:
+                    raw = resp.json()
+                except json.JSONDecodeError:
+                    return {"error": "Upstream returned invalid JSON"}
+                if not isinstance(raw, dict):
+                    return {"error": "Upstream returned non-object JSON"}
+
+                result = adapter.parse_frontier_response(raw)
+                tool_calls = result.get("tool_calls")
+
+                if not tool_calls or not req.mcp_tool_loop:
+                    break
+
+                tool_results = _execute_tool_calls(tool_calls, provider_key, turn)
+                tool_calls_total += len(tool_results)
+
+                if hasattr(adapter, "append_tool_round"):
+                    adapter.append_tool_round(json_body, raw, tool_results)
+                else:
+                    logger.warning(
+                        "Adapter %s lacks append_tool_round; stopping tool loop",
+                        provider_key,
+                    )
+                    break
+            else:
+                if req.mcp_tool_loop:
+                    result["warning"] = f"Tool loop reached max turns ({max_turns})"
     except httpx.TimeoutException:
         duration = monotonic_now() - t0
-        has_mcp = bool(json_body.get("mcp_servers"))
         record(
             "mcp.frontier.generate.error",
             error="timeout",
             provider=provider_key,
             duration_s=round(duration, 3),
-            has_mcp=has_mcp,
         )
-        suffix = (
-            " MCP tool callbacks may be hanging — check MCP server health and "
-            "firewall rules for provider callback IPs."
-            if has_mcp
-            else ""
-        )
-        return {"error": f"Upstream timeout after {int(duration)}s.{suffix}"}
+        return {"error": f"Upstream timeout after {int(duration)}s."}
     except httpx.RequestError as exc:
         logger.error("Frontier upstream request failed: %s", exc)
         record("mcp.frontier.generate.error", error="connection", provider=provider_key)
         return {"error": "Upstream connection failed"}
 
-    if resp.status_code >= 400:
-        detail_text = resp.text[:500]
-        error_key = f"upstream_{resp.status_code}"
-        error_msg = f"Upstream error ({resp.status_code})"
-
-        if "Connection to MCP server timed out" in detail_text:
-            error_key = "mcp_server_unreachable"
-            error_msg = (
-                "Provider could not reach the MCP server for tool callbacks. "
-                "The MCP server may be overloaded, unreachable from the provider's "
-                "network, or blocked by a firewall."
-            )
-
-        logger.warning(
-            "Frontier upstream %d for model=%s provider=%s: %s",
-            resp.status_code,
-            model,
-            provider_key,
-            error_key,
-        )
-        record(
-            "mcp.frontier.generate.error",
-            error=error_key,
-            provider=provider_key,
-        )
-        return {"error": error_msg, "detail": detail_text}
-
-    try:
-        raw = resp.json()
-    except json.JSONDecodeError:
-        return {"error": "Upstream returned invalid JSON"}
-    if not isinstance(raw, dict):
-        return {"error": "Upstream returned non-object JSON"}
-
     duration = monotonic_now() - t0
-    result = adapter.parse_frontier_response(raw)
     if include_raw:
         result["raw"] = raw
+    if tool_calls_total > 0:
+        result["tool_calls_made"] = tool_calls_total
 
     record(
         "mcp.frontier.generate.completed",
@@ -283,6 +246,7 @@ def execute_frontier(
         has_tool_calls=result.get("tool_calls") is not None,
         input_tokens=result.get("usage", {}).get("input_tokens", 0),
         output_tokens=result.get("usage", {}).get("output_tokens", 0),
+        tool_calls_made=tool_calls_total,
     )
     return result
 
@@ -309,32 +273,42 @@ def build_frontier_request(
     reasoning_trace: list[dict[str, Any]] | None = None,
     provider_options: dict[str, Any] | None = None,
 ) -> FrontierRequest | dict[str, Any]:
-    """Assemble boot context and build FrontierRequest. Returns error dict on failure."""
+    """Assemble boot context and build FrontierRequest. Returns error dict on failure.
+
+    When MCP tools are requested (via boot level or explicit ``inject_mcp``),
+    tool definitions are merged into the ``tools`` list as standard function-calling
+    definitions and ``mcp_tool_loop=True`` triggers client-side tool resolution in
+    ``execute_frontier``.  The Connector pattern (``mcp_servers`` in body) is never
+    used for API calls.
+    """
     parsed = ModelId.parse(model)
     try:
-        boot_level = _normalize_boot_level(boot)
-        boot_context = _assemble_boot_context(boot_level, boot_ref)
+        boot_level = normalize_boot_level(boot)
+        boot_context = assemble_boot_context(boot_level, boot_ref)
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         record("mcp.frontier.generate.error", error="boot_context_invalid")
         return {"error": str(exc)}
-    effective_system = _compose_system_prompt(boot_context, system)
-    effective_inject_mcp = parsed.is_mcp or _resolve_inject_mcp_default(
-        boot_level, inject_mcp
-    )
+    effective_system = compose_system_prompt(boot_context, system)
+    wants_mcp = resolve_inject_mcp_default(boot_level, inject_mcp)
+
+    merged_tools = list(tools or [])
+    mcp_tool_loop = False
+    if wants_mcp:
+        merged_tools.extend(TOOL_DEFINITIONS)
+        mcp_tool_loop = True
 
     return FrontierRequest(
         messages=messages,
         model=parsed.api_model_id,
         max_tokens=max_tokens,
         system=effective_system,
-        inject_mcp=effective_inject_mcp,
         temperature=temperature,
         top_p=top_p,
         stop_sequences=stop_sequences,
         seed=seed,
         thinking=thinking,
         effort=effort,
-        tools=tools,
+        tools=merged_tools or None,
         tool_choice=tool_choice,
         response_format=response_format,
         boot=boot_level,
@@ -342,4 +316,5 @@ def build_frontier_request(
         conversation_id=conversation_id,
         reasoning_trace=reasoning_trace,
         provider_options=provider_options,
+        mcp_tool_loop=mcp_tool_loop,
     )

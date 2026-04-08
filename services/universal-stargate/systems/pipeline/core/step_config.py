@@ -124,6 +124,7 @@ class StepConfig(BaseModel):
     model_ref: str | None = None
     model_requirements: dict[str, Any] | None = None
     prompt_ref: str | None = None
+    system_prompt: str | None = None
     condition: str | None = None
     skip_token_counting: bool | None = None
     disable_profile: bool | None = None

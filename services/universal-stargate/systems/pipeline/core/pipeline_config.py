@@ -35,11 +35,12 @@ class PipelineOptions(BaseModel):
     timeout_seconds: int = 60
     max_tokens: int | None = None
     skip_token_counting: bool = False
-    # Profile control — pipelines manage their own generation parameters,
-    # so model-assigned profiles (e.g. "creative" on qwen2-5) are suppressed by default.
-    # Set disable_profile=False to allow profile assignment, or set profile
-    # to a specific profile name to apply it to all steps.
-    disable_profile: bool = True
+    # Profile control — model-assigned profiles (e.g. "gemma4-instruct", "qwen3-instruct")
+    # are applied by default so models get correct generation parameters (enable_thinking,
+    # sampling settings). Set disable_profile=True in pipeline options or on a specific
+    # step to suppress profile injection for that scope. Explicit step/pipeline profile
+    # overrides the default assignment.
+    disable_profile: bool = False
     profile: str | None = None
     save_execution_summary: bool = False  # Write detailed execution log to disk
     summary_format: str = (

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Refresh MCP tool descriptors for the Cursor agent context.
+# Refresh MCP tool descriptors for all Cursor workspace projects.
 #
 # Fetches the live tool list from the MCP server and writes per-tool JSON
-# descriptor files to the Cursor mcps/ directory. The agent (Cursor AI)
-# reads these files at session start to discover available tools.
+# descriptor files to every Cursor project's mcps/ directory that has a
+# user-vortex server registered. Also writes to the ULG vortex directory.
 #
 # Run after:
 #   - New tools are added to the MCP server
@@ -14,16 +14,14 @@
 # Usage:
 #   ./scripts/refresh-cursor-mcp-descriptors
 #
-# After running, reload the Cursor window (Ctrl+Shift+P → Developer: Reload Window)
+# After running, reload each Cursor window (Ctrl+Shift+P → Developer: Reload Window)
 # for the agent to pick up changes.
 
 set -euo pipefail
 
 MCP_URL="${MCP_URL:-https://mcp.k-1.me/mcp}"
 MCP_YAML="${MCP_YAML:-$HOME/.gateway/mcp.yaml}"
-MCPS_DIR="/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/mcps/vortex"
-TOOLS_DIR="${MCPS_DIR}/tools"
-SERVER_METADATA_PATH="${MCPS_DIR}/SERVER_METADATA.json"
+CURSOR_PROJECTS="$HOME/.cursor/projects"
 
 if [ -z "${MCP_TOKEN:-}" ] && [ -f "${MCP_YAML}" ]; then
   MCP_TOKEN=$(python3 - "${MCP_YAML}" <<'PY'
@@ -82,29 +80,22 @@ if [ -z "${RESPONSE}" ]; then
   exit 1
 fi
 
-mkdir -p "${TOOLS_DIR}"
+write_descriptors() {
+  local tools_dir="$1"
+  local server_id="$2"
+  local metadata_path
+  metadata_path="$(dirname "$tools_dir")/SERVER_METADATA.json"
 
-python3 - <<'PY'
-import json
-from pathlib import Path
+  mkdir -p "$tools_dir"
+  printf '{\n  "serverIdentifier": "%s",\n  "serverName": "vortex"\n}\n' "$server_id" > "$metadata_path"
 
-metadata_path = Path("/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/mcps/vortex/SERVER_METADATA.json")
-metadata_path.parent.mkdir(parents=True, exist_ok=True)
-metadata = {
-    "serverIdentifier": "vortex",
-    "serverName": "vortex",
-}
-metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-PY
-
-COUNT=$(echo "${RESPONSE}" | python3 -c "
+  echo "${RESPONSE}" | python3 -c "
 import sys, json, os
 
 data = json.load(sys.stdin)
 tools = data['result']['tools']
-base = '${TOOLS_DIR}'
+base = sys.argv[1]
 
-# Remove stale descriptors not in current tool list
 current_names = {t['name'] for t in tools}
 for f in os.listdir(base):
     if f.endswith('.json'):
@@ -124,13 +115,31 @@ for tool in tools:
         json.dump(descriptor, f, indent=2)
 
 print(len(tools))
-")
+" "$tools_dir"
+}
 
-echo "Wrote ${COUNT} tool descriptors to ${TOOLS_DIR}"
-echo ""
-echo "Server metadata: ${SERVER_METADATA_PATH}"
-cat "${SERVER_METADATA_PATH}"
+TOTAL_TARGETS=0
+
+# ULG primary: vortex (written by this script historically)
+ULG_VORTEX="${CURSOR_PROJECTS}/mnt-torus-projects-universal-llm-gateway/mcps/vortex/tools"
+if [ -d "$(dirname "$(dirname "$ULG_VORTEX")")" ]; then
+  COUNT=$(write_descriptors "$ULG_VORTEX" "vortex")
+  echo "  ULG vortex: ${COUNT} tools"
+  TOTAL_TARGETS=$((TOTAL_TARGETS + 1))
+fi
+
+# All workspaces: user-vortex (Cursor's auto-registered name for user-level servers)
+for project_dir in "${CURSOR_PROJECTS}"/*/mcps/user-vortex; do
+  [ -d "$project_dir" ] || continue
+  tools_dir="${project_dir}/tools"
+  ws_name="$(basename "$(dirname "$(dirname "$project_dir")")")"
+  COUNT=$(write_descriptors "$tools_dir" "user-vortex")
+  echo "  ${ws_name}: ${COUNT} tools"
+  TOTAL_TARGETS=$((TOTAL_TARGETS + 1))
+done
 
 echo ""
-echo "Next step: reload Cursor window (Ctrl+Shift+P → Developer: Reload Window)"
-echo "The agent will pick up the new descriptors on next session start."
+echo "Updated ${TOTAL_TARGETS} workspace(s)"
+echo ""
+echo "Next step: reload each Cursor window (Ctrl+Shift+P → Developer: Reload Window)"
+echo "Agents will pick up the new descriptors on next session start."

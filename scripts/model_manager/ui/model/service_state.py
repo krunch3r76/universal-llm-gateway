@@ -350,8 +350,13 @@ class ServiceState:
 
     def check_stargate(self) -> ServiceInfo:
         pid, pid_note = self._resolve_pid_file(self.STARGATE_PID_FILE)
-        healthy = self._port_open(self.STARGATE_PORT)
-        listener_pid = self._find_listener_pid(self.STARGATE_PORT) if healthy else None
+        port_open = self._port_open(self.STARGATE_PORT)
+        listener_pid = self._find_listener_pid(self.STARGATE_PORT) if port_open else None
+        healthy, health_note = (
+            self._stargate_probe_tcp(host="127.0.0.1", port=self.STARGATE_PORT)
+            if port_open
+            else (False, None)
+        )
         if listener_pid is not None and listener_pid != pid:
             self._write_pid_file(self.STARGATE_PID_FILE, listener_pid)
             pid = listener_pid
@@ -369,7 +374,11 @@ class ServiceState:
                 health_url=f"http://localhost:{self.STARGATE_PORT}/health",
                 detail=self._with_note(
                     f"PID {pid}{uptime_str}"
-                    + ("" if healthy else ", port not responding"),
+                    + (
+                        ""
+                        if healthy
+                        else f", {health_note or 'port not responding'}"
+                    ),
                     pid_note,
                 ),
             )
@@ -386,6 +395,34 @@ class ServiceState:
             port=self.STARGATE_PORT,
             detail=pid_note or "",
         )
+
+    def _stargate_probe_tcp(
+        self, *, host: str, port: int
+    ) -> tuple[bool, str | None]:
+        """Probe Stargate /health and honor pipeline readiness when present."""
+        from transport_utils import make_sync_client
+
+        try:
+            with make_sync_client(
+                f"http://{host}:{port}", timeout=_SERVICE_HEALTH_TIMEOUT
+            ) as client:
+                resp = client.get("/health")
+                if resp.status_code != 200:
+                    return (False, f"/health returned {resp.status_code}")
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    return (True, None)
+                if (
+                    isinstance(payload, dict)
+                    and payload.get("pipeline_system_ready") is False
+                ):
+                    count = payload.get("pipeline_count")
+                    suffix = f" (count={count})" if count is not None else ""
+                    return (False, f"pipeline system not ready{suffix}")
+                return (True, None)
+        except Exception as exc:
+            return (False, f"health probe failed: {type(exc).__name__}")
 
     def check_sidecar(self) -> ServiceInfo:
         """Check pipeline-tools sidecar container status."""

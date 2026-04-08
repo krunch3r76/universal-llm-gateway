@@ -413,8 +413,10 @@ def _merge_adjacent_bold_runs(markdown: str) -> str:
     merged = markdown
     while True:
         updated = _ADJACENT_BOLD_RE.sub(
-            lambda m: f"**{m.group('left').strip()}{m.group('ws')}"
-            f"{m.group('right').strip()}**",
+            lambda m: (
+                f"**{m.group('left').strip()}{m.group('ws')}"
+                f"{m.group('right').strip()}**"
+            ),
             merged,
         )
         if updated == merged:
@@ -590,13 +592,39 @@ def chunk_pdf(
     )
 
 
+def _normalize_epub_chapter_html(path: str, html_bytes: bytes) -> str:
+    """Convert a single EPUB chapter's HTML to markdown with heading structure.
+
+    Uses the same ``normalize_html_to_markdown`` pipeline as ``.html`` files so
+    that ``<h1>``–``<h6>`` tags become ATX headings and ``parse_sections`` in
+    ``chunk_markdown`` can produce hierarchical section paths.
+
+    Falls back to plain-text extraction when markdownify produces empty output
+    (e.g. image-only chapters).
+    """
+    raw_html = html_bytes.decode("utf-8", errors="replace")
+    try:
+        return normalize_html_to_markdown(path, raw_html)
+    except ValueError:
+        soup = BeautifulSoup(raw_html, "html.parser")
+        return soup.get_text(separator="\n\n", strip=True)
+
+
 def chunk_epub(
     path: str,
     *,
     target_chars: int = _CHUNK_CHARS_EBOOK,
     pad_chars: int = _CHUNK_CHARS_EBOOK_PAD,
 ) -> list[Chunk]:
-    """Extract EPUB chapters via ebooklib, convert to text, chunk as markdown."""
+    """Extract EPUB chapters via ebooklib, normalize to markdown, then chunk.
+
+    Each chapter's HTML is converted to markdown through the same
+    ``normalize_html_to_markdown`` pipeline used by ``.html`` files, preserving
+    heading structure (``<h1>``–``<h6>`` → ATX headings).  The combined markdown
+    is then chunked via ``chunk_markdown`` so that ``parse_sections`` produces
+    hierarchical ``section_path`` metadata on every chunk — identical to the PDF
+    and HTML ingestion paths.
+    """
     try:
         import ebooklib
         from ebooklib import epub
@@ -609,23 +637,29 @@ def chunk_epub(
         book = epub.read_epub(path, options={"ignore_ncx": True})
     except Exception as e:
         raise RuntimeError(f"Failed to read EPUB '{path}': {e}") from e
+
     sections: list[str] = []
     for item in book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
         html = item.get_body_content()
         if not html:
             continue
-        soup = BeautifulSoup(html, "html.parser")
-        text = soup.get_text(separator="\n\n", strip=True)
-        if text:
-            sections.append(text)
+        markdown = _normalize_epub_chapter_html(path, html)
+        if markdown:
+            sections.append(markdown)
 
     if not sections:
         return []
 
     combined = "\n\n".join(sections)
-    return chunk_markdown(
+    combined = _ATX_BOLD_RE.sub(lambda m: f"{m.group(1)} {m.group(2)}", combined)
+    combined = _promote_bold_only_paragraphs(combined)
+    chunks = chunk_markdown(
         path, combined, target_chars=target_chars, pad_chars=pad_chars
     )
+    for chunk in chunks:
+        chunk.metadata["source_format"] = "epub"
+        chunk.metadata["normalized_format"] = "markdown"
+    return chunks
 
 
 def normalize_html_to_markdown(path: str, html: str) -> str:

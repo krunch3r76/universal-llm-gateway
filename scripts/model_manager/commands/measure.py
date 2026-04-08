@@ -818,6 +818,10 @@ def _build_updated_catalog_entry(
         if device == "cpu":
             cpu_profiles[ctx_str] = clean_profile
         elif device == "hybrid":
+            # f16_kv: True for hybrid — partial GPU offload keeps KV cache in RAM,
+            # so FP16 (vs FP32) halves KV RAM usage, which is the scarce resource.
+            # Per-profile loader override wins over base_loader at merge time.
+            clean_profile["loader"] = {"f16_kv": True}
             hybrid_profiles[ctx_str] = clean_profile
         else:
             gpu_profiles[ctx_str] = clean_profile

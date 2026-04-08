@@ -50,6 +50,38 @@ class _WatchCursor:
     resume_seq: int | None = None
 
 
+@dataclass
+class _FailureBreakdown:
+    total_count: int
+    transient_infra_count: int
+    transient_parse_count: int
+    transient_other_count: int
+    permanent_count: int
+    transient_infra_by_file: dict[str, int]
+    transient_parse_by_file: dict[str, int]
+    transient_other_by_file: dict[str, int]
+    permanent_by_file: dict[str, int]
+
+    @property
+    def transient_total(self) -> int:
+        return (
+            self.transient_infra_count
+            + self.transient_parse_count
+            + self.transient_other_count
+        )
+
+    @property
+    def incomplete_files_count(self) -> int:
+        return len(
+            {
+                *self.transient_infra_by_file,
+                *self.transient_parse_by_file,
+                *self.transient_other_by_file,
+                *self.permanent_by_file,
+            }
+        )
+
+
 async def _iter_event_service_events(
     *,
     resume_seq: int | None,
@@ -137,6 +169,77 @@ def _load_events() -> list[dict[str, Any]]:
 
 def _basename(path: str) -> str:
     return Path(path).name
+
+
+def _classify_failure(error: str, *, permanent: bool) -> str:
+    if permanent:
+        return "permanent"
+    if error.startswith("infrastructure:") or "stargate error" in error:
+        return "transient_infra"
+    if error in {
+        "invalid extraction response shape",
+        "invalid extraction list payload",
+    } or error.startswith("missing or invalid result after batch parsing"):
+        return "transient_parse"
+    return "transient_other"
+
+
+def _load_failure_breakdown() -> _FailureBreakdown | None:
+    if not DB_PATH.exists():
+        return None
+
+    conn = sqlite3.connect(str(DB_PATH))
+    try:
+        rows = conn.execute(
+            "SELECT source, error, permanent FROM failed_extractions"
+        ).fetchall()
+    except sqlite3.Error:
+        conn.close()
+        return None
+    finally:
+        conn.close()
+
+    transient_infra_by_file: dict[str, int] = {}
+    transient_parse_by_file: dict[str, int] = {}
+    transient_other_by_file: dict[str, int] = {}
+    permanent_by_file: dict[str, int] = {}
+    transient_infra_count = 0
+    transient_parse_count = 0
+    transient_other_count = 0
+    permanent_count = 0
+
+    for source, error, permanent in rows:
+        category = _classify_failure(str(error), permanent=bool(permanent))
+        if category == "transient_infra":
+            transient_infra_count += 1
+            transient_infra_by_file[source] = transient_infra_by_file.get(source, 0) + 1
+        elif category == "transient_parse":
+            transient_parse_count += 1
+            transient_parse_by_file[source] = transient_parse_by_file.get(source, 0) + 1
+        elif category == "transient_other":
+            transient_other_count += 1
+            transient_other_by_file[source] = transient_other_by_file.get(source, 0) + 1
+        else:
+            permanent_count += 1
+            permanent_by_file[source] = permanent_by_file.get(source, 0) + 1
+
+    return _FailureBreakdown(
+        total_count=len(rows),
+        transient_infra_count=transient_infra_count,
+        transient_parse_count=transient_parse_count,
+        transient_other_count=transient_other_count,
+        permanent_count=permanent_count,
+        transient_infra_by_file=transient_infra_by_file,
+        transient_parse_by_file=transient_parse_by_file,
+        transient_other_by_file=transient_other_by_file,
+        permanent_by_file=permanent_by_file,
+    )
+
+
+def _print_failure_bucket(label: str, count: int, by_file: dict[str, int]) -> None:
+    print(f"{label:<18}: {count}")
+    for source, bucket_count in sorted(by_file.items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f"  {bucket_count:4d}  {_basename(source)}")
 
 
 def _build_state(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -359,6 +462,91 @@ def _clamp_sample_limit(value: int) -> int:
 
 
 _DEFAULT_INDEX_WORKERS = 8  # matches DEFAULT_INDEX_WORKERS in services/rag/config.py
+_STALE_ACTIVE_SECONDS = 5 * 60
+
+
+def _query_inflight_files() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return (extracting, embedding) active files with event age metadata.
+
+    Queries the event service for the latest lifecycle event per file in the
+    current RAG session. A file is considered active only when its newest
+    lifecycle event is 'batch.started' (actively extracting) or
+    'batch.completed' (waiting for embed/index completion). This avoids relying
+    on event publish ordering across async producers.
+
+    Returns empty lists when the event service is unavailable or holds no data
+    since last rag.started.
+    """
+    if not EVENT_QUERY_SOCKET.exists():
+        return [], []
+
+    session_anchor = (
+        "COALESCE((SELECT MAX(seq) FROM events WHERE signal = 'rag.started'), 0)"
+    )
+    lifecycle_sql = (
+        "WITH latest AS ("
+        f"  SELECT json_extract(e.payload, '$.file') AS file,"
+        "         e.signal AS signal,"
+        "         e.ts_unix_ms AS ts_unix_ms,"
+        "         ROW_NUMBER() OVER ("
+        "           PARTITION BY json_extract(e.payload, '$.file')"
+        "           ORDER BY e.seq DESC"
+        "         ) AS rn"
+        "  FROM events e"
+        "  WHERE e.signal IN ("
+        "    'rag.extraction.batch.started',"
+        "    'rag.extraction.batch.completed',"
+        "    'rag.file.indexed',"
+        "    'rag.file.indexing.failed',"
+        "    'rag.file.indexing.skipped',"
+        "    'rag.file.skipped',"
+        "    'rag.file.retry.deferred'"
+        "  )"
+        f"    AND e.seq > {session_anchor}"
+        "    AND json_extract(e.payload, '$.file') IS NOT NULL"
+        ")"
+        " SELECT file, signal, ts_unix_ms"
+        " FROM latest"
+        " WHERE rn = 1"
+        "   AND signal IN ('rag.extraction.batch.started', 'rag.extraction.batch.completed')"
+        " ORDER BY ts_unix_ms DESC"
+        " LIMIT 100"
+    )
+
+    try:
+        result = _query_event_service({"type": "sql", "sql": lifecycle_sql, "limit": 100})
+        rows = result.get("rows", [])
+        now_ms = int(time.time() * 1000)
+        extracting: list[dict[str, Any]] = []
+        embedding: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            file = row.get("file")
+            signal = row.get("signal")
+            if not file or signal not in {
+                "rag.extraction.batch.started",
+                "rag.extraction.batch.completed",
+            }:
+                continue
+            ts_unix_ms = _as_int(row.get("ts_unix_ms"))
+            age_seconds = (
+                max(0.0, (now_ms - ts_unix_ms) / 1000.0)
+                if ts_unix_ms is not None
+                else None
+            )
+            entry = {
+                "file": file,
+                "ts_unix_ms": ts_unix_ms,
+                "age_seconds": age_seconds,
+            }
+            if signal == "rag.extraction.batch.started":
+                extracting.append(entry)
+            else:
+                embedding.append(entry)
+        return extracting, embedding
+    except Exception:
+        return [], []
 
 
 def _query_extraction_chunks_per_sec() -> float | None:
@@ -391,7 +579,6 @@ def _query_extraction_chunks_per_sec() -> float | None:
     except Exception:
         pass
     return None
-
 
 
 def _fetch_failed_chunks(url: str) -> list[dict[str, Any]]:
@@ -444,8 +631,10 @@ def _fetch_indexing_status_fallback(url: str, sample_limit: int) -> dict[str, An
 
     if url.startswith("unix://"):
         rest = url[7:].lstrip("/")
-        uds_path = f"/{rest}" if rest else os.environ.get(
-            "RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock"
+        uds_path = (
+            f"/{rest}"
+            if rest
+            else os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock")
         )
 
         class _UnixHTTPConnection(HTTPConnection):
@@ -516,33 +705,102 @@ def _print_status_snapshot(status: dict[str, Any], url: str = "") -> None:
     """Render human-readable status snapshot from `/indexing/status` payload."""
     print("RAG Operational Status")
     print("======================")
-    print("Pending count includes in-flight indexing; after idle it should be zero.")
     print()
-    print(f"Pending work      : {int(status.get('pending_count', 0))}")
+
+    extracting, embedding = _query_inflight_files()
+    active = len(extracting) + len(embedding)
+    if active:
+        print(f"Active workers    : {active} files in-flight")
+        if extracting:
+            print(f"  Extracting ({len(extracting)}):")
+            for entry in extracting:
+                age = entry.get("age_seconds")
+                age_suffix = (
+                    f"  ({_fmt_duration(age)} ago)"
+                    if isinstance(age, int | float)
+                    else ""
+                )
+                stale_suffix = (
+                    " [stale >5m]"
+                    if isinstance(age, int | float) and age > _STALE_ACTIVE_SECONDS
+                    else ""
+                )
+                print(f"    {_basename(entry['file'])}{age_suffix}{stale_suffix}")
+        if embedding:
+            print(f"  Embedding ({len(embedding)}):")
+            for entry in embedding:
+                age = entry.get("age_seconds")
+                age_suffix = (
+                    f"  ({_fmt_duration(age)} ago)"
+                    if isinstance(age, int | float)
+                    else ""
+                )
+                stale_suffix = (
+                    " [stale >5m]"
+                    if isinstance(age, int | float) and age > _STALE_ACTIVE_SECONDS
+                    else ""
+                )
+                print(f"    {_basename(entry['file'])}{age_suffix}{stale_suffix}")
+        print()
+
+    pending = int(status.get("pending_count", 0))
+    print(f"Pending (queued)  : {pending}")
 
     failed_count = int(status.get("failed_extractions_count", 0))
     perm_count = int(status.get("failed_extractions_permanent_count", 0))
-    print(f"Failed chunks     : {failed_count}")
-    by_file: dict[str, int] = {}
-    if failed_count > 0 and url:
-        chunks = _fetch_failed_chunks(url)
-        for chunk in chunks:
-            src = chunk.get("source", "")
-            by_file[src] = by_file.get(src, 0) + 1
-        if by_file:
-            for src, n in sorted(by_file.items(), key=lambda kv: -kv[1]):
-                print(f"  {n:4d}  {_basename(src)}")
-    print(f"Permanent failures: {perm_count}")
-    if by_file:
+    breakdown = _load_failure_breakdown()
+    incomplete_files = 0
+    transient_total = max(0, failed_count - perm_count)
+    if breakdown is not None:
+        failed_count = breakdown.total_count
+        perm_count = breakdown.permanent_count
+        transient_total = breakdown.transient_total
+        incomplete_files = breakdown.incomplete_files_count
+        print(f"Failed chunks total : {failed_count}")
+        _print_failure_bucket(
+            "Transient infra",
+            breakdown.transient_infra_count,
+            breakdown.transient_infra_by_file,
+        )
+        _print_failure_bucket(
+            "Transient parse/output",
+            breakdown.transient_parse_count,
+            breakdown.transient_parse_by_file,
+        )
+        if breakdown.transient_other_count:
+            _print_failure_bucket(
+                "Transient other",
+                breakdown.transient_other_count,
+                breakdown.transient_other_by_file,
+            )
+        _print_failure_bucket(
+            "Permanent failures",
+            breakdown.permanent_count,
+            breakdown.permanent_by_file,
+        )
+    else:
+        print(f"Failed chunks total : {failed_count}")
+        if failed_count > 0 and url:
+            by_file: dict[str, int] = {}
+            chunks = _fetch_failed_chunks(url)
+            for chunk in chunks:
+                src = chunk.get("source", "")
+                by_file[src] = by_file.get(src, 0) + 1
+            if by_file:
+                for src, n in sorted(by_file.items(), key=lambda kv: -kv[1]):
+                    print(f"  {n:4d}  {_basename(src)}")
+                incomplete_files = len(by_file)
+        print(f"Permanent failures: {perm_count}")
+    if transient_total:
         rate = _query_extraction_chunks_per_sec()
         if rate is not None and rate > 0:
-            n_files = len(by_file)
+            n_files = incomplete_files or min(_DEFAULT_INDEX_WORKERS, transient_total)
             parallelism = min(n_files, _DEFAULT_INDEX_WORKERS)
-            est_s = failed_count / (rate * parallelism)
+            est_s = transient_total / (rate * parallelism)
             rate_per_min = rate * 60
             print(
                 f"Est. retry time   : ~{_fmt_duration(est_s)}"
-                f"  ({failed_count} chunks ÷ {rate_per_min:.1f} chunks/min"
+                f"  ({transient_total} transient chunks ÷ {rate_per_min:.1f} chunks/min"
                 f" × {parallelism} workers)"
             )
 
@@ -556,7 +814,7 @@ def _print_status_snapshot(status: dict[str, Any], url: str = "") -> None:
 
     source_count = int(status.get("indexed_sources_count", 0))
     if source_count > 0:
-        partial = len(by_file)
+        partial = incomplete_files
         complete = source_count - partial
         if partial:
             print(
@@ -630,6 +888,7 @@ def _print_failures() -> None:
     try:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")}
         has_permanent = "permanent" in cols
+        has_parse_reason = "parse_failure_reason" in cols
 
         if has_permanent:
             perm_rows = conn.execute(
@@ -641,11 +900,37 @@ def _print_failures() -> None:
                 "SELECT source, COUNT(*) FROM failed_extractions"
                 " WHERE permanent = 0 GROUP BY source ORDER BY source"
             ).fetchall()
+            transient_parse_rows = conn.execute(
+                "SELECT source, chunk_id, attempt_count, recorded_at, error"
+                + (
+                    ", parse_failure_reason"
+                    if has_parse_reason
+                    else ", NULL AS parse_failure_reason"
+                )
+                + " FROM failed_extractions WHERE permanent = 0"
+                " AND (error = 'invalid extraction response shape'"
+                " OR error = 'invalid extraction list payload'"
+                " OR error LIKE 'missing or invalid result after batch parsing%')"
+                " ORDER BY source, chunk_id"
+            ).fetchall()
         else:
             perm_rows = []
             transient_rows = conn.execute(
                 "SELECT source, COUNT(*) FROM failed_extractions"
                 " GROUP BY source ORDER BY source"
+            ).fetchall()
+            transient_parse_rows = conn.execute(
+                "SELECT source, chunk_id, attempt_count, recorded_at, error"
+                + (
+                    ", parse_failure_reason"
+                    if has_parse_reason
+                    else ", NULL AS parse_failure_reason"
+                )
+                + " FROM failed_extractions"
+                " WHERE error = 'invalid extraction response shape'"
+                " OR error = 'invalid extraction list payload'"
+                " OR error LIKE 'missing or invalid result after batch parsing%'"
+                " ORDER BY source, chunk_id"
             ).fetchall()
 
         total_perm = len(perm_rows)
@@ -679,6 +964,52 @@ def _print_failures() -> None:
             print("Files with transient failures (retrying):")
             for source, count in transient_rows:
                 print(f"  {_basename(source):50s}  {count} chunk(s)")
+            if transient_parse_rows:
+                print()
+                print("Transient parse/output rows:")
+                by_file: dict[str, list[tuple[str, int, str, str, str | None]]] = {}
+                for (
+                    source,
+                    chunk_id,
+                    attempt_count,
+                    recorded_at,
+                    error,
+                    parse_failure_reason,
+                ) in transient_parse_rows:
+                    by_file.setdefault(source, []).append(
+                        (
+                            chunk_id,
+                            attempt_count,
+                            recorded_at,
+                            error,
+                            parse_failure_reason,
+                        )
+                    )
+                for source, chunks in by_file.items():
+                    print(f"  {_basename(source)}  ({len(chunks)} chunks)")
+                    for (
+                        chunk_id,
+                        attempt_count,
+                        recorded_at,
+                        error,
+                        parse_failure_reason,
+                    ) in chunks:
+                        ts_str = recorded_at[:16] if recorded_at else "?"
+                        reason_suffix = (
+                            f"  reason={parse_failure_reason}"
+                            if parse_failure_reason
+                            else ""
+                        )
+                        print(
+                            f"    {chunk_id}  attempts={attempt_count}  last={ts_str}"
+                            f"  error={_short_error(error)}{reason_suffix}"
+                        )
+                if not has_parse_reason:
+                    print()
+                    print(
+                        "  (note: DB predates parse_failure_reason — "
+                        "restart RAG after the migration to populate parser details)"
+                    )
     finally:
         conn.close()
 
@@ -1114,6 +1445,51 @@ def _render_watch_event(
             )
 
         case "rag.extraction.failed":
+            return (
+                dir_start_ts,
+                batch_active,
+                batch_seen_activity,
+                batch_done,
+                batch_failed,
+                batch_skipped,
+                batch_effective_secs,
+                seq,
+            )
+
+        case "rag.file.retry.deferred":
+            path = p.get("file", "")
+            reason = str(p.get("reason", "deferred"))
+            failed_chunks = _as_int(p.get("failed_chunks"))
+            attempted_chunks = _as_int(p.get("attempted_chunks"))
+            failure_category = p.get("failure_category")
+            finish_reason = p.get("finish_reason")
+            detail = p.get("failure_detail")
+            top_reasons = p.get("top_failure_reasons")
+
+            counts = ""
+            if (
+                failed_chunks is not None
+                and failed_chunks >= 0
+                and attempted_chunks is not None
+                and attempted_chunks > 0
+            ):
+                counts = f"  {failed_chunks}/{attempted_chunks} chunks"
+
+            tags: list[str] = [f"reason={reason}"]
+            if isinstance(failure_category, str) and failure_category:
+                tags.append(f"category={failure_category}")
+            if isinstance(finish_reason, str) and finish_reason:
+                tags.append(f"finish={finish_reason}")
+            if isinstance(top_reasons, list):
+                cleaned = [str(item) for item in top_reasons if str(item).strip()]
+                if cleaned:
+                    tags.append(f"hints={','.join(cleaned[:3])}")
+            if isinstance(detail, str) and detail:
+                tags.append(f"detail={_short_error(detail)}")
+
+            emit(
+                f"{ts}  [↺ RETRY ]  {_basename(path)}{counts}  {'  '.join(tags)}"
+            )
             return (
                 dir_start_ts,
                 batch_active,

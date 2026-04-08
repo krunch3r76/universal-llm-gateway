@@ -222,6 +222,7 @@ class FailedChunkItem(BaseModel):
     chunk_id: str
     source: str
     error: str
+    parse_failure_reason: str | None = None
     attempt_count: int
     recorded_at: str
 

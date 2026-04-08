@@ -217,8 +217,10 @@ def create_entity(body: EntityCreate) -> EntityDetail:
         conn = cortex_conn()
         conn.execute(
             "INSERT INTO entities (id, type, name, description, status, aliases, "
-            "attributes, notes, source_uri, content_hash, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "attributes, notes, source_uri, content_hash, "
+            "retention_policy, retention_ttl_days, "
+            "created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.id,
                 body.type,
@@ -230,6 +232,8 @@ def create_entity(body: EntityCreate) -> EntityDetail:
                 body.notes,
                 body.source_uri,
                 body.content_hash,
+                body.retention_policy or "permanent",
+                body.retention_ttl_days,
                 now,
                 now,
             ),

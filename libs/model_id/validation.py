@@ -13,9 +13,8 @@ def validate_model_id(model_id: str) -> str | None:
 
     Rules:
     - Cannot be empty
-    - Cannot have duplicate suffixes (-cpu-cpu, -hybrid-hybrid, -mcp-mcp)
+    - Cannot have duplicate suffixes (-cpu-cpu, -hybrid-hybrid)
     - Cannot have conflicting suffixes (-cpu-hybrid)
-    - ``-mcp`` must be the outermost suffix (after ``-cpu`` when both present)
     - Suffixes must be at end in correct order
 
     Args:
@@ -28,11 +27,6 @@ def validate_model_id(model_id: str) -> str | None:
         return "Model ID cannot be empty"
 
     work_id = model_id
-    if work_id.endswith("-mcp"):
-        inner = work_id[:-4]
-        if inner.endswith("-mcp"):
-            return "Model ID contains duplicate -mcp suffix"
-        work_id = inner
 
     # Check for duplicate suffixes
     if work_id.count("-cpu") > 1:

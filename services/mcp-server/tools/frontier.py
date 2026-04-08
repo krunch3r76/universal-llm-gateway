@@ -59,6 +59,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         boot: str = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Generate with xAI Grok models via Stargate provider-native endpoint.
 
@@ -128,6 +129,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             req=req,
             include_raw=include_raw,
             tool_name="grok_generate",
+            timeout=timeout,
         )
 
     @mcp.tool()
@@ -151,6 +153,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         boot: str = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Generate with Anthropic Claude models via Stargate provider-native endpoint.
 
@@ -160,6 +163,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         MCP injection is enabled unless the caller opts out with
         ``boot="none"`` or ``inject_mcp=False``.
+
+        ``timeout`` overrides the read timeout in seconds (default 600, max 1800).
+        Use higher values for subagent dispatches with boot="full" or heavy
+        tool-use workloads that may exceed the default ceiling.
 
         Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="claude_generate")
         """
@@ -215,6 +222,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             req=req,
             include_raw=include_raw,
             tool_name="claude_generate",
+            timeout=timeout,
         )
 
     @mcp.tool()
@@ -240,6 +248,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         boot: str = "none",
         boot_ref: str | None = None,
         include_raw: bool = False,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         """Backward-compatible generation — routes to grok_generate or claude_generate.
 
@@ -275,4 +284,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         )
         if isinstance(req, dict):
             return req
-        return execute_frontier(model=model, req=req, include_raw=include_raw)
+        return execute_frontier(
+            model=model, req=req, include_raw=include_raw, timeout=timeout
+        )

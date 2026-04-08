@@ -113,7 +113,7 @@ def _build_node_models_response(proxy: StargateProxy) -> dict:
     status_map = get_model_status_map(local_id, gm, fm)
     pipeline_ids = (
         sorted(proxy.pipeline_registry.pipelines.keys())
-        if proxy.pipeline_registry
+        if proxy.is_pipeline_system_ready and proxy.pipeline_registry
         else []
     )
     node_models, loaded_model_ids = _node_models_from_source(

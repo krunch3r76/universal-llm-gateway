@@ -10,10 +10,13 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import embeddings as cortex_embeddings
+from . import vector_store
 from .db import check_cortex_db, cortex_conn, run_migrations
 from .routes import (
     assertions,
@@ -25,16 +28,45 @@ from .routes import (
     entity_status,
     extraction_runs,
     gated,
+    graph,
     ingest,
+    reaper,
     relationships,
+    resolve,
     salience,
     session_journals,
     stats,
     surface_forms,
+    tags,
 )
 from .scoring import compact_access_log
 
 logger = logging.getLogger("cortex-api")
+
+_DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
+
+
+def _init_vector_subsystem() -> None:
+    """Configure embedding client + ChromaDB vector store at startup.
+
+    Best-effort: failures are logged but do not prevent cortex-api from
+    serving. Search will degrade to FTS5-only if this fails.
+    """
+    model_id = os.environ.get("CORTEX_EMBEDDING_MODEL", _DEFAULT_EMBEDDING_MODEL)
+    try:
+        cortex_embeddings.configure(model_id)
+    except Exception:
+        logger.warning("Failed to configure embedding model", exc_info=True)
+        return
+
+    db_path_str = os.environ.get(
+        "CORTEX_DB_PATH", str(Path.home() / ".cortex" / "cortex.db")
+    )
+    db_dir = Path(db_path_str).parent
+    try:
+        vector_store.init_vector_store(db_dir)
+    except Exception:
+        logger.warning("Failed to initialize vector store", exc_info=True)
 
 
 def create_app(*, db_path: str | None = None) -> FastAPI:
@@ -70,6 +102,8 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
                 logger.debug("Access log compaction skipped (table may not exist yet)")
             finally:
                 conn.close()
+
+            _init_vector_subsystem()
         else:
             logger.warning("cortex.db not found — skipping migrations")
 
@@ -78,7 +112,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
 
     app = FastAPI(
         title="cortex-api",
-        version="2.0.0",
+        version="3.0.0",
         description="REST API for the Cortex knowledge graph.",
         lifespan=lifespan,
     )
@@ -105,6 +139,10 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(extraction_runs.router)
     app.include_router(gated.router)
     app.include_router(ingest.router)
+    app.include_router(resolve.router)
+    app.include_router(tags.router)
+    app.include_router(graph.router)
+    app.include_router(reaper.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

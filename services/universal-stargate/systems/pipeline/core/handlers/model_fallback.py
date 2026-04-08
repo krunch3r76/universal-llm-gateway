@@ -83,7 +83,6 @@ async def try_fallbacks(
                 context,
                 prompt_config,
                 fallback_id,
-                None,
                 user_prompt,
                 source_provenance,
             )

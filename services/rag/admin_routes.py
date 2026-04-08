@@ -81,6 +81,26 @@ router = APIRouter()
 type ArticleRow = dict[str, str]
 
 
+def _coverage_sources(
+    *,
+    prop_idx: PropertyIndex | None,
+    chroma_sources: set[str],
+) -> list[str]:
+    """Return source paths visible to coverage for both extracted and raw-only corpora.
+
+    Property-backed scopes surface via ``properties.source``. Extraction-disabled
+    corpora such as ``persian_poetry`` can legitimately have zero property rows
+    while still being fully indexed in ChromaDB and cached in ``indexed_sources``.
+    Coverage must union all three surfaces instead of treating properties as the
+    sole authority.
+    """
+    if prop_idx is None:
+        return sorted(chroma_sources)
+    property_sources = set(prop_idx.get_sources())
+    cached_sources = set(prop_idx.get_indexed_sources())
+    return sorted(property_sources | cached_sources | chroma_sources)
+
+
 def _align_list_length(
     values: list[Any] | None,
     expected: int,
@@ -229,6 +249,11 @@ def register_admin_routes(
             on_index_error=_on_error,
             force=force,
             operation="reindex" if is_reindex else "index",
+            max_concurrency=(
+                config.index_workers
+                if (config := get_config_fn()) is not None
+                else None
+            ),
         )
 
         if is_reindex:
@@ -619,7 +644,7 @@ def register_admin_routes(
     def get_coverage() -> CoverageResponse:
         """Per-scope, per-prefix view of indexed file counts and recency.
 
-        Aggregates property index sources against configured scope prefixes.
+        Aggregates indexed sources against configured scope prefixes.
         Optionally enriches with last_indexed timestamps from ChromaDB chunk
         metadata (skipped when collection exceeds 100k chunks).
         """
@@ -628,7 +653,6 @@ def register_admin_routes(
             return CoverageResponse(scopes={})
 
         prop_idx = get_property_index_fn()
-        all_sources = prop_idx.get_sources() if prop_idx else []
 
         # Build source -> max(indexed_at) from ChromaDB metadata.
         # Skip for very large collections to keep this admin endpoint responsive.
@@ -658,6 +682,11 @@ def register_admin_routes(
                 timestamp_scan_degraded = True
                 # Add a field to CoverageResponse to hold this error message
                 # self.timestamp_scan_error = str(e)
+
+        all_sources = _coverage_sources(
+            prop_idx=prop_idx,
+            chroma_sources=set(source_last_indexed),
+        )
 
         scopes: dict[str, ScopeCoverage] = {}
         for scope_name, scope_def in config.scopes.items():

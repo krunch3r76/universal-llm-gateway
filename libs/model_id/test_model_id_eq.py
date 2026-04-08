@@ -109,47 +109,6 @@ def test_xai_native_bare():
     assert m.is_cloud is True
 
 
-def test_cloud_native_mcp_suffix():
-    """Cloud IDs with -mcp: is_mcp set, api_model_id strips provider and -mcp."""
-    m = ModelId.parse("anthropic/claude-sonnet-4-6-mcp")
-    assert m.is_mcp is True
-    assert m.provider == "anthropic"
-    assert m.base_id == "anthropic/claude-sonnet-4-6"
-    assert m.api_model_id == "claude-sonnet-4-6"
-    assert m.normalized == "anthropic/claude-sonnet-4-6-mcp"
-    assert m.is_cloud is True
-
-
-def test_cloud_mcp_distinct_from_base():
-    """Base cloud model and -mcp variant are distinct identity."""
-    base = ModelId.parse("anthropic/claude-sonnet-4-6")
-    mcp = ModelId.parse("anthropic/claude-sonnet-4-6-mcp")
-    assert base != mcp
-    assert hash(base) != hash(mcp)
-    assert base.normalized != mcp.normalized
-
-
-def test_openrouter_cloud_mcp():
-    """openrouter/ prefix preserved with -mcp on cloud id."""
-    m = ModelId.parse("openrouter/anthropic/claude-sonnet-4-6-mcp")
-    assert m.routing_layer == "openrouter"
-    assert m.is_mcp is True
-    assert m.provider == "anthropic"
-    assert m.base_id == "anthropic/claude-sonnet-4-6"
-    assert m.api_model_id == "anthropic/claude-sonnet-4-6"
-
-
-def test_local_hybrid_mcp():
-    """Local model can combine -hybrid and -mcp (mcp outermost)."""
-    m = ModelId.parse("model-8192-hybrid-mcp")
-    assert m.is_hybrid is True
-    assert m.is_mcp is True
-    assert m.base_id == "model"
-    assert m.context_length == 8192
-    assert m.normalized == "model-8192-mcp"
-    assert m.synthetic_id == "model-8192-hybrid-mcp"
-
-
 if __name__ == "__main__":
     test_modelid_eq_string()
     test_modelid_eq_modelid()
@@ -163,8 +122,4 @@ if __name__ == "__main__":
     test_routing_layer_identity()
     test_routing_layer_preserved_by_with_context()
     test_xai_native_bare()
-    test_cloud_native_mcp_suffix()
-    test_cloud_mcp_distinct_from_base()
-    test_openrouter_cloud_mcp()
-    test_local_hybrid_mcp()
     print("All tests passed!")

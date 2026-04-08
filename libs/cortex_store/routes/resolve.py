@@ -1,0 +1,192 @@
+"""Cortex URI resolution — cortex://TYPE/SLUG[?r=N][&a=ARTIFACT]
+
+Resolves cortex:// URIs to entity + optional assertion data.
+Additive endpoint — does not modify any existing routes.
+"""
+
+from __future__ import annotations
+
+import logging
+from urllib.parse import parse_qs, urlparse
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from ..db import cortex_conn, decode_row, query
+
+_resolve_logger = logging.getLogger("cortex-api.resolve")
+
+router = APIRouter(prefix="/resolve", tags=["resolve"])
+
+_ASSERTION_COLS = (
+    "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by, "
+    "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
+    "observed_at, valid_from, valid_until, superseded_by, "
+    "review_status, reviewer, reviewed_at, review_notes, "
+    "resolution_status, fulfillment_assertion_id, quality_score, "
+    "prospective_summary, events_json, artifact_uri, artifact_storage, "
+    "entrenchment_score, created_at"
+)
+
+_JSON_FIELDS = frozenset({"evidence_uris"})
+
+
+def parse_cortex_uri(uri: str) -> dict:
+    """Parse a cortex:// URI into components.
+
+    Supports:
+      cortex://TYPE/SLUG
+      cortex://TYPE/SLUG?r=N
+      cortex://TYPE/SLUG?r=N&a=ARTIFACT
+      cortex://assertion/ID
+    """
+    parsed = urlparse(uri)
+    if parsed.scheme != "cortex":
+        raise ValueError(f"Not a cortex:// URI: {uri}")
+
+    entity_type = parsed.netloc
+    slug = parsed.path.lstrip("/")
+
+    if not entity_type or not slug:
+        raise ValueError(f"Invalid cortex:// URI: {uri}")
+
+    params = parse_qs(parsed.query)
+    revision = int(params["r"][0]) if "r" in params else None
+    artifact = params["a"][0] if "a" in params else None
+
+    return {
+        "type": entity_type,
+        "slug": slug,
+        "entity_id": f"{entity_type}:{slug}",
+        "revision": revision,
+        "artifact": artifact,
+    }
+
+
+@router.get("")
+def resolve_cortex_uri(
+    uri: str = Query(..., description="cortex:// URI to resolve"),
+    tag: str | None = Query(
+        None, description="Resolve to assertion pointed to by this tag"
+    ),
+) -> dict:
+    """Resolve a cortex:// URI to entity + optional assertion data.
+
+    When *tag* is provided, resolve to the assertion pointed to by that tag
+    instead of the latest non-superseded assertion.
+    """
+    try:
+        parsed = parse_cortex_uri(uri)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+    with cortex_conn() as conn:
+        # Special case: cortex://assertion/ID
+        if parsed["type"] == "assertion":
+            try:
+                assertion_id = int(parsed["slug"])
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid assertion ID: {parsed['slug']}",
+                )
+            rows = query(
+                conn,
+                f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+                (assertion_id,),
+            )
+            if not rows:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Assertion not found: {assertion_id}",
+                )
+            return {
+                "resolved": "assertion",
+                "uri": uri,
+                "assertion": decode_row(rows[0], _JSON_FIELDS),
+            }
+
+        # Entity resolution
+        entity_id = parsed["entity_id"]
+        entity_rows = query(
+            conn,
+            "SELECT * FROM entities WHERE id = ?",
+            (entity_id,),
+        )
+        if not entity_rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Entity not found: {entity_id}",
+            )
+
+        result: dict = {
+            "resolved": "entity",
+            "uri": uri,
+            "entity": dict(entity_rows[0]),
+        }
+
+        # Tag-based resolution takes precedence over revision pinning
+        if tag is not None:
+            tag_rows = query(
+                conn,
+                "SELECT assertion_id FROM tag_assignments "
+                "WHERE tag_name = ? AND entity_id = ?",
+                (tag, entity_id),
+            )
+            if not tag_rows:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Tag {tag!r} not found for entity {entity_id}",
+                )
+            assertion_rows = query(
+                conn,
+                f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+                (tag_rows[0]["assertion_id"],),
+            )
+            if not assertion_rows:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Tagged assertion {tag_rows[0]['assertion_id']} no longer exists",
+                )
+            result["assertion"] = decode_row(assertion_rows[0], _JSON_FIELDS)
+            result["resolved_via_tag"] = tag
+            try:
+                conn.execute(
+                    "INSERT INTO entity_access_log "
+                    "(entity_id, agent, operation, source) "
+                    "VALUES (?, 'system', 'tag_resolve', 'tag_resolve')",
+                    (entity_id,),
+                )
+                conn.commit()
+            except Exception:
+                _resolve_logger.debug("Access log insert failed for tag_resolve %s", entity_id)
+            return result
+
+        # Revision pinning
+        if parsed["revision"] is not None:
+            r = parsed["revision"]
+            assertion_rows = query(
+                conn,
+                f"SELECT {_ASSERTION_COLS} FROM assertions "
+                "WHERE entity_id = ? ORDER BY created_at ASC LIMIT 1 OFFSET ?",
+                (entity_id, r - 1),
+            )
+            if not assertion_rows:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Revision {r} not found for {entity_id}",
+                )
+            result["assertion"] = decode_row(assertion_rows[0], _JSON_FIELDS)
+
+            # Artifact dereference
+            if parsed["artifact"]:
+                a = result["assertion"]
+                result["artifact"] = {
+                    "field": parsed["artifact"],
+                    "uri": a.get("artifact_uri"),
+                    "storage": a.get("artifact_storage"),
+                }
+
+        return result

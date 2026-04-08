@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS failed_extractions (
     chunk_id TEXT NOT NULL PRIMARY KEY,
     source TEXT NOT NULL,
     error TEXT NOT NULL,
+    parse_failure_reason TEXT,
     attempt_count INTEGER NOT NULL DEFAULT 1,
     permanent INTEGER NOT NULL DEFAULT 0,
     recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -142,6 +143,7 @@ class FailedChunk:
     chunk_id: str
     source: str
     error: str
+    parse_failure_reason: str | None
     attempt_count: int
     permanent: bool
     recorded_at: str
@@ -236,6 +238,11 @@ class PropertyIndex:
                 "ALTER TABLE failed_extractions "
                 "ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0"
             )
+        if "parse_failure_reason" not in failed_cols:
+            conn.execute(
+                "ALTER TABLE failed_extractions "
+                "ADD COLUMN parse_failure_reason TEXT"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_failed_permanent ON failed_extractions(permanent)"
         )
@@ -301,6 +308,17 @@ class PropertyIndex:
                     "TEXT NOT NULL DEFAULT 'local'"
                 )
 
+        def _migration_v7_parse_failure_reason(conn: sqlite3.Connection) -> None:
+            """Adds per-chunk parse failure detail to failed extraction rows."""
+            cols = {
+                row[1] for row in conn.execute("PRAGMA table_info(failed_extractions)")
+            }
+            if "parse_failure_reason" not in cols:
+                conn.execute(
+                    "ALTER TABLE failed_extractions "
+                    "ADD COLUMN parse_failure_reason TEXT"
+                )
+
         migrations: list[tuple[int, str, Callable[[sqlite3.Connection], None]]] = [
             (
                 1,
@@ -331,6 +349,11 @@ class PropertyIndex:
                 6,
                 "scope_freshness.classified_tier for vocabulary pipeline skip-fresh",
                 _migration_v6_classified_tier,
+            ),
+            (
+                7,
+                "failed_extractions.parse_failure_reason for parser diagnostics",
+                _migration_v7_parse_failure_reason,
             ),
         ]
         for version, description, fn in migrations:
@@ -548,6 +571,7 @@ class PropertyIndex:
         source: str,
         error: str,
         *,
+        parse_failure_reason: str | None = None,
         permanent: bool = False,
         increment_attempt: bool = True,
     ) -> None:
@@ -568,10 +592,11 @@ class PropertyIndex:
             conn = self._ensure_conn()
             conn.execute(
                 "INSERT INTO failed_extractions"
-                " (chunk_id, source, error, attempt_count, permanent)"
-                " VALUES (?, ?, ?, ?, ?)"
+                " (chunk_id, source, error, parse_failure_reason, attempt_count, permanent)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
                 " ON CONFLICT(chunk_id) DO UPDATE SET"
                 "   error = excluded.error,"
+                "   parse_failure_reason = excluded.parse_failure_reason,"
                 "   attempt_count = attempt_count + ?,"
                 "   permanent = MAX(permanent, excluded.permanent),"
                 "   recorded_at = datetime('now')",
@@ -579,6 +604,7 @@ class PropertyIndex:
                     chunk_id,
                     source,
                     error,
+                    parse_failure_reason,
                     attempt_increment,
                     permanent,
                     attempt_increment,
@@ -1241,6 +1267,20 @@ class PropertyIndex:
             ).fetchall()
         return [r[0] for r in rows]
 
+    def get_indexed_sources(self, prefix: str | None = None) -> list[str]:
+        """Return cached indexed source paths, optionally filtered by prefix."""
+        conn = self._ensure_conn()
+        if prefix:
+            rows = conn.execute(
+                "SELECT source FROM indexed_sources WHERE source LIKE ? ORDER BY source",
+                (f"{prefix}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT source FROM indexed_sources ORDER BY source"
+            ).fetchall()
+        return [r[0] for r in rows]
+
     def list_known_sources(self, prefixes: list[str]) -> set[str]:
         """Return source paths present in metadata-only tables under watched prefixes."""
         if not prefixes:
@@ -1279,14 +1319,16 @@ class PropertyIndex:
         conn = self._ensure_conn()
         if source is not None:
             rows = conn.execute(
-                "SELECT chunk_id, source, error, attempt_count, permanent, recorded_at"
+                "SELECT chunk_id, source, error, parse_failure_reason, attempt_count,"
+                " permanent, recorded_at"
                 " FROM failed_extractions WHERE source = ?"
                 " ORDER BY recorded_at DESC",
                 (source,),
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT chunk_id, source, error, attempt_count, permanent, recorded_at"
+                "SELECT chunk_id, source, error, parse_failure_reason, attempt_count,"
+                " permanent, recorded_at"
                 " FROM failed_extractions ORDER BY recorded_at DESC"
             ).fetchall()
         return [
@@ -1294,9 +1336,10 @@ class PropertyIndex:
                 chunk_id=r[0],
                 source=r[1],
                 error=r[2],
-                attempt_count=r[3],
-                permanent=bool(r[4]),
-                recorded_at=r[5],
+                parse_failure_reason=r[3],
+                attempt_count=r[4],
+                permanent=bool(r[5]),
+                recorded_at=r[6],
             )
             for r in rows
         ]

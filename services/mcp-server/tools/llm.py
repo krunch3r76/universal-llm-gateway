@@ -119,12 +119,26 @@ def register_llm_tools(mcp: FastMCP) -> None:
         or cloud proxy passthrough. Use ``claude_generate`` / ``grok_generate``
         only when you need provider-native features (thinking, MCP, structured output).
 
+        **Model ID format** (CRITICAL — wrong format → 404):
+
+        - ``anthropic/claude-sonnet-4`` — direct Anthropic API
+        - ``xai/grok-4.20-0309-reasoning`` — direct xAI API
+        - ``openai/gpt-5.4`` — direct OpenAI API
+        - ``openrouter/google/gemini-2.5-flash`` — OpenRouter (note triple-segment ID)
+        - ``openrouter/qwen/qwen3-32b`` — OpenRouter
+        - ``hermes-3-llama-3-1-70b-...-16384-hybrid`` — local model (no slash)
+
+        Google, Qwen, Meta, Mistral, and all other providers without a direct
+        API integration MUST use the ``openrouter/`` prefix. Bare
+        ``google/gemini-*`` will 404 — there is no direct Google provider.
+
+        Use ``model_status()`` to discover available model IDs.
+
         Args:
             messages: Conversation messages (list of ``{role, content}`` dicts).
             system: Optional system prompt prepended as a ``{"role": "system"}``
                 message.  Ignored when empty.
-            model: Any model ID known to Stargate — local model, pipeline,
-                or cloud (e.g. ``anthropic/claude-sonnet-4``).
+            model: Model ID in the format described above.
             max_tokens: Maximum tokens to generate.
             temperature: Sampling temperature. None = model/provider default.
             top_p: Nucleus sampling probability mass. None = default.

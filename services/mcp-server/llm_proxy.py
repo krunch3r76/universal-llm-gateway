@@ -1,9 +1,14 @@
-"""LLM proxy — multi-provider passthrough with credential + MCP injection.
+"""LLM proxy — multi-provider passthrough with credential injection.
 
 Accepts Anthropic-shaped JSON at ``POST /llm/v1/messages`` (messages, optional
 system, max_tokens). Routes by model ID: Anthropic Messages API, or xAI/OpenAI
 Responses API. Clients authenticate with the Vortex bearer token; provider keys
-and MCP URL never leave the server.
+never leave the server.
+
+MCP tool calling is NOT injected here.  API calls use client-side tool
+resolution via the frontier tools (``claude_generate``, ``grok_generate``).
+The Connector pattern (``mcp_servers``) only passes through if the caller
+explicitly includes it in the request body.
 """
 
 from __future__ import annotations
@@ -15,10 +20,8 @@ import httpx
 from llm_adapters import (
     AnthropicAdapter,
     ResponsesAPIAdapter,
-    anthropic_inject_mcp_into_body,
     body_to_llm_request,
     effective_provider_for_model,
-    mcp_config_from_env,
     resolve_llm_adapter,
 )
 from mcp_events import monotonic_now, record
@@ -31,8 +34,6 @@ logger = get_logger(__name__)
 
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_BETA = "mcp-client-2025-11-20"
-_MCP_SERVER_NAME = "vortex"
-_MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "").strip()
 _ANTHROPIC_BASE = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com").rstrip(
     "/"
 )
@@ -49,10 +50,6 @@ _CORS_HEADERS: dict[str, str] = {
 }
 
 
-def _get_mcp_auth_token() -> str:
-    return os.environ.get("MCP_AUTH_TOKEN", "").strip()
-
-
 def handle_llm_preflight() -> JSONResponse:
     """Handle OPTIONS /llm/* — CORS preflight response."""
     return JSONResponse({"status": "ok"}, headers=_CORS_HEADERS)
@@ -65,7 +62,7 @@ def _content_block_count(result: dict, *, provider: str) -> int:
 
 
 async def handle_llm_proxy(request: Request) -> JSONResponse:
-    """Proxy POST /llm/v1/messages to the resolved provider with key + MCP injection."""
+    """Proxy POST /llm/v1/messages to the resolved provider with key injection."""
     try:
         body = await request.json()
     except json.JSONDecodeError:
@@ -135,17 +132,6 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             if isinstance(adapter, AnthropicAdapter):
-                if (
-                    _MCP_SERVER_URL
-                    and parsed.is_mcp
-                    and body.get("tool_choice") != "none"
-                ):
-                    anthropic_inject_mcp_into_body(
-                        body,
-                        mcp_url=_MCP_SERVER_URL,
-                        mcp_name=_MCP_SERVER_NAME,
-                        mcp_auth_token=_get_mcp_auth_token(),
-                    )
                 upstream_headers = {
                     "x-api-key": os.environ.get("ANTHROPIC_API_KEY", "").strip(),
                     "anthropic-version": _ANTHROPIC_VERSION,
@@ -160,13 +146,8 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
                     json=body,
                 )
             elif isinstance(adapter, ResponsesAPIAdapter):
-                llm_req = body_to_llm_request(
-                    body, model, wants_remote_mcp=parsed.is_mcp
-                )
-                mcp = mcp_config_from_env()
-                url, headers, json_body = adapter.build_request(
-                    llm_req, mcp if llm_req.inject_mcp else None
-                )
+                llm_req = body_to_llm_request(body, model)
+                url, headers, json_body = adapter.build_request(llm_req)
                 resp = await client.post(url, headers=headers, json=json_body)
             else:
                 return JSONResponse(

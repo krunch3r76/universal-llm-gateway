@@ -22,7 +22,6 @@ class ModelRef(BaseModel):
 
     Core fields:
         model: Model ID string
-        system_prompt: Optional system prompt override
         profile: Inference profile name to apply for this model (e.g.
             "qwen3-5-instruct", "qwen3-5-instruct-reasoning"). Inserts between
             step-level and pipeline-level profile in the resolution hierarchy.
@@ -39,12 +38,14 @@ class ModelRef(BaseModel):
         prompt_override: str | None (alternative prompt_ref for this model)
 
     Invariant: ∀ extra field: handler reads via getattr(model_config, field, default)
+    Invariant: ¬system_prompt — system prompts belong on the step (StepConfig.system_prompt)
+               or in the prompt definition (prompts.yaml). ModelRef is model routing, not
+               prompt engineering.
     """
 
     model_config = ConfigDict(extra="allow")
 
     model: str
-    system_prompt: str | None = None
     profile: str | None = None
 
 

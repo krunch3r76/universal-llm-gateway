@@ -1,10 +1,7 @@
 """
 Core ModelId class for parsing and representing model identifiers.
 
-Pattern: {base_model_id}[-{context}][-hybrid][-cpu][-mcp]
-
-Optional ``-mcp`` (outermost, stripped first) opts into remote MCP for cloud
-and local IDs; it is identity-bearing in ``normalized`` / ``routing_key``.
+Pattern: {base_model_id}[-{context}][-hybrid][-cpu]
 
 Examples:
     - 'hermes3-llama-3.1-70b' → base only
@@ -34,8 +31,7 @@ class ModelId:
         - routing_key includes context (different contexts = different models)
         - normalized is consistent for dict keys (strips -hybrid, keeps -cpu)
         - Two ModelIds with same routing_key represent the same loadable variant
-        - Cloud IDs skip local -cpu/-hybrid/context parsing; ``-mcp`` is
-          stripped before cloud detection.
+        - Cloud IDs skip local -cpu/-hybrid/context parsing.
 
     Usage:
         model = ModelId.parse("model-8192-hybrid")
@@ -67,9 +63,6 @@ class ModelId:
     is_hybrid: bool
     """True if model ID ends with -hybrid suffix."""
 
-    is_mcp: bool = False
-    """True if model ID ends with -mcp suffix (explicit remote MCP opt-in)."""
-
     backend_type: str | None = None
     """Backend type: None (local), 'federated', 'cloud_api', 'vps'."""
 
@@ -93,7 +86,6 @@ class ModelId:
         Parse a model ID string into a ModelId object.
 
         Parse order (outermost to innermost):
-        0. MCP opt-in suffix (-mcp), cloud and local
         1. Routing prefix (openrouter/)
         2. Cloud branch (contains /) or local: device (-cpu), hybrid (-hybrid),
            context (-NNNN)
@@ -120,13 +112,6 @@ class ModelId:
 
         original = model_id_str
 
-        is_mcp = False
-        if model_id_str.endswith("-mcp"):
-            if len(model_id_str) <= 4:
-                raise ValueError("Model ID cannot be only '-mcp'")
-            is_mcp = True
-            model_id_str = model_id_str[:-4]
-
         # Strip known routing prefix (openrouter/) before parsing.
         routing_layer: str | None = None
         if "/" in model_id_str:
@@ -136,7 +121,7 @@ class ModelId:
                 model_id_str = model_id_str[len(first_segment) + 1 :]
 
         # Cloud model IDs contain '/' (e.g., 'anthropic/claude-sonnet-4-20250514').
-        # Opaque pass-through except -mcp (already stripped from base_id string).
+        # Opaque pass-through — no local suffix parsing for cloud IDs.
         if "/" in model_id_str:
             provider_prefix = model_id_str.split("/", 1)[0]
             return cls(
@@ -145,7 +130,6 @@ class ModelId:
                 context_length=None,
                 is_cpu=False,
                 is_hybrid=False,
-                is_mcp=is_mcp,
                 backend_type="cloud_api",
                 provider=provider_prefix,
                 routing_layer=routing_layer,
@@ -177,7 +161,6 @@ class ModelId:
             context_length=context_length,
             is_cpu=is_cpu,
             is_hybrid=is_hybrid,
-            is_mcp=is_mcp,
         )
 
     @property
@@ -188,7 +171,7 @@ class ModelId:
         Invariant: Two models with same routing_key represent the same
         loadable model variant. Different context lengths are different variants.
 
-        Format: "{base_id}[-{context}][-cpu][-mcp]"
+        Format: "{base_id}[-{context}][-cpu]"
         Note: -hybrid is stripped (hybrid and non-hybrid share routing key)
         Note: Context length IS included (different contexts = different resources)
         """
@@ -202,7 +185,7 @@ class ModelId:
         Strips -hybrid suffix (informational only).
         Preserves -cpu suffix (affects resource allocation).
 
-        Format: "{base_id}[-{context}][-cpu][-mcp]"
+        Format: "{base_id}[-{context}][-cpu]"
         """
         parts = [self.base_id]
         if self.context_length is not None:
@@ -210,8 +193,33 @@ class ModelId:
         result = "-".join(parts)
         if self.is_cpu:
             result += "-cpu"
-        if self.is_mcp:
-            result += "-mcp"
+        return result
+
+    @property
+    def process_key(self) -> str:
+        """Key for shared physical-process resources (supervisor, socket, PID).
+
+        Hybrid and non-hybrid variants share the same worker process, so this
+        key strips -hybrid (same as ``normalized``). Use for ProcessState
+        lookups where the underlying resource is a single OS process.
+        """
+        return self.normalized
+
+    @property
+    def tracking_key(self) -> str:
+        """Key for per-variant state tracking (state machine, ModelResourceInfo).
+
+        Preserves -hybrid because each variant has independent lifecycle state:
+        a hybrid variant can be BUSY while its non-hybrid sibling is unloading.
+        """
+        parts = [self.base_id]
+        if self.context_length is not None:
+            parts.append(str(self.context_length))
+        result = "-".join(parts)
+        if self.is_hybrid:
+            result += "-hybrid"
+        if self.is_cpu:
+            result += "-cpu"
         return result
 
     @property
@@ -219,8 +227,7 @@ class ModelId:
         """
         ID for catalog lookups (base + context for config resolution).
 
-        Format: "{base_id}-{context}" or "{base_id}" (no ``-mcp``; use
-        ``normalized`` / ``original`` for MCP-specific catalog entries).
+        Format: "{base_id}-{context}" or "{base_id}"
         """
         if self.context_length is not None:
             return f"{self.base_id}-{self.context_length}"
@@ -231,7 +238,7 @@ class ModelId:
         """
         Full synthetic ID including all suffixes.
 
-        Format: "{base_id}-{context}[-hybrid][-cpu][-mcp]"
+        Format: "{base_id}-{context}[-hybrid][-cpu]"
         """
         parts = [self.base_id]
         if self.context_length is not None:
@@ -241,8 +248,6 @@ class ModelId:
             result += "-hybrid"
         if self.is_cpu:
             result += "-cpu"
-        if self.is_mcp:
-            result += "-mcp"
         return result
 
     @property
@@ -339,7 +344,6 @@ class ModelId:
             context_length=context,
             is_cpu=self.is_cpu,
             is_hybrid=self.is_hybrid,
-            is_mcp=self.is_mcp,
             backend_type=self.backend_type,
             provider=self.provider,
             routing_layer=self.routing_layer,
@@ -355,7 +359,6 @@ class ModelId:
             context_length=self.context_length,
             is_cpu=cpu,
             is_hybrid=hybrid,
-            is_mcp=self.is_mcp,
             backend_type=self.backend_type,
             provider=self.provider,
             routing_layer=self.routing_layer,
@@ -388,8 +391,6 @@ class ModelId:
             parts.append("cpu=True")
         if self.is_hybrid:
             parts.append("hybrid=True")
-        if self.is_mcp:
-            parts.append("mcp=True")
         if self.backend_type:
             parts.append(f"backend={self.backend_type}")
         if self.provider:
