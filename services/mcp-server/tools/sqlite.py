@@ -160,7 +160,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
     max_rows: int = int(_CONFIG["max_rows"])
     allow_destructive: bool = bool(_CONFIG["allow_destructive"])
 
-    @mcp.tool()
+    @mcp.tool(title="SQLite: List Databases")
     def sqlite_list_databases() -> dict[str, list[dict[str, str]]]:
         """List all configured SQLite databases."""
         databases: list[dict[str, str]] = []
@@ -181,7 +181,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         record("mcp.sqlite.databases.listed", count=len(databases))
         return {"databases": databases}
 
-    @mcp.tool()
+    @mcp.tool(title="SQLite: Schema")
     def sqlite_schema(
         db: str = "default",
         table: str | None = None,
@@ -256,7 +256,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         )
         return {"tables": result_tables}
 
-    @mcp.tool()
+    @mcp.tool(title="SQL Query (Read-Only)")
     def sql(
         sql: str,
         db: str = "default",
@@ -308,7 +308,7 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         logger.info("sql: db=%s -> %d rows (%.3fs)", db, len(rows), duration)
         return {"columns": columns, "rows": rows, "count": len(rows)}
 
-    @mcp.tool()
+    @mcp.tool(title="SQLite: Execute (Write)")
     def sqlite_execute(
         sql: str,
         db: str = "default",

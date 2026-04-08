@@ -69,7 +69,7 @@ def _llm_classify(text: str) -> str | None:
 def register_finance_smart_ingest_tools(mcp: FastMCP) -> None:
     """Register the finance_smart_ingest tool."""
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Smart Ingest")
     def finance_smart_ingest(
         path: str,
     ) -> dict[str, Any]:
@@ -169,7 +169,7 @@ def register_finance_smart_ingest_tools(mcp: FastMCP) -> None:
             "top_scores": scores[:3],
         }
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Smart Ingest Directory")
     def finance_smart_ingest_directory(
         directory: str,
     ) -> dict[str, Any]:

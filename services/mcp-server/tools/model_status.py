@@ -32,14 +32,19 @@ def _get_headers() -> dict[str, str]:
 def register_model_status_tools(mcp: FastMCP) -> None:
     """Register the model_status tool on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(title="Model Status")
     def model_status(
         model_id: str | None = None,
         status_filter: str | None = None,
     ) -> dict[str, Any]:
         """Query model load/busy/loading status across Stargate nodes.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="model_status")
+        Args:
+          model_id      (str|None) — specific model to query; omit for all models
+          status_filter (str|None) — filter by status: loaded, busy, loading, available (all-models only)
+
+        Without model_id: returns all models with per-model placement across nodes.
+        With model_id: returns detail for one model ({"error": "Model not found: ..."} if missing).
         """
         if model_id:
             url = f"{_STARGATE_URL}/api/v1/model-status/{model_id}"

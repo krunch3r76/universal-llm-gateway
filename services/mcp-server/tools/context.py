@@ -79,7 +79,7 @@ def _safe_tasks_path(relative: str) -> Path:
 def register_context_tools(mcp: FastMCP) -> None:
     """Register context bridge tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="List Journal Entries")
     def list_journal_entries(
         limit: int = 20,
         domain: str | None = None,
@@ -138,7 +138,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         )
         return {"entries": filtered}
 
-    @mcp.tool()
+    @mcp.tool(title="Read Journal Entry")
     def read_journal_entry(slug: str) -> dict[str, str]:
         """Read a journal entry by its slug.
 
@@ -159,7 +159,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         record("mcp.tool.journal.read", slug=slug, chars=len(content))
         return {"content": content, "slug": slug}
 
-    @mcp.tool()
+    @mcp.tool(title="Write Journal Entry")
     def write_journal_entry(
         slug: str,
         title: str,
@@ -251,7 +251,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         record("mcp.tool.journal.created", slug=slug)
         return {"status": "created", "path": str(entry_path)}
 
-    @mcp.tool()
+    @mcp.tool(title="List Context Directory")
     def list_context_directory(path: str = "") -> dict[str, list[str] | str]:
         """List files and directories under the tasks/ workspace context.
 
@@ -279,7 +279,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         )
         return {"entries": entries}
 
-    @mcp.tool()
+    @mcp.tool(title="Read Context File")
     def read_context_file(path: str, binary: bool = False) -> dict[str, Any]:
         """Read a file from the tasks/ workspace context.
 
@@ -322,7 +322,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         )
         return {"content": content, "path": path}
 
-    @mcp.tool()
+    @mcp.tool(title="Write Context File")
     def write_context_file(path: str, content: str) -> dict[str, str]:
         """Write a text file to the tasks/ workspace context.
 
@@ -367,7 +367,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         record("mcp.tool.context.file.written", path=path, chars=len(content))
         return {"status": "written", "path": path}
 
-    @mcp.tool()
+    @mcp.tool(title="Edit Context File")
     def edit_context_file(
         path: str,
         operation: str,
@@ -488,7 +488,7 @@ def register_context_tools(mcp: FastMCP) -> None:
             )
             return {"error": f"An unexpected error occurred: {exc}"}
 
-    @mcp.tool()
+    @mcp.tool(title="Context (Tasks Sandbox)")
     def context(
         op: str = "",
         path: str = "",
@@ -584,7 +584,7 @@ def register_context_tools(mcp: FastMCP) -> None:
     def _raise_value_error(msg: str) -> Any:
         raise ValueError(msg)
 
-    @mcp.tool()
+    @mcp.tool(title="Move Context File")
     def move_context_file(path: str, target: str) -> dict[str, str]:
         """Move or rename a file in the tasks/ workspace context."""
         if _TASKS_READ_ONLY:
@@ -609,7 +609,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         record("mcp.tool.context.file.moved", source=path, destination=target)
         return {"status": "moved", "from": path, "to": target}
 
-    @mcp.tool()
+    @mcp.tool(title="Delete Context File")
     def delete_context_file(path: str) -> dict[str, str]:
         """Delete a file from the tasks/ workspace context.
 

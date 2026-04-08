@@ -152,7 +152,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
     """Register pipeline execution and validation tools."""
     _refresh_pipeline_timeouts()
 
-    @mcp.tool()
+    @mcp.tool(title="Run Pipeline")
     def pipeline(
         pipeline: str,
         messages: list[dict[str, str]],
@@ -161,7 +161,14 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Run a pipeline, block until done, return result with execution_id.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="pipeline")
+        Args:
+          pipeline  (str)        — pipeline ID, e.g. "consensus", "rag-context" — REQUIRED
+          messages  (list[dict]) — chat messages in OpenAI format — REQUIRED
+          options   (dict|None)  — optional pipeline_options overrides
+          timeout   (float|None) — override HTTP timeout (auto-detected from pipeline config when omitted)
+
+        Blocks until completion. YAML, prompts, and model configs hot-reload on file change.
+        Returns execution summary with execution_id for trace queries.
         """
         t0 = monotonic_now()
         record("mcp.pipeline.run.called", pipeline=pipeline)
@@ -255,7 +262,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
                 execution_id=tp_exec_id,
             )
 
-    @mcp.tool()
+    @mcp.tool(title="Validate Pipeline")
     def validate_pipeline(pipeline: str) -> dict[str, Any]:
         """Validate pipeline YAML structure and model availability.
 

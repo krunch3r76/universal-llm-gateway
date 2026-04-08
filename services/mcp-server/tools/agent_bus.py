@@ -533,11 +533,27 @@ _AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
 def register_agent_bus_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style agent_bus tool on the MCP server instance."""
 
-    @mcp.tool()
+    @mcp.tool(title="Agent Bus")
     def agent_bus(tool: str, arguments: str = "{}") -> Any:
         """Inter-agent message bus — threads, turns, read/reply coordination.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="agent_bus")
+        tool: operation name (see table below)
+        arguments: JSON string with operation arguments
+
+        Operations:
+          threads  (status?, to?, limit?)         — list threads; status: active/archived/all
+          fetch    (thread, last?, compact?, mark_read?) — get turns; compact=true strips markdown
+          get      (thread, turn_number)           — get one specific turn
+          post     (slug, to, subject, body, from_agent?, tags?) — start a new thread
+          reply    (thread, to, subject, body, after_turn?, from_agent?) — reply to a thread
+          read     (thread, turn_number)           — mark a turn as read
+          archive  (thread)                        — archive a thread
+          summary  ()                              — unread counts per agent
+
+        Examples:
+          agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
+          agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n..."}')
+          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n..."}')
         """
         import json as _json
 

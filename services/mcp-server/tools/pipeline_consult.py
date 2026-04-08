@@ -138,7 +138,7 @@ def _detect_scope(model_id: str | None) -> str:
 def register_pipeline_consult_tools(mcp: FastMCP) -> None:
     """Register pipeline consultation tool on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="Pipeline Consult")
     def pipeline_consult(
         execution_id: str,
         step_name: str,

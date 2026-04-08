@@ -71,17 +71,6 @@ _MAX_NARRATIVE_TOKENS = 8000
 _CHARS_PER_TOKEN = 4
 
 
-def _compact_ts(iso_str: str | None) -> str:
-    """Format ISO timestamp as MM-DD HH:MM for compact edge rendering."""
-    if not iso_str:
-        return "?"
-    try:
-        ts = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
-        return ts.strftime("%m-%d %H:%M")
-    except (ValueError, TypeError):
-        return iso_str[:16] if iso_str else "?"
-
-
 def render_boot_narrative(
     *,
     boot_sections: dict[str, Any] | None = None,
@@ -91,15 +80,12 @@ def render_boot_narrative(
     sessions: list[dict[str, Any]],
     suspected: list[dict[str, Any]] | None = None,
     hypothesized: list[dict[str, Any]] | None = None,
-    threads: list[dict[str, Any]],
-    unread: list[dict[str, Any]],
     review_total: int | None = None,
     continuation_decisions: list[dict[str, Any]] | None = None,
     continuation_services: list[dict[str, Any]] | None = None,
     todos: list[dict[str, Any]] | None = None,
     gated_entities: list[dict[str, Any]] | None = None,
-    edges_supersedes: list[dict[str, Any]] | None = None,
-    edges_reasoning: list[dict[str, Any]] | None = None,
+    edges_summary: dict[str, int] | None = None,
     commitments: list[dict[str, Any]] | None = None,
     legal_contacts: list[dict[str, Any]] | None = None,
     activated_context: list[dict[str, Any]] | None = None,
@@ -119,13 +105,12 @@ def render_boot_narrative(
     from the bottom of the priority stack:
     1. Deadlines (never truncated)
     2. Open investigations
-    3. Agent bus (unread summary)
-    4. Continuation state + todos
-    5. Recent sessions (2-3 most recent)
-    6. Session edges
-    7. Temporal assertions
-    8. Commitments + legal contacts
-    9. Gated entities + key entity one-liners (truncated most aggressively)
+    3. Continuation state + todos
+    4. Recent sessions (2-3 most recent)
+    5. Session edges
+    6. Temporal assertions
+    7. Commitments + legal contacts
+    8. Gated entities + key entity one-liners (truncated most aggressively)
     """
     import logging
 
@@ -139,30 +124,13 @@ def render_boot_narrative(
     if transcript_continuation:
         tc = transcript_continuation
         parts.append(f"\n## Resuming From: `{tc['entity_id']}`")
-        if tc.get("description"):
-            parts.append(f"**Session summary**: {tc['description']}")
-        assertions = tc.get("assertions", [])
-        if assertions:
-            active = [a for a in assertions if not a.get("superseded_by")]
-            if active:
-                parts.append("\n**Prior session context:**")
-                for a in active[:10]:
-                    conf = a.get("confidence", "?")
-                    parts.append(f"- [{conf}] {a.get('claim', '')}")
-        chain = tc.get("chain", [])
-        if chain:
-            parts.append(f"\n**Session lineage** ({len(chain)} link(s)):")
-            for edge in chain:
-                parts.append(
-                    f"- `{edge.get('from_node', '?')}` continues "
-                    f"`{edge.get('to_node', '?')}`"
-                )
-        source_uri = tc.get("source_uri")
-        if source_uri:
-            parts.append(
-                f"\n*Full transcript at `{source_uri}` — "
-                f'use fs(op="md_read") for section-level access.*'
-            )
+        summary = tc.get("summary", tc.get("description", ""))
+        if summary:
+            parts.append(f"**Session summary**: {summary}")
+        parts.append(
+            f"*Full transcript: `cortex(tool='entity_get', "
+            f'arguments=\'{{"entity_id": "{tc["entity_id"]}"}}\')`*'
+        )
 
     if continuation_decisions is not None or continuation_services is not None:
         parts.append("\n## Continuation State")
@@ -203,30 +171,18 @@ def render_boot_narrative(
                 if len(body.strip().splitlines()) > 8:
                     parts.append("> *(truncated)*")
 
-    if edges_supersedes is not None or edges_reasoning is not None:
-        sup = edges_supersedes or []
-        reas = edges_reasoning or []
-        if sup or reas:
+    if edges_summary is not None:
+        sup_count = edges_summary.get("supersession_chains", 0)
+        reas_count = edges_summary.get("reasoning_edges", 0)
+        if sup_count or reas_count:
             parts.append("\n## Session Edges (last 48h)")
-            if sup:
-                parts.append(f"\nSupersession chains ({len(sup)}):")
-                for e in sup:
-                    parts.append(
-                        f"  {e.get('from_node', '?')} → {e.get('to_node', '?')} "
-                        f"({e.get('agent', '?')}, {_compact_ts(e.get('created_at'))})"
-                    )
-            if reas:
-                parts.append(f"\nReasoning edges ({len(reas)}):")
-                for e in reas:
-                    ctx = (e.get("context") or "")[:80]
-                    ctx_line = f'\n  "{ctx}"' if ctx else ""
-                    parts.append(
-                        f"  {e.get('from_node', '?')} "
-                        f"-[{e.get('edge_type', '?')}]→ "
-                        f"{e.get('to_node', '?')}"
-                        f" ({e.get('agent', '?')}, {_compact_ts(e.get('created_at'))})"
-                        f"{ctx_line}"
-                    )
+            parts.append(
+                f"Supersession chains: {sup_count} | Reasoning edges: {reas_count}"
+            )
+            parts.append(
+                "*Load on demand: `cortex(tool='edges', "
+                'arguments=\'{"session_id": "SESSION_ID"}\')`*'
+            )
 
     if gated_entities:
         total_assertions = sum(e.get("assertions_shown", 0) for e in gated_entities)
@@ -413,26 +369,6 @@ def render_boot_narrative(
                         parts.append(
                             f"- [{a.get('entity_id', '?')}] {a.get('claim', '')}"
                         )
-
-    parts.append("\n## Agent Bus")
-    hot_threads = [t for t in threads if t.get("unread_count", 0) > 0]
-    if not hot_threads:
-        total = len(threads)
-        parts.append(
-            f"No unread threads ({total} active)." if total else "No active threads."
-        )
-    else:
-        parts.append(
-            f"{len(hot_threads)} thread(s) with unread turns "
-            f"({len(threads)} active total):"
-        )
-        for t in hot_threads:
-            unread_ct = t.get("unread_count", 0)
-            parts.append(
-                f"- #{t.get('id', '?')} {t.get('slug', '')} **({unread_ct} unread)**"
-            )
-    if unread:
-        parts.append(f"\n{len(unread)} unread turn(s) awaiting attention.")
 
     if review_total is not None:
         parts.append(f"\n## Review Queue\n{review_total} item(s) pending review.")

@@ -178,7 +178,7 @@ def _relay(
 def register_local_api_tools(mcp: FastMCP) -> None:
     """Register the local_api relay tool on the MCP server instance."""
 
-    @mcp.tool()
+    @mcp.tool(title="Local API Relay")
     def local_api(
         service: str,
         method: str,

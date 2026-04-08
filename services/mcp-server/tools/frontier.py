@@ -37,7 +37,7 @@ _CLAUDE_BOOT_REF_DEFAULTS: dict[str, str] = {
 def register_frontier_tools(mcp: FastMCP) -> None:
     """Register grok_generate, claude_generate, and frontier_generate (compat)."""
 
-    @mcp.tool()
+    @mcp.tool(title="Grok Generate")
     def grok_generate(
         messages: list[dict[str, Any]],
         model: str = "grok-4.20-multi-agent",
@@ -77,7 +77,19 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         team-lead context, tool mastery enforcement, or multi-agent orchestration.
         Any model can still force a persona seed via explicit ``boot_ref``.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="grok_generate")
+        Models:
+          grok-4.20-reasoning       — top model, built-in reasoning, 2M ctx (DEFAULT)
+          grok-4.20-non-reasoning   — same without reasoning
+          grok-4.20-multi-agent     — multi-agent optimized, reasoning
+          grok-4-1-fast-reasoning   — fast + cheap reasoning
+          grok-4-1-fast-non-reasoning — fast without reasoning
+          grok-3-mini               — legacy, supports reasoning_effort ("low"/"medium"/"high")
+
+        Key args: messages (REQUIRED), model, system, max_output_tokens, temperature,
+          seed, response_format, reasoning_effort (grok-3/mini only — silently stripped for grok-4),
+          include_encrypted_reasoning, tools, tool_choice,
+          server_tools ("web_search"/"x_search"/"code_execution" — $5/1k calls each),
+          conversation_id, reasoning_trace, boot ("none"/"mcp"/"full"), inject_mcp, include_raw
         """
         full_model = model if "/" in model else f"xai/{model}"
 
@@ -132,7 +144,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             timeout=timeout,
         )
 
-    @mcp.tool()
+    @mcp.tool(title="Claude Generate")
     def claude_generate(
         messages: list[dict[str, Any]],
         model: str = "claude-sonnet-4-6",
@@ -168,7 +180,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         Use higher values for subagent dispatches with boot="full" or heavy
         tool-use workloads that may exceed the default ceiling.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="claude_generate")
+        Models:
+          claude-sonnet-4    — fast + capable, 16k output, adaptive thinking (DEFAULT)
+          claude-opus-4      — top model, 32k output, extended thinking
+          claude-3-5-sonnet  — previous gen, 8k output
+
+        Key args: messages (REQUIRED), model, system, max_tokens, temperature,
+          thinking ("adaptive" / {"type": "enabled", "budget_tokens": N}),
+          effort ("max"/"high"/"medium"/"low" — requires thinking enabled),
+          tools, tool_choice,
+          server_tools ("web_search"/"web_fetch"/"code_execution" — auto-versioned),
+          speed ("fast" enables fast mode beta), provider_options,
+          boot ("none"/"mcp"/"full"), inject_mcp, include_raw
         """
         full_model = model if "/" in model else f"anthropic/{model}"
 
@@ -225,7 +248,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             timeout=timeout,
         )
 
-    @mcp.tool()
+    @mcp.tool(title="Frontier Generate")
     def frontier_generate(
         messages: list[dict[str, Any]],
         model: str = "anthropic/claude-sonnet-4",
@@ -252,7 +275,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Backward-compatible generation — routes to grok_generate or claude_generate.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="frontier_generate")
+        Routes by model prefix: "anthropic/" or "claude-*" → claude_generate; everything else → grok_generate.
+        Prefer calling grok_generate or claude_generate directly for new code.
         """
         if stream:
             return {"error": "Streaming not yet implemented for frontier_generate"}

@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, override
 import uvicorn
 from auth_middleware import AuthMiddleware
 from fastmcp import FastMCP
-from mcp_events import monotonic_now, record
+from mcp_events import record
 from mcp_request_middleware import McpRequestEventsMiddleware
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 from oauth_config import OAuthServerConfig, load_oauth_config
@@ -32,7 +32,6 @@ from oauth_store import OAuthStore
 from request_profile import current_profile
 from response_size_guard import register_response_guard
 from schema_compact import patch_fastmcp_tool_serialization
-from sse_starlette.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tools.agent_bus import register_agent_bus_tools
@@ -72,8 +71,6 @@ if TYPE_CHECKING:
     from asyncio.transports import BaseTransport
     from collections.abc import Callable
 
-    from starlette.types import Send
-
 logger = logging.getLogger(__name__)
 
 _AUTH_TOKEN_ENV = "MCP_AUTH_TOKEN"
@@ -84,7 +81,6 @@ _PORT = 443
 _TCP_KEEPIDLE = 10
 _TCP_KEEPINTVL = 10
 _TCP_KEEPCNT = 3
-_SSE_PING_INTERVAL: int = int(os.getenv("MCP_SSE_PING_INTERVAL", "15"))
 
 
 def _env_truthy(name: str, default: bool) -> bool:
@@ -99,94 +95,6 @@ def _env_truthy(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _patch_sse_ping() -> None:
-    """Patch SSE response construction to emit heartbeat events at a fixed cadence.
-
-    The patch injects a named `heartbeat` event and a configurable ping interval
-    during `EventSourceResponse` initialization so idle transports stay active.
-    """
-    _orig_init = EventSourceResponse.__init__
-
-    def _patched_init(
-        self: EventSourceResponse, *args: object, **kwargs: object
-    ) -> None:
-        kwargs["ping_message_factory"] = lambda: ServerSentEvent(
-            event="heartbeat", data="{}"
-        )
-        kwargs["ping"] = _SSE_PING_INTERVAL
-        _orig_init(self, *args, **kwargs)
-
-    # Monkey-patch __init__ to inject custom ping interval via kwargs.
-    # This is a type-unsafe operation due to diverging signatures. Consider subclassing
-    # EventSourceResponse if a more type-safe approach is desired.
-    EventSourceResponse.__init__ = _patched_init  # type: ignore[method-assign]
-
-
-def _patch_sse_lifecycle_events() -> None:
-    """Wrap SSE stream execution with structured lifecycle event emission.
-
-    Emits `mcp.sse.stream.started`, `mcp.sse.stream.aborted`, and
-    `mcp.sse.stream.ended` so stream health is visible in event telemetry.
-    """
-    # Accessing protected member for lifecycle-event monkey-patch. This is brittle.
-    _orig_stream = EventSourceResponse._stream_response  # type: ignore[attr-defined]
-
-    async def _stream_with_events(self: EventSourceResponse, send: Send) -> None:
-        t0 = monotonic_now()
-        record("mcp.sse.stream.started")
-        record(
-            "mcp.transport.sse.session.started",
-            transport="https",
-            channel="sse",
-        )
-        try:
-            await _orig_stream(self, send)
-        except Exception as exc:
-            duration = monotonic_now() - t0
-            record(
-                "mcp.sse.stream.aborted",
-                duration_s=round(duration, 3),
-                reason=str(exc),
-                exc_type=type(exc).__name__,
-            )
-            record(
-                "mcp.transport.sse.session.aborted",
-                transport="https",
-                channel="sse",
-                duration_s=round(duration, 3),
-                error=str(exc),
-                exc_type=type(exc).__name__,
-            )
-            logger.warning(
-                "SSE stream aborted after %.1fs: %s",
-                duration,
-                exc,
-                exc_info=True,
-            )
-            raise
-        else:
-            duration = monotonic_now() - t0
-            record(
-                "mcp.sse.stream.ended",
-                duration_s=round(duration, 3),
-                reason="clean",
-            )
-            record(
-                "mcp.transport.sse.session.ended",
-                transport="https",
-                channel="sse",
-                duration_s=round(duration, 3),
-            )
-            # Only log streams that did real work; sub-100ms = ListTools handshake.
-            if duration >= 0.1:
-                logger.info("SSE stream ended cleanly after %.1fs", duration)
-
-    # Monkey-patch protected method to wrap stream with start/end events. This is brittle.
-    EventSourceResponse._stream_response = _stream_with_events  # type: ignore[method-assign]
-
-
-_patch_sse_ping()
-_patch_sse_lifecycle_events()
 patch_fastmcp_tool_serialization()
 
 
@@ -315,7 +223,7 @@ def _build_server() -> FastMCP:
     register_security_js_tools(mcp)
     register_usps_tools(mcp)
 
-    @mcp.tool()
+    @mcp.tool(title="Server Health Check")
     def health() -> dict[str, str]:
         """Health check — confirms the MCP server is reachable."""
         return {"status": "ok"}
@@ -343,7 +251,7 @@ def _build_server() -> FastMCP:
         "md_delete": "delete_section",
     }
 
-    @mcp.tool()
+    @mcp.tool(title="File I/O (Sandboxed)")
     def fs(
         op: str,
         sandbox: str,
@@ -368,7 +276,29 @@ def _build_server() -> FastMCP:
         rename or relocate a file within the selected sandbox. Prefer the
         markdown ops for large markdown docs.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
+        Sandboxes: files=/data/files  context=tasks/  project=repo-root
+        project paths must include repo name prefix (e.g. universal-llm-gateway/docs/...).
+
+        Standard ops:
+          read           (path)                           — read file (text or PDF/DOCX/ODT/EML/HTML)
+          read_multi     (paths: list)                    — read multiple files
+          write          (path, content)                  — write/create file
+          append         (path, content)                  — append to file
+          prepend        (path, content)                  — prepend to file
+          replace        (path, target, content, all_occurrences?) — replace text
+          insert_at_line (path, content, line)            — insert at line number
+          list           (path?)                          — list directory
+          delete         (path)                           — delete file
+          search         (path, content)                  — regex search (project sandbox only)
+          move           (path, target)                   — rename/relocate file
+          write_binary   (path, content)                  — write base64-encoded binary (files sandbox only)
+
+        Markdown section ops (for large docs):
+          md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML)
+          md_read    (path, section)           — read one section
+          md_replace (path, section, content)  — replace section (text files only)
+          md_append  (path, section, content)  — append to section (text files only)
+          md_delete  (path, section)           — delete section (text files only)
         """
         if not op:
             return {"error": "'op' is required"}
@@ -485,11 +415,26 @@ def _build_server() -> FastMCP:
         "delete_directory": "rag_delete_directory",
     }
 
-    @mcp.tool()
+    @mcp.tool(title="RAG Knowledge Retrieval")
     async def rag(op: str, arguments: str = "{}") -> Any:
         """RAG knowledge retrieval and index management — dispatch by op name.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="rag")
+        op: operation name (see table below)
+        arguments: JSON string with operation arguments
+
+        Operations:
+          search            (query, scope?, prefix?, top_k?)    — semantic search; scope/prefix are mutually exclusive
+          answer            (question, scope?, prefix?, deep?)  — RAG-grounded answer; deep=true for iterative retrieval
+          list_scopes       ()                                  — list scopes with prefixes and coverage
+          coverage          ()                                  — per-scope indexed file counts
+          upsert_article    (url, title?, scope?)               — index article by URL
+          delete_source     (source_hash)                       — delete indexed source by hash
+          refresh_hints     (scope?)                            — regenerate discriminative vocabulary hints
+          orphaned_articles ()                                  — find articles not in any scope
+          delete_directory  (directory)                         — delete all indexed content under a path
+
+        Example:
+          rag(op="search", arguments='{"query": "embedding strategies", "scope": "research"}')
         """
         import json as _json
 
@@ -536,7 +481,7 @@ def _build_server() -> FastMCP:
         finally:
             toolprogress_end(t_prog, prog_timer, "rag", error=err, op=op)
 
-    @mcp.tool()
+    @mcp.tool(title="Tool Dispatcher")
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
@@ -653,7 +598,6 @@ def main() -> None:
     for _quiet_logger in (
         "mcp.server.lowlevel.server",
         "mcp.server.streamable_http_manager",
-        "mcp.server.sse",
     ):
         logging.getLogger(_quiet_logger).setLevel(logging.WARNING)
 

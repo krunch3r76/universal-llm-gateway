@@ -27,7 +27,7 @@ _SCANNABLE = frozenset({".pdf"}) | _IMAGE_SUFFIXES
 def register_document_ocr_tools(mcp: FastMCP) -> None:
     """Register document OCR tools (dispatch-only)."""
 
-    @mcp.tool()
+    @mcp.tool(title="Document OCR")
     def document_ocr(
         path: str,
         prompt: str = "",
@@ -81,7 +81,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Document OCR (Structured)")
     def document_ocr_structured(
         path: str,
         statement_type: str,
@@ -142,7 +142,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Document OCR (Directory)")
     def document_ocr_directory(
         directory: str,
         prompt: str = "",

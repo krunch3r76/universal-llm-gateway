@@ -29,7 +29,7 @@ _ARTICLE_TIMEOUT = 15.0
 def register_rag_article_tools(mcp: FastMCP) -> None:
     """Register RAG article metadata tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Upsert Article")
     def rag_upsert_article(
         source_path: str,
         title: str = "",
@@ -139,7 +139,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         )
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Delete Directory")
     def rag_delete_directory(directory_path: str) -> dict[str, Any]:
         """Remove all sources under a directory from all RAG storage surfaces.
 
@@ -206,7 +206,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         )
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Delete Source")
     def rag_delete_source(source_path: str) -> dict[str, Any]:
         """Remove a source file from all RAG storage surfaces.
 
@@ -277,7 +277,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         )
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: List Articles")
     def rag_list_articles(
         scope: str | None = None,
         include_abstract: bool = False,
@@ -345,7 +345,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         logger.info("rag_list_articles: count=%d in %.1fs", count, duration)
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Orphaned Articles")
     def rag_orphaned_articles() -> dict[str, Any]:
         """List articles with no corresponding indexed chunks.
 

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 def register_security_js_tools(mcp: FastMCP) -> None:
     """Register JS analysis tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="JS Analyze")
     def js_analyze(
         source: str,
         extractors: list[str] | None = None,

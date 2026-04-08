@@ -101,7 +101,7 @@ def _call_anthropic(
 def register_llm_tools(mcp: FastMCP) -> None:
     """Register the llm_generate tool on the MCP server instance."""
 
-    @mcp.tool()
+    @mcp.tool(title="LLM Generate")
     def llm_generate(
         messages: list[dict[str, Any]],
         system: str = "",

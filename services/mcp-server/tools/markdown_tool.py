@@ -129,7 +129,7 @@ def _section_write_result(
 
 
 def register_markdown_tools(mcp: FastMCP) -> None:
-    @mcp.tool()
+    @mcp.tool(title="Markdown Operations")
     def markdown(
         op: str,
         path: str,

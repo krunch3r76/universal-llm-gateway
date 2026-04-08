@@ -273,7 +273,7 @@ def _scope_metadata_from_db() -> dict[str, dict[str, Any]]:
 def register_rag_tools(mcp: FastMCP) -> None:
     """Register RAG pipeline tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: List Scopes")
     def rag_list_scopes() -> dict[str, Any]:
         """List available retrieval scopes with coverage status.
 
@@ -353,7 +353,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         )
         return {"scopes": scope_names, "details": details}
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Coverage")
     def rag_coverage() -> dict[str, Any]:
         """Show per-scope, per-prefix indexed file counts and last-indexed timestamps.
 
@@ -398,7 +398,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         )
         return payload
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Search")
     def rag_search(
         query: str,
         top_k: int = 20,
@@ -527,7 +527,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             "context": content,
         }
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Answer")
     def rag_answer(
         question: str,
         scope: str | list[str] | None = None,
@@ -661,7 +661,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             "answer": content,
         }
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Search Preview")
     def rag_search_preview(
         query: str,
         top_k: int = 5,
@@ -734,7 +734,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         )
         return {"items": items, "count": len(items), "top_k": safe_k}
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Get Chunks")
     def rag_get_chunks(source: str, chunk_indices: list[int]) -> dict[str, Any]:
         """Fetch explicit chunk text by source and chunk indices."""
         if not chunk_indices:
@@ -776,7 +776,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         record("mcp.rag.chunks.fetched", source=source, count=count)
         return payload
 
-    @mcp.tool()
+    @mcp.tool(title="RAG: Refresh Corpus Hints")
     def rag_refresh_corpus_hints(
         scope: str | None = None,
         entity_boost_hyphen: float = 1.3,

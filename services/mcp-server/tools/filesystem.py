@@ -142,7 +142,7 @@ def _write_shared_image(filename: str, jpeg_bytes: bytes) -> tuple[Path, Path]:
 def register_filesystem_tools(mcp: FastMCP) -> None:
     """Register all filesystem tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="Write File")
     def write_file(path: str, content: str) -> dict[str, str]:
         """Write *content* to *path* inside the sandboxed files directory.
 
@@ -196,7 +196,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
         return {"status": "written", "path": str(dest)}
 
-    @mcp.tool()
+    @mcp.tool(title="Read File")
     def read_file(path: str, binary: bool = False) -> dict[str, Any]:
         """Read and return the contents of *path* from the sandboxed directory.
 
@@ -238,7 +238,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="View Image")
     def view_image(
         path: str,
         max_dimension: int = 1024,
@@ -329,7 +329,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             "bytes": len(jpeg_bytes),
         }
 
-    @mcp.tool()
+    @mcp.tool(title="Edit File")
     def edit_file(
         path: str,
         operation: str,
@@ -412,7 +412,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             logger.exception("edit_file failed on %s", path)
             raise
 
-    @mcp.tool()
+    @mcp.tool(title="Move File")
     def move_file(source: str, destination: str) -> dict[str, str]:
         """Move or rename a file within the sandbox.
 
@@ -446,7 +446,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         logger.info("move_file: %s → %s", src, dst)
         return {"status": "moved", "from": str(src), "to": str(dst)}
 
-    @mcp.tool()
+    @mcp.tool(title="Copy File")
     def copy_file(source: str, destination: str) -> dict[str, str]:
         """Copy a file within the sandbox.
 
@@ -480,7 +480,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         logger.info("copy_file: %s → %s", src, dst)
         return {"status": "copied", "from": str(src), "to": str(dst)}
 
-    @mcp.tool()
+    @mcp.tool(title="Remove Directory")
     def remove_directory(directory: str) -> dict[str, str]:
         """Remove a directory and all its contents from the sandbox.
 
@@ -512,7 +512,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         logger.info("remove_directory: %s", target)
         return {"status": "removed", "path": str(target)}
 
-    @mcp.tool()
+    @mcp.tool(title="Delete File")
     def delete_file(path: str) -> dict[str, str]:
         """Delete a file from the sandboxed files directory.
 
@@ -541,7 +541,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         logger.info("delete_file: deleted %s", target)
         return {"status": "deleted", "path": str(target)}
 
-    @mcp.tool()
+    @mcp.tool(title="List Files")
     def list_files(directory: str = "") -> dict[str, list[str]]:
         """List files in *directory* within the sandboxed files directory.
 
@@ -662,7 +662,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             "total_bytes": final_size,
         }
 
-    @mcp.tool()
+    @mcp.tool(title="Files (Unified Sandbox)")
     def files(
         op: str = "",
         path: str = "",

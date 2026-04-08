@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 def register_agent_consult_tools(mcp: FastMCP) -> None:
     """Register the agent_consult tool on the MCP server instance."""
 
-    @mcp.tool()
+    @mcp.tool(title="Agent Consult")
     def agent_consult(
         query: str,
         providers: list[str] | None = None,

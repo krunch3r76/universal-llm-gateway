@@ -92,7 +92,7 @@ def _write_markdown(
 def register_ingest_document_tools(mcp: FastMCP) -> None:
     """Register the ingest_document tool."""
 
-    @mcp.tool()
+    @mcp.tool(title="Ingest Document")
     def ingest_document(
         path: str,
         output_path: str = "",

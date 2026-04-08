@@ -131,7 +131,7 @@ def _query_event_service(
 def register_event_tools(mcp: FastMCP) -> None:
     """Register event observability tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(title="Observability")
     def observability(
         operation: str,
         params: dict[str, Any] | None = None,
@@ -139,7 +139,34 @@ def register_event_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Query system telemetry, traces, and request snapshots from Event Service.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="observability")
+        operation: named operation (see table below)
+        params: dict with operation-specific parameters (optional)
+        target: event service target, default "ulg"
+
+        Operations:
+          recent-failures      (limit?)              — failures/errors in current session
+          noise-profile        (minutes?)            — signal frequency histogram
+          coordination-audit   ()                    — recent role=coordination events
+          model-timeline       (model_id)            — load/execute/unload for a model
+          request-trace        (request_id)          — all events for a request
+          request-lifecycle    (request_id)          — snapshot phases for a request
+          request-summary      ()                    — aggregate request stats
+          pipeline-trace       (execution_id)        — step-by-step execution trace
+          compare-runs         (run_a, run_b)        — side-by-side metrics
+          federation-health    ()                    — latest relay telemetry
+          capacity-snapshot    ()                    — current slot usage
+          signal-events        (signal?)             — recent events for a signal pattern
+          stack-last-started   ()                    — per-service last startup timestamp
+          realtime-snapshot    ()                    — last N from in-memory ring buffer
+          operations           ()                    — list all available operations
+          raw_sql              (sql, params?, limit?) — raw SQL SELECT query
+
+        Default time window: since most recent system.started (session boundary).
+        Override with params={"since_ts": <unix_ms>} or params={"minutes": N}.
+
+        Example:
+          observability(operation="recent-failures", params={"limit": 20})
+          observability(operation="pipeline-trace", params={"execution_id": "abc123"})
         """
         if operation not in _VALID_OPERATIONS:
             return {
@@ -184,7 +211,7 @@ def register_event_tools(mcp: FastMCP) -> None:
 
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Observability Preview")
     def query_observability_preview(
         operation: str,
         params: dict[str, Any] | None = None,

@@ -321,7 +321,7 @@ def _tracked_parent_directories(
 def register_project_tools(mcp: FastMCP) -> None:
     """Register project directory tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="Read Project File")
     def read_project_file(path: str, binary: bool = False) -> dict[str, Any]:
         """Read a file from the project directory.
 
@@ -355,7 +355,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             logger.info("read_project_file: %s (%d chars)", path, len(result["content"]))
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Move Project File")
     def move_project_file(path: str, target: str) -> dict[str, str]:
         """Move or rename a file in the project directory.
 
@@ -379,7 +379,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         record("mcp.project.file.moved", source=rel_src, destination=rel_dst)
         return {"status": "moved", "from": rel_src, "to": rel_dst}
 
-    @mcp.tool()
+    @mcp.tool(title="List Project Files")
     def list_project_files(
         directory: str = "",
         max_depth: int = 3,
@@ -463,7 +463,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         )
         return {"files": files, "directories": directories, "truncated": truncated}
 
-    @mcp.tool()
+    @mcp.tool(title="Search Project Files")
     def search_project_files(
         pattern: str,
         directory: str = "",
@@ -542,7 +542,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         )
         return {"matches": matches, "truncated": truncated}
 
-    @mcp.tool()
+    @mcp.tool(title="Write Project File")
     def write_project_file(path: str, content: str) -> dict[str, str]:
         """Write or create a file in the project directory.
 
@@ -573,7 +573,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         record("mcp.project.file.written", path=rel, size=len(content))
         return {"status": "written", "path": rel}
 
-    @mcp.tool()
+    @mcp.tool(title="Edit Project File")
     def edit_project_file(
         path: str,
         operation: str,

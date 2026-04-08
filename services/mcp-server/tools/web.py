@@ -63,7 +63,7 @@ def _extract_title(html: str) -> str:
 def register_web_tools(mcp: FastMCP) -> None:
     """Register web search and fetch tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="Web Search")
     def web_search(
         query: str,
         max_results: int = 5,
@@ -111,7 +111,7 @@ def register_web_tools(mcp: FastMCP) -> None:
         logger.info("web_search: query=%r → %d results", query, len(results))
         return {"results": results}
 
-    @mcp.tool()
+    @mcp.tool(title="Web Fetch")
     def web_fetch(
         url: str,
         max_chars: int = _DEFAULT_MAX_CHARS,
@@ -223,7 +223,7 @@ def register_web_tools(mcp: FastMCP) -> None:
             "truncated": truncated,
         }
 
-    @mcp.tool()
+    @mcp.tool(title="Web Browse")
     def browse(
         url: str,
         selector: str | None = None,

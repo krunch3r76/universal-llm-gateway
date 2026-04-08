@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
 
@@ -504,6 +505,12 @@ def run_cortex_boot(
     cont_decisions: list[dict[str, Any]] = safe_list(raw.get("cont_decisions", []))
     cont_services: list[dict[str, Any]] = safe_list(raw.get("cont_services", []))
     todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
+    # Belt-and-suspenders: filter infra/tech domains for web even if the
+    # cortex-api endpoint doesn't apply domain_exclude (e.g. stale running process).
+    # NULL domain rows are preserved (personal/unclassified todos are valid for web).
+    if agent == "web":
+        _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
+        todos = [t for t in todos if t.get("domain") not in _web_domain_exclude]
 
     boot_sections_raw = raw.get("boot_sections")
     boot_sections: dict[str, Any] | None = None
@@ -585,6 +592,26 @@ def run_cortex_boot(
         else None
     )
 
+    edges_summary: dict[str, int] | None = None
+    if edges_supersedes or edges_reasoning:
+        edges_summary = {
+            "supersession_chains": len(edges_supersedes),
+            "reasoning_edges": len(edges_reasoning),
+        }
+
+    tc_summary: dict[str, Any] | None = None
+    if transcript_continuation:
+        tc = transcript_continuation
+        summary = tc.get("description", "")
+        if not summary and tc.get("assertions"):
+            active = [a for a in tc["assertions"] if not a.get("superseded_by")]
+            if active:
+                summary = active[0].get("claim", "")
+        tc_summary = {
+            "entity_id": tc["entity_id"],
+            "summary": summary,
+        }
+
     narrative = render_boot_narrative(
         boot_sections=boot_sections,
         deadlines=deadlines if profile.get("include_deadlines", True) else None,
@@ -595,21 +622,18 @@ def run_cortex_boot(
         hypothesized=hypothesized
         if profile.get("include_investigations", True)
         else None,
-        threads=threads,
-        unread=unread_turns,
         review_total=review_total,
         continuation_decisions=cont_decisions or None,
         continuation_services=cont_services or None,
         todos=todos or None,
         gated_entities=gated_entities or None,
-        edges_supersedes=edges_supersedes or None,
-        edges_reasoning=edges_reasoning or None,
+        edges_summary=edges_summary,
         activated_context=activated_context or None,
         commitments=commitments or None,
         legal_contacts=legal_contacts or None,
         domain_depth_hints=_detect_boot_domains(sessions, cont_decisions, todos)
         or None,
-        transcript_continuation=transcript_continuation,
+        transcript_continuation=tc_summary,
         recent_activity=activity_journal or None,
         capability_ref_note=capability_ref_note,
     )
@@ -628,40 +652,42 @@ def run_cortex_boot(
         unread_count=len(unread_turns),
         review_total=review_total,
     )
+    op_ctx_path = f"notes/system/shared/operational-context-{agent}.md"
+    try:
+        _op_dir = Path("/data/files/notes/system/shared")
+        _op_dir.mkdir(parents=True, exist_ok=True)
+        (_op_dir / f"operational-context-{agent}.md").write_text(ops_context)
+    except OSError:
+        logger.warning("Could not write operational context to %s", op_ctx_path)
 
     result: dict[str, Any] = {
         "session_id": session_id,
         "recent_sessions": sessions,
         "agent_bus": {
-            "active_threads": [
+            "unread_count": len(unread_turns),
+            "threads": [
                 {
-                    "thread": t.get("id", ""),
+                    "id": t.get("id", ""),
                     "slug": t.get("slug", ""),
-                    "turns": t.get("turns_count", 0),
                     "unread": t.get("unread_count", 0),
                 }
                 for t in threads
                 if t.get("unread_count", 0) > 0
             ],
-            "unread_turns": unread_turns,
         },
         "pre_files": pre_file_results,
         "post_files": post_file_results,
         "boot_narrative": narrative,
-        "operational_context": ops_context,
-        "operational_context_version": "v2.0",
+        "operational_context_ref": op_ctx_path,
     }
 
-    if transcript_continuation:
-        result["continuation_transcript_id"] = transcript_continuation["transcript_id"]
-        result["transcript_continuation"] = {
-            "entity_id": transcript_continuation["entity_id"],
-            "name": transcript_continuation["name"],
-            "description": transcript_continuation["description"],
-            "source_uri": transcript_continuation["source_uri"],
-            "assertions": transcript_continuation["assertions"],
-            "chain": transcript_continuation["chain"],
-            "markdown_loaded": bool(transcript_continuation.get("markdown")),
+    if tc_summary:
+        result["continuation_transcript"] = {
+            **tc_summary,
+            "fetch_hint": (
+                f"cortex(tool='entity_get', "
+                f'arguments=\'{{"entity_id": "{tc_summary["entity_id"]}"}}\')'
+            ),
         }
 
     if profile.get("include_deadlines", True):
@@ -686,19 +712,51 @@ def run_cortex_boot(
         result["continuation_state"] = {
             "decisions": cont_decisions,
             "service_observations": cont_services,
-            "open_todos": todos,
+            "open_todos": [
+                {
+                    "id": t.get("id", ""),
+                    "title": t.get("title", ""),
+                    "priority": t.get("priority"),
+                    "domain": t.get("domain"),
+                }
+                for t in todos
+            ]
+            if todos
+            else [],
         }
     if gated_entities:
         result["gated_entities"] = gated_entities
-    if edges_supersedes or edges_reasoning:
+    if edges_summary:
         result["session_edges"] = {
-            "supersession_chains": edges_supersedes,
-            "reasoning_edges": edges_reasoning,
+            **edges_summary,
+            "fetch_hint": (
+                "cortex(tool='edges', "
+                f'arguments=\'{{"session_id": "{session_id}"}}\')'
+            ),
         }
 
     domain_hints = _detect_boot_domains(sessions, cont_decisions, todos)
     if domain_hints:
         result["domain_depth_hints"] = domain_hints
+
+    result["manifest_fetch_patterns"] = {
+        "operational_context": (
+            f"fs(sandbox='files', op='md_read', path='{op_ctx_path}', section='<name>')"
+        ),
+        "agent_bus_thread": (
+            "agent_bus(tool='fetch', "
+            'arguments=\'{"thread": "ID", "last": 5, "mark_read": true}\')'
+        ),
+        "session_edges": (
+            "cortex(tool='edges', arguments='{\"session_id\": \"SESSION_ID\"}')"
+        ),
+        "todo_detail": (
+            "cortex(tool='entity_get', arguments='{\"entity_id\": \"todo:SLUG\"}')"
+        ),
+        "transcript_detail": (
+            "cortex(tool='entity_get', arguments='{\"entity_id\": \"transcript:ID\"}')"
+        ),
+    }
 
     return result
 
@@ -708,7 +766,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
     # --------------------------------------------------------------- chunks
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex: Create Chunk")
     def cortex_chunk_create(
         content: str,
         source_uri: str | None = None,
@@ -757,14 +815,14 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
             logger.error("cortex_chunk_create failed: %s", result.get("error"))
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex: Get Chunk")
     def cortex_chunk_get(chunk_id: int) -> dict[str, Any]:
         """Get a chunk by ID with its full content."""
         return _cx("GET", f"/chunks/{chunk_id}")
 
     # --------------------------------------------------------- surface forms
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex: Create Surface Form")
     def cortex_surface_form_create(
         mention: str,
         entity_id: str,
@@ -814,7 +872,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
             logger.error("cortex_surface_form_create failed: %s", result.get("error"))
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex: Lookup Surface Form")
     def cortex_surface_form_lookup(
         mention: str,
         context_hash: str,
@@ -830,7 +888,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
     # --------------------------------------------------------------- staging extras
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex: List Staging")
     def cortex_staging_list(
         status: str | None = None,
         source_uri: str | None = None,
@@ -853,7 +911,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
             params["source_uri"] = source_uri
         return _cx("GET", f"/staging?{urlencode(params)}")
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex: Reject Staging")
     def cortex_staging_reject(staging_id: int, reviewer: str = "web") -> dict[str, Any]:
         """Reject a staging proposal.
 
@@ -877,7 +935,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
     # --------------------------------------------------------------- boot
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex Boot")
     def cortex_boot(
         agent: str = "web",
         pre_files: str = "",
@@ -890,7 +948,19 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         loads its markdown, traverses the continues chain, and injects continuation
         context into the narrative. Returns transcript_not_found error if invalid.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="cortex_boot")
+        Args:
+          agent        (str) — agent profile: web, cursor, api, grok, subagent (default: "web")
+          pre_files    (str) — comma-separated files loaded before briefing
+          post_files   (str) — comma-separated files loaded after briefing
+          transcript_id (str) — if provided, loads and continues from that transcript
+
+        Key response fields:
+          session_id         — server-minted ID in format {agent}-{YYYY-MM-DD}-{HHMM} UTC;
+                               hold in working memory and pass to all edge_create calls
+          boot_narrative     — rendered Markdown briefing (todos, threads, temporal, salience)
+          continuation_state — recent decisions, service observations, open todos
+          agent_bus          — active threads and unread turns
+          temporal           — active and upcoming temporally-bounded assertions
         """
         return run_cortex_boot(
             agent=agent,

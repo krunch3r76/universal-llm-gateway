@@ -834,7 +834,7 @@ def register_response_guard(mcp: FastMCP) -> None:
     ``_prune_to_primary()`` and is directly visible to all consumers.
     """
 
-    @mcp.tool()
+    @mcp.tool(title="Retrieve Oversized Response")
     def retrieve(id: str) -> ToolResult | dict[str, str]:
         """Retrieve a stored oversized tool response by reference ID (pop semantics, 10min TTL)."""
         now = time.monotonic()

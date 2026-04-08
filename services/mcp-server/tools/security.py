@@ -133,7 +133,7 @@ def _norm_json(text: str) -> str:
 def register_security_tools(mcp: FastMCP) -> None:
     """Register security testing tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="Security: Session Store")
     def session_store(
         op: str,
         key: str = "",
@@ -169,7 +169,7 @@ def register_security_tools(mcp: FastMCP) -> None:
             return {"deleted": key, "found": _store.pop(key, None) is not None}
         return {"error": f"Unknown op {op!r}. Use: set, get, list, delete"}
 
-    @mcp.tool()
+    @mcp.tool(title="HTTP Request")
     def http_request(
         method: str,
         url: str,
@@ -195,7 +195,7 @@ def register_security_tools(mcp: FastMCP) -> None:
             session_profile=session_profile,
         )
 
-    @mcp.tool()
+    @mcp.tool(title="HTTP Diff")
     def http_diff(
         request_a: dict[str, Any],
         request_b: dict[str, Any],
@@ -255,7 +255,7 @@ def register_security_tools(mcp: FastMCP) -> None:
         result["summary"] = summary
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="HTTP Replay")
     def http_replay(
         captured_request: dict[str, Any],
         modifications: dict[str, Any] | None = None,

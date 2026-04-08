@@ -143,7 +143,7 @@ def _parse_statement(
 def register_finance_tools(mcp: FastMCP) -> None:
     """Register financial PDF extraction and parsing tools (dispatch-only)."""
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Extract PDF")
     def finance_extract_pdf(path: str) -> dict[str, Any]:
         """Extract tables and text from a financial PDF using pdfplumber.
 
@@ -179,7 +179,7 @@ def register_finance_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Extract Directory")
     def finance_extract_directory(directory: str) -> dict[str, Any]:
         """Extract tables and text from every PDF in a directory.
 
@@ -236,7 +236,7 @@ def register_finance_tools(mcp: FastMCP) -> None:
             },
         }
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Parse Statement")
     def finance_parse_statement(path: str, statement_type: str) -> dict[str, Any]:
         """Parse a financial PDF into structured JSON via Claude API.
 
@@ -283,7 +283,7 @@ def register_finance_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Parse Directory")
     def finance_parse_directory(
         directory: str,
         type_map: dict[str, str] | None = None,

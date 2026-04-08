@@ -173,7 +173,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
     def _record_action_result(action: str, status: str, **payload: object) -> None:
         record("mcp.browser.action.result", action=action, status=status, **payload)
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Navigate")
     async def browser_navigate(url: str) -> dict[str, str]:
         """Navigate to a URL. Returns page title and final URL."""
         record("mcp.browser.action", action="navigate", url=url)
@@ -191,7 +191,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             _record_action_result("navigate", "failed", error=str(e))
             return {"error": str(e), "url": url}
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Get Structure")
     async def browser_get_structure() -> dict[str, object]:
         """Get the structural outline of the current page.
 
@@ -264,7 +264,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             _record_action_result("get_structure", "failed", error=str(e))
             return {"error": str(e)}
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Get Content")
     async def browser_get_content(selector: str = "body") -> dict[str, str | bool]:
         """Get visible text content of the current page.
 
@@ -290,7 +290,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             _record_action_result("get_content", "failed", error=str(e))
             return {"error": str(e)}
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Click")
     async def browser_click(selector: str) -> dict[str, str]:
         """Click an element matching a CSS selector."""
         record("mcp.browser.action", action="click", selector=selector)
@@ -304,7 +304,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             _record_action_result("click", "failed", error=str(e))
             return {"error": str(e)}
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Fill")
     async def browser_fill(selector: str, value: str) -> dict[str, str]:
         """Fill a text input matching a CSS selector."""
         record("mcp.browser.action", action="fill", selector=selector)
@@ -318,7 +318,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             _record_action_result("fill", "failed", error=str(e))
             return {"error": str(e)}
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Screenshot")
     async def browser_screenshot() -> ImageContent | dict[str, str]:
         """Take a full-page screenshot, returned directly to vision context."""
         record("mcp.browser.action", action="screenshot")
@@ -332,7 +332,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             _record_action_result("screenshot", "failed", error=str(e))
             return {"error": str(e)}
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Refresh Session")
     async def browser_refresh_session() -> dict[str, str]:
         """Drop browser context and re-read Firefox cookies on next action.
 
@@ -346,7 +346,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             "message": "Session cleared. Next browser action will reload cookies from host Firefox.",
         }
 
-    @mcp.tool()
+    @mcp.tool(title="Browser Load Cookies")
     async def browser_load_cookies(cookies_json: str) -> dict[str, object]:
         """Inject cookies from a JSON string into the current browser context.
 

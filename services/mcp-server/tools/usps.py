@@ -228,7 +228,7 @@ def _shape_tracking_response(
 def register_usps_tools(mcp: FastMCP) -> None:
     """Register USPS tracking tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="USPS Track Package")
     def usps_track(tracking_number: str) -> dict[str, Any]:
         """Track one USPS package by tracking number.
 

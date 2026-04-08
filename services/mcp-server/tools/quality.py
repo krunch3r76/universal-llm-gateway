@@ -25,7 +25,7 @@ _TIMEOUT = 30
 def register_quality_tools(mcp: FastMCP) -> None:
     """Register code quality gate tools."""
 
-    @mcp.tool()
+    @mcp.tool(title="Quality Gate")
     def quality_gate(files: list[str]) -> dict[str, Any]:
         """Run ruff lint + compileall on specified files. Returns {passed, ruff, compile}."""
         t0 = monotonic_now()

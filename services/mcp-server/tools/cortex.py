@@ -900,11 +900,42 @@ def _parse_cortex_arguments(arguments: object, tool: str) -> dict[str, Any] | No
 def register_cortex_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style cortex tool on the MCP server instance."""
 
-    @mcp.tool()
+    @mcp.tool(title="Cortex Knowledge Graph")
     def cortex(tool: str, arguments: str = "{}") -> Any:
         """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="cortex")
+        tool: operation name (see table below)
+        arguments: JSON string with operation arguments
+
+        Operations:
+          entities          (type?, limit?)                          — list entities
+          entity_get        (entity_id)                             — get entity with assertions + relationships
+          entity_create     (id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?) — create entity
+          entity_update     (entity_id, name?, description?, status?, notes?, aliases?, attributes?)  — update entity
+          assertions        (entity_id?, confidence?, review_status?, superseded?, limit?) — list assertions
+          assert            (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?) — write assertion
+          assertion_update  (assertion_id, superseded_by?, valid_until?, confidence?, review_status?) — update assertion
+          supersede         (old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent) — atomic close+create
+          relationships     (entity_id?, type_id?, limit?)          — list with names, strength
+          relationship_create (source_id, target_id, type_id, role?, strength?, evidence?) — create relationship
+          stats             ()                                       — dashboard counts
+          surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
+          journal_read      (limit?)                                 — recent session journals
+          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?) — write journal
+          review_queue      (limit?)                                 — provisional entities + flagged assertions
+          edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection
+          edges             (from_node?, to_node?, edge_type?, agent?, session_id?, limit?) — query edges
+          edge_traverse     (node, hops?, edge_type?, min_strength?) — graph traversal (1-2 hops)
+          edge_retire       (edge_id, valid_until?)                  — retire an edge
+          edge_types        ()                                        — list registered edge types
+          search            (query, limit?, superseded?, entity_type?) — FTS5 fulltext search over assertions
+
+        confidence values: confirmed / believed / suspected / hypothesized
+        review_status values: committed / flagged / staged / rejected
+
+        Example:
+          cortex(tool="entities", arguments='{"type": "todo", "limit": 20}')
+          cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
         """
         handler = _OPS.get(tool)
         if handler is None:

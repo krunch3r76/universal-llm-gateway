@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def register_finance_ingest_tools(mcp: FastMCP) -> None:
     """Register financial statement → Cortex ingestion tools (dispatch-only)."""
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Ingest Statement")
     def finance_ingest_statement(
         parsed_json: dict[str, Any] | None = None,
         path: str | None = None,
@@ -108,7 +108,7 @@ def register_finance_ingest_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Ingest Directory")
     def finance_ingest_directory(
         directory: str,
         type_map: dict[str, str] | None = None,

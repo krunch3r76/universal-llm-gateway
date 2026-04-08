@@ -229,7 +229,7 @@ def _llm_reconcile_entity(
 def register_finance_reconcile_tools(mcp: FastMCP) -> None:
     """Register the finance_reconcile tool."""
 
-    @mcp.tool()
+    @mcp.tool(title="Finance: Reconcile")
     def finance_reconcile(
         path: str,
     ) -> dict[str, Any]:

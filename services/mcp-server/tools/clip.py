@@ -100,7 +100,7 @@ def _parse_frontmatter(head: str) -> dict[str, str]:
 def register_clip_tools(mcp: FastMCP) -> None:
     """Register clip discovery and reading tools on *mcp*."""
 
-    @mcp.tool()
+    @mcp.tool(title="List Clips")
     def list_clips(limit: int = 20) -> dict[str, list[dict[str, str]] | str]:
         """List saved web clips, most recent first.
 
@@ -142,7 +142,7 @@ def register_clip_tools(mcp: FastMCP) -> None:
         logger.info("list_clips: %d clips", len(clips))
         return {"clips": clips}
 
-    @mcp.tool()
+    @mcp.tool(title="Read Clip")
     def read_clip(clip_id: str) -> dict[str, str]:
         """Read a web clip by its clip_id.
 

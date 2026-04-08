@@ -23,6 +23,8 @@ steps:
     timeout_seconds: 900
     # Per-iteration ceiling; flows as X-Request-Timeout to Stargate (min with upstream_retry_timeout).
     handler_timeout_seconds: 900
+    # MapExecutor has its own per-iteration timeout; keep it aligned with the handler budget.
+    inference_timeout_seconds: 900
     skip_token_counting: true
     max_concurrency: 5
     map_over:

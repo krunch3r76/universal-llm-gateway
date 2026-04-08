@@ -191,7 +191,7 @@ def _lifecycle_timeout_result(
 def register_manage_tools(mcp: FastMCP) -> None:
     """Register the manage tool on the MCP server instance."""
 
-    @mcp.tool()
+    @mcp.tool(title="Manage Services")
     def manage(
         action: str,
         service: str = "",
@@ -199,7 +199,25 @@ def register_manage_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, rebuild, health, wait_healthy.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="manage")
+        action: lifecycle action (see table below)
+        service: service name (required for most actions)
+        timeout: seconds to wait for wait_healthy (default 120)
+
+        Actions:
+          status      (no service needed) — running/stopped for all services
+          health      (service)           — health detail for one service
+          start       (service)           — start a stopped service
+          stop        (service)           — stop a running service
+          restart     (service)           — stop then start
+          rebuild     (service)           — rebuild container image and restart
+          wait_healthy (service, timeout?) — block until RUNNING or timeout
+
+        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus
+
+        Post-code-change workflow:
+          1. quality_gate(files=[...])
+          2. manage(action="rebuild", service="gateway")
+          3. manage(action="wait_healthy", service="gateway", timeout=120)
         """
         if action not in _VALID_ACTIONS:
             return {

@@ -1,0 +1,450 @@
+#!/usr/bin/env python3
+"""Download curated third-party API documentation into docs/thirdparty/.
+
+Pages are fetched as raw markdown from their public .md URLs and written
+to docs/thirdparty/{source}/ for RAG ingestion.
+
+Usage:
+  scripts/ingest-thirdparty-docs [--dry-run] [--force] [--source mcp|claude-api]
+  scripts/ingest-thirdparty-docs --list
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+import httpx
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_ROOT = REPO_ROOT / "docs" / "thirdparty"
+
+# ---------------------------------------------------------------------------
+# Curated page lists
+# Each entry: (url, relative_output_path, description)
+# ---------------------------------------------------------------------------
+
+MCP_PAGES: list[tuple[str, str, str]] = [
+    # Conceptual overview
+    (
+        "https://modelcontextprotocol.io/docs/getting-started/intro.md",
+        "mcp/intro.md",
+        "What is MCP?",
+    ),
+    (
+        "https://modelcontextprotocol.io/docs/learn/architecture.md",
+        "mcp/architecture.md",
+        "Architecture overview",
+    ),
+    (
+        "https://modelcontextprotocol.io/docs/learn/client-concepts.md",
+        "mcp/client-concepts.md",
+        "Understanding MCP clients",
+    ),
+    (
+        "https://modelcontextprotocol.io/docs/learn/server-concepts.md",
+        "mcp/server-concepts.md",
+        "Understanding MCP servers",
+    ),
+    # Build guides
+    (
+        "https://modelcontextprotocol.io/docs/develop/build-client.md",
+        "mcp/build-client.md",
+        "Build an MCP client",
+    ),
+    (
+        "https://modelcontextprotocol.io/docs/develop/build-server.md",
+        "mcp/build-server.md",
+        "Build an MCP server",
+    ),
+    (
+        "https://modelcontextprotocol.io/docs/tools/debugging.md",
+        "mcp/debugging.md",
+        "Debugging MCP integrations",
+    ),
+    # Specification — protocol basics
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/basic/index.md",
+        "mcp/spec/basic-overview.md",
+        "Spec: protocol overview",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle.md",
+        "mcp/spec/lifecycle.md",
+        "Spec: connection lifecycle",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/basic/transports.md",
+        "mcp/spec/transports.md",
+        "Spec: transports (stdio, SSE, streamable-HTTP)",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization.md",
+        "mcp/spec/authorization.md",
+        "Spec: authorization (OAuth 2.1)",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/architecture/index.md",
+        "mcp/spec/architecture.md",
+        "Spec: architecture",
+    ),
+    # Specification — client capabilities
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/client/sampling.md",
+        "mcp/spec/client-sampling.md",
+        "Spec: client sampling",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/client/roots.md",
+        "mcp/spec/client-roots.md",
+        "Spec: client roots",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation.md",
+        "mcp/spec/client-elicitation.md",
+        "Spec: client elicitation",
+    ),
+    # Specification — server capabilities
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/server/index.md",
+        "mcp/spec/server-overview.md",
+        "Spec: server capabilities overview",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/server/tools.md",
+        "mcp/spec/server-tools.md",
+        "Spec: server tools",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/server/resources.md",
+        "mcp/spec/server-resources.md",
+        "Spec: server resources",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/server/prompts.md",
+        "mcp/spec/server-prompts.md",
+        "Spec: server prompts",
+    ),
+    # Specification — utilities
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/cancellation.md",
+        "mcp/spec/util-cancellation.md",
+        "Spec: cancellation",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/progress.md",
+        "mcp/spec/util-progress.md",
+        "Spec: progress reporting",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging.md",
+        "mcp/spec/util-logging.md",
+        "Spec: server logging",
+    ),
+    (
+        "https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/pagination.md",
+        "mcp/spec/util-pagination.md",
+        "Spec: pagination",
+    ),
+]
+
+CLAUDE_API_PAGES: list[tuple[str, str, str]] = [
+    # Getting started
+    (
+        "https://platform.claude.com/docs/en/intro.md",
+        "claude-api/intro.md",
+        "Intro to Claude",
+    ),
+    (
+        "https://platform.claude.com/docs/en/get-started.md",
+        "claude-api/get-started.md",
+        "Quickstart",
+    ),
+    (
+        "https://platform.claude.com/docs/en/about-claude/models/overview.md",
+        "claude-api/models-overview.md",
+        "Models overview",
+    ),
+    (
+        "https://platform.claude.com/docs/en/about-claude/models/choosing-a-model.md",
+        "claude-api/models-choosing.md",
+        "Choosing a model",
+    ),
+    (
+        "https://platform.claude.com/docs/en/about-claude/pricing.md",
+        "claude-api/pricing.md",
+        "Pricing",
+    ),
+    # Core build-with-claude
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/overview.md",
+        "claude-api/build-overview.md",
+        "Features overview",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/working-with-messages.md",
+        "claude-api/messages-api.md",
+        "Using the Messages API",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/streaming.md",
+        "claude-api/streaming.md",
+        "Streaming messages",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/context-windows.md",
+        "claude-api/context-windows.md",
+        "Context windows",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/token-counting.md",
+        "claude-api/token-counting.md",
+        "Token counting",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/prompt-caching.md",
+        "claude-api/prompt-caching.md",
+        "Prompt caching",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/extended-thinking.md",
+        "claude-api/extended-thinking.md",
+        "Extended thinking",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking.md",
+        "claude-api/adaptive-thinking.md",
+        "Adaptive thinking",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/structured-outputs.md",
+        "claude-api/structured-outputs.md",
+        "Structured outputs",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/batch-processing.md",
+        "claude-api/batch-processing.md",
+        "Batch processing",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/vision.md",
+        "claude-api/vision.md",
+        "Vision (image inputs)",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/pdf-support.md",
+        "claude-api/pdf-support.md",
+        "PDF support",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/files.md",
+        "claude-api/files-api.md",
+        "Files API",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/embeddings.md",
+        "claude-api/embeddings.md",
+        "Embeddings",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/citations.md",
+        "claude-api/citations.md",
+        "Citations",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons.md",
+        "claude-api/stop-reasons.md",
+        "Handling stop reasons",
+    ),
+    # Prompt engineering
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/overview.md",
+        "claude-api/prompt-engineering.md",
+        "Prompt engineering overview",
+    ),
+    (
+        "https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices.md",
+        "claude-api/prompting-best-practices.md",
+        "Prompting best practices",
+    ),
+    # Tool use
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview.md",
+        "claude-api/tool-use-overview.md",
+        "Tool use overview",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works.md",
+        "claude-api/tool-use-how-it-works.md",
+        "How tool use works",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools.md",
+        "claude-api/tool-use-define.md",
+        "Define tools",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls.md",
+        "claude-api/tool-use-handle-calls.md",
+        "Handle tool calls",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use.md",
+        "claude-api/tool-use-parallel.md",
+        "Parallel tool use",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling.md",
+        "claude-api/tool-use-programmatic.md",
+        "Programmatic tool calling",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-combinations.md",
+        "claude-api/tool-combinations.md",
+        "Tool combinations",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/build-a-tool-using-agent.md",
+        "claude-api/tool-use-agent-tutorial.md",
+        "Tutorial: build a tool-using agent",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/tool-use/troubleshooting-tool-use.md",
+        "claude-api/tool-use-troubleshooting.md",
+        "Troubleshooting tool use",
+    ),
+    # MCP integration (Anthropic's perspective)
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/mcp-connector.md",
+        "claude-api/mcp-connector.md",
+        "MCP connector",
+    ),
+    (
+        "https://platform.claude.com/docs/en/agents-and-tools/remote-mcp-servers.md",
+        "claude-api/remote-mcp-servers.md",
+        "Remote MCP servers",
+    ),
+    # Evaluation
+    (
+        "https://platform.claude.com/docs/en/test-and-evaluate/develop-tests.md",
+        "claude-api/develop-tests.md",
+        "Define success and build evaluations",
+    ),
+    (
+        "https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-hallucinations.md",
+        "claude-api/reduce-hallucinations.md",
+        "Reduce hallucinations",
+    ),
+    (
+        "https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/increase-consistency.md",
+        "claude-api/increase-consistency.md",
+        "Increase output consistency",
+    ),
+    # API reference (language-independent overview only)
+    (
+        "https://platform.claude.com/docs/en/api/overview.md",
+        "claude-api/api-reference-overview.md",
+        "API reference overview",
+    ),
+]
+
+ALL_SOURCES: dict[str, list[tuple[str, str, str]]] = {
+    "mcp": MCP_PAGES,
+    "claude-api": CLAUDE_API_PAGES,
+}
+
+
+def download_page(url: str, dest: Path, *, dry_run: bool, force: bool) -> bool:
+    """Fetch a markdown page and write it to dest. Returns True on success."""
+    if dest.exists() and not force:
+        print(f"  [cached] {dest.relative_to(REPO_ROOT)}")
+        return True
+
+    if dry_run:
+        print(f"  [dry-run] {url} → {dest.relative_to(REPO_ROOT)}")
+        return True
+
+    try:
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            resp = client.get(url, headers={"Accept": "text/markdown, text/plain, */*"})
+        resp.raise_for_status()
+        content = resp.text
+        # Sanity check: skip if response looks like an HTML error page
+        if content.strip().startswith("<!DOCTYPE") or "<html" in content[:200]:
+            print(f"  [warn] HTML response (not markdown), skipping: {url}")
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        kb = len(resp.content) // 1024
+        print(f"  [ok] {dest.relative_to(REPO_ROOT)} ({kb}KB)")
+        return True
+    except httpx.HTTPStatusError as exc:
+        print(f"  [error] HTTP {exc.response.status_code}: {url}")
+        return False
+    except Exception as exc:  # noqa: BLE001
+        print(f"  [error] {exc}: {url}")
+        return False
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Download curated third-party API docs for RAG ingestion"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print actions without writing files"
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Re-download even if file exists"
+    )
+    parser.add_argument(
+        "--source",
+        choices=["mcp", "claude-api"],
+        help="Only download pages for this source (default: all)",
+    )
+    parser.add_argument("--list", action="store_true", help="List pages and exit")
+    args = parser.parse_args()
+
+    sources = {args.source: ALL_SOURCES[args.source]} if args.source else ALL_SOURCES
+
+    if args.list:
+        total = 0
+        for source, pages in sources.items():
+            print(f"\n[{source}] — {len(pages)} pages")
+            for url, local, description in pages:
+                print(f"  {local:55s}  {description}")
+            total += len(pages)
+        print(f"\nTotal: {total} pages")
+        return
+
+    total = sum(len(p) for p in sources.values())
+    print(f"Downloading {total} pages → {OUTPUT_ROOT.relative_to(REPO_ROOT)}")
+    if args.dry_run:
+        print("(dry-run — no files written)\n")
+
+    succeeded = failed = skipped = 0
+    for source, pages in sources.items():
+        print(f"\n── {source} ({len(pages)} pages) ──")
+        for url, local, _description in pages:
+            dest = OUTPUT_ROOT / local
+            already_exists = dest.exists()
+            ok = download_page(url, dest, dry_run=args.dry_run, force=args.force)
+            if ok:
+                if already_exists and not args.force and not args.dry_run:
+                    skipped += 1
+                else:
+                    succeeded += 1
+            else:
+                failed += 1
+            if not args.dry_run and ok and not already_exists:
+                time.sleep(0.5)
+
+    print(f"\n{'=' * 50}")
+    print(f"Done: {succeeded} downloaded, {skipped} cached, {failed} failed")
+    if failed:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

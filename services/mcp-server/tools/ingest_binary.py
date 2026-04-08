@@ -157,7 +157,7 @@ def _create_document_entity(
 def register_ingest_binary_tools(mcp: FastMCP) -> None:
     """Register binary evidence ingestion as a dispatch-only tool."""
 
-    @mcp.tool()
+    @mcp.tool(title="Ingest Binary")
     def ingest_binary(
         path: str,
         content_base64: str,
