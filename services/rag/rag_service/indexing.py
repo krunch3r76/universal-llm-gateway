@@ -1,8 +1,9 @@
 """Indexing and deletion pipeline for RAG chunks.
 
-This module owns file-level index/delete operations and their all-or-nothing
-coordination with extraction + property index writes. Lifecycle and admin routes
-delegate here, while shared mutable resources are read via ``state``.
+This module owns file-level index/delete operations. Extraction is decoupled:
+after chunks are embedded and upserted into ChromaDB, the source is enqueued
+for async extraction by extraction_worker.py. Files become searchable
+immediately — extraction enrichment arrives later.
 """
 
 from __future__ import annotations
@@ -31,7 +32,6 @@ from services.rag.events.articles import (
     rag_article_auto_created,
     rag_article_path_moved,
 )
-from services.rag.events.extraction import rag_extraction_model_mismatch
 from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
     rag_chroma_upsert_completed,
@@ -45,7 +45,6 @@ from services.rag.events.indexing import (
     rag_file_deleted,
     rag_file_indexed,
     rag_file_indexing_failed,
-    rag_file_retry_deferred,
     rag_file_skipped,
     rag_hints_update_completed,
     rag_hints_update_started,
@@ -57,11 +56,6 @@ from services.rag.events.indexing import (
     rag_property_write_started,
     rag_source_commit_completed,
     rag_source_commit_started,
-)
-from services.rag.extraction_wiring import (
-    ExtractionResult,
-    recover_missing_extraction,
-    run_extraction,
 )
 from services.rag.indexing_helpers import (
     all_ids_match_prefix,
@@ -77,7 +71,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CHARS_PER_TOKEN = 4  # Approximate characters per token for chunk sizing, used for chunk sizing heuristics.
+_CHARS_PER_TOKEN = 4
 
 
 def _should_skip_cached_source(
@@ -87,26 +81,18 @@ def _should_skip_cached_source(
     cached_source: object | None,
     source_mtime_ns: int,
     source_size_bytes: int,
-    schema_version: int,
-    extraction_model: str,
-    has_retriable_failures: bool,
 ) -> bool:
     """Return whether the stat-first cache may short-circuit this source.
 
-    `reindex` is an operator intent to rerun the indexing pipeline even when the
-    on-disk file is unchanged. `force` remains the stronger clean-slate switch
-    used by higher-level directory flows.
+    With extraction decoupled, the skip check only compares file identity
+    (mtime + size). Extraction staleness is handled by the extraction worker.
     """
     if force or operation == "reindex" or cached_source is None:
         return False
 
     cached = cached_source
     return bool(
-        cached.mtime_ns == source_mtime_ns
-        and cached.size_bytes == source_size_bytes
-        and cached.extraction_schema_version == schema_version
-        and cached.extraction_model == extraction_model
-        and not has_retriable_failures
+        cached.mtime_ns == source_mtime_ns and cached.size_bytes == source_size_bytes
     )
 
 
@@ -121,18 +107,6 @@ def _derive_subdirectory(source: str, config: RagConfig) -> str:
             continue
         return str(relative.parent) if relative.parent != Path(".") else ""
     return ""
-
-
-async def _clear_extraction_state_for_source(
-    source: str,
-    chunk_ids: list[str],
-) -> None:
-    """Purge extraction-derived metadata while preserving chunks and FTS rows."""
-    prop_index = state._property_index
-    if prop_index is None:
-        return
-    await prop_index.remove_properties_for_chunks(chunk_ids)
-    await prop_index.clear_failures_for(source)
 
 
 async def _index_file(
@@ -163,8 +137,6 @@ async def _index_file(
     finally:
         if state._file_index_locks.get(source) is lock:
             state._file_index_locks.pop(source, None)
-        # Consider if a separate cleanup for prop_index.clear_pending is needed here
-        # if _index_file_impl fails before its own finally block can execute it.
 
 
 async def _delete_file(file_path: Path) -> DeleteResult:
@@ -209,6 +181,15 @@ async def _delete_file_impl(source: str) -> DeleteResult:
     return DeleteResult(file=source, deleted=deleted)
 
 
+async def _enqueue_for_extraction(source: str) -> None:
+    """Queue a source for async extraction if the scope allows it."""
+    if state._config is None or state._property_index is None:
+        return
+    scope = state._config.get_scope_for_path(source)
+    if state._config.knowledge_extraction.should_extract_scope(scope):
+        await state._property_index.enqueue_extraction(source)
+
+
 async def _index_file_impl(
     file_path: Path,
     metadata_overrides: dict[str, str | int | float | bool] | None,
@@ -222,10 +203,8 @@ async def _index_file_impl(
 ) -> IndexResult:
     """Inner implementation of indexing called with source lock held.
 
-    Pending journal invariants:
-    - stat-only unchanged skips do not mark pending.
-    - mark_pending executes before recovery or any mutating index path.
-    - clear_pending executes for every marked file in ``finally``.
+    Extraction is decoupled: after successful ChromaDB upsert, the source
+    is enqueued for async extraction. No extraction calls on this path.
     """
     start = time.monotonic()
     correlation_id = operation_id or uuid4().hex
@@ -246,9 +225,6 @@ async def _index_file_impl(
             cached_source=cached_source,
             source_mtime_ns=source_stat.st_mtime_ns,
             source_size_bytes=source_stat.st_size,
-            schema_version=schema_version,
-            extraction_model=extraction_model,
-            has_retriable_failures=prop_index.has_retriable_failures(source),
         ):
             await prop_index.clear_pending(source)
             if emit_skip_event and state._event_bus is not None:
@@ -264,16 +240,9 @@ async def _index_file_impl(
 
     await require_healthy()
     raw = await asyncio.to_thread(file_path.read_bytes)
-    # Decide if source_hash should also incorporate schema_version
-    # If so:
-    # source_hash = file_hash(raw, schema_version=schema_version)
-    # If not, ensure content_hash and source_hash are clearly distinct concepts.
-    # For now, assuming content_hash is the primary content identifier.
     content_hash = file_hash(raw, schema_version=schema_version)
     prefix = content_hash[:16]
-    source_hash = hashlib.sha256(
-        raw
-    ).hexdigest()  # This hash is independent of schema_version
+    source_hash = hashlib.sha256(raw).hexdigest()
 
     if prop_index is not None:
         orphan = prop_index.find_orphaned_article_by_hash(
@@ -347,7 +316,6 @@ async def _index_file_impl(
     existing = collection.get(where={"source": source}, include=["metadatas"])
     existing_ids: list[str] = existing.get("ids", [])
 
-    pending_marked = False
     if prop_index is None and state._event_bus is not None:
         await state._event_bus.publish_async_nowait(
             rag_property_index_unavailable(file=source)
@@ -355,89 +323,6 @@ async def _index_file_impl(
 
     try:
         if not force and existing_ids and all_ids_match_prefix(existing_ids, prefix):
-            existing_metadatas = [
-                m for m in (existing.get("metadatas") or []) if isinstance(m, dict)
-            ]
-            if prop_index is not None:
-                expected_model = state._config.knowledge_extraction.extraction_model
-                mismatch_chunks = [
-                    m
-                    for m in existing_metadatas
-                    if not chunk_metadata_is_noise(m)
-                    and bool(expected_model)
-                    and m.get("extraction_model") != expected_model
-                ]
-                if mismatch_chunks and state._event_bus is not None:
-                    await state._event_bus.publish_async_nowait(
-                        rag_extraction_model_mismatch(
-                            file=source,
-                            expected_model=expected_model,
-                            chunk_count=len(mismatch_chunks),
-                        )
-                    )
-
-                scope = state._config.get_scope_for_path(source)
-                if state._config.knowledge_extraction.should_extract_scope(scope):
-                    await prop_index.mark_pending(source)
-                    pending_marked = True
-                    ext_result = await recover_missing_extraction(
-                        collection=collection,
-                        source=source,
-                        existing_ids=existing_ids,
-                        existing_metadatas=existing_metadatas,
-                        config=state._config.knowledge_extraction,
-                        property_index=prop_index,
-                        event_bus=state._event_bus,
-                        scope=scope,
-                    )
-                else:
-                    await _clear_extraction_state_for_source(source, existing_ids)
-                    ext_result = ExtractionResult(success=True)
-                if ext_result is not None and ext_result.success:
-                    # Invariant: upsert_indexed_source only after chunks exist
-                    # in ChromaDB. ¬write on extraction failure paths.
-                    await prop_index.upsert_indexed_source(
-                        source=source,
-                        mtime_ns=source_stat.st_mtime_ns,
-                        size_bytes=source_stat.st_size,
-                        extraction_schema_version=schema_version,
-                        extraction_model=extraction_model,
-                    )
-                    await state._maybe_update_corpus_hints()
-                    if state._event_bus is not None:
-                        await state._event_bus.publish_async_nowait(
-                            rag_file_indexed(
-                                file=source,
-                                deleted=0,
-                                indexed=0,
-                                duration_seconds=time.monotonic() - start,
-                                batch_start_ts=getattr(
-                                    ext_result, "batch_start_ts", None
-                                ),
-                                document_metadata=(
-                                    state._article_event_kwargs(state._registry, source)
-                                    if state._registry is not None
-                                    else None
-                                ),
-                                processing_seconds=getattr(
-                                    ext_result, "processing_seconds", None
-                                ),
-                                queue_wait_seconds=getattr(
-                                    ext_result, "queue_wait_seconds", None
-                                ),
-                                operation_id=correlation_id,
-                                operation=operation,
-                            )
-                        )
-                    return IndexResult(
-                        deleted=0,
-                        indexed=0,
-                        unchanged=False,
-                        file=source,
-                        extraction_entities=ext_result.entities,
-                        extraction_topics=ext_result.topics,
-                    )
-
             if prop_index is not None:
                 await prop_index.upsert_indexed_source(
                     source=source,
@@ -464,6 +349,7 @@ async def _index_file_impl(
                                 scope=scope,
                             )
                         )
+                await _enqueue_for_extraction(source)
             if emit_skip_event and state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
                     rag_file_skipped(
@@ -571,81 +457,7 @@ async def _index_file_impl(
                         )
                     )
 
-        extraction_entities: int | None = None
-        extraction_topics: int | None = None
-        extraction_property_entries: list[tuple[str, str, str, str]] = []
-        file_batch_start_ts: str | None = None
-        ext_result: ExtractionResult | None = None
-        if state._config is not None and prop_index is not None:
-            scope = state._config.get_scope_for_path(source)
-            if state._config.knowledge_extraction.should_extract_scope(scope):
-                extract_indices = [
-                    i for i, m in enumerate(metadatas) if not chunk_metadata_is_noise(m)
-                ]
-                extract_ids = [ids[i] for i in extract_indices]
-                extract_chunks = [chunks[i] for i in extract_indices]
-                extract_metadatas = [metadatas[i] for i in extract_indices]
-                if extract_ids:
-                    ext_result = await run_extraction(
-                        file=source,
-                        ids=extract_ids,
-                        chunks=extract_chunks,
-                        metadatas=extract_metadatas,
-                        config=state._config.knowledge_extraction,
-                        property_index=prop_index,
-                        event_bus=state._event_bus,
-                        apply_property_index=False,
-                        scope=scope,
-                    )
-                else:
-                    ext_result = ExtractionResult(success=True)
-            else:
-                await _clear_extraction_state_for_source(source, ids)
-                ext_result = ExtractionResult(success=True)
-            extraction_entities = ext_result.entities
-            extraction_topics = ext_result.topics
-            extraction_property_entries = ext_result.property_entries
-            ext_batch_start = getattr(ext_result, "batch_start_ts", None)
-            file_batch_start_ts = (
-                ext_batch_start if isinstance(ext_batch_start, str) else None
-            )
-
-            noise_ids = {
-                ids[i]
-                for i, meta in enumerate(metadatas)
-                if chunk_metadata_is_noise(meta)
-            }
-            if noise_ids:
-                extraction_property_entries = [
-                    e for e in extraction_property_entries if e[1] not in noise_ids
-                ]
-
-            if not ext_result.success:
-                if state._event_bus is not None:
-                    await state._event_bus.publish_async_nowait(
-                        rag_file_retry_deferred(
-                            file=source,
-                            reason="extraction_incomplete",
-                            failed_chunks=getattr(ext_result, "failed_chunks", None),
-                            attempted_chunks=getattr(
-                                ext_result, "attempted_chunks", None
-                            ),
-                            failure_category=getattr(
-                                ext_result, "failure_category", None
-                            ),
-                            failure_detail=getattr(ext_result, "failure_detail", None),
-                            finish_reason=getattr(ext_result, "finish_reason", None),
-                            top_failure_reasons=getattr(
-                                ext_result, "top_failure_reasons", None
-                            ),
-                            operation_id=correlation_id,
-                            operation=operation,
-                        )
-                    )
-                return IndexResult(deleted=0, indexed=0, unchanged=False, file=source)
-
         embed_texts = texts
-        # Contextualization is on by default; set contextualize_model: "" in rag.yaml to disable.
         if state._config is not None and state._config.contextualize_model:
             context_model = state._config.contextualize_model
             context_max_concurrency = state._config.contextualize_max_concurrency
@@ -747,7 +559,6 @@ async def _index_file_impl(
                     operation=operation,
                 )
             )
-        property_entry_count = len(extraction_property_entries)
         if prop_index is not None:
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
@@ -755,27 +566,20 @@ async def _index_file_impl(
                         file=source,
                         operation_id=correlation_id,
                         chunk_count=len(ids),
-                        property_entries=property_entry_count,
+                        property_entries=0,
                         operation=operation,
                     )
                 )
             await prop_index.fts.insert_batch(
                 [(cid, source, text) for cid, text in zip(ids, texts, strict=True)]
             )
-            if extraction_property_entries:
-                try:
-                    await prop_index.add_batch_with_scope(extraction_property_entries)
-                except Exception:
-                    collection.delete(ids=ids)
-                    await prop_index.fts.remove_batch(ids)
-                    raise
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
                     rag_property_write_completed(
                         file=source,
                         operation_id=correlation_id,
                         chunk_count=len(ids),
-                        property_entries=property_entry_count,
+                        property_entries=0,
                         operation=operation,
                     )
                 )
@@ -795,17 +599,6 @@ async def _index_file_impl(
                 )
             )
         raise
-    finally:
-        if pending_marked:
-            if prop_index is not None:
-                await prop_index.clear_pending(source)
-            else:
-                # This case should ideally not happen if mark_pending was called
-                # only when prop_index was available.
-                logger.error(
-                    "Property index became unavailable after marking pending for source=%s",
-                    source,
-                )
 
     try:
         if state._event_bus is not None:
@@ -889,6 +682,8 @@ async def _index_file_impl(
             )
         raise
 
+    await _enqueue_for_extraction(source)
+
     logger.info(
         "Index complete: file=%s deleted=%d indexed=%d",
         source,
@@ -903,15 +698,12 @@ async def _index_file_impl(
                 deleted=len(stale_ids),
                 indexed=len(chunks),
                 duration_seconds=time.monotonic() - start,
-                batch_start_ts=file_batch_start_ts,
                 noise_chunks=n_noise,
                 document_metadata=(
                     state._article_event_kwargs(state._registry, source)
                     if state._registry is not None
                     else None
                 ),
-                processing_seconds=getattr(ext_result, "processing_seconds", None),
-                queue_wait_seconds=getattr(ext_result, "queue_wait_seconds", None),
                 operation_id=correlation_id,
                 operation=operation,
             )
@@ -921,6 +713,4 @@ async def _index_file_impl(
         indexed=len(chunks),
         unchanged=False,
         file=source,
-        extraction_entities=extraction_entities,
-        extraction_topics=extraction_topics,
     )

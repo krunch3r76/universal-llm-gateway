@@ -1,40 +1,16 @@
 """LLM-based structured knowledge extraction via the rag-extraction pipeline.
 
-At index time, this module calls the ``rag-extraction`` pipeline (via Stargate)
-to extract structured knowledge from each document chunk. This is a RAG-specific
-extraction — independent of Cortex — that treats extracted names and topics as
-retrieval vocabulary rather than knowledge graph nodes.
+Provides the HTTP client and parsing for calling the extraction pipeline.
+The pipeline uses MapExecutor to process all chunks of a file in one call.
 
-The extraction schema captures:
+Data flow:
+  1. extraction_worker.py picks a source from the extraction queue
+  2. This module makes one HTTP call to Stargate (pipeline execution)
+  3. Model output is parsed into ExtractedKnowledge objects
+  4. Results returned to the worker for metadata patching + property writes
 
-  Entities:    named concepts with typed categories (component, protocol, config key, …)
-               and key-value facets (e.g. port: 9999, role: master).
-  Relations:   directed edges scoped to an entity (subject → predicate → target),
-               recording how components interact (e.g. Stargate → routes_to → Edge).
-  Topics:      free-form thematic labels for the chunk (federation, routing, telemetry).
-
-The pipeline uses a MapExecutor to extract all chunks of a file in one call,
-ensuring consistent entity naming across chunks (same model state, same session).
-Results are returned as a list of ``ExtractedKnowledge`` objects, one per chunk.
-
-Parsed results flow to two destinations:
-  1. ``extraction_wiring.py`` writes property index entries (``prop.name@@``,
-     ``prop.type@@``, ``prop.facet@@``, ``prop.rel@@``, ``prop.topic@@``) to the
-     SQLite property inverted index. Entity names and topics become seed terms for
-     IDF-weighted corpus expansion in Pool B (``term_expansion.idf_expand``) and
-     for metadata score adjustment (``metadata_boost.apply_metadata_boost``).
-  2. The ``extraction`` and ``extraction_schema_version`` fields are stored in
-     ChromaDB chunk metadata for cross-chunk entity merging at answer generation
-     time (``entity_merging.py``).
-
-∀ file: one extraction call covers all chunks (MapExecutor fan-out).
-Invariant: ∀ file: (∀ chunk extracted in one call) ∨ (∀ chunk unextracted).
-Partial writes were implemented twice and reverted twice — see lessons.
-
-Per-batch HTTP timeouts scale with chunk count to fail fast when the backend
-model is saturated by concurrent index workers.  Concurrency is bounded at the
-queue/worker level (``index_workers`` in config), not here — this project uses
-queues for concurrency control, not semaphores or locks.
+Retry and scheduling policy lives in extraction_worker — this module is a
+single-attempt client with no defensive state machinery.
 """
 
 from __future__ import annotations
@@ -42,15 +18,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import random
-import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import httpx
-from universal_event_bus.events.debug import emit_debug_event
-
-from services.rag.model_availability_tracker import get_model_availability_tracker
 
 if TYPE_CHECKING:
     from services.rag.config import KnowledgeExtractionConfig
@@ -59,91 +31,10 @@ logger = logging.getLogger(__name__)
 
 STARGATE_URL = "http://localhost:9999"
 
-# Pipeline YAML ceiling (rag-extraction-v2.yaml timeout_seconds: 3600).
-# The default client timeout remains a safety net; per-batch timeouts override it.
 _PIPELINE_CEILING_S = 3600.0
 _client = httpx.AsyncClient(timeout=_PIPELINE_CEILING_S + 30.0)
 
-_MAX_GENERAL_RETRIES = 2
-_GENERAL_BACKOFF_BASE_S = 2.0
 _batch_overhead_s: float = 30.0
-
-# ---------------------------------------------------------------------------
-# Capacity retry budget (model eviction/reload cycles)
-#
-# Stargate returns retryable capacity errors when the extraction model is
-# evicted (VRAM reclaimed for another model). On NVMe + RTX 5090, cold loads
-# take ~15-30s; worst-case contention (another model mid-inference) ~120s.
-# Fixed polling interval avoids exponential backoff's wasted short/long tails.
-# ---------------------------------------------------------------------------
-_CAPACITY_POLL_INTERVAL_S = 25.0
-_CAPACITY_POLL_JITTER_S = 4.0
-_CAPACITY_MAX_TOTAL_WAIT_S = 330.0  # hard cap ~5.5 min
-
-# ---------------------------------------------------------------------------
-# Extraction circuit breaker
-#
-# Only HARD failures (non-retryable errors, capacity budget exhausted) count
-# toward the breaker. Transient capacity errors during normal model eviction
-# cycles are expected and must not trip the breaker.
-# ---------------------------------------------------------------------------
-_CIRCUIT_OPEN_AFTER = 5  # consecutive hard-fail batches before opening
-_CIRCUIT_COOLDOWN_S = (
-    180.0  # 3 min — exceeds worst-case contention, < reconcile interval
-)
-
-_consecutive_all_failures: int = 0
-_last_all_failure_ts: float = 0.0
-
-
-def _is_circuit_open() -> bool:
-    """True when the breaker is open (recent consecutive all-fail batches)."""
-    if _consecutive_all_failures < _CIRCUIT_OPEN_AFTER:
-        return False
-    return (time.monotonic() - _last_all_failure_ts) < _CIRCUIT_COOLDOWN_S
-
-
-def _record_batch_outcome(*, all_failed: bool) -> None:
-    """Update breaker state after an extraction batch completes."""
-    global _consecutive_all_failures, _last_all_failure_ts
-    if all_failed:
-        _consecutive_all_failures += 1
-        _last_all_failure_ts = time.monotonic()
-    else:
-        _consecutive_all_failures = 0
-
-
-# Pipeline registration window: pipelines register 5–10s after Stargate starts
-# accepting requests. MODEL_NOT_FOUND 404s during this window are transient.
-_PIPELINE_REGISTRATION_TIMEOUT_S = 60.0
-_PIPELINE_REGISTRATION_POLL_S = 3.0
-
-
-async def _emit_extraction_debug(
-    signal: str,
-    *,
-    file: str | None,
-    payload: dict[str, Any],
-) -> None:
-    """Emit temporary extraction debug events without affecting correctness."""
-    await emit_debug_event(
-        signal,
-        {**({"file": file} if file else {}), **payload},
-        source="rag",
-    )
-
-
-class BatchTimeoutError(Exception):
-    """Raised when a batch exceeds the configured dynamic timeout budget.
-
-    The timeout budget is attached so callers can emit observability events
-    with the actual limit that was exceeded for this specific batch.
-    """
-
-    def __init__(self, timeout_seconds: float) -> None:
-        super().__init__(f"Extraction batch timed out after {timeout_seconds:.0f}s")
-        self.timeout_seconds = timeout_seconds
-
 
 _EXTRACTION_PROBE_TIMEOUT_S = 300.0
 _EXTRACTION_PROBE_INTERVAL_S = 5.0
@@ -157,8 +48,8 @@ async def wait_until_extraction_ready(
     """Block until the extraction pipeline is registered in Stargate's model list.
 
     Polls GET /v1/models at interval_s. Raises TimeoutError if not found
-    within timeout_s.  Gates watcher start on extraction readiness so
-    indexing doesn't burn retry budgets against an unreachable model.
+    within timeout_s. Called by extraction_worker at startup to avoid burning
+    retries against an unregistered pipeline.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
@@ -198,83 +89,23 @@ async def wait_until_extraction_ready(
 
 
 def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
-    """Set batch timeout overhead from config at RAG startup.
-
-    Per-iteration inference timeout is enforced server-side by Stargate via
-    X-Request-Timeout (handler_timeout_seconds in pipeline YAML). The RAG
-    client timeout is pipeline ceiling + overhead only — no per-chunk scaling.
-    """
+    """Set batch timeout overhead from config at RAG startup."""
     global _batch_overhead_s
     _batch_overhead_s = config.batch_timeout_overhead_s
     logger.info(
-        "Extraction timeouts configured: overhead=%.0fs"
-        " (per-chunk enforcement via Stargate X-Request-Timeout)",
+        "Extraction timeouts configured: overhead=%.0fs",
         _batch_overhead_s,
     )
 
 
-def _is_pipeline_not_registered(exc: Exception, pipeline_model: str) -> bool:
-    """Detect a transient MODEL_NOT_FOUND 404 for the configured pipeline model."""
-    if not isinstance(exc, httpx.HTTPStatusError):
-        return False
-    if exc.response.status_code != 404:
-        return False
-    try:
-        body = exc.response.json()
-    except Exception:
-        return False
-    # OpenAI-compatible error shape: {"error": {"code": "MODEL_NOT_FOUND", "message": ...}}
-    error = body.get("error", {})
-    if isinstance(error, dict):
-        return error.get("code") == "MODEL_NOT_FOUND" and pipeline_model in error.get(
-            "message", ""
-        )
-    return False
-
-
-@dataclass(slots=True, kw_only=True)
-class StargateError:
-    code: str
-    retryable: bool
-    message: str
-
-
-def _parse_stargate_error(exc: httpx.HTTPStatusError) -> StargateError | None:
-    """Parse Stargate's structured error envelope from a 4xx/5xx response."""
-    try:
-        body = exc.response.json()
-    except Exception:
-        return None
-
-    error_block = body.get("error", {})
-    if not isinstance(error_block, dict):
-        error_block = {}
-
-    code = body.get("code", "")
-    if not isinstance(code, str) or not code:
-        code = error_block.get("code", "")
-    if not isinstance(code, str) or not code:
-        return None
-
-    retryable = body.get("retryable", False)
-    if not isinstance(retryable, bool):
-        retryable = False
-    if not retryable:
-        nested_retryable = error_block.get("retryable", False)
-        if isinstance(nested_retryable, bool):
-            retryable = nested_retryable
-
-    message = body.get("message", "")
-    if not isinstance(message, str) or not message:
-        nested_message = error_block.get("message", "")
-        message = nested_message if isinstance(nested_message, str) else ""
-
-    return StargateError(code=code, retryable=retryable, message=message)
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
 
 
 @dataclass(slots=True, kw_only=True)
 class Facet:
-    """Represents a key-value attribute or property of an Entity, providing additional detail. For example, a 'port' facet with value '9999' for a 'Service' entity."""
+    """Key-value attribute of an Entity (e.g. port: 9999)."""
 
     name: str
     value: str
@@ -282,7 +113,7 @@ class Facet:
 
 @dataclass(slots=True, kw_only=True)
 class Relation:
-    """Represents a directed relationship or interaction between two entities, where the current entity is the subject, and 'target' is the object of the 'predicate'."""
+    """Directed edge: current entity → predicate → target."""
 
     predicate: str
     target: str
@@ -290,7 +121,7 @@ class Relation:
 
 @dataclass(slots=True, kw_only=True)
 class Entity:
-    """Represents a named concept extracted from a document chunk, characterized by its type(s), descriptive facets, and relationships to other entities."""
+    """Named concept with typed categories, facets, and relations."""
 
     name: str
     type: list[str]
@@ -322,6 +153,11 @@ class ExtractedKnowledge:
         }
 
 
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+
 def _parse_one(
     data: dict[str, object],
     *,
@@ -329,8 +165,8 @@ def _parse_one(
 ) -> ExtractedKnowledge | None:
     """Parse one extraction payload item for a specific chunk identifier.
 
-    The chunk identity comes from caller-owned ordering, not model output.
-    Returns None only when the caller should treat the item as invalid.
+    Chunk identity comes from caller-owned ordering, not model output.
+    Returns None only when the item is structurally invalid.
     """
     returned_chunk_id = data.get("chunk_id")
     if isinstance(returned_chunk_id, str) and returned_chunk_id != chunk_id:
@@ -428,11 +264,6 @@ def _parse_map_response(
             continue
         item = items[idx]
         if item is None:
-            logger.warning(
-                "Map response item %d for chunk %s is None; iteration produced no aligned output",
-                idx,
-                chunk_id,
-            )
             failure_reasons[chunk_id] = "missing_iteration_output"
             parsed.append(None)
             continue
@@ -450,20 +281,32 @@ def _parse_map_response(
     return parsed, failure_reasons
 
 
-async def _call_extraction(
-    chunks: list[dict[str, str]],
-    chunk_ids: list[str],
-    config: KnowledgeExtractionConfig,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
-    """Execute one extraction HTTP call.
+# ---------------------------------------------------------------------------
+# HTTP call — single attempt, no retries
+# ---------------------------------------------------------------------------
 
-    Per-iteration inference timeout is enforced server-side by Stargate via
-    X-Request-Timeout (handler_timeout_seconds in pipeline YAML). This client
-    timeout is a pipeline-ceiling safety net only — not scaled per chunk so
-    queue-wait time does not consume the inference budget.
-    Raises on non-2xx HTTP responses.
+
+async def extract_file_chunks(
+    chunk_ids: list[str],
+    chunk_texts: list[str],
+    config: KnowledgeExtractionConfig,
+) -> tuple[list[ExtractedKnowledge | None], dict[str, Any]]:
+    """Execute one extraction pipeline call. Single attempt, no retries.
+
+    Returns (parsed_results, timing_metadata).
+    Raises httpx.TimeoutException or httpx.HTTPStatusError on failure —
+    the caller (extraction_worker) owns retry policy.
     """
+    if not chunk_ids:
+        return [], {}
+
+    request_id = f"rag-extract-{uuid4().hex}"
+    chunks = [
+        {"id": cid, "text": text}
+        for cid, text in zip(chunk_ids, chunk_texts, strict=True)
+    ]
     batch_timeout = _PIPELINE_CEILING_S + _batch_overhead_s
+
     response = await _client.post(
         f"{STARGATE_URL}/v1/chat/completions",
         json={
@@ -471,6 +314,7 @@ async def _call_extraction(
             "messages": [{"role": "user", "content": "extract"}],
             "pipeline_options": {"chunks": chunks},
         },
+        headers={"X-Internal-Request-ID": request_id},
         timeout=batch_timeout,
     )
     response.raise_for_status()
@@ -480,12 +324,12 @@ async def _call_extraction(
     finish_reason = choice.get("finish_reason")
     if finish_reason == "length":
         logger.warning(
-            "Extraction batch hit max_tokens (finish_reason=length) for %d chunks"
-            " — map output truncated; trailing chunks will be missing",
+            "Extraction hit max_tokens (finish_reason=length) for %d chunks",
             len(chunk_ids),
         )
     parsed, parse_failure_reasons = _parse_map_response(content, chunk_ids)
-    timing: dict[str, object] = dict(body.get("pipeline_timing") or {})
+    timing: dict[str, Any] = dict(body.get("pipeline_timing") or {})
+    timing["request_id"] = request_id
     execution_id = response.headers.get("x-pipeline-execution-id")
     if execution_id:
         timing["execution_id"] = execution_id
@@ -494,362 +338,3 @@ async def _call_extraction(
     if parse_failure_reasons:
         timing["parse_failure_reasons"] = parse_failure_reasons
     return parsed, timing
-
-
-async def _await_pipeline_registration(
-    chunks: list[dict[str, str]],
-    chunk_ids: list[str],
-    config: KnowledgeExtractionConfig,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
-    """Poll until the pipeline model registers or the deadline expires.
-
-    Called when the first MODEL_NOT_FOUND 404 is seen — the pipeline has not
-    yet registered with Stargate. This is transient at startup (5–10s typical).
-    """
-    deadline = asyncio.get_event_loop().time() + _PIPELINE_REGISTRATION_TIMEOUT_S
-    logger.info(
-        "Pipeline '%s' not yet registered; waiting up to %.0fs",
-        config.pipeline,
-        _PIPELINE_REGISTRATION_TIMEOUT_S,
-    )
-    while True:
-        await asyncio.sleep(_PIPELINE_REGISTRATION_POLL_S)
-        remaining = deadline - asyncio.get_event_loop().time()
-        if remaining <= 0:
-            logger.error(
-                "Pipeline '%s' did not register within %.0fs",
-                config.pipeline,
-                _PIPELINE_REGISTRATION_TIMEOUT_S,
-            )
-            return [None] * len(chunk_ids), {}
-        try:
-            result = await _call_extraction(chunks, chunk_ids, config)
-            logger.info(
-                "Pipeline '%s' registered — extraction succeeded (%.0fs remaining)",
-                config.pipeline,
-                remaining,
-            )
-            return result
-        except httpx.HTTPStatusError as exc:
-            if not _is_pipeline_not_registered(exc, config.pipeline):
-                logger.warning(
-                    "Unexpected HTTP error while waiting for pipeline: %s",
-                    exc,
-                    exc_info=True,
-                )
-                return [None] * len(chunk_ids), {}
-            logger.debug(
-                "Pipeline '%s' still not registered; %.0fs remaining",
-                config.pipeline,
-                remaining,
-            )
-        except httpx.RequestError as exc:
-            logger.error(
-                "Network error during pipeline registration wait: %s",
-                exc,
-                exc_info=True,
-            )
-            return [None] * len(chunk_ids), {}
-        except Exception as exc:
-            logger.error(
-                "Unexpected non-HTTP error during pipeline registration wait: %s",
-                exc,
-                exc_info=True,
-            )
-            # Consider re-raising if this is truly unexpected and should halt registration
-            # For now, returning None to indicate failure to register.
-            return [None] * len(chunk_ids), {}
-
-
-async def extract_knowledge_batch(
-    chunk_ids: list[str],
-    chunk_texts: list[str],
-    config: KnowledgeExtractionConfig,
-    *,
-    file: str | None = None,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, object]]:
-    """Extract structured knowledge from all chunks in a file via one pipeline call.
-
-    HTTP timeout scales with chunk count so small batches fail fast under model
-    saturation.  Timeout exceptions are translated to BatchTimeoutError so callers
-    can emit a dedicated event and preserve per-file all-or-nothing behavior.
-    """
-    if not chunk_ids:
-        return [], {}
-
-    if _is_circuit_open():
-        remaining = _CIRCUIT_COOLDOWN_S - (time.monotonic() - _last_all_failure_ts)
-        await _emit_extraction_debug(
-            "debug.rag.extraction.circuit",
-            file=file,
-            payload={
-                "step": "circuit_open",
-                "consecutive_failures": _consecutive_all_failures,
-                "cooldown_remaining_s": round(max(0, remaining), 1),
-                "chunk_count": len(chunk_ids),
-            },
-        )
-        logger.info(
-            "Extraction circuit breaker open (%d consecutive all-fail batches,"
-            " %.0fs cooldown remaining) — deferring %d chunks for %s",
-            _consecutive_all_failures,
-            max(0, remaining),
-            len(chunk_ids),
-            file or "unknown",
-        )
-        return [None] * len(chunk_ids), {
-            "circuit_breaker": True,
-            "consecutive_failures": _consecutive_all_failures,
-        }
-
-    mat = get_model_availability_tracker()
-    if mat is not None:
-        result = await mat.wait_until_available(
-            config.extraction_model,
-            config.model_load_wait_s,
-        )
-        if not result.available:
-            await _emit_extraction_debug(
-                "debug.rag.extraction.availability",
-                file=file,
-                payload={
-                    "step": "model_unavailable",
-                    "chunk_count": len(chunk_ids),
-                    "model_id": config.extraction_model,
-                    "reason": result.reason.value,
-                    "detail": result.detail,
-                    "structural": result.reason.is_structural,
-                },
-            )
-            if result.reason.is_structural:
-                logger.error(
-                    "Extraction model not in catalog — failing batch"
-                    " (%d chunks, %s: %s)",
-                    len(chunk_ids),
-                    result.reason.value,
-                    result.detail,
-                )
-                return [None] * len(chunk_ids), {
-                    "model_unavailable": True,
-                    "structural": True,
-                    "unavailability_reason": result.reason.value,
-                    "unavailability_detail": result.detail,
-                }
-            logger.info(
-                "Extraction model transiently unavailable — skipping batch"
-                " (%d chunks, %s: %s)",
-                len(chunk_ids),
-                result.reason.value,
-                result.detail,
-            )
-            return [None] * len(chunk_ids), {
-                "model_unavailable": True,
-                "structural": False,
-                "unavailability_reason": result.reason.value,
-            }
-
-    chunks = [
-        {"id": cid, "text": text}
-        for cid, text in zip(chunk_ids, chunk_texts, strict=True)
-    ]
-    batch_timeout = _PIPELINE_CEILING_S + _batch_overhead_s
-    await _emit_extraction_debug(
-        "debug.rag.extraction.attempt",
-        file=file,
-        payload={
-            "step": "batch_started",
-            "chunk_count": len(chunk_ids),
-            "model_id": config.extraction_model,
-            "pipeline": config.pipeline,
-            "timeout_budget_seconds": batch_timeout,
-        },
-    )
-
-    last_exc: Exception | None = None
-    capacity_retries = 0
-    capacity_waited_s = 0.0
-    general_attempts = 0
-
-    while True:
-        await _emit_extraction_debug(
-            "debug.rag.extraction.attempt",
-            file=file,
-            payload={
-                "step": "call_started",
-                "general_attempt": general_attempts + 1,
-                "capacity_retries": capacity_retries,
-                "capacity_waited_s": round(capacity_waited_s, 1),
-                "chunk_count": len(chunk_ids),
-                "model_id": config.extraction_model,
-                "pipeline": config.pipeline,
-            },
-        )
-        try:
-            parsed, timing = await _call_extraction(chunks, chunk_ids, config)
-            if capacity_retries > 0:
-                timing = {
-                    **timing,
-                    "capacity_retries": capacity_retries,
-                    "capacity_waited_s": round(capacity_waited_s, 1),
-                }
-            await _emit_extraction_debug(
-                "debug.rag.extraction.result",
-                file=file,
-                payload={
-                    "step": "call_succeeded",
-                    "general_attempt": general_attempts + 1,
-                    "capacity_retries": capacity_retries,
-                    "capacity_waited_s": round(capacity_waited_s, 1),
-                    "chunk_count": len(chunk_ids),
-                    "result_count": len(parsed),
-                    "finish_reason": timing.get("finish_reason"),
-                    "processing_seconds": timing.get("processing_seconds"),
-                    "queue_wait_seconds": timing.get("queue_wait_seconds"),
-                },
-            )
-            return parsed, timing
-        except httpx.TimeoutException:
-            await _emit_extraction_debug(
-                "debug.rag.extraction.result",
-                file=file,
-                payload={
-                    "step": "client_timeout",
-                    "general_attempt": general_attempts + 1,
-                    "chunk_count": len(chunk_ids),
-                    "timeout_budget_seconds": batch_timeout,
-                },
-            )
-            logger.warning(
-                "Batch extraction timed out (%d chunks, budget %.0fs); not retrying",
-                len(chunk_ids),
-                batch_timeout,
-            )
-            raise BatchTimeoutError(batch_timeout)
-        except httpx.HTTPStatusError as exc:
-            if _is_pipeline_not_registered(exc, config.pipeline):
-                return await _await_pipeline_registration(chunks, chunk_ids, config)
-            stargate_err = _parse_stargate_error(exc)
-            if stargate_err is not None:
-                await _emit_extraction_debug(
-                    "debug.rag.extraction.stargate",
-                    file=file,
-                    payload={
-                        "step": "http_status_error",
-                        "general_attempt": general_attempts + 1,
-                        "capacity_retries": capacity_retries,
-                        "status_code": exc.response.status_code,
-                        "code": stargate_err.code,
-                        "retryable": stargate_err.retryable,
-                        "message": stargate_err.message,
-                    },
-                )
-                if not stargate_err.retryable:
-                    logger.warning(
-                        "Non-retryable Stargate error for extraction: code=%s message=%s",
-                        stargate_err.code,
-                        stargate_err.message,
-                    )
-                    return [None] * len(chunk_ids), {
-                        "stargate_error": stargate_err.code
-                    }
-
-                # --- Capacity retry path (fixed-interval polling) ---
-                last_exc = exc
-                if capacity_waited_s >= _CAPACITY_MAX_TOTAL_WAIT_S:
-                    logger.warning(
-                        "Capacity wait budget exhausted (%.0fs / %.0fs) for %s; "
-                        "treating as hard failure",
-                        capacity_waited_s,
-                        _CAPACITY_MAX_TOTAL_WAIT_S,
-                        file or "unknown",
-                    )
-                    break
-                capacity_retries += 1
-                delay = _CAPACITY_POLL_INTERVAL_S + random.uniform(
-                    -_CAPACITY_POLL_JITTER_S, _CAPACITY_POLL_JITTER_S
-                )
-                logger.info(
-                    "Capacity contention (code=%s, waited %.0fs/%.0fs); "
-                    "polling in %.0fs for %s",
-                    stargate_err.code,
-                    capacity_waited_s,
-                    _CAPACITY_MAX_TOTAL_WAIT_S,
-                    delay,
-                    file or "unknown",
-                )
-                await asyncio.sleep(delay)
-                capacity_waited_s += delay
-                continue
-
-            # --- General error path (exponential backoff, limited retries) ---
-            last_exc = exc
-            general_attempts += 1
-            if general_attempts >= _MAX_GENERAL_RETRIES:
-                break
-            delay = _GENERAL_BACKOFF_BASE_S**general_attempts
-            logger.warning(
-                "Batch extraction general error %d/%d (%s); retrying in %.1fs",
-                general_attempts,
-                _MAX_GENERAL_RETRIES,
-                type(exc).__name__,
-                delay,
-                exc_info=True,
-            )
-            await asyncio.sleep(delay)
-        except httpx.RequestError as exc:
-            last_exc = exc
-            general_attempts += 1
-            if general_attempts >= _MAX_GENERAL_RETRIES:
-                break
-            delay = _GENERAL_BACKOFF_BASE_S**general_attempts
-            logger.warning(
-                "Batch extraction request error %d/%d (%s); retrying in %.1fs",
-                general_attempts,
-                _MAX_GENERAL_RETRIES,
-                type(exc).__name__,
-                delay,
-                exc_info=True,
-            )
-            await asyncio.sleep(delay)
-        except Exception as exc:
-            last_exc = exc
-            general_attempts += 1
-            if general_attempts >= _MAX_GENERAL_RETRIES:
-                break
-            delay = _GENERAL_BACKOFF_BASE_S**general_attempts
-            logger.warning(
-                "Batch extraction unexpected error %d/%d (%s); retrying in %.1fs",
-                general_attempts,
-                _MAX_GENERAL_RETRIES,
-                type(exc).__name__,
-                delay,
-                exc_info=True,
-            )
-            await asyncio.sleep(delay)
-
-    await _emit_extraction_debug(
-        "debug.rag.extraction.result",
-        file=file,
-        payload={
-            "step": "attempts_exhausted",
-            "chunk_count": len(chunk_ids),
-            "general_attempts": general_attempts,
-            "capacity_retries": capacity_retries,
-            "capacity_waited_s": round(capacity_waited_s, 1),
-            "last_error_type": type(last_exc).__name__ if last_exc else None,
-            "last_error": str(last_exc)[:240] if last_exc else None,
-        },
-    )
-    if last_exc is not None:
-        logger.warning(
-            "Batch extraction failed (general=%d, capacity=%d, waited=%.0fs): %s",
-            general_attempts,
-            capacity_retries,
-            capacity_waited_s,
-            last_exc,
-            exc_info=True,
-        )
-    return [None] * len(chunk_ids), {
-        "capacity_retries": capacity_retries,
-        "capacity_waited_s": round(capacity_waited_s, 1),
-    }

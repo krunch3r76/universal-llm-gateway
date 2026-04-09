@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from .. import embeddings as cortex_embeddings
 from .. import vector_store
 from ..assertion_quality import validate_assertion
+from ..belief_guard import (
+    analyze_assertion_impact,
+    guard_assertion_write,
+)
 from ..claim_hash import compute_claim_hash
 from ..db import cortex_conn, decode_row, json_encode, query
 from ..enrichment import (
@@ -26,6 +29,7 @@ from ..models import (
     AssertionSearchItem,
     AssertionSearchResult,
     AssertionUpdate,
+    ContradictionConflict,
     EnrichRequest,
     EnrichResponse,
     NearDuplicateWarning,
@@ -39,7 +43,11 @@ logger = logging.getLogger("cortex-api.assertions")
 
 def _log_search_access(items: list) -> None:
     """Batch-log access for entities touched by search results (TTL reset for ephemeral)."""
-    entity_ids = {getattr(item, "entity_id", None) or item.get("entity_id") for item in items if item}
+    entity_ids = {
+        getattr(item, "entity_id", None) or item.get("entity_id")
+        for item in items
+        if item
+    }
     entity_ids.discard(None)
     if not entity_ids:
         return
@@ -215,26 +223,20 @@ _SEARCH_COLS = (
     "a.entrenchment_score, a.observed_at, a.created_at"
 )
 
-# FTS5 special characters that cause parse errors when present in user queries.
-# Colon is a column-filter operator (term:column), parentheses alter grouping,
-# hyphens are interpreted as NOT-minus, caret/tilde/star alter matching.
-# We also strip the boolean keyword operators to prevent accidental SQL injection
-# into the query grammar (e.g. bare "AND" triggers an operator parse error).
-_FTS5_OPERATORS = re.compile(r"[+\-*^~:()\"]")
-_FTS5_KEYWORDS = re.compile(r"\b(AND|OR|NOT|NEAR)\b", re.IGNORECASE)
-
 
 def _sanitize_fts_query(raw: str) -> str:
-    """Sanitize a user-supplied string for safe use in an FTS5 MATCH clause.
+    """Wrap each whitespace-split token in FTS5 double-quote phrase syntax.
 
-    Replaces FTS5 operator characters and reserved keywords with spaces so
-    that any input can be passed to MATCH without triggering a parse error.
-    Space-separated terms are treated as implicit AND by FTS5.
+    Quote-wrapping disables all operator interpretation (hyphens, colons,
+    parentheses, boolean keywords) structurally — no enumeration of special
+    characters is required. Each token is quoted independently, giving
+    implicit AND semantics across terms. Embedded double-quotes are escaped
+    as "" per the FTS5 phrase rules.
     """
-    step1 = _FTS5_KEYWORDS.sub(" ", raw)
-    step2 = _FTS5_OPERATORS.sub(" ", step1)
-    # Collapse runs of whitespace to a single space and strip edges.
-    return re.sub(r"\s+", " ", step2).strip()
+    tokens = raw.strip().split()
+    if not tokens:
+        return ""
+    return " ".join(f'"{t.replace(chr(34), chr(34) * 2)}"' for t in tokens)
 
 
 _SEARCH_COLS_WITH_ENTITY = _SEARCH_COLS + ", e.name AS entity_name"
@@ -487,6 +489,41 @@ def create_assertion(
                 detail=f"Entity not found: {body.entity_id}",
             )
 
+        # C2: Write-path contradiction check (entity-local, AGM G3)
+        contradiction_warnings_out: list[ContradictionConflict] | None = None
+        if body.force and body.supersedes_id is not None:
+            sup_target = query(
+                conn,
+                "SELECT id FROM assertions WHERE id = ?",
+                (body.supersedes_id,),
+            )
+            if not sup_target:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(f"supersedes_id assertion not found: {body.supersedes_id}"),
+                )
+
+        guard = guard_assertion_write(
+            conn, body.entity_id, body.claim, force=body.force
+        )
+        if not guard.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=guard.block_detail,
+            )
+        if guard.review_status:
+            review_status = guard.review_status
+        if guard.contradiction_warnings:
+            contradiction_warnings_out = [
+                ContradictionConflict(
+                    assertion_id=c.assertion_id,
+                    claim=c.claim,
+                    confidence=c.confidence,
+                    similarity=c.similarity,
+                )
+                for c in guard.contradiction_warnings
+            ]
+
         entrenchment = compute_entrenchment(
             confidence=body.confidence,
             derivation_type=body.derivation_type or "inference",
@@ -554,6 +591,31 @@ def create_assertion(
 
         near_dup_warning: NearDuplicateWarning | None = None
         if was_new:
+            # Force+supersedes: mark old assertion superseded
+            if body.force and body.supersedes_id:
+                import datetime as dt
+
+                now_str = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                conn.execute(
+                    "UPDATE assertions SET superseded_by = ?, valid_until = ?, "
+                    "updated_at = ? WHERE id = ? AND superseded_by IS NULL",
+                    (new_id, now_str, now_str, body.supersedes_id),
+                )
+                conn.commit()
+
+            # C2 flagging: persist review notes for believed contradictions
+            if contradiction_warnings_out:
+                c2_notes = "; ".join(
+                    f"Semantic contradiction: #{c.assertion_id} "
+                    f"(sim={c.similarity:.2f})"
+                    for c in contradiction_warnings_out
+                )
+                conn.execute(
+                    "UPDATE assertions SET review_notes = ? WHERE id = ?",
+                    (c2_notes, new_id),
+                )
+                conn.commit()
+
             match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
             if match:
                 record_near_duplicate(conn, new_id, match.existing_id, match.score)
@@ -564,8 +626,16 @@ def create_assertion(
             contradiction = check_contradictions(conn, body.entity_id, body.claim)
             if contradiction.flagged:
                 conn.execute(
-                    "UPDATE assertions SET review_status = ?, review_notes = ? WHERE id = ?",
-                    ("flagged", contradiction.review_notes, new_id),
+                    "UPDATE assertions SET review_status = ?, "
+                    "review_notes = CASE WHEN review_notes IS NOT NULL "
+                    "THEN review_notes || '; ' || ? ELSE ? END "
+                    "WHERE id = ?",
+                    (
+                        "flagged",
+                        contradiction.review_notes,
+                        contradiction.review_notes,
+                        new_id,
+                    ),
                 )
                 conn.commit()
                 rows = query(
@@ -624,6 +694,7 @@ def create_assertion(
         item=item,
         near_duplicate_warning=near_dup_warning,
         validation_warnings=validation_warnings,
+        contradiction_warnings=contradiction_warnings_out,
     )
 
 
@@ -747,6 +818,25 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 detail=f"Entity not found: {body.entity_id}",
             )
 
+        # C1: Validate supersession target against semantic impact
+        impact = analyze_assertion_impact(
+            conn, body.entity_id, body.claim, body.confidence
+        )
+        touched_ids = {t.assertion_id for t in impact.touched_assertions}
+        impact_warning: str | None = None
+        if (
+            body.old_assertion_id not in impact.likely_supersedes
+            and body.old_assertion_id not in touched_ids
+        ):
+            impact_warning = (
+                f"Assertion {body.old_assertion_id} not found in semantic "
+                f"impact analysis — target may not be the most relevant match"
+            )
+            logger.warning(
+                "Supersede target %d has low semantic relevance to new claim",
+                body.old_assertion_id,
+            )
+
         entrenchment = compute_entrenchment(
             confidence=body.confidence,
             derivation_type=body.derivation_type or "inference",
@@ -837,6 +927,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
     return SupersedeResponse(
         old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),
         new=AssertionItem(**decode_row(new_result[0], _JSON_FIELDS)),
+        impact_warning=impact_warning,
     )
 
 

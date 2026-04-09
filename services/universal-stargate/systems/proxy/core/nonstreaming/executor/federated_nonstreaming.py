@@ -9,11 +9,13 @@ Part of the `nonstreaming/executor` subpackage. Contains two functions:
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, Response
+from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope
 
@@ -32,6 +34,29 @@ if TYPE_CHECKING:
     from ..context import RequestContext
 
 logger = get_logger(__name__)
+
+
+async def _emit_federated_execute_debug(
+    step: str,
+    *,
+    fed_gateway: FederatedGateway,
+    request_id: str,
+    model_id: str,
+    **extra: Any,
+) -> None:
+    """Emit master-side debug events for federated execution phases."""
+    await emit_debug_event(
+        "debug.federation.execute.master",
+        {
+            "step": step,
+            "gateway_id": fed_gateway.gateway_id,
+            "remote_id": fed_gateway.remote_stargate_id,
+            "request_id": request_id,
+            "model_id": model_id,
+            **extra,
+        },
+        source="stargate",
+    )
 
 
 async def _forward_via_tracker_or_forwarder(
@@ -60,6 +85,15 @@ async def _forward_via_tracker_or_forwarder(
         request_tracker = federation_integration.request_tracker
 
     if request_tracker is None:
+        await _emit_federated_execute_debug(
+            "forward_start",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_id,
+            path="direct",
+            hop_count=hop_count,
+            endpoint_category=str(endpoint_category),
+        )
         if federation_forwarder is None:
             raise HTTPException(
                 status_code=503,
@@ -77,9 +111,30 @@ async def _forward_via_tracker_or_forwarder(
         response = await federation_forwarder.forward_request(
             fed_gateway, request_body, hop_count, request_id, hints=hints
         )
+        await _emit_federated_execute_debug(
+            "forward_done",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_id,
+            path="direct",
+            status_code=response.status_code,
+            remote_request_id=response.headers.get("x-request-id"),
+            remote_correlation_id=response.headers.get("x-correlation-id"),
+            remote_response_time_ms=response.headers.get("x-response-time-ms"),
+        )
         return response.json(), extract_remote_headers(response), response.status_code
 
     cancel_group = getattr(context, "cancel_group", None) if context else None
+    await _emit_federated_execute_debug(
+        "forward_start",
+        fed_gateway=fed_gateway,
+        request_id=request_id,
+        model_id=model_id,
+        path="tracker",
+        hop_count=hop_count,
+        endpoint_category=str(endpoint_category),
+        cancel_group=cancel_group,
+    )
     response_content = await request_tracker.forward(
         gateway=fed_gateway,
         request_body=request_body,
@@ -89,6 +144,14 @@ async def _forward_via_tracker_or_forwarder(
         hints=hints,
         request_id=request_id,
         cancel_group=cancel_group,
+    )
+    await _emit_federated_execute_debug(
+        "forward_done",
+        fed_gateway=fed_gateway,
+        request_id=request_id,
+        model_id=model_id,
+        path="tracker",
+        status_code=200,
     )
     # Tracker path does not preserve remote headers (informational only in Master mode).
     return response_content, {}, 200
@@ -120,6 +183,13 @@ async def _forward_or_recover(
     except httpx.HTTPStatusError as e:
         if e.response.status_code != 500:
             raise
+        await _emit_federated_execute_debug(
+            "forward_http_500",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=str(model_id),
+            status_code=e.response.status_code,
+        )
         content, headers, status = (
             extract_upstream_error_payload(e.response),
             {},
@@ -131,6 +201,12 @@ async def _forward_or_recover(
         return content, headers, status
 
     # 500 detected — attempt OOM recovery
+    await _emit_federated_execute_debug(
+        "oom_recovery_start",
+        fed_gateway=fed_gateway,
+        request_id=request_id,
+        model_id=str(model_id),
+    )
     recovered = await attempt_oom_recovery(
         gateway=fed_gateway,
         model_id=model_id,
@@ -139,6 +215,13 @@ async def _forward_or_recover(
         request_tracker=request_tracker,
         event_bus=event_bus,
         request_id=request_id,
+    )
+    await _emit_federated_execute_debug(
+        "oom_recovery_result",
+        fed_gateway=fed_gateway,
+        request_id=request_id,
+        model_id=str(model_id),
+        recovered=recovered,
     )
 
     if not recovered:
@@ -152,6 +235,13 @@ async def _forward_or_recover(
     try:
         content, headers, status = await forward_fn()
     except httpx.HTTPStatusError as e:
+        await _emit_federated_execute_debug(
+            "oom_recovery_retry_failed",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=str(model_id),
+            status_code=e.response.status_code,
+        )
         if e.response.status_code == 500:
             logger.warning(
                 "OOM retry failed after eviction on %s (model=%s); "
@@ -162,6 +252,12 @@ async def _forward_or_recover(
         raise
 
     if status == 500:
+        await _emit_federated_execute_debug(
+            "oom_recovery_retry_500",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=str(model_id),
+        )
         logger.warning(
             "OOM retry returned 500 after eviction on %s (model=%s); "
             "skipping ban — routing will evict on next attempt",
@@ -180,6 +276,13 @@ async def _forward_or_recover(
             )
         )
 
+    await _emit_federated_execute_debug(
+        "oom_recovery_retry_succeeded",
+        fed_gateway=fed_gateway,
+        request_id=request_id,
+        model_id=str(model_id),
+        status_code=status,
+    )
     return content, headers, status
 
 
@@ -223,6 +326,7 @@ async def _execute_federated_nonstreaming(
 
     model_name = str(context.selected_model)
     content_filter = create_content_filter(model_name, context.request_id)
+    execute_start = time.monotonic()
 
     if content_filter:
         logger.info(
@@ -230,6 +334,14 @@ async def _execute_federated_nonstreaming(
         )
 
     try:
+        await _emit_federated_execute_debug(
+            "execute_start",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_name,
+            endpoint_category=str(endpoint_category),
+            hop_count=hop_count,
+        )
         request_tracker = (
             federation_integration.request_tracker
             if federation_integration is not None
@@ -272,6 +384,18 @@ async def _execute_federated_nonstreaming(
                 response_status_code,
             ) = await _do_forward()
 
+        await _emit_federated_execute_debug(
+            "execute_response",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_name,
+            elapsed_ms=int((time.monotonic() - execute_start) * 1000),
+            status_code=response_status_code,
+            remote_request_id=response_headers.get("x-federated-request-id"),
+            remote_correlation_id=response_headers.get("x-federated-correlation-id"),
+            remote_response_time_ms=response_headers.get("x-federated-response-time-ms"),
+        )
+
         await write_response_snapshot(
             response_content, context.request_id, stage="response-from-gateway"
         )
@@ -307,6 +431,14 @@ async def _execute_federated_nonstreaming(
         )
 
     except httpx.HTTPStatusError as e:
+        await _emit_federated_execute_debug(
+            "execute_http_error",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_name,
+            elapsed_ms=int((time.monotonic() - execute_start) * 1000),
+            status_code=e.response.status_code,
+        )
         await raise_federated_http_error(
             error=e,
             context=context,
@@ -316,6 +448,13 @@ async def _execute_federated_nonstreaming(
 
     except httpx.TimeoutException:
         logger.error(f"Federated request timeout for {fed_gateway.gateway_id}")
+        await _emit_federated_execute_debug(
+            "execute_timeout",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_name,
+            elapsed_ms=int((time.monotonic() - execute_start) * 1000),
+        )
         await emit_execution_failed(
             event_bus=event_bus,
             url=fed_gateway.remote_stargate_url,
@@ -337,6 +476,15 @@ async def _execute_federated_nonstreaming(
 
     except Exception as e:
         logger.exception(f"Federated request error: {e}")
+        await _emit_federated_execute_debug(
+            "execute_unexpected_error",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_name,
+            elapsed_ms=int((time.monotonic() - execute_start) * 1000),
+            error_type=type(e).__name__,
+            error=str(e),
+        )
         await emit_execution_failed(
             event_bus=event_bus,
             url=fed_gateway.remote_stargate_url,

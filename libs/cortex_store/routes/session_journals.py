@@ -35,13 +35,26 @@ def _ensure_transcript_entity(
     transcript_id: str,
     agent: str,
     timestamp: str,
+    source_uri: str | None = None,
 ) -> None:
-    """INSERT OR IGNORE the transcript entity — idempotent."""
+    """INSERT OR IGNORE the transcript entity — idempotent.
+
+    When *source_uri* is provided, also updates it on an existing entity
+    (INSERT OR IGNORE won't overwrite an existing row).
+    """
     entity_id = f"transcript:{transcript_id}"
+    if source_uri is None:
+        source_uri = f"files://notes/system/journal/{transcript_id}.md"
     conn.execute(  # type: ignore[union-attr]
-        "INSERT OR IGNORE INTO entities (id, type, name, status, created_at, updated_at) "
-        "VALUES (?, 'transcript', ?, 'confirmed', ?, ?)",
-        (entity_id, transcript_id, timestamp, timestamp),
+        "INSERT OR IGNORE INTO entities "
+        "(id, type, name, status, source_uri, created_at, updated_at) "
+        "VALUES (?, 'transcript', ?, 'confirmed', ?, ?, ?)",
+        (entity_id, transcript_id, source_uri, timestamp, timestamp),
+    )
+    conn.execute(  # type: ignore[union-attr]
+        "UPDATE entities SET source_uri = ?, updated_at = ? "
+        "WHERE id = ? AND (source_uri IS NULL OR source_uri != ?)",
+        (source_uri, timestamp, entity_id, source_uri),
     )
 
 

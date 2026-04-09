@@ -276,7 +276,8 @@ def _build_server() -> FastMCP:
         (files sandbox only) to stage base64-encoded binary files (PDFs, images)
         — pass the base64 string as `content`. Use `move` to rename or relocate
         a file within the selected sandbox. Prefer the markdown ops for large
-        markdown docs.
+        structured docs when you need sections/TOC; for PDFs they operate on
+        markdown produced internally by ``pymupdf4llm.to_markdown()``.
 
         **PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).
         For tabular or columnar PDFs (statements, invoices, ledger exports),
@@ -310,11 +311,14 @@ def _build_server() -> FastMCP:
           write_binary   (path, content)                  — write base64-encoded binary (files sandbox only)
 
         Markdown section ops (for large docs):
-          md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML)
-          md_read    (path, section)           — read one section
+          md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML via auto-converted markdown)
+          md_read    (path, section)           — read one section (also works on PDF/DOCX/ODT/EML via auto-converted markdown)
           md_replace (path, section, content)  — replace section (text files only)
           md_append  (path, section, content)  — append to section (text files only)
           md_delete  (path, section)           — delete section (text files only)
+        Converted formats such as PDF are read-only for markdown section ops:
+        use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /
+        ``md_append`` / ``md_delete``.
         """
         if not op:
             return {"error": "'op' is required"}

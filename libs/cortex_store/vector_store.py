@@ -129,6 +129,58 @@ def search_similar(
     return items
 
 
+def search_by_entity(
+    query_embedding: list[float],
+    entity_id: str,
+    n_results: int = 20,
+) -> list[dict]:
+    """Search for similar assertions filtered to a specific entity.
+
+    Uses ChromaDB metadata where-clause for entity-scoped search.
+    Falls back to unfiltered search + post-filter if the where-clause
+    raises (e.g. no embeddings have entity_id metadata yet).
+    """
+    _require_init()
+    assert _collection is not None
+    count = _collection.count()
+    if count == 0:
+        return []
+    effective_n = min(n_results, count)
+    try:
+        results = _collection.query(
+            query_embeddings=[query_embedding],
+            n_results=effective_n,
+            where={"entity_id": entity_id},
+            include=["distances", "metadatas"],
+        )
+    except Exception:
+        logger.warning(
+            "Entity-scoped vector search failed, post-filtering fallback",
+            exc_info=True,
+        )
+        unfiltered = search_similar(query_embedding, n_results=effective_n * 3)
+        return [r for r in unfiltered if r.get("entity_id") == entity_id][:n_results]
+
+    items: list[dict] = []
+    ids = results.get("ids", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+
+    for i, doc_id in enumerate(ids):
+        distance = distances[i] if i < len(distances) else 1.0
+        cosine_sim = max(0.0, 1.0 - distance)
+        meta = metadatas[i] if i < len(metadatas) else {}
+        items.append(
+            {
+                "assertion_id": int(doc_id),
+                "distance": distance,
+                "cosine_similarity": cosine_sim,
+                **(meta or {}),
+            }
+        )
+    return items
+
+
 def delete_assertion_embedding(assertion_id: int) -> None:
     """Remove an assertion's embedding (e.g. on supersession)."""
     _require_init()

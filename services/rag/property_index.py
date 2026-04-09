@@ -121,6 +121,15 @@ CREATE TABLE IF NOT EXISTS indexed_sources (
 CREATE INDEX IF NOT EXISTS idx_indexed_sources_updated_at ON indexed_sources(updated_at);
 """
 
+_V8_EXTRACTION_QUEUE_SQL = """
+CREATE TABLE IF NOT EXISTS extraction_queue (
+    source TEXT PRIMARY KEY,
+    queued_at TEXT NOT NULL DEFAULT (datetime('now')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT
+);
+"""
+
 _V5_SCOPE_FRESHNESS_SQL = """
 CREATE TABLE IF NOT EXISTS scope_freshness (
     scope TEXT PRIMARY KEY,
@@ -240,8 +249,7 @@ class PropertyIndex:
             )
         if "parse_failure_reason" not in failed_cols:
             conn.execute(
-                "ALTER TABLE failed_extractions "
-                "ADD COLUMN parse_failure_reason TEXT"
+                "ALTER TABLE failed_extractions ADD COLUMN parse_failure_reason TEXT"
             )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_failed_permanent ON failed_extractions(permanent)"
@@ -354,6 +362,11 @@ class PropertyIndex:
                 7,
                 "failed_extractions.parse_failure_reason for parser diagnostics",
                 _migration_v7_parse_failure_reason,
+            ),
+            (
+                8,
+                "extraction_queue for async decoupled extraction",
+                lambda conn: conn.executescript(_V8_EXTRACTION_QUEUE_SQL),
             ),
         ]
         for version, description, fn in migrations:
@@ -1015,9 +1028,7 @@ class PropertyIndex:
 
         async def _write() -> None:
             conn = self._ensure_conn()
-            conn.execute(
-                "DELETE FROM scope_freshness WHERE scope = ?", (scope,)
-            )
+            conn.execute("DELETE FROM scope_freshness WHERE scope = ?", (scope,))
             conn.commit()
 
         await self._seq.run(_write())
@@ -1379,14 +1390,98 @@ class PropertyIndex:
         ).fetchone()[0]
 
     def has_retriable_failures(self, source: str) -> bool:
-        """Return True if source has any non-permanent failed extraction rows."""
+        """Return True if source has non-permanent failures whose backoff has elapsed.
+
+        Backoff schedule (from recorded_at): attempt 1 → 5 min, 2 → 15 min,
+        3 → 60 min, 4+ → 240 min. Prevents failing files from hammering
+        every sweep.
+        """
         conn = self._ensure_conn()
         row = conn.execute(
             "SELECT 1 FROM failed_extractions"
-            " WHERE source = ? AND permanent = 0 LIMIT 1",
+            " WHERE source = ? AND permanent = 0"
+            "   AND datetime(recorded_at,"
+            "     '+' || CASE"
+            "       WHEN attempt_count <= 1 THEN '5'"
+            "       WHEN attempt_count <= 2 THEN '15'"
+            "       WHEN attempt_count <= 3 THEN '60'"
+            "       ELSE '240'"
+            "     END || ' minutes') < datetime('now')"
+            " LIMIT 1",
             (source,),
         ).fetchone()
         return row is not None
+
+    # ------------------------------------------------------------------
+    # Extraction queue (async decoupled extraction)
+    # ------------------------------------------------------------------
+
+    async def enqueue_extraction(self, source: str) -> None:
+        """Add a source to the extraction queue (idempotent)."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "INSERT OR IGNORE INTO extraction_queue (source) VALUES (?)",
+                (source,),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def dequeue_extraction(
+        self, limit: int = 10, max_attempts: int = 5
+    ) -> list[str]:
+        """Return sources ready for extraction (backoff elapsed, under max attempts).
+
+        Backoff: attempt 0 → immediate, 1 → 1 min, 2 → 5 min, 3 → 15 min, 4+ → 60 min.
+        """
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT source FROM extraction_queue"
+            " WHERE attempts < ?"
+            "   AND (last_attempt_at IS NULL"
+            "     OR datetime(last_attempt_at,"
+            "       '+' || CASE"
+            "         WHEN attempts <= 1 THEN '1'"
+            "         WHEN attempts <= 2 THEN '5'"
+            "         WHEN attempts <= 3 THEN '15'"
+            "         ELSE '60'"
+            "       END || ' minutes') < datetime('now'))"
+            " ORDER BY queued_at ASC LIMIT ?",
+            (max_attempts, limit),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    async def complete_extraction(self, source: str) -> None:
+        """Remove a source from the extraction queue after successful extraction."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute("DELETE FROM extraction_queue WHERE source = ?", (source,))
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def fail_extraction(self, source: str) -> None:
+        """Record a failed extraction attempt (increment counter, update timestamp)."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue"
+                " SET attempts = attempts + 1, last_attempt_at = datetime('now')"
+                " WHERE source = ?",
+                (source,),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    def get_extraction_queue_count(self) -> int:
+        """Return the number of sources pending extraction."""
+        conn = self._ensure_conn()
+        return conn.execute("SELECT COUNT(*) FROM extraction_queue").fetchone()[0]
 
     def get_indexed_source_count(self) -> int:
         """Return the number of sources committed to ChromaDB (embed complete).

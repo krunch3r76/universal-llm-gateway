@@ -198,7 +198,7 @@ def extract_entities_from_metadata(
     """Parse entities from a chunk's extraction metadata field.
 
     Returns empty list if extraction metadata is absent or malformed.
-    The extraction field is a JSON-serialized dict stored by extraction_wiring.py.
+    The extraction field is a JSON-serialized dict stored by extraction_worker.py.
     """
     raw = metadata.get("extraction")
     if not raw:

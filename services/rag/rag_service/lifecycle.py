@@ -43,7 +43,6 @@ from services.rag.embeddings import (
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
-from services.rag.events.extraction import rag_extraction_unavailable
 from services.rag.events.lifecycle import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
@@ -58,10 +57,7 @@ from services.rag.events.lifecycle import (
     rag_start_degraded,
     rag_started,
 )
-from services.rag.knowledge_extractor import (
-    configure_timeouts,
-    wait_until_extraction_ready,
-)
+from services.rag.extraction_worker import run_extraction_worker
 from services.rag.model_availability_tracker import (
     ModelAvailabilityStartError,
     ModelAvailabilityTracker,
@@ -548,17 +544,12 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
             state._dependency_activation.waiting_on = "embeddings"
             await wait_until_healthy()
 
-            state._dependency_activation.waiting_on = "extraction"
-            await wait_until_extraction_ready(config.knowledge_extraction.pipeline)
-
             state._dependency_activation.waiting_on = "watcher_registration"
             await _start_watcher_runtime(config)
             state._dependency_activation.phase = "ready"
             state._dependency_activation.waiting_on = None
             await state._event_bus.publish_async(
-                rag_dependencies_activated(
-                    dependencies=["stargate", "embeddings", "extraction"]
-                )
+                rag_dependencies_activated(dependencies=["stargate", "embeddings"])
             )
             # Scope freshness repair sends LLM requests to Stargate (vocabulary
             # classification). On cold restart the local model is still loading,
@@ -588,13 +579,6 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
             if waiting_on == "embeddings":
                 await state._event_bus.publish_async(
                     rag_embeddings_unavailable(error=error)
-                )
-            elif waiting_on == "extraction":
-                await state._event_bus.publish_async(
-                    rag_extraction_unavailable(
-                        pipeline=config.knowledge_extraction.pipeline,
-                        error=error,
-                    )
                 )
         except Exception as exc:
             # Any unexpected exception from _start_watcher_runtime (e.g. RuntimeError
@@ -656,27 +640,6 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
         if isinstance(config.index_workers, int)
         else DEFAULT_INDEX_WORKERS
     )
-    configure_timeouts(config.knowledge_extraction)
-
-    mat = get_model_availability_tracker()
-    startup_model_wait_s = 120.0
-    ext_id = config.knowledge_extraction.extraction_model
-    if mat is not None and ext_id in mat._model_ids and not mat.is_available(ext_id):
-        result = await mat.wait_until_available(ext_id, startup_model_wait_s)
-        if not result.available and result.reason.is_structural:
-            logger.error(
-                "Extraction model %s not in catalog: %s"
-                " — indexing will proceed without extraction",
-                ext_id,
-                result.detail,
-            )
-            if state._event_bus is not None:
-                await state._event_bus.publish_async(
-                    rag_extraction_unavailable(
-                        pipeline=config.knowledge_extraction.pipeline,
-                        error=f"structural: {result.reason.value} — {result.detail}",
-                    )
-                )
 
     reconcile_worker_count = (
         config.reconcile_workers if isinstance(config.reconcile_workers, int) else 3
@@ -717,6 +680,19 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
         task.add_done_callback(state._background_tasks.discard)
 
     await state._watcher_manager.start(config)
+
+    state._extraction_shutdown = asyncio.Event()
+    extraction_task = asyncio.create_task(
+        run_extraction_worker(
+            config=config,
+            collection_fn=state._get_collection,
+            property_index=state._property_index,
+            event_bus=state._event_bus,
+            shutdown_event=state._extraction_shutdown,
+        ),
+        name="rag-extraction-worker",
+    )
+    _track_background_task(extraction_task)
 
 
 def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | None:
@@ -761,6 +737,9 @@ def _resolve_chunk_tokens_for_file(file_path: Path, config: RagConfig) -> int | 
 async def _shutdown() -> None:
     """Shutdown RAG resources, cancel lifecycle tasks, and stop background services."""
     state._dependency_activation.phase = "shutting_down"
+
+    if state._extraction_shutdown is not None:
+        state._extraction_shutdown.set()
 
     tasks = [task for task in state._background_tasks if not task.done()]
     for task in tasks:

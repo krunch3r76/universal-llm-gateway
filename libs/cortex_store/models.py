@@ -119,6 +119,16 @@ class AssertionCreate(BaseModel):
     events_json: str | None = None
     artifact_uri: str | None = None
     artifact_storage: str = "inline"
+    # C2: explicit revision bypass — force=True skips contradiction check,
+    # supersedes_id marks the target for atomic supersession
+    force: bool = Field(
+        False,
+        description="Bypass C2 contradiction check",
+    )
+    supersedes_id: int | None = Field(
+        None,
+        description="Assertion to supersede when force=True",
+    )
 
 
 ReviewStatus = Literal["committed", "flagged", "staged", "rejected"]
@@ -186,6 +196,7 @@ class SupersedeRequest(BaseModel):
 class SupersedeResponse(BaseModel):
     old: AssertionItem
     new: AssertionItem
+    impact_warning: str | None = None
 
 
 class NearDuplicateWarning(BaseModel):
@@ -193,11 +204,21 @@ class NearDuplicateWarning(BaseModel):
     score: float
 
 
+class ContradictionConflict(BaseModel):
+    """A conflicting assertion detected by C2 write-path contradiction check."""
+
+    assertion_id: int
+    claim: str
+    confidence: str
+    similarity: float
+
+
 class AssertionCreateResponse(BaseModel):
     was_new: bool
     item: AssertionItem
     near_duplicate_warning: NearDuplicateWarning | None = None
     validation_warnings: list[dict[str, str]] | None = None
+    contradiction_warnings: list[ContradictionConflict] | None = None
 
 
 class AssertionList(BaseModel):
@@ -245,6 +266,30 @@ class AssertionSearchResult(BaseModel):
     search_mode: str = Field(
         "hybrid", description="'hybrid' when vector is available, 'fulltext' otherwise"
     )
+
+
+class TouchedAssertionItem(BaseModel):
+    """Assertion touched by a proposed claim in C1 impact analysis."""
+
+    assertion_id: int
+    claim: str
+    confidence: str
+    similarity: float
+    entity_id: str
+    retrieval_source: str
+
+
+class ImpactAnalysisRequest(BaseModel):
+    entity_id: str
+    claim: str
+    confidence: AssertionConfidence = "believed"
+
+
+class ImpactAnalysisResponse(BaseModel):
+    touched_assertions: list[TouchedAssertionItem]
+    likely_supersedes: list[int]
+    implicated_entities: list[str]
+    impact_score: float
 
 
 class EnrichRequest(BaseModel):
@@ -338,7 +383,7 @@ class _SessionJournalCommon(BaseModel):
 
 
 class SessionJournalCreate(_SessionJournalCommon):
-    pass
+    markdown_content: str | None = None
 
 
 class SessionJournalItem(_SessionJournalCommon):

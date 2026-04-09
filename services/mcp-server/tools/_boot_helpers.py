@@ -424,7 +424,14 @@ def render_boot_narrative(
 
     if domain_depth_hints:
         parts.append("\n## Domain Depth Available")
-        parts.append("Dispatch subagent for full context on these detected domains:")
+        parts.append(
+            "Dispatch a lightweight synthesis call for each domain below. "
+            "Use `grok_generate(model='grok-4.20-multi-agent-0309', boot='none', messages=[...])`"
+            " — boot=none is intentional (fetch-and-synthesize only; no live tool calls needed), "
+            "not a model restriction. Pass only the relevant excerpted sections from this boot "
+            "payload as message content (continuation decisions, open todos, and gated entity "
+            "assertions for the domain — target 5-15k tokens, not 150k+):"
+        )
         for hint in domain_depth_hints:
             parts.append(
                 f"- **{hint['domain']}**: {hint['reason']}. "

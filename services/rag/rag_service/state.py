@@ -60,6 +60,7 @@ _dependency_activation = DependencyActivationState()
 # Serialize concurrent indexing of the same file path (watcher + API can race).
 _file_index_locks: dict[str, asyncio.Lock] = {}
 _post_index_stale: bool = False
+_extraction_shutdown: asyncio.Event | None = None
 
 
 def _article_event_kwargs(

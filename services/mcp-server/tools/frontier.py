@@ -25,9 +25,6 @@ _GROK_OPPIE_BOOT_REFS: dict[str, str] = {
     "full": "notes/system/prompts/oppie-seed-full-v1.5.md",
 }
 # Models that auto-load the Oppie persona seed when boot != "none".
-# Note: grok-4.20-multi-agent-0309 is listed here for explicit opt-in but
-# it blocks client-side function calling (xAI restriction). Use it only when
-# tool execution is not needed (boot="none" or pure orchestration tasks).
 _GROK_OPPIE_MODELS: set[str] = {"grok-4.20-multi-agent-0309"}
 
 _CLAUDE_BOOT_REF_DEFAULTS: dict[str, str] = {
@@ -82,9 +79,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``grok-4.20-0309-reasoning`` — top model, built-in reasoning, tool
           calling, 2M ctx. **DEFAULT** — use for all Oppie-style subagent calls.
         - ``grok-4.20-0309-non-reasoning`` — same without reasoning overhead.
-        - ``grok-4.20-multi-agent-0309`` — multi-agent optimised. Does NOT
-          support client-side function calling (xAI restriction); use with
-          boot="none" only.
+        - ``grok-4.20-multi-agent-0309`` — multi-agent optimised; suited for
+          coordination, orchestration, and fetch-and-synthesize tasks. Supports
+          client-side function calling. Use with boot="none" when no live tool
+          access is needed (eliminates ~150k token schema overhead).
         - ``grok-4-1-fast-reasoning`` — fast + cheap reasoning.
         - ``grok-4-1-fast-non-reasoning`` — fast without reasoning.
         - ``grok-3-mini`` — legacy; supports reasoning_effort

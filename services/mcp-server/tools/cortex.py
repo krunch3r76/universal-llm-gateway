@@ -190,6 +190,9 @@ def _op_assert(
     events_json: str | None = None,
     artifact_uri: str | None = None,
     artifact_storage: str | None = None,
+    # C2: explicit contradiction bypass
+    force: bool = False,
+    supersedes_id: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {
@@ -233,6 +236,10 @@ def _op_assert(
     ]:
         if val is not None:
             body[key] = val
+    if force:
+        body["force"] = True
+    if supersedes_id is not None:
+        body["supersedes_id"] = supersedes_id
     if derivation_type is None or confidence_score is None:
         logger.warning(
             "cortex assert: missing derivation_type=%s or confidence_score=%s — "
@@ -369,6 +376,18 @@ def _op_journal_read(limit: int | None = None, **_: object) -> dict[str, Any]:
     return _cx("GET", f"/session-journals?limit={limit or 3}")
 
 
+def _derive_session_id_local(agent: str, timestamp: str) -> str:
+    """Derive a session ID from agent + timestamp (mirrors cortex-api logic)."""
+    import re
+
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):?(\d{2})", timestamp)
+    if match:
+        year, mon, day, hour, minute = match.groups()
+        return f"{agent}-{year}-{mon}-{day}-{hour}{minute}"
+    now = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
+    return f"{agent}-{now}"
+
+
 def _op_journal_write(
     timestamp: str | None = None,
     agent: str | None = None,
@@ -380,12 +399,23 @@ def _op_journal_write(
     file_path: str | None = None,
     session_id: str | None = None,
     prior_session_id: str | None = None,
+    markdown_content: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {"timestamp": timestamp, "agent": agent, "summary": summary}
     for field, val in required_fields.items():
         if not val:
             return {"error": f"{field} is required"}
+    assert agent is not None and timestamp is not None
+
+    derived_id = session_id or _derive_session_id_local(agent, timestamp)
+
+    if markdown_content is not None:
+        journal_path = _FILES_ROOT / "notes" / "system" / "journal" / f"{derived_id}.md"
+        journal_path.parent.mkdir(parents=True, exist_ok=True)
+        journal_path.write_text(markdown_content, encoding="utf-8")
+        logger.info("journal_write: wrote markdown to %s", journal_path)
+
     body: dict[str, Any] = {
         "timestamp": timestamp,
         "agent": agent,
@@ -782,6 +812,34 @@ def _op_activate(
     return _cx("GET", f"/assertions/activate?{_urlencode(params)}")
 
 
+def _op_analyze_impact(
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Semantic impact analysis — preview which assertions a proposed claim would affect.
+
+    Uses entity-scoped hybrid search (FTS5 + vector) to find assertions that
+    may need revision. Returns touched_assertions, likely_supersedes IDs,
+    implicated_entities, and an overall impact_score. Call before assert/supersede
+    to understand revision scope.
+    """
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    if not claim:
+        return {"error": "claim is required"}
+    if confidence is not None and confidence not in _VALID_CONFIDENCE:
+        return {
+            "error": f"Invalid confidence {confidence!r}. "
+            f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        }
+    body: dict[str, Any] = {"entity_id": entity_id, "claim": claim}
+    if confidence is not None:
+        body["confidence"] = confidence
+    return _cx("POST", "/assertions/analyze-impact", body)
+
+
 def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     lim = limit or 30
     flagged_resp = _cx(
@@ -859,6 +917,7 @@ _OPS: dict[str, Any] = {
     "activate": _op_activate,
     "resolve": _op_resolve,
     "search": _op_search,
+    "analyze_impact": _op_analyze_impact,
     "tag_assign": _op_tag_assign,
     "tag_list": _op_tag_list,
     "tag_resolve": _op_tag_resolve,
@@ -923,7 +982,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           entity_create     (id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?) — create entity
           entity_update     (entity_id, name?, description?, status?, notes?, aliases?, attributes?)  — update entity
           assertions        (entity_id?, confidence?, review_status?, superseded?, limit?) — list assertions
-          assert            (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?) — write assertion
+          assert            (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, force?, supersedes_id?) — write assertion
           assertion_update  (assertion_id, superseded_by?, valid_until?, confidence?, review_status?) — update assertion
           supersede         (old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent) — atomic close+create
           relationships     (entity_id?, type_id?, limit?)          — list with names, strength
@@ -931,7 +990,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           stats             ()                                       — dashboard counts
           surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
           journal_read      (limit?)                                 — recent session journals
-          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?) — write journal; auto-creates transcript entity + continues edge
+          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?, markdown_content?) — write journal; auto-creates transcript entity + continues edge; markdown_content writes file server-side
           review_queue      (limit?)                                 — provisional entities + flagged assertions
           edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection
           edges             (from_node?, to_node?, edge_type?, agent?, session_id?, limit?) — query edges
@@ -939,6 +998,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           edge_retire       (edge_id, valid_until?)                  — retire an edge
           edge_types        ()                                        — list registered edge types
           search            (query, limit?, superseded?, entity_type?) — FTS5 fulltext search over assertions
+          analyze_impact    (entity_id, claim, confidence?)            — semantic pre-write impact analysis (C1)
 
         confidence values: confirmed / believed / suspected / hypothesized
         review_status values: committed / flagged / staged / rejected

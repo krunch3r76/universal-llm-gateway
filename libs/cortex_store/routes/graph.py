@@ -11,9 +11,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from ..activation import spreading_activation
+from ..belief_guard import analyze_assertion_impact
 from ..db import cortex_conn
 from ..db import query as db_query
 from ..graph_utils import analyze_impact
+from ..models import (
+    ImpactAnalysisRequest,
+    ImpactAnalysisResponse,
+    TouchedAssertionItem,
+)
 
 router = APIRouter(tags=["graph"])
 
@@ -59,6 +65,50 @@ def impact_analysis(
         ],
         "total_impacted_assertions": result.total_impacted_assertions,
     }
+
+
+@router.post("/assertions/analyze-impact", response_model=ImpactAnalysisResponse)
+def analyze_impact_semantic(
+    body: ImpactAnalysisRequest,
+) -> ImpactAnalysisResponse:
+    """Semantic impact analysis — find assertions affected by a proposed claim.
+
+    Uses entity-scoped hybrid search (FTS5 + vector) to identify assertions
+    that may need revision if this claim is asserted. Exposes likely_supersedes
+    for pre-write supersession guidance. Also available as an MCP tool.
+    """
+    conn = cortex_conn()
+    try:
+        entity_rows = db_query(
+            conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
+        )
+        if not entity_rows:
+            raise HTTPException(
+                status_code=404, detail=f"Entity not found: {body.entity_id}"
+            )
+
+        result = analyze_assertion_impact(
+            conn, body.entity_id, body.claim, body.confidence
+        )
+    finally:
+        conn.close()
+
+    return ImpactAnalysisResponse(
+        touched_assertions=[
+            TouchedAssertionItem(
+                assertion_id=t.assertion_id,
+                claim=t.claim,
+                confidence=t.confidence,
+                similarity=t.similarity,
+                entity_id=t.entity_id,
+                retrieval_source=t.retrieval_source,
+            )
+            for t in result.touched_assertions
+        ],
+        likely_supersedes=result.likely_supersedes,
+        implicated_entities=result.implicated_entities,
+        impact_score=result.impact_score,
+    )
 
 
 @router.get("/assertions/activate")
