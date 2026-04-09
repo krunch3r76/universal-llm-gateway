@@ -29,12 +29,18 @@ prompts:
       - Extract at most 10 entities. Stop after 10.
       - Only extract named things: tools, methods, models, datasets,
         benchmarks, protocols, services, libraries, people, institutions.
-      - Do NOT extract abstract concepts or generic terms.
+      - Do NOT extract abstract concepts, generic terms, or document-structure
+        references (table 1, figure 2, section 3, equation 4, etc.).
       - Each entity name must be 1-4 words.
       - Facets: at most 3 per entity. Only concrete, measurable properties.
       - Relations: only explicit relationships stated in the text.
         Predicates: "routes_to", "depends_on", "contains", "exposes", "connects_via".
-      - Topics: 3-7 keywords capturing the subject matter.
+      - Topics: 3-6 specific technique or method names discussed in this text —
+        named algorithms, approaches, or tasks (e.g. "contrastive retrieval",
+        "reciprocal rank fusion", "entity alignment"). Do NOT use broad field
+        labels (machine learning, NLP, information retrieval), research-process
+        terms (evaluation, benchmarking, ablation, datasets, baselines), or
+        paper-structure terms (acknowledgements, references, abstract).
       - Return only `entities` and `topics`.
       Do not invent information not present in the text.
     template: |

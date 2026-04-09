@@ -101,9 +101,15 @@ class RequestContext:
         self.capacity_token: Any | None = None
 
         # Monotonic deadline for capacity waiting (set by retry loop).
-        # Inner mechanisms (admission, pre-route queue, eviction wait) use
-        # this to compute their remaining timeout instead of static defaults.
+        # Inner mechanisms (admission, eviction wait) use this to compute
+        # their remaining timeout instead of static defaults.
         self._capacity_deadline_mono: float | None = None
+
+        # Queue-wait-specific budget (seconds) for the pre-route queue only.
+        # ∀ queue_wait_timeout_s is set: pre_route_queue uses it verbatim.
+        # This is independent of the inference timeout (X-Request-Timeout).
+        # Set from config request_queue.queue_timeout; never capped by hint.
+        self.queue_wait_timeout_s: float | None = None
 
         # Overflow attempt metadata is only surfaced if routing ends terminally.
         # NOTE: The overflow_load_failed branch has not been observed live after

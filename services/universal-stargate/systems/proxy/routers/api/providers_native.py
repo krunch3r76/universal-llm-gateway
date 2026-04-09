@@ -29,6 +29,13 @@ _VALID_ROUTES: dict[tuple[str, str], str] = {
     ("anthropic", "messages"): "/api/v1/providers/anthropic/messages",
     ("xai", "responses"): "/api/v1/providers/xai/responses",
     ("openai", "responses"): "/api/v1/providers/openai/responses",
+    # Image generation / editing
+    ("xai", "images.generations"): "/api/v1/providers/xai/images/generations",
+    ("xai", "images.edits"): "/api/v1/providers/xai/images/edits",
+    ("openai", "images.generations"): "/api/v1/providers/openai/images/generations",
+    ("openai", "images.edits"): "/api/v1/providers/openai/images/edits",
+    # Video generation (submit)
+    ("xai", "videos.generations"): "/api/v1/providers/xai/videos/generations",
 }
 
 _CLOUD_UNAVAILABLE = JSONResponse(
@@ -138,5 +145,65 @@ async def native_xai_responses(request: Request) -> Response:
 
 @router.post("/openai/responses")
 async def native_openai_responses(request: Request) -> Response:
-    """Native OpenAI Responses (stub in phase 1)."""
+    """Native OpenAI Responses (raw model id, native body)."""
     return await _passthrough(request, "openai", "responses")
+
+
+# ── Image generation / editing ─────────────────────────────────────────────
+
+@router.post("/xai/images/generations")
+async def xai_images_generations(request: Request) -> Response:
+    """xAI image generation (grok-imagine-image / grok-imagine-image-pro)."""
+    return await _passthrough(request, "xai", "images.generations")
+
+
+@router.post("/xai/images/edits")
+async def xai_images_edits(request: Request) -> Response:
+    """xAI image editing (JSON body, not multipart)."""
+    return await _passthrough(request, "xai", "images.edits")
+
+
+@router.post("/openai/images/generations")
+async def openai_images_generations(request: Request) -> Response:
+    """OpenAI image generation (gpt-image-1, dall-e-3, chatgpt-image-latest)."""
+    return await _passthrough(request, "openai", "images.generations")
+
+
+@router.post("/openai/images/edits")
+async def openai_images_edits(request: Request) -> Response:
+    """OpenAI image editing."""
+    return await _passthrough(request, "openai", "images.edits")
+
+
+# ── Video generation ────────────────────────────────────────────────────────
+
+@router.post("/xai/videos/generations")
+async def xai_videos_generations(request: Request) -> Response:
+    """xAI video generation — submit async job, returns request_id."""
+    return await _passthrough(request, "xai", "videos.generations")
+
+
+@router.get("/xai/videos/{request_id}")
+async def xai_video_status(request_id: str) -> Response:
+    """xAI video status poll — GET until status == done."""
+    client = _get_cloud_forwarder()
+    if not client:
+        return _CLOUD_UNAVAILABLE
+    cloud_path = f"/api/v1/providers/xai/videos/{request_id}"
+    try:
+        resp = await client.proxy_request("GET", cloud_path)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 502
+        preview = (
+            exc.response.text[:500] if exc.response is not None else str(exc)[:500]
+        )
+        logger.warning("Video status poll failed [%s]: %s", request_id, preview)
+        return JSONResponse(status_code=status, content={"detail": preview})
+    except httpx.HTTPError as exc:
+        logger.warning("Video status poll transport error [%s]: %s", request_id, exc)
+        return JSONResponse(status_code=502, content={"detail": str(exc)[:300]})

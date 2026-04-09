@@ -207,3 +207,69 @@ class OpenAICompatibleAdapter:
         if response.status_code >= 400:
             await self._raise_provider_http_error(response)
         return response.json()
+
+    async def forward_images_generation(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to /images/generations with model ID stripped to upstream form."""
+        body = {
+            **request_body,
+            "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
+        }
+        response = await self._client.post(
+            f"{self._config.base_url}/images/generations",
+            json=body,
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        return response.json()
+
+    async def forward_images_edit(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to /images/edits with model ID stripped to upstream form.
+
+        xAI edits use application/json (not multipart), so the body includes
+        ``image`` as an object with ``url`` or ``type`` keys rather than a form
+        file upload.
+        """
+        body = {
+            **request_body,
+            "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
+        }
+        response = await self._client.post(
+            f"{self._config.base_url}/images/edits",
+            json=body,
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        return response.json()
+
+    async def forward_video_generation(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to /videos/generations — returns request_id + initial status."""
+        body = {
+            **request_body,
+            "model": self.to_upstream_model_id(str(request_body.get("model", ""))),
+        }
+        response = await self._client.post(
+            f"{self._config.base_url}/videos/generations",
+            json=body,
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        return response.json()
+
+    async def forward_video_status(self, request_id: str) -> dict[str, Any]:
+        """GET /videos/{request_id} — poll for completion status."""
+        response = await self._client.get(
+            f"{self._config.base_url}/videos/{request_id}",
+            headers=self._headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        return response.json()

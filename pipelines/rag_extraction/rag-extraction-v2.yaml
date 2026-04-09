@@ -19,23 +19,38 @@ steps:
     model_ref: extraction
     prompt_ref: rag_extraction.extract_batch
     # Stall timeout: resets whenever any map iteration completes (liveness under queue pressure).
-    # Must exceed cold model load time + first inference time (~120s load + ~30s inference = 150s).
+    # Under concurrent ingest load (3 docs × 8 concurrency), late iterations queue 23–40s before
+    # inference. 900s gives ~22 stall cycles without any completion — effectively never fires.
     timeout_seconds: 900
-    # Per-iteration ceiling; flows as X-Request-Timeout to Stargate (min with upstream_retry_timeout).
-    handler_timeout_seconds: 900
-    # MapExecutor has its own per-iteration timeout; keep it aligned with the handler budget.
-    inference_timeout_seconds: 900
+    # Safety-net ceiling for handler dispatch (X-Request-Timeout = handler_timeout + 30s buffer).
+    # NOT the primary inference budget — inference_timeout_seconds owns that role.
+    # Sized for: worst-case queue wait (~130s across 8 serial chunks at 11s each) +
+    # inference_timeout (200s) + buffer (120s) = 450s. Only fires when both
+    # request.inference.started and request.processing signals are lost.
+    handler_timeout_seconds: 450
+    # Per-iteration inference ceiling — primary budget control.
+    # MapExecutor monitor starts counting from request.inference.started (primary) or
+    # request.processing (fallback). Queue wait never consumes this budget.
+    # 200s = cold load ceiling (~120s) + max observed warm inference (~11s) + 69s margin.
+    inference_timeout_seconds: 200
     skip_token_counting: true
-    max_concurrency: 5
+    max_concurrency: 8
+    min_success_threshold: 0.5
     map_over:
       chunk: optionsNs.chunks
     map_inputs:
       text: mapNs.iteration.value.text
-    min_success_threshold: 0.1
     generation_parameters:
-      max_tokens: 8192
+      # Schema hard max (12 entities × 3 facets × 3 relations + 10 topics) ≈ 1893 tokens.
+      # 4096 gives 2× headroom over that ceiling; halves the original 8192 safety net.
+      max_tokens: 4096
       temperature: 0.2
       frequency_penalty: 0.3
+      # Explicitly suppress qwen3 thinking mode. The profile (qwen3-instruct) also sets
+      # this via chat_template_kwargs, but certain math-heavy inputs bypass profile-level
+      # suppression. User-specified params cannot be overridden — this is the hard guard.
+      chat_template_kwargs:
+        enable_thinking: false
       response_format:
         type: json_object
         schema:

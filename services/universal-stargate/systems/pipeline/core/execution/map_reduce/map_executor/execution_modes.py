@@ -184,9 +184,12 @@ class MapExecutionModes:
         """
         Background monitor that cancels iterations exceeding inference timeout.
 
-        Only cancels iterations where inference has started (inference_started_at
-        is set). Queued iterations (no inference_started_at) are exempt — queue
-        wait is unbounded within the outer wall-clock guard.
+        Only cancels iterations where at least one inference boundary signal has
+        arrived. Priority order for timeout start:
+          1. inference_started_at (request.inference.started — primary)
+          2. fallback_boundary_at (request.processing — conservative estimate)
+        Queued iterations (neither signal set) are exempt — queue wait is
+        unbounded within the outer wall-clock guard.
         """
         task_by_idx: dict[int, asyncio.Task[Any]] = {
             idx: task for task, idx in tasks.items()
@@ -196,7 +199,9 @@ class MapExecutionModes:
             await asyncio.sleep(check_interval)
             now = time.monotonic()
             for idx, ctx in iteration_context.items():
-                inference_started = ctx.get("inference_started_at")
+                inference_started = ctx.get("inference_started_at") or ctx.get(
+                    "fallback_boundary_at"
+                )
                 if inference_started is None:
                     continue
                 if "completed_at" in ctx:

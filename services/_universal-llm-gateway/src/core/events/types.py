@@ -225,6 +225,19 @@ Payload:
 
 # ========== Worker Crash Detection Event Signals ==========
 
+WORKER_LOADING = "worker.loading"
+"""
+Emitted when the gateway begins loading a model into a worker slot.
+
+Carries estimated VRAM so downstream services can anticipate cold-load
+duration and avoid stampeding the worker with concurrent requests.
+
+Payload:
+    model_id: str - Model being loaded
+    estimated_vram_mb: int - Estimated VRAM requirement from catalog
+    trigger: str - What triggered the load ("on_demand" | "explicit")
+"""
+
 WORKER_CRASH_DETECTED = "worker.crash.detected"
 """
 Emitted when a worker process crashes unexpectedly.
@@ -850,7 +863,35 @@ def InferenceResourceUpdate(
     )
 
 
-# Worker Crash Detection Event Factories
+# Worker Lifecycle Event Factories
+@event_factory
+def WorkerLoading(
+    model_id: str,
+    estimated_vram_mb: int,
+    trigger: str = "on_demand",
+) -> Event:
+    """Create WORKER_LOADING event.
+
+    Coordination signal: downstream services should anticipate a cold-load
+    window before the model can serve inference.
+
+    Args:
+        model_id: Model being loaded.
+        estimated_vram_mb: Estimated VRAM requirement from catalog.
+        trigger: What triggered the load ("on_demand" or "explicit").
+    """
+    return Event(
+        signal=WORKER_LOADING,
+        payload={
+            "model_id": model_id,
+            "estimated_vram_mb": estimated_vram_mb,
+            "trigger": trigger,
+        },
+        role="coordination",
+        scope="global",
+    )
+
+
 @event_factory
 def WorkerCrashDetected(
     model_id: str,

@@ -45,7 +45,7 @@ class ScopeDefinition:
 
     prefixes: list[str]
     description: str = ""
-    vocab_mode: str = ""  # "local" | "frontier" | "" (inherit global vocabulary_mode)
+    vocab_mode: str = ""  # "local" | "frontier" | "none" (skip) | "" (inherit global vocabulary_mode)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -83,6 +83,8 @@ DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
 DEFAULT_INDEX_WORKERS = 8
 # Used when contextualize_model is omitted; set to "" to disable contextualization.
 DEFAULT_CONTEXTUALIZE_MODEL = "qwen3-5-9b-q8-0-262144"
+DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY = 32
+DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 60.0
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -118,6 +120,12 @@ class RagConfig:
     # Model ID for per-chunk context generation before embedding. Omitted → use default (on).
     # Set to "" to explicitly disable contextualization.
     contextualize_model: str = DEFAULT_CONTEXTUALIZE_MODEL
+    # Cap in-flight contextualization requests per file so one large source does not
+    # monopolize Stargate queue depth.
+    contextualize_max_concurrency: int = DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
+    # Outer client timeout for a single contextualization request. Keep this bounded so
+    # a bad tail request does not stall the full file for multiple minutes.
+    contextualize_client_timeout_s: float = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0
@@ -140,6 +148,14 @@ class RagConfig:
     # Per-file timeout for watcher workers (initial reindex + reconcile). 0 = no timeout.
     # Prevents a single hung extraction from blocking an entire watcher worker indefinitely.
     file_timeout_s: float = 600.0
+    # Probe-first settings for contextualize_chunks. Before the full batch fires, a
+    # single probe request tests whether the model is warm. On retryable failure
+    # (timeout or 503/429) the probe is retried with exponential backoff.
+    # Set ctx_probe_max_probes to 0 to disable the probe-first pattern entirely.
+    ctx_probe_timeout_s: float = 8.0          # tight client timeout for the probe
+    ctx_probe_backoff_initial_s: float = 5.0  # first retry wait after failure
+    ctx_probe_backoff_max_s: float = 60.0     # cap on per-retry wait
+    ctx_probe_max_probes: int = 10            # max probe attempts before giving up
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -314,7 +330,7 @@ def _parse_scopes(raw_scopes: object) -> dict[str, ScopeDefinition]:
         vocab_mode = (
             raw_vocab_mode.strip().lower()
             if isinstance(raw_vocab_mode, str)
-            and raw_vocab_mode.strip().lower() in ("local", "frontier", "")
+            and raw_vocab_mode.strip().lower() in ("local", "frontier", "none", "")
             else ""
         )
 
@@ -444,6 +460,20 @@ def load_config() -> RagConfig:
         contextualize_model = raw_ctx_model.strip()
     else:
         contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
+    raw_ctx_concurrency = parsed_root.get(
+        "contextualize_max_concurrency", DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
+    )
+    if isinstance(raw_ctx_concurrency, int) and raw_ctx_concurrency >= 1:
+        contextualize_max_concurrency = raw_ctx_concurrency
+    else:
+        contextualize_max_concurrency = DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
+    raw_ctx_client_timeout = parsed_root.get(
+        "contextualize_client_timeout_s", DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
+    )
+    if isinstance(raw_ctx_client_timeout, int | float) and raw_ctx_client_timeout > 0:
+        contextualize_client_timeout_s = float(raw_ctx_client_timeout)
+    else:
+        contextualize_client_timeout_s = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
     raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
     if isinstance(raw_reconcile, int | float) and raw_reconcile >= 0:
         reconcile_interval_s = float(raw_reconcile)
@@ -459,6 +489,23 @@ def load_config() -> RagConfig:
         file_timeout_s = float(raw_file_timeout)
     else:
         file_timeout_s = 600.0
+
+    def _parse_positive_float(key: str, default: float, *, zero_ok: bool = False) -> float:
+        raw = parsed_root.get(key, default)
+        if isinstance(raw, int | float) and (raw > 0 or (zero_ok and raw >= 0)):
+            return float(raw)
+        return default
+
+    def _parse_positive_int(key: str, default: int, *, zero_ok: bool = False) -> int:
+        raw = parsed_root.get(key, default)
+        if isinstance(raw, int) and not isinstance(raw, bool) and (raw > 0 or (zero_ok and raw >= 0)):
+            return raw
+        return default
+
+    ctx_probe_timeout_s = _parse_positive_float("ctx_probe_timeout_s", 8.0)
+    ctx_probe_backoff_initial_s = _parse_positive_float("ctx_probe_backoff_initial_s", 5.0)
+    ctx_probe_backoff_max_s = _parse_positive_float("ctx_probe_backoff_max_s", 60.0)
+    ctx_probe_max_probes = _parse_positive_int("ctx_probe_max_probes", 10, zero_ok=True)
     raw_vocab_mode = parsed_root.get("vocabulary_mode", "local")
     if isinstance(raw_vocab_mode, str) and raw_vocab_mode.strip().lower() in (
         "local",
@@ -486,9 +533,15 @@ def load_config() -> RagConfig:
         baseline_extensions=BASELINE_EXTENSIONS,
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
+        contextualize_max_concurrency=contextualize_max_concurrency,
+        contextualize_client_timeout_s=contextualize_client_timeout_s,
         reconcile_interval_s=reconcile_interval_s,
         reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,
         vocabulary_mode=vocabulary_mode,
         vocabulary_taxonomy=vocabulary_taxonomy,
+        ctx_probe_timeout_s=ctx_probe_timeout_s,
+        ctx_probe_backoff_initial_s=ctx_probe_backoff_initial_s,
+        ctx_probe_backoff_max_s=ctx_probe_backoff_max_s,
+        ctx_probe_max_probes=ctx_probe_max_probes,
     )

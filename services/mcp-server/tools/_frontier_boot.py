@@ -102,9 +102,13 @@ def default_mcp_brief() -> str:
     return "\n".join(lines)
 
 
-def resolve_inject_mcp_default(boot_level: str, inject_mcp: bool | None) -> bool:
-    if inject_mcp is not None:
-        return inject_mcp
+def should_inject_tools(boot_level: str) -> bool:
+    """Return whether TOOL_DEFINITIONS should be merged into the request.
+
+    Tools are injected whenever a boot context is active (boot != "none").
+    Skipping tools when boot="none" avoids token cost for pure advisory calls.
+    Tool injection is always client-side function calling — provider-agnostic.
+    """
     return boot_level != "none"
 
 

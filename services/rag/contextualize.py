@@ -10,11 +10,16 @@ schema papers and enterprise KG surveys) get distinct embedding vectors
 because their context prefixes anchor them to different documents.
 
 Architecture:
-  - Sends each chunk to a small LLM (e.g. qwen3-5-9b) via Stargate
-  - Stargate queues requests against the model's parallel_slots
-  - X-Request-Timeout header enforces per-chunk inference deadline from
-    the moment Stargate acquires the slot, not from enqueue time
-  - Returns context strings; empty string on per-chunk failure (graceful)
+  - Before dispatching the full batch, a single probe request is sent with a
+    tight client timeout (ctx_probe_timeout_s). If the probe succeeds the model
+    is warm and the full batch fires immediately. On retryable failure (httpx
+    timeout or 503/429) the probe is retried with exponential backoff until the
+    model is reachable or ctx_probe_max_probes is exhausted.
+  - After a successful probe, the full batch (up to max_concurrency workers)
+    fires normally. Each worker uses client_timeout_s as the outer HTTP timeout.
+  - X-Request-Timeout header enforces per-chunk inference deadline from the
+    moment Stargate acquires the slot, not from enqueue time.
+  - Returns context strings; empty string on per-chunk failure (graceful).
 """
 
 from __future__ import annotations
@@ -44,6 +49,9 @@ _CONTEXT_SYSTEM_PROMPT = (
 )
 
 _NEIGHBOR_CHARS = 800
+
+# Retryable HTTP status codes — model is busy or overloaded but will recover.
+_RETRYABLE_STATUS_CODES = frozenset({429, 503})
 
 
 def _build_chunk_context(
@@ -78,12 +86,101 @@ def _build_chunk_context(
     return "\n\n".join(parts)
 
 
+async def _probe_model(
+    model: str,
+    timeout_s: float,
+    inference_timeout_s: float,
+    *,
+    backoff_initial_s: float,
+    backoff_max_s: float,
+    max_probes: int,
+) -> bool:
+    """Test model readiness with a minimal request before committing the full batch.
+
+    Sends a single short probe with a tight client timeout. On retryable failure
+    (httpx.TimeoutException or 503/429) waits with exponential backoff and retries.
+    Returns True when the model responds, False after max_probes exhausted.
+
+    ∀ retryable_failure: wait exponential_backoff, retry; never more than max_probes.
+    ∀ non_retryable_failure (4xx except 429): return False immediately.
+    """
+    if max_probes <= 0:
+        return True  # Probe disabled; proceed directly to full batch.
+
+    backoff = backoff_initial_s
+    for attempt in range(1, max_probes + 1):
+        try:
+            await _call_llm(
+                "ping",
+                model,
+                inference_timeout_s,
+                client_timeout_s=timeout_s,
+            )
+            logger.debug(
+                "Contextualization probe succeeded (model=%s, attempt=%d)",
+                model,
+                attempt,
+            )
+            return True
+        except httpx.TimeoutException:
+            logger.info(
+                "Contextualization probe timeout (model=%s, attempt=%d/%d, "
+                "next_wait=%.1fs)",
+                model,
+                attempt,
+                max_probes,
+                backoff,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in _RETRYABLE_STATUS_CODES:
+                logger.info(
+                    "Contextualization probe got %d (model=%s, attempt=%d/%d, "
+                    "next_wait=%.1fs)",
+                    exc.response.status_code,
+                    model,
+                    attempt,
+                    max_probes,
+                    backoff,
+                )
+            else:
+                logger.warning(
+                    "Contextualization probe non-retryable %d (model=%s)",
+                    exc.response.status_code,
+                    model,
+                )
+                return False
+        except Exception as exc:
+            logger.warning(
+                "Contextualization probe unexpected error (model=%s): %s",
+                model,
+                exc,
+            )
+            return False
+
+        if attempt < max_probes:
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2.0, backoff_max_s)
+
+    logger.warning(
+        "Contextualization probe exhausted after %d attempts (model=%s)",
+        max_probes,
+        model,
+    )
+    return False
+
+
 async def contextualize_chunks(
     chunks: list[Chunk],
     source: str,
     model: str,
     *,
     timeout_s: float = 30.0,
+    max_concurrency: int = 32,
+    client_timeout_s: float = 60.0,
+    probe_timeout_s: float = 8.0,
+    probe_backoff_initial_s: float = 5.0,
+    probe_backoff_max_s: float = 60.0,
+    probe_max_probes: int = 10,
 ) -> list[str]:
     """Generate context prefixes for chunks via LLM.
 
@@ -91,9 +188,10 @@ async def contextualize_chunks(
     contextual retrieval findings). Neighboring chunk excerpts are included
     to help the LLM resolve references and identify structural position.
 
-    Concurrency is bounded by Stargate's slot-based request queuing — the
-    model's parallel_slots config determines how many requests run on the
-    GPU simultaneously; excess requests wait in Stargate's capacity queue.
+    Before dispatching the full batch, one probe request with tight client
+    timeout verifies the model is warm. On retryable failure the probe retries
+    with exponential backoff. This prevents all concurrent workers from entering
+    a cold-load window simultaneously (stampede prevention).
 
     Args:
         chunks: Chunks to contextualize.
@@ -102,6 +200,14 @@ async def contextualize_chunks(
         timeout_s: Per-chunk inference timeout in seconds, enforced server-side
             via X-Request-Timeout (starts when Stargate acquires the model slot,
             not when the request is enqueued).
+        max_concurrency: Maximum number of in-flight contextualization requests
+            for this file.
+        client_timeout_s: Outer HTTP timeout covering queue wait and inference.
+        probe_timeout_s: Client timeout for the probe request (tight, used only
+            to test model availability before committing the full batch).
+        probe_backoff_initial_s: Initial wait (s) after a probe retryable failure.
+        probe_backoff_max_s: Maximum per-retry wait (s) for probe backoff.
+        probe_max_probes: Max probe attempts. 0 = disable probe-first pattern.
 
     Returns:
         List of context strings (one per chunk). Empty string on per-chunk failure.
@@ -109,35 +215,79 @@ async def contextualize_chunks(
     if not chunks:
         return []
 
+    # Probe-first: verify model is reachable before committing the full batch.
+    # Uses a tight timeout so a cold-loading model is detected quickly.
+    if probe_max_probes > 0:
+        model_ready = await _probe_model(
+            model,
+            timeout_s=probe_timeout_s,
+            inference_timeout_s=timeout_s,
+            backoff_initial_s=probe_backoff_initial_s,
+            backoff_max_s=probe_backoff_max_s,
+            max_probes=probe_max_probes,
+        )
+        if not model_ready:
+            logger.warning(
+                "Skipping contextualization for %s: probe failed after %d attempts "
+                "(model=%s)",
+                source,
+                probe_max_probes,
+                model,
+            )
+            return [""] * len(chunks)
+
     results: list[str] = [""] * len(chunks)
+    worker_count = max(1, min(max_concurrency, len(chunks)))
+    queue: asyncio.Queue[int | None] = asyncio.Queue()
+    for idx in range(len(chunks)):
+        queue.put_nowait(idx)
 
-    async def _generate_one(idx: int) -> None:
-        try:
-            user_msg = _build_chunk_context(idx, chunks, source)
-            context = await _call_llm(user_msg, model, timeout_s)
-            results[idx] = context
-        except Exception:
-            logger.warning("Contextualization failed for chunk %d of %s", idx, source)
+    async def _worker() -> None:
+        while True:
+            idx = await queue.get()
+            try:
+                if idx is None:
+                    return
+                try:
+                    user_msg = _build_chunk_context(idx, chunks, source)
+                    context = await _call_llm(
+                        user_msg,
+                        model,
+                        timeout_s,
+                        client_timeout_s=client_timeout_s,
+                    )
+                    results[idx] = context
+                except Exception:
+                    logger.warning(
+                        "Contextualization failed for chunk %d of %s", idx, source
+                    )
+            finally:
+                queue.task_done()
 
-    tasks = [asyncio.create_task(_generate_one(i)) for i in range(len(chunks))]
-    await asyncio.gather(*tasks)
+    workers = [
+        asyncio.create_task(_worker(), name=f"contextualize-worker-{i}")
+        for i in range(worker_count)
+    ]
+    await queue.join()
+    for _ in workers:
+        queue.put_nowait(None)
+    await asyncio.gather(*workers)
 
     successful = sum(1 for r in results if r)
     logger.info(
-        "Contextualized %d/%d chunks for %s (model=%s)",
+        "Contextualized %d/%d chunks for %s (model=%s, concurrency=%d)",
         successful,
         len(chunks),
         source,
         model,
+        worker_count,
     )
     return results
 
 
-# Outer httpx timeout: queue wait + inference headroom. The actual inference
-# deadline is enforced server-side via X-Request-Timeout (starts when Stargate
-# acquires the model slot, not when the HTTP request is sent).
-_QUEUE_HEADROOM_S = 300.0
-_CLIENT = httpx.AsyncClient(timeout=_QUEUE_HEADROOM_S)
+# Timeout is supplied per call so config can shrink the queue wait budget
+# without rebuilding the shared client.
+_CLIENT = httpx.AsyncClient(timeout=None)
 
 # Anthropic research: 50-100 token prefixes are the sweet spot for 1024-token chunks.
 _MAX_CONTEXT_TOKENS = 150
@@ -147,6 +297,8 @@ async def _call_llm(
     user_msg: str,
     model: str,
     timeout_s: float,
+    *,
+    client_timeout_s: float,
 ) -> str:
     """Call the contextualization LLM for a single chunk.
 
@@ -168,6 +320,7 @@ async def _call_llm(
             "max_tokens": _MAX_CONTEXT_TOKENS,
             "temperature": 0.1,
         },
+        timeout=client_timeout_s,
     )
     response.raise_for_status()
     data = response.json()

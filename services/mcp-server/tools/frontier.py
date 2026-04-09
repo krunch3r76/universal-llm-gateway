@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from model_id import ModelId
-
 from ._frontier_core import (
+    OPENAI_SERVER_TOOL_MAP,
     XAI_SERVER_TOOL_MAP,
     build_frontier_request,
     execute_frontier,
@@ -25,7 +24,11 @@ _GROK_OPPIE_BOOT_REFS: dict[str, str] = {
     "team": "notes/system/prompts/oppie-seed-mcp-v1.5.md",
     "full": "notes/system/prompts/oppie-seed-full-v1.5.md",
 }
-_GROK_OPPIE_MODELS: set[str] = {"grok-4.20-multi-agent"}
+# Models that auto-load the Oppie persona seed when boot != "none".
+# Note: grok-4.20-multi-agent-0309 is listed here for explicit opt-in but
+# it blocks client-side function calling (xAI restriction). Use it only when
+# tool execution is not needed (boot="none" or pure orchestration tasks).
+_GROK_OPPIE_MODELS: set[str] = {"grok-4.20-multi-agent-0309"}
 
 _CLAUDE_BOOT_REF_DEFAULTS: dict[str, str] = {
     "mcp": "notes/system/prompts/api-claude-seed-v1.0.md",
@@ -40,7 +43,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Grok Generate")
     def grok_generate(
         messages: list[dict[str, Any]],
-        model: str = "grok-4.20-multi-agent",
+        model: str = "grok-4.20-0309-reasoning",
         system: str = "",
         max_output_tokens: int | None = None,
         temperature: float | None = None,
@@ -55,7 +58,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         server_tools: list[str] | None = None,
         conversation_id: str | None = None,
         reasoning_trace: list[dict[str, Any]] | None = None,
-        inject_mcp: bool | None = None,
         boot: str = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
@@ -63,33 +65,38 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Generate with xAI Grok models via Stargate provider-native endpoint.
 
-        **Model routing** (two orthogonal axes — model selects capability,
-        boot selects identity/context):
+        **Boot and tools** (two orthogonal axes):
 
-        - ``grok-4.20-multi-agent`` + boot=mcp/team/full → Oppie persona seed
-          auto-loaded. Use for multi-agent coordination, Triad consultation.
-        - ``grok-4.20`` (reasoning) → neutral, no persona seed. Use for deep
-          chain-of-thought reasoning without persona overhead.
-        - ``grok-3-mini`` → neutral, no persona seed. Use for quick advisory
-          checks via agent_consult.
+        - ``boot`` controls system prompt / persona:
+          - ``"mcp"`` (default) — loads API subagent seed; Cortex/RAG tool
+            definitions injected automatically.
+          - ``"none"`` — no system prompt, no tool definitions (saves tokens
+            for pure advisory or orchestration calls).
+          - ``"team"`` / ``"full"`` — richer Oppie persona seed.
+        - Tool definitions (Cortex, RAG) are injected as standard client-side
+          function-calling schemas whenever boot != "none". No server URL or
+          connector config needed.
 
-        Default to neutral reasoning Grok unless you specifically need Oppie's
-        team-lead context, tool mastery enforcement, or multi-agent orchestration.
-        Any model can still force a persona seed via explicit ``boot_ref``.
+        **Model selection**:
 
-        Models:
-          grok-4.20-reasoning       — top model, built-in reasoning, 2M ctx (DEFAULT)
-          grok-4.20-non-reasoning   — same without reasoning
-          grok-4.20-multi-agent     — multi-agent optimized, reasoning
-          grok-4-1-fast-reasoning   — fast + cheap reasoning
-          grok-4-1-fast-non-reasoning — fast without reasoning
-          grok-3-mini               — legacy, supports reasoning_effort ("low"/"medium"/"high")
+        - ``grok-4.20-0309-reasoning`` — top model, built-in reasoning, tool
+          calling, 2M ctx. **DEFAULT** — use for all Oppie-style subagent calls.
+        - ``grok-4.20-0309-non-reasoning`` — same without reasoning overhead.
+        - ``grok-4.20-multi-agent-0309`` — multi-agent optimised. Does NOT
+          support client-side function calling (xAI restriction); use with
+          boot="none" only.
+        - ``grok-4-1-fast-reasoning`` — fast + cheap reasoning.
+        - ``grok-4-1-fast-non-reasoning`` — fast without reasoning.
+        - ``grok-3-mini`` — legacy; supports reasoning_effort
+          ("low"/"medium"/"high", silently stripped for grok-4 models).
 
-        Key args: messages (REQUIRED), model, system, max_output_tokens, temperature,
-          seed, response_format, reasoning_effort (grok-3/mini only — silently stripped for grok-4),
-          include_encrypted_reasoning, tools, tool_choice,
-          server_tools ("web_search"/"x_search"/"code_execution" — $5/1k calls each),
-          conversation_id, reasoning_trace, boot ("none"/"mcp"/"full"), inject_mcp, include_raw
+        **Unique capabilities**:
+        - ``x_search`` server tool — real-time X/Twitter signal retrieval
+          ($5/1k calls). No equivalent on other providers.
+        - ``conversation_id`` — multi-turn stateful conversations server-side.
+        - ``reasoning_trace`` — inject prior reasoning context into follow-up
+          requests for continued chain-of-thought.
+        - 2M token context window on grok-4.20 family.
         """
         full_model = model if "/" in model else f"xai/{model}"
 
@@ -121,7 +128,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             system=system,
             boot=boot,
             boot_ref=boot_ref,
-            inject_mcp=inject_mcp,
             max_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -159,7 +165,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         server_tools: list[str] | None = None,
-        inject_mcp: bool | None = None,
         speed: str | None = None,
         provider_options: dict[str, Any] | None = None,
         boot: str = "mcp",
@@ -173,25 +178,25 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         identity (subordinate to caller, tool-disciplined, journal-capable).
         This is distinct from Web Claude (strategic advisor) and Cursor Claude.
 
-        MCP injection is enabled unless the caller opts out with
-        ``boot="none"`` or ``inject_mcp=False``.
+        Tool definitions (Cortex, RAG) are injected automatically whenever
+        boot != "none". Use boot="none" for pure advisory calls that don't
+        need tool access (saves tokens).
 
-        ``timeout`` overrides the read timeout in seconds (default 600, max 1800).
-        Use higher values for subagent dispatches with boot="full" or heavy
-        tool-use workloads that may exceed the default ceiling.
+        ``timeout`` overrides read timeout in seconds (default 600, max 1800).
+
+        **Unique capabilities**:
+        - Extended thinking with ``budget_tokens`` on claude-opus-4 — deep
+          multi-step reasoning with explicit token allocation.
+        - ``speed="fast"`` on claude-sonnet-4 — reduced latency tier.
+        - Document blocks — native PDF input via base64 in message content
+          (bypasses local pymupdf4llm extraction for higher fidelity).
+        - Citations — structured source attribution in responses.
+        - Computer use beta — GUI interaction capability.
 
         Models:
           claude-sonnet-4    — fast + capable, 16k output, adaptive thinking (DEFAULT)
           claude-opus-4      — top model, 32k output, extended thinking
           claude-3-5-sonnet  — previous gen, 8k output
-
-        Key args: messages (REQUIRED), model, system, max_tokens, temperature,
-          thinking ("adaptive" / {"type": "enabled", "budget_tokens": N}),
-          effort ("max"/"high"/"medium"/"low" — requires thinking enabled),
-          tools, tool_choice,
-          server_tools ("web_search"/"web_fetch"/"code_execution" — auto-versioned),
-          speed ("fast" enables fast mode beta), provider_options,
-          boot ("none"/"mcp"/"full"), inject_mcp, include_raw
         """
         full_model = model if "/" in model else f"anthropic/{model}"
 
@@ -226,7 +231,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             system=system,
             boot=boot,
             boot_ref=boot_ref,
-            inject_mcp=inject_mcp,
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -248,66 +252,79 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             timeout=timeout,
         )
 
-    @mcp.tool(title="Frontier Generate")
-    def frontier_generate(
+    @mcp.tool(title="OpenAI Generate")
+    def openai_generate(
         messages: list[dict[str, Any]],
-        model: str = "anthropic/claude-sonnet-4",
+        model: str = "gpt-5.4",
         system: str = "",
-        max_tokens: int | None = None,
+        max_output_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         stop_sequences: list[str] | None = None,
         seed: int | None = None,
-        stream: bool = False,
         response_format: dict[str, Any] | None = None,
-        thinking: dict[str, Any] | None = None,
-        effort: str | None = None,
+        reasoning_effort: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
-        inject_mcp: bool | None = None,
+        server_tools: list[str] | None = None,
         provider_options: dict[str, Any] | None = None,
-        conversation_id: str | None = None,
-        reasoning_trace: list[dict[str, Any]] | None = None,
         boot: str = "none",
         boot_ref: str | None = None,
         include_raw: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """Backward-compatible generation — routes to grok_generate or claude_generate.
+        """Generate with OpenAI models via Stargate provider-native Responses API.
 
-        Routes by model prefix: "anthropic/" or "claude-*" → claude_generate; everything else → grok_generate.
-        Prefer calling grok_generate or claude_generate directly for new code.
+        Routes through ``/api/v1/providers/openai/responses`` on Stargate.
+
+        ``boot`` defaults to ``"none"`` — no system prompt, no tool injection.
+        Set boot="mcp" to enable the standard subagent seed and Cortex/RAG tools.
+
+        Models:
+          gpt-5.4              — best intelligence, agentic + coding (DEFAULT)
+          gpt-5.4-mini         — strong mini for coding, computer use, subagents
+          gpt-5.4-nano         — cheapest GPT-5.4 class, high-volume tasks
+          o4-mini              — reasoning model, deductive tasks
+          o3                   — deep reasoning
         """
-        if stream:
-            return {"error": "Streaming not yet implemented for frontier_generate"}
+        full_model = model if "/" in model else f"openai/{model}"
 
-        parsed = ModelId.parse(model)
-        if parsed.routing_layer == "openrouter":
-            return {"error": "OpenRouter routing not yet implemented"}
+        thinking: dict[str, Any] | None = None
+        if reasoning_effort:
+            thinking = {"effort": reasoning_effort}
+
+        all_tools: list[dict[str, Any]] = []
+        if server_tools:
+            for st in server_tools:
+                mapped = OPENAI_SERVER_TOOL_MAP.get(st)
+                if mapped:
+                    all_tools.append(dict(mapped))
+        if tools:
+            all_tools.extend(tools)
 
         req = build_frontier_request(
-            model=model,
+            model=full_model,
             messages=messages,
             system=system,
             boot=boot,
             boot_ref=boot_ref,
-            inject_mcp=inject_mcp,
-            max_tokens=max_tokens,
+            max_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
             stop_sequences=stop_sequences,
             seed=seed,
             thinking=thinking,
-            effort=effort,
-            tools=tools,
+            tools=all_tools or None,
             tool_choice=tool_choice,
             response_format=response_format,
-            conversation_id=conversation_id,
-            reasoning_trace=reasoning_trace,
             provider_options=provider_options,
         )
         if isinstance(req, dict):
             return req
         return execute_frontier(
-            model=model, req=req, include_raw=include_raw, timeout=timeout
+            model=full_model,
+            req=req,
+            include_raw=include_raw,
+            tool_name="openai_generate",
+            timeout=timeout,
         )

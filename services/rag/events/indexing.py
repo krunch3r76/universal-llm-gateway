@@ -253,6 +253,72 @@ def rag_property_index_unavailable(*, file: str) -> Event:
 
 
 @event_factory
+def rag_contextualization_started(
+    *,
+    file: str,
+    chunk_count: int,
+    model: str,
+    max_concurrency: int,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted before per-chunk contextualization requests are dispatched."""
+    return Event(
+        signal="rag.contextualization.started",
+        payload={
+            "file": file,
+            "chunk_count": chunk_count,
+            "model": model,
+            "max_concurrency": max_concurrency,
+            **{
+                key: value
+                for key, value in {
+                    "operation_id": operation_id,
+                    "operation": operation,
+                }.items()
+                if value is not None
+            },
+        },
+    )
+
+
+@event_factory
+def rag_contextualization_completed(
+    *,
+    file: str,
+    chunk_count: int,
+    successful: int,
+    failed: int,
+    duration_seconds: float,
+    model: str,
+    max_concurrency: int,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after all contextualization requests settle for a file."""
+    return Event(
+        signal="rag.contextualization.completed",
+        payload={
+            "file": file,
+            "chunk_count": chunk_count,
+            "successful": successful,
+            "failed": failed,
+            "duration_seconds": duration_seconds,
+            "model": model,
+            "max_concurrency": max_concurrency,
+            **{
+                key: value
+                for key, value in {
+                    "operation_id": operation_id,
+                    "operation": operation,
+                }.items()
+                if value is not None
+            },
+        },
+    )
+
+
+@event_factory
 def rag_contextualization_applied(*, file: str, chunk_count: int, model: str) -> Event:
     """Emitted when contextualized chunk prefixes are applied before embedding."""
     return Event(

@@ -60,9 +60,25 @@ Hold `session_id` (from boot response) for the entire session — pass it to eve
 
 _SANDBOX_MAP = """\
 ## File Sandboxes
-`fs(sandbox="files", …)` → user documents, notes, journals, prompts.
-`fs(sandbox="project", …)` → source code — prefix path with repo name (e.g. `universal-llm-gateway/…`).
-`fs(sandbox="context", …)` → tasks/, specs, lessons, discoveries."""
+Two sandboxes — no others exist:
+
+`fs(sandbox="files", …)` → `/data/files` — user documents, notes, uploads, exports.
+
+`fs(sandbox="project", …)` → `/mnt/torus/projects/` — all repository files including
+source, config, tasks, docs, scripts.
+
+**project path rules (CRITICAL):**
+- Paths MUST include the repo name prefix: `universal-llm-gateway/…`
+- Use `op="list"` for directories; `op="read"` on a directory path returns an error
+- Repo root listing: `fs(sandbox="project", op="list", path="universal-llm-gateway")`
+- Config files: `fs(sandbox="project", op="list", path="universal-llm-gateway/config")`
+- Tasks/specs: `fs(sandbox="project", op="read", path="universal-llm-gateway/tasks/specs/foo.md")`
+- Source file: `fs(sandbox="project", op="read", path="universal-llm-gateway/services/mcp-server/server.py")`
+
+**When you don't know where something is:**
+1. `fs(sandbox="project", op="list", path="universal-llm-gateway")` — repo root
+2. Narrow by subdirectory based on what you see
+3. Never guess a full path and `read` it — list first"""
 
 _AGENT_BUS_COMPACT = """\
 ## Agent Bus Protocol
@@ -168,7 +184,18 @@ Browse the canonical MCP docs: `fs(sandbox="project", op="md_list", path="univer
 Read the primary file tool docs: `fs(sandbox="project", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="fs")`
 For large Markdown docs, prefer section ops over whole-file reads: `md_list` to inspect the tree, `md_read` to load one section, and `md_replace` / `md_append` / `md_delete` to edit one section without loading the full document.
 Dispatch catalog: `fs(sandbox="project", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")`
-Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by` linkage is internal to the assertions table."""
+Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by` linkage is internal to the assertions table.
+
+## Model Discovery & Inference
+`list_models()` — lists all 500+ models available through the gateway (local, anthropic, xai, openai, openrouter).
+  Filter by provider: `list_models(filter="anthropic")` / `list_models(filter="local")` / `list_models(filter="openrouter")`
+  Always call this before guessing a model ID — wrong format → 404.
+
+Inference routing:
+- `llm_generate(model=..., messages=...)` — universal, works for any model ID, routes via /v1/chat/completions
+- `claude_generate(...)` — Anthropic-native: thinking, extended output, MCP injection, persona boot
+- `grok_generate(...)` — xAI-native: server tools (web_search/x_search), reasoning_trace, Oppie boot
+- OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
 
 def _render_observe_and_search(agent: str) -> str:
@@ -218,8 +245,8 @@ Two orthogonal axes — model selects capability, boot selects identity/context:
 
 | Model | Capability | Default persona | Use when |
 |---|---|---|---|
-| `grok-4.20-multi-agent` | Multi-agent coordination | Oppie (auto) | Triad consultation, team coordination, multi-step orchestration |
-| `grok-4.20` | Deep reasoning (CoT) | Neutral | Chain-of-thought analysis, complex reasoning without persona overhead |
+| `grok-4.20-multi-agent-0309` | Multi-agent coordination | Oppie (auto) | Triad consultation, team coordination, multi-step orchestration |
+| `grok-4.20-0309-reasoning` | Deep reasoning (CoT) | Neutral | Chain-of-thought analysis, complex reasoning without persona overhead |
 | `grok-3-mini` | Fast advisory | Neutral | Quick checks via agent_consult, low-stakes validation |
 | `claude-sonnet-4-6` (via claude_generate) | Deep synthesis | API Claude (auto) | Analytical work, evidence synthesis, structured extraction |
 

@@ -30,7 +30,66 @@ def _get_headers() -> dict[str, str]:
 
 
 def register_model_status_tools(mcp: FastMCP) -> None:
-    """Register the model_status tool on the MCP server."""
+    """Register model_status and list_models tools on the MCP server."""
+
+    @mcp.tool(title="List Models")
+    def list_models(filter: str | None = None) -> dict[str, Any]:
+        """List all models available through the gateway.
+
+        Calls Stargate ``GET /v1/models`` — the same catalog a human client
+        or any OpenAI-compatible tool would see.  Use this to discover model
+        IDs before calling ``llm_generate``, ``claude_generate``, or
+        ``grok_generate``.
+
+        Args:
+            filter: Optional provider prefix to narrow results.
+                Accepted values: ``anthropic``, ``xai``, ``openai``,
+                ``openrouter``, ``local`` (no-slash IDs).
+                Omit to return all models.
+
+        Returns:
+            ``{"models": [{"id": str, "type": str, "owned_by": str}, ...],
+            "total": int, "filter": str | None}``
+        """
+        url = f"{_STARGATE_URL}/v1/models"
+        try:
+            resp = httpx.get(url, headers=_get_headers(), timeout=_TIMEOUT)
+            resp.raise_for_status()
+        except httpx.ConnectError:
+            return {"error": "Cannot reach Stargate — is it running?"}
+        except httpx.TimeoutException:
+            return {"error": "Stargate request timed out"}
+        except httpx.HTTPStatusError as exc:
+            return {
+                "error": f"HTTP {exc.response.status_code}",
+                "detail": exc.response.text,
+            }
+        except Exception as exc:
+            logger.error("list_models failed: %s", exc, exc_info=True)
+            return {"error": str(exc)}
+
+        raw = resp.json()
+        models: list[dict[str, Any]] = raw.get("data", [])
+
+        if filter:
+            if filter == "local":
+                models = [m for m in models if "/" not in m.get("id", "")]
+            else:
+                prefix = filter.rstrip("/") + "/"
+                models = [m for m in models if m.get("id", "").startswith(prefix)]
+
+        return {
+            "models": [
+                {
+                    "id": m.get("id", ""),
+                    "type": m.get("type", "model"),
+                    "owned_by": m.get("owned_by", ""),
+                }
+                for m in models
+            ],
+            "total": len(models),
+            "filter": filter,
+        }
 
     @mcp.tool(title="Model Status")
     def model_status(
@@ -43,8 +102,11 @@ def register_model_status_tools(mcp: FastMCP) -> None:
           model_id      (str|None) — specific model to query; omit for all models
           status_filter (str|None) — filter by status: loaded, busy, loading, available (all-models only)
 
-        Without model_id: returns all models with per-model placement across nodes.
+        Without model_id: returns GPU worker load/busy/loading state across nodes.
         With model_id: returns detail for one model ({"error": "Model not found: ..."} if missing).
+
+        Use ``list_models()`` to discover available model IDs — this tool reports
+        runtime load state, not the model catalog.
         """
         if model_id:
             url = f"{_STARGATE_URL}/api/v1/model-status/{model_id}"

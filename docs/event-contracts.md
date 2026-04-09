@@ -226,9 +226,41 @@ contain `request_id` and `gateway_id` for slot tracking.
 
 ```
 model.load.initiated
-  └─> model.loading.started
+  └─> model.loading.started + worker.loading
       └─> model.loaded | model.load.failed
 ```
+
+### Worker Lifecycle Signals
+
+Coordination signals for cold-worker visibility. Downstream services (RAG,
+pipelines) use these to avoid stampeding cold workers with concurrent requests.
+
+| Signal | Role | Scope | Required Payload | Description |
+|--------|------|-------|------------------|-------------|
+| `worker.evicted` | coordination | global | `model_id`, `trigger_model_id`, `vram_freed_mb`, `gateway_name` | Stargate evicted a model from a gateway to free VRAM for another model |
+| `worker.loading` | coordination | global | `model_id`, `estimated_vram_mb`, `trigger` | Gateway began loading a model into a worker slot |
+| `inference.dequeued` | coordination | node | `worker_id`, `model_id`, `request_id`, `queue_wait_ms` | Worker inference slot acquired from FifoCapacityGate; marks queue-wait boundary |
+
+**`worker.evicted`**: Emitted by Stargate's eviction executor after `model.unloaded`
+is confirmed for each evicted model. `trigger_model_id` identifies the model that
+needed the freed VRAM. `vram_freed_mb` is the aggregate estimate from the eviction
+plan.
+
+**`worker.loading`**: Emitted by the gateway alongside `model.loading.started`.
+`estimated_vram_mb` comes from the model catalog requirements. `trigger` is
+`"on_demand"` (inference-path auto-load) or `"explicit"` (API load endpoint).
+
+**`inference.dequeued`**: Emitted by the worker subprocess to the Event Service
+immediately after `FifoCapacityGate.acquire()` returns. `queue_wait_ms` is the
+time (ms) spent waiting for an inference slot — the exact boundary between
+queue-wait and active inference latency. `scope: node` (worker-local; not
+re-emitted on master). Source: `emit_inference_dequeued()` in
+`services/_universal-llm-gateway/src/core/workers/worker/events.py`.
+
+**Distinction from `worker.model.loading`**: The existing `worker.model.loading`
+signal (emitted by the worker subprocess to Event Service) carries only
+`worker_id` and `model_id`. `worker.loading` is a gateway EventBus signal with
+VRAM estimates for downstream coordination.
 
 ### Federation Monitoring Events
 
@@ -353,6 +385,8 @@ rag.started
                   └─> rag.extraction.permanently.skipped  (* ≤ M; when chunk crosses max_attempts)
                   └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
               └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
+              └─> rag.contextualization.started
+                  └─> rag.contextualization.completed
               └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
               └─> rag.file.indexed | rag.file.deleted | rag.file.indexing.failed
           └─> rag.watch.reconcile.complete*      (* zero or more)
@@ -1401,6 +1435,8 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
 | `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
 | `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
+| `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency` | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency` | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
 | `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
 | `rag.embed.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before chunk embeddings are requested; optional: `operation` |
 | `rag.embed.completed` | `file`, `operation_id`, `chunk_count` | emitted after chunk embeddings return; optional: `operation` |

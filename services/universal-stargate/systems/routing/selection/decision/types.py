@@ -87,6 +87,7 @@ class EvictionPlanSummary:
     non_evictable_vram_reserve_mb: int = 0
     hardware_correction_applied: bool = False
     # Hysteresis metadata (for event emission by async caller)
+    trigger_model_id: str | None = None
     cooldown_protected_count: int = 0
     demand_protected_count: int = 0
     escape_hatch_used: bool = False

@@ -18,6 +18,7 @@ from mcp_events import record
 from ._boot_helpers import (
     AGENT_PERSONA_SEEDS,
     build_gated_entities,
+    filter_stale_open_items,
     render_boot_narrative,
     render_operational_context,
     safe_list,
@@ -538,6 +539,16 @@ def run_cortex_boot(
     temporal_upcoming: list[dict[str, Any]] = safe_list(
         temporal_raw.get("upcoming", []) if isinstance(temporal_raw, dict) else []
     )
+    temporal_recently_resolved: list[dict[str, Any]] = safe_list(
+        temporal_raw.get("recently_resolved", [])
+        if isinstance(temporal_raw, dict)
+        else []
+    )
+
+    # Tag stale open_items in sessions that reference recently-resolved temporal
+    # matters. This prevents e.g. "Escape property tax due April 10" from surfacing
+    # as actionable after the matter was paid and the assertion superseded.
+    sessions = filter_stale_open_items(sessions, temporal_recently_resolved)
 
     activity_journal: list[dict[str, Any]] = []
     if activity_journal_limit > 0:

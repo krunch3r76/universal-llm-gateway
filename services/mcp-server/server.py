@@ -48,6 +48,7 @@ from tools.finance_ingest import register_finance_ingest_tools
 from tools.finance_reconcile import register_finance_reconcile_tools
 from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.frontier import register_frontier_tools
+from tools.frontier_imagine import register_imagine_tools
 from tools.ingest_binary import register_ingest_binary_tools
 from tools.ingest_document import register_ingest_document_tools
 from tools.llm import register_llm_tools
@@ -168,6 +169,7 @@ _PRIMARY_TOOLS: set[str] = {
     # LLM — provider-specific surfaces
     "grok_generate",
     "claude_generate",
+    "openai_generate",
     # RAG (consolidated)
     "rag",
     # Response size guard
@@ -219,6 +221,7 @@ def _build_server() -> FastMCP:
     register_cortex_named_tools(mcp)
     register_llm_tools(mcp)
     register_frontier_tools(mcp)
+    register_imagine_tools(mcp)
     register_security_tools(mcp)
     register_security_js_tools(mcp)
     register_usps_tools(mcp)
@@ -238,10 +241,9 @@ def _build_server() -> FastMCP:
 
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
-    valid_sandboxes = {"files", "context", "project"}
+    valid_sandboxes = {"files", "project"}
     sandbox_tool: dict[str, str] = {
         "files": "files",
-        "context": "context",
     }
     md_op_map: dict[str, str] = {
         "md_list": "list_sections",
@@ -265,19 +267,33 @@ def _build_server() -> FastMCP:
         include_untracked: bool = True,
         binary: bool = False,
     ) -> dict[str, Any]:
-        """File I/O across sandboxes (files, context, project). Both sandbox and op are REQUIRED.
+        """File I/O across sandboxes (files, project). Both sandbox and op are REQUIRED.
 
         `read` is unified across sandboxes: source files plus text-oriented
         document formats such as PDF, DOCX, ODT, EML, and HTML can be read in
-        text mode from `files`, `context`, or `project`. Use `binary=True` only
-        when another tool needs base64 file bytes instead of decoded text. Use
-        `write_binary` (files sandbox only) to stage base64-encoded binary files
-        (PDFs, images) — pass the base64 string as `content`. Use `move` to
-        rename or relocate a file within the selected sandbox. Prefer the
-        markdown ops for large markdown docs.
+        text mode from `files` or `project`. Use `binary=True` only when another
+        tool needs base64 file bytes instead of decoded text. Use `write_binary`
+        (files sandbox only) to stage base64-encoded binary files (PDFs, images)
+        — pass the base64 string as `content`. Use `move` to rename or relocate
+        a file within the selected sandbox. Prefer the markdown ops for large
+        markdown docs.
 
-        Sandboxes: files=/data/files  context=tasks/  project=repo-root
-        project paths must include repo name prefix (e.g. universal-llm-gateway/docs/...).
+        **PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).
+        For tabular or columnar PDFs (statements, invoices, ledger exports),
+        prefer ``finance_extract_pdf(path=...)`` which uses pdfplumber and
+        preserves table structure. PDF reads include an ``extraction`` field
+        with method info and alternative suggestions.
+
+        Sandboxes:
+          files   — /data/files — user documents, notes, uploads, exports
+          project — /mnt/torus/projects/ — repository source, config, tasks, docs
+
+        project paths MUST include the repo name prefix:
+          fs(sandbox="project", op="read", path="universal-llm-gateway/tasks/specs/foo.md")
+          fs(sandbox="project", op="list", path="universal-llm-gateway/config")
+          fs(sandbox="project", op="list", path="universal-llm-gateway")  ← repo root
+
+        Use op="list" for directories; op="read" on a directory path returns an error.
 
         Standard ops:
           read           (path)                           — read file (text or PDF/DOCX/ODT/EML/HTML)
@@ -303,9 +319,7 @@ def _build_server() -> FastMCP:
         if not op:
             return {"error": "'op' is required"}
         if sandbox not in valid_sandboxes:
-            return {
-                "error": f"sandbox must be 'files', 'context', or 'project', got {sandbox!r}"
-            }
+            return {"error": f"sandbox must be 'files' or 'project', got {sandbox!r}"}
 
         if op.startswith("md_"):
             md_fn = overflow_registry.get("markdown")

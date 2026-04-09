@@ -44,6 +44,120 @@ def safe_list(raw: dict[str, Any] | list[Any], key: str = "items") -> list[Any]:
     return []
 
 
+def _resolved_key_phrases(recently_resolved: list[dict[str, Any]]) -> set[str]:
+    """Extract specific key phrases from recently-resolved temporal claims.
+
+    Uses the first 4 words of each claim as a matching key. Only phrases that
+    contain a distinguishing token — a digit/dollar amount, or a word with 8+
+    characters — are included. Phrases starting with generic sentence openers
+    (pronouns, helper verbs) are excluded to avoid false-positive matches
+    against unrelated open_items describing similar-but-distinct events.
+    """
+    generic_starters = frozenset(
+        {
+            "has",
+            "have",
+            "had",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "he",
+            "she",
+            "it",
+            "they",
+            "we",
+            "kaywan",
+            "there",
+            "this",
+            "that",
+        }
+    )
+    common_short = frozenset(
+        {
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "not",
+            "on",
+            "in",
+            "at",
+            "to",
+            "of",
+            "for",
+            "from",
+            "by",
+            "as",
+            "with",
+            "its",
+        }
+    )
+
+    phrases: set[str] = set()
+    for r in recently_resolved:
+        claim = r.get("claim") or ""
+        words = claim.split()[:4]
+        if len(words) < 3:
+            continue
+        # Skip phrases that start with generic/pronoun words — they describe
+        # ongoing behavioral patterns, not specific trackable facts.
+        if words[0].lower().rstrip(".,;:") in generic_starters:
+            continue
+        phrase = " ".join(words).lower()
+        # Require at least one distinguishing token: a digit/$ amount, or a word
+        # 8+ chars that is not a common stop word.
+        has_distinguishing = any(
+            any(ch.isdigit() or ch == "$" for ch in w)
+            or (len(w) >= 8 and w.lower().rstrip(".,;:") not in common_short)
+            for w in words
+        )
+        if has_distinguishing:
+            phrases.add(phrase)
+    return phrases
+
+
+def filter_stale_open_items(
+    sessions: list[dict[str, Any]],
+    recently_resolved: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Tag open_items in sessions that reference recently-resolved temporal matters.
+
+    When a temporal assertion (valid_until set) is superseded — meaning the matter
+    was resolved — session journals that still carry it as an open_item receive a
+    '[RESOLVED]' prefix. This prevents the item from appearing as actionable in
+    future boot briefings while preserving a visible audit trail.
+    """
+    if not recently_resolved:
+        return sessions
+
+    key_phrases = _resolved_key_phrases(recently_resolved)
+    if not key_phrases:
+        return sessions
+
+    result: list[dict[str, Any]] = []
+    for session in sessions:
+        open_items = session.get("open_items") or []
+        tagged: list[str] = []
+        for item in open_items:
+            item_lower = str(item).lower()
+            if any(phrase in item_lower for phrase in key_phrases):
+                tagged.append(f"[RESOLVED] {item}")
+            else:
+                tagged.append(item)
+        result.append({**session, "open_items": tagged})
+    return result
+
+
 def build_gated_entities(
     gated_raw: list[dict[str, Any]],
     temporal_active: list[dict[str, Any]],

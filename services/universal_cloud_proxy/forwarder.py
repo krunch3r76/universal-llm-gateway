@@ -72,3 +72,51 @@ class ProviderForwarder:
     ) -> AsyncIterator[bytes]:
         """Stream provider-native body (no OpenAI translation)."""
         return self._adapter(provider).forward_native_stream(request_body)
+
+    async def forward_image_generation(
+        self,
+        *,
+        provider: str,
+        request_body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """POST to /images/generations for ``provider``."""
+        adapter = self._adapter(provider)
+        if not hasattr(adapter, "forward_images_generation"):
+            raise ValueError(f"Provider {provider} does not support image generation")
+        return await adapter.forward_images_generation(request_body)
+
+    async def forward_image_edit(
+        self,
+        *,
+        provider: str,
+        request_body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """POST to /images/edits for ``provider``."""
+        adapter = self._adapter(provider)
+        if not hasattr(adapter, "forward_images_edit"):
+            raise ValueError(f"Provider {provider} does not support image editing")
+        return await adapter.forward_images_edit(request_body)
+
+    async def forward_video_generation(
+        self,
+        *,
+        provider: str,
+        request_body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """POST to /videos/generations for ``provider``."""
+        adapter = self._adapter(provider)
+        if not hasattr(adapter, "forward_video_generation"):
+            raise ValueError(f"Provider {provider} does not support video generation")
+        return await adapter.forward_video_generation(request_body)
+
+    async def forward_video_status(
+        self,
+        *,
+        provider: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """GET /videos/{request_id} for ``provider``."""
+        adapter = self._adapter(provider)
+        if not hasattr(adapter, "forward_video_status"):
+            raise ValueError(f"Provider {provider} does not support video status polling")
+        return await adapter.forward_video_status(request_id)

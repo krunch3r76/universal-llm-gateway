@@ -143,10 +143,13 @@ def _compute_eviction_plan(
     gw_keys_in_flight: set[str] | None = None
     if routing_key_tracker is None:
         logger.debug("No routing_key_tracker provided - trusting busy_models telemetry")
-    gw_keys_in_flight = routing_key_tracker.get_routing_keys_in_flight(gateway.name) if routing_key_tracker else None
+    gw_keys_in_flight = (
+        routing_key_tracker.get_routing_keys_in_flight(gateway.name)
+        if routing_key_tracker
+        else None
+    )
     logger.debug(
-        f"Per-gateway in-flight routing keys for {gateway.name}: "
-        f"{gw_keys_in_flight}"
+        f"Per-gateway in-flight routing keys for {gateway.name}: {gw_keys_in_flight}"
     )
 
     actually_busy_models = {
@@ -413,6 +416,7 @@ def _compute_eviction_plan(
         hardware_used_vram_mb=hardware_used_vram_mb,
         non_evictable_vram_reserve_mb=non_evictable_vram_reserve_mb,
         hardware_correction_applied=hardware_correction_applied,
+        trigger_model_id=str(placement.model_id),
         cooldown_protected_count=len(cooldown_protected),
         demand_protected_count=len(demand_protected),
         escape_hatch_used=escape_hatch_used,

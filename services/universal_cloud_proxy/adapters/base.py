@@ -47,3 +47,25 @@ class ProviderAdapter(Protocol):
     ) -> AsyncIterator[bytes]:
         """Stream provider-native body unchanged."""
         ...
+
+    async def forward_images_generation(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to /images/generations. Optional — raise NotImplementedError if unsupported."""
+        ...
+
+    async def forward_images_edit(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to /images/edits. Optional — raise NotImplementedError if unsupported."""
+        ...
+
+    async def forward_video_generation(
+        self, request_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """POST to /videos/generations. Optional — raise NotImplementedError if unsupported."""
+        ...
+
+    async def forward_video_status(self, request_id: str) -> dict[str, Any]:
+        """GET /videos/{request_id}. Optional — raise NotImplementedError if unsupported."""
+        ...

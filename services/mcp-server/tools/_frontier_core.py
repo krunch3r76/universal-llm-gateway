@@ -25,7 +25,7 @@ from ._frontier_boot import (
     assemble_boot_context,
     compose_system_prompt,
     normalize_boot_level,
-    resolve_inject_mcp_default,
+    should_inject_tools,
 )
 
 logger = get_logger(__name__)
@@ -47,6 +47,12 @@ XAI_SERVER_TOOL_MAP: dict[str, dict[str, str]] = {
     "web_search": {"type": "web_search"},
     "x_search": {"type": "x_search"},
     "code_execution": {"type": "code_interpreter"},
+}
+
+OPENAI_SERVER_TOOL_MAP: dict[str, dict[str, str]] = {
+    "web_search": {"type": "web_search_preview"},
+    "code_interpreter": {"type": "code_interpreter"},
+    "file_search": {"type": "file_search"},
 }
 
 _MCP_TOOL_NAMES: set[str] = {
@@ -258,7 +264,6 @@ def build_frontier_request(
     system: str,
     boot: str,
     boot_ref: str | None,
-    inject_mcp: bool | None,
     max_tokens: int | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
@@ -275,11 +280,14 @@ def build_frontier_request(
 ) -> FrontierRequest | dict[str, Any]:
     """Assemble boot context and build FrontierRequest. Returns error dict on failure.
 
-    When MCP tools are requested (via boot level or explicit ``inject_mcp``),
-    tool definitions are merged into the ``tools`` list as standard function-calling
-    definitions and ``mcp_tool_loop=True`` triggers client-side tool resolution in
-    ``execute_frontier``.  The Connector pattern (``mcp_servers`` in body) is never
-    used for API calls.
+    Tool injection is driven entirely by boot level:
+    - boot="none" → no system prompt, no tools (saves tokens for pure advisory calls)
+    - boot="mcp"/"team"/"full" → system prompt loaded + TOOL_DEFINITIONS injected
+
+    Tools are always client-side function-calling definitions (provider-agnostic).
+    The MCP Connector pattern (mcp_servers in body) is web-only and never used here.
+    Provider-native server_tools (web_search, x_search, etc.) are passed directly
+    via the ``tools`` argument and are independent of boot level.
     """
     parsed = ModelId.parse(model)
     try:
@@ -289,13 +297,11 @@ def build_frontier_request(
         record("mcp.frontier.generate.error", error="boot_context_invalid")
         return {"error": str(exc)}
     effective_system = compose_system_prompt(boot_context, system)
-    wants_mcp = resolve_inject_mcp_default(boot_level, inject_mcp)
 
     merged_tools = list(tools or [])
-    mcp_tool_loop = False
-    if wants_mcp:
+    inject_tools = should_inject_tools(boot_level)
+    if inject_tools:
         merged_tools.extend(TOOL_DEFINITIONS)
-        mcp_tool_loop = True
 
     return FrontierRequest(
         messages=messages,
@@ -316,5 +322,5 @@ def build_frontier_request(
         conversation_id=conversation_id,
         reasoning_trace=reasoning_trace,
         provider_options=provider_options,
-        mcp_tool_loop=mcp_tool_loop,
+        mcp_tool_loop=inject_tools,
     )

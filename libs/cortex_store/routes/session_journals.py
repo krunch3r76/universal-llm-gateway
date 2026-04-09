@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import re
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -11,6 +13,65 @@ logger = logging.getLogger("cortex-api.session_journals")
 router = APIRouter(prefix="/session-journals", tags=["session-journals"])
 
 _JSON_FIELDS = frozenset({"domains", "decisions", "open_items", "entity_ids"})
+
+
+def _derive_session_id(agent: str, timestamp: str) -> str:
+    """Derive a session ID from agent + timestamp string.
+
+    Accepts ISO 8601 (``2026-04-08T23:11:00Z``) or any string containing
+    a ``YYYY-MM-DD`` date fragment.  Falls back to today if unparseable.
+    Format: ``{agent}-YYYY-MM-DD-HHMM``.
+    """
+    match = re.search(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):?(\d{2})", timestamp)
+    if match:
+        year, mon, day, hour, minute = match.groups()
+        return f"{agent}-{year}-{mon}-{day}-{hour}{minute}"
+    today = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
+    return f"{agent}-{today}"
+
+
+def _ensure_transcript_entity(
+    conn: object,
+    transcript_id: str,
+    agent: str,
+    timestamp: str,
+) -> None:
+    """INSERT OR IGNORE the transcript entity — idempotent."""
+    entity_id = f"transcript:{transcript_id}"
+    conn.execute(  # type: ignore[union-attr]
+        "INSERT OR IGNORE INTO entities (id, type, name, status, created_at, updated_at) "
+        "VALUES (?, 'transcript', ?, 'confirmed', ?, ?)",
+        (entity_id, transcript_id, timestamp, timestamp),
+    )
+
+
+def _ensure_continues_edge(
+    conn: object,
+    session_id: str,
+    prior_session_id: str,
+    agent: str,
+    timestamp: str,
+) -> None:
+    """Write a continues edge: transcript:{session_id} → transcript:{prior_session_id}.
+
+    Checks for an existing active edge before inserting to stay idempotent.
+    """
+    from_node = f"transcript:{session_id}"
+    to_node = f"transcript:{prior_session_id}"
+    existing = conn.execute(  # type: ignore[union-attr]
+        "SELECT 1 FROM session_edges "
+        "WHERE from_node = ? AND to_node = ? AND edge_type = 'continues' "
+        "AND valid_until IS NULL LIMIT 1",
+        (from_node, to_node),
+    ).fetchone()
+    if existing:
+        return
+    conn.execute(  # type: ignore[union-attr]
+        "INSERT INTO session_edges "
+        "(session_id, agent, from_node, to_node, edge_type, strength, edge_source, created_at) "
+        "VALUES (?, ?, ?, ?, 'continues', 0.9, 'server', ?)",
+        (session_id, agent, from_node, to_node, timestamp),
+    )
 
 
 @router.get("", response_model=SessionJournalList)
@@ -48,14 +109,35 @@ def list_session_journals(
 
 @router.post("", response_model=SessionJournalItem, status_code=status.HTTP_201_CREATED)
 def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
-    """Create a session journal row and return the inserted item."""
+    """Create a session journal row, auto-create transcript entity, and return the item.
+
+    Side effects (all within the same transaction):
+    - transcript:{session_id} entity is created (INSERT OR IGNORE — idempotent)
+    - A ``continues`` edge is written if ``prior_session_id`` is supplied
+    ``session_id`` is derived from the timestamp if not explicitly provided.
+    """
+    transcript_id = body.session_id or _derive_session_id(body.agent, body.timestamp)
+    transcript_entity_id = f"transcript:{transcript_id}"
+
     conn = cortex_conn()
     try:
+        _ensure_transcript_entity(conn, transcript_id, body.agent, body.timestamp)
+
+        if body.prior_session_id:
+            # Ensure the prior transcript entity exists too (so the FK-like
+            # reference is safe even when the prior session journal isn't present).
+            _ensure_transcript_entity(
+                conn, body.prior_session_id, body.agent, body.timestamp
+            )
+            _ensure_continues_edge(
+                conn, transcript_id, body.prior_session_id, body.agent, body.timestamp
+            )
+
         cur = conn.execute(
             "INSERT INTO session_journals "
             "(timestamp, agent, summary, domains, decisions, open_items, "
-            "entity_ids, file_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "entity_ids, file_path, session_id, prior_session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.timestamp,
                 body.agent,
@@ -65,6 +147,8 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
                 json_encode(body.open_items),
                 json_encode(body.entity_ids),
                 body.file_path,
+                transcript_id,
+                body.prior_session_id,
             ),
         )
         conn.commit()
@@ -85,4 +169,7 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Session journal created but could not be read back",
         )
-    return SessionJournalItem(**decode_row(rows[0], _JSON_FIELDS))
+
+    item = SessionJournalItem(**decode_row(rows[0], _JSON_FIELDS))
+    item.transcript_entity_id = transcript_entity_id
+    return item

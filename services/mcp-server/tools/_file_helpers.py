@@ -201,7 +201,20 @@ def read_file_result(
         )
 
     content = extract_text_content(src)
-    return {"content": content, "path": str(src)}
+    result: dict[str, Any] = {"content": content, "path": str(src)}
+    if suffix == ".pdf":
+        result["extraction_method"] = "pymupdf4llm"
+        result["extraction"] = {
+            "method": "pymupdf4llm",
+            "kind": "prose_oriented",
+            "advisory": (
+                "Extracted with pymupdf4llm (prose-oriented). "
+                "If output has garbled tables or columns, try "
+                "finance_extract_pdf(path=...) for pdfplumber-based "
+                "tabular extraction."
+            ),
+        }
+    return result
 
 
 def read_files_batch(

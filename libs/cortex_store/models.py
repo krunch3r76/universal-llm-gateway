@@ -331,6 +331,10 @@ class _SessionJournalCommon(BaseModel):
     open_items: list[str] | None = None
     entity_ids: list[str] | None = None
     file_path: str | None = None
+    # Optional session identity — used to auto-create transcript entity and
+    # write continues edges server-side.
+    session_id: str | None = None
+    prior_session_id: str | None = None
 
 
 class SessionJournalCreate(_SessionJournalCommon):
@@ -339,6 +343,7 @@ class SessionJournalCreate(_SessionJournalCommon):
 
 class SessionJournalItem(_SessionJournalCommon):
     id: int
+    transcript_entity_id: str | None = None
 
 
 class SessionJournalList(BaseModel):

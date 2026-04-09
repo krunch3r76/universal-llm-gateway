@@ -172,6 +172,21 @@ async def execute_eviction_plan(
                             f"✅ Evicted {model_id_str} from {gateway_name} "
                             f"(event confirmed)"
                         )
+
+                        if event_bus and eviction_plan:
+                            from src.scheduling.events.model_lifecycle import (
+                                WorkerEvicted,
+                            )
+
+                            trigger = eviction_plan.trigger_model_id or "unknown"
+                            await event_bus.publish_async_nowait(
+                                WorkerEvicted(
+                                    model_id=model_id_str,
+                                    trigger_model_id=trigger,
+                                    vram_freed_mb=eviction_plan.freed_vram_mb,
+                                    gateway_name=gateway_name,
+                                )
+                            )
                     else:
                         # No event_bus - fall back to assuming success
                         # (less reliable but maintains backward compatibility)

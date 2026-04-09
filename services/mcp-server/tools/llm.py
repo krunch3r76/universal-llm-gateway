@@ -64,7 +64,6 @@ def _call_anthropic(
         model=model,
         max_tokens=max_tokens,
         system=system,
-        inject_mcp=False,
     )
     url, headers, json_body = adapter.build_request(req, None)
 
@@ -132,7 +131,9 @@ def register_llm_tools(mcp: FastMCP) -> None:
         API integration MUST use the ``openrouter/`` prefix. Bare
         ``google/gemini-*`` will 404 — there is no direct Google provider.
 
-        Use ``model_status()`` to discover available model IDs.
+        Use ``list_models()`` to discover available model IDs — call with an optional
+        provider filter (e.g. ``list_models(filter="openrouter")``).  ``model_status()``
+        reports GPU worker load state only, not the catalog.
 
         Args:
             messages: Conversation messages (list of ``{role, content}`` dicts).

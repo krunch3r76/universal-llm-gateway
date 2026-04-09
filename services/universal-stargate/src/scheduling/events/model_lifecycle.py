@@ -18,6 +18,7 @@ Signals:
     model.execution.completed — one request completed (triggers slot release)
     model.execution.failed — one request failed (triggers slot release)
     model.capacity.freed — wake-only; capacity likely increased
+    worker.evicted — model evicted from gateway to free VRAM
 """
 
 # ruff: noqa: N802
@@ -141,6 +142,21 @@ Consumers should re-check capacity but NOT release any tracked slots.
 Payload: {
     "url": str,       # Gateway URL
     "model_id": str,  # Model with freed capacity
+}
+"""
+
+WORKER_EVICTED = "worker.evicted"
+"""
+Emitted when Stargate evicts a model from a gateway to free VRAM for another model.
+
+Coordination signal: downstream services (RAG, pipelines) use this to avoid
+stampeding cold workers with concurrent requests after eviction.
+
+Payload: {
+    "model_id": str,           # Model that was evicted
+    "trigger_model_id": str,   # Model that needs the freed VRAM
+    "vram_freed_mb": int,      # Estimated VRAM freed by this eviction
+    "gateway_name": str        # Gateway where eviction occurred
 }
 """
 
@@ -457,4 +473,36 @@ def ModelCapacityFreed(url: str, model_id: str) -> Event:
         signal=MODEL_CAPACITY_FREED,
         payload={"url": url, "model_id": model_id},
         role="coordination",
+    )
+
+
+@event_factory
+def WorkerEvicted(
+    model_id: str,
+    trigger_model_id: str,
+    vram_freed_mb: int,
+    gateway_name: str,
+) -> Event:
+    """Create worker.evicted event.
+
+    Coordination signal emitted per model when Stargate evicts it from a gateway
+    to free VRAM for trigger_model_id. Downstream services should anticipate a
+    cold-load window before the evicted model can serve again.
+
+    Args:
+        model_id: Model that was evicted.
+        trigger_model_id: Model that needs the freed VRAM.
+        vram_freed_mb: Estimated VRAM freed by this eviction.
+        gateway_name: Gateway where eviction occurred.
+    """
+    return Event(
+        signal=WORKER_EVICTED,
+        payload={
+            "model_id": model_id,
+            "trigger_model_id": trigger_model_id,
+            "vram_freed_mb": vram_freed_mb,
+            "gateway_name": gateway_name,
+        },
+        role="coordination",
+        scope="global",
     )

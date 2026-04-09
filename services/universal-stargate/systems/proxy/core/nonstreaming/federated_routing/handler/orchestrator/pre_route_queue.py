@@ -69,12 +69,19 @@ async def wait_for_retryable_capacity(
     queue_start = time.monotonic()
     routing_key = context.selected_model.routing_key
 
-    # Use the capacity deadline when available; fall back to static default.
-    deadline = getattr(context, "_capacity_deadline_mono", None)
-    if deadline is not None:
-        queue_timeout = max(0.0, deadline - queue_start)
+    # queue_wait_timeout_s is the dedicated pre-route queue budget, set from
+    # config request_queue.queue_timeout (not capped by inference hint).
+    # _capacity_deadline_mono is the overall capacity deadline (may be shorter
+    # due to inference hint); fall back to it only if the dedicated field is absent.
+    queue_wait_s = getattr(context, "queue_wait_timeout_s", None)
+    if queue_wait_s is not None and queue_wait_s > 0:
+        queue_timeout = queue_wait_s
     else:
-        queue_timeout = _DEFAULT_PRE_ROUTE_TIMEOUT_S
+        deadline = getattr(context, "_capacity_deadline_mono", None)
+        if deadline is not None:
+            queue_timeout = max(0.0, deadline - queue_start)
+        else:
+            queue_timeout = _DEFAULT_PRE_ROUTE_TIMEOUT_S
 
     register_demand(routing_key, context.request_id)
 

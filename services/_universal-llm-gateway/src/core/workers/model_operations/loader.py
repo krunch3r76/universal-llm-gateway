@@ -274,6 +274,21 @@ class ModelLoader:
             await load_flow.emit_loading_event(self._controller, model_id, "started")
             await _emit_load_gate_debug("loading_event_started", model_id)
 
+            if self._controller.event_bus:
+                try:
+                    from src.core.events.types import WorkerLoading
+
+                    req = resource_tracker.get_model_requirements(model_id)
+                    estimated_vram = req.get("vram_required_mb") or 0
+                    await self._controller.event_bus.publish_async_nowait(
+                        WorkerLoading(
+                            model_id=model_id,
+                            estimated_vram_mb=estimated_vram,
+                        )
+                    )
+                except Exception as e:
+                    logger.warning("Failed to emit worker.loading: %s", e)
+
             loading_ok = resource_tracker.set_model_loading(model_id)
             if not loading_ok:
                 await load_flow.emit_loading_event(
@@ -282,9 +297,7 @@ class ModelLoader:
                     "failed",
                     "Rejected transition to LOADING (invalid worker state)",
                 )
-                await _emit_load_gate_debug(
-                    "loading_transition_rejected", model_id
-                )
+                await _emit_load_gate_debug("loading_transition_rejected", model_id)
                 return False
             load_flow.reset_state_machine(model_id)
 
@@ -405,7 +418,9 @@ class ModelLoader:
         logger.error(f"❌ {error_msg}")
         resource_tracker = _get_resource_tracker()
         resource_tracker.set_model_error(model_id, error_msg)
-        await load_flow.emit_loading_event(self._controller, model_id, "failed", error_msg)
+        await load_flow.emit_loading_event(
+            self._controller, model_id, "failed", error_msg
+        )
         await load_flow.cleanup_failed_worker(
             self._controller, model_id, "Engine readiness check failed"
         )

@@ -38,6 +38,8 @@ from services.rag.events.indexing import (
     rag_chroma_upsert_started,
     rag_chunk_noise_tagged,
     rag_contextualization_applied,
+    rag_contextualization_completed,
+    rag_contextualization_started,
     rag_embed_completed,
     rag_embed_started,
     rag_file_deleted,
@@ -631,9 +633,7 @@ async def _index_file_impl(
                             failure_category=getattr(
                                 ext_result, "failure_category", None
                             ),
-                            failure_detail=getattr(
-                                ext_result, "failure_detail", None
-                            ),
+                            failure_detail=getattr(ext_result, "failure_detail", None),
                             finish_reason=getattr(ext_result, "finish_reason", None),
                             top_failure_reasons=getattr(
                                 ext_result, "top_failure_reasons", None
@@ -647,17 +647,55 @@ async def _index_file_impl(
         embed_texts = texts
         # Contextualization is on by default; set contextualize_model: "" in rag.yaml to disable.
         if state._config is not None and state._config.contextualize_model:
+            context_model = state._config.contextualize_model
+            context_max_concurrency = state._config.contextualize_max_concurrency
+            context_client_timeout_s = state._config.contextualize_client_timeout_s
+            context_timeout_s = min(30.0, context_client_timeout_s)
+            if state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_contextualization_started(
+                        file=source,
+                        chunk_count=len(chunks),
+                        model=context_model,
+                        max_concurrency=context_max_concurrency,
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
+                )
+            context_start = time.monotonic()
             contexts = await contextualize_chunks(
                 chunks,
                 source,
-                state._config.contextualize_model,
+                context_model,
+                timeout_s=context_timeout_s,
+                max_concurrency=context_max_concurrency,
+                client_timeout_s=context_client_timeout_s,
+                probe_timeout_s=state._config.ctx_probe_timeout_s,
+                probe_backoff_initial_s=state._config.ctx_probe_backoff_initial_s,
+                probe_backoff_max_s=state._config.ctx_probe_backoff_max_s,
+                probe_max_probes=state._config.ctx_probe_max_probes,
             )
+            successful_contexts = sum(1 for ctx in contexts if ctx)
+            if state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_contextualization_completed(
+                        file=source,
+                        chunk_count=len(contexts),
+                        successful=successful_contexts,
+                        failed=len(contexts) - successful_contexts,
+                        duration_seconds=time.monotonic() - context_start,
+                        model=context_model,
+                        max_concurrency=context_max_concurrency,
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
+                )
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
                     rag_contextualization_applied(
                         file=source,
                         chunk_count=len(contexts),
-                        model=state._config.contextualize_model,
+                        model=context_model,
                     )
                 )
             embed_texts = [
@@ -667,9 +705,7 @@ async def _index_file_impl(
             for i, ctx in enumerate(contexts):
                 if ctx:
                     metadatas[i]["context_prefix"] = ctx
-                    metadatas[i]["contextualize_model"] = (
-                        state._config.contextualize_model
-                    )
+                    metadatas[i]["contextualize_model"] = context_model
 
         if state._event_bus is not None:
             await state._event_bus.publish_async_nowait(

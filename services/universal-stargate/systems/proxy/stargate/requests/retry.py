@@ -276,14 +276,18 @@ async def execute_with_retry(
     retry_count = 0
 
     # Publish a monotonic deadline so inner mechanisms (CapacityPool,
-    # pre-route queue, eviction wait) use the full budget instead of
-    # short per-attempt timeouts that destroy FIFO queue ordering.
+    # eviction wait) use the full budget instead of short per-attempt
+    # timeouts that destroy FIFO queue ordering.
+    # queue_wait_timeout_s is set from config only — never capped by the
+    # inference hint — so the pre-route queue uses the full config budget
+    # regardless of X-Request-Timeout (which is an inference-only signal).
     effective_capacity_budget = capacity_timeout_s
     if context.request_timeout_hint:
         effective_capacity_budget = min(
             context.request_timeout_hint, capacity_timeout_s
         )
     context._capacity_deadline_mono = retry_started + effective_capacity_budget
+    context.queue_wait_timeout_s = capacity_timeout_s
 
     try:
         while True:

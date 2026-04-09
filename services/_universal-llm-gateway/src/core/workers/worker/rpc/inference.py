@@ -1,6 +1,7 @@
 """Inference execution RPC handlers."""
 
 import asyncio
+import time
 import uuid
 
 from universal_logging import get_logger
@@ -54,6 +55,7 @@ class InferenceHandlers:
         )
 
         gate_acquired = False
+        gate_wait_start = time.monotonic()
         try:
             # Wrap inference with deadline enforcement
             async with enforce_deadline(timeout_hint, cancellation_event, request_id):
@@ -63,6 +65,16 @@ class InferenceHandlers:
                     cancellation_event=cancellation_event,
                 )
                 gate_acquired = True
+                queue_wait_ms = (time.monotonic() - gate_wait_start) * 1000.0
+
+                from ..events import emit_inference_dequeued
+
+                await emit_inference_dequeued(
+                    worker_id=getattr(self, "worker_id", "unknown"),
+                    model_id=getattr(self, "model_id", "unknown"),
+                    request_id=request_id,
+                    queue_wait_ms=queue_wait_ms,
+                )
 
                 if cancellation_event.is_set():
                     raise EngineError(

@@ -321,6 +321,7 @@ async def run_scope_freshness_repair(
 
     Per-scope vocab_mode (set in rag.yaml under each scope) overrides the global
     vocabulary_mode. Scopes with vocab_mode=frontier use vocab-classify-v1;
+    scopes with vocab_mode=none are skipped (corpus hints still refresh);
     all others use the lightweight local-model path.
     """
     if not stale_scopes:
@@ -353,13 +354,15 @@ async def run_scope_freshness_repair(
             )
             hints_updated.append(scope_name)
 
-        # Only classify scopes that have no existing vocabulary candidates.
+        # Only classify scopes that have no existing vocabulary candidates
+        # and are not explicitly opting out of classification (vocab_mode=none).
         # Corpus hints are always refreshed above; classification is expensive
         # and runs once per scope — until vocabulary is explicitly cleared.
         classify_scopes = [
             s
             for s in set(stale_scopes) & set(cs_map.keys())
             if not property_index.has_scope_vocabulary(s)
+            and _resolve_scope_vocab_mode(s, config) != "none"
         ]
 
         local_scopes = [

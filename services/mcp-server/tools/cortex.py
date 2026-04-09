@@ -378,6 +378,8 @@ def _op_journal_write(
     open_items: list[str] | None = None,
     entity_ids: list[str] | None = None,
     file_path: str | None = None,
+    session_id: str | None = None,
+    prior_session_id: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {"timestamp": timestamp, "agent": agent, "summary": summary}
@@ -393,10 +395,18 @@ def _op_journal_write(
         **({} if open_items is None else {"open_items": open_items}),
         **({} if entity_ids is None else {"entity_ids": entity_ids}),
         **({} if file_path is None else {"file_path": file_path}),
+        **({} if session_id is None else {"session_id": session_id}),
+        **({} if prior_session_id is None else {"prior_session_id": prior_session_id}),
     }
     result = _cx("POST", "/session-journals", body)
     if "error" not in result:
-        logger.info("cortex journal_write: %s agent=%s", timestamp, agent)
+        transcript_entity_id = result.get("transcript_entity_id", "")
+        logger.info(
+            "cortex journal_write: %s agent=%s transcript=%s",
+            timestamp,
+            agent,
+            transcript_entity_id,
+        )
     return result
 
 
@@ -921,7 +931,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           stats             ()                                       — dashboard counts
           surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
           journal_read      (limit?)                                 — recent session journals
-          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?) — write journal
+          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?) — write journal; auto-creates transcript entity + continues edge
           review_queue      (limit?)                                 — provisional entities + flagged assertions
           edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection
           edges             (from_node?, to_node?, edge_type?, agent?, session_id?, limit?) — query edges

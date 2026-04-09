@@ -333,6 +333,7 @@ _TEMPORAL_ACTIVE_SQL = """
       AND (a.valid_from IS NULL OR a.valid_from <= datetime('now'))
       AND a.review_status = 'committed'
       AND a.superseded_by IS NULL
+      AND (a.resolution_status IS NULL OR a.resolution_status = 'pending')
     ORDER BY a.valid_until ASC
     LIMIT ?
 """
@@ -347,7 +348,25 @@ _TEMPORAL_UPCOMING_SQL = """
       AND a.valid_from <= datetime('now', '+7 days')
       AND a.review_status = 'committed'
       AND a.superseded_by IS NULL
+      AND (a.resolution_status IS NULL OR a.resolution_status = 'pending')
     ORDER BY a.valid_from ASC
+    LIMIT ?
+"""
+
+# Assertions that had a future valid_until within the last 30 days but are now
+# superseded. These represent recently-resolved temporal matters — used by cortex_boot
+# to suppress stale open_items in session journals that still reference the matter
+# as pending.
+_TEMPORAL_RECENTLY_RESOLVED_SQL = """
+    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
+           a.valid_from, a.valid_until, a.confidence
+    FROM assertions a
+    JOIN entities e ON a.entity_id = e.id
+    WHERE a.valid_until IS NOT NULL
+      AND a.valid_until >= datetime('now', '-30 days')
+      AND a.superseded_by IS NOT NULL
+      AND a.review_status = 'committed'
+    ORDER BY a.valid_until DESC
     LIMIT ?
 """
 
@@ -356,14 +375,25 @@ _TEMPORAL_UPCOMING_SQL = """
 def get_boot_temporal(
     active_limit: int = Query(10, ge=1, le=50, description="Max active assertions"),
     upcoming_limit: int = Query(10, ge=1, le=50, description="Max upcoming assertions"),
+    resolved_limit: int = Query(
+        20,
+        ge=1,
+        le=100,
+        description="Max recently-resolved temporal assertions (last 30 days)",
+    ),
 ) -> dict[str, Any]:
-    """Temporally active and upcoming assertions for boot briefings.
+    """Temporally active, upcoming, and recently-resolved assertions for boot briefings.
 
     Active: assertions whose validity window includes now (valid_until in
-    the future, valid_from in the past or null). Ordered by soonest expiry.
+    the future, valid_from in the past or null), not superseded, not resolved.
+    Ordered by soonest expiry.
 
     Upcoming: assertions with valid_from in the next 7 days that haven't
-    started yet. Ordered by soonest start.
+    started yet, not superseded, not resolved. Ordered by soonest start.
+
+    Recently resolved: temporal assertions (valid_until set) that were superseded
+    within the last 30 days. Used by cortex_boot to tag stale open_items in session
+    journals that still reference the matter as pending.
 
     Only surfaces assertions with explicit temporal bounds — unbounded
     (valid_until IS NULL) assertions are excluded since they don't expire.
@@ -372,6 +402,9 @@ def get_boot_temporal(
     try:
         active_rows = db_query(conn, _TEMPORAL_ACTIVE_SQL, (active_limit,))
         upcoming_rows = db_query(conn, _TEMPORAL_UPCOMING_SQL, (upcoming_limit,))
+        resolved_rows = db_query(
+            conn, _TEMPORAL_RECENTLY_RESOLVED_SQL, (resolved_limit,)
+        )
     finally:
         conn.close()
 
@@ -389,6 +422,7 @@ def get_boot_temporal(
     return {
         "active": [_format_row(r) for r in active_rows],
         "upcoming": [_format_row(r) for r in upcoming_rows],
+        "recently_resolved": [_format_row(r) for r in resolved_rows],
     }
 
 

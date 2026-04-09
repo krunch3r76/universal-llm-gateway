@@ -111,6 +111,34 @@ async def emit_model_failed(*, worker_id: str, model_id: str, error: str) -> Non
     )
 
 
+async def emit_inference_dequeued(
+    *,
+    worker_id: str,
+    model_id: str,
+    request_id: str,
+    queue_wait_ms: float,
+) -> None:
+    """Emit when inference slot is acquired from FifoCapacityGate.
+
+    Coordination-role event: marks the boundary between queue-wait and
+    active inference. queue_wait_ms is the time spent waiting for the slot,
+    allowing precise latency decomposition (queue vs. inference).
+    """
+    pub = await _get_publisher()
+    pub.publish_nowait(
+        _make_event(
+            "inference.dequeued",
+            {
+                "worker_id": worker_id,
+                "model_id": model_id,
+                "request_id": request_id,
+                "queue_wait_ms": round(queue_wait_ms, 1),
+            },
+            role="coordination",
+        )
+    )
+
+
 async def emit_inference_started(
     *, worker_id: str, model_id: str, request_id: str
 ) -> None:

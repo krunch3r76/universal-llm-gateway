@@ -35,15 +35,8 @@ from ._file_helpers import extract_text_content, is_converted_format
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-_TASKS_ROOT = Path(os.environ.get("TASKS_ROOT", "/data/tasks"))
 _FILES_ROOT = Path("/data/files")
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
-_TASKS_READ_ONLY = os.environ.get("TASKS_READ_ONLY", "false").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 _PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower() in {
     "1",
     "true",
@@ -53,15 +46,13 @@ _PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower()
 
 
 def _resolve_sandbox(sandbox: str, path: str) -> tuple[Path, bool]:
-    if sandbox == "context":
-        root, read_only = _TASKS_ROOT.resolve(), _TASKS_READ_ONLY
-    elif sandbox == "files":
+    if sandbox == "files":
         root, read_only = _FILES_ROOT.resolve(), False
     elif sandbox == "project":
         root, read_only = _PROJECT_ROOT.resolve(), _PROJECT_READ_ONLY
     else:
         raise ValueError(
-            f"Unknown sandbox {sandbox!r}. Use 'context' (tasks/), 'files' (/data/files), "
+            f"Unknown sandbox {sandbox!r}. Use 'files' (/data/files) "
             "or 'project' (project root)"
         )
     candidate = (root / path.lstrip("/")).resolve()
