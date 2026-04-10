@@ -109,7 +109,14 @@ def register_web_tools(mcp: FastMCP) -> None:
             )
 
         logger.info("web_search: query=%r → %d results", query, len(results))
-        return {"results": results}
+        return {
+            "results": results,
+            "_next": (
+                "If these search results contain novel facts about a known "
+                "Cortex entity, seed via cortex assert with derivation_type "
+                '"direct_observation" and the source URL as evidence_uri'
+            ),
+        }
 
     @mcp.tool(title="Web Fetch")
     def web_fetch(

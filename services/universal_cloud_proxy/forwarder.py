@@ -118,5 +118,7 @@ class ProviderForwarder:
         """GET /videos/{request_id} for ``provider``."""
         adapter = self._adapter(provider)
         if not hasattr(adapter, "forward_video_status"):
-            raise ValueError(f"Provider {provider} does not support video status polling")
+            raise ValueError(
+                f"Provider {provider} does not support video status polling"
+            )
         return await adapter.forward_video_status(request_id)

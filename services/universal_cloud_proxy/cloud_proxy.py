@@ -12,7 +12,7 @@ Endpoints:
     POST /v1/embeddings       — forward with auth injection
     POST /api/v1/providers/anthropic/messages — native Anthropic Messages API (raw model id)
     POST /api/v1/providers/xai/responses      — native xAI Responses API (raw model id)
-    POST /api/v1/providers/openai/responses   — reserved stub (501) in phase 1
+    POST /api/v1/providers/openai/responses   — native OpenAI Responses API (raw model id)
     GET  /                    — model browser UI
     GET  /api/models          — full OpenRouter catalog with pricing
     POST /api/refresh         — force re-fetch of browser catalog
@@ -531,6 +531,15 @@ async def chat_completions(request: Request) -> Response:
     model_id = str(body.get("model", ""))
     streaming = body.get("stream", False)
 
+    mcp_requested = model_id.endswith("-mcp")
+    if mcp_requested:
+        model_id = model_id[:-4]
+        body["model"] = model_id
+        from .mcp_tool_defs import MCP_TOOL_DEFINITIONS
+
+        existing = body.get("tools") or []
+        body["tools"] = existing + MCP_TOOL_DEFINITIONS
+
     provider_catalog = catalog.resolve_provider(model_id)
     if provider_catalog is None:
         await _publish_request_failed_event(
@@ -577,6 +586,7 @@ async def chat_completions(request: Request) -> Response:
                     model=model_id,
                     streaming=True,
                     adapter_type=adapter,
+                    mcp_injected=mcp_requested,
                 )
             )
         return StreamingResponse(
@@ -602,6 +612,7 @@ async def chat_completions(request: Request) -> Response:
                     model=model_id,
                     streaming=False,
                     adapter_type=adapter,
+                    mcp_injected=mcp_requested,
                 )
             )
         return JSONResponse(content=response_json)

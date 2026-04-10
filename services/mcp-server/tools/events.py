@@ -84,10 +84,7 @@ def _query_event_service(
     resolved_target = _resolve_target(target)
     if resolved_target is None:
         return {
-            "error": (
-                f"Unknown observability target: {target}. "
-                "Valid targets: ulg"
-            )
+            "error": (f"Unknown observability target: {target}. Valid targets: ulg")
         }
     try:
         client_ctx = make_sync_client(
@@ -207,6 +204,11 @@ def register_event_tools(mcp: FastMCP) -> None:
                 operation=operation,
                 target=target,
                 duration_s=round(duration, 3),
+            )
+            result["_next"] = (
+                "If this investigation surfaced a root cause, discovery, or "
+                "non-obvious insight, record it via "
+                "cortex observe on the relevant service: entity"
             )
 
         return result

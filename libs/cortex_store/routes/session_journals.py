@@ -44,7 +44,7 @@ def _ensure_transcript_entity(
     """
     entity_id = f"transcript:{transcript_id}"
     if source_uri is None:
-        source_uri = f"files://notes/system/journal/{transcript_id}.md"
+        source_uri = f"files://notes/system/transcripts/{transcript_id}.md"
     conn.execute(  # type: ignore[union-attr]
         "INSERT OR IGNORE INTO entities "
         "(id, type, name, status, source_uri, created_at, updated_at) "

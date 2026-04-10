@@ -54,9 +54,7 @@ class ProviderAdapter(Protocol):
         """POST to /images/generations. Optional — raise NotImplementedError if unsupported."""
         ...
 
-    async def forward_images_edit(
-        self, request_body: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def forward_images_edit(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """POST to /images/edits. Optional — raise NotImplementedError if unsupported."""
         ...
 

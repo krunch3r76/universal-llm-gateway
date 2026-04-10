@@ -52,6 +52,28 @@ _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {".md", ".txt"}
 _BINARY_MAX_BYTES = 20 * 1024 * 1024
 
+_FS_WORKFLOW_HINTS: dict[str, str] = {
+    "move": (
+        "next: cortex entity_update or assert with source_uri pointing to the "
+        "new permanent path if this file is evidence for an entity"
+    ),
+    "write": (
+        "next: cortex entity_create or assert with source_uri pointing to this "
+        "path if this is a new document that should be tracked"
+    ),
+    "write_binary": (
+        "next: cortex entity_create or assert with source_uri pointing to this "
+        "path; or use document_ocr for PDFs/images requiring text extraction"
+    ),
+}
+
+_DROPBOX_READ_HINT = (
+    "This file is in dropbox/ (temporary staging). After reading: "
+    "(1) check if it has a document: entity in Cortex — if not, create one; "
+    "(2) move to a permanent path via fs move; "
+    "(3) seed cortex assertions with source_uri pointing to the permanent path"
+)
+
 
 def _normalize_files_reference(path: str) -> str:
     """Accept either a relative sandbox path or a `files://` URI."""
@@ -712,6 +734,11 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             or config + schema pairs. One call replaces N reads. Returns
             {path: content} or {path: {error: msg}} for missing files.
 
+        Workflow chains (write, write_binary, move responses carry a ``_next`` hint):
+          move   → cortex entity_update/assert (update source_uri to permanent path)
+          write  → cortex entity_create or assert (register the new document)
+          write_binary → cortex entity_create or assert; or document_ocr for PDFs/images
+
         Args:
             op: Operation name (see above).
             path: Relative file path, e.g. "documents/resume.md".
@@ -730,7 +757,10 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         if op == "read":
             if not path:
                 raise ValueError("'path' is required for read")
-            return read_file(path, binary=binary)
+            result = read_file(path, binary=binary)
+            if path.startswith("dropbox/"):
+                result["_next"] = _DROPBOX_READ_HINT
+            return result
         if op == "read_multi":
             if not paths:
                 raise ValueError("'paths' is required for read_multi")
@@ -763,13 +793,17 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 raise ValueError("'path' is required for write")
             if not content:
                 raise ValueError("'content' is required for write")
-            return write_file(path, content)
+            result = write_file(path, content)
+            result["_next"] = _FS_WORKFLOW_HINTS["write"]
+            return result
         if op == "write_binary":
             if not path:
                 raise ValueError("'path' is required for write_binary")
             if not content:
                 raise ValueError("'content' (base64) is required for write_binary")
-            return _write_binary_to_sandbox(path, content)
+            result = _write_binary_to_sandbox(path, content)
+            result["_next"] = _FS_WORKFLOW_HINTS["write_binary"]
+            return result
         if op == "append_binary":
             if not path:
                 raise ValueError("'path' is required for append_binary")
@@ -807,7 +841,9 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 raise ValueError("'path' is required for move")
             if not target:
                 raise ValueError("'target' is required for move")
-            return move_file(path, target)
+            result = move_file(path, target)
+            result["_next"] = _FS_WORKFLOW_HINTS["move"]
+            return result
         raise ValueError(
             f"Unknown op: {op!r}. "
             "Use: read, read_multi, write, write_binary, append_binary, "

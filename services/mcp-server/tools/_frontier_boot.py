@@ -1,16 +1,28 @@
 """Boot context assembly for frontier generation tools.
 
 Handles boot level normalization, system prompt composition, cortex boot
-integration, and subagent preamble/grounding guard constants.
+integration, birth prompt injection, and subagent preamble constants.
 """
 
 from __future__ import annotations
 
+import logging
+
 from ._file_helpers import read_file_result
 from .cortex_named_tools import run_cortex_boot
 
+_logger = logging.getLogger(__name__)
+
 _BOOT_SEPARATOR = "\n\n---\n\n"
 _VALID_BOOT_LEVELS = {"none", "mcp", "minimal", "full", "team"}
+
+_BIRTH_PROMPTS: dict[str, str] = {
+    "oppie": "notes/system/prompts/oppie-birth.md",
+    "orion": "notes/system/prompts/orion-birth.md",
+    "api_claude": "notes/system/prompts/web-claude-birth.md",
+    "web": "notes/system/prompts/web-claude-birth.md",
+    "cursor": "notes/system/prompts/cursor-claude-birth.md",
+}
 
 CORTEX_TOOL_QUICKREF = """\
 Cortex tool quick-reference (CRITICAL — read before calling any Cortex tool):
@@ -30,8 +42,11 @@ Non-existent tools (do not call): search_assertions, search_entities, get_entity
 Wrong field names: `entity_id` (not `slug`), `query` (not `q`)"""
 
 
-SUBAGENT_PREAMBLE = (
-    """\
+def build_subagent_preamble(agent: str = "") -> str:
+    """Build subagent preamble with agent-specific Cortex contribution guidance."""
+    agent_name = agent or "subagent"
+    return (
+        f"""\
 You are a team member consulted by the system owner.
 Apply your own epistemic standards fully — if you identify errors or gaps in the supplied framing, flag them. Do not defer.
 
@@ -46,9 +61,29 @@ If you cannot ground a claim in the supplied context, mark it [UNGROUNDED] and n
 Shared vocabulary: "Cortex" = the knowledge graph, not the service · \
 "directive" = implement now · "ticket" = deferred work.
 
+## Cortex Contribution
+
+You have one turn. The team's shared memory grows when you leave something in it.
+
+When your analysis surfaces an insight the team should remember beyond this \
+conversation — an architectural observation, a corrected assumption, a connection \
+the caller may not have seen — record it inline rather than hoping someone else will:
+
+cortex(tool="observe", arguments='{{"entity_id": "service:rag", "claim": "embedding threshold too aggressive for short docs", "agent": "{agent_name}"}}')
+cortex(tool="assert", arguments='{{"entity_id": "decision:boot-levels", "claim": "team boot sufficient for most consultations — full adds latency without proportional value", "confidence": "believed", "evidence": "observed across multiple dispatches", "agent": "{agent_name}"}}')
+
+Equally valuable: if Cortex did not surface context you needed, say so. That gap \
+is itself an observation worth recording — it tells the system what to index next.
+
+Use `observe` for patterns noticed, `assert` for claims with evidence. \
+Target the relevant entity — don't pile everything on a single node.
+
 """
-    + CORTEX_TOOL_QUICKREF
-)
+        + CORTEX_TOOL_QUICKREF
+    )
+
+
+SUBAGENT_PREAMBLE = build_subagent_preamble()
 
 MCP_GROUNDING_GUARD = """\
 Source discipline (invariant):
@@ -112,8 +147,29 @@ def should_inject_tools(boot_level: str) -> bool:
     return boot_level != "none"
 
 
-def assemble_boot_context(boot: str, boot_ref: str | None) -> str:
-    """Build the full boot context string from boot level and optional ref."""
+def _load_birth_prompt(agent: str) -> str | None:
+    """Load birth prompt for the given agent identity, if one exists."""
+    path = _BIRTH_PROMPTS.get(agent)
+    if not path:
+        return None
+    try:
+        result = read_file_result(path)
+        content = str(result.get("content", "")).strip()
+        return content if content else None
+    except (FileNotFoundError, RuntimeError) as exc:
+        _logger.warning("Birth prompt for %s not found at %s: %s", agent, path, exc)
+        return None
+
+
+def assemble_boot_context(
+    boot: str, boot_ref: str | None, *, agent: str = ""
+) -> str:
+    """Build the full boot context string from boot level and optional ref.
+
+    When ``agent`` is provided and boot is ``team`` or ``full``, the agent's
+    birth prompt is loaded and prepended — giving the model its identity
+    before any operational context.
+    """
     boot_level = normalize_boot_level(boot)
     if boot_level == "none":
         if boot_ref:
@@ -124,18 +180,31 @@ def assemble_boot_context(boot: str, boot_ref: str | None) -> str:
             seed_content = _read_boot_ref(boot_ref)
             return f"{MCP_GROUNDING_GUARD}{_BOOT_SEPARATOR}{seed_content}"
         return default_mcp_brief()
+
+    birth = _load_birth_prompt(agent) if agent else None
+
+    preamble = build_subagent_preamble(agent) if agent else SUBAGENT_PREAMBLE
+
     if boot_level == "team":
-        parts: list[str] = [SUBAGENT_PREAMBLE]
+        parts: list[str] = []
+        if birth:
+            parts.append(birth)
+        parts.append(preamble)
         if boot_ref:
             parts.append(_read_boot_ref(boot_ref))
         return _BOOT_SEPARATOR.join(parts)
+
+    # full: birth + preamble + boot_ref + cortex_boot narrative
     result = run_cortex_boot(agent="subagent")
     if "error" in result:
         raise RuntimeError(str(result["error"]))
     narrative = result.get("boot_narrative")
     if not isinstance(narrative, str) or not narrative.strip():
         raise RuntimeError("cortex_boot returned no boot_narrative")
-    full_parts: list[str] = [SUBAGENT_PREAMBLE]
+    full_parts: list[str] = []
+    if birth:
+        full_parts.append(birth)
+    full_parts.append(preamble)
     if boot_ref:
         full_parts.append(_read_boot_ref(boot_ref))
     full_parts.append(narrative)

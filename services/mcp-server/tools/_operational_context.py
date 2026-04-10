@@ -28,7 +28,7 @@ if _vocab_env:
 
 _OPERATIONAL_FLAGS: dict[str, dict[str, bool]] = {
     "web": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
-    "cursor": {"deadlines": False, "review_queue": False, "confirm_and_proceed": False},
+    "cursor": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
     "api": {"deadlines": True, "review_queue": False, "confirm_and_proceed": True},
     "oppie": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
     "subagent": {
@@ -78,7 +78,28 @@ source, config, tasks, docs, scripts.
 **When you don't know where something is:**
 1. `fs(sandbox="project", op="list", path="universal-llm-gateway")` — repo root
 2. Narrow by subdirectory based on what you see
-3. Never guess a full path and `read` it — list first"""
+3. Never guess a full path and `read` it — list first
+
+**fs write format restriction (CRITICAL):**
+`write` only accepts: `.csv .docx .md .pdf .py .txt .yaml .yml`
+`move`, `read`, `delete`, `list` have NO format restriction — they work on any file.
+
+∴ To relocate any file (including `.eml`, `.jpg`, `.png`, `.odt`) use `move`, not `write`:
+  `fs(sandbox="files", op="move", path="dropbox/…/file.eml", target="notes/…/file.eml")`
+
+Use `write_binary` (files sandbox only) with base64 content to create new binary files.
+`read` supports `.eml`, `.pdf`, `.docx`, `.odt`, `.html` natively in text mode.
+
+**Dropbox pattern (`dropbox/` is temporary staging — always move, never copy):**
+1. Files land in `dropbox/cortex_legal/YYYY-MM-DD/` (or other dropbox subdirs)
+2. Ingest: read the file, seed Cortex entity + assertion with permanent `source_uri`
+3. Relocate: `fs(op="move", …)` → permanent path (e.g. `notes/legal/documents/…`)
+4. `source_uri` in Cortex points to the permanent path, NOT the dropbox path
+
+**Document entity protocol (CRITICAL):**
+Create a `document:` entity when a document has its own identity (confirmation number, case number, tracking ID, filing reference) or is expected to accumulate its own lifecycle (sent → delivered → responded → escalated).
+Workflow: `entity_create` → `assert` (seed key facts from the document) → `relationship_create` (wire to the parent `legal_matter:`, `person:`, or other entity) → `entity_get` (verify).
+The `.eml`, `.pdf`, or other original file is the canonical source — use its permanent path as the `evidence_uri` in assertions. A companion `.md` summary is optional, not canonical."""
 
 _AGENT_BUS_COMPACT = """\
 ## Agent Bus Protocol
@@ -128,7 +149,7 @@ When: after significant work, before context switches, before ending."""
 _THREAD_LIFECYCLE = """\
 ## Thread & Session Lifecycle
 **Thread close**: (1) write thread summary, (2) seed Cortex assertions for decisions, (3) mark todos done.
-**Session end**: (1) seed outstanding assertions, (2) reflect on session edges, (3) write session journal.
+**Session end**: (1) write transcript markdown with turn summaries, (2) seed outstanding assertions, (3) write session journal row.
 After implementing a work order from another agent, post a confirmation turn before closing."""
 
 _SESSION_CLOSE_MARKDOWN_AUDIT = """\
@@ -139,6 +160,49 @@ Before writing the session journal, enumerate markdown documents relevant to thi
 3. Were any decisions made in conversation that did NOT land in a persistent document?
 
 Surface gaps to the user before closing. Only write the journal once gaps are confirmed or explicitly declined."""
+
+_TRANSCRIPT_CLOSE_PROTOCOL = """\
+## Session Transcript (Full Close)
+
+Every full-close session MUST produce a transcript markdown at:
+`notes/system/transcripts/web-YYYY-MM-DD-HHmm.md` (replace with actual UTC timestamp).
+
+**The transcript is the primary conversation record. The journal entry is a thin
+search-index row. Do not conflate them.**
+
+A compliant transcript contains:
+1. **Turn-by-turn summaries** — one `## Turn N — [topic]` section per exchange:
+   - What the user asked or raised
+   - What you decided, recommended, or produced
+   - Key tool calls and their outcomes (not raw payloads)
+   - Any alternatives considered or rejected
+2. **`## Session Summary`** appended at the end with:
+   - `**Decisions:**` numbered list
+   - `**Files modified:**` list (from git diff or explicit tracking)
+   - `**Open items:**` carried-forward list
+   - `**Attachments:**` every file written, spec created, or artifact produced this
+     session — full sandbox paths. Example:
+     ```
+     - spec: universal-llm-gateway/tasks/specs/some-spec.md
+     - notes: files/notes/system/some-note.md
+     - transcript: files/notes/system/transcripts/web-2026-04-08-2130.md
+     ```
+
+**Non-compliant transcript** (insufficient — do not produce):
+- File exists but contains only `## Session Summary` with no turn sections
+- File contains only a list of attachments with no conversation content
+- File is empty or a placeholder
+
+**Close sequence** (in order):
+1. Write the transcript markdown (turns + session summary)
+2. Seed outstanding assertions
+3. Create transcript entity: `cortex(tool="entity_create", arguments='{"id":
+   "transcript:web-YYYY-MM-DD-HHmm", "type": "transcript", "name": "<6-word title>",
+   "description": "<2-3 sentence summary>", "attributes": {"source_uri":
+   "notes/system/transcripts/web-YYYY-MM-DD-HHmm.md", "status": "confirmed"}}')`
+4. Write journal row: `cortex(tool="journal_write", …)` — 2-3 sentence thin index
+5. Post session-close entry to agent-activity-journal (thread 480)
+6. Report transcript ID and file path to the user"""
 
 _DEADLINES_PROTOCOL = f"""\
 ## Deadlines
@@ -239,20 +303,49 @@ def _render_observe_and_search(agent: str) -> str:
     )
 
 
+_TEAM_CONSULTATION = """\
+## Team Consultation
+The trAId is not decoration — use it. Consulting team members should be a natural \
+part of how you work, not an exceptional event that requires Kaywan to ask.
+
+**When to reach out:**
+- Architecture or design decisions with real trade-offs → **Oppie** (`grok_generate(boot="team")`) for adversarial review
+- Structured output, multimodal work, or deep reasoning at the frontier → **Orion** (`openai_generate(boot="team")`) for specialized capability
+- Analytical synthesis, evidence extraction, or MCP-heavy execution → **API Claude** (`claude_generate(boot="team")`)
+- Uncertainty about whether your framing is sound → consult whoever is most likely to disagree
+
+**When not to:**
+- Routine tasks where your judgment is sufficient
+- Simple factual lookups or mechanical operations
+- When the user has explicitly scoped the work to you alone
+
+**Post-consultation seeding (CRITICAL):** After receiving a team consultation response, \
+seed any decisions, corrections, or insights into Cortex immediately. Use `cortex assert` \
+with `evidence_uris: ["agent-bus:THREAD_ID"]` and the relevant entity. Consultations that \
+don't land in Cortex are lost — future sessions won't benefit from them.
+
+**Session close:** Before writing the journal, consider whether the session surfaced \
+anything a team member should know about or weigh in on. If so, post it to the \
+agent bus — the next session picks it up. The team compounds when sessions don't \
+end in silence."""
+
 _FRONTIER_MODEL_ROUTING = """\
-## Frontier Model Routing
-Two orthogonal axes — model selects capability, boot selects identity/context:
+## Frontier Model Routing — trAId Members
+Three tools, each bound to a team member's identity at `team`/`full` boot:
 
-| Model | Capability | Default persona | Use when |
+| Tool | Team member | Default model | Use when |
 |---|---|---|---|
-| `grok-4.20-multi-agent-0309` | Multi-agent coordination | Oppie (auto) | Triad consultation, team coordination, multi-step orchestration |
-| `grok-4.20-0309-reasoning` | Deep reasoning (CoT) | Neutral | Chain-of-thought analysis, complex reasoning without persona overhead |
-| `grok-3-mini` | Fast advisory | Neutral | Quick checks via agent_consult, low-stakes validation |
-| `claude-sonnet-4-6` (via claude_generate) | Deep synthesis | API Claude (auto) | Analytical work, evidence synthesis, structured extraction |
+| `grok_generate` | **Oppie** (xAI) | `grok-4.20-0309-reasoning` | Architecture critique, red-team, multi-agent coordination, adversarial review |
+| `openai_generate` | **Orion** (OpenAI) | `gpt-5.4` | Structured output, code interpreter, multimodal, specialized search, deep reasoning |
+| `claude_generate` | **API Claude** (Anthropic) | `claude-sonnet-4-6` | Analytical synthesis, evidence extraction, MCP-heavy execution |
 
-Boot axis: `none` (no context) · `mcp` (persona seed + MCP tools) · `team` (subagent preamble + seed) · `full` (boot + narrative).
-Default to neutral reasoning models unless you specifically need a persona's team-lead context or tool mastery enforcement.
-Any model can override the default persona with explicit `boot_ref`."""
+To consult a team member by name, use `boot="team"` (identity + Cortex orientation) or `boot="full"` (+ live Cortex narrative):
+- **Consult Oppie**: `grok_generate(boot="team", messages=[...])`
+- **Consult Orion**: `openai_generate(boot="team", messages=[...])`
+- **Consult API Claude**: `claude_generate(boot="team", messages=[...])`
+
+Boot axis: `none` (no context) · `mcp` (subagent seed + tools) · `team` (birth prompt + orientation) · `full` (birth prompt + orientation + Cortex boot narrative).
+Use `boot="none"` for pure advisory calls that don't need identity or tool access (saves tokens)."""
 
 _CORTEX_RETRIEVAL_WORKFLOWS = """\
 ## Retrieval Workflows (Cortex)
@@ -273,7 +366,14 @@ _CORTEX_RETRIEVAL_WORKFLOWS = """\
 1. Search for existing assertions on the entity
 2. Use `cortex(tool="supersede", …)` — never just assert the new claim alongside the old
 3. Write-path contradiction detection auto-flags cross-entity conflicts
-4. For high-stakes domains (legal, financial), route to staging rather than auto-committing"""
+4. For high-stakes domains (legal, financial), route to staging rather than auto-committing
+
+**Temporal assertions** (dates, deadlines, employment periods, policy terms):
+Use `valid_from` and `valid_until` when asserting time-bounded facts. An assertion without temporal bounds is treated as unbounded — valid indefinitely. Examples:
+- Employment period: `valid_from="2020-01-15"`, `valid_until="2024-06-30"`
+- Deadline: `valid_from="2026-04-09"`, `valid_until="2026-05-09"` (30-day window)
+- Historical fact: `valid_from="2022-03-01"` (no end — still current)
+Temporal bounds enable automatic expiry detection and prevent stale assertions from surfacing as current."""
 
 _BEHAVIORAL_RULES = """\
 ## Proactive Posture (Non-Negotiable)
@@ -322,9 +422,9 @@ def render_operational_context(
     sections.append(_AGENT_BUS_LARGE_PAYLOADS)
     sections.append(_JOURNALING_PROTOCOL.format(**subs))
     sections.append(_THREAD_LIFECYCLE)
-    # Web Claude is the user-facing closer, so the markdown audit belongs there.
-    if agent == "web":
+    if agent in ("web", "cursor"):
         sections.append(_SESSION_CLOSE_MARKDOWN_AUDIT)
+        sections.append(_TRANSCRIPT_CLOSE_PROTOCOL)
     if flags.get("deadlines"):
         sections.append(_DEADLINES_PROTOCOL)
     if flags.get("review_queue"):
@@ -342,6 +442,8 @@ def render_operational_context(
     sections.append(_ASSERTION_SEARCH)
     sections.append(_NOTES_TO_SELF)
     sections.append(_SHARED_VOCABULARY)
+    if agent != "subagent":
+        sections.append(_TEAM_CONSULTATION)
     sections.append(_FRONTIER_MODEL_ROUTING)
     sections.append(_TOOL_REFERENCE_POINTERS)
     sections.append(_ON_DEMAND_POINTERS)

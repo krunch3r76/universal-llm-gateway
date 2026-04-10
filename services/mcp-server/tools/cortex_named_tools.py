@@ -47,20 +47,20 @@ def _extract_entity_ids(sessions: list[dict[str, Any]]) -> list[str]:
 _BOOT_PROFILES: dict[str, dict[str, Any]] = {
     "cursor": {
         "include_deadlines": True,
-        "include_review_queue": False,
-        "include_investigations": False,
+        "include_review_queue": True,
+        "include_investigations": True,
         "include_session_edges": True,
-        "session_agent_filter": "cursor",
-        "entity_type_exclude": "property",
+        "session_agent_filter": None,
+        "entity_type_exclude": None,
         "session_limit": 3,
         "assertion_limit": 50,
         "continuation_decision_limit": 5,
         "continuation_service_limit": 3,
         "boot_section_max_full": 5,
         "boot_section_max_oneline": 15,
-        "boot_section_type_exclude": "property",
+        "boot_section_type_exclude": None,
         "session_edges_hours": 48,
-        "session_edges_limit": 15,
+        "session_edges_limit": 20,
     },
     "api": {
         "include_deadlines": False,
@@ -432,9 +432,7 @@ def run_cortex_boot(
 
     todo_limit = 15
     todo_qs_parts: dict[str, Any] = {"limit": todo_limit}
-    if agent == "cursor":
-        todo_qs_parts["context"] = "code"
-    elif agent == "web":
+    if agent == "web":
         todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
     futures_spec["todos"] = (
         _cx,

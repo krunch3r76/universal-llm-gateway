@@ -33,6 +33,10 @@ _CLAUDE_BOOT_REF_DEFAULTS: dict[str, str] = {
     "full": "notes/system/prompts/claude-seed-full-v1.0.md",
 }
 
+_OPENAI_BOOT_REF_DEFAULTS: dict[str, str] = {
+    "mcp": "notes/system/prompts/api-claude-seed-v1.0.md",
+}
+
 
 def register_frontier_tools(mcp: FastMCP) -> None:
     """Register grok_generate, claude_generate, and frontier_generate (compat)."""
@@ -69,7 +73,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             definitions injected automatically.
           - ``"none"`` — no system prompt, no tool definitions (saves tokens
             for pure advisory or orchestration calls).
-          - ``"team"`` / ``"full"`` — richer Oppie persona seed.
+          - ``"team"`` / ``"full"`` — Oppie birth prompt (identity) +
+            operational context. ``"full"`` adds Cortex boot narrative.
         - Tool definitions (Cortex, RAG) are injected as standard client-side
           function-calling schemas whenever boot != "none". No server URL or
           connector config needed.
@@ -126,6 +131,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             system=system,
             boot=boot,
             boot_ref=boot_ref,
+            agent="oppie",
             max_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -229,6 +235,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             system=system,
             boot=boot,
             boot_ref=boot_ref,
+            agent="api_claude",
             max_tokens=max_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -266,7 +273,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         tool_choice: str | dict[str, Any] | None = None,
         server_tools: list[str] | None = None,
         provider_options: dict[str, Any] | None = None,
-        boot: str = "none",
+        boot: str = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
         timeout: float | None = None,
@@ -275,8 +282,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         Routes through ``/api/v1/providers/openai/responses`` on Stargate.
 
-        ``boot`` defaults to ``"none"`` — no system prompt, no tool injection.
-        Set boot="mcp" to enable the standard subagent seed and Cortex/RAG tools.
+        **Boot and tools** (two orthogonal axes):
+
+        - ``boot`` controls system prompt / persona:
+          - ``"mcp"`` (default) — loads subagent seed; Cortex/RAG tool
+            definitions injected automatically.
+          - ``"none"`` — no system prompt, no tool definitions (saves tokens
+            for pure advisory or orchestration calls).
+          - ``"team"`` / ``"full"`` — Orion birth prompt (identity) +
+            operational context. ``"full"`` adds Cortex boot narrative.
+        - Tool definitions (Cortex, RAG) are injected as standard client-side
+          function-calling schemas whenever boot != "none".
 
         Models:
           gpt-5.4              — best intelligence, agentic + coding (DEFAULT)
@@ -286,6 +302,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           o3                   — deep reasoning
         """
         full_model = model if "/" in model else f"openai/{model}"
+
+        if boot_ref is None:
+            boot_ref = _OPENAI_BOOT_REF_DEFAULTS.get(boot)
 
         thinking: dict[str, Any] | None = None
         if reasoning_effort:
@@ -306,6 +325,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             system=system,
             boot=boot,
             boot_ref=boot_ref,
+            agent="orion",
             max_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,

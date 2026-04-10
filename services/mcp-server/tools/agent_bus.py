@@ -571,7 +571,18 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             except _json.JSONDecodeError as exc:
                 return {"error": f"Invalid arguments JSON: {exc}"}
             record("mcp.agentbus.dispatch", tool=tool)
-            return handler(**parsed)
+            result = handler(**parsed)
+            if (
+                isinstance(result, dict)
+                and "error" not in result
+                and tool in ("post", "reply")
+            ):
+                result["_next"] = (
+                    "If this message records a decision or surfaces an insight, "
+                    "seed it as a cortex assert with "
+                    'evidence_uris: ["agent-bus:THREAD_ID"]'
+                )
+            return result
         except Exception as exc:
             err = str(exc)
             raise

@@ -885,6 +885,53 @@ def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     }
 
 
+# ── workflow hints (injected as _next into successful responses) ──────────
+
+_WORKFLOW_HINTS: dict[str, str] = {
+    "entity_create": (
+        "next: assert (seed claims with evidence_uris) "
+        "→ relationship_create (wire edges to related entities) "
+        "→ entity_get (verify full graph)"
+    ),
+    "assert": (
+        "next: relationship_create if this claim connects two entities; "
+        "entity_get to verify the assertion appears on the entity"
+    ),
+    "assert_from_chunk": (
+        "next: relationship_create if connecting entities; entity_get to verify"
+    ),
+    "relationship_create": (
+        "next: entity_get on source_id or target_id to verify the full graph "
+        "(entity + assertions + relationships)"
+    ),
+    "entity_update": "next: entity_get to confirm the updated state is reflected",
+    "supersede": (
+        "next: entity_get to confirm the new assertion is visible "
+        "and the old one is marked superseded; "
+        "tag_assign to pin the new assertion as 'current' if it is the canonical state"
+    ),
+    "ingest_document": (
+        "next: assert_from_chunk to pin specific claims to chunk IDs; "
+        "entity_get to verify"
+    ),
+    "journal_write": (
+        "next: entity_get on the returned transcript entity; "
+        "edge_traverse to check session continuity chain"
+    ),
+    "search": (
+        "next: extract entity_ids from results → activate (for structurally "
+        "connected assertions the query wouldn't find directly); "
+        "before writing a new assertion, call analyze_impact to check for contradictions"
+    ),
+}
+
+_FRICTION_HINT = (
+    "If this failure was unexpected, log friction: "
+    'cortex(tool="friction", arguments=\'{"service": "...", '
+    '"category": "tool_mismatch", "note": "...", "agent": "..."}\')'
+)
+
+
 # ── op dispatch table ────────────────────────────────────────────────────
 
 _OPS: dict[str, Any] = {
@@ -925,6 +972,22 @@ _OPS: dict[str, Any] = {
 
 
 # ── registration ─────────────────────────────────────────────────────────
+
+
+def _enrich_entity_completeness(result: dict[str, Any]) -> None:
+    """Add a _completeness hint if the entity is thin."""
+    gaps: list[str] = []
+    assertions = result.get("assertions")
+    if isinstance(assertions, list) and len(assertions) == 0:
+        gaps.append("no assertions — seed claims via assert")
+    relationships = result.get("relationships")
+    if isinstance(relationships, list) and len(relationships) == 0:
+        gaps.append("no relationships — wire edges via relationship_create")
+    desc = result.get("description") or ""
+    if len(desc) < 50:
+        gaps.append("thin description (<50 chars) — enrich via entity_update")
+    if gaps:
+        result["_completeness"] = "; ".join(gaps)
 
 
 _CORTEX_FORMAT_HINT = (
@@ -1003,6 +1066,12 @@ def register_cortex_tools(mcp: FastMCP) -> None:
         confidence values: confirmed / believed / suspected / hypothesized
         review_status values: committed / flagged / staged / rejected
 
+        Workflow chains (successful responses carry a ``_next`` hint field):
+          entity_create → assert → relationship_create → entity_get
+          ingest_document → assert_from_chunk → relationship_create → entity_get
+          supersede → entity_get (verify old superseded, new visible)
+          journal_write → entity_get (transcript entity) → edge_traverse
+
         Example:
           cortex(tool="entities", arguments='{"type": "todo", "limit": 20}')
           cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
@@ -1029,4 +1098,15 @@ def register_cortex_tools(mcp: FastMCP) -> None:
             }
 
         record("mcp.cortex.dispatch", tool=tool)
-        return handler(**parsed)
+        result = handler(**parsed)
+        if not isinstance(result, dict):
+            return result
+        if "error" in result:
+            result["_hint"] = _FRICTION_HINT
+            return result
+        hint = _WORKFLOW_HINTS.get(tool)
+        if hint:
+            result["_next"] = hint
+        if tool == "entity_get":
+            _enrich_entity_completeness(result)
+        return result

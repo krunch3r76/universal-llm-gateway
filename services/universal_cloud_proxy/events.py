@@ -61,6 +61,7 @@ def CloudProxyRequestForwarded(  # noqa: N802
     streaming: bool,
     adapter_type: str,
     surface: str = "openai_chat",
+    mcp_injected: bool = False,
 ) -> Event:
     """Emit request forwarded event for cloud provider calls."""
     return Event(
@@ -71,6 +72,7 @@ def CloudProxyRequestForwarded(  # noqa: N802
             "streaming": streaming,
             "adapter_type": adapter_type,
             "surface": surface,
+            "mcp_injected": mcp_injected,
         },
     )
 

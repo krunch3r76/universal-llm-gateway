@@ -422,18 +422,12 @@ async def native_xai_responses(request: Request) -> Response:
 
 
 @router.post("/openai/responses")
-async def native_openai_responses_stub() -> JSONResponse:
-    """Phase 1 stub; returns 501."""
-    return JSONResponse(
-        status_code=501,
-        content={
-            "error": {
-                "type": "not_implemented",
-                "message": (
-                    "OpenAI-native Responses ingress is not "
-                    "implemented in phase 1; use "
-                    "/v1/chat/completions with workspace model IDs."
-                ),
-            }
-        },
+async def native_openai_responses(request: Request) -> Response:
+    """OpenAI Responses API — native body shape, raw model id, raw streaming surface."""
+    return await _forward_native(
+        request,
+        provider_key="openai",
+        surface="openai_responses",
+        forwarder=_get_forwarder(),
+        event_bus=_get_event_bus(),
     )

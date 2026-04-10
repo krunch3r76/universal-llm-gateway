@@ -79,6 +79,12 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
             total_tokens=result["total_tokens"],
             duration_s=round(elapsed, 3),
         )
+        result["_next"] = (
+            "If extracted text contains facts about known entities, "
+            "seed via cortex assert or ingest_document. "
+            "If the source document lacks a document: entity in Cortex, "
+            "create one via cortex entity_create"
+        )
         return result
 
     @mcp.tool(title="Document OCR (Structured)")

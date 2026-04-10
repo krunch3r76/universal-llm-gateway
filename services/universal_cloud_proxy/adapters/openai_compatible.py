@@ -141,6 +141,33 @@ class OpenAICompatibleAdapter:
             await self._raise_provider_http_error(response)
         return response.json()
 
+    async def forward_native_stream(
+        self, request_body: dict[str, Any]
+    ) -> AsyncIterator[bytes]:
+        """Stream Responses API SSE bytes unchanged (native xAI/OpenAI-shaped ingress)."""
+        stream_start = time.monotonic()
+        first_chunk_seen = False
+        requested_model = str(request_body.get("model", ""))
+        async with self._client.stream(
+            "POST",
+            f"{self._config.base_url}/responses",
+            json=request_body,
+            headers=self._headers(),
+        ) as response:
+            if response.status_code >= 400:
+                await self._raise_provider_http_error(response)
+            async for chunk in response.aiter_raw():
+                if chunk:
+                    if not first_chunk_seen:
+                        first_chunk_seen = True
+                        self._emit_stream_debug(
+                            step="firstchunk",
+                            model_id=requested_model,
+                            stream_start=stream_start,
+                            chunk_bytes=len(chunk),
+                        )
+                    yield chunk
+
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self._config.api_key}",
@@ -225,9 +252,7 @@ class OpenAICompatibleAdapter:
             await self._raise_provider_http_error(response)
         return response.json()
 
-    async def forward_images_edit(
-        self, request_body: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def forward_images_edit(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """POST to /images/edits with model ID stripped to upstream form.
 
         xAI edits use application/json (not multipart), so the body includes

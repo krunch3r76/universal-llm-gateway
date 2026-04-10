@@ -254,6 +254,14 @@ def execute_frontier(
         output_tokens=result.get("usage", {}).get("output_tokens", 0),
         tool_calls_made=tool_calls_total,
     )
+    if "error" not in result and req.boot in ("team", "full"):
+        result["_next"] = (
+            "If this consultation surfaced a decision, insight, or correction "
+            "worth remembering: cortex assert or observe with "
+            "evidence_uris pointing to the agent-bus thread. "
+            "If Cortex lacked context this consultation needed, "
+            "record that gap via cortex observe."
+        )
     return result
 
 
@@ -264,6 +272,7 @@ def build_frontier_request(
     system: str,
     boot: str,
     boot_ref: str | None,
+    agent: str = "",
     max_tokens: int | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
@@ -284,6 +293,9 @@ def build_frontier_request(
     - boot="none" → no system prompt, no tools (saves tokens for pure advisory calls)
     - boot="mcp"/"team"/"full" → system prompt loaded + TOOL_DEFINITIONS injected
 
+    When ``agent`` is provided, ``team`` and ``full`` boot levels prepend the
+    agent's birth prompt (identity, role, values) before operational context.
+
     Tools are always client-side function-calling definitions (provider-agnostic).
     The MCP Connector pattern (mcp_servers in body) is web-only and never used here.
     Provider-native server_tools (web_search, x_search, etc.) are passed directly
@@ -292,7 +304,7 @@ def build_frontier_request(
     parsed = ModelId.parse(model)
     try:
         boot_level = normalize_boot_level(boot)
-        boot_context = assemble_boot_context(boot_level, boot_ref)
+        boot_context = assemble_boot_context(boot_level, boot_ref, agent=agent)
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         record("mcp.frontier.generate.error", error="boot_context_invalid")
         return {"error": str(exc)}
