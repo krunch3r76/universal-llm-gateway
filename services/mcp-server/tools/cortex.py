@@ -915,8 +915,17 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "entity_get to verify"
     ),
     "journal_write": (
-        "next: entity_get on the returned transcript entity; "
-        "edge_traverse to check session continuity chain"
+        "IMPORTANT: journal_write creates a THIN transcript entity. You must still:\n"
+        "1. Write the full transcript markdown — pass it as markdown_content param in this "
+        "same call, OR write it separately via fs(sandbox='files', op='write', "
+        "path='notes/system/transcripts/{session_id}.md', content='...')\n"
+        "2. Seed assertions on the transcript entity with domains, decisions, files "
+        "modified, open items: cortex(tool='assert', arguments='{\"entity_id\": "
+        '"transcript:{session_id}", ...}\')\n'
+        "3. entity_get on the returned transcript_entity_id to confirm it exists\n"
+        "4. edge_traverse to check session continuity chain\n"
+        "The transcript markdown is the source of truth — the journal row is a thin "
+        "search-index entry. Both are required for a complete session close."
     ),
     "search": (
         "next: extract entity_ids from results → activate (for structurally "
@@ -1070,7 +1079,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           entity_create → assert → relationship_create → entity_get
           ingest_document → assert_from_chunk → relationship_create → entity_get
           supersede → entity_get (verify old superseded, new visible)
-          journal_write → entity_get (transcript entity) → edge_traverse
+          journal_write → write transcript markdown (markdown_content param or fs write) → assert on transcript entity (seed decisions/files/open_items) → entity_get (confirm entity exists and has assertions)
 
         Example:
           cortex(tool="entities", arguments='{"type": "todo", "limit": 20}')

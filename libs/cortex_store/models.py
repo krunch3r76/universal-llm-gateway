@@ -375,6 +375,8 @@ class DeadlineItem(BaseModel):
     deadline_name: str
     deadline_date: str | None = None
     deadline_description: str | None = None
+    urgency: str | None = None
+    outcome: str | None = None
 
 
 class DeadlineList(BaseModel):
