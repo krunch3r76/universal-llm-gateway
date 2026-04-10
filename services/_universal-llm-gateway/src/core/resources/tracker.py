@@ -297,8 +297,14 @@ class ResourceTracker:
     ) -> None:
         """Mark model loaded; records hardware VRAM when pid is available.
 
-        Also propagates LOADED to sibling variants that are in LOADING state
-        (they share the same physical worker process).
+        Propagates LOADED to all sibling variants sharing the same physical
+        worker process:
+        - LOADING siblings: normal LOADING → LOADED transition.
+        - UNLOADED / UNINITIALIZED siblings: the shared process is now alive
+          but the sibling SM was never advanced (e.g. federation load used the
+          base routing_key while a -hybrid SM is UNLOADED from a prior eviction).
+          Advance through LOADING → LOADED so set_model_busy() can succeed
+          without an unnecessary redundant reload.
         """
         tkey = _tracking_key(model_id)
         pkey = _process_key(model_id)
@@ -319,12 +325,27 @@ class ResourceTracker:
                         self._models[tkey].vram_usage_mb,
                     )
 
+        _needs_load_advance = frozenset(
+            {WorkerState.UNLOADED, WorkerState.UNINITIALIZED}
+        )
         for sibling_tkey in self._variant_registry.get_variants(pkey):
             if sibling_tkey == tkey:
                 continue
             sm = self._state_machines.get(sibling_tkey)
-            if sm is not None and sm.current_state == WorkerState.LOADING:
+            if sm is None:
+                continue
+            if sm.current_state == WorkerState.LOADING:
                 sm.transition(WorkerState.LOADED, reason="sibling_loaded")
+            elif sm.current_state in _needs_load_advance:
+                # Shared process is now alive; advance sibling SM so that
+                # set_model_busy() succeeds without a redundant reload.
+                self.logger.info(
+                    "Advancing sibling SM %s from %s → LOADED (shared process loaded)",
+                    sibling_tkey,
+                    sm.current_state.value,
+                )
+                if sm.transition(WorkerState.LOADING, reason="sibling_process_loaded"):
+                    sm.transition(WorkerState.LOADED, reason="sibling_process_loaded")
 
     async def set_model_busy(
         self, model_id: str | ModelId, request_id: str = ""

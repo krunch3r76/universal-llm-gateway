@@ -533,6 +533,15 @@ async def chat_completions(request: Request) -> Response:
 
     mcp_requested = model_id.endswith("-mcp")
     if mcp_requested:
+        # Strip suffix before routing — the upstream model has no -mcp variant.
+        # MCP_TOOL_DEFINITIONS are injected so the model can call Cortex / RAG
+        # tools, but the client MUST implement the tool-call execution loop:
+        #   1. Receive finish_reason="tool_calls" in the SSE stream.
+        #   2. Execute each tool_call against the MCP/Cortex/RAG backend.
+        #   3. Append role="tool" result messages.
+        #   4. Re-submit for the final completion.
+        # Chat UIs (OpenWebUI, plain curl) do not run this loop — they will
+        # stall on tool_calls responses.  Use the bare model ID for chat.
         model_id = model_id[:-4]
         body["model"] = model_id
         from .mcp_tool_defs import MCP_TOOL_DEFINITIONS

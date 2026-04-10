@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 
 from .. import embeddings as cortex_embeddings
 from .. import vector_store
+from ..action_hints import detect_expired_unresolved
 from ..assertion_quality import validate_assertion
 from ..belief_guard import (
     analyze_assertion_impact,
@@ -213,7 +214,8 @@ def list_assertions(
                 row.get("id"),
                 exc_info=True,
             )
-    return AssertionList(items=items)
+    hints = detect_expired_unresolved([i.model_dump() for i in items])
+    return AssertionList(items=items, action_hints=hints or None)
 
 
 _SEARCH_COLS = (

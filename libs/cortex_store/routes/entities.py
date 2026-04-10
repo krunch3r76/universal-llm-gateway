@@ -6,6 +6,7 @@ import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
+from ..action_hints import detect_expired_unresolved
 from ..db import cortex_conn, decode_row, execute, json_encode, query
 from ..models import (
     AssertionItem,
@@ -129,10 +130,12 @@ def get_entity(entity_id: str, request: Request) -> EntityDetail:
                 exc_info=True,
             )
     relationships = [RelationshipItem(**row) for row in rel_rows]
+    hints = detect_expired_unresolved([a.model_dump() for a in assertions])
     return EntityDetail(
         **decode_row(entity, _ENTITY_JSON_FIELDS),
         assertions=assertions,
         relationships=relationships,
+        action_hints=hints or None,
     )
 
 

@@ -130,10 +130,29 @@ class CatalogManager:
         logger.debug("CatalogManager shut down")
 
     def get_all_models(self) -> list[dict[str, Any]]:
-        """Return the full cached catalog as a list of dicts."""
+        """Return the full cached catalog as a list of dicts.
+
+        Each model also gets a ``{id}-mcp`` synthetic variant that triggers
+        MCP tool injection when used via ``/v1/chat/completions``.
+
+        ``-mcp`` variants are for **agentic clients only** — callers that
+        implement the tool-call execution loop (dispatch tool calls to the MCP
+        server, append role=tool results, re-submit).  Chat UIs such as
+        OpenWebUI must use the bare model ID; they will receive a broken
+        ``finish_reason="tool_calls"`` response and stall otherwise.
+        """
+        _mcp_meta: dict[str, Any] = {
+            "description": (
+                "Agentic tool-call variant — requires client-side tool "
+                "execution loop. Not for chat UIs."
+            ),
+            "tags": ["agentic"],
+        }
         result: list[dict[str, Any]] = []
         for catalog in self._catalogs.values():
-            result.extend(m.to_dict() for m in catalog.models)
+            for m in catalog.models:
+                result.append(m.to_dict())
+                result.append({**m.to_dict(), "id": f"{m.id}-mcp", **_mcp_meta})
         return result
 
     def get_all_models_with_pricing(self) -> list[dict[str, Any]]:

@@ -1,7 +1,8 @@
-"""Boot briefing helpers — narrative rendering and response extraction."""
+"""Boot briefing helpers — narrative rendering, briefing card, and response extraction."""
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -158,386 +159,217 @@ def filter_stale_open_items(
     return result
 
 
-def build_gated_entities(
-    gated_raw: list[dict[str, Any]],
-    temporal_active: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """Build gated entity entries, tagging source as temporal/gated/both.
-
-    Entities appearing in both temporal surfacing and the journal entity gate
-    get tagged 'both' and receive enriched assertion depth in the narrative.
-    """
-    temporal_entity_ids: set[str] = set()
-    for a in temporal_active:
-        eid = a.get("entity_id")
-        if eid:
-            temporal_entity_ids.add(eid)
-
-    result: list[dict[str, Any]] = []
-    for entity in gated_raw:
-        eid = entity.get("entity_id", "")
-        source = "both" if eid in temporal_entity_ids else "gated"
-        result.append({**entity, "source": source})
-    return result
+# ── Slim briefing card ──────────────────────────────────────────────────────
 
 
-_MAX_NARRATIVE_TOKENS = 8000
-_CHARS_PER_TOKEN = 4
+def _deadline_line(d: dict[str, Any], today: datetime) -> str:
+    """Render a single deadline as a compact markdown line."""
+    dl_date = d.get("deadline_date", "")
+    remaining = ""
+    if dl_date:
+        try:
+            dl = datetime.strptime(dl_date[:10], "%Y-%m-%d").date()
+            delta = (dl - today.date()).days
+            if delta >= 0:
+                remaining = f" ({delta}d)"
+            else:
+                remaining = f" (**{abs(delta)}d OVERDUE**)"
+        except ValueError:
+            pass
+    return (
+        f"- **{dl_date}**{remaining} — "
+        f"{d.get('deadline_name', '')} ({d.get('matter_name', '')})"
+    )
 
 
-def render_boot_narrative(
+def render_briefing_card(
     *,
-    boot_sections: dict[str, Any] | None = None,
     deadlines: list[dict[str, Any]] | None = None,
-    temporal_active: list[dict[str, Any]] | None = None,
-    temporal_upcoming: list[dict[str, Any]] | None = None,
-    sessions: list[dict[str, Any]],
-    suspected: list[dict[str, Any]] | None = None,
-    hypothesized: list[dict[str, Any]] | None = None,
+    unread_count: int = 0,
+    unread_threads: list[dict[str, Any]] | None = None,
     review_total: int | None = None,
-    continuation_decisions: list[dict[str, Any]] | None = None,
-    continuation_services: list[dict[str, Any]] | None = None,
+    review_top: list[dict[str, Any]] | None = None,
+    last_session: dict[str, Any] | None = None,
+    self_reflections: list[dict[str, Any]] | None = None,
     todos: list[dict[str, Any]] | None = None,
-    gated_entities: list[dict[str, Any]] | None = None,
-    edges_summary: dict[str, int] | None = None,
-    commitments: list[dict[str, Any]] | None = None,
-    legal_contacts: list[dict[str, Any]] | None = None,
-    activated_context: list[dict[str, Any]] | None = None,
-    domain_depth_hints: list[dict[str, str]] | None = None,
+    todo_total: int = 0,
+    temporal_active: list[dict[str, Any]] | None = None,
+    expired_unresolved: list[dict[str, Any]] | None = None,
     transcript_continuation: dict[str, Any] | None = None,
-    recent_activity: list[dict[str, Any]] | None = None,
-    capability_ref_note: str | None = None,
-    max_narrative_tokens: int = _MAX_NARRATIVE_TOKENS,
-) -> str:
-    """Render boot briefing as Markdown narrative with token budget enforcement.
+    op_ctx_path: str = "",
+) -> tuple[str, list[dict[str, Any]]]:
+    """Render a compact briefing card (~3-5KB) and section manifest.
 
-    Sections with None values are omitted entirely. This enables
-    persona-scoped boot: Cursor skips deadlines, investigations,
-    and review queue; Web gets everything.
-
-    If the narrative exceeds max_narrative_tokens, sections are truncated
-    from the bottom of the priority stack:
-    1. Deadlines (never truncated)
-    2. Open investigations
-    3. Continuation state + todos
-    4. Recent sessions (2-3 most recent)
-    5. Session edges
-    6. Temporal assertions
-    7. Commitments + legal contacts
-    8. Gated entities + key entity one-liners (truncated most aggressively)
+    Returns (card_markdown, sections_available).
+    The card contains only priority signals — enough for the agent to orient
+    and decide what to pull deeper. Heavy sections are replaced with counts
+    and fetch hints in the manifest.
     """
-    import logging
-
-    _logger = logging.getLogger(__name__)
-    today = datetime.now(UTC).date()
+    now = datetime.now(UTC)
+    today = now.date()
     parts: list[str] = [f"# Boot Briefing — {today.isoformat()}"]
-
-    if capability_ref_note:
-        parts.append(f"\n{capability_ref_note}")
 
     if transcript_continuation:
         tc = transcript_continuation
-        parts.append(f"\n## Resuming From: `{tc['entity_id']}`")
+        parts.append(f"\n## Resuming From: `{tc.get('entity_id', '?')}`")
         summary = tc.get("summary", tc.get("description", ""))
         if summary:
-            parts.append(f"**Session summary**: {summary}")
-        parts.append(
-            f"*Full transcript: `cortex(tool='entity_get', "
-            f'arguments=\'{{"entity_id": "{tc["entity_id"]}"}}\')`*'
-        )
+            parts.append(f"**Summary**: {summary}")
 
-    if continuation_decisions is not None or continuation_services is not None:
-        parts.append("\n## Continuation State")
-        has_content = False
-        if continuation_decisions:
-            has_content = True
-            parts.append("\n**Recent decisions:**")
-            for a in continuation_decisions:
-                eid = a.get("entity_id", "?")
-                conf = a.get("confidence", "?")
-                parts.append(f"- [{eid}] ({conf}) {a.get('claim', '')}")
-        if continuation_services:
-            has_content = True
-            parts.append("\n**Service observations:**")
-            for a in continuation_services:
-                eid = a.get("entity_id", "?")
-                parts.append(f"- [{eid}] {a.get('claim', '')}")
-        if todos:
-            has_content = True
-            parts.append(f"\n**Open todos** ({len(todos)}):")
-            for t in todos:
-                parts.append(f"- [{t.get('id', '?')}] {t.get('title', '')}")
-        if not has_content:
-            parts.append("No continuation state available.")
-
-    if recent_activity:
-        parts.append(f"\n## Recent Activity ({len(recent_activity)} entries)")
-        for entry in recent_activity:
-            agent_from = entry.get("from", "?")
-            subject = entry.get("subject", "")
-            created = entry.get("created_at", "")
-            rel_time = _relative_time(created, datetime.now(UTC))
-            parts.append(f"\n**{agent_from}** ({rel_time}) — {subject}")
-            body = entry.get("body", "")
-            if body:
-                for line in body.strip().splitlines()[:8]:
-                    parts.append(f"> {line}")
-                if len(body.strip().splitlines()) > 8:
-                    parts.append("> *(truncated)*")
-
-    if edges_summary is not None:
-        sup_count = edges_summary.get("supersession_chains", 0)
-        reas_count = edges_summary.get("reasoning_edges", 0)
-        if sup_count or reas_count:
-            parts.append("\n## Session Edges (last 48h)")
-            parts.append(
-                f"Supersession chains: {sup_count} | Reasoning edges: {reas_count}"
-            )
-            parts.append(
-                "*Load on demand: `cortex(tool='edges', "
-                'arguments=\'{"session_id": "SESSION_ID"}\')`*'
-            )
-
-    if gated_entities:
-        total_assertions = sum(e.get("assertions_shown", 0) for e in gated_entities)
-        parts.append(
-            f"\n## Gated Entities ({len(gated_entities)} entities, "
-            f"{total_assertions} assertions surfaced)"
-        )
-        for entity in gated_entities:
-            eid = entity.get("entity_id", "?")
-            name = entity.get("entity_name", eid)
-            shown = entity.get("assertions_shown", 0)
-            total = entity.get("assertion_count", 0)
-            source_tag = entity.get("source", "gated")
-            enriched = " [enriched — temporal+gated]" if source_tag == "both" else ""
-            parts.append(f"\n### {name} ({shown}/{total} assertions){enriched}")
-            for a in entity.get("assertions", []):
-                conf = a.get("confidence", "?")
-                parts.append(f"- [{conf}] {a.get('claim', '')}")
-            if total > shown:
-                parts.append(f'-> entity_get("{eid}") for full context')
-
+    # ── Deadlines (never truncated) ──
     if deadlines is not None:
         parts.append("\n## Deadlines")
         if not deadlines:
             parts.append("No active deadlines.")
         else:
             for d in deadlines:
-                dl_date = d.get("deadline_date", "")
-                remaining = ""
-                if dl_date:
-                    try:
-                        dl = datetime.strptime(dl_date[:10], "%Y-%m-%d").date()
-                        delta = (dl - today).days
-                        if delta >= 0:
-                            remaining = f" ({delta}d)"
-                        else:
-                            remaining = f" (**{abs(delta)}d OVERDUE**)"
-                    except ValueError as e:
-                        _logger.warning(
-                            "Failed to parse deadline date '%s': %s", dl_date, e
-                        )
-                parts.append(
-                    f"- **{dl_date}**{remaining} — "
-                    f"{d.get('deadline_name', '')} ({d.get('matter_name', '')})"
-                )
+                parts.append(_deadline_line(d, now))
 
-    if temporal_active or temporal_upcoming:
-        if temporal_active:
-            parts.append("\n## Temporally Active")
-            for a in temporal_active:
-                name = a.get("entity_name", a.get("entity_id", "?"))
-                until = a.get("valid_until", "")
-                remaining = ""
-                if until:
-                    try:
-                        exp = datetime.fromisoformat(
-                            until.replace("Z", "+00:00")
-                        ).date()
-                        delta = (exp - today).days
-                        if delta == 0:
-                            remaining = " (expires today)"
-                        elif delta > 0:
-                            remaining = f" (expires in {delta}d)"
-                        else:
-                            remaining = f" (**expired {abs(delta)}d ago**)"
-                    except (ValueError, TypeError):
-                        pass
-                parts.append(f"- **{name}**{remaining} — {a.get('claim', '')}")
-        if temporal_upcoming:
-            parts.append("\n## Upcoming (next 7 days)")
-            for a in temporal_upcoming:
-                name = a.get("entity_name", a.get("entity_id", "?"))
-                from_date = a.get("valid_from", "")
-                starts = ""
-                if from_date:
-                    try:
-                        start = datetime.fromisoformat(
-                            from_date.replace("Z", "+00:00")
-                        ).date()
-                        delta = (start - today).days
-                        starts = f" (in {delta}d)" if delta > 0 else " (today)"
-                    except (ValueError, TypeError):
-                        pass
-                parts.append(f"- **{name}**{starts} — {a.get('claim', '')}")
-
-    if boot_sections is not None:
-        full = boot_sections.get("full", [])
-        oneline = boot_sections.get("oneline", [])
-        if full or oneline:
-            parts.append("\n## Key Entities")
-            for entity in full:
-                parts.append(f"\n{entity.get('section_markdown', '')}")
-            if oneline:
-                parts.append("\n---\n\n### One-Line Summaries")
-                for entity in oneline:
-                    parts.append(f"- {entity.get('summary', '')}")
-
-    if activated_context:
-        activation_items = [
-            a for a in activated_context if a.get("source") == "activation"
-        ]
-        search_items = [
-            a for a in activated_context if a.get("source") == "hybrid_search"
-        ]
-        parts.append(f"\n## Activated Context ({len(activated_context)} assertions)")
-        if activation_items:
-            parts.append("\n**Via spreading activation** (structurally connected):")
-            for a in activation_items:
-                conf = a.get("confidence", "?")
-                ent = a.get("entrenchment_score")
-                score = f" (e={ent:.2f})" if ent else ""
-                hop = a.get("hop_distance", "?")
-                parts.append(
-                    f"- [{conf}]{score} [{a.get('entity_id', '?')}, hop {hop}] {a.get('claim', '')}"
-                )
-        if search_items:
-            parts.append("\n**Via hybrid search** (continuation-relevant):")
-            for a in search_items:
-                conf = a.get("confidence", "?")
-                cms = a.get("combmax_score")
-                score = f" (cm={cms:.2f})" if cms else ""
-                parts.append(
-                    f"- [{conf}]{score} [{a.get('entity_id', '?')}] {a.get('claim', '')}"
-                )
-
-    if domain_depth_hints:
-        parts.append("\n## Domain Depth Available")
-        parts.append(
-            "Dispatch a lightweight synthesis call for each domain below. "
-            "Use `grok_generate(model='grok-4.20-multi-agent-0309', boot='none', messages=[...])`"
-            " — boot=none is intentional (fetch-and-synthesize only; no live tool calls needed), "
-            "not a model restriction. Pass only the relevant excerpted sections from this boot "
-            "payload as message content (continuation decisions, open todos, and gated entity "
-            "assertions for the domain — target 5-15k tokens, not 150k+):"
-        )
-        for hint in domain_depth_hints:
+    # ── Expired unresolved (action needed) ──
+    if expired_unresolved:
+        parts.append(f"\n## Expired — Action Needed ({len(expired_unresolved)})")
+        for a in expired_unresolved[:5]:
+            name = a.get("entity_name", a.get("entity_id", "?"))
+            until = a.get("valid_until", "")
+            days_tag = ""
+            if until:
+                try:
+                    exp = datetime.fromisoformat(until.replace("Z", "+00:00")).date()
+                    days_past = (today - exp).days
+                    days_tag = f" (expired {days_past}d ago)"
+                except (ValueError, TypeError):
+                    pass
+            claim_preview = (a.get("claim") or "")[:100]
+            aid = a.get("id", "?")
+            parts.append(f'- **{name}**{days_tag} — "{claim_preview}"')
             parts.append(
-                f"- **{hint['domain']}**: {hint['reason']}. "
-                f"Query: `{hint['dispatch_query']}`"
+                f"  -> If resolved, supersede: "
+                f'`cortex(tool="supersede", '
+                f"arguments='{{\"old_assertion_id\": {aid}, ...}}')`"
             )
 
-    parts.append("\n## Recent Sessions")
-    if not sessions:
-        parts.append("No recent sessions.")
-    else:
-        for s in sessions:
-            parts.append(f"\n### {s.get('timestamp', '?')} ({s.get('agent', '?')})")
-            parts.append(s.get("summary", "No summary."))
-            for label, field in [
-                ("Decisions", "decisions"),
-                ("Open items", "open_items"),
-            ]:
-                val = s.get(field)
-                if val:
-                    items = list(val)
-                    fenced = [f"> {str(i)}" for i in items]
-                    parts.append(f"**{label}**:\n" + "\n".join(fenced))
+    # ── Temporal (active only, compact) ──
+    if temporal_active:
+        parts.append(f"\n## Temporally Active ({len(temporal_active)})")
+        for a in temporal_active[:5]:
+            name = a.get("entity_name", a.get("entity_id", "?"))
+            until = a.get("valid_until", "")
+            tag = ""
+            if until:
+                try:
+                    exp = datetime.fromisoformat(until.replace("Z", "+00:00")).date()
+                    delta = (exp - today).days
+                    if delta == 0:
+                        tag = " (expires today)"
+                    elif delta > 0:
+                        tag = f" (expires in {delta}d)"
+                    else:
+                        tag = f" (**expired {abs(delta)}d ago**)"
+                except (ValueError, TypeError):
+                    pass
+            parts.append(f"- **{name}**{tag} — {a.get('claim', '')[:120]}")
 
-    if commitments is not None:
-        if commitments:
-            parts.append(f"\n## Open Commitments ({len(commitments)})")
-            for c in commitments:
-                name = c.get("entity_name", c.get("entity_id", "?"))
-                vf = c.get("valid_from", "")
-                since = f" (since {vf})" if vf else ""
-                parts.append(f"- **{name}**{since} — {c.get('claim', '')}")
-        else:
-            parts.append("\n## Open Commitments\nNo pending commitments.")
+    # ── Agent bus ──
+    if unread_count > 0:
+        thread_slugs = ", ".join(
+            t.get("slug", t.get("id", "?")) for t in (unread_threads or [])
+        )
+        parts.append(f"\n## Agent Bus — {unread_count} unread")
+        if thread_slugs:
+            parts.append(f"Threads with unread: {thread_slugs}")
 
-    if legal_contacts:
-        parts.append(f"\n## Legal Matter Contacts ({len(legal_contacts)})")
-        for contact in legal_contacts:
-            name = contact.get("entity_name", contact.get("entity_id", "?"))
-            etype = contact.get("entity_type", "?")
-            parts.append(f"\n### {name} ({etype})")
-            for a in contact.get("assertions", []):
-                conf = a.get("confidence", "?")
-                parts.append(f"- [{conf}] {a.get('claim', '')}")
+    # ── Review queue ──
+    if review_total is not None and review_total > 0:
+        parts.append(f"\n## Review Queue — {review_total} item(s)")
+        for item in (review_top or [])[:3]:
+            reason = item.get("reason", "")
+            name = item.get("name", item.get("id", "?"))
+            parts.append(f"- [{reason}] {name}")
 
-    if suspected is not None or hypothesized is not None:
-        parts.append("\n## Open Investigations")
-        s_list = suspected or []
-        h_list = hypothesized or []
-        if not s_list and not h_list:
-            parts.append("No open investigations.")
-        else:
-            for label, items in [("Suspected", s_list), ("Hypothesized", h_list)]:
-                if items:
-                    parts.append(f"\n**{label}** ({len(items)}):")
-                    for a in items:
-                        parts.append(
-                            f"- [{a.get('entity_id', '?')}] {a.get('claim', '')}"
-                        )
+    # ── Last session ──
+    if last_session:
+        agent = last_session.get("agent", "?")
+        ts = last_session.get("timestamp", "?")
+        rel = _relative_time(str(ts), now)
+        parts.append(f"\n## Last Session — {agent} ({rel})")
+        parts.append(last_session.get("summary", "No summary.")[:300])
+        open_items = last_session.get("open_items", [])
+        if open_items:
+            parts.append(f"**Open items** ({len(open_items)}):")
+            for item in open_items[:5]:
+                parts.append(f"- {item}")
+            if len(open_items) > 5:
+                parts.append(f"- *…{len(open_items) - 5} more*")
 
-    if review_total is not None:
-        parts.append(f"\n## Review Queue\n{review_total} item(s) pending review.")
+    # ── Todos (top 5) ──
+    if todos:
+        parts.append(f"\n## Todos — {todo_total} open")
+        for t in todos[:5]:
+            priority = t.get("priority", "")
+            p_tag = f" [{priority}]" if priority else ""
+            parts.append(f"- `{t.get('id', '?')}`{p_tag} {t.get('title', '')}")
+        if todo_total > 5:
+            parts.append(
+                f"- *…{todo_total - 5} more — "
+                "`cortex(tool='entities', arguments='{\"type\": \"todo\"}')`*"
+            )
 
-    narrative = "\n".join(parts)
-    max_chars = max_narrative_tokens * _CHARS_PER_TOKEN
-    if len(narrative) <= max_chars:
-        return narrative
+    # ── Self-observations ──
+    if self_reflections:
+        parts.append(f"\n## Your Notes ({len(self_reflections)})")
+        for a in self_reflections:
+            session = a.get("evidence", "")
+            session_tag = ""
+            if session:
+                m = re.search(r"(cursor|web|api)-\d{4}-\d{2}-\d{2}-\d{4}", session)
+                if m:
+                    session_tag = f"[{m.group()}] "
+            parts.append(f"- {session_tag}{a.get('claim', '')[:200]}")
 
-    _logger.warning(
-        "boot_narrative %d chars exceeds budget %d (%d tokens). Truncating low-priority sections.",
-        len(narrative),
-        max_chars,
-        max_narrative_tokens,
+    card = "\n".join(parts)
+
+    # ── Section manifest ──
+    manifest: list[dict[str, Any]] = []
+    if todo_total > 0:
+        manifest.append(
+            {
+                "section": "todos",
+                "count": todo_total,
+                "hint": "cortex(tool='entities', arguments='{\"type\": \"todo\"}')",
+            }
+        )
+    manifest.append(
+        {
+            "section": "sessions",
+            "hint": "cortex(tool='journal_read', arguments='{\"limit\": 5}')",
+        }
     )
-    # Priority order (bottom truncates first):
-    # Never truncated: Deadlines, Continuation State, Agent Bus
-    # Truncated last→first: Key Entities, Commitments, Legal Contacts,
-    # Temporal, Session Edges, Recent Sessions, Gated Entities
-    truncation_targets = [
-        "## Gated Entities",
-        "## One-Line Summaries",
-        "## Legal Matter Contacts",
-        "## Open Commitments",
-        "## Session Edges",
-        "## Recent Sessions",
-        "## Upcoming",
-        "## Temporally Active",
-        "## Key Entities",
-    ]
-    for target in truncation_targets:
-        if len(narrative) <= max_chars:
-            break
-        idx = narrative.find(f"\n{target}")
-        if idx < 0:
-            idx = narrative.find(f"\n### {target.lstrip('# ')}")
-        if idx > 0:
-            next_section = narrative.find("\n## ", idx + len(target) + 2)
-            if next_section > 0:
-                narrative = narrative[:idx] + narrative[next_section:]
-            else:
-                narrative = narrative[:idx]
+    if unread_count > 0:
+        manifest.append(
+            {
+                "section": "bus",
+                "unread": unread_count,
+                "hint": 'agent_bus(tool=\'fetch\', arguments=\'{"thread": "480", "last": 10}\')',
+            }
+        )
+    if op_ctx_path:
+        manifest.append(
+            {
+                "section": "operational_context",
+                "hint": f"fs(sandbox='files', op='md_list', path='{op_ctx_path}')",
+            }
+        )
+    manifest.append(
+        {
+            "section": "self_reflections",
+            "hint": "cortex(tool='assertions', arguments='{\"entity_id\": \"ai_agent:AGENT\"}')",
+        }
+    )
+    manifest.append(
+        {
+            "section": "deadlines",
+            "hint": "cortex(tool='deadlines')",
+        }
+    )
 
-    if len(narrative) > max_chars:
-        narrative = narrative[:max_chars]
-
-    sections_removed = sum(1 for t in truncation_targets if f"\n{t}" not in narrative)
-    if sections_removed:
-        narrative += f"\n\n*[{sections_removed} section(s) truncated for token budget]*"
-
-    return narrative
+    return card, manifest

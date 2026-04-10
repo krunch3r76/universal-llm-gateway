@@ -401,7 +401,7 @@ _ON_DEMAND_POINTERS = """\
 - Infrastructure session: `agent_bus(tool="threads", …)` + `cortex(tool="entities", arguments='{"type": "decision"}')` + open todos
 - Frontier intelligence: `fs(sandbox="files", op="read", path="notes/system/shared/frontier-intelligence.md")`
 
-Note: `notes/system/shared/operational-lessons.md` (full capability reference) loads automatically at boot via post_files."""
+Note: `notes/system/shared/operational-lessons.md` (full capability reference) is available on demand — use `md_list` then `md_read` by section."""
 
 
 def render_operational_context(

@@ -58,6 +58,7 @@ class EntityDetail(_EntityCommon):
     updated_at: str
     assertions: list[AssertionItem] = Field(default_factory=list)
     relationships: list[RelationshipItem] = Field(default_factory=list)
+    action_hints: list[ActionHint] | None = None
 
 
 class EntityUpdate(BaseModel):
@@ -213,6 +214,20 @@ class ContradictionConflict(BaseModel):
     similarity: float
 
 
+class ActionHint(BaseModel):
+    """Structured hint for data that likely needs agent action.
+
+    Attached to read responses when temporal staleness or unresolved state
+    is detected. Nudges agents to close the loop on stale data.
+    """
+
+    category: str
+    target_id: int | None = None
+    entity_id: str | None = None
+    message: str
+    action: str
+
+
 class AssertionCreateResponse(BaseModel):
     was_new: bool
     item: AssertionItem
@@ -223,6 +238,7 @@ class AssertionCreateResponse(BaseModel):
 
 class AssertionList(BaseModel):
     items: list[AssertionItem]
+    action_hints: list[ActionHint] | None = None
 
 
 class AssertionSearchItem(BaseModel):
@@ -266,6 +282,7 @@ class AssertionSearchResult(BaseModel):
     search_mode: str = Field(
         "hybrid", description="'hybrid' when vector is available, 'fulltext' otherwise"
     )
+    action_hints: list[ActionHint] | None = None
 
 
 class TouchedAssertionItem(BaseModel):
@@ -362,6 +379,7 @@ class DeadlineItem(BaseModel):
 
 class DeadlineList(BaseModel):
     items: list[DeadlineItem]
+    action_hints: list[ActionHint] | None = None
 
 
 # --- Session Journals ---

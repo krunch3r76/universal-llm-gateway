@@ -20,9 +20,7 @@ from systems.pipeline.core.handlers.protocol import StepOutput
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = os.environ.get(
-    "CORTEX_DB_PATH", str(Path.home() / ".cortex" / "cortex.db")
-)
+_DB_PATH = os.environ.get("CORTEX_DB_PATH", str(Path.home() / ".cortex" / "cortex.db"))
 
 _REVIEW_STATUSES = ("committed", "staged", "flagged")
 
@@ -36,7 +34,8 @@ def _collect_from_db(last_id: int | None) -> list[dict[str, Any]]:
         base_query = (
             "SELECT a.id, a.entity_id, a.claim, a.confidence, "
             "a.entrenchment_score, a.review_status, a.review_notes, "
-            "a.created_at, a.seeded_by, e.name AS entity_name "
+            "a.created_at, a.seeded_by, a.valid_from, a.valid_until, "
+            "e.name AS entity_name "
             "FROM assertions a LEFT JOIN entities e ON a.entity_id = e.id "
             "WHERE a.superseded_by IS NULL "
             f"AND a.review_status IN ({placeholders}) "
@@ -88,14 +87,14 @@ class CollectHandler(BaseHandler):
                 "review_status": a.get("review_status", ""),
                 "review_notes": a.get("review_notes", ""),
                 "created_at": a.get("created_at", ""),
+                "valid_from": a.get("valid_from"),
+                "valid_until": a.get("valid_until"),
                 "session_provenance": a.get("seeded_by", ""),
             }
             for a in assertions
         ]
 
-        batches = [
-            items[i : i + batch_size] for i in range(0, len(items), batch_size)
-        ]
+        batches = [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
         max_id = max(a["id"] for a in assertions)
 
         result = {

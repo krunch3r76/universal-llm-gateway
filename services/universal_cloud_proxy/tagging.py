@@ -29,6 +29,8 @@ _ID_TAG_RULES: list[tuple[re.Pattern[str], str]] = [
     ),
     (re.compile(r"-pro(?:$|-|\b)", re.IGNORECASE), "pro"),
     (re.compile(r"chat\b", re.IGNORECASE), "chat"),
+    # -mcp suffix: requires agentic tool-call execution loop; not for chat UIs.
+    (re.compile(r"-mcp$", re.IGNORECASE), "agentic"),
 ]
 
 # ── Tier thresholds (completion cost per million tokens) ─────────────

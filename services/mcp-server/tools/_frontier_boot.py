@@ -161,9 +161,7 @@ def _load_birth_prompt(agent: str) -> str | None:
         return None
 
 
-def assemble_boot_context(
-    boot: str, boot_ref: str | None, *, agent: str = ""
-) -> str:
+def assemble_boot_context(boot: str, boot_ref: str | None, *, agent: str = "") -> str:
     """Build the full boot context string from boot level and optional ref.
 
     When ``agent`` is provided and boot is ``team`` or ``full``, the agent's
@@ -194,18 +192,18 @@ def assemble_boot_context(
             parts.append(_read_boot_ref(boot_ref))
         return _BOOT_SEPARATOR.join(parts)
 
-    # full: birth + preamble + boot_ref + cortex_boot narrative
+    # full: birth + preamble + boot_ref + cortex_boot briefing card
     result = run_cortex_boot(agent="subagent")
     if "error" in result:
         raise RuntimeError(str(result["error"]))
-    narrative = result.get("boot_narrative")
-    if not isinstance(narrative, str) or not narrative.strip():
-        raise RuntimeError("cortex_boot returned no boot_narrative")
+    briefing = result.get("briefing_card")
+    if not isinstance(briefing, str) or not briefing.strip():
+        raise RuntimeError("cortex_boot returned no briefing_card")
     full_parts: list[str] = []
     if birth:
         full_parts.append(birth)
     full_parts.append(preamble)
     if boot_ref:
         full_parts.append(_read_boot_ref(boot_ref))
-    full_parts.append(narrative)
+    full_parts.append(briefing)
     return _BOOT_SEPARATOR.join(full_parts)

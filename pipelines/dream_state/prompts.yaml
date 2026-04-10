@@ -10,6 +10,9 @@ prompts:
          - Assertions about completed one-time tasks score low.
          - Assertions about ongoing patterns, preferences, or architectural decisions score high.
          - Continuation-state assertions (what is done, what is next) that are superseded score low.
+         - Assertions with valid_until in the past that are NOT superseded are STALE temporal claims.
+           Score relevance LOW (0.1-0.2). Recommend deprecation with reason "temporal expiry".
+         - Do NOT deprecate assertions where valid_until is still in the future or is null.
 
       2. DEPRECATION RECOMMENDATION (boolean + reason): Should this assertion be deprecated?
          Criteria:

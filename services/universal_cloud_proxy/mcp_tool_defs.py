@@ -1,8 +1,40 @@
 """Static tool definitions injected into Chat Completions for ``-mcp`` model IDs.
 
-These mirror the curated tool surface from the MCP server's agent tools.
-When a client sends ``openai/gpt-5.4-mcp`` to ``/v1/chat/completions``,
-the cloud proxy injects these into ``body["tools"]`` before forwarding.
+## What ``-mcp`` variants are
+
+Every cloud model in the catalog has a synthetic ``{id}-mcp`` twin
+(e.g. ``openai/gpt-5.4-mcp``).  When a request targets such a model the
+cloud proxy:
+
+1. Strips the ``-mcp`` suffix and routes to the real upstream model.
+2. Injects ``MCP_TOOL_DEFINITIONS`` into ``request["tools"]`` before
+   forwarding.
+
+The tool definitions mirror the curated Cortex + RAG tool surface exposed
+by the MCP server (cortex entity lookup, assertions, deadlines, RAG search).
+
+## Intended clients — agentic, NOT chat UIs
+
+``-mcp`` variants are exclusively for **agentic clients** that implement the
+tool-call execution loop:
+
+    client → POST /v1/chat/completions (model=...mcp)
+    ↓
+    model responds with finish_reason="tool_calls"
+    ↓
+    client executes each tool_call against the MCP server / Cortex / RAG
+    ↓
+    client appends tool-result messages (role="tool")
+    ↓
+    client re-submits the conversation for the final model response
+
+**Do NOT use ``-mcp`` variants in chat UIs** (OpenWebUI, Cursor chat,
+plain curl one-shots, etc.).  Those clients do not run the tool execution
+loop.  When the model issues a tool call the chat UI receives
+``finish_reason="tool_calls"`` with no ``content``, which renders as an
+empty or broken message and the conversation stalls.
+
+Use the bare model ID (e.g. ``openai/gpt-5.4``) for interactive chat.
 """
 
 from __future__ import annotations
