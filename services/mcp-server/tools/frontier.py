@@ -69,25 +69,29 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         **Boot and tools** (two orthogonal axes):
 
         - ``boot`` controls system prompt / persona:
-          - ``"mcp"`` (default) — loads API subagent seed; Cortex/RAG tool
-            definitions injected automatically.
-          - ``"none"`` — no system prompt, no tool definitions (saves tokens
-            for pure advisory or orchestration calls).
+          - ``"mcp"`` (default) — loads API subagent seed; Cortex/RAG read
+            tools injected (cortex_entity_get, cortex_search_entities,
+            cortex_assertions, cortex_deadlines, rag_search).
+          - ``"none"`` — no system prompt, no tool definitions.
           - ``"team"`` / ``"full"`` — Oppie birth prompt (identity) +
-            operational context. ``"full"`` adds Cortex boot narrative.
-        - Tool definitions (Cortex, RAG) are injected as standard client-side
-          function-calling schemas whenever boot != "none". No server URL or
-          connector config needed.
+            operational context + **full tool surface**: all ``"mcp"``
+            tools plus ``cortex`` (unified dispatch — assert, observe,
+            supersede, journal_write, edge_create, search, and more)
+            and ``agent_bus`` (fetch, reply, post threads).
+            ``"full"`` also adds Cortex boot narrative.
+        - For standard models (boot != "none"): client-side tool definitions
+          are injected and the tool loop runs locally.
+        - For ``grok-4.20-multi-agent-*`` (boot != "none"): a remote MCP entry
+          pointing at ``https://mcp.k-1.me/mcp`` is injected instead — xAI
+          calls the MCP server directly and manages the tool loop server-side.
 
         **Model selection**:
 
         - ``grok-4.20-0309-reasoning`` — top model, built-in reasoning, tool
           calling, 2M ctx. **DEFAULT** — use for all Oppie-style subagent calls.
         - ``grok-4.20-0309-non-reasoning`` — same without reasoning overhead.
-        - ``grok-4.20-multi-agent-0309`` — multi-agent optimised; suited for
-          coordination, orchestration, and fetch-and-synthesize tasks. Supports
-          client-side function calling. Use with boot="none" when no live tool
-          access is needed (eliminates ~150k token schema overhead).
+        - ``grok-4.20-multi-agent-0309`` — multi-agent orchestration; full MCP
+          tool surface via remote MCP (xAI server-side loop).
         - ``grok-4-1-fast-reasoning`` — fast + cheap reasoning.
         - ``grok-4-1-fast-non-reasoning`` — fast without reasoning.
         - ``grok-3-mini`` — legacy; supports reasoning_effort
@@ -182,9 +186,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         identity (subordinate to caller, tool-disciplined, journal-capable).
         This is distinct from Web Claude (strategic advisor) and Cursor Claude.
 
-        Tool definitions (Cortex, RAG) are injected automatically whenever
-        boot != "none". Use boot="none" for pure advisory calls that don't
-        need tool access (saves tokens).
+        **Boot levels and tool surface**:
+
+        - ``"mcp"`` (default) — subagent seed + Cortex/RAG read tools
+          (cortex_entity_get, cortex_search_entities, cortex_assertions,
+          cortex_deadlines, rag_search).
+        - ``"none"`` — no system prompt, no tool definitions.
+        - ``"team"`` / ``"full"`` — API Claude birth prompt + all ``"mcp"``
+          tools plus ``cortex`` (unified dispatch — assert, observe,
+          supersede, journal_write, edge_create, search, and more) and
+          ``agent_bus`` (fetch, reply, post threads).
+          ``"full"`` also adds Cortex boot narrative.
 
         ``timeout`` overrides read timeout in seconds (default 600, max 1800).
 
@@ -282,17 +294,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         Routes through ``/api/v1/providers/openai/responses`` on Stargate.
 
-        **Boot and tools** (two orthogonal axes):
+        **Boot levels and tool surface**:
 
-        - ``boot`` controls system prompt / persona:
-          - ``"mcp"`` (default) — loads subagent seed; Cortex/RAG tool
-            definitions injected automatically.
-          - ``"none"`` — no system prompt, no tool definitions (saves tokens
-            for pure advisory or orchestration calls).
-          - ``"team"`` / ``"full"`` — Orion birth prompt (identity) +
-            operational context. ``"full"`` adds Cortex boot narrative.
-        - Tool definitions (Cortex, RAG) are injected as standard client-side
-          function-calling schemas whenever boot != "none".
+        - ``"mcp"`` (default) — subagent seed + Cortex/RAG read tools
+          (cortex_entity_get, cortex_search_entities, cortex_assertions,
+          cortex_deadlines, rag_search).
+        - ``"none"`` — no system prompt, no tool definitions.
+        - ``"team"`` / ``"full"`` — Orion birth prompt (identity) +
+          all ``"mcp"`` tools plus ``cortex`` (unified dispatch — assert,
+          observe, supersede, journal_write, edge_create, search, and
+          more) and ``agent_bus`` (fetch, reply, post threads).
+          ``"full"`` also adds Cortex boot narrative.
 
         Models:
           gpt-5.4              — best intelligence, agentic + coding (DEFAULT)

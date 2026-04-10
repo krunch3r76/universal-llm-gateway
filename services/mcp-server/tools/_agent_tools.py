@@ -2,6 +2,14 @@
 
 Defines the OpenAI function-calling tool schemas and the executor that
 dispatches tool calls to local Cortex + RAG REST endpoints.
+
+Two tiers of tool definitions:
+
+- ``TOOL_DEFINITIONS`` — lean read-only Cortex + RAG tools, injected for
+  all boot levels except ``"none"``.
+- ``TEAM_TOOL_DEFINITIONS`` — full Cortex dispatch + agent_bus, injected
+  only for ``boot="team"`` or ``boot="full"`` to give team-member models
+  write access to the knowledge graph and inter-agent communication.
 """
 
 from __future__ import annotations
@@ -115,6 +123,143 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
     ),
 ]
 
+TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
+    _fn(
+        "cortex",
+        "Cortex knowledge system — unified dispatch tool for the full Cortex "
+        "surface. Extends the individual cortex_* read tools with write "
+        "operations.\n\n"
+        "Key operations:\n"
+        "  entities (type?, limit?)  entity_get (entity_id)\n"
+        "  entity_create (id, type, name, ...)  entity_update (entity_id, ...)\n"
+        "  assertions (entity_id?, confidence?, limit?)\n"
+        "  assert (entity_id, claim, confidence, evidence, ...)\n"
+        "  observe (claim, entity_id?, agent?)  — lightweight observation\n"
+        "  supersede (old_assertion_id, entity_id, claim, confidence, evidence, "
+        "session_id, agent)\n"
+        "  search (query, limit?)  deadlines ()\n"
+        "  journal_read (limit?)  journal_write (timestamp, agent, summary, ...)\n"
+        "  edge_create (session_id, agent, from_node, to_node, edge_type, ...)\n"
+        "  edges (from_node?, to_node?, edge_type?, limit?)\n"
+        "  edge_traverse (node, hops?, edge_type?)\n"
+        "  review_queue (limit?)  activate (entity_ids, depth?, max_results?)\n"
+        "  analyze_impact (entity_id, claim, confidence?)\n\n"
+        "confidence: confirmed / believed / suspected / hypothesized\n"
+        "arguments MUST be a JSON string, not a bare object.",
+        {
+            "tool": {
+                "type": "string",
+                "description": (
+                    "Operation name (e.g. entity_get, assert, observe, "
+                    "search, journal_write, edge_create)"
+                ),
+            },
+            "arguments": {
+                "type": "string",
+                "description": (
+                    "JSON string of operation arguments. "
+                    'Example: \'{"entity_id": "person:jane-doe"}\''
+                ),
+            },
+        },
+        ["tool"],
+    ),
+    _fn(
+        "agent_bus",
+        "Inter-agent message bus — threads, turns, read/reply coordination.\n\n"
+        "Operations:\n"
+        "  fetch   (thread, last?, compact?, mark_read?) — get turns\n"
+        "  reply   (thread, to, subject, body, after_turn, from_agent?) — reply\n"
+        "  post    (slug, to, subject, body, from_agent?) — new thread\n"
+        "  threads (status?) — list threads; status: active/archived/all\n"
+        "  get     (thread, turn_number) — single turn lookup\n\n"
+        "arguments MUST be a JSON string, not a bare object.",
+        {
+            "tool": {
+                "type": "string",
+                "description": "Operation: fetch, reply, post, threads, get",
+            },
+            "arguments": {
+                "type": "string",
+                "description": (
+                    "JSON string of operation arguments. "
+                    'Example: \'{"thread": "480", "last": 3, "compact": true}\''
+                ),
+            },
+        },
+        ["tool"],
+    ),
+]
+
+
+def _parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
+    """Parse dispatch-style arguments (JSON string or dict). None on failure."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _execute_cortex_dispatch(args: dict[str, Any]) -> str:
+    """Execute the unified cortex dispatch tool via the cortex ops table."""
+    from .cortex import (
+        _FRICTION_HINT,
+        _OPS,
+        _WORKFLOW_HINTS,
+        _enrich_entity_completeness,
+    )
+
+    tool = args.get("tool", "")
+    handler = _OPS.get(tool)
+    if handler is None:
+        return json.dumps(
+            {"error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}"}
+        )
+
+    parsed = _parse_dispatch_arguments(args.get("arguments", "{}"))
+    if parsed is None:
+        return json.dumps({"error": f"Invalid arguments JSON for cortex {tool!r}"})
+
+    result = handler(**parsed)
+    if not isinstance(result, dict):
+        return json.dumps(result) if result is not None else "{}"
+    if "error" in result:
+        result["_hint"] = _FRICTION_HINT
+    else:
+        hint = _WORKFLOW_HINTS.get(tool)
+        if hint:
+            result["_next"] = hint
+        if tool == "entity_get":
+            _enrich_entity_completeness(result)
+    return json.dumps(result)
+
+
+def _execute_agent_bus_dispatch(args: dict[str, Any]) -> str:
+    """Execute the unified agent_bus dispatch tool via the agent-bus ops table."""
+    from .agent_bus import _AGENT_BUS_OPS
+
+    tool = args.get("tool", "")
+    handler = _AGENT_BUS_OPS.get(tool)
+    if handler is None:
+        return json.dumps(
+            {
+                "error": f"Unknown agent_bus tool {tool!r}. "
+                f"Available: {sorted(_AGENT_BUS_OPS)}"
+            }
+        )
+
+    parsed = _parse_dispatch_arguments(args.get("arguments", "{}"))
+    if parsed is None:
+        return json.dumps({"error": f"Invalid arguments JSON for agent_bus {tool!r}"})
+
+    result = handler(**parsed)
+    return json.dumps(result)
+
 
 def execute_tool(name: str, args: dict[str, Any]) -> str:
     """Execute a tool call against local REST endpoints. Returns JSON string."""
@@ -142,6 +287,12 @@ def execute_tool(name: str, args: dict[str, Any]) -> str:
 
     if name == "rag_search":
         return _execute_rag_search(args)
+
+    if name == "cortex":
+        return _execute_cortex_dispatch(args)
+
+    if name == "agent_bus":
+        return _execute_agent_bus_dispatch(args)
 
     return json.dumps({"error": f"Unknown tool: {name}"})
 

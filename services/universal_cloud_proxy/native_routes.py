@@ -72,6 +72,11 @@ async def _forward_native(
             detail="Missing required field: model",
         )
 
+    # Strip -mcp suffix — upstream providers don't accept this Stargate annotation.
+    if raw_model.endswith("-mcp"):
+        raw_model = raw_model[:-4]
+        body = {**body, "model": raw_model}
+
     try:
         _ = model_id_from_native(provider_key, raw_model)
     except ValueError as exc:

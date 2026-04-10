@@ -259,14 +259,23 @@ class ModelId:
         ``claude-sonnet-4``).  For ``openrouter/`` routing, returns
         ``base_id`` as-is (OpenRouter expects ``provider/model``). Local
         models also return ``base_id`` unchanged.
+
+        Invariant: ∀ result: ¬endswith("-mcp") — upstream APIs never accept
+        this Stargate-level annotation.
         """
         if self.routing_layer == "openrouter":
             return self.base_id
         if self.provider:
             prefix = f"{self.provider}/"
             if self.base_id.startswith(prefix):
-                return self.base_id[len(prefix) :]
-        return self.base_id
+                result = self.base_id[len(prefix):]
+                if result.endswith("-mcp"):
+                    result = result[:-4]
+                return result
+        base = self.base_id
+        if base.endswith("-mcp"):
+            base = base[:-4]
+        return base
 
     @property
     def is_synthetic(self) -> bool:

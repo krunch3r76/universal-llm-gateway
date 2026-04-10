@@ -20,7 +20,7 @@ from mcp_events import monotonic_now, record
 from model_id import ModelId
 from universal_logging import get_logger
 
-from ._agent_tools import TOOL_DEFINITIONS, execute_tool
+from ._agent_tools import TEAM_TOOL_DEFINITIONS, TOOL_DEFINITIONS, execute_tool
 from ._frontier_boot import (
     assemble_boot_context,
     compose_system_prompt,
@@ -31,6 +31,7 @@ from ._frontier_boot import (
 logger = get_logger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+_MCP_PUBLIC_URL = os.environ.get("MCP_PUBLIC_URL", "https://mcp.k-1.me/mcp")
 _DEFAULT_READ_TIMEOUT = 600.0
 _TIMEOUT = httpx.Timeout(
     connect=10.0, read=_DEFAULT_READ_TIMEOUT, write=30.0, pool=10.0
@@ -56,8 +57,19 @@ OPENAI_SERVER_TOOL_MAP: dict[str, dict[str, str]] = {
 }
 
 _MCP_TOOL_NAMES: set[str] = {
-    td.get("function", {}).get("name", "") for td in TOOL_DEFINITIONS
+    td.get("function", {}).get("name", "")
+    for td in TOOL_DEFINITIONS + TEAM_TOOL_DEFINITIONS
 }
+
+
+def _is_xai_multi_agent(model: str) -> bool:
+    """True for xAI multi-agent model variants that require remote MCP instead of client-side tools.
+
+    xAI gates client-side function calling on multi-agent models behind beta access.
+    Remote MCP (server_url) is the supported alternative — xAI calls our MCP server
+    directly and manages the tool loop server-side.
+    """
+    return "multi-agent" in model.lower()
 
 
 def _execute_tool_calls(
@@ -289,15 +301,17 @@ def build_frontier_request(
 ) -> FrontierRequest | dict[str, Any]:
     """Assemble boot context and build FrontierRequest. Returns error dict on failure.
 
-    Tool injection is driven entirely by boot level:
-    - boot="none" → no system prompt, no tools (saves tokens for pure advisory calls)
-    - boot="mcp"/"team"/"full" → system prompt loaded + TOOL_DEFINITIONS injected
+    Tool injection is driven by boot level and model capability:
+    - boot="none" → no system prompt, no tools
+    - boot="mcp"/"team"/"full" + standard model → client-side TOOL_DEFINITIONS
+      injected; execute_frontier runs the tool resolution loop locally.
+    - boot="mcp"/"team"/"full" + xAI multi-agent model → remote MCP entry injected
+      pointing at the public MCP server; xAI manages the tool loop server-side.
+      mcp_tool_loop is False — no client-side loop needed.
 
     When ``agent`` is provided, ``team`` and ``full`` boot levels prepend the
     agent's birth prompt (identity, role, values) before operational context.
 
-    Tools are always client-side function-calling definitions (provider-agnostic).
-    The MCP Connector pattern (mcp_servers in body) is web-only and never used here.
     Provider-native server_tools (web_search, x_search, etc.) are passed directly
     via the ``tools`` argument and are independent of boot level.
     """
@@ -312,8 +326,23 @@ def build_frontier_request(
 
     merged_tools = list(tools or [])
     inject_tools = should_inject_tools(boot_level)
+    use_remote_mcp = inject_tools and _is_xai_multi_agent(model)
+
     if inject_tools:
-        merged_tools.extend(TOOL_DEFINITIONS)
+        if use_remote_mcp:
+            auth_token = os.environ.get("MCP_AUTH_TOKEN", "")
+            merged_tools.append(
+                {
+                    "type": "mcp",
+                    "server_url": _MCP_PUBLIC_URL,
+                    "server_label": "mcp",
+                    "authorization": f"Bearer {auth_token}",
+                }
+            )
+        else:
+            merged_tools.extend(TOOL_DEFINITIONS)
+            if boot_level in ("team", "full"):
+                merged_tools.extend(TEAM_TOOL_DEFINITIONS)
 
     return FrontierRequest(
         messages=messages,
@@ -334,5 +363,5 @@ def build_frontier_request(
         conversation_id=conversation_id,
         reasoning_trace=reasoning_trace,
         provider_options=provider_options,
-        mcp_tool_loop=inject_tools,
+        mcp_tool_loop=inject_tools and not use_remote_mcp,
     )
