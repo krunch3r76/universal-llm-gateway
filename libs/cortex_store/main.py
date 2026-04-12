@@ -31,6 +31,7 @@ from .routes import (
     graph,
     ingest,
     reaper,
+    reflective_journal,
     relationships,
     resolve,
     salience,
@@ -143,6 +144,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(tags.router)
     app.include_router(graph.router)
     app.include_router(reaper.router)
+    app.include_router(reflective_journal.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

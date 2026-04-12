@@ -116,13 +116,17 @@ def register_llm_tools(mcp: FastMCP) -> None:
         All requests go through ``/v1/chat/completions`` on Stargate.
         Stargate resolves the model: local inference, pipeline dispatch,
         or cloud proxy passthrough. Use ``claude_generate`` / ``grok_generate``
-        only when you need provider-native features (thinking, MCP, structured output).
+        only when you need provider-native features (thinking, full MCP tool loop,
+        structured output).
 
         **Model ID format** (CRITICAL — wrong format → 404):
 
         - ``anthropic/claude-sonnet-4`` — direct Anthropic API
         - ``xai/grok-4.20-0309-reasoning`` — direct xAI API
         - ``openai/gpt-5.4`` — direct OpenAI API
+        - ``openai/gpt-5-search-api`` — OpenAI search model (Chat Completions only —
+          do NOT use ``openai_generate`` for search models; they are unavailable on
+          the Responses API and reject custom tool definitions)
         - ``openrouter/google/gemini-2.5-flash`` — OpenRouter (note triple-segment ID)
         - ``openrouter/qwen/qwen3-32b`` — OpenRouter
         - ``hermes-3-llama-3-1-70b-...-16384-hybrid`` — local model (no slash)
@@ -130,6 +134,16 @@ def register_llm_tools(mcp: FastMCP) -> None:
         Google, Qwen, Meta, Mistral, and all other providers without a direct
         API integration MUST use the ``openrouter/`` prefix. Bare
         ``google/gemini-*`` will 404 — there is no direct Google provider.
+
+        **MCP tool injection via ``-mcp`` suffix**:
+
+        Appending ``-mcp`` to any cloud model ID (e.g. ``openai/gpt-5.4-mcp``)
+        causes the cloud proxy to inject Cortex/RAG tool definitions into the
+        request before forwarding to the provider. The provider may then respond
+        with ``finish_reason="tool_calls"``. This tool forwards ``tool_calls``
+        in its response so the caller can execute them and drive the loop manually.
+        ``openai_generate`` / ``claude_generate`` run the tool loop automatically;
+        use those when you don't want to manage the loop yourself.
 
         Use ``list_models()`` to discover available model IDs — call with an optional
         provider filter (e.g. ``list_models(filter="openrouter")``).  ``model_status()``
@@ -150,6 +164,11 @@ def register_llm_tools(mcp: FastMCP) -> None:
             ``{"role": "assistant", "content": str, "finish_reason": str | None,
             "model": str, "usage": {prompt_tokens, completion_tokens}}``,
             or ``{"error": "..."}`` on failure.
+
+            When ``finish_reason`` is ``"tool_calls"``, ``tool_calls`` is also
+            present — a list of ``{id, type, function: {name, arguments}}`` dicts.
+            Append the assistant message and tool results, then call again to
+            continue the loop.
 
             Append the response directly to your ``messages`` array for
             multi-turn conversations::
@@ -222,14 +241,16 @@ def register_llm_tools(mcp: FastMCP) -> None:
         content = msg.get("content", "")
         finish_reason = choice.get("finish_reason")
         returned_model = data.get("model", model)
+        tool_calls = msg.get("tool_calls")
 
         record(
             "mcp.llm.generate.completed",
             duration_s=round(duration, 3),
             model=returned_model,
+            has_tool_calls=bool(tool_calls),
         )
         logger.info("llm_generate completed: %.3fs, model=%s", duration, returned_model)
-        return {
+        result: dict[str, Any] = {
             "role": msg.get("role", "assistant"),
             "content": content,
             "finish_reason": finish_reason,
@@ -239,3 +260,6 @@ def register_llm_tools(mcp: FastMCP) -> None:
                 "completion_tokens": usage_raw.get("completion_tokens", 0),
             },
         }
+        if tool_calls:
+            result["tool_calls"] = tool_calls
+        return result

@@ -42,7 +42,7 @@ All current retrieval observations are against `qwen3-14b` extraction + local vo
 2. **Source hashing** — plain SHA-256 of file bytes is stored as `source_hash` on every chunk (PDF, Markdown, HTML, etc.). This hash serves as the universal join key to the `articles` table for query-time metadata enrichment.
 3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index. This is the most expensive index-time step, but it enables deterministic metadata boost and IDF expansion at search time.
 4. **Full-text indexing (FTS5)** — every chunk's text is indexed in a SQLite FTS5 full-text index alongside the vector store. This powers Pool B sparse retrieval with BM25 scoring — no embedding model involved. Lives in the same `rag_metadata.db` as the property index.
-5. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary.
+5. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary. A global capacity gate (`FifoCapacityGate`) bounds total in-flight contextualization requests across all concurrent files — see [Concurrency: Global Contextualization Gate](#concurrency-global-contextualization-gate).
 6. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
 7. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
 
@@ -312,8 +312,62 @@ vocabulary_taxonomy:
 | `knowledge_extraction` | LLM extraction config — pipeline, boost factor, retry limits |
 | `post_index_enforcement` | `strict` (default): return 503 on search until post-index enrichment watermarks are current. `warn`: log ERROR at startup but continue serving |
 | `contextualize_model` | Model ID for per-chunk context generation before embedding. Omit for default (on); set to `""` to disable |
+| `contextualize_global_max_concurrency` | Global cap on total in-flight contextualization requests across all concurrent files. Default 16. See [Concurrency: Global Contextualization Gate](#concurrency-global-contextualization-gate) |
 | `reconcile_interval_s` | Base seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled. Reconcile uses the same worker pool as initial reindex; when a sweep recovers files, the next sweep runs after 30 s (busy interval), otherwise after the full interval |
 | `vocabulary_taxonomy` | Ordered list of vocabulary categories for classification. Order = retrieval anchor priority. Extend to add domain-specific categories; re-classify affected scopes to take effect. Default: `[specification, practitioner, academic]` |
+
+## Concurrency: Global Contextualization Gate
+
+Contextualization sends one LLM request per chunk per file. When the watcher
+indexes N files concurrently (each with up to `contextualize_max_concurrency`
+workers), total in-flight requests can reach N × max_concurrency — enough to
+overwhelm Stargate's queue and cause cascading timeouts.
+
+The **global contextualization gate** (`FifoCapacityGate` from `universal_concurrency`)
+caps total in-flight contextualization requests across all concurrent files:
+
+```
+                ┌─── file A workers ───┐
+                │  acquire → LLM → release │
+ global gate    │  acquire → LLM → release │    limit = 16
+ (FIFO, cap=16) ├─── file B workers ───┤    (configurable)
+                │  acquire → LLM → release │
+                │  acquire → LLM → release │
+                └──────────────────────────┘
+```
+
+- **Per-file `max_concurrency`** (default 8) remains the inner cap — controls
+  how many chunks from one file are in flight simultaneously.
+- **`contextualize_global_max_concurrency`** (default 16) is the outer cap —
+  bounds total across all files. When the gate is full, workers block in FIFO
+  order until a slot frees.
+- Gate acquire timeout = `client_timeout_s` (default 300s). On timeout the chunk
+  gets an empty context prefix and indexing continues — graceful degradation.
+
+### Configuration
+
+```yaml
+# rag.yaml
+contextualize_global_max_concurrency: 16   # total across all concurrent files
+contextualize_max_concurrency: 8           # per-file worker cap
+```
+
+### Implementation
+
+| File | Role |
+|------|------|
+| `services/rag/config.py` | `contextualize_global_max_concurrency` field + YAML parsing |
+| `services/rag/rag_service/state.py` | `_global_contextualize_gate: FifoCapacityGate \| None` slot |
+| `services/rag/rag_service/lifecycle.py` | Init gate at startup (when `contextualize_model` is set), clear at shutdown |
+| `services/rag/contextualize.py` | Workers acquire/release the gate around each LLM call |
+| `services/rag/rag_service/indexing.py` | Passes `state._global_contextualize_gate` to `contextualize_chunks()` |
+
+### When to apply this pattern
+
+Any RAG pipeline step that sends per-chunk LLM requests during bulk indexing is
+a candidate for the same gate pattern: a global `FifoCapacityGate` initialized
+at startup, threaded through indexing into the worker function, acquired before
+the LLM call, released in a `finally` block.
 
 ## Storage
 

@@ -486,6 +486,7 @@ async def _index_file_impl(
                 probe_backoff_initial_s=state._config.ctx_probe_backoff_initial_s,
                 probe_backoff_max_s=state._config.ctx_probe_backoff_max_s,
                 probe_max_probes=state._config.ctx_probe_max_probes,
+                global_gate=state._global_contextualize_gate,
             )
             successful_contexts = sum(1 for ctx in contexts if ctx)
             if state._event_bus is not None:

@@ -294,11 +294,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         Routes through ``/api/v1/providers/openai/responses`` on Stargate.
 
+        **NOT for search models** — ``gpt-5-search-api``, ``gpt-4o-search-preview``,
+        and any ``*-search-*`` / ``*-search-api`` variant are Chat Completions-only.
+        They are unavailable on the Responses API and reject custom tool definitions.
+        Use ``llm_generate(model="openai/gpt-5-search-api", ...)`` for those models.
+
         **Boot levels and tool surface**:
 
         - ``"mcp"`` (default) — subagent seed + Cortex/RAG read tools
           (cortex_entity_get, cortex_search_entities, cortex_assertions,
-          cortex_deadlines, rag_search).
+          cortex_deadlines, rag_search). Tool loop runs client-side automatically.
         - ``"none"`` — no system prompt, no tool definitions.
         - ``"team"`` / ``"full"`` — Orion birth prompt (identity) +
           all ``"mcp"`` tools plus ``cortex`` (unified dispatch — assert,

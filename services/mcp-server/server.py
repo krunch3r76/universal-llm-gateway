@@ -34,6 +34,8 @@ from response_size_guard import register_response_guard
 from schema_compact import patch_fastmcp_tool_serialization
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
+
+from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
 from tools.browser import register_browser_tools
@@ -220,6 +222,7 @@ def _build_server() -> FastMCP:
     register_cortex_tools(mcp)
     register_cortex_named_tools(mcp)
     register_llm_tools(mcp)
+    register_advisor_tools(mcp)
     register_frontier_tools(mcp)
     register_imagine_tools(mcp)
     register_security_tools(mcp)

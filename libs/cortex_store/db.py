@@ -20,7 +20,9 @@ _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
+    # timeout: seconds to wait for a write lock under concurrent access.
+    # Python default is 5s — 30s gives concurrent write ops room to complete.
+    conn = sqlite3.connect(str(db_path), timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

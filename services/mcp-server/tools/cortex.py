@@ -27,6 +27,13 @@ from .cortex_dispatch_ops import (
     _op_supersede,
     _op_surface_forms,
 )
+from .cortex_reflective_ops import (
+    _op_rj_consolidate,
+    _op_rj_link,
+    _op_rj_list,
+    _op_rj_read,
+    _op_rj_write,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -649,6 +656,105 @@ def _op_assert_from_chunk(
     return result
 
 
+_SESSION_ID_RE = __import__("re").compile(r"^[a-z]+-\d{4}-\d{2}-\d{2}-\d{4}$")
+
+
+def _op_session_close(
+    session_id: str | None = None,
+    agent: str | None = None,
+    transcript_md: str | None = None,
+    summary: str | None = None,
+    domains: list[str] | None = None,
+    decisions: list[str] | None = None,
+    open_items: list[str] | None = None,
+    entity_ids: list[str] | None = None,
+    prior_session_id: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Atomic session close — write transcript file + create entity/journal/edge.
+
+    Validates inputs, writes the transcript markdown to disk, then relays
+    to cortex-api for the atomic DB transaction (entity, journal row, edge).
+    """
+    required = {
+        "session_id": session_id,
+        "agent": agent,
+        "transcript_md": transcript_md,
+        "summary": summary,
+    }
+    for field, val in required.items():
+        if not val:
+            return {"error": f"{field} is required"}
+
+    assert session_id and agent and transcript_md and summary
+
+    if not _SESSION_ID_RE.match(session_id):
+        return {
+            "error": f"session_id {session_id!r} does not match "
+            "pattern {{agent}}-YYYY-MM-DD-HHMM"
+        }
+    if len(summary) < 20:
+        return {"error": f"summary must be >= 20 characters (got {len(summary)})"}
+    if len(transcript_md) < 200:
+        return {
+            "error": f"transcript_md must be >= 200 characters (got {len(transcript_md)}). "
+            "Stub-only closes are rejected."
+        }
+
+    has_structure = "## Turn" in transcript_md or "## Session Summary" in transcript_md
+    if not has_structure:
+        return {
+            "error": "transcript_md must contain at least one '## Turn' heading "
+            "or a '## Session Summary' section."
+        }
+
+    transcript_path = f"notes/system/transcripts/{session_id}.md"
+    abs_path = _FILES_ROOT / transcript_path
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_text(transcript_md, encoding="utf-8")
+
+    body: dict[str, Any] = {
+        "session_id": session_id,
+        "agent": agent,
+        "transcript_md": transcript_md,
+        "summary": summary,
+    }
+    for key, val in [
+        ("domains", domains),
+        ("decisions", decisions),
+        ("open_items", open_items),
+        ("entity_ids", entity_ids),
+        ("prior_session_id", prior_session_id),
+    ]:
+        if val is not None:
+            body[key] = val
+
+    result = _cx("POST", "/session-journals/close", body)
+
+    if "error" in result:
+        try:
+            abs_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Failed to clean up transcript file after DB error: %s", abs_path
+            )
+        return result
+
+    logger.info(
+        "session_close: %s agent=%s transcript=%s",
+        session_id,
+        agent,
+        transcript_path,
+    )
+    record(
+        "mcp.session.close.atomic",
+        agent=agent,
+        session_id=session_id,
+        transcript_path=transcript_path,
+    )
+    return result
+
+
 def _op_search(
     query: str | None = None,
     limit: int | None = None,
@@ -915,22 +1021,27 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "entity_get to verify"
     ),
     "journal_write": (
-        "IMPORTANT: journal_write creates a THIN transcript entity. You must still:\n"
-        "1. Write the full transcript markdown — pass it as markdown_content param in this "
-        "same call, OR write it separately via fs(sandbox='files', op='write', "
-        "path='notes/system/transcripts/{session_id}.md', content='...')\n"
-        "2. Seed assertions on the transcript entity with domains, decisions, files "
-        "modified, open items: cortex(tool='assert', arguments='{\"entity_id\": "
-        '"transcript:{session_id}", ...}\')\n'
-        "3. entity_get on the returned transcript_entity_id to confirm it exists\n"
-        "4. edge_traverse to check session continuity chain\n"
-        "The transcript markdown is the source of truth — the journal row is a thin "
-        "search-index entry. Both are required for a complete session close."
+        "DEPRECATED: Use session_close instead. session_close atomically writes "
+        "the transcript file, creates the entity, journal row, and continues edge "
+        "in one call — preventing the stub-only failures that journal_write allows."
+    ),
+    "session_close": (
+        "next: seed content assertions on relevant entities (decisions, observations); "
+        "post to agent bus thread 480 with session debrief; "
+        "entity_get on transcript_entity_id to confirm the full record"
     ),
     "search": (
         "next: extract entity_ids from results → activate (for structurally "
         "connected assertions the query wouldn't find directly); "
         "before writing a new assertion, call analyze_impact to check for contradictions"
+    ),
+    "rj_write": (
+        "next: review suggested_links and accept relevant ones via rj_link; "
+        "check if this entry contradicts or revises earlier entries"
+    ),
+    "rj_consolidate": (
+        "next: rj_list to verify the consolidation appears; "
+        "rj_link to connect any entries the consolidation missed"
     ),
 }
 
@@ -963,6 +1074,7 @@ _OPS: dict[str, Any] = {
     "deadlines": _op_deadlines,
     "journal_read": _op_journal_read,
     "journal_write": _op_journal_write,
+    "session_close": _op_session_close,
     "review_queue": _op_review_queue,
     "edge_create": _op_edge_create,
     "edges": _op_edges,
@@ -977,6 +1089,12 @@ _OPS: dict[str, Any] = {
     "tag_assign": _op_tag_assign,
     "tag_list": _op_tag_list,
     "tag_resolve": _op_tag_resolve,
+    # Reflective journal — first-person agent introspection
+    "rj_write": _op_rj_write,
+    "rj_read": _op_rj_read,
+    "rj_list": _op_rj_list,
+    "rj_link": _op_rj_link,
+    "rj_consolidate": _op_rj_consolidate,
 }
 
 
@@ -1062,7 +1180,8 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           stats             ()                                       — dashboard counts
           surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
           journal_read      (limit?)                                 — recent session journals
-          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?, markdown_content?) — write journal; auto-creates transcript entity + continues edge; markdown_content writes file server-side
+          journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?, markdown_content?) — [DEPRECATED: use session_close] write journal; auto-creates transcript entity + continues edge
+          session_close     (session_id, agent, transcript_md, summary, domains?, decisions?, open_items?, entity_ids?, prior_session_id?) — ATOMIC session close: validates transcript, writes file, creates entity + journal row + continues edge in one call. Rejects stubs.
           review_queue      (limit?)                                 — provisional entities + flagged assertions
           edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection
           edges             (from_node?, to_node?, edge_type?, agent?, session_id?, limit?) — query edges
@@ -1071,6 +1190,11 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           edge_types        ()                                        — list registered edge types
           search            (query, limit?, superseded?, entity_type?) — FTS5 fulltext search over assertions
           analyze_impact    (entity_id, claim, confidence?)            — semantic pre-write impact analysis (C1)
+          rj_write          (agent, register, entry, kind?, session_id?, revises?, links?, consolidation_data?) — write reflective journal entry
+          rj_read           (entry_id)                                  — get a reflective journal entry with links
+          rj_list           (agent?, kind?, limit?, offset?)            — list reflective journal entries
+          rj_link           (entry_id, to_entry?, to_entity?, link_type?) — link entry to another entry or entity
+          rj_consolidate    (agent, register, entry, throughline, before, now, tension_points?, contradiction_set?, falsifier?, rendered_shift?, confidence?, source_entry_ids?) — write consolidation entry
 
         confidence values: confirmed / believed / suspected / hypothesized
         review_status values: committed / flagged / staged / rejected
@@ -1079,7 +1203,8 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           entity_create → assert → relationship_create → entity_get
           ingest_document → assert_from_chunk → relationship_create → entity_get
           supersede → entity_get (verify old superseded, new visible)
-          journal_write → write transcript markdown (markdown_content param or fs write) → assert on transcript entity (seed decisions/files/open_items) → entity_get (confirm entity exists and has assertions)
+          session_close → assert on relevant entities (seed decisions/observations) → post bus debrief → entity_get (confirm transcript entity)
+          journal_write [DEPRECATED] → use session_close instead
 
         Example:
           cortex(tool="entities", arguments='{"type": "todo", "limit": 20}')

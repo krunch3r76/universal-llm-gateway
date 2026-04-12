@@ -415,6 +415,28 @@ class SessionJournalList(BaseModel):
     items: list[SessionJournalItem]
 
 
+# --- Session Close (atomic) ---
+
+
+class SessionCloseRequest(BaseModel):
+    session_id: str
+    agent: str
+    transcript_md: str
+    summary: str
+    domains: list[str] | None = None
+    decisions: list[str] | None = None
+    open_items: list[str] | None = None
+    entity_ids: list[str] | None = None
+    prior_session_id: str | None = None
+
+
+class SessionCloseResponse(BaseModel):
+    transcript_entity_id: str
+    transcript_path: str
+    journal_row_id: int
+    session_id: str
+
+
 # --- Chunks ---
 
 
@@ -605,3 +627,76 @@ class EdgeList(BaseModel):
 
 class EdgeRetire(BaseModel):
     valid_until: str | None = None  # None = now()
+
+
+# --- Reflective Journal ---
+
+ReflectiveKind = Literal["entry", "reflection", "revision", "consolidation"]
+JournalLinkType = Literal[
+    "contradicts",
+    "refines",
+    "supersedes",
+    "reopens",
+    "unresolved_with",
+    "continues",
+    "related",
+]
+
+
+class JournalLinkCreate(BaseModel):
+    to_entry: int | None = None
+    to_entity: str | None = None
+    link_type: JournalLinkType
+
+
+class JournalLinkItem(BaseModel):
+    id: int
+    from_entry: int
+    to_entry: int | None = None
+    to_entity: str | None = None
+    link_type: JournalLinkType
+    created_at: str
+
+
+class ConsolidationData(BaseModel):
+    """Structured consolidation synthesis with anti-coherence-theater safeguards."""
+
+    throughline: str
+    before: str
+    now: str
+    tension_points: list[str] = Field(default_factory=list)
+    contradiction_set: list[str] = Field(default_factory=list)
+    falsifier: str | None = None
+    rendered_shift: str | None = None
+    confidence: str | None = None
+    source_entry_ids: list[int] = Field(default_factory=list)
+
+
+class ReflectiveEntryCreate(BaseModel):
+    agent: str
+    register: str
+    entry: str
+    kind: ReflectiveKind = "entry"
+    session_id: str | None = None
+    revises: int | None = None
+    links: list[JournalLinkCreate] | None = None
+    consolidation_data: ConsolidationData | None = None
+
+
+class ReflectiveEntryItem(BaseModel):
+    id: int
+    agent: str
+    register: str
+    entry: str
+    kind: ReflectiveKind
+    session_id: str | None = None
+    revises: int | None = None
+    consolidation_data: dict[str, Any] | None = None
+    links: list[JournalLinkItem] = Field(default_factory=list)
+    suggested_links: list[dict[str, Any]] | None = None
+    created_at: str
+
+
+class ReflectiveEntryList(BaseModel):
+    items: list[ReflectiveEntryItem]
+    total: int

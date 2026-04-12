@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import chromadb
 import httpx
+from universal_concurrency import FifoCapacityGate
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from universal_hot_reload import matches_watch_exclude
 
@@ -212,6 +213,16 @@ async def _startup() -> None:
     state._config = load_config()
     configure_embeddings(state._config.embedding_model)
     set_embeddings_event_bus(state._event_bus)
+
+    if state._config.contextualize_model:
+        state._global_contextualize_gate = FifoCapacityGate(
+            state._config.contextualize_global_max_concurrency,
+            gate_id="contextualize",
+        )
+        logger.info(
+            "Global contextualization gate initialized (limit=%d)",
+            state._config.contextualize_global_max_concurrency,
+        )
 
     ke = state._config.knowledge_extraction
     watch_ids = [
@@ -749,6 +760,7 @@ async def _shutdown() -> None:
     state._background_tasks.clear()
     state._init_task = None
 
+    state._global_contextualize_gate = None
     if state._event_bus is not None:
         await state._event_bus.publish_async(rag_shutdown())
     if state._watcher_manager is not None:

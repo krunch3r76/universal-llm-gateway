@@ -178,6 +178,14 @@ def run_cortex_boot(
     )
     futures_spec["temporal"] = (_cx, "GET", "/boot-temporal")
 
+    rj_agent = {"cursor": "cursor-claude", "web": "web-claude"}.get(agent, agent)
+    rj_qs = urlencode({"agent": rj_agent, "limit": 5})
+    futures_spec["reflective_journal"] = (
+        _cx,
+        "GET",
+        f"/boot-reflective?{rj_qs}",
+    )
+
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
     if self_entity_id and self_reflections_limit > 0:
@@ -206,6 +214,11 @@ def run_cortex_boot(
     staging_items: list[dict[str, Any]] = safe_list(raw.get("staging", []))
     todos: list[dict[str, Any]] = safe_list(raw.get("todos", []))
     self_reflections: list[dict[str, Any]] = safe_list(raw.get("self_reflections", []))
+    rj_entries: list[dict[str, Any]] = safe_list(raw.get("reflective_journal", []))
+    rj_total: int = 0
+    rj_raw = raw.get("reflective_journal", {})
+    if isinstance(rj_raw, dict):
+        rj_total = rj_raw.get("total", 0)
 
     if agent == "web":
         _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
@@ -299,6 +312,8 @@ def run_cortex_boot(
         expired_unresolved=expired_unresolved or None,
         transcript_continuation=tc_summary,
         op_ctx_path=op_ctx_path,
+        reflective_entries=rj_entries or None,
+        reflective_total=rj_total,
     )
 
     logger.info(
@@ -311,6 +326,7 @@ def run_cortex_boot(
 
     result: dict[str, Any] = {
         "session_id": session_id,
+        "utc_now": t_boot.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "briefing_card": card,
         "sections_available": manifest,
         "operational_context_ref": op_ctx_path,
@@ -532,18 +548,19 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
     # --------------------------------------------------------- session close
 
-    @mcp.tool(title="Session Close")
+    @mcp.tool(title="Session Close (Reminder)")
     def session_close(
         agent: str = "web",
         session_id: str = "",
     ) -> dict[str, Any]:
-        """Structured session close reminder. Call this when closing a session.
+        """DEPRECATED — use cortex(tool="session_close", ...) for atomic closes.
 
-        Returns the transcript ID, file paths, bus thread state, and step-by-step
-        protocol instructions. Does NOT perform the close — you execute each step.
+        This tool only returns step-by-step instructions without performing
+        the close.  The atomic version (cortex dispatch) validates transcript
+        content, writes the file, and creates entity + journal row + edge
+        in one call.
 
-        Guards against double-close: returns an error if the transcript entity
-        already exists.
+        Kept for backward compatibility.  Will be removed in a future release.
 
         Args:
           agent      — agent identity: web, cursor, api (default: "web")
@@ -553,6 +570,12 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
         result = build_session_close(agent=agent, session_id=session_id)
         if "error" not in result:
+            result["_deprecation"] = (
+                "This tool is deprecated. Use cortex(tool='session_close', "
+                'arguments=\'{"session_id": "...", "agent": "...", '
+                '"transcript_md": "...", "summary": "..."}\') instead. '
+                "The atomic version prevents stub-only closes."
+            )
             record(
                 "mcp.session.close",
                 agent=agent,

@@ -90,6 +90,9 @@ changelog/
 # Mature pipelines go in pipelines/ (tracked)
 pipelines.local/
 
+# Local-only scripts (not for public release; same idea as pipelines.local)
+scripts.local/
+
 # RAG scope vocabulary (auto-generated, per-machine)
 scope_vocabulary.yaml
 
@@ -127,5 +130,6 @@ snapshots/
 
 # SQL files (may contain private/sensitive data — never commit)
 **/*.sql
-# Migration DDL is schema, not data — safe to commit
-!libs/cortex_store/migrations/*.sql
+
+# Migrations are local — sole maintainer applies them directly
+libs/cortex_store/migrations/

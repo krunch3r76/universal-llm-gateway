@@ -97,6 +97,12 @@ def _entity_hybrid_search(
 ) -> list[SimilarAssertion]:
     """Hybrid FTS5 + vector search for similar assertions on the same entity."""
     fts_rows = _entity_fts_search(conn, claim_text, entity_id, limit * 2)
+    # ∀ new entity: no FTS candidates ⟹ no active assertions ⟹ no contradiction possible.
+    # reindex_assertion_fts is always called at assertion creation, so empty FTS means
+    # the entity has no indexed assertions. Skip the embedding HTTP call entirely to
+    # avoid blocking the write path on a Stargate round-trip that yields nothing.
+    if not fts_rows:
+        return []
     vector_results = _entity_vector_search(claim_text, entity_id, limit * 2)
 
     max_rank = max((abs(r.get("rank", 0)) for r in fts_rows), default=1.0) or 1.0

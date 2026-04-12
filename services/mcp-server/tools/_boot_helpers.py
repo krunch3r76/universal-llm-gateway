@@ -45,6 +45,63 @@ def safe_list(raw: dict[str, Any] | list[Any], key: str = "items") -> list[Any]:
     return []
 
 
+# ── Assertion-ref pattern ────────────────────────────────────────────────────
+# Matches [assertion:841] or [ref:841] tags appended to open_items by agents.
+_ASSERTION_REF_RE = re.compile(r"\[(?:assertion|ref):(\d+)\]", re.IGNORECASE)
+
+# ── Token extraction for fuzzy fallback ──────────────────────────────────────
+_DOLLAR_RE = re.compile(r"\$[\d,]+(?:\.\d{2})?")
+_DATE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}"  # ISO dates
+    r"|(?:january|february|march|april|may|june|july|august"
+    r"|september|october|november|december)\s+\d{1,2}"  # "April 12"
+    r"|\d{1,2}/\d{1,2}(?:/\d{2,4})?",  # MM/DD or MM/DD/YYYY
+    re.IGNORECASE,
+)
+_ACCOUNT_SUFFIX_RE = re.compile(r"(?:···|\.{3}|\*{3,4})(\d{4})")
+
+_STOP_WORDS = frozenset(
+    {
+        "the", "a", "an", "and", "or", "not", "on", "in", "at", "to", "of",
+        "for", "from", "by", "as", "with", "its", "is", "are", "was", "were",
+        "has", "have", "had", "be", "been", "will", "would", "could", "should",
+        "may", "might", "he", "she", "it", "they", "we", "there", "this",
+        "that", "no", "yes", "due", "paid", "payment", "minimum", "balance",
+        "confirmed", "recorded", "yet", "still", "upcoming",
+    }
+)
+
+
+def _extract_discriminating_tokens(text: str) -> set[str]:
+    """Pull dollar amounts, dates, account suffixes, and distinctive words.
+
+    Returns a set of lowercased tokens that distinguish one financial
+    obligation from another. Used for fuzzy matching when assertion refs
+    are unavailable.
+    """
+    tokens: set[str] = set()
+
+    # Dollar amounts (normalized: strip commas)
+    for m in _DOLLAR_RE.finditer(text):
+        tokens.add(m.group().replace(",", "").lower())
+
+    # Dates (raw match, lowercased)
+    for m in _DATE_RE.finditer(text):
+        tokens.add(m.group().lower())
+
+    # Account suffixes like ···0480, ***0480
+    for m in _ACCOUNT_SUFFIX_RE.finditer(text):
+        tokens.add(m.group(1))
+
+    # Distinctive words: 4+ chars, not stop words, not pure digits
+    for word in re.findall(r"[a-zA-Z]{4,}", text):
+        w = word.lower()
+        if w not in _STOP_WORDS:
+            tokens.add(w)
+
+    return tokens
+
+
 def _resolved_key_phrases(recently_resolved: list[dict[str, Any]]) -> set[str]:
     """Extract specific key phrases from recently-resolved temporal claims.
 
@@ -56,51 +113,15 @@ def _resolved_key_phrases(recently_resolved: list[dict[str, Any]]) -> set[str]:
     """
     generic_starters = frozenset(
         {
-            "has",
-            "have",
-            "had",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "will",
-            "would",
-            "could",
-            "should",
-            "may",
-            "might",
-            "he",
-            "she",
-            "it",
-            "they",
-            "we",
-            "kaywan",
-            "there",
-            "this",
-            "that",
+            "has", "have", "had", "is", "are", "was", "were", "be", "been",
+            "will", "would", "could", "should", "may", "might", "he", "she",
+            "it", "they", "we", "kaywan", "there", "this", "that",
         }
     )
     common_short = frozenset(
         {
-            "the",
-            "a",
-            "an",
-            "and",
-            "or",
-            "not",
-            "on",
-            "in",
-            "at",
-            "to",
-            "of",
-            "for",
-            "from",
-            "by",
-            "as",
-            "with",
-            "its",
+            "the", "a", "an", "and", "or", "not", "on", "in", "at", "to",
+            "of", "for", "from", "by", "as", "with", "its",
         }
     )
 
@@ -110,13 +131,9 @@ def _resolved_key_phrases(recently_resolved: list[dict[str, Any]]) -> set[str]:
         words = claim.split()[:4]
         if len(words) < 3:
             continue
-        # Skip phrases that start with generic/pronoun words — they describe
-        # ongoing behavioral patterns, not specific trackable facts.
         if words[0].lower().rstrip(".,;:") in generic_starters:
             continue
         phrase = " ".join(words).lower()
-        # Require at least one distinguishing token: a digit/$ amount, or a word
-        # 8+ chars that is not a common stop word.
         has_distinguishing = any(
             any(ch.isdigit() or ch == "$" for ch in w)
             or (len(w) >= 8 and w.lower().rstrip(".,;:") not in common_short)
@@ -127,22 +144,94 @@ def _resolved_key_phrases(recently_resolved: list[dict[str, Any]]) -> set[str]:
     return phrases
 
 
+def _build_resolved_index(
+    recently_resolved: list[dict[str, Any]],
+) -> tuple[set[int], list[set[str]]]:
+    """Build dual index for resolution matching.
+
+    Returns:
+        resolved_ids: assertion IDs that were resolved (for ref matching)
+        resolved_token_sets: list of discriminating token sets, one per
+            resolved assertion (for fuzzy fallback — match if 2+ tokens
+            overlap with an open_item)
+    """
+    resolved_ids: set[int] = set()
+    resolved_token_sets: list[set[str]] = []
+
+    for r in recently_resolved:
+        aid = r.get("id")
+        if aid is not None:
+            resolved_ids.add(int(aid))
+
+        # Build token set from claim + entity_name combined
+        combined = (r.get("claim") or "") + " " + (r.get("entity_name") or "")
+        tokens = _extract_discriminating_tokens(combined)
+        if len(tokens) >= 2:
+            resolved_token_sets.append(tokens)
+
+    return resolved_ids, resolved_token_sets
+
+
+def _is_resolved(
+    item: str,
+    resolved_ids: set[int],
+    resolved_token_sets: list[set[str]],
+    key_phrases: set[str],
+) -> bool:
+    """Check if an open_item matches a resolved assertion via three strategies.
+
+    Strategy 1 (deterministic): assertion ref tag [assertion:ID]
+    Strategy 2 (legacy): first-4-word phrase substring match
+    Strategy 3 (fuzzy fallback): 2+ discriminating token overlap
+    """
+    item_lower = item.lower()
+
+    # Strategy 1: assertion ref — highest confidence, zero false positives
+    for m in _ASSERTION_REF_RE.finditer(item):
+        if int(m.group(1)) in resolved_ids:
+            return True
+
+    # Strategy 2: legacy phrase matching (preserved for backward compat)
+    if any(phrase in item_lower for phrase in key_phrases):
+        return True
+
+    # Strategy 3: token overlap fallback — requires 2+ matching tokens
+    # to avoid false positives between unrelated financial items
+    if resolved_token_sets:
+        item_tokens = _extract_discriminating_tokens(item)
+        if item_tokens:
+            for resolved_tokens in resolved_token_sets:
+                overlap = item_tokens & resolved_tokens
+                if len(overlap) >= 2:
+                    return True
+
+    return False
+
+
 def filter_stale_open_items(
     sessions: list[dict[str, Any]],
     recently_resolved: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Tag open_items in sessions that reference recently-resolved temporal matters.
 
-    When a temporal assertion (valid_until set) is superseded — meaning the matter
-    was resolved — session journals that still carry it as an open_item receive a
-    '[RESOLVED]' prefix. This prevents the item from appearing as actionable in
-    future boot briefings while preserving a visible audit trail.
+    Resolution is detected via three strategies (checked in order):
+    1. Assertion ref: open_item contains [assertion:ID] matching a resolved ID
+    2. Phrase match: first 4 words of resolved claim appear in open_item (legacy)
+    3. Token overlap: 2+ discriminating tokens (dollar amounts, dates, account
+       suffixes, distinctive words) shared between resolved claim and open_item
+
+    Matched items receive a '[RESOLVED]' prefix. This prevents the item from
+    appearing as actionable in future boot briefings while preserving an audit
+    trail.
     """
     if not recently_resolved:
         return sessions
 
+    resolved_ids, resolved_token_sets = _build_resolved_index(recently_resolved)
     key_phrases = _resolved_key_phrases(recently_resolved)
-    if not key_phrases:
+
+    # If none of the three strategies have material to work with, bail early
+    if not resolved_ids and not key_phrases and not resolved_token_sets:
         return sessions
 
     result: list[dict[str, Any]] = []
@@ -150,8 +239,9 @@ def filter_stale_open_items(
         open_items = session.get("open_items") or []
         tagged: list[str] = []
         for item in open_items:
-            item_lower = str(item).lower()
-            if any(phrase in item_lower for phrase in key_phrases):
+            if _is_resolved(
+                str(item), resolved_ids, resolved_token_sets, key_phrases
+            ):
                 tagged.append(f"[RESOLVED] {item}")
             else:
                 tagged.append(item)
@@ -197,6 +287,8 @@ def render_briefing_card(
     expired_unresolved: list[dict[str, Any]] | None = None,
     transcript_continuation: dict[str, Any] | None = None,
     op_ctx_path: str = "",
+    reflective_entries: list[dict[str, Any]] | None = None,
+    reflective_total: int = 0,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -326,6 +418,21 @@ def render_briefing_card(
                     session_tag = f"[{m.group()}] "
             parts.append(f"- {session_tag}{a.get('claim', '')[:200]}")
 
+    # ── Reflective journal ──
+    if reflective_entries:
+        parts.append(f"\n## Reflective Journal ({reflective_total} total)")
+        for e in reflective_entries[:5]:
+            kind = e.get("kind", "entry")
+            kind_tag = f" [{kind}]" if kind != "entry" else ""
+            register = e.get("register", "?")
+            entry_preview = (e.get("entry") or "")[:200]
+            parts.append(f"- *{register}*{kind_tag}: {entry_preview}")
+        if reflective_total > 5:
+            parts.append(
+                f"- *…{reflective_total - 5} more — "
+                "`cortex(tool='rj_list', arguments='{\"limit\": 20}')`*"
+            )
+
     card = "\n".join(parts)
 
     # ── Section manifest ──
@@ -365,6 +472,14 @@ def render_briefing_card(
             "hint": "cortex(tool='assertions', arguments='{\"entity_id\": \"ai_agent:AGENT\"}')",
         }
     )
+    if reflective_total > 0:
+        manifest.append(
+            {
+                "section": "reflective_journal",
+                "count": reflective_total,
+                "hint": "cortex(tool='rj_list', arguments='{\"limit\": 20}')",
+            }
+        )
     manifest.append(
         {
             "section": "deadlines",

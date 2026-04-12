@@ -45,7 +45,9 @@ class ScopeDefinition:
 
     prefixes: list[str]
     description: str = ""
-    vocab_mode: str = ""  # "local" | "frontier" | "none" (skip) | "" (inherit global vocabulary_mode)
+    vocab_mode: str = (
+        ""  # "local" | "frontier" | "none" (skip) | "" (inherit global vocabulary_mode)
+    )
 
 
 @dataclass(slots=True, kw_only=True)
@@ -85,6 +87,7 @@ DEFAULT_INDEX_WORKERS = 8
 DEFAULT_CONTEXTUALIZE_MODEL = "qwen3-5-9b-q8-0-262144"
 DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY = 32
 DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 60.0
+DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY = 16
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -152,10 +155,15 @@ class RagConfig:
     # single probe request tests whether the model is warm. On retryable failure
     # (timeout or 503/429) the probe is retried with exponential backoff.
     # Set ctx_probe_max_probes to 0 to disable the probe-first pattern entirely.
-    ctx_probe_timeout_s: float = 8.0          # tight client timeout for the probe
+    # Global cap on total in-flight contextualization requests across all files.
+    # Prevents N concurrent files × per-file concurrency from overwhelming Stargate.
+    contextualize_global_max_concurrency: int = (
+        DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY
+    )
+    ctx_probe_timeout_s: float = 8.0  # tight client timeout for the probe
     ctx_probe_backoff_initial_s: float = 5.0  # first retry wait after failure
-    ctx_probe_backoff_max_s: float = 60.0     # cap on per-retry wait
-    ctx_probe_max_probes: int = 10            # max probe attempts before giving up
+    ctx_probe_backoff_max_s: float = 60.0  # cap on per-retry wait
+    ctx_probe_max_probes: int = 10  # max probe attempts before giving up
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -474,6 +482,16 @@ def load_config() -> RagConfig:
         contextualize_client_timeout_s = float(raw_ctx_client_timeout)
     else:
         contextualize_client_timeout_s = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
+    raw_ctx_global = parsed_root.get(
+        "contextualize_global_max_concurrency",
+        DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY,
+    )
+    if isinstance(raw_ctx_global, int) and raw_ctx_global >= 1:
+        contextualize_global_max_concurrency = raw_ctx_global
+    else:
+        contextualize_global_max_concurrency = (
+            DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY
+        )
     raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
     if isinstance(raw_reconcile, int | float) and raw_reconcile >= 0:
         reconcile_interval_s = float(raw_reconcile)
@@ -490,7 +508,9 @@ def load_config() -> RagConfig:
     else:
         file_timeout_s = 600.0
 
-    def _parse_positive_float(key: str, default: float, *, zero_ok: bool = False) -> float:
+    def _parse_positive_float(
+        key: str, default: float, *, zero_ok: bool = False
+    ) -> float:
         raw = parsed_root.get(key, default)
         if isinstance(raw, int | float) and (raw > 0 or (zero_ok and raw >= 0)):
             return float(raw)
@@ -498,12 +518,18 @@ def load_config() -> RagConfig:
 
     def _parse_positive_int(key: str, default: int, *, zero_ok: bool = False) -> int:
         raw = parsed_root.get(key, default)
-        if isinstance(raw, int) and not isinstance(raw, bool) and (raw > 0 or (zero_ok and raw >= 0)):
+        if (
+            isinstance(raw, int)
+            and not isinstance(raw, bool)
+            and (raw > 0 or (zero_ok and raw >= 0))
+        ):
             return raw
         return default
 
     ctx_probe_timeout_s = _parse_positive_float("ctx_probe_timeout_s", 8.0)
-    ctx_probe_backoff_initial_s = _parse_positive_float("ctx_probe_backoff_initial_s", 5.0)
+    ctx_probe_backoff_initial_s = _parse_positive_float(
+        "ctx_probe_backoff_initial_s", 5.0
+    )
     ctx_probe_backoff_max_s = _parse_positive_float("ctx_probe_backoff_max_s", 60.0)
     ctx_probe_max_probes = _parse_positive_int("ctx_probe_max_probes", 10, zero_ok=True)
     raw_vocab_mode = parsed_root.get("vocabulary_mode", "local")
@@ -535,6 +561,7 @@ def load_config() -> RagConfig:
         contextualize_model=contextualize_model,
         contextualize_max_concurrency=contextualize_max_concurrency,
         contextualize_client_timeout_s=contextualize_client_timeout_s,
+        contextualize_global_max_concurrency=contextualize_global_max_concurrency,
         reconcile_interval_s=reconcile_interval_s,
         reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,

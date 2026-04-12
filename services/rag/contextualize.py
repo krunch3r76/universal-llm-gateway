@@ -26,10 +26,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 
 from services.rag.chunkers import Chunk
+
+if TYPE_CHECKING:
+    from universal_concurrency import FifoCapacityGate
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +185,7 @@ async def contextualize_chunks(
     probe_backoff_initial_s: float = 5.0,
     probe_backoff_max_s: float = 60.0,
     probe_max_probes: int = 10,
+    global_gate: FifoCapacityGate | None = None,
 ) -> list[str]:
     """Generate context prefixes for chunks via LLM.
 
@@ -208,6 +213,9 @@ async def contextualize_chunks(
         probe_backoff_initial_s: Initial wait (s) after a probe retryable failure.
         probe_backoff_max_s: Maximum per-retry wait (s) for probe backoff.
         probe_max_probes: Max probe attempts. 0 = disable probe-first pattern.
+        global_gate: Optional cross-file capacity gate. When provided, each
+            worker acquires a slot before calling the LLM, bounding total
+            in-flight contextualization requests across all concurrent files.
 
     Returns:
         List of context strings (one per chunk). Empty string on per-chunk failure.
@@ -242,21 +250,36 @@ async def contextualize_chunks(
     for idx in range(len(chunks)):
         queue.put_nowait(idx)
 
-    async def _worker() -> None:
+    async def _worker(worker_id: int) -> None:
         while True:
             idx = await queue.get()
             try:
                 if idx is None:
                     return
                 try:
-                    user_msg = _build_chunk_context(idx, chunks, source)
-                    context = await _call_llm(
-                        user_msg,
-                        model,
-                        timeout_s,
-                        client_timeout_s=client_timeout_s,
+                    if global_gate is not None:
+                        await global_gate.acquire(
+                            f"ctx-{source}-{idx}",
+                            timeout=client_timeout_s,
+                        )
+                    try:
+                        user_msg = _build_chunk_context(idx, chunks, source)
+                        context = await _call_llm(
+                            user_msg,
+                            model,
+                            timeout_s,
+                            client_timeout_s=client_timeout_s,
+                        )
+                        results[idx] = context
+                    finally:
+                        if global_gate is not None:
+                            await global_gate.release()
+                except TimeoutError:
+                    logger.warning(
+                        "Contextualization gate timeout for chunk %d of %s",
+                        idx,
+                        source,
                     )
-                    results[idx] = context
                 except Exception:
                     logger.warning(
                         "Contextualization failed for chunk %d of %s", idx, source
@@ -265,7 +288,7 @@ async def contextualize_chunks(
                 queue.task_done()
 
     workers = [
-        asyncio.create_task(_worker(), name=f"contextualize-worker-{i}")
+        asyncio.create_task(_worker(i), name=f"contextualize-worker-{i}")
         for i in range(worker_count)
     ]
     await queue.join()
