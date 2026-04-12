@@ -1,11 +1,16 @@
-"""Core OCR logic: PDF→image rendering, Claude Vision calls, multi-page batching.
+"""Core OCR logic: PDF→image rendering, multi-provider vision, multi-page batching.
 
-Uses PyMuPDF (fitz) for PDF→PNG conversion and Anthropic Claude Vision for
-text extraction. Supports both generic OCR and structured financial extraction.
+Uses PyMuPDF (fitz) for PDF→PNG conversion and frontier vision models (via
+Stargate) for text extraction.  Supports both generic OCR and structured
+financial extraction.
+
+Supported providers (frontier-only — direct API, no OpenRouter):
+- anthropic/claude-sonnet-4-*  (default)
+- openai/gpt-5.4
+- xai/grok-*
 
 All images are auto-resized to fit within _MAX_IMAGE_DIMENSION before encoding
-to avoid Anthropic API 400 errors on oversized payloads (high-res scans,
-high-DPI PDF renders).
+to avoid provider API errors on oversized payloads.
 """
 
 from __future__ import annotations
@@ -14,16 +19,20 @@ import base64
 import io
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
-from .llm import _call_anthropic
+import httpx
 
 logger = logging.getLogger(__name__)
 
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
+
 _DEFAULT_DPI = 200
 _MAX_PAGES_PER_BATCH = 4
-_OCR_MODEL = "claude-sonnet-4-20250514"
+_OCR_MODEL = "anthropic/claude-sonnet-4-20250514"
 _OCR_MAX_TOKENS = 8192
 _MAX_IMAGE_DIMENSION = 1600
 
@@ -99,16 +108,11 @@ def _pdf_page_count(pdf_path: Path) -> int:
 def _build_image_blocks(
     images: list[tuple[str, str]],
 ) -> list[dict[str, Any]]:
-    """Build Anthropic image content blocks from (base64_data, media_type) pairs."""
-    blocks: list[dict[str, Any]] = []
-    for data, media in images:
-        blocks.append(
-            {
-                "type": "image",
-                "source": {"type": "base64", "media_type": media, "data": data},
-            }
-        )
-    return blocks
+    """Build OpenAI-format image content blocks from (base64_data, media_type) pairs."""
+    return [
+        {"type": "image_url", "image_url": {"url": f"data:{media};base64,{data}"}}
+        for data, media in images
+    ]
 
 
 def _call_vision(
@@ -118,30 +122,67 @@ def _call_vision(
     model: str = _OCR_MODEL,
     max_tokens: int = _OCR_MAX_TOKENS,
 ) -> dict[str, Any]:
-    """Send image blocks + text prompt to Claude Vision."""
+    """Send image blocks + text prompt to a vision model via Stargate.
+
+    Routes through ``/v1/chat/completions`` so any Stargate-routable vision
+    model works (Anthropic, OpenAI, xAI).  Returns the raw OpenAI-format
+    response dict, or ``{"error": "..."}`` on failure.
+    """
     content: list[dict[str, Any]] = list(image_blocks)
     content.append({"type": "text", "text": user_prompt})
-    payload: dict[str, Any] = {
+
+    messages: list[dict[str, Any]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": content})
+
+    body: dict[str, Any] = {
         "model": model,
+        "messages": messages,
         "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": content}],
-        "system": system,
+        "stream": False,
     }
-    return _call_anthropic(payload, requested_model=model)
+
+    url = f"{_STARGATE_URL}/v1/chat/completions"
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            resp = client.post(url, json=body)
+    except httpx.TimeoutException:
+        return {"error": "Stargate timeout"}
+    except httpx.RequestError as exc:
+        logger.error("Stargate OCR request failed: %s", exc)
+        return {"error": "Stargate connection failed"}
+
+    if resp.status_code >= 400:
+        logger.warning("Stargate returned %d for OCR model=%s", resp.status_code, model)
+        return {
+            "error": f"Upstream error ({resp.status_code})",
+            "detail": resp.text[:500],
+        }
+
+    try:
+        data = resp.json()
+    except json.JSONDecodeError:
+        return {"error": "Stargate returned invalid JSON"}
+    if not isinstance(data, dict):
+        return {"error": "Stargate returned non-object JSON"}
+    return data
 
 
 def _extract_text_from_response(resp: dict[str, Any]) -> str:
-    """Pull concatenated text from Anthropic response content blocks."""
+    """Pull assistant text from an OpenAI-format chat completion response."""
     if "error" in resp:
         return f"[OCR error: {resp['error']}]"
-    return "".join(
-        b.get("text", "") for b in resp.get("content", []) if b.get("type") == "text"
-    )
+    choices = resp.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return message.get("content") or ""
 
 
 def _usage_from_response(resp: dict[str, Any]) -> int:
-    usage = resp.get("usage", {})
-    return usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+    usage = resp.get("usage") or {}
+    return usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
 
 
 def ocr_pages(
@@ -155,7 +196,7 @@ def ocr_pages(
     """OCR a PDF or image file, returning extracted text per page.
 
     For PDFs: renders each page to PNG, batches into groups of 4, sends to
-    Claude Vision. For images: sends the image directly.
+    a vision model via Stargate. For images: sends the image directly.
     """
     is_image = abs_path.suffix.lower() in _IMAGE_SUFFIXES
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
@@ -13,7 +14,7 @@ from ..belief_guard import (
     guard_assertion_write,
 )
 from ..claim_hash import compute_claim_hash
-from ..db import cortex_conn, decode_row, json_encode, query
+from ..db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ..enrichment import (
     enrich_assertion,
     enrich_background,
@@ -53,7 +54,7 @@ def _log_search_access(items: list) -> None:
     if not entity_ids:
         return
     try:
-        with cortex_conn() as conn:
+        with WRITE_LOCK, cortex_conn() as conn:
             conn.executemany(
                 "INSERT INTO entity_access_log "
                 "(entity_id, agent, operation, source) VALUES (?, 'system', 'search', 'search')",
@@ -535,47 +536,101 @@ def create_assertion(
             conn=conn,
         )
 
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO assertions ("
-            "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
-            "  chunk_id, derivation_type, reasoning_summary, observed_at,"
-            "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
-            "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
-            "  prospective_summary, events_json, artifact_uri, artifact_storage,"
-            "  entrenchment_score"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                body.entity_id,
-                body.claim,
-                body.confidence,
-                body.confidence_score,
-                body.evidence,
-                json_encode(body.evidence_uris),
-                body.seeded_by,
-                body.chunk_id,
-                body.derivation_type or "inference",
-                body.reasoning_summary,
-                body.observed_at,
-                body.valid_from,
-                body.valid_until,
-                body.is_atomic,
-                body.is_decontextualized,
-                claim_hash,
-                body.resolution_status,
-                body.fulfillment_assertion_id,
-                validation.quality_score,
-                review_status,
-                body.prospective_summary,
-                body.events_json,
-                body.artifact_uri,
-                body.artifact_storage,
-                entrenchment,
-            ),
-        )
-        conn.commit()
+        near_dup_warning: NearDuplicateWarning | None = None
 
-        was_new = cur.rowcount > 0
-        new_id = cur.lastrowid
+        with WRITE_LOCK:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO assertions ("
+                "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
+                "  chunk_id, derivation_type, reasoning_summary, observed_at,"
+                "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
+                "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
+                "  prospective_summary, events_json, artifact_uri, artifact_storage,"
+                "  entrenchment_score"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    body.entity_id,
+                    body.claim,
+                    body.confidence,
+                    body.confidence_score,
+                    body.evidence,
+                    json_encode(body.evidence_uris),
+                    body.seeded_by,
+                    body.chunk_id,
+                    body.derivation_type or "inference",
+                    body.reasoning_summary,
+                    body.observed_at,
+                    body.valid_from,
+                    body.valid_until,
+                    body.is_atomic,
+                    body.is_decontextualized,
+                    claim_hash,
+                    body.resolution_status,
+                    body.fulfillment_assertion_id,
+                    validation.quality_score,
+                    review_status,
+                    body.prospective_summary,
+                    body.events_json,
+                    body.artifact_uri,
+                    body.artifact_storage,
+                    entrenchment,
+                ),
+            )
+
+            was_new = cur.rowcount > 0
+            new_id = cur.lastrowid
+
+            if was_new:
+                if body.force and body.supersedes_id:
+                    import datetime as dt
+
+                    now_str = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    conn.execute(
+                        "UPDATE assertions SET superseded_by = ?, valid_until = ?, "
+                        "updated_at = ? WHERE id = ? AND superseded_by IS NULL",
+                        (new_id, now_str, now_str, body.supersedes_id),
+                    )
+
+                if contradiction_warnings_out:
+                    c2_notes = "; ".join(
+                        f"Semantic contradiction: #{c.assertion_id} "
+                        f"(sim={c.similarity:.2f})"
+                        for c in contradiction_warnings_out
+                    )
+                    conn.execute(
+                        "UPDATE assertions SET review_notes = ? WHERE id = ?",
+                        (c2_notes, new_id),
+                    )
+
+                match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
+                if match:
+                    record_near_duplicate(conn, new_id, match.existing_id, match.score)
+                    near_dup_warning = NearDuplicateWarning(
+                        existing_id=match.existing_id, score=match.score
+                    )
+
+                contradiction = check_contradictions(conn, body.entity_id, body.claim)
+                if contradiction.flagged:
+                    conn.execute(
+                        "UPDATE assertions SET review_status = ?, "
+                        "review_notes = CASE WHEN review_notes IS NOT NULL "
+                        "THEN review_notes || '; ' || ? ELSE ? END "
+                        "WHERE id = ?",
+                        (
+                            "flagged",
+                            contradiction.review_notes,
+                            contradiction.review_notes,
+                            new_id,
+                        ),
+                    )
+                    logger.info(
+                        "Assertion %d flagged: contradiction with %s via edge #%s",
+                        new_id,
+                        contradiction.contradicting_entity,
+                        contradiction.edge_id,
+                    )
+
+            conn.commit()
 
         if was_new:
             rows = query(
@@ -590,67 +645,6 @@ def create_assertion(
                 "WHERE entity_id = ? AND claim_hash = ? AND superseded_by IS NULL",
                 (body.entity_id, claim_hash),
             )
-
-        near_dup_warning: NearDuplicateWarning | None = None
-        if was_new:
-            # Force+supersedes: mark old assertion superseded
-            if body.force and body.supersedes_id:
-                import datetime as dt
-
-                now_str = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-                conn.execute(
-                    "UPDATE assertions SET superseded_by = ?, valid_until = ?, "
-                    "updated_at = ? WHERE id = ? AND superseded_by IS NULL",
-                    (new_id, now_str, now_str, body.supersedes_id),
-                )
-                conn.commit()
-
-            # C2 flagging: persist review notes for believed contradictions
-            if contradiction_warnings_out:
-                c2_notes = "; ".join(
-                    f"Semantic contradiction: #{c.assertion_id} "
-                    f"(sim={c.similarity:.2f})"
-                    for c in contradiction_warnings_out
-                )
-                conn.execute(
-                    "UPDATE assertions SET review_notes = ? WHERE id = ?",
-                    (c2_notes, new_id),
-                )
-                conn.commit()
-
-            match = check_near_duplicate(conn, body.entity_id, body.claim, new_id)
-            if match:
-                record_near_duplicate(conn, new_id, match.existing_id, match.score)
-                near_dup_warning = NearDuplicateWarning(
-                    existing_id=match.existing_id, score=match.score
-                )
-
-            contradiction = check_contradictions(conn, body.entity_id, body.claim)
-            if contradiction.flagged:
-                conn.execute(
-                    "UPDATE assertions SET review_status = ?, "
-                    "review_notes = CASE WHEN review_notes IS NOT NULL "
-                    "THEN review_notes || '; ' || ? ELSE ? END "
-                    "WHERE id = ?",
-                    (
-                        "flagged",
-                        contradiction.review_notes,
-                        contradiction.review_notes,
-                        new_id,
-                    ),
-                )
-                conn.commit()
-                rows = query(
-                    conn,
-                    f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
-                    (new_id,),
-                )
-                logger.info(
-                    "Assertion %d flagged: contradiction with %s via edge #%s",
-                    new_id,
-                    contradiction.contradicting_entity,
-                    contradiction.edge_id,
-                )
     finally:
         conn.close()
 
@@ -675,7 +669,9 @@ def create_assertion(
             item.id,
         )
     else:
-        reindex_assertion_fts(item.id)
+        threading.Thread(
+            target=reindex_assertion_fts, args=(item.id,), daemon=True
+        ).start()
         enrich_background(item.id, body.claim, body.entity_id, body.confidence)
         _embed_assertion_background(
             item.id,
@@ -771,10 +767,11 @@ def update_assertion(assertion_id: int, body: AssertionUpdate) -> AssertionItem:
         params.append(now)
         params.append(assertion_id)
 
-        conn.execute(
-            f"UPDATE assertions SET {', '.join(sets)} WHERE id = ?", tuple(params)
-        )
-        conn.commit()
+        with WRITE_LOCK:
+            conn.execute(
+                f"UPDATE assertions SET {', '.join(sets)} WHERE id = ?", tuple(params)
+            )
+            conn.commit()
 
         rows = query(
             conn,
@@ -848,46 +845,47 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             conn=conn,
         )
 
-        cur = conn.execute(
-            "INSERT INTO assertions ("
-            "  entity_id, claim, confidence, evidence, evidence_uris,"
-            "  derivation_type, observed_at, valid_from, entrenchment_score"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                body.entity_id,
-                body.claim,
-                body.confidence,
-                body.evidence,
-                json_encode(body.evidence_uris),
-                body.derivation_type or "inference",
-                now,
-                body.valid_from,
-                entrenchment,
-            ),
-        )
-        new_id = cur.lastrowid
+        with WRITE_LOCK:
+            cur = conn.execute(
+                "INSERT INTO assertions ("
+                "  entity_id, claim, confidence, evidence, evidence_uris,"
+                "  derivation_type, observed_at, valid_from, entrenchment_score"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    body.entity_id,
+                    body.claim,
+                    body.confidence,
+                    body.evidence,
+                    json_encode(body.evidence_uris),
+                    body.derivation_type or "inference",
+                    now,
+                    body.valid_from,
+                    entrenchment,
+                ),
+            )
+            new_id = cur.lastrowid
 
-        conn.execute(
-            "UPDATE assertions SET valid_until = ?, superseded_by = ?, updated_at = ? "
-            "WHERE id = ?",
-            (now, new_id, now, body.old_assertion_id),
-        )
-        conn.execute(
-            "INSERT INTO session_edges ("
-            "  session_id, agent, from_node, to_node, edge_type, strength, edge_source, context"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                body.session_id,
-                body.agent,
-                f"assertion:{new_id}",
-                f"assertion:{body.old_assertion_id}",
-                "supersedes",
-                1.0,
-                "derived",
-                "auto-created by supersede tool",
-            ),
-        )
-        conn.commit()
+            conn.execute(
+                "UPDATE assertions SET valid_until = ?, superseded_by = ?, updated_at = ? "
+                "WHERE id = ?",
+                (now, new_id, now, body.old_assertion_id),
+            )
+            conn.execute(
+                "INSERT INTO session_edges ("
+                "  session_id, agent, from_node, to_node, edge_type, strength, edge_source, context"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    body.session_id,
+                    body.agent,
+                    f"assertion:{new_id}",
+                    f"assertion:{body.old_assertion_id}",
+                    "supersedes",
+                    1.0,
+                    "derived",
+                    "auto-created by supersede tool",
+                ),
+            )
+            conn.commit()
 
         enrich_old_assertion_events(conn, body.old_assertion_id)
 
@@ -908,7 +906,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             detail="Supersession committed but could not read back results",
         )
 
-    reindex_assertion_fts(new_id)
+    threading.Thread(
+        target=reindex_assertion_fts, args=(new_id,), daemon=True
+    ).start()
     enrich_background(new_id, body.claim, body.entity_id, body.confidence)
 
     vector_store.delete_assertion_embedding(body.old_assertion_id)

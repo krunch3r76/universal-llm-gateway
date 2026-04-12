@@ -77,6 +77,73 @@ async def _wait_for_cf_resolution(page: object, timeout_ms: int) -> bool:
         return False
 
 
+async def download_with_browser(
+    url: str,
+    *,
+    save_to: str,
+    cdp_url: str,
+    timeout_ms: int = 60_000,
+) -> dict[str, object]:
+    """Download a file via the authenticated CDP-attached Chrome session.
+
+    Navigates to *url* using the live browser (with its existing cookies/session),
+    captures the download event triggered by Scribd-style signed-URL redirects,
+    and writes the bytes to *save_to* on the local filesystem.
+
+    Works for any site where the user is already authenticated in the attached
+    Chrome — Scribd, court PACER portals, etc.
+
+    Returns ``{"saved_to": path, "size": bytes, "url": final_url}``.
+    """
+    import pathlib
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "playwright is not installed — run: pip install playwright && playwright install chromium"
+        ) from exc
+
+    save_path = pathlib.Path(save_to)
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp(cdp_url)
+        try:
+            ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+
+            # Allow downloads so Playwright captures them instead of blocking.
+            await ctx.grant_permissions([])
+            page = await ctx.new_page()
+
+            try:
+                async with page.expect_download(timeout=timeout_ms) as dl_info:
+                    # navigate — Scribd redirect chain ends in a PDF download trigger
+                    await page.goto(url, timeout=timeout_ms, wait_until="commit")
+
+                download = await dl_info.value
+                await download.save_as(str(save_path))
+                size = save_path.stat().st_size
+                logger.info("Downloaded %s → %s (%d bytes)", url, save_path, size)
+                return {"saved_to": str(save_path), "size": size, "url": download.url}
+
+            except Exception:
+                # Fallback: some sites serve PDFs as inline navigation (no download event).
+                # Capture the response bytes directly.
+                logger.info("No download event for %s — capturing response bytes", url)
+                resp = await page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+                if resp is None:
+                    raise RuntimeError(f"No response navigating to {url}")
+                body = await resp.body()
+                save_path.write_bytes(body)
+                size = len(body)
+                logger.info("Captured response %s → %s (%d bytes)", url, save_path, size)
+                return {"saved_to": str(save_path), "size": size, "url": page.url}
+        finally:
+            if not page.is_closed():
+                await page.close()
+
+
 async def fetch_with_browser(
     url: str,
     *,

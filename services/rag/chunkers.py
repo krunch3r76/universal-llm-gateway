@@ -30,6 +30,8 @@ Entry point: ``chunk_file(path, target_chars=None)`` dispatches by file extensio
 
 import logging
 import re
+import subprocess
+import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from hashlib import sha256
@@ -672,8 +674,14 @@ def normalize_html_to_markdown(path: str, html: str) -> str:
 
     root = soup.select_one("main") or soup.select_one("article") or soup.body or soup
 
+    # Guard: never remove a boilerplate candidate that holds the majority of the
+    # root text — substring class selectors like [class*='sidebar'] can false-positive
+    # on content wrappers (e.g. class="parade-loop-sidebar" containing all content).
+    root_text_len = len(root.get_text())
     for node in root.select(_BOILERPLATE_SELECTORS):
         if node is root:
+            continue
+        if root_text_len > 0 and len(node.get_text()) > root_text_len * 0.5:
             continue
         node.decompose()
     markdown = md(
@@ -699,9 +707,23 @@ def chunk_html(
     target_chars: int = _CHUNK_CHARS_TARGET,
     pad_chars: int = _CHUNK_CHARS_PAD,
 ) -> list[Chunk]:
-    """Convert HTML to markdown, then chunk as markdown."""
+    """Convert HTML to markdown, then chunk as markdown.
+
+    JS-rendered shells (e.g. Scribd, SPAs) produce empty markdown after
+    stripping scripts and boilerplate. These are skipped with a warning
+    rather than propagating ValueError, so the indexer can continue past
+    un-extractable files.
+    """
     raw_html = Path(path).read_text(errors="replace")
-    markdown = normalize_html_to_markdown(path, raw_html)
+    try:
+        markdown = normalize_html_to_markdown(path, raw_html)
+    except ValueError:
+        _LOG.warning(
+            "Skipping %s — HTML normalization produced no extractable text"
+            " (likely a JS-rendered shell with no static document content)",
+            path,
+        )
+        return []
     chunks = chunk_markdown(
         path, markdown, target_chars=target_chars, pad_chars=pad_chars
     )
@@ -921,6 +943,102 @@ def chunk_code(
     return _annotate_chunk_indices(chunks)
 
 
+_DOCX_HEADING_PREFIX: dict[str, str] = {
+    "Title": "# ",
+    "Subtitle": "## ",
+    "Heading 1": "# ",
+    "Heading 2": "## ",
+    "Heading 3": "### ",
+    "Heading 4": "#### ",
+    "Heading 5": "##### ",
+}
+
+
+def chunk_docx(
+    path: str,
+    *,
+    target_chars: int = _CHUNK_CHARS_TARGET,
+    pad_chars: int = _CHUNK_CHARS_PAD,
+) -> list[Chunk]:
+    """Extract text from a .docx file and chunk as markdown.
+
+    Maps python-docx paragraph styles to ATX heading prefixes so document
+    structure is preserved through the standard markdown chunking pipeline.
+    """
+    try:
+        import docx as _docx
+    except ImportError as exc:
+        raise RuntimeError(
+            "python-docx is required for .docx ingestion: pip install python-docx"
+        ) from exc
+
+    doc = _docx.Document(path)
+    parts: list[str] = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        prefix = _DOCX_HEADING_PREFIX.get(para.style.name, "")
+        parts.append(f"{prefix}{text}")
+
+    markdown = "\n\n".join(parts)
+    if not markdown.strip():
+        raise ValueError(f"No extractable text in {path}")
+
+    chunks = chunk_markdown(path, markdown, target_chars=target_chars, pad_chars=pad_chars)
+    for chunk in chunks:
+        chunk.metadata["source_format"] = "docx"
+        chunk.metadata["normalized_format"] = "markdown"
+    return chunks
+
+
+def chunk_doc(
+    path: str,
+    *,
+    target_chars: int = _CHUNK_CHARS_TARGET,
+    pad_chars: int = _CHUNK_CHARS_PAD,
+) -> list[Chunk]:
+    """Convert a legacy .doc file to plain text via LibreOffice headless, then chunk.
+
+    Requires ``soffice`` on PATH (LibreOffice). Falls back gracefully with a
+    clear error if unavailable so the index run fails fast rather than silently.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            result = subprocess.run(
+                ["soffice", "--headless", "--convert-to", "txt", "--outdir", tmpdir, path],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                "LibreOffice (soffice) is required for .doc ingestion but was not found on PATH"
+            ) from exc
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"LibreOffice conversion failed for {path}: {result.stderr.strip()}"
+            )
+
+        txt_path = Path(tmpdir) / (Path(path).stem + ".txt")
+        if not txt_path.exists():
+            raise RuntimeError(
+                f"LibreOffice did not produce output for {path}; stderr: {result.stderr.strip()}"
+            )
+
+        text = txt_path.read_text(errors="replace")
+
+    if not text.strip():
+        raise ValueError(f"No extractable text in {path}")
+
+    chunks = chunk_markdown(path, text, target_chars=target_chars, pad_chars=pad_chars)
+    for chunk in chunks:
+        chunk.metadata["source_format"] = "doc"
+        chunk.metadata["normalized_format"] = "text"
+    return chunks
+
+
 def chunk_file(
     path: Path,
     *,
@@ -946,6 +1064,12 @@ def chunk_file(
 
     if suffix in _HTML_EXTENSIONS:
         return chunk_html(str(path), **kwargs)
+
+    if suffix == ".docx":
+        return chunk_docx(str(path), **kwargs)
+
+    if suffix == ".doc":
+        return chunk_doc(str(path), **kwargs)
 
     if suffix in _CODE_EXTENSIONS:
         # Code chunkers use max_chunk_chars; map target_chars to the same budget.

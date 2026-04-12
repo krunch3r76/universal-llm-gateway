@@ -19,7 +19,7 @@ import trafilatura
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .browser import BrowserResult, fetch_with_browser, is_cf_challenge
+from .browser import BrowserResult, download_with_browser, fetch_with_browser, is_cf_challenge
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ class FetchRequest(BaseModel):
     screenshot: bool = False
     screenshot_format: str = "jpeg"
     screenshot_quality: int = 80
+    save_to: str | None = None  # local path on the web-fetcher host; triggers binary download
 
 
 def create_app(*, headless: bool | None = None) -> FastAPI:
@@ -83,7 +84,22 @@ async def _do_fetch(
     headless: bool | None = None,
     cdp_url: str | None = None,
 ) -> dict[str, Any]:
-    """Orchestrate fetch: httpx first (fast), browser fallback (CF bypass)."""
+    """Orchestrate fetch: httpx first (fast), browser fallback (CF bypass).
+
+    When *req.save_to* is set, skip text extraction entirely and save the
+    response bytes to that local path. Requires browser mode (authenticated
+    session via CDP) to handle redirects and Scribd-style download flows.
+    """
+    if req.save_to is not None:
+        if not cdp_url:
+            return {"error": "save_to requires browser mode (BROWSER_CDP_URL not configured)", "url": req.url}
+        try:
+            result = await download_with_browser(req.url, save_to=req.save_to, cdp_url=cdp_url)
+            return result
+        except Exception as exc:
+            logger.error("Download failed for %s: %s", req.url, exc)
+            return {"error": f"Download failed: {exc}", "url": req.url}
+
     if req.mode in ("auto", "http"):
         httpx_result = await _try_httpx(req.url)
         if httpx_result is not None and not is_cf_challenge(httpx_result["html"]):

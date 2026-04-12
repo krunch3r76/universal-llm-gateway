@@ -65,7 +65,7 @@ def _call_anthropic(
         max_tokens=max_tokens,
         system=system,
     )
-    url, headers, json_body = adapter.build_request(req, None)
+    url, headers, json_body = adapter.build_request(req)
 
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:

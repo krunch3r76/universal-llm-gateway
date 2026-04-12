@@ -241,6 +241,7 @@ def register_web_tools(mcp: FastMCP) -> None:
         screenshot_format: str = "jpeg",
         screenshot_quality: int = 80,
         screenshot_raw: bool = False,
+        save_to: str | None = None,
     ) -> list[TextContent | ImageContent] | dict[str, Any]:
         """Fetch a URL via a browser proxy with Cloudflare bypass.
 
@@ -276,6 +277,15 @@ def register_web_tools(mcp: FastMCP) -> None:
           for lossless captures. Adjust screenshot_quality (1-100) to trade
           size for fidelity (50 = ~80KB, 95 = ~500KB).
 
+        Authenticated download mode (save_to):
+          When save_to is set, the browser navigates to url using the live
+          authenticated Chrome session (CDP) and saves the response bytes to
+          that absolute path on the web-fetcher host. Returns
+          {saved_to, size, url} instead of text content. Use for downloading
+          PDFs, documents, or other binary files from sites where the user is
+          already logged in (Scribd, PACER, etc.). Requires browser mode —
+          save_to is ignored without BROWSER_CDP_URL configured.
+
         Args:
             url: The URL to fetch (http or https).
             selector: Optional CSS selector — extract only matching elements.
@@ -287,10 +297,13 @@ def register_web_tools(mcp: FastMCP) -> None:
             screenshot_quality: JPEG quality 1-100 (default 80). Ignored for PNG.
             screenshot_raw: If True, embed screenshot as base64 in JSON dict
                 instead of returning ImageContent (for non-Claude MCP clients).
+            save_to: Absolute path on the web-fetcher host to save the downloaded
+                file. When set, skips text extraction and returns download metadata.
 
         Returns:
-            Without screenshot: {url, title, content, total_chars, truncated,
-                method, cf_bypassed}
+            Without screenshot or save_to: {url, title, content, total_chars,
+                truncated, method, cf_bypassed}
+            save_to set: {saved_to, size, url}
             screenshot=True, screenshot_raw=False (default): [TextContent, ImageContent]
                 — Claude.ai renders the image directly in vision context.
             screenshot=True, screenshot_raw=True: dict with added "screenshot"
@@ -307,8 +320,11 @@ def register_web_tools(mcp: FastMCP) -> None:
                 "url": url,
             }
 
+        # Downloads may take longer than a normal page fetch.
+        client_timeout = 120.0 if save_to else 45.0
+
         try:
-            with httpx.Client(timeout=45.0) as client:
+            with httpx.Client(timeout=client_timeout) as client:
                 resp = client.post(
                     f"{fetcher_url.rstrip('/')}/fetch",
                     json={
@@ -320,8 +336,7 @@ def register_web_tools(mcp: FastMCP) -> None:
                         "screenshot": screenshot,
                         "screenshot_format": screenshot_format,
                         "screenshot_quality": screenshot_quality,
-                        # Always request raw bytes from fetcher; we decide the
-                        # return shape (ImageContent vs dict) here in the tool.
+                        "save_to": save_to,
                     },
                 )
                 resp.raise_for_status()
@@ -336,6 +351,12 @@ def register_web_tools(mcp: FastMCP) -> None:
             return {"error": f"Fetcher unreachable: {exc}", "url": url}
 
         data = resp.json()
+
+        # save_to mode — return download metadata directly, no image processing.
+        if save_to is not None:
+            logger.info("browse download: %s → %s (%s bytes)", url, data.get("saved_to"), data.get("size"))
+            return data
+
         logger.info(
             "browse: %s → %s chars via %s (cf_bypassed=%s, screenshot=%s)",
             url,

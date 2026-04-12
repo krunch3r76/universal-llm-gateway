@@ -177,10 +177,10 @@ def _build_indexed_text(
 
 def reindex_assertion_fts(assertion_id: int) -> None:
     """Rebuild the FTS5 row for a single assertion from its current DB state."""
-    from .db import cortex_conn
+    from .db import WRITE_LOCK, cortex_conn
 
     try:
-        with cortex_conn() as conn:
+        with WRITE_LOCK, cortex_conn() as conn:
             row = conn.execute(
                 "SELECT claim, prospective_summary, events_json, entity_id "
                 "FROM assertions WHERE id = ?",
@@ -209,10 +209,10 @@ def reindex_assertion_fts(assertion_id: int) -> None:
 
 def _update_assertion_field(assertion_id: int, field: str, value: str) -> None:
     """Update a single enrichment field on an assertion row."""
-    from .db import cortex_conn
+    from .db import WRITE_LOCK, cortex_conn
 
     try:
-        with cortex_conn() as conn:
+        with WRITE_LOCK, cortex_conn() as conn:
             conn.execute(
                 f"UPDATE assertions SET {field} = ? WHERE id = ?",
                 (value, assertion_id),

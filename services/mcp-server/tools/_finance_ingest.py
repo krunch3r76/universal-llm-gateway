@@ -29,6 +29,19 @@ logger = logging.getLogger(__name__)
 
 _FILES_ROOT = Path("/data/files")
 
+_URI_NORMALIZATIONS: dict[str, str] = {
+    "dropbox/cortex_finance/": "documents/finance/",
+    "dropbox/cortex_legal/": "documents/legal/",
+}
+
+
+def _normalize_uri(path: str) -> str:
+    """Map legacy dropbox paths to canonical documents/ URIs."""
+    for old, new in _URI_NORMALIZATIONS.items():
+        if path.startswith(old):
+            return new + path[len(old) :]
+    return path
+
 
 def _content_hash(abs_path: Path) -> str | None:
     """SHA-256 of a local file. Returns None if the file doesn't exist."""
@@ -242,6 +255,7 @@ def ingest_statement(
 
     abs_pdf = _FILES_ROOT / pdf_path.lstrip("/")
     chash = _content_hash(abs_pdf)
+    uri = _normalize_uri(pdf_path)
 
     existing_stmt = _entity_exists(statement_eid)
     if existing_stmt is not None:
@@ -296,7 +310,7 @@ def ingest_statement(
                 "account",
                 _display_name(issuer_name, "mortgage", acct_suffix),
                 attributes=acct_attrs,
-                source_uri=pdf_path,
+                source_uri=uri,
             )
     else:
         _create_or_update_entity(
@@ -304,7 +318,7 @@ def ingest_statement(
             entity_type,
             _display_name(issuer_name, statement_type, acct_suffix),
             attributes=acct_attrs,
-            source_uri=pdf_path,
+            source_uri=uri,
         )
     _create_or_update_entity(
         org_eid,
@@ -340,7 +354,7 @@ def ingest_statement(
         "type": "statement",
         "name": f"{issuer_name} {statement_type.replace('_', ' ')} statement {stmt_date}",
         "attributes": parsed,
-        "source_uri": pdf_path,
+        "source_uri": uri,
     }
     if chash:
         stmt_body["content_hash"] = chash
@@ -355,7 +369,7 @@ def ingest_statement(
         _cx("POST", "/entities", stmt_body)
 
     evidence = f"Extracted from {Path(pdf_path).name} via finance pipeline Phase 2"
-    evidence_uris = [pdf_path]
+    evidence_uris = [uri]
     assertion_defs = build_assertions(parsed, statement_type)
     assertions_created = 0
     for adef in assertion_defs:

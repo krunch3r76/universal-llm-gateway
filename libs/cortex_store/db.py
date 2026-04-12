@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,13 @@ _TODOS_DB = Path(
     os.environ.get("TODOS_DB_PATH", str(Path.home() / ".cortex" / "todos.db"))
 )
 _MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+
+
+# SQLite WAL allows concurrent readers but serializes writers. Without
+# application-level coordination, thread-pool workers compete for the write
+# lock through SQLite's polling busy-handler, causing unpredictable timeouts
+# under burst load. This lock serializes writers with proper FIFO ordering.
+WRITE_LOCK = threading.Lock()
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:

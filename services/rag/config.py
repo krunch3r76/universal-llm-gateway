@@ -94,6 +94,8 @@ _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".html",
     ".htm",
     ".pdf",
+    ".docx",
+    ".doc",
 )
 # Public alias for cross-module baseline defaults.
 BASELINE_EXTENSIONS: tuple[str, ...] = _BASELINE_EXTENSIONS
