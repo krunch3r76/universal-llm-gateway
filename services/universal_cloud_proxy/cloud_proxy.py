@@ -26,6 +26,7 @@ import atexit
 import json
 import logging
 import os
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -60,6 +61,7 @@ from .events import (
 )
 from .forwarder import ProviderForwarder
 from .local_catalog import LocalCatalogCache
+from .mcp_executor import McpToolExecutor
 from .native_routes import router as native_router
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,14 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
             )
         )
 
+    mcp_executor: McpToolExecutor | None = None
+    if config.mcp_server_url:
+        mcp_executor = McpToolExecutor(
+            mcp_url=config.mcp_server_url,
+            auth_token=config.mcp_auth_token,
+        )
+        await mcp_executor.startup()
+
     missing_assets = [
         asset
         for asset in _REQUIRED_BROWSER_ASSETS
@@ -237,6 +247,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     _application.state.broadcaster = broadcaster
     _application.state.browser_cache = browser_cache
     _application.state.local_cache = local_cache
+    _application.state.mcp_executor = mcp_executor
     _application.state.browser_ui_ready = browser_ui_ready
     _application.state.browser_ui_error = browser_ui_error
 
@@ -245,6 +256,8 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     _shutdown_clean = True
     await event_bus.publish_async(CloudProxyShutdown(reason="clean"))
     await catalog.shutdown()
+    if mcp_executor:
+        await mcp_executor.shutdown()
     await shared_client.aclose()
     await broadcaster.stop_debug_server()
     logger.info("Cloud proxy shut down")
@@ -328,6 +341,45 @@ async def _read_json_object_body(
         adapter_type="unknown",
     )
     raise HTTPException(status_code=400, detail=error_msg)
+
+
+async def _json_completion_to_sse(
+    completion: dict[str, Any],
+) -> AsyncIterator[bytes]:
+    """Wrap a non-streaming chat completion JSON as SSE chunks.
+
+    Used when the proxy-side tool loop produces a final JSON response but the
+    original client request had ``stream: true``.
+    """
+    choices = completion.get("choices", [])
+    msg = choices[0].get("message", {}) if choices else {}
+    chunk_id = completion.get("id", f"chatcmpl-{int(time.time() * 1000)}")
+    created = completion.get("created", int(time.time()))
+    model = completion.get("model", "")
+
+    delta_role: dict[str, Any] = {"role": msg.get("role", "assistant")}
+    chunk = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta_role, "finish_reason": None}],
+    }
+    yield f"data: {json.dumps(chunk)}\n\n".encode()
+
+    content = msg.get("content")
+    if content:
+        chunk["choices"] = [
+            {"index": 0, "delta": {"content": content}, "finish_reason": None}
+        ]
+        yield f"data: {json.dumps(chunk)}\n\n".encode()
+
+    finish_reason = choices[0].get("finish_reason", "stop") if choices else "stop"
+    chunk["choices"] = [{"index": 0, "delta": {}, "finish_reason": finish_reason}]
+    if "usage" in completion:
+        chunk["usage"] = completion["usage"]
+    yield f"data: {json.dumps(chunk)}\n\n".encode()
+    yield b"data: [DONE]\n\n"
 
 
 async def _relay_stream_safe(
@@ -462,6 +514,10 @@ def _get_event_bus() -> EventBus | None:
     return getattr(app.state, "event_bus", None)
 
 
+def _get_mcp_executor() -> McpToolExecutor | None:
+    return getattr(app.state, "mcp_executor", None)
+
+
 def _get_ui_status() -> tuple[bool, str]:
     return (
         bool(getattr(app.state, "browser_ui_ready", False)),
@@ -533,21 +589,8 @@ async def chat_completions(request: Request) -> Response:
 
     mcp_requested = model_id.endswith("-mcp")
     if mcp_requested:
-        # Strip suffix before routing — the upstream model has no -mcp variant.
-        # MCP_TOOL_DEFINITIONS are injected so the model can call Cortex / RAG
-        # tools, but the client MUST implement the tool-call execution loop:
-        #   1. Receive finish_reason="tool_calls" in the SSE stream.
-        #   2. Execute each tool_call against the MCP/Cortex/RAG backend.
-        #   3. Append role="tool" result messages.
-        #   4. Re-submit for the final completion.
-        # Chat UIs (OpenWebUI, plain curl) do not run this loop — they will
-        # stall on tool_calls responses.  Use the bare model ID for chat.
         model_id = model_id[:-4]
         body["model"] = model_id
-        from .mcp_tool_defs import MCP_TOOL_DEFINITIONS
-
-        existing = body.get("tools") or []
-        body["tools"] = existing + MCP_TOOL_DEFINITIONS
 
     provider_catalog = catalog.resolve_provider(model_id)
     if provider_catalog is None:
@@ -582,6 +625,68 @@ async def chat_completions(request: Request) -> Response:
             adapter_type="unknown",
         )
         raise HTTPException(status_code=500, detail=error_text) from exc
+
+    # xAI multi-agent models only work on the Responses API — route them
+    # through the bridge regardless of -mcp suffix.
+    _xai_multi_agent = (
+        provider_catalog.provider == "xai" and "multi-agent" in model_id.lower()
+    )
+    # xAI grok-4+: Responses API bridge (provider connects to MCP server,
+    # server-side tool loop).  Only grok-4 family supports type:"mcp" tools.
+    _xai_responses_api = False
+    if provider_catalog.provider == "xai" and (
+        _xai_multi_agent or (mcp_requested and "grok-4" in model_id.lower())
+    ):
+        body["_mcp_requested"] = True
+        _xai_responses_api = True
+
+    # Resolve cortex_boot directives in system prompt before any MCP path.
+    # The proxy-side loop does this inside run_tool_loop; the Responses API
+    # bridge bypasses that, so we resolve here for the bridge path.
+    if _xai_responses_api:
+        _boot_exec = _get_mcp_executor()
+        if _boot_exec and _boot_exec.available:
+            await _boot_exec._resolve_boot_directive(body.get("messages", []))
+
+    # Proxy-side tool loop: inject MCP tool defs as standard function tools,
+    # execute tool_calls locally via MCP server, re-submit.  Works with any
+    # model that supports function calling.  Avoids requiring the provider to
+    # connect back to our MCP server (firewall, connectivity issues).
+    _proxy_loop_providers = {"anthropic", "google", "openrouter", "openai"}
+    _use_proxy_loop = mcp_requested and (
+        provider_catalog.provider in _proxy_loop_providers
+        or (provider_catalog.provider == "xai" and not _xai_responses_api)
+    )
+    mcp_executor = _get_mcp_executor()
+    if _use_proxy_loop:
+        if not mcp_executor or not mcp_executor.available:
+            raise HTTPException(
+                status_code=503,
+                detail="MCP tool executor not available — proxy tool loop unavailable",
+            )
+
+        async def _proxy_forward(b: dict[str, Any]) -> dict[str, Any]:
+            return await forwarder.forward_chat_request(
+                provider=provider_catalog.provider, request_body=b
+            )
+
+        response_json = await mcp_executor.run_tool_loop(_proxy_forward, body)
+        if event_bus:
+            await event_bus.publish_async(
+                CloudProxyRequestForwarded(
+                    provider=provider_catalog.provider,
+                    model=model_id,
+                    streaming=False,
+                    adapter_type=adapter,
+                    mcp_injected=True,
+                )
+            )
+        if streaming:
+            return StreamingResponse(
+                _json_completion_to_sse(response_json),
+                media_type="text/event-stream",
+            )
+        return JSONResponse(content=response_json)
 
     if streaming:
         chunks = forwarder.forward_request_stream(

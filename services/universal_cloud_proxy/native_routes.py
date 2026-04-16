@@ -26,6 +26,66 @@ from .native_boundary import (
 
 router = APIRouter(prefix="/api/v1/providers", tags=["provider-native"])
 
+_MCP_SERVER_NAME = "vortex"
+
+
+def _inject_native_mcp(provider_key: str, body: dict) -> None:
+    """Inject provider-appropriate MCP entry into a native request body.
+
+    Only applies when -mcp was detected. Each provider has its own format:
+    - Anthropic: ``mcp_servers`` list in body
+    - OpenAI/xAI: ``type: "mcp"`` tool in ``tools`` array
+    """
+    from .cloud_proxy import _get_mcp_executor
+
+    executor = _get_mcp_executor()
+    if executor is None:
+        return
+
+    config = _get_mcp_config_for_provider(provider_key)
+    if not config:
+        return
+
+    if provider_key == "anthropic":
+        mcp_entry: dict = {
+            "type": "url",
+            "name": _MCP_SERVER_NAME,
+            "url": config["url"],
+        }
+        if config.get("token"):
+            mcp_entry["authorization_token"] = config["token"]
+        existing = body.get("mcp_servers") or []
+        body["mcp_servers"] = existing + [mcp_entry]
+    elif provider_key in {"openai", "xai"}:
+        tool_entry: dict = {
+            "type": "mcp",
+            "server_url": config["url"],
+            "server_label": _MCP_SERVER_NAME,
+        }
+        if config.get("token"):
+            tool_entry["authorization"] = f"Bearer {config['token']}"
+        if provider_key == "openai":
+            tool_entry["require_approval"] = "never"
+        existing_tools = body.get("tools") or []
+        body["tools"] = existing_tools + [tool_entry]
+
+
+def _get_mcp_config_for_provider(provider_key: str) -> dict | None:
+    """Resolve MCP server URL and auth token for a provider."""
+    from .cloud_proxy import app
+
+    config = getattr(app.state, "config", None)
+    if config is None:
+        return None
+
+    for p in config.providers:
+        if p.provider == provider_key and p.mcp_server_url:
+            return {"url": p.mcp_server_url, "token": p.mcp_auth_token}
+
+    if config.mcp_server_url:
+        return {"url": config.mcp_server_url, "token": config.mcp_auth_token}
+    return None
+
 
 async def _publish_failed(
     event_bus: EventBus | None,
@@ -73,9 +133,11 @@ async def _forward_native(
         )
 
     # Strip -mcp suffix — upstream providers don't accept this Stargate annotation.
-    if raw_model.endswith("-mcp"):
+    mcp_requested = raw_model.endswith("-mcp")
+    if mcp_requested:
         raw_model = raw_model[:-4]
         body = {**body, "model": raw_model}
+        _inject_native_mcp(provider_key, body)
 
     try:
         _ = model_id_from_native(provider_key, raw_model)

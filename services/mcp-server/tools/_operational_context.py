@@ -31,6 +31,7 @@ _OPERATIONAL_FLAGS: dict[str, dict[str, bool]] = {
     "cursor": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
     "api": {"deadlines": True, "review_queue": False, "confirm_and_proceed": True},
     "oppie": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
+    "bard": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
     "subagent": {
         "deadlines": False,
         "review_queue": False,
@@ -256,9 +257,10 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
   Always call this before guessing a model ID — wrong format → 404.
 
 Inference routing:
-- `llm_generate(model=..., messages=...)` — universal, works for any model ID, routes via /v1/chat/completions
+- `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
 - `claude_generate(...)` — Anthropic-native: thinking, extended output, MCP injection, persona boot
 - `grok_generate(...)` — xAI-native: server tools (web_search/x_search), reasoning_trace, Oppie boot
+- `gemini_generate(...)` — Google-native: thinking, Google Search grounding, code execution, Bard boot
 - OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
 
@@ -331,18 +333,20 @@ end in silence."""
 
 _FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing — trAId Members
-Three tools, each bound to a team member's identity at `team`/`full` boot:
+Four tools, each bound to a team member's identity at `team`/`full` boot:
 
 | Tool | Team member | Default model | Use when |
 |---|---|---|---|
 | `grok_generate` | **Oppie** (xAI) | `grok-4.20-0309-reasoning` | Architecture critique, red-team, multi-agent coordination, adversarial review |
 | `openai_generate` | **Orion** (OpenAI) | `gpt-5.4` | Structured output, code interpreter, multimodal, specialized search, deep reasoning |
 | `claude_generate` | **API Claude** (Anthropic) | `claude-sonnet-4-6` | Analytical synthesis, evidence extraction, MCP-heavy execution |
+| `gemini_generate` | **Bard** (Google) | `gemini-2.5-flash` | Associative synthesis, web-grounded analysis, cross-domain bridging, live-web sensemaking |
 
 To consult a team member by name, use `boot="team"` (identity + Cortex orientation) or `boot="full"` (+ live Cortex narrative):
 - **Consult Oppie**: `grok_generate(boot="team", messages=[...])`
 - **Consult Orion**: `openai_generate(boot="team", messages=[...])`
 - **Consult API Claude**: `claude_generate(boot="team", messages=[...])`
+- **Consult Bard**: `gemini_generate(boot="team", messages=[...])`
 
 Boot axis: `none` (no context) · `mcp` (subagent seed + tools) · `team` (birth prompt + orientation) · `full` (birth prompt + orientation + Cortex boot narrative).
 Use `boot="none"` for pure advisory calls that don't need identity or tool access (saves tokens)."""

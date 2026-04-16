@@ -123,7 +123,9 @@ class GoogleAdapter:
             "content-type": "application/json",
         }
         contents = _messages_to_contents(req.messages)
-        body: dict[str, Any] = {"contents": contents}
+        # model is included so the cloud-proxy route can extract it for routing/telemetry;
+        # forward_native strips it before the actual upstream call to Google
+        body: dict[str, Any] = {"model": req.model, "contents": contents}
 
         if req.system.strip():
             body["systemInstruction"] = {"parts": [{"text": req.system}]}
@@ -141,9 +143,21 @@ class GoogleAdapter:
             gen_config["seed"] = req.seed
 
         if req.thinking:
-            level = req.thinking.get("level") or req.thinking.get("effort")
-            if level:
-                gen_config["thinkingConfig"] = {"thinkingLevel": level.upper()}
+            level_raw = req.thinking.get("level") or req.thinking.get("effort")
+            if level_raw:
+                level = level_raw.upper()
+                model_lower = req.model.lower()
+                if model_lower.startswith("gemini-3"):
+                    gen_config["thinkingConfig"] = {"thinkingLevel": level}
+                elif model_lower.startswith("gemini-2.5"):
+                    # Gemini 2.5 rejects thinkingLevel; it requires an
+                    # integer thinkingBudget. 1024/8192/24576 lie inside
+                    # every 2.5 variant's valid range (pro 128-32768,
+                    # flash 0-24576, flash-lite 512-24576).
+                    budget_map = {"LOW": 1024, "MEDIUM": 8192, "HIGH": 24576}
+                    budget = budget_map.get(level)
+                    if budget is not None:
+                        gen_config["thinkingConfig"] = {"thinkingBudget": budget}
 
         if req.response_format:
             fmt = req.response_format

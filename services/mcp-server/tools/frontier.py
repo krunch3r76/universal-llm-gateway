@@ -38,6 +38,12 @@ _OPENAI_BOOT_REF_DEFAULTS: dict[str, str] = {
     "mcp": "notes/system/prompts/api-claude-seed-v1.0.md",
 }
 
+_GEMINI_BOOT_REF_DEFAULTS: dict[str, str] = {
+    "mcp": "notes/system/prompts/bard-birth.md",
+    "team": "notes/system/prompts/bard-birth.md",
+    "full": "notes/system/prompts/bard-birth.md",
+}
+
 
 def register_frontier_tools(mcp: FastMCP) -> None:
     """Register grok_generate, claude_generate, openai_generate, and gemini_generate."""
@@ -420,6 +426,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         """
         full_model = model if "/" in model else f"google/{model}"
 
+        if boot_ref is None:
+            boot_ref = _GEMINI_BOOT_REF_DEFAULTS.get(boot)
+
         thinking: dict[str, Any] | None = None
         if thinking_level:
             thinking = {"level": thinking_level}
@@ -439,7 +448,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             system=system,
             boot=boot,
             boot_ref=boot_ref,
-            agent="",
+            agent="bard",
             max_tokens=max_output_tokens,
             temperature=temperature,
             top_p=top_p,

@@ -113,6 +113,8 @@ class CloudProxyConfig:
     socket_path: str | None = None
     providers: list[ProviderConfig] = field(default_factory=list)
     stargate_url: str = DEFAULT_STARGATE_URL
+    mcp_server_url: str | None = None
+    mcp_auth_token: str | None = None
 
 
 def _validate_base_url(provider: str, url: str) -> None:
@@ -371,6 +373,20 @@ def load_config(
 
     provider_env = env if env is not None else _build_provider_env()
 
+    top_mcp_url: str | None = None
+    raw_top_mcp = raw.get("mcp_server_url")
+    if isinstance(raw_top_mcp, str) and raw_top_mcp.strip():
+        top_mcp_url = raw_top_mcp.strip()
+
+    top_mcp_token: str | None = None
+    raw_top_mcp_env = raw.get("mcp_auth_token_env")
+    if isinstance(raw_top_mcp_env, str) and raw_top_mcp_env.strip():
+        top_mcp_token = provider_env.get(raw_top_mcp_env.strip(), "").strip() or None
+    if not top_mcp_token:
+        raw_top_token = raw.get("mcp_auth_token")
+        if isinstance(raw_top_token, str) and raw_top_token.strip():
+            top_mcp_token = raw_top_token.strip()
+
     raw_providers = raw.get("providers", [])
     if not isinstance(raw_providers, list):
         logger.error("providers must be a list")
@@ -384,10 +400,19 @@ def load_config(
         if parsed is not None:
             providers.append(parsed)
 
+    if not top_mcp_url:
+        for p in providers:
+            if p.mcp_server_url:
+                top_mcp_url = p.mcp_server_url
+                top_mcp_token = top_mcp_token or p.mcp_auth_token
+                break
+
     return CloudProxyConfig(
         port=port,
         host=host,
         socket_path=socket_path,
         providers=providers,
         stargate_url=stargate_url,
+        mcp_server_url=top_mcp_url,
+        mcp_auth_token=top_mcp_token,
     )

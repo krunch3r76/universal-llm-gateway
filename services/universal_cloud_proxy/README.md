@@ -38,7 +38,8 @@ Workspace IDs (`anthropic/...`, `xai/...`) stay on `POST /v1/chat/completions`. 
 |----------|--------|---------|
 | `POST /api/v1/providers/anthropic/messages` | POST | Anthropic Messages API passthrough |
 | `POST /api/v1/providers/xai/responses` | POST | xAI Responses API passthrough |
-| `POST /api/v1/providers/openai/responses` | POST | Reserved — returns **501** (not implemented) in phase 1 |
+| `POST /api/v1/providers/openai/responses` | POST | OpenAI Responses API passthrough |
+| `POST /api/v1/providers/google/generateContent` | POST | Google Gemini generateContent passthrough |
 
 ### Catalog
 
@@ -77,7 +78,8 @@ These endpoints are proxied through Stargate on `:9999` so clients don't need di
 - `POST /api/refresh` — force catalog refresh
 - `POST /api/v1/providers/anthropic/messages` — native Anthropic Messages
 - `POST /api/v1/providers/xai/responses` — native xAI Responses
-- `POST /api/v1/providers/openai/responses` — OpenAI-native stub (501)
+- `POST /api/v1/providers/openai/responses` — native OpenAI Responses
+- `POST /api/v1/providers/google/generateContent` — native Gemini generateContent
 
 ## Configuration
 
@@ -111,6 +113,11 @@ providers:
   - provider: xai
     api_key_env: XAI_API_KEY
     base_url: https://api.x.ai/v1
+
+  - provider: google
+    api_key_env: GOOGLE_API_KEY
+    allow_prefixes:
+      - "google/"
 ```
 
 ### Key Options

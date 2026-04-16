@@ -30,7 +30,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         dpi: int = 200,
         model: str = "",
     ) -> dict[str, Any]:
-        """OCR a scanned PDF or image via Claude Vision.
+        """OCR a scanned PDF or image via a frontier vision model (Stargate-routed).
 
         Available via: dispatch(tool="document_ocr", arguments='{"path": "..."}')
 
@@ -47,7 +47,9 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
             prompt: Extraction instruction (default: generic text extraction).
             pages: 1-based page numbers to process (default: all).
             dpi: Render resolution for PDFs (default: 200).
-            model: Model override (default: Claude Sonnet via Anthropic API).
+            model: Model override (default: openai/gpt-5.4). Any Stargate-routable
+                vision model works — e.g. anthropic/claude-sonnet-4,
+                xai/grok-4.20-0309-reasoning.
         """
         t0 = monotonic_now()
         record("mcp.document.ocr.called", path=path)
@@ -104,7 +106,9 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
             directory: Directory path relative to /data/files/.
             prompt: Extraction instruction (default: generic text extraction).
             dpi: Render resolution for PDFs (default: 200).
-            model: Model override (default: Claude Sonnet via Anthropic API).
+            model: Model override (default: openai/gpt-5.4). Any Stargate-routable
+                vision model works — e.g. anthropic/claude-sonnet-4,
+                xai/grok-4.20-0309-reasoning.
         """
         t0 = monotonic_now()
         record("mcp.document.ocr.directory.called", directory=directory)

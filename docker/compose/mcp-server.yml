@@ -69,6 +69,12 @@ services:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - XAI_API_KEY=${XAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+      # ClaudeBurst bots on Jupiter — TCP transport for MCP tool relays
+      - CLAUDEBURST_HOST=${CLAUDEBURST_HOST:-}
+      - CLAUDEBURST_PORT=${CLAUDEBURST_PORT:-}
+      - CLAUDEBURST_PERPS_HOST=${CLAUDEBURST_PERPS_HOST:-}
+      - CLAUDEBURST_PERPS_PORT=${CLAUDEBURST_PERPS_PORT:-}
       - MCP_SERVER_URL=${MCP_SERVER_URL:-}
       # Cortex deployment config — parameterizes personal references
       - CORTEX_DEFAULT_USER_ENTITY=${CORTEX_DEFAULT_USER_ENTITY:-}

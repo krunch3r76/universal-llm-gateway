@@ -11,6 +11,10 @@ from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 from ..config import ProviderConfig
+from .responses_bridge import (
+    forward_via_responses,
+    forward_via_responses_stream,
+)
 
 _APP_TITLE = "Stargate"
 _APP_URL = "https://github.com/krunch3r76/universal-llm-gateway"
@@ -84,6 +88,22 @@ class OpenAICompatibleAdapter:
         OpenRouter expects provider/model. Native providers expect bare model name.
         """
         return ModelId.parse(catalog_model_id).api_model_id
+
+    def _is_mcp_responses_request(self, request_body: dict[str, Any]) -> bool:
+        """True when this -mcp request should route via the Responses API.
+
+        OpenAI and xAI support remote MCP on the Responses API but not on
+        chat completions.  When ``_mcp_requested`` is set and the provider
+        has MCP configured, bridge through /responses.
+        """
+        provider = self._config.provider.strip().lower()
+        if provider not in {"openai", "xai"}:
+            return False
+        return bool(
+            request_body.get("_mcp_requested")
+            and self._config.mcp_server_url
+            and request_body.get("tool_choice") != "none"
+        )
 
     def _prepare_chat_body(
         self, request_body: dict[str, Any], *, stream: bool | None = None
@@ -206,6 +226,13 @@ class OpenAICompatibleAdapter:
 
     async def forward_chat(self, request_body: dict[str, Any]) -> dict[str, Any]:
         """Forward a non-streaming chat request and preserve provider error payloads on HTTP failure."""
+        if self._is_mcp_responses_request(request_body):
+            upstream_model = self.to_upstream_model_id(
+                str(request_body.get("model", ""))
+            )
+            return await forward_via_responses(
+                self._client, self._config, request_body, upstream_model
+            )
         body = self._prepare_chat_body(request_body)
         response = await self._client.post(
             f"{self._config.base_url}/chat/completions",
@@ -219,7 +246,16 @@ class OpenAICompatibleAdapter:
     async def forward_chat_stream(
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
-        """Forward a streaming chat request as a transparent SSE relay."""
+        """Forward a streaming chat request, translating via Responses API when MCP is active."""
+        if self._is_mcp_responses_request(request_body):
+            upstream_model = self.to_upstream_model_id(
+                str(request_body.get("model", ""))
+            )
+            async for chunk in forward_via_responses_stream(
+                self._client, self._config, request_body, upstream_model
+            ):
+                yield chunk
+            return
         async for chunk in self._forward_chat_passthrough_stream(request_body):
             yield chunk
 

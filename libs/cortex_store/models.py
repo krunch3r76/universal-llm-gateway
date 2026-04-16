@@ -4,13 +4,39 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Schema migration to structured types (list[str], etc.) was deferred as intentional
 # debt. API contract is string-passthrough at the boundary; callers parse. Do not
 # "fix" to strict types without a product decision — see thread 045.
 
 AssertionConfidence = Literal["confirmed", "believed", "suspected", "hypothesized"]
+
+
+def _reject_cortex_dropbox_source_uri(value: str | None) -> str | None:
+    """Reject source_uri values that point into the cortex sandbox dropbox.
+
+    dropbox/ in the cortex sandbox is a temporary, non-persistent staging area.
+    Entities MUST reference permanent paths — the ingest flow is to read from
+    dropbox, move to a permanent location, then record the permanent path.
+
+    Accepts raw sandbox paths (``dropbox/...``) as well as ``files://`` URI
+    forms (``files://dropbox/...``, ``files:///dropbox/...``). External URLs
+    that merely contain the substring "dropbox" (e.g. ``https://dropbox.com/x``)
+    are unaffected.
+    """
+    if value is None:
+        return value
+    normalized = value.removeprefix("files://").lstrip("/")
+    first_segment = normalized.split("/", 1)[0]
+    if first_segment == "dropbox":
+        raise ValueError(
+            "source_uri must not point into the cortex sandbox dropbox "
+            "(temporary, non-persistent staging). Move the file to a "
+            "permanent path and record that path instead. "
+            f"Rejected: {value!r}"
+        )
+    return value
 
 
 # --- Entities ---
@@ -22,6 +48,10 @@ class _EntityCommon(BaseModel):
     notes: str | None = None
     source_uri: str | None = None
     content_hash: str | None = None
+
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
 
 
 EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated", "reaped"]
@@ -73,6 +103,10 @@ class EntityUpdate(BaseModel):
     content_hash: str | None = None
     retention_policy: RetentionPolicy | None = None
     retention_ttl_days: int | None = None
+
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
 
 
 class EntityList(BaseModel):

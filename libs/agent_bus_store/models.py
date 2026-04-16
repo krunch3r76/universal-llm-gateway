@@ -14,6 +14,7 @@ class AgentName(StrEnum):
     KAYWAN = "kaywan"
     OPPIE = "oppie"
     ORION = "orion"
+    BARD = "bard"
     ALL = "all"
 
 

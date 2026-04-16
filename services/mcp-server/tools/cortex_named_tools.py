@@ -30,41 +30,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_FULL_CAPACITY: dict[str, Any] = {
+    "include_deadlines": True,
+    "include_review_queue": True,
+    "session_agent_filter": None,
+    "session_limit": 3,
+    "self_reflections_limit": 5,
+}
+
 _BOOT_PROFILES: dict[str, dict[str, Any]] = {
-    "cursor": {
-        "include_deadlines": True,
-        "include_review_queue": True,
-        "session_agent_filter": None,
-        "session_limit": 3,
-        "self_entity_id": "ai_agent:cursor-claude",
-        "self_reflections_limit": 5,
-    },
-    "api": {
-        "include_deadlines": False,
-        "include_review_queue": False,
-        "session_agent_filter": "api",
-        "session_limit": 3,
-    },
-    "web": {
-        "include_deadlines": True,
-        "include_review_queue": True,
-        "session_agent_filter": None,
-        "session_limit": 3,
-        "self_entity_id": "ai_agent:web-claude",
-        "self_reflections_limit": 5,
-    },
-    "oppie": {
-        "include_deadlines": True,
-        "include_review_queue": True,
-        "session_agent_filter": None,
-        "session_limit": 3,
-    },
-    "subagent": {
-        "include_deadlines": True,
-        "include_review_queue": True,
-        "session_agent_filter": None,
-        "session_limit": 3,
-    },
+    "cursor": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:cursor-claude"},
+    "web": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:web-claude"},
+    "api": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:api-claude"},
+    "api_claude": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:api-claude"},
+    "oppie": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:oppie"},
+    "orion": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:orion"},
+    "bard": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:bard"},
+    "subagent": {**_FULL_CAPACITY},
 }
 
 
@@ -532,7 +514,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
-          agent         — agent profile: web, cursor, api, oppie, subagent (default: "web")
+          agent         — agent profile: web, cursor, api, api_claude, oppie, orion, subagent (default: "web")
           transcript_id — if provided, loads continuation context for that transcript
 
         Key response fields:

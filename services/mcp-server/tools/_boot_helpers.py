@@ -413,7 +413,7 @@ def render_briefing_card(
             session = a.get("evidence", "")
             session_tag = ""
             if session:
-                m = re.search(r"(cursor|web|api)-\d{4}-\d{2}-\d{2}-\d{4}", session)
+                m = re.search(r"(cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4}", session)
                 if m:
                     session_tag = f"[{m.group()}] "
             parts.append(f"- {session_tag}{a.get('claim', '')[:200]}")

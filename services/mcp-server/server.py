@@ -165,6 +165,7 @@ _PRIMARY_TOOLS: set[str] = {
     "grok_generate",
     "claude_generate",
     "openai_generate",
+    "gemini_generate",
     # RAG (consolidated)
     "rag",
     # Response size guard
@@ -681,6 +682,34 @@ def _prune_to_primary(mcp: FastMCP) -> dict[str, Callable[..., Any]]:
     return registry
 
 
+class _AcceptNormalizeMiddleware:
+    """Ensure ``Accept`` includes both ``application/json`` and ``text/event-stream``.
+
+    Remote MCP clients (OpenAI Responses API, xAI) may not send the exact
+    Accept header that the MCP SDK's Streamable HTTP transport requires,
+    resulting in 406.  This middleware normalises the header before the
+    transport layer checks it.
+    """
+
+    _REQUIRED = "application/json, text/event-stream"
+
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            accept = headers.get(b"accept", b"").decode()
+            needs_fix = (
+                "application/json" not in accept or "text/event-stream" not in accept
+            )
+            if needs_fix:
+                new_headers = [(k, v) for k, v in scope["headers"] if k != b"accept"]
+                new_headers.append((b"accept", self._REQUIRED.encode()))
+                scope = {**scope, "headers": new_headers}
+        await self._app(scope, receive, send)
+
+
 class _UTCFormatter(logging.Formatter):
     """Logging formatter that renders asctime in UTC (converter = time.gmtime).
 
@@ -748,10 +777,11 @@ def main() -> None:
         )
 
     # Middleware composition order (outermost first):
-    # AuthMiddleware → McpRequestEventsMiddleware → GZip → asgi_app
+    # AuthMiddleware → McpRequestEventsMiddleware → AcceptNormalize → GZip → asgi_app
     # Rejected tokens terminate before mcp.request.started fires.
     compressed_app = GZipMiddleware(asgi_app, minimum_size=500)
-    evented_app = McpRequestEventsMiddleware(compressed_app)
+    accept_app = _AcceptNormalizeMiddleware(compressed_app)
+    evented_app = McpRequestEventsMiddleware(accept_app)
     protected_app = AuthMiddleware(
         evented_app,
         token=auth_token,

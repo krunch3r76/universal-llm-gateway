@@ -9,6 +9,7 @@ All HTTP I/O delegates to ``_relay()`` from ``local_api.py``.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -541,18 +542,21 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         arguments: JSON string with operation arguments
 
         Operations:
-          threads  (status?, to?, limit?)         — list threads; status: active/archived/all
-          fetch    (thread, last?, compact?, mark_read?) — get turns; compact=true strips markdown
-          get      (thread, turn_number)           — get one specific turn
-          post     (slug, to, subject, body, from_agent?, tags?) — start a new thread
-          reply    (thread, to, subject, body, after_turn?, from_agent?) — reply to a thread
-          read     (thread, turn_number)           — mark a turn as read
-          archive  (thread)                        — archive a thread
-          summary  ()                              — unread counts per agent
+          threads       (status?)                                       — list threads; status: active|blocked|waiting|closed|all (default active)
+          fetch         (to?, thread?, last?, unread?, compact?, mark_read?)  — get turns; at least one of to/thread required
+          get           (thread, turn_number)                           — get one specific turn
+          post          (slug, to, subject, body, from_agent?, summary?, attachments?) — start a new thread
+          reply         (thread, to, subject, body, after_turn, from_agent?, status?, mark_read?, attachments?) — reply to a thread
+          update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
+          mark_read     (thread, turn_number)                           — mark a turn as read
+          update_thread (thread, status?, summary?)                     — patch thread metadata
+          close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
+          delete_turn   (thread, turn_number, force?)                   — delete a single turn
+          delete_thread (thread, force?)                                — delete an entire thread
 
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-          agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n..."}')
+          agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5}')
           agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n..."}')
         """
         import json as _json
@@ -570,6 +574,27 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                 parsed = _json.loads(arguments)
             except _json.JSONDecodeError as exc:
                 return {"error": f"Invalid arguments JSON: {exc}"}
+            if not isinstance(parsed, dict):
+                return {
+                    "error": (
+                        f"arguments must be a JSON object, got {type(parsed).__name__}"
+                    )
+                }
+            accepted = set(inspect.signature(handler).parameters)
+            unknown = [k for k in parsed if k not in accepted]
+            if unknown:
+                record(
+                    "mcp.agentbus.dispatch.rejected",
+                    tool=tool,
+                    unknown=",".join(sorted(unknown)),
+                )
+                return {
+                    "error": (
+                        f"{tool}: unsupported argument(s): "
+                        f"{', '.join(sorted(unknown))}. "
+                        f"Accepted: {sorted(accepted)}"
+                    )
+                }
             record("mcp.agentbus.dispatch", tool=tool)
             result = handler(**parsed)
             if (

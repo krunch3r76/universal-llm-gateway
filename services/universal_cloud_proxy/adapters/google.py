@@ -50,9 +50,17 @@ class GoogleAdapter:
     def client(self) -> httpx.AsyncClient:
         return self._client
 
-    def _headers(self) -> dict[str, str]:
+    def _native_headers(self) -> dict[str, str]:
+        """Headers for native generateContent endpoints (x-goog-api-key)."""
         return {
             "x-goog-api-key": self._config.api_key,
+            "Content-Type": "application/json",
+        }
+
+    def _compat_headers(self) -> dict[str, str]:
+        """Headers for Google's OpenAI-compatible endpoints (Bearer auth)."""
+        return {
+            "Authorization": f"Bearer {self._config.api_key}",
             "Content-Type": "application/json",
         }
 
@@ -97,7 +105,7 @@ class GoogleAdapter:
         """
         response = await self._client.get(
             f"{self._config.base_url}/models",
-            headers=self._headers(),
+            headers=self._native_headers(),
         )
         response.raise_for_status()
         body: dict[str, Any] = response.json()
@@ -143,7 +151,7 @@ class GoogleAdapter:
         response = await self._client.post(
             f"{self._config.base_url}/openai/chat/completions",
             json=body,
-            headers=self._headers(),
+            headers=self._compat_headers(),
         )
         if response.status_code >= 400:
             await self._raise_provider_http_error(response)
@@ -159,7 +167,7 @@ class GoogleAdapter:
             "POST",
             f"{self._config.base_url}/openai/chat/completions",
             json=body,
-            headers=self._headers(),
+            headers=self._compat_headers(),
         ) as response:
             if response.status_code >= 400:
                 await self._raise_provider_http_error(response)
@@ -193,9 +201,9 @@ class GoogleAdapter:
         """POST Gemini generateContent — native body, model in URL path."""
         model, body = self._extract_model(request_body)
         response = await self._client.post(
-            self._native_url(model),
+            self._native_url(self.to_upstream_model_id(model)),
             json=body,
-            headers=self._headers(),
+            headers=self._native_headers(),
         )
         if response.status_code >= 400:
             await self._raise_provider_http_error(response)
@@ -209,9 +217,9 @@ class GoogleAdapter:
         model, body = self._extract_model(request_body)
         async with self._client.stream(
             "POST",
-            self._native_stream_url(model),
+            self._native_stream_url(self.to_upstream_model_id(model)),
             json=body,
-            headers=self._headers(),
+            headers=self._native_headers(),
         ) as response:
             if response.status_code >= 400:
                 await self._raise_provider_http_error(response)

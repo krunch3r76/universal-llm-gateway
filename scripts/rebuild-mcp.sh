@@ -110,6 +110,18 @@ if openai:
 xai = (cfg.get('XAI_API_KEY') or cfg.get('xai_api_key') or os.environ.get('XAI_API_KEY') or '').strip()
 if xai:
     print('export XAI_API_KEY=' + shlex.quote(xai))
+google = (cfg.get('GOOGLE_API_KEY') or cfg.get('google_api_key') or os.environ.get('GOOGLE_API_KEY') or '').strip()
+if google:
+    print('export GOOGLE_API_KEY=' + shlex.quote(google))
+for key in (
+    'CLAUDEBURST_HOST',
+    'CLAUDEBURST_PORT',
+    'CLAUDEBURST_PERPS_HOST',
+    'CLAUDEBURST_PERPS_PORT',
+):
+    value = (cfg.get(key) or os.environ.get(key) or '').strip()
+    if value:
+        print(f'export {key}=' + shlex.quote(str(value)))
 mcp_url = (cfg.get('mcp_server_url') or '').strip()
 if mcp_url:
     print('export MCP_SERVER_URL=' + shlex.quote(mcp_url))
