@@ -22,7 +22,7 @@ from ._boot_helpers import (
 )
 from ._cortex_relay import _cx
 from ._file_helpers import read_files_batch
-from .local_api import _relay
+from ._local_relay import relay as _relay
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP

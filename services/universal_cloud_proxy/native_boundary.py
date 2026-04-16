@@ -18,7 +18,7 @@ from __future__ import annotations
 from model_id import ModelId
 
 # Path segment keys under ``/api/v1/providers/{key}/...``
-NATIVE_PROVIDER_KEYS = frozenset({"anthropic", "xai", "openai"})
+NATIVE_PROVIDER_KEYS = frozenset({"anthropic", "xai", "openai", "google"})
 
 
 def workspace_catalog_id_from_native(provider_key: str, raw_model_id: str) -> str:

@@ -79,6 +79,7 @@ class ServiceState:
             self.check_event_service(),
             self.check_cortex_api(),
             self.check_agent_bus(),
+            self.check_email_bridge(),
         ]
 
     def check_rag(self) -> ServiceInfo:
@@ -351,7 +352,9 @@ class ServiceState:
     def check_stargate(self) -> ServiceInfo:
         pid, pid_note = self._resolve_pid_file(self.STARGATE_PID_FILE)
         port_open = self._port_open(self.STARGATE_PORT)
-        listener_pid = self._find_listener_pid(self.STARGATE_PORT) if port_open else None
+        listener_pid = (
+            self._find_listener_pid(self.STARGATE_PORT) if port_open else None
+        )
         healthy, health_note = (
             self._stargate_probe_tcp(host="127.0.0.1", port=self.STARGATE_PORT)
             if port_open
@@ -374,11 +377,7 @@ class ServiceState:
                 health_url=f"http://localhost:{self.STARGATE_PORT}/health",
                 detail=self._with_note(
                     f"PID {pid}{uptime_str}"
-                    + (
-                        ""
-                        if healthy
-                        else f", {health_note or 'port not responding'}"
-                    ),
+                    + ("" if healthy else f", {health_note or 'port not responding'}"),
                     pid_note,
                 ),
             )
@@ -396,9 +395,7 @@ class ServiceState:
             detail=pid_note or "",
         )
 
-    def _stargate_probe_tcp(
-        self, *, host: str, port: int
-    ) -> tuple[bool, str | None]:
+    def _stargate_probe_tcp(self, *, host: str, port: int) -> tuple[bool, str | None]:
         """Probe Stargate /health and honor pipeline readiness when present."""
         from transport_utils import make_sync_client
 
@@ -452,6 +449,10 @@ class ServiceState:
     AGENT_BUS_SOCK: Path = Path(
         os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
     )
+    EMAIL_BRIDGE_PID_FILE: Path = Path.home() / ".gateway" / "email-bridge.pid"
+    EMAIL_BRIDGE_SOCK: Path = Path(
+        os.environ.get("EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock")
+    )
 
     def check_cortex_api(self) -> ServiceInfo:
         """Check cortex-api status via PID file + UDS health probe."""
@@ -474,6 +475,18 @@ class ServiceState:
             health_endpoint="/health",
             managed_pid_predicate=lambda pid: self._pid_cmdline_contains(
                 pid, "agent_bus_store.server:app", "--uds"
+            ),
+        )
+
+    def check_email_bridge(self) -> ServiceInfo:
+        """Check email-bridge status via PID file + UDS health probe."""
+        return self._check_uds_service(
+            name="Email Bridge",
+            pid_file=self.EMAIL_BRIDGE_PID_FILE,
+            socket_path=self.EMAIL_BRIDGE_SOCK,
+            health_endpoint="/health",
+            managed_pid_predicate=lambda pid: self._pid_cmdline_contains(
+                pid, "src.main:app", "email-bridge.sock"
             ),
         )
 
@@ -523,7 +536,9 @@ class ServiceState:
         """Generic UDS service health check: PID file + socket + health probe."""
         pid, pid_note = self._resolve_pid_file(pid_file)
         managed_pid = (
-            pid if pid is not None and self._pid_is_managed(pid, managed_pid_predicate) else None
+            pid
+            if pid is not None and self._pid_is_managed(pid, managed_pid_predicate)
+            else None
         )
 
         if not socket_path.exists():
@@ -546,7 +561,11 @@ class ServiceState:
         healthy = self._probe_uds_health(socket_path, health_endpoint)
         listener_pid = self._find_unix_listener_pid(socket_path) if healthy else None
         listener_is_managed = self._pid_is_managed(listener_pid, managed_pid_predicate)
-        if listener_is_managed and listener_pid is not None and listener_pid != managed_pid:
+        if (
+            listener_is_managed
+            and listener_pid is not None
+            and listener_pid != managed_pid
+        ):
             self._write_pid_file(pid_file, listener_pid)
             managed_pid = listener_pid
             pid_note = self._merge_notes(
@@ -852,9 +871,7 @@ class ServiceState:
     @staticmethod
     def _pid_cmdline_contains(pid: int, *needles: str) -> bool:
         try:
-            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(
-                errors="replace"
-            )
+            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace")
         except OSError:
             return False
         return all(needle in cmdline for needle in needles)

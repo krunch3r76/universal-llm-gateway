@@ -95,6 +95,9 @@ class OpenAICompatibleAdapter:
         }
         if stream is not None:
             body["stream"] = stream
+        # GPT-5.x+ rejects max_tokens; the Chat Completions API requires max_completion_tokens.
+        if self._config.provider == "openai" and "max_tokens" in body:
+            body["max_completion_tokens"] = body.pop("max_tokens")
         return body
 
     async def _forward_chat_passthrough_stream(

@@ -10,6 +10,7 @@ from ..action_hints import detect_expired_unresolved
 from ..db import cortex_conn, decode_row, execute, json_encode, query
 from ..models import (
     AssertionItem,
+    EdgeItem,
     EntityCreate,
     EntityDetail,
     EntityList,
@@ -18,6 +19,7 @@ from ..models import (
     RelationshipItem,
 )
 from .assertions import _ASSERTION_COLS
+from .edges import _EDGE_COLS
 
 logger = logging.getLogger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
@@ -59,7 +61,8 @@ _RELATIONSHIP_SELECT = """
     r.type AS type_id, rt.description AS type_name,
     se.name AS source_name, te.name AS target_name,
     r.role, r.strength, r.evidence, r.chunk_id,
-    r.valid_from, r.valid_until, r.source_uri, r.created_at
+    r.valid_from, r.valid_until, r.source_uri,
+    r.session_id, r.agent, r.created_at
 """
 
 _RELATIONSHIP_FROM = """
@@ -71,8 +74,17 @@ _RELATIONSHIP_FROM = """
 
 
 @router.get("/{entity_id}", response_model=EntityDetail)
-def get_entity(entity_id: str, request: Request) -> EntityDetail:
-    """Fetch one entity with linked assertions and relationships."""
+def get_entity(
+    entity_id: str,
+    request: Request,
+    include_edges: bool = Query(
+        False, description="Include reasoning edges from session_edges"
+    ),
+    edge_limit: int = Query(
+        20, ge=1, le=100, description="Max reasoning edges to return"
+    ),
+) -> EntityDetail:
+    """Fetch one entity with linked assertions, relationships, and optionally reasoning edges."""
     source = request.headers.get("x-cortex-source", "agent")
     agent = request.headers.get("x-cortex-agent", "web")
     session_id = request.headers.get("x-cortex-session")
@@ -98,10 +110,21 @@ def get_entity(entity_id: str, request: Request) -> EntityDetail:
         rel_rows = query(
             conn,
             f"SELECT {_RELATIONSHIP_SELECT} {_RELATIONSHIP_FROM} "
-            "WHERE r.from_entity = ? OR r.to_entity = ? "
+            "WHERE (r.from_entity = ? OR r.to_entity = ?) AND r.active = 1 "
             "ORDER BY r.created_at DESC",
             (entity_id, entity_id),
         )
+
+        edge_rows: list[dict] = []
+        if include_edges:
+            edge_rows = query(
+                conn,
+                f"SELECT {_EDGE_COLS} FROM session_edges "
+                "WHERE (from_node = ? OR to_node = ?) "
+                "AND valid_until IS NULL "
+                "ORDER BY created_at DESC LIMIT ?",
+                (entity_id, entity_id, edge_limit),
+            )
 
         if source != "boot":
             try:
@@ -130,11 +153,13 @@ def get_entity(entity_id: str, request: Request) -> EntityDetail:
                 exc_info=True,
             )
     relationships = [RelationshipItem(**row) for row in rel_rows]
+    edges = [EdgeItem(**row) for row in edge_rows]
     hints = detect_expired_unresolved([a.model_dump() for a in assertions])
     return EntityDetail(
         **decode_row(entity, _ENTITY_JSON_FIELDS),
         assertions=assertions,
         relationships=relationships,
+        reasoning_edges=edges,
         action_hints=hints or None,
     )
 

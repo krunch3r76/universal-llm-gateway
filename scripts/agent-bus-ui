@@ -198,6 +198,7 @@ _HTML = r"""<!DOCTYPE html>
         <option value="web">web</option>
         <option value="api">api</option>
         <option value="cursor">cursor</option>
+        <option value="orion">orion</option>
         <option value="kaywan">kaywan</option>
       </select>
     </div>

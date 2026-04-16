@@ -421,7 +421,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         Call rag_list_scopes() for the current set of valid scope names.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
+        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
 
         Args:
             query: Natural language search query.
@@ -553,7 +553,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         Call rag_list_scopes() for the current set of valid scope names.
 
-        Full docs: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="rag_answer")
+        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_answer")
 
         Args:
             question: Natural language question.

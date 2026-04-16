@@ -19,7 +19,7 @@ An optional, standalone service that routes inference requests to cloud API prov
 | Anthropic | Native adapter | Direct Claude API |
 | OpenAI | OpenAI-compatible | Direct OpenAI API |
 | xAI | OpenAI-compatible | Grok at `https://api.x.ai/v1` |
-| Google | OpenAI-compatible | Via OpenRouter or direct |
+| Google | Native adapter | Direct Gemini API (`generativelanguage.googleapis.com`) |
 
 ## API Endpoints
 

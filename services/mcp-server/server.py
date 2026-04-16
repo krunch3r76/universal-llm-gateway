@@ -6,7 +6,7 @@ Anthropic models via the mcp_servers API parameter.
 Security boundaries:
   - Auth admission via static bearer token or OAuth 2.1 (PKCE + S256)
   - TLS via Let's Encrypt certs mounted at /etc/letsencrypt (read-only)
-  - Filesystem access sandboxed to /data/files via volume mount
+  - Filesystem access sandboxed to /data/files (cortex sandbox) via volume mount
 """
 
 from __future__ import annotations
@@ -45,16 +45,10 @@ from tools.cortex_named_tools import register_cortex_named_tools
 from tools.document_ocr import register_document_ocr_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
-from tools.finance import register_finance_tools
-from tools.finance_ingest import register_finance_ingest_tools
-from tools.finance_reconcile import register_finance_reconcile_tools
-from tools.finance_smart_ingest import register_finance_smart_ingest_tools
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
-from tools.ingest_binary import register_ingest_binary_tools
 from tools.ingest_document import register_ingest_document_tools
 from tools.llm import register_llm_tools
-from tools.local_api import register_local_api_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
@@ -67,7 +61,6 @@ from tools.rag_articles import register_rag_article_tools
 from tools.security import register_security_tools
 from tools.security_js import register_security_js_tools
 from tools.sqlite import register_sqlite_tools
-from tools.usps import register_usps_tools
 from tools.web import register_web_tools
 
 if TYPE_CHECKING:
@@ -176,7 +169,60 @@ _PRIMARY_TOOLS: set[str] = {
     "rag",
     # Response size guard
     "retrieve",
+    # Domain dispatch (private layer — discovered from tools.local/)
+    "email",
 }
+
+
+def _discover_private_tools(
+    mcp: FastMCP,
+) -> list[str]:
+    """Discover and register tools from ``tools.local/`` (gitignored private layer).
+
+    Walks ``tools.local/`` for modules containing ``register_*_tools(mcp)``
+    functions — same convention as the static ``tools/`` registrations.
+    Returns a list of registered tool names for logging.
+    """
+    import importlib
+    import inspect
+    import pkgutil
+
+    registered: list[str] = []
+    try:
+        import tools.local as pkg  # noqa: PLC0415
+    except ImportError:
+        logger.info("No tools.local package found — private tools disabled")
+        return registered
+
+    for finder, mod_name, _is_pkg in pkgutil.iter_modules(
+        pkg.__path__, prefix="tools.local."
+    ):
+        if mod_name.rsplit(".", 1)[-1].startswith("_"):
+            continue
+        try:
+            module = importlib.import_module(mod_name)
+        except Exception:
+            logger.exception("Failed to import private tool module %s", mod_name)
+            continue
+
+        for attr_name, fn in inspect.getmembers(module, inspect.isfunction):
+            if attr_name.startswith("register_") and attr_name.endswith("_tools"):
+                try:
+                    fn(mcp)
+                    registered.append(f"{mod_name}.{attr_name}")
+                except Exception:
+                    logger.exception(
+                        "Failed to register private tools from %s.%s",
+                        mod_name,
+                        attr_name,
+                    )
+
+    return registered
+
+
+async def _tool_names(mcp: FastMCP) -> set[str]:
+    """Return the set of currently registered tool names."""
+    return {t.name for t in await mcp.list_tools()}
 
 
 def _build_server() -> FastMCP:
@@ -206,17 +252,11 @@ def _build_server() -> FastMCP:
             logger.info(f"{tool_name} disabled ({env_var}=false)")
     register_sqlite_tools(mcp)
     register_event_tools(mcp)
-    register_finance_tools(mcp)
-    register_finance_ingest_tools(mcp)
-    register_finance_reconcile_tools(mcp)
-    register_finance_smart_ingest_tools(mcp)
-    register_ingest_binary_tools(mcp)
     register_ingest_document_tools(mcp)
     register_document_ocr_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_quality_tools(mcp)
-    register_local_api_tools(mcp)
     register_agent_bus_tools(mcp)
     register_agent_consult_tools(mcp)
     register_cortex_tools(mcp)
@@ -227,7 +267,11 @@ def _build_server() -> FastMCP:
     register_imagine_tools(mcp)
     register_security_tools(mcp)
     register_security_js_tools(mcp)
-    register_usps_tools(mcp)
+
+    _pre_private_tools = asyncio.run(_tool_names(mcp))
+    _discover_private_tools(mcp)
+    _post_private_tools = asyncio.run(_tool_names(mcp))
+    _private_tool_names = _post_private_tools - _pre_private_tools
 
     @mcp.tool(title="Server Health Check")
     def health() -> dict[str, str]:
@@ -244,9 +288,17 @@ def _build_server() -> FastMCP:
 
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
-    valid_sandboxes = {"files", "project"}
+    private_overflow: dict[str, Callable[..., Any]] = {}
+    if _private_tool_names:
+        private_overflow = {
+            k: v for k, v in overflow_registry.items() if k in _private_tool_names
+        }
+        for k in private_overflow:
+            del overflow_registry[k]
+
+    valid_sandboxes = {"cortex", "workspaces"}
     sandbox_tool: dict[str, str] = {
-        "files": "files",
+        "cortex": "files",
     }
     md_op_map: dict[str, str] = {
         "md_list": "list_sections",
@@ -270,13 +322,13 @@ def _build_server() -> FastMCP:
         include_untracked: bool = True,
         binary: bool = False,
     ) -> dict[str, Any]:
-        """File I/O across sandboxes (files, project). Both sandbox and op are REQUIRED.
+        """File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.
 
         `read` is unified across sandboxes: source files plus text-oriented
         document formats such as PDF, DOCX, ODT, EML, and HTML can be read in
-        text mode from `files` or `project`. Use `binary=True` only when another
+        text mode from `cortex` or `workspaces`. Use `binary=True` only when another
         tool needs base64 file bytes instead of decoded text. Use `write_binary`
-        (files sandbox only) to stage base64-encoded binary files (PDFs, images)
+        (cortex sandbox only) to stage base64-encoded binary files (PDFs, images)
         — pass the base64 string as `content`. Use `move` to rename or relocate
         a file within the selected sandbox. Prefer the markdown ops for large
         structured docs when you need sections/TOC; for PDFs they operate on
@@ -289,13 +341,13 @@ def _build_server() -> FastMCP:
         with method info and alternative suggestions.
 
         Sandboxes:
-          files   — /data/files — user documents, notes, uploads, exports
-          project — /mnt/torus/projects/ — repository source, config, tasks, docs
+          cortex     — /data/files — user documents, notes, uploads, exports
+          workspaces — /mnt/torus/projects/ — repository source, config, tasks, docs
 
-        project paths MUST include the repo name prefix:
-          fs(sandbox="project", op="read", path="universal-llm-gateway/tasks/specs/foo.md")
-          fs(sandbox="project", op="list", path="universal-llm-gateway/config")
-          fs(sandbox="project", op="list", path="universal-llm-gateway")  ← repo root
+        workspaces paths MUST include the repo name prefix:
+          fs(sandbox="workspaces", op="read", path="universal-llm-gateway/tasks/specs/foo.md")
+          fs(sandbox="workspaces", op="list", path="universal-llm-gateway/config")
+          fs(sandbox="workspaces", op="list", path="universal-llm-gateway")  ← repo root
 
         Use op="list" for directories; op="read" on a directory path returns an error.
 
@@ -309,9 +361,10 @@ def _build_server() -> FastMCP:
           insert_at_line (path, content, line)            — insert at line number
           list           (path?)                          — list directory
           delete         (path)                           — delete file
-          search         (path, content)                  — regex search (project sandbox only)
+          search         (path, content)                  — regex search (workspaces sandbox only)
           move           (path, target)                   — rename/relocate file
-          write_binary   (path, content)                  — write base64-encoded binary (files sandbox only)
+          copy           (path, target)                   — copy file (both sandboxes)
+          write_binary   (path, content)                  — write base64-encoded binary (cortex sandbox only)
 
         Markdown section ops (for large docs):
           md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML via auto-converted markdown)
@@ -326,7 +379,9 @@ def _build_server() -> FastMCP:
         if not op:
             return {"error": "'op' is required"}
         if sandbox not in valid_sandboxes:
-            return {"error": f"sandbox must be 'files' or 'project', got {sandbox!r}"}
+            return {
+                "error": f"sandbox must be 'cortex' or 'workspaces', got {sandbox!r}"
+            }
 
         if op.startswith("md_"):
             md_fn = overflow_registry.get("markdown")
@@ -340,7 +395,7 @@ def _build_server() -> FastMCP:
                 op=md_op, path=path, sandbox=sandbox, section=section, content=content
             )
 
-        if sandbox == "project":
+        if sandbox == "workspaces":
             if op == "read":
                 fn = overflow_registry.get("read_project_file")
                 if fn is None:
@@ -387,14 +442,19 @@ def _build_server() -> FastMCP:
                 if fn is None:
                     return {"error": "move_project_file tool not available"}
                 return fn(path, target)
-            valid = "read, write, append, prepend, replace, insert_at_line, move, list, search"
-            return {"error": f"Unknown project op: {op!r}. Available: {valid}"}
+            if op == "copy":
+                fn = overflow_registry.get("copy_project_file")
+                if fn is None:
+                    return {"error": "copy_project_file tool not available"}
+                return fn(path, target)
+            valid = "read, write, append, prepend, replace, insert_at_line, move, copy, list, search"
+            return {"error": f"Unknown workspaces op: {op!r}. Available: {valid}"}
 
         tool_name = sandbox_tool[sandbox]
         fn = overflow_registry.get(tool_name)
         if fn is None:
             return {"error": f"{tool_name} tool not available"}
-        if sandbox == "files":
+        if sandbox == "cortex":
             if op == "read_multi":
                 paths = paths or []
                 return fn(
@@ -506,7 +566,7 @@ def _build_server() -> FastMCP:
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
-        Full catalog: fs(op="md_read", sandbox="project", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")
+        Full catalog: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")
         """
         import json as _json
 
@@ -524,6 +584,11 @@ def _build_server() -> FastMCP:
 
         fn = overflow_registry.get(tool)
         if fn is None:
+            if private_overflow and tool in private_overflow:
+                raise ValueError(
+                    f"Tool {tool!r} is a personal tool — use "
+                    f"private_dispatch(tool={tool!r}, ...) instead."
+                )
             raise ValueError(
                 f"Unknown dispatch tool: {tool!r}. "
                 f"Available: {sorted(overflow_registry)}"
@@ -542,11 +607,45 @@ def _build_server() -> FastMCP:
             return result
         return {"tool": tool, "result": result}
 
+    if private_overflow:
+        _PRIMARY_TOOLS.add("private_dispatch")
+
+        @mcp.tool(title="Private Tool Dispatcher")
+        async def private_dispatch(tool: str, arguments: str = "{}") -> Any:
+            """Call personal/domain-specific tools by name.
+
+            Use `private_dispatch(tool="list")` to see available tools.
+            """
+            import json as _json
+
+            if tool == "list":
+                return {"available_tools": sorted(private_overflow)}
+
+            fn = private_overflow.get(tool)
+            if fn is None:
+                raise ValueError(
+                    f"Unknown private tool: {tool!r}. "
+                    f"Available: {sorted(private_overflow)}"
+                )
+            parsed = _json.loads(arguments)
+            record("mcp.tool.private.called", tool=tool)
+            result = fn(**parsed)
+            if asyncio.iscoroutine(result):
+                result = await result
+            record("mcp.tool.private.success", tool=tool)
+            if hasattr(result, "model_dump"):
+                return result
+            return {"tool": tool, "result": result}
+
     primary_count = len(_PRIMARY_TOOLS)
+    overflow_count = len(overflow_registry)
+    private_count = len(private_overflow)
     logger.info(
-        "Tool pruning: %d primary (advertised), %d overflow (via dispatch)",
+        "Tool pruning: %d primary (advertised), %d overflow (via dispatch), "
+        "%d private (via private_dispatch)",
         primary_count,
-        len(overflow_registry),
+        overflow_count,
+        private_count,
     )
     return mcp
 

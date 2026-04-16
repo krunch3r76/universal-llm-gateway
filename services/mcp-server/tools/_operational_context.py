@@ -62,21 +62,21 @@ _SANDBOX_MAP = """\
 ## File Sandboxes
 Two sandboxes — no others exist:
 
-`fs(sandbox="files", …)` → `/data/files` — user documents, notes, uploads, exports.
+`fs(sandbox="cortex", …)` → `/data/files` — user documents, notes, uploads, exports.
 
-`fs(sandbox="project", …)` → `/mnt/torus/projects/` — all repository files including
+`fs(sandbox="workspaces", …)` → `/mnt/torus/projects/` — all repository files including
 source, config, tasks, docs, scripts.
 
-**project path rules (CRITICAL):**
+**workspaces path rules (CRITICAL):**
 - Paths MUST include the repo name prefix: `universal-llm-gateway/…`
 - Use `op="list"` for directories; `op="read"` on a directory path returns an error
-- Repo root listing: `fs(sandbox="project", op="list", path="universal-llm-gateway")`
-- Config files: `fs(sandbox="project", op="list", path="universal-llm-gateway/config")`
-- Tasks/specs: `fs(sandbox="project", op="read", path="universal-llm-gateway/tasks/specs/foo.md")`
-- Source file: `fs(sandbox="project", op="read", path="universal-llm-gateway/services/mcp-server/server.py")`
+- Repo root listing: `fs(sandbox="workspaces", op="list", path="universal-llm-gateway")`
+- Config files: `fs(sandbox="workspaces", op="list", path="universal-llm-gateway/config")`
+- Tasks/specs: `fs(sandbox="workspaces", op="read", path="universal-llm-gateway/tasks/specs/foo.md")`
+- Source file: `fs(sandbox="workspaces", op="read", path="universal-llm-gateway/services/mcp-server/server.py")`
 
 **When you don't know where something is:**
-1. `fs(sandbox="project", op="list", path="universal-llm-gateway")` — repo root
+1. `fs(sandbox="workspaces", op="list", path="universal-llm-gateway")` — repo root
 2. Narrow by subdirectory based on what you see
 3. Never guess a full path and `read` it — list first
 
@@ -85,9 +85,9 @@ source, config, tasks, docs, scripts.
 `move`, `read`, `delete`, `list` have NO format restriction — they work on any file.
 
 ∴ To relocate any file (including `.eml`, `.jpg`, `.png`, `.odt`) use `move`, not `write`:
-  `fs(sandbox="files", op="move", path="dropbox/…/file.eml", target="notes/…/file.eml")`
+  `fs(sandbox="cortex", op="move", path="dropbox/…/file.eml", target="notes/…/file.eml")`
 
-Use `write_binary` (files sandbox only) with base64 content to create new binary files.
+Use `write_binary` (cortex sandbox only) with base64 content to create new binary files.
 `read` supports `.eml`, `.pdf`, `.docx`, `.odt`, `.html` natively in text mode.
 
 **Dropbox pattern (`dropbox/` is temporary staging — always move, never copy):**
@@ -127,7 +127,7 @@ Never treat "too large" as "skip" — it means "navigate differently.\""""
 _JOURNALING_PROTOCOL = """\
 ## Session Journaling
 Every session MUST produce a journal. Write throughout, not just at the end.
-File: `notes/system/journal/{journal_prefix}-YYYY-MM-DD-HHmm.md` via `fs(sandbox="files", op="write", …)`.
+File: `notes/system/journal/{journal_prefix}-YYYY-MM-DD-HHmm.md` via `fs(sandbox="cortex", op="write", …)`.
 Row: `cortex(tool="journal_write", arguments='{{"agent": "{agent}", "summary": "…", "domains": ["…"], "decisions": ["…"], "open_items": ["…"]}}')`.
 
 Template:
@@ -244,10 +244,10 @@ Prefer `search` over `assertions` list when you have a natural-language query. U
 
 _TOOL_REFERENCE_POINTERS = """\
 ## Tool Reference
-Browse the canonical MCP docs: `fs(sandbox="project", op="md_list", path="universal-llm-gateway/docs/tool-reference.md")`
-Read the primary file tool docs: `fs(sandbox="project", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="fs")`
+Browse the canonical MCP docs: `fs(sandbox="workspaces", op="md_list", path="universal-llm-gateway/docs/tool-reference.md")`
+Read the primary file tool docs: `fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="fs")`
 For large Markdown docs, prefer section ops over whole-file reads: `md_list` to inspect the tree, `md_read` to load one section, and `md_replace` / `md_append` / `md_delete` to edit one section without loading the full document.
-Dispatch catalog: `fs(sandbox="project", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")`
+Dispatch catalog: `fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")`
 Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by` linkage is internal to the assertions table.
 
 ## Model Discovery & Inference
@@ -397,9 +397,9 @@ Target the relevant entity (`service:cortex`, `service:mcp-server`, `decision:*`
 
 _ON_DEMAND_POINTERS = """\
 ## On-Demand Modules (load when needed)
-- Cortex full schema: `fs(sandbox="files", op="read", path="notes/system/cortex-spec-index.md")`
+- Cortex full schema: `fs(sandbox="cortex", op="read", path="notes/system/cortex-spec-index.md")`
 - Infrastructure session: `agent_bus(tool="threads", …)` + `cortex(tool="entities", arguments='{"type": "decision"}')` + open todos
-- Frontier intelligence: `fs(sandbox="files", op="read", path="notes/system/shared/frontier-intelligence.md")`
+- Frontier intelligence: `fs(sandbox="cortex", op="read", path="notes/system/shared/frontier-intelligence.md")`
 
 Note: `notes/system/shared/operational-lessons.md` (full capability reference) is available on demand — use `md_list` then `md_read` by section."""
 

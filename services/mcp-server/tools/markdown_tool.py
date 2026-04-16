@@ -46,14 +46,14 @@ _PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower()
 
 
 def _resolve_sandbox(sandbox: str, path: str) -> tuple[Path, bool]:
-    if sandbox == "files":
+    if sandbox == "cortex":
         root, read_only = _FILES_ROOT.resolve(), False
-    elif sandbox == "project":
+    elif sandbox == "workspaces":
         root, read_only = _PROJECT_ROOT.resolve(), _PROJECT_READ_ONLY
     else:
         raise ValueError(
-            f"Unknown sandbox {sandbox!r}. Use 'files' (/data/files) "
-            "or 'project' (project root)"
+            f"Unknown sandbox {sandbox!r}. Use 'cortex' (/data/files) "
+            "or 'workspaces' (project root)"
         )
     candidate = (root / path.lstrip("/")).resolve()
     try:
@@ -130,10 +130,10 @@ def register_markdown_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/delete/to_dict/from_dict.
 
-        Sandboxes: context → tasks/; files → /data/files; project → project root.
+        Sandboxes: context → tasks/; cortex → /data/files; workspaces → project root.
         Section path from list_sections; "" = preamble. from_dict: content is JSON.
-        Prefer over whole-file context/files/project for long structured docs.
-        Use project sandbox for tmp/ files (debrief log, phase docs, handoff docs).
+        Prefer over whole-file context/cortex/workspaces for long structured docs.
+        Use workspaces sandbox for tmp/ files (debrief log, phase docs, handoff docs).
 
         PDF, DOCX, ODT, and EML files are auto-converted to markdown for
         read ops (list_sections, read_section, to_dict). Write ops

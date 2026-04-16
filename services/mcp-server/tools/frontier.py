@@ -1,8 +1,8 @@
-"""Frontier generation tools — provider-specific MCP surfaces.
+"""Frontier generation tools — provider-specific primary MCP surfaces.
 
-``grok_generate`` and ``claude_generate`` are the primary tools with
-provider-aware signatures and defaults.  ``frontier_generate`` stays as a
-backward-compatible dispatch that routes to the correct provider.
+``grok_generate``, ``claude_generate``, ``openai_generate``, and
+``gemini_generate`` are primary tools (in ``_PRIMARY_TOOLS``) with
+provider-aware signatures and defaults.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ._frontier_core import (
+    GOOGLE_SERVER_TOOL_MAP,
     OPENAI_SERVER_TOOL_MAP,
     XAI_SERVER_TOOL_MAP,
     build_frontier_request,
@@ -39,7 +40,7 @@ _OPENAI_BOOT_REF_DEFAULTS: dict[str, str] = {
 
 
 def register_frontier_tools(mcp: FastMCP) -> None:
-    """Register grok_generate, claude_generate, and frontier_generate (compat)."""
+    """Register grok_generate, claude_generate, openai_generate, and gemini_generate."""
 
     @mcp.tool(title="Grok Generate")
     def grok_generate(
@@ -91,7 +92,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           calling, 2M ctx. **DEFAULT** — use for all Oppie-style subagent calls.
         - ``grok-4.20-0309-non-reasoning`` — same without reasoning overhead.
         - ``grok-4.20-multi-agent-0309`` — multi-agent orchestration; full MCP
-          tool surface via remote MCP (xAI server-side loop).
+          tool surface via remote MCP (xAI server-side loop). **Default for
+          team/full boot** — Oppie always operates as a multi-agent.
         - ``grok-4-1-fast-reasoning`` — fast + cheap reasoning.
         - ``grok-4-1-fast-non-reasoning`` — fast without reasoning.
         - ``grok-3-mini`` — legacy; supports reasoning_effort
@@ -105,6 +107,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           requests for continued chain-of-thought.
         - 2M token context window on grok-4.20 family.
         """
+        use_remote_mcp = boot in ("team", "full")
+        if use_remote_mcp and model == "grok-4.20-0309-reasoning":
+            model = "grok-4.20-multi-agent-0309"
         full_model = model if "/" in model else f"xai/{model}"
 
         if boot_ref is None:
@@ -147,6 +152,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             response_format=response_format,
             conversation_id=conversation_id,
             reasoning_trace=reasoning_trace,
+            remote_mcp=use_remote_mcp,
         )
         if isinstance(req, dict):
             return req
@@ -361,5 +367,96 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             req=req,
             include_raw=include_raw,
             tool_name="openai_generate",
+            timeout=timeout,
+        )
+
+    # ── Gemini ─────────────────────────────────────────────────────────
+
+    @mcp.tool(title="Gemini Generate")
+    def gemini_generate(
+        messages: list[dict[str, Any]],
+        model: str = "gemini-2.5-flash",
+        system: str = "",
+        max_output_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        stop_sequences: list[str] | None = None,
+        seed: int | None = None,
+        response_format: dict[str, Any] | None = None,
+        thinking_level: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        server_tools: list[str] | None = None,
+        provider_options: dict[str, Any] | None = None,
+        boot: str = "mcp",
+        boot_ref: str | None = None,
+        include_raw: bool = False,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Generate with Google Gemini models via Stargate provider-native endpoint.
+
+        Routes through ``/api/v1/providers/google/generateContent`` on Stargate.
+
+        **Gemini-native capabilities** (via server_tools or native body):
+
+        - ``google_search`` — ground responses in real-time Google Search results
+        - ``code_execution`` — execute Python code in a sandboxed environment
+
+        **Boot levels and tool surface**:
+
+        - ``"mcp"`` (default) — subagent seed + Cortex/RAG read tools.
+          Tool loop runs client-side automatically.
+        - ``"none"`` — no system prompt, no tool definitions.
+        - ``"team"`` / ``"full"`` — full tool surface with Cortex dispatch
+          and agent_bus. ``"full"`` also adds Cortex boot narrative.
+
+        Models:
+          gemini-2.5-flash     — fast, efficient, thinking-capable (DEFAULT)
+          gemini-2.5-pro       — strongest reasoning, largest context
+          gemini-2.0-flash     — fast multimodal
+
+        thinking_level: Controls thinking depth for 2.5+ models.
+          "LOW", "MEDIUM", "HIGH" — maps to Gemini thinkingConfig.
+        """
+        full_model = model if "/" in model else f"google/{model}"
+
+        thinking: dict[str, Any] | None = None
+        if thinking_level:
+            thinking = {"level": thinking_level}
+
+        all_tools: list[dict[str, Any]] = []
+        if server_tools:
+            for st in server_tools:
+                mapped = GOOGLE_SERVER_TOOL_MAP.get(st)
+                if mapped:
+                    all_tools.append(dict(mapped))
+        if tools:
+            all_tools.extend(tools)
+
+        req = build_frontier_request(
+            model=full_model,
+            messages=messages,
+            system=system,
+            boot=boot,
+            boot_ref=boot_ref,
+            agent="",
+            max_tokens=max_output_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            stop_sequences=stop_sequences,
+            seed=seed,
+            thinking=thinking,
+            tools=all_tools or None,
+            tool_choice=tool_choice,
+            response_format=response_format,
+            provider_options=provider_options,
+        )
+        if isinstance(req, dict):
+            return req
+        return execute_frontier(
+            model=full_model,
+            req=req,
+            include_raw=include_raw,
+            tool_name="gemini_generate",
             timeout=timeout,
         )

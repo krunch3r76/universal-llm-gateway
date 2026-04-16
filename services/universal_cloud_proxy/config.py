@@ -92,6 +92,8 @@ def _default_base_url(provider: str) -> str:
         return "https://api.anthropic.com/v1"
     if normalized == "openai":
         return "https://api.openai.com/v1"
+    if normalized == "google":
+        return "https://generativelanguage.googleapis.com/v1beta"
     return DEFAULT_BASE_URL
 
 

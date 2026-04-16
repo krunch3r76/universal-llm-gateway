@@ -58,6 +58,7 @@ class EntityDetail(_EntityCommon):
     updated_at: str
     assertions: list[AssertionItem] = Field(default_factory=list)
     relationships: list[RelationshipItem] = Field(default_factory=list)
+    reasoning_edges: list[EdgeItem] = Field(default_factory=list)
     action_hints: list[ActionHint] | None = None
 
 
@@ -337,6 +338,8 @@ class RelationshipCreate(BaseModel):
     valid_from: str | None = None
     valid_until: str | None = None
     source_uri: str | None = None
+    session_id: str | None = None
+    agent: str | None = None
 
 
 class RelationshipItem(BaseModel):
@@ -354,6 +357,8 @@ class RelationshipItem(BaseModel):
     valid_from: str | None = None
     valid_until: str | None = None
     source_uri: str | None = None
+    session_id: str | None = None
+    agent: str | None = None
     created_at: str
 
 

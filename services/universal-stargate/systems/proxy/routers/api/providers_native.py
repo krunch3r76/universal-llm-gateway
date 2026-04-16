@@ -29,6 +29,7 @@ _VALID_ROUTES: dict[tuple[str, str], str] = {
     ("anthropic", "messages"): "/api/v1/providers/anthropic/messages",
     ("xai", "responses"): "/api/v1/providers/xai/responses",
     ("openai", "responses"): "/api/v1/providers/openai/responses",
+    ("google", "generateContent"): "/api/v1/providers/google/generateContent",
     # Image generation / editing
     ("xai", "images.generations"): "/api/v1/providers/xai/images/generations",
     ("xai", "images.edits"): "/api/v1/providers/xai/images/edits",
@@ -129,6 +130,12 @@ async def _passthrough(
             status_code=502,
             content={"detail": str(exc)[:300]},
         )
+
+
+@router.post("/google/generateContent")
+async def native_google_generate_content(request: Request) -> Response:
+    """Native Google Gemini generateContent."""
+    return await _passthrough(request, "google", "generateContent")
 
 
 @router.post("/anthropic/messages")

@@ -463,7 +463,7 @@ def render_briefing_card(
         manifest.append(
             {
                 "section": "operational_context",
-                "hint": f"fs(sandbox='files', op='md_list', path='{op_ctx_path}')",
+                "hint": f"fs(sandbox='cortex', op='md_list', path='{op_ctx_path}')",
             }
         )
     manifest.append(

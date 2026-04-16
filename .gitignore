@@ -45,6 +45,7 @@ config/env/*.local
 !.env.example
 !.env.*.example
 tmp/
+docs/agent-guides/
 docs/engram/
 docs/prompts/
 docs/research/
@@ -89,6 +90,12 @@ changelog/
 # Local pipeline development workspace (not for public release)
 # Mature pipelines go in pipelines/ (tracked)
 pipelines.local/
+
+# Local-only MCP tools (not for public release; same idea as pipelines.local)
+services/mcp-server/tools/local/
+
+# Local-only service controller plugins (not for public release)
+scripts/model_manager/ui/controller/service_ctl/local/
 
 # Local-only scripts (not for public release; same idea as pipelines.local)
 scripts.local/

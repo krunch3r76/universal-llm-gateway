@@ -81,10 +81,21 @@ def _op_entities(
     return _cx("GET", f"/entities?{urlencode(params)}")
 
 
-def _op_entity_get(entity_id: str | None = None, **_: object) -> dict[str, Any]:
+def _op_entity_get(
+    entity_id: str | None = None,
+    include_edges: bool = False,
+    edge_limit: int = 20,
+    **_: object,
+) -> dict[str, Any]:
     if not entity_id:
         return {"error": "entity_id is required"}
-    return _cx("GET", f"/entities/{entity_id}")
+    params: dict[str, str] = {}
+    if include_edges:
+        params["include_edges"] = "true"
+        if edge_limit != 20:
+            params["edge_limit"] = str(edge_limit)
+    qs = f"?{urlencode(params)}" if params else ""
+    return _cx("GET", f"/entities/{entity_id}{qs}")
 
 
 _VALID_STATUS = {"confirmed", "provisional", "merged", "deprecated"}
@@ -1008,7 +1019,8 @@ _WORKFLOW_HINTS: dict[str, str] = {
     ),
     "relationship_create": (
         "next: entity_get on source_id or target_id to verify the full graph "
-        "(entity + assertions + relationships)"
+        "(entity + assertions + relationships). Pass include_edges=true to also "
+        "see reasoning edges. Tip: pass session_id and agent for provenance."
     ),
     "entity_update": "next: entity_get to confirm the updated state is reflected",
     "supersede": (
@@ -1042,6 +1054,29 @@ _WORKFLOW_HINTS: dict[str, str] = {
     "rj_consolidate": (
         "next: rj_list to verify the consolidation appears; "
         "rj_link to connect any entries the consolidation missed"
+    ),
+    "edge_create": (
+        "next: entity_get with include_edges=true on from_node or to_node "
+        "to verify the edge is visible in the reasoning graph"
+    ),
+    "entity_get": (
+        "tip: pass include_edges=true to also see reasoning edges "
+        "(session-attributed cognitive connections). "
+        "Relationships are structural links; edges are reasoning links."
+    ),
+    "edges": (
+        "tip: to see edges in entity context, use entity_get with include_edges=true. "
+        "To traverse multi-hop, use edge_traverse."
+    ),
+    "relationships": (
+        "tip: to create typed structural links, use relationship_create with "
+        "session_id + agent for provenance. Available types: supplement_to, "
+        "filed_against, respondent_in, evidence_for, recipient_of, issued_by, "
+        "owns, references, parent_of/child_of, sibling_of, related_to, and more."
+    ),
+    "activate": (
+        "next: review the spreading activation results for structurally connected "
+        "assertions the original search wouldn't find directly"
     ),
 }
 
@@ -1110,6 +1145,12 @@ def _enrich_entity_completeness(result: dict[str, Any]) -> None:
     relationships = result.get("relationships")
     if isinstance(relationships, list) and len(relationships) == 0:
         gaps.append("no relationships — wire edges via relationship_create")
+    reasoning_edges = result.get("reasoning_edges")
+    if isinstance(reasoning_edges, list) and len(reasoning_edges) == 0:
+        gaps.append(
+            "no reasoning edges visible — pass include_edges=true to surface them, "
+            "or seed via edge_create"
+        )
     desc = result.get("description") or ""
     if len(desc) < 50:
         gaps.append("thin description (<50 chars) — enrich via entity_update")
@@ -1130,6 +1171,16 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "assert_entity": "assert",
     "create_entity": "entity_create",
     "update_entity": "entity_update",
+    "create_relationship": "relationship_create",
+    "list_relationships": "relationships",
+    "get_relationships": "relationships",
+    "create_edge": "edge_create",
+    "list_edges": "edges",
+    "get_edges": "edges",
+    "traverse": "edge_traverse",
+    "list_edge_types": "edge_types",
+    "get_edge_types": "edge_types",
+    "assertion_get": "assertions",
 }
 
 
@@ -1168,7 +1219,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
 
         Operations:
           entities          (type?, limit?)                          — list entities
-          entity_get        (entity_id)                             — get entity with assertions + relationships
+          entity_get        (entity_id, include_edges?, edge_limit?) — get entity with assertions + relationships + optional reasoning edges
           entity_create     (id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?) — create entity
           entity_update     (entity_id, name?, description?, status?, notes?, aliases?, attributes?)  — update entity
           assertions        (entity_id?, confidence?, review_status?, superseded?, limit?) — list assertions
@@ -1176,7 +1227,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           assertion_update  (assertion_id, superseded_by?, valid_until?, confidence?, review_status?) — update assertion
           supersede         (old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent) — atomic close+create
           relationships     (entity_id?, type_id?, limit?)          — list with names, strength
-          relationship_create (source_id, target_id, type_id, role?, strength?, evidence?) — create relationship
+          relationship_create (source_id, target_id, type_id, role?, strength?, evidence?, session_id?, agent?) — create relationship with optional provenance
           stats             ()                                       — dashboard counts
           surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
           journal_read      (limit?)                                 — recent session journals

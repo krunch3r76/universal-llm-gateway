@@ -43,6 +43,11 @@ from . import (
     rag_service,
 )
 
+try:
+    from .local import email_bridge_service as _email_bridge_svc
+except ImportError:
+    _email_bridge_svc = None
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -620,6 +625,32 @@ class ServiceController:
         """Rebuild agent-bus — host process, so rebuild = restart."""
         await self.stop_agent_bus()
         return await self.start_agent_bus()
+
+    async def start_email_bridge(self) -> str:
+        """Start email-bridge as host subprocess."""
+        if _email_bridge_svc is None:
+            return "email-bridge not available in this installation."
+        return await _email_bridge_svc.start_email_bridge(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def stop_email_bridge(self) -> str:
+        """Stop email-bridge gracefully."""
+        if _email_bridge_svc is None:
+            return "email-bridge not available in this installation."
+        return await _email_bridge_svc.stop_email_bridge(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def restart_email_bridge(self) -> str:
+        """Restart email-bridge (stop then start)."""
+        await self.stop_email_bridge()
+        return await self.start_email_bridge()
+
+    async def rebuild_email_bridge(self, *, no_cache: bool = False) -> str:  # noqa: ARG002
+        """Rebuild email-bridge — host process, so rebuild = restart."""
+        await self.stop_email_bridge()
+        return await self.start_email_bridge()
 
     async def _wait_mcp_healthy(self, *, timeout: float) -> str | None:
         """Wait until the mcp-server container reports healthy."""

@@ -13,6 +13,7 @@ class AgentName(StrEnum):
     GROK = "grok"
     KAYWAN = "kaywan"
     OPPIE = "oppie"
+    ORION = "orion"
     ALL = "all"
 
 

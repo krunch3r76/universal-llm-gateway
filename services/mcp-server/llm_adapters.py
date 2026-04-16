@@ -226,6 +226,17 @@ def resolve_llm_adapter(provider: str | None) -> LLMAdapter | None:
                 "/"
             )
             return ResponsesAPIAdapter(api_key=key, base_url=base, vendor=p)
+        case "google":
+            from llm_adapter_google import GoogleAdapter as GeminiAdapter
+
+            key = os.environ.get("GOOGLE_API_KEY", "").strip()
+            if not key:
+                return None
+            base = os.getenv(
+                "GOOGLE_BASE_URL",
+                "https://generativelanguage.googleapis.com/v1beta",
+            )
+            return GeminiAdapter(api_key=key, base_url=base)
         case _:
             return None
 

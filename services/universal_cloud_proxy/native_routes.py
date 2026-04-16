@@ -398,6 +398,18 @@ def _get_event_bus() -> EventBus | None:
     return _ge()
 
 
+@router.post("/google/generateContent")
+async def native_google_generate_content(request: Request) -> Response:
+    """Google Gemini generateContent — native body shape, model in body for routing."""
+    return await _forward_native(
+        request,
+        provider_key="google",
+        surface="google_generate_content",
+        forwarder=_get_forwarder(),
+        event_bus=_get_event_bus(),
+    )
+
+
 @router.post("/anthropic/messages")
 async def native_anthropic_messages(request: Request) -> Response:
     """Anthropic Messages API — native body shape, raw model id."""

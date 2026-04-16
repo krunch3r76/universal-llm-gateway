@@ -5,9 +5,11 @@ Stargate) for text extraction.  Supports both generic OCR and structured
 financial extraction.
 
 Supported providers (frontier-only — direct API, no OpenRouter):
-- anthropic/claude-sonnet-4-*  (default)
-- openai/gpt-5.4
-- xai/grok-*
+- openai/gpt-5.4  (default — strongest overall, best for photographed documents with printed material)
+- anthropic/claude-sonnet-4-*  (strong alternative, especially for complex layouts)
+- xai/grok-4.20-*  (second to gpt-5.4 for photographs)
+- xai/grok-4-*  (poor vision quality — avoid for scans/photographs)
+- xai/grok-3-mini-*  (no vision support)
 
 All images are auto-resized to fit within _MAX_IMAGE_DIMENSION before encoding
 to avoid provider API errors on oversized payloads.
@@ -17,22 +19,17 @@ from __future__ import annotations
 
 import base64
 import io
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
-import httpx
+from .llm import _call_stargate
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
-
 _DEFAULT_DPI = 200
 _MAX_PAGES_PER_BATCH = 4
-_OCR_MODEL = "anthropic/claude-sonnet-4-20250514"
+_OCR_MODEL = "openai/gpt-5.4"
 _OCR_MAX_TOKENS = 8192
 _MAX_IMAGE_DIMENSION = 1600
 
@@ -130,43 +127,8 @@ def _call_vision(
     """
     content: list[dict[str, Any]] = list(image_blocks)
     content.append({"type": "text", "text": user_prompt})
-
-    messages: list[dict[str, Any]] = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": content})
-
-    body: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-
-    url = f"{_STARGATE_URL}/v1/chat/completions"
-    try:
-        with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.post(url, json=body)
-    except httpx.TimeoutException:
-        return {"error": "Stargate timeout"}
-    except httpx.RequestError as exc:
-        logger.error("Stargate OCR request failed: %s", exc)
-        return {"error": "Stargate connection failed"}
-
-    if resp.status_code >= 400:
-        logger.warning("Stargate returned %d for OCR model=%s", resp.status_code, model)
-        return {
-            "error": f"Upstream error ({resp.status_code})",
-            "detail": resp.text[:500],
-        }
-
-    try:
-        data = resp.json()
-    except json.JSONDecodeError:
-        return {"error": "Stargate returned invalid JSON"}
-    if not isinstance(data, dict):
-        return {"error": "Stargate returned non-object JSON"}
-    return data
+    messages = [{"role": "user", "content": content}]
+    return _call_stargate(messages, model=model, system=system, max_tokens=max_tokens)
 
 
 def _extract_text_from_response(resp: dict[str, Any]) -> str:
@@ -257,80 +219,6 @@ def ocr_pages(
         "per_page": per_page,
         "model": used_model,
         "total_tokens": total_tokens,
-    }
-
-
-def ocr_structured(
-    abs_path: Path,
-    statement_type: str,
-    *,
-    dpi: int = _DEFAULT_DPI,
-    model: str = _OCR_MODEL,
-) -> dict[str, Any]:
-    """OCR + structured extraction: render PDF pages, send with schema prompt.
-
-    Returns the same JSON shape as finance_parse_statement (Phase 2) so it
-    feeds directly into finance_ingest_statement (Phase 3).
-    """
-    from ._finance_schemas import STATEMENT_SCHEMAS
-
-    schema = STATEMENT_SCHEMAS.get(statement_type)
-    if schema is None:
-        return {"error": f"Unknown statement_type: {statement_type!r}"}
-
-    schema_json = json.dumps(schema, indent=2)
-    system = (
-        "You are a financial document parser. Extract structured data from "
-        "this scanned document. Return ONLY valid JSON with no preamble, "
-        "no markdown, no explanation."
-    )
-    user_prompt = (
-        f"Statement type: {statement_type}\n\n"
-        f"Extract data from this scanned document image(s).\n\n"
-        f"Return JSON matching this schema:\n{schema_json}"
-    )
-
-    is_image = abs_path.suffix.lower() in _IMAGE_SUFFIXES
-    if is_image:
-        data, media = _image_file_to_base64(abs_path)
-        images = [(data, media)]
-    else:
-        total = _pdf_page_count(abs_path)
-        images = [_pdf_page_to_base64(abs_path, i, dpi) for i in range(total)]
-
-    all_parsed: dict[str, Any] = {}
-    for batch_start in range(0, len(images), _MAX_PAGES_PER_BATCH):
-        batch = images[batch_start : batch_start + _MAX_PAGES_PER_BATCH]
-        blocks = _build_image_blocks(batch)
-        resp = _call_vision(blocks, user_prompt, system=system, model=model)
-        raw = _extract_text_from_response(resp)
-
-        import re
-
-        text = raw.strip()
-        m = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", text, re.DOTALL)
-        if m:
-            text = m.group(1).strip()
-
-        try:
-            batch_parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            return {
-                "error": f"JSON parse failed: {exc}",
-                "raw_response": raw,
-                "statement_type": statement_type,
-            }
-        if not all_parsed:
-            all_parsed = batch_parsed
-        else:
-            for key, val in batch_parsed.items():
-                if isinstance(val, list) and isinstance(all_parsed.get(key), list):
-                    all_parsed[key].extend(val)
-
-    return {
-        "statement_type": statement_type,
-        "parsed": all_parsed,
-        "model": model,
     }
 
 

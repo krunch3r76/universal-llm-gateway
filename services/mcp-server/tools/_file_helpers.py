@@ -203,6 +203,8 @@ def read_file_result(
     content = extract_text_content(src)
     result: dict[str, Any] = {"content": content, "path": str(src)}
     if suffix == ".pdf":
+        content_stripped = content.strip()
+        is_empty = len(content_stripped) < 50
         result["extraction_method"] = "pymupdf4llm"
         result["extraction"] = {
             "method": "pymupdf4llm",
@@ -214,6 +216,17 @@ def read_file_result(
                 "tabular extraction."
             ),
         }
+        if is_empty:
+            rel_path = str(Path(path))
+            result["_next"] = (
+                f"This PDF has no text layer (scanned or image-only). "
+                f"Use dispatch(tool=\"document_ocr\", "
+                f"arguments='{{\"path\": \"{rel_path}\"}}') "
+                f"for vision-based OCR, or "
+                f"dispatch(tool=\"ingest_document\", "
+                f"arguments='{{\"path\": \"{rel_path}\"}}') "
+                f"to OCR and persist as a reusable markdown sidecar."
+            )
     return result
 
 

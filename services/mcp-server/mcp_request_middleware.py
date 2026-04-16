@@ -76,7 +76,7 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
     if tool_name == "dispatch":
         inner = args.get("tool", "")
         return f"→{inner}" if inner else ""
-    if tool_name in ("files", "project"):
+    if tool_name in ("files", "project", "cortex", "workspaces"):
         op = args.get("op", "")
         path = args.get("path", "")
         return f"op={op} path={path}" if op else ""

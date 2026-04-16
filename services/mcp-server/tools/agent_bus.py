@@ -17,7 +17,7 @@ from urllib.parse import urlencode
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
-from .local_api import _relay
+from ._local_relay import relay as _relay
 
 if TYPE_CHECKING:
     from collections.abc import Callable

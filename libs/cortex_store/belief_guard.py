@@ -243,16 +243,27 @@ def check_write_contradiction(
 ) -> ContradictionResult:
     """Detect entity-local semantic contradictions before assertion commit.
 
-    Searches for existing assertions on the same entity with high similarity
-    and divergent polarity. Scoped to entity-local only — cross-entity
-    contradictions are out of scope (AGM G3, not global consistency).
+    Uses FTS5 only — no embedding call. The write path must not block on a
+    model HTTP round-trip; vector search improves recall but runs post-commit.
+    Scoped to entity-local only (AGM G3, not global consistency).
     """
-    similar = _entity_hybrid_search(conn, claim, entity_id, limit=10)
+    fts_rows = _entity_fts_search(conn, claim, entity_id, limit=10)
+    similar = [
+        SimilarAssertion(
+            assertion_id=r["id"],
+            claim=r["claim"],
+            confidence=r["confidence"],
+            similarity=0.0,
+            entity_id=entity_id,
+            retrieval_source="fts",
+        )
+        for r in fts_rows
+    ]
 
+    # FTS already filtered for textual relevance; check polarity on all candidates.
+    # Cosine-based threshold is not applicable to BM25 ranks — omit it here.
     conflicts: list[ConflictDetail] = []
     for s in similar:
-        if s.similarity < CONTRADICTION_SIMILARITY_THRESHOLD:
-            continue
         if not detect_polarity_conflict(claim, s.claim):
             continue
         conflicts.append(

@@ -25,7 +25,7 @@ _SELECT = """
     se.name AS source_name, te.name AS target_name,
     r.role, r.strength, r.evidence, r.chunk_id,
     r.valid_from, r.valid_until, r.source_uri,
-    r.created_at
+    r.session_id, r.agent, r.created_at
 """
 
 _FROM = """
@@ -108,8 +108,9 @@ def create_relationship(
             cur = conn.execute(
                 "INSERT INTO relationships "
                 "(type, from_entity, to_entity, role, strength, evidence, "
-                " chunk_id, valid_from, valid_until, source_uri, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " chunk_id, valid_from, valid_until, source_uri, "
+                " session_id, agent, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.type_id,
                     from_entity,
@@ -121,6 +122,8 @@ def create_relationship(
                     body.valid_from,
                     body.valid_until,
                     body.source_uri,
+                    body.session_id,
+                    body.agent,
                     now,
                     now,
                 ),

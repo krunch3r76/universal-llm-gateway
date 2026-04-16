@@ -45,6 +45,7 @@ AGENT_MAP = {
     "claude api": "api",
     "claude cursor": "cursor",
     "kaywan": "kaywan",
+    "orion": "orion",
 }
 
 TURN_HEADER_RE = re.compile(

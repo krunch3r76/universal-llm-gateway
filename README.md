@@ -97,7 +97,7 @@ Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each
 | Tool Category | Examples |
 |---|---|
 | Cortex | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal |
-| File I/O | Read/write across `files` and `project` sandboxes with markdown section ops |
+| File I/O | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops |
 | RAG | Semantic search, answer generation, article upsert, scope routing |
 | Frontier models | `grok_generate`, `claude_generate`, `openai_generate` for deep reasoning and synthesis |
 | Infrastructure | Service lifecycle (`manage`), observability queries, pipeline execution |
@@ -185,7 +185,7 @@ If you are an agent encountering this repo for the first time:
 2. **Tool reference**: `docs/tool-reference.md` — all MCP tool signatures, sandbox routing, dispatch catalog
 3. **Cortex orientation**: `.cursor/rules/cortex-orientation.mdc` — access patterns, confidence taxonomy, agent responsibilities
 4. **Feature registry**: `docs/cursor/cortex-registry.md` — belief revision primitives and operational extensions, classification guide
-5. **Boot sequence**: `notes/system/shared/boot-sequence.md` (files sandbox) — boot flow and on-demand modules
+5. **Boot sequence**: `notes/system/shared/boot-sequence.md` (cortex sandbox) — boot flow and on-demand modules
 
 ## Project Structure
 

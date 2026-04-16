@@ -1,4 +1,4 @@
-"""Filesystem tools — sandboxed read/write/list in /data/files.
+"""Filesystem tools — sandboxed read/write/list in /data/files (cortex sandbox).
 
 All paths are resolved relative to _SANDBOX_ROOT. Traversal attempts
 (../) are rejected before resolution so that the container volume mount
@@ -56,6 +56,10 @@ _FS_WORKFLOW_HINTS: dict[str, str] = {
     "move": (
         "next: cortex entity_update or assert with source_uri pointing to the "
         "new permanent path if this file is evidence for an entity"
+    ),
+    "copy": (
+        "next: cortex entity_create or assert with source_uri pointing to the "
+        "copy destination if the copy should be tracked as a separate document"
     ),
     "write": (
         "next: cortex entity_create or assert with source_uri pointing to this "
@@ -402,7 +406,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
                 all_occurrences=all_occurrences,
             )
             event_payload: dict[str, str | int | bool] = {
-                "sandbox": "files",
+                "sandbox": "cortex",
                 "path": path,
                 "operation": operation,
                 "content_chars": len(content),
@@ -425,7 +429,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             )
             record(
                 "mcp.tool.file.edit_failed",
-                sandbox="files",
+                sandbox="cortex",
                 path=path,
                 operation=operation,
                 reason=reason,
@@ -559,7 +563,7 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             )
 
         target.unlink()
-        record("mcp.tool.file.deleted", sandbox="files", path=path)
+        record("mcp.tool.file.deleted", sandbox="cortex", path=path)
         logger.info("delete_file: deleted %s", target)
         return {"status": "deleted", "path": str(target)}
 
@@ -699,10 +703,10 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
 
         Use `files` for persistent user documents, notes, uploads, exports,
         and any files shared with the agent (dropbox). For repository source code,
-        config, tasks, docs, and scripts use `project`.
+        config, tasks, docs, and scripts use the workspaces sandbox via `fs`.
 
         For large markdown documents (>5k chars), prefer the `markdown` tool
-        (with sandbox="files") which provides section-level read/write/delete
+        (with sandbox="cortex") which provides section-level read/write/delete
         without ingesting the entire file.
 
         Use `binary=True` with `read` or `read_multi` when you need base64
@@ -728,14 +732,16 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
           insert_at_line — insert at line N (path, content, line required)
           list   — list files in directory (path optional, defaults to root)
           move   — move or rename a file (path = source, target = destination)
+          copy   — copy a file (path = source, target = destination)
 
         read_multi — batch read multiple files (paths required)
             Use when loading multiple related files such as boot sequence prompts
             or config + schema pairs. One call replaces N reads. Returns
             {path: content} or {path: {error: msg}} for missing files.
 
-        Workflow chains (write, write_binary, move responses carry a ``_next`` hint):
+        Workflow chains (write, write_binary, move, copy responses carry a ``_next`` hint):
           move   → cortex entity_update/assert (update source_uri to permanent path)
+          copy   → cortex entity_create or assert (register the copy as a new document if needed)
           write  → cortex entity_create or assert (register the new document)
           write_binary → cortex entity_create or assert; or document_ocr for PDFs/images
 
@@ -844,8 +850,16 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
             result = move_file(path, target)
             result["_next"] = _FS_WORKFLOW_HINTS["move"]
             return result
+        if op == "copy":
+            if not path:
+                raise ValueError("'path' is required for copy")
+            if not target:
+                raise ValueError("'target' is required for copy")
+            result = copy_file(path, target)
+            result["_next"] = _FS_WORKFLOW_HINTS["copy"]
+            return result
         raise ValueError(
             f"Unknown op: {op!r}. "
             "Use: read, read_multi, write, write_binary, append_binary, "
-            "append, prepend, replace, insert_at_line, list, move"
+            "append, prepend, replace, insert_at_line, list, move, copy"
         )

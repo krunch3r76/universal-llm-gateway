@@ -130,6 +130,8 @@ def _op_relationship_create(
     valid_from: str | None = None,
     valid_until: str | None = None,
     source_uri: str | None = None,
+    session_id: str | None = None,
+    agent: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     for field, val in [
@@ -152,6 +154,8 @@ def _op_relationship_create(
         ("valid_from", valid_from),
         ("valid_until", valid_until),
         ("source_uri", source_uri),
+        ("session_id", session_id),
+        ("agent", agent),
     ]:
         if val is not None:
             body[key] = val

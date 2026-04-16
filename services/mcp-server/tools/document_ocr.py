@@ -1,8 +1,4 @@
-"""Document OCR tool registration — dispatch-only tools for scanned PDFs.
-
-Phase 4: Extends the finance pipeline to handle scanned documents (no text
-layer) by rendering pages to images and sending to Claude Vision.
-"""
+"""Document OCR tool registration for scanned PDFs and images."""
 
 from __future__ import annotations
 
@@ -11,9 +7,8 @@ from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
 
-from ._document_ocr import ocr_pages, ocr_structured
+from ._document_ocr import ocr_pages
 from ._file_helpers import FILES_ROOT, resolve_files_path
-from ._finance_schemas import VALID_TYPES
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -25,7 +20,7 @@ _SCANNABLE = frozenset({".pdf"}) | _IMAGE_SUFFIXES
 
 
 def register_document_ocr_tools(mcp: FastMCP) -> None:
-    """Register document OCR tools (dispatch-only)."""
+    """Register general-purpose document OCR tools (public dispatch)."""
 
     @mcp.tool(title="Document OCR")
     def document_ocr(
@@ -37,12 +32,15 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """OCR a scanned PDF or image via Claude Vision.
 
-        Use when: a PDF has no text layer (pdfplumber returns empty/garbage),
-        or you need to extract text from photographs or scanned documents.
-        Returns per-page text with token usage.
+        Available via: dispatch(tool="document_ocr", arguments='{"path": "..."}')
+
+        Use when: fs(op="read") returns empty or garbled text for a PDF (no text
+        layer), or you need to extract text from photographs or scanned documents.
+        Handles rendering, resizing, batching, and vision model routing server-side
+        — do not extract base64 manually.
 
         For financial documents that need structured JSON, prefer
-        document_ocr_structured instead.
+        document_ocr_structured (via private_dispatch) instead.
 
         Args:
             path: PDF or image path relative to /data/files/.
@@ -87,67 +85,6 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         )
         return result
 
-    @mcp.tool(title="Document OCR (Structured)")
-    def document_ocr_structured(
-        path: str,
-        statement_type: str,
-        dpi: int = 200,
-        model: str = "",
-    ) -> dict[str, Any]:
-        """OCR a scanned financial document directly into structured JSON.
-
-        The scanned-document equivalent of finance_parse_statement. Renders
-        pages to images, sends to Claude Vision with the statement type schema,
-        returns structured JSON that feeds into finance_ingest_statement.
-
-        Use when: you have a scanned PDF (no text layer) of a financial
-        statement, tax form, or property tax bill.
-
-        Args:
-            path: PDF or image path relative to /data/files/.
-            statement_type: One of the valid finance statement types.
-            dpi: Render resolution (default: 200).
-            model: Model override (default: Claude Sonnet via Anthropic API).
-        """
-        t0 = monotonic_now()
-        record(
-            "mcp.document.ocr.structured.called",
-            path=path,
-            statement_type=statement_type,
-        )
-
-        if statement_type not in VALID_TYPES:
-            raise ValueError(
-                f"Invalid statement_type: {statement_type!r}. "
-                f"Valid: {sorted(VALID_TYPES)}"
-            )
-
-        abs_path = resolve_files_path(path)
-        if not abs_path.exists():
-            raise FileNotFoundError(f"File not found: {path!r}")
-        if abs_path.suffix.lower() not in _SCANNABLE:
-            raise ValueError(f"Unsupported file type: {abs_path.suffix!r}")
-
-        kwargs: dict[str, Any] = {"dpi": dpi}
-        if model:
-            kwargs["model"] = model
-
-        result = ocr_structured(abs_path, statement_type, **kwargs)
-        result["path"] = path
-
-        elapsed = monotonic_now() - t0
-        has_error = "error" in result
-        record(
-            "mcp.document.ocr.structured.completed"
-            if not has_error
-            else "mcp.document.ocr.structured.error",
-            path=path,
-            statement_type=statement_type,
-            duration_s=round(elapsed, 3),
-            **({"error": result["error"]} if has_error else {}),
-        )
-        return result
-
     @mcp.tool(title="Document OCR (Directory)")
     def document_ocr_directory(
         directory: str,
@@ -157,8 +94,11 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Batch OCR all PDFs and images in a directory.
 
-        Use when: bulk processing scanned documents (legal correspondence,
-        assessor letters, deeds, etc.). Returns per-file OCR text.
+        Available via: dispatch(tool="document_ocr_directory", ...)
+
+        Cost warning: runs one vision model call per page per file — a
+        directory with 20 multi-page PDFs can consume thousands of tokens.
+        Prefer document_ocr on individual files when possible.
 
         Args:
             directory: Directory path relative to /data/files/.

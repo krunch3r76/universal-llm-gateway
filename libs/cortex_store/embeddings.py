@@ -118,12 +118,16 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 def embed_query(text: str) -> list[float]:
-    """Embed a single search query with instruction prefix."""
+    """Embed a single search query with model-appropriate prefix."""
     _require_configured()
-    if "qwen3-embedding" in _embed_model.lower():
+    model_lower = _embed_model.lower()
+    if "qwen3-embedding" in model_lower:
         formatted = f"Instruct: {_INSTRUCTION}\nQuery: {text}"
-    else:
+    elif any(p in model_lower for p in ("nomic-embed", "bge", "e5")):
         formatted = f"search_query: {text}"
+    else:
+        # OpenAI, etc. — no prefix
+        formatted = text
     result = _post_batch([formatted])
     return result[0]
 

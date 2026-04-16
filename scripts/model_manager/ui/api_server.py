@@ -46,11 +46,12 @@ _VALID_SERVICES = frozenset(
         "event_service",
         "cortex_api",
         "agent_bus",
+        "email_bridge",
     }
 )  # All recognized service names for API operations
 # Services that support the 'rebuild' operation (container services with local Dockerfiles).
 _REBUILD_SERVICES = frozenset(
-    {"gateway", "mcp", "event_service", "cortex_api", "agent_bus"}
+    {"gateway", "mcp", "event_service", "cortex_api", "agent_bus", "email_bridge"}
 )
 
 

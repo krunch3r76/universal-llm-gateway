@@ -41,26 +41,40 @@ def _is_model_actually_busy(
     routing_key_tracker: "RoutingKeyTracker | None",
     gw_keys_in_flight: set[str] | None = None,
 ) -> bool:
-    """Return True iff the model is busy with verified in-flight requests."""
-    if model_id not in gateway.busy_models:
+    """Return True iff the model has verified in-flight requests.
+
+    INVARIANT: ∀ model_id: tracker_in_flight(model_id, gateway) ⟹ busy(model_id)
+
+    The routing_key_tracker is checked first because it is the master's
+    authoritative record of requests it dispatched and not yet completed.
+    Telemetry (busy_models) is a best-effort hint from the edge; it can be
+    momentarily stale (e.g., between generation batches) and MUST NOT be
+    used to override a positive tracker signal.
+
+    Decision matrix:
+      tracker has keys   → busy (regardless of telemetry)
+      no tracker         → telemetry alone decides
+      tracker, no keys   → idle (telemetry "busy" treated as stale)
+    """
+    if routing_key_tracker is not None:
+        keys_in_flight = (
+            gw_keys_in_flight
+            if gw_keys_in_flight is not None
+            else routing_key_tracker.get_routing_keys_in_flight(gateway.name)
+        )
+        if model_id.routing_key in keys_in_flight:
+            return True
+        # Tracker is authoritative: no in-flight keys → model is idle from
+        # the master's perspective. If telemetry still says busy, it is stale.
+        if model_id in gateway.busy_models:
+            logger.info(
+                f"📊 Stale busy_models detected: {model_id} on {gateway.name} "
+                f"is busy per telemetry but idle per routing tracker"
+            )
         return False
 
-    if routing_key_tracker is None:
-        return True
-
-    keys_in_flight = (
-        gw_keys_in_flight
-        if gw_keys_in_flight is not None
-        else routing_key_tracker.get_routing_keys_in_flight(gateway.name)
-    )
-
-    model_is_actually_busy = model_id.routing_key in keys_in_flight
-    if not model_is_actually_busy:
-        logger.info(
-            f"📊 Stale busy_models detected: {model_id} on {gateway.name} "
-            f"is busy per telemetry but idle per routing tracker"
-        )
-    return model_is_actually_busy
+    # No routing tracker (standalone/edge mode): fall back to telemetry.
+    return model_id in gateway.busy_models
 
 
 def _compute_eviction_plan(
@@ -400,6 +414,23 @@ def _compute_eviction_plan(
         f"free {corrected_freed_vram}MB VRAM, {freed_ram_catalog}MB RAM "
         f"(catalog={catalog_freed_vram}MB, correction={hardware_correction_applied})"
     )
+
+    # Belt-and-suspenders: INVARIANT ∀ mid ∈ models_to_evict: ¬in_flight(mid)
+    # _is_model_actually_busy should have already excluded in-flight models;
+    # this guard catches any future regression in that classification.
+    if routing_key_tracker is not None and gw_keys_in_flight is not None:
+        in_flight_violations = [
+            mid
+            for mid in models_to_evict
+            if mid.routing_key in gw_keys_in_flight
+        ]
+        if in_flight_violations:
+            logger.error(
+                f"🚨 INVARIANT VIOLATION: eviction plan for {placement.model_id} "
+                f"includes in-flight models {[str(m) for m in in_flight_violations]} "
+                f"on {gateway.name}. Aborting eviction to protect active generation."
+            )
+            return None
 
     # Calculate eviction cost
     eviction_count = len(models_to_evict)

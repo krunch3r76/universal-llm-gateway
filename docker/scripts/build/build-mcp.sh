@@ -44,9 +44,16 @@ cleanup() {
 trap cleanup EXIT
 
 echo "📦 Syncing MCP build context from working tree (.gitignore-aware)..."
+# tools/local/ and pipelines.local/ are gitignored (private, not for release)
+# but must be included in the local MCP image.  Rsync processes filter rules in
+# order — these --include rules fire before the .gitignore merge and win.
 rsync -a \
     --delete \
     --exclude=".git" \
+    --include="services/mcp-server/tools/local/" \
+    --include="services/mcp-server/tools/local/**" \
+    --include="pipelines.local/" \
+    --include="pipelines.local/**" \
     --filter=':- .gitignore' \
     "${PROJECT_ROOT}/" "${BUILD_CONTEXT}/"
 

@@ -76,9 +76,7 @@ def _extract_text(path: Path, fmt: str, dpi: int, model: str) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def _write_markdown(
-    output_path: Path, source_rel: str, fmt: str, text: str
-) -> None:
+def _write_markdown(output_path: Path, source_rel: str, fmt: str, text: str) -> None:
     """Write extracted text as markdown with a provenance header."""
     header = (
         f"# Extracted: {Path(source_rel).name}\n\n"
@@ -103,6 +101,8 @@ def register_ingest_document_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Ingest any document — detect format, extract text, write sidecar markdown.
 
+        Available via: dispatch(tool="ingest_document", arguments='{"path": "..."}')
+
         Smart router: automatically detects whether a file is a text PDF,
         scanned PDF, image, ODT, DOCX, EML, or plain text, then extracts
         content using the appropriate method (pymupdf4llm for text PDFs,
@@ -111,7 +111,9 @@ def register_ingest_document_tools(mcp: FastMCP) -> None:
 
         Use when: you need to read a document that isn't plain text or a
         text-layer PDF — scanned PDFs, high-res photos of documents, or
-        any format where read_file returns empty/garbage.
+        any format where fs(op="read") returns empty/garbage. Prefer this
+        over document_ocr when you want persistent extracted text (markdown
+        sidecar) so future reads skip OCR.
 
         The extracted text is persisted as a markdown file so future reads
         don't re-run OCR.
@@ -174,7 +176,7 @@ def register_ingest_document_tools(mcp: FastMCP) -> None:
         }
 
         if entity_id:
-            from .local_api import _relay
+            from ._local_relay import relay as _relay
 
             body: dict[str, Any] = {
                 "id": entity_id,
@@ -202,6 +204,9 @@ def register_ingest_document_tools(mcp: FastMCP) -> None:
         )
         logger.info(
             "ingest_document: %s → %s (%d chars, %.1fs)",
-            path, out_rel, len(text), elapsed,
+            path,
+            out_rel,
+            len(text),
+            elapsed,
         )
         return result

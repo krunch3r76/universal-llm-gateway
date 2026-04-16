@@ -14,7 +14,8 @@ from typing import Any
 from mcp_events import monotonic_now, record
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from tools.local_api import _relay
+
+from tools._local_relay import relay as _relay
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ async def handle_cortex_proxy(request: Request) -> Response:
     """
     path = request.url.path
     if path.startswith(_PREFIX):
-        path = path[len(_PREFIX):]
+        path = path[len(_PREFIX) :]
     if not path:
         path = "/"
     if request.url.query:

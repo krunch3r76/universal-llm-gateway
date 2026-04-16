@@ -1,8 +1,6 @@
-"""Local API relay — HTTP passthrough into internal services (UDS or Docker network).
+"""Shared HTTP relay to internal services (UDS or Docker network).
 
-Agents call `local_api(service, method, path, ...)` via dispatch. The MCP
-server forwards the request to the named service via Unix Domain Socket or
-Docker bridge network and returns the parsed JSON response.
+Infrastructure helper used by proxy modules and the ``local_api`` MCP tool.
 """
 
 from __future__ import annotations
@@ -10,14 +8,11 @@ from __future__ import annotations
 import json as _json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import httpx
 from mcp_events import monotonic_now, record
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
-
-if TYPE_CHECKING:
-    from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +30,13 @@ _SERVICES: dict[str, dict[str, str]] = {
     "cortex-api": {
         "url": DEFAULT_CORTEX_URL,
     },
+    "email-bridge": {
+        "url": f"unix://{os.environ.get('EMAIL_BRIDGE_SOCK', '/tmp/universal-protocol/email-bridge.sock')}",
+    },
 }
 
 
-def _relay(
+def relay(
     service: str,
     method: str,
     path: str,
@@ -46,9 +44,6 @@ def _relay(
     token: str | None = None,
 ) -> dict[str, Any]:
     """Forward an HTTP request to an internal service (UDS or Docker network).
-
-    Module-level relay function used by both the ``local_api`` MCP tool
-    and other internal callers (e.g. context tools routing through cortex-api).
 
     Returns:
         Parsed JSON response from the service, or ``{"error": "<message>"}``.
@@ -173,37 +168,3 @@ def _relay(
         logger.error("local_api relay to %s failed: %s", service, exc, exc_info=True)
         _record_failed(error="unexpected_error", duration=duration, detail=str(exc))
         return {"error": f"Relay to {service} failed: {exc}"}
-
-
-def register_local_api_tools(mcp: FastMCP) -> None:
-    """Register the local_api relay tool on the MCP server instance."""
-
-    @mcp.tool(title="Local API Relay")
-    def local_api(
-        service: str,
-        method: str,
-        path: str,
-        body: dict[str, Any] | None = None,
-        token: str | None = None,
-    ) -> dict[str, Any]:
-        """Forward an HTTP request to an internal service (UDS or Docker network).
-
-        Acts as a relay from MCP into services that are not directly reachable
-        from the internet — via Unix Domain Socket or Docker bridge network.
-
-        Services:
-          agent-bus      — Agent Bus API (UDS: `AGENT_BUS_SOCK`, default `/tmp/universal-protocol/agent-bus.sock`)
-          journal-bridge — Journal Bridge API (Docker bridge, port 8200)
-          cortex-api     — Cortex Knowledge System API (UDS: `CORTEX_API_SOCK`, default `/tmp/universal-protocol/cortex-api.sock`)
-
-        Args:
-            service: Service name from the registry above.
-            method: HTTP method — GET, POST, PUT, PATCH, or DELETE.
-            path: Request path with optional query string, e.g. "/entries?limit=5".
-            body: Optional JSON body for POST/PUT requests.
-            token: Bearer token override. Falls back to the service's env var.
-
-        Returns:
-            Parsed JSON response from the service, or {"error": "<message>"}.
-        """
-        return _relay(service, method, path, body=body, token=token)

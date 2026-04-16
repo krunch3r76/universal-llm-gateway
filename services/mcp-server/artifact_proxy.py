@@ -23,17 +23,20 @@ from typing import Any
 from mcp_events import monotonic_now, record
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from tools.local_api import _relay
+
+from tools._local_relay import relay as _relay
 
 logger = logging.getLogger(__name__)
 
 _PREFIX = "/artifact/cortex"
 
 # Allowed origins — only claude.ai artifacts
-_ALLOWED_ORIGINS = frozenset({
-    "https://claude.ai",
-    "https://www.claude.ai",
-})
+_ALLOWED_ORIGINS = frozenset(
+    {
+        "https://claude.ai",
+        "https://www.claude.ai",
+    }
+)
 
 _FORWARDED_METHODS = frozenset({"GET", "POST", "PATCH", "PUT", "DELETE"})
 
@@ -83,13 +86,15 @@ async def handle_artifact_proxy(request: Request) -> Response:
             origin=request.headers.get("origin", ""),
         )
         return JSONResponse(
-            {"error": "Origin not allowed. This endpoint only accepts requests from claude.ai artifacts."},
+            {
+                "error": "Origin not allowed. This endpoint only accepts requests from claude.ai artifacts."
+            },
             status_code=403,
         )
 
     path = request.url.path
     if path.startswith(_PREFIX):
-        path = path[len(_PREFIX):]
+        path = path[len(_PREFIX) :]
     if not path:
         path = "/"
     if request.url.query:
@@ -129,7 +134,9 @@ async def handle_artifact_proxy(request: Request) -> Response:
             error=result["error"],
             path=path,
         )
-        return JSONResponse(result, status_code=status_code, headers=_cors_headers(origin))
+        return JSONResponse(
+            result, status_code=status_code, headers=_cors_headers(origin)
+        )
 
     record(
         "mcp.artifact.proxy.completed",

@@ -327,7 +327,7 @@ def register_project_tools(mcp: FastMCP) -> None:
 
         Use the default text mode for source files, Markdown, and supported
         document formats. Project reads share the same extraction helpers as the
-        files sandbox, so PDFs, DOCX, ODT, EML, and HTML can be read as text.
+        cortex sandbox, so PDFs, DOCX, ODT, EML, and HTML can be read as text.
         Use ``binary=True`` when another tool needs base64 bytes instead of text
         decoding.
 
@@ -352,7 +352,9 @@ def register_project_tools(mcp: FastMCP) -> None:
                 "read_project_file: %s (%d bytes, binary)", path, result["bytes"]
             )
         else:
-            logger.info("read_project_file: %s (%d chars)", path, len(result["content"]))
+            logger.info(
+                "read_project_file: %s (%d chars)", path, len(result["content"])
+            )
         return result
 
     @mcp.tool(title="Move Project File")
@@ -378,6 +380,39 @@ def register_project_tools(mcp: FastMCP) -> None:
         logger.info("move_project_file: %s -> %s", rel_src, rel_dst)
         record("mcp.project.file.moved", source=rel_src, destination=rel_dst)
         return {"status": "moved", "from": rel_src, "to": rel_dst}
+
+    @mcp.tool(title="Copy Project File")
+    def copy_project_file(path: str, target: str) -> dict[str, str]:
+        """Copy a file in the project directory.
+
+        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
+        Creates intermediate directories at the destination automatically.
+        Overwrites the destination if it already exists.
+
+        Args:
+            path: Relative source path, e.g. "universal-llm-gateway/docs/foo.md".
+            target: Relative destination path.
+
+        Returns:
+            {"status": "copied", "from": "<source path>", "to": "<dest path>"}
+        """
+        if _PROJECT_READ_ONLY:
+            return cast("dict[str, str]", _read_only_error())
+
+        src = _safe_project_path(path)
+        dst = _safe_project_path(target)
+        if not src.exists():
+            return {"error": f"File not found: {path!r}"}
+        if not src.is_file():
+            return {"error": f"Path is not a file: {path!r}"}
+
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dst))
+        rel_src = str(src.relative_to(_PROJECT_ROOT.resolve()))
+        rel_dst = str(dst.relative_to(_PROJECT_ROOT.resolve()))
+        logger.info("copy_project_file: %s -> %s", rel_src, rel_dst)
+        record("mcp.project.file.copied", source=rel_src, destination=rel_dst)
+        return {"status": "copied", "from": rel_src, "to": rel_dst}
 
     @mcp.tool(title="List Project Files")
     def list_project_files(

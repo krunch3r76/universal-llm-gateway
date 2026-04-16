@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 from ._cortex_relay import _cx
-from .local_api import _relay
+from ._local_relay import relay as _relay
 
 
 def build_session_close(
@@ -103,7 +103,7 @@ def _build_steps(
             "action": "Write transcript markdown",
             "detail": (
                 f"Write turn-by-turn transcript to: "
-                f"`fs(sandbox='files', op='write', path='{transcript_path}', content='...')`\n"
+                f"`fs(sandbox='cortex', op='write', path='{transcript_path}', content='...')`\n"
                 "Include: H1 title, H2 per exchange (### User / ### Claude verbatim), "
                 "## Session Summary at end with Decisions, Files modified, Open items, "
                 "Attachments, Journal, Transcript fields."
