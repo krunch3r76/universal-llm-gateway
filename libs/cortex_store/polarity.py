@@ -1,8 +1,8 @@
 """Polarity detection for assertion contradiction checking.
 
-Rule-based, no LLM — designed for the hot write path. Detects
-status antonym pairs and negation asymmetry between two claims.
-Defaults to "no conflict" when ambiguous (false negatives > false positives).
+Rule-based, no LLM — designed for the hot write path. Detects status antonym
+pairs between two claims. Defaults to "no conflict" when ambiguous (false
+negatives > false positives).
 """
 
 from __future__ import annotations
@@ -33,13 +33,6 @@ _STATUS_ANTONYMS: dict[str, str] = {
     "blocked": "unblocked",
     "unblocked": "blocked",
 }
-
-_NEGATION_RE = re.compile(
-    r"\b(not|no longer|isn't|aren't|wasn't|weren't|won't|cannot|"
-    r"can't|doesn't|don't|didn't|hasn't|haven't|hadn't|never|"
-    r"neither|nor)\b",
-    re.IGNORECASE,
-)
 
 STOP_WORDS = frozenset(
     {
@@ -85,24 +78,21 @@ WORD_RE = re.compile(r"\b\w+\b")
 def detect_polarity_conflict(claim_a: str, claim_b: str) -> bool:
     """Rule-based polarity check between two claims.
 
-    Returns True if claims appear to express contradictory states.
-    Defaults to False when ambiguous — false negatives are safer
-    than false positives on the write path.
+    Returns True iff the claims express opposing status states on the same
+    vocabulary (e.g. "open" vs "closed"). Defaults to False when ambiguous —
+    false negatives are safer than false positives on the write path.
+
+    The previous negation-asymmetry heuristic was removed (agent-bus thread
+    555): rhetorical "not" in ordinary prose combined with trivial ≥3-word
+    topicality overlap produced systematic false positives on any entity with
+    accumulated history. Semantic polarity detection belongs in an offline /
+    post-commit review path with an LLM, not in a word-level rule.
     """
-    a_lower = claim_a.lower()
-    b_lower = claim_b.lower()
-    a_words = set(WORD_RE.findall(a_lower))
-    b_words = set(WORD_RE.findall(b_lower))
+    a_words = set(WORD_RE.findall(claim_a.lower()))
+    b_words = set(WORD_RE.findall(claim_b.lower()))
 
     for word, antonym in _STATUS_ANTONYMS.items():
         if word in a_words and antonym in b_words:
-            return True
-
-    a_has_neg = bool(_NEGATION_RE.search(a_lower))
-    b_has_neg = bool(_NEGATION_RE.search(b_lower))
-    if a_has_neg != b_has_neg:
-        content_words = (a_words & b_words) - STOP_WORDS
-        if len(content_words) >= 3:
             return True
 
     return False
