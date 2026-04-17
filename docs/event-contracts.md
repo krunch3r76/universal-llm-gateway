@@ -1791,10 +1791,37 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
 | `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
 | `mcp.frontier.generate.called` | `model`, `tool`, `provider`, `boot_level`, `has_thinking`, `has_tools`, `has_conversation_id`, `mcp_tool_loop` | Frontier generate entry — one per `grok_generate`/`claude_generate`/`openai_generate`/`gemini_generate` invocation (including tool-loop-driven calls) |
-| `mcp.frontier.generate.completed` | `tool`, `model`, `provider`, `duration_s`, `input_tokens`, `output_tokens`, `tool_calls_made`, `has_thinking`, `has_tool_calls` | Frontier generate succeeded; `duration_s` covers the full client-side tool loop when `mcp_tool_loop=True` |
+| `mcp.frontier.generate.completed` | `tool`, `model`, `provider`, `duration_s`, `input_tokens`, `output_tokens`, `tool_calls_made`, `has_thinking`, `has_tool_calls`, `finish_reason`, `block_reason` | Frontier generate succeeded; `duration_s` covers the full client-side tool loop when `mcp_tool_loop=True`. `finish_reason` and `block_reason` are populated for providers whose adapter surfaces them (Google) and `None` otherwise — disambiguates empty/short outputs across {`STOP`, `MAX_TOKENS`, `SAFETY`, `RECITATION`, `MALFORMED_FUNCTION_CALL`, `OTHER`} |
 | `mcp.frontier.generate.error` | `provider`, `error`, optional `duration_s` | Frontier generate failed. `error` ∈ {`no_native_path`, `missing_api_key`, `adapter_missing_frontier`, `upstream_{status}`, `timeout`, `connection`, `boot_context_invalid`} |
 | `mcp.frontier.tool.executed` | `tool`, `turn`, `provider` | Individual MCP tool call executed inside the client-side frontier tool loop (one per tool invocation, per turn) |
-| `mcp.frontier.output.short` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `tool_calls_made`, `content_preview` | Frontier generate (`team`/`full` boot) returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting |
+| `mcp.frontier.output.short` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview` | Frontier generate (`team`/`full` boot) returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. `finish_reason`/`block_reason` distinguish provider-reported termination cause from silent empty candidates |
+| `mcp.frontier.thought.termination.shadow` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `generate_id`, `detector` ({`mode`, `version`, `provider`, `adapter`}), `reason`, `confidence`, `evidence` (list of {`kind`, `score`, `excerpt`}), `suggested_next_action`, `trace_visibility` | Advisory post-`generate.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion / coherence_collapse / user_directed / unknown) in the model's reasoning trace. v1 scope: provider=`google` + boot ∈ {`team`,`full`} + thought summaries available. `.shadow` topic prefix (not a flag) marks v1 as NOT production-consumable during the 7–14 day calibration window — orchestrators MUST filter on prefix, not on a shadow boolean. `generate_id` is minted at the `execute_frontier` retry boundary and inherits the upstream generation scope per call. Never replaces `generate.completed`, never fires on `generate.error`. Known gap: no semantic rubric in v1 — phrase-based detection is scaffolding; the semantic detector becomes the primary defense post-calibration |
+
+### Generation Quality Signal Family
+
+`mcp.frontier.output.short` and `mcp.frontier.thought.termination` (currently
+shadow) are members of a pre-declared **`mcp.frontier.generation.quality`**
+signal family. The family is a taxonomic label on this doc and a consumer-side
+query grouping — it is NOT a literal wire-level prefix. Membership criteria
+(agent-bus thread 576, turn 6):
+
+1. Signal is about whether a completed generation was *substantively* complete,
+   not merely token-terminated.
+2. Emission is post-hoc (after `generate.completed`), advisory, and never
+   replaces or blocks completion/error events.
+3. Schema includes `detector.mode`, `confidence`, `generate_id`
+   (inherited from the upstream generation), and family-consistent correlation
+   fields (`tool`, `provider`, `model`, `boot_level`, `finish_reason`, `block_reason`).
+
+Rationale: threads 570, 575, 576 surfaced the same failure-class — event
+surface treating `generate.completed` as a proxy for substantive success when
+it is not. Future members (e.g. a `coherence_collapse` / high-token-zero-value
+signal from thread 575) register here rather than bolt on independently.
+
+Phrase-based detection sunset: the hybrid heuristic is the v1 primary; the
+semantic detector is a known gap (API Claude mod #1, thread 576 t5). Sunset
+commitment — phrase detection degrades to a secondary weak signal once the
+semantic layer ships; target milestone is post-calibration-window close.
 
 ### Agent-Bus Signals
 

@@ -27,6 +27,7 @@ from ._frontier_boot import (
     normalize_boot_level,
     should_inject_tools,
 )
+from ._frontier_termination import emit_termination_shadow_if_detected
 
 logger = get_logger(__name__)
 
@@ -246,6 +247,14 @@ def execute_frontier(
         result["tool_calls_made"] = tool_calls_total
 
     output_tokens = result.get("usage", {}).get("output_tokens", 0)
+    # finish_reason / block_reason are the provider's own description of why
+    # a generation ended. Without them, an empty candidate (0 output tokens,
+    # no tool calls, no thinking) is indistinguishable from MAX_TOKENS,
+    # SAFETY, RECITATION, MALFORMED_FUNCTION_CALL, or a transient STOP-with-
+    # nothing from the upstream API. Only the Google adapter populates
+    # these today; other adapters return None and the fields stay absent.
+    finish_reason = result.get("finish_reason")
+    block_reason = result.get("block_reason")
     record(
         "mcp.frontier.generate.completed",
         duration_s=round(duration, 3),
@@ -257,6 +266,8 @@ def execute_frontier(
         input_tokens=result.get("usage", {}).get("input_tokens", 0),
         output_tokens=output_tokens,
         tool_calls_made=tool_calls_total,
+        finish_reason=finish_reason,
+        block_reason=block_reason,
     )
     # Anomaly: team/full consults returning a tiny final turn are almost
     # always a silent failure (thinking-budget starvation, model confusion,
@@ -271,8 +282,21 @@ def execute_frontier(
             boot_level=req.boot,
             output_tokens=output_tokens,
             tool_calls_made=tool_calls_total,
+            finish_reason=finish_reason,
+            block_reason=block_reason,
             content_preview=(result.get("content") or "")[:500],
         )
+
+    emit_termination_shadow_if_detected(
+        result,
+        tool_name,
+        api_model,
+        provider_key,
+        req.boot,
+        output_tokens,
+        finish_reason,
+        block_reason,
+    )
     if "error" not in result and req.boot in ("team", "full"):
         result["_next"] = (
             "If this consultation surfaced a decision, insight, or correction "
