@@ -131,6 +131,7 @@ DerivationType = Literal[
     "inference",
     "direct_observation",
     "agent_observation",
+    "user_statement",
     "stated",
     "commitment",
     "other",

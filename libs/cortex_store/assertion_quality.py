@@ -21,7 +21,9 @@ _DATE_PATTERN = re.compile(
 )
 
 _SOURCED_TYPES = frozenset({"quotation", "compression"})
-_OBSERVATION_TYPES = frozenset({"agent_observation", "direct_observation"})
+_OBSERVATION_TYPES = frozenset(
+    {"agent_observation", "direct_observation", "user_statement"}
+)
 
 
 @dataclass
@@ -94,8 +96,11 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
         result.hard_reject.append(
             ValidationDiagnostic(
                 field="derivation_type",
-                message="derivation_type is required — specify how this claim was derived "
-                "(quotation, compression, inference, commitment, etc.)",
+                message="derivation_type is required — specify how this claim was derived. "
+                "Types that require chunk_id + evidence_uris: quotation, compression. "
+                "Types that do NOT require chunk_id (session/observation sources): "
+                "user_statement, agent_observation, direct_observation, inference, "
+                "commitment, stated, other.",
             )
         )
 
@@ -105,7 +110,9 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
                 ValidationDiagnostic(
                     field="chunk_id",
                     message=f"derivation_type={body.derivation_type!r} requires chunk_id — "
-                    "create chunks via POST /chunks or cortex_ingest_document() first",
+                    "create chunks via POST /chunks or cortex_ingest_document() first. "
+                    "For session-originated claims (user told you in conversation), "
+                    "use derivation_type='user_statement' instead.",
                 )
             )
         if not body.evidence_uris:
