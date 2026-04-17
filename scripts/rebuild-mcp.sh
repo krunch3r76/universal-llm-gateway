@@ -118,6 +118,8 @@ for key in (
     'CLAUDEBURST_PORT',
     'CLAUDEBURST_PERPS_HOST',
     'CLAUDEBURST_PERPS_PORT',
+    'CLAUDEBURST_COINBASE_HOST',
+    'CLAUDEBURST_COINBASE_PORT',
 ):
     value = (cfg.get(key) or os.environ.get(key) or '').strip()
     if value:
