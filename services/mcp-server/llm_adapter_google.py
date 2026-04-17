@@ -246,10 +246,12 @@ class GoogleAdapter:
         thinking_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         server_tool_calls: list[dict[str, Any]] = []
+        finish_reason: str | None = None
 
         candidates = response_data.get("candidates", [])
         if candidates:
             candidate = candidates[0]
+            finish_reason = candidate.get("finishReason")
             parts = (candidate.get("content") or {}).get("parts", [])
             for part in parts:
                 if not isinstance(part, dict):
@@ -275,6 +277,9 @@ class GoogleAdapter:
             if grounding:
                 server_tool_calls.append({"type": "grounding", **grounding})
 
+        prompt_feedback = response_data.get("promptFeedback") or {}
+        block_reason = prompt_feedback.get("blockReason")
+
         usage_meta = response_data.get("usageMetadata", {})
         usage: dict[str, Any] = {
             "input_tokens": usage_meta.get("promptTokenCount", 0),
@@ -299,6 +304,8 @@ class GoogleAdapter:
             "tool_calls": tool_calls or None,
             "server_tool_calls": server_tool_calls or None,
             "response_id": response_data.get("responseId"),
+            "finish_reason": finish_reason,
+            "block_reason": block_reason,
             "raw": None,
         }
 
