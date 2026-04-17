@@ -62,12 +62,58 @@ _ACCOUNT_SUFFIX_RE = re.compile(r"(?:···|\.{3}|\*{3,4})(\d{4})")
 
 _STOP_WORDS = frozenset(
     {
-        "the", "a", "an", "and", "or", "not", "on", "in", "at", "to", "of",
-        "for", "from", "by", "as", "with", "its", "is", "are", "was", "were",
-        "has", "have", "had", "be", "been", "will", "would", "could", "should",
-        "may", "might", "he", "she", "it", "they", "we", "there", "this",
-        "that", "no", "yes", "due", "paid", "payment", "minimum", "balance",
-        "confirmed", "recorded", "yet", "still", "upcoming",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "not",
+        "on",
+        "in",
+        "at",
+        "to",
+        "of",
+        "for",
+        "from",
+        "by",
+        "as",
+        "with",
+        "its",
+        "is",
+        "are",
+        "was",
+        "were",
+        "has",
+        "have",
+        "had",
+        "be",
+        "been",
+        "will",
+        "would",
+        "could",
+        "should",
+        "may",
+        "might",
+        "he",
+        "she",
+        "it",
+        "they",
+        "we",
+        "there",
+        "this",
+        "that",
+        "no",
+        "yes",
+        "due",
+        "paid",
+        "payment",
+        "minimum",
+        "balance",
+        "confirmed",
+        "recorded",
+        "yet",
+        "still",
+        "upcoming",
     }
 )
 
@@ -113,15 +159,51 @@ def _resolved_key_phrases(recently_resolved: list[dict[str, Any]]) -> set[str]:
     """
     generic_starters = frozenset(
         {
-            "has", "have", "had", "is", "are", "was", "were", "be", "been",
-            "will", "would", "could", "should", "may", "might", "he", "she",
-            "it", "they", "we", "kaywan", "there", "this", "that",
+            "has",
+            "have",
+            "had",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "he",
+            "she",
+            "it",
+            "they",
+            "we",
+            "kaywan",
+            "there",
+            "this",
+            "that",
         }
     )
     common_short = frozenset(
         {
-            "the", "a", "an", "and", "or", "not", "on", "in", "at", "to",
-            "of", "for", "from", "by", "as", "with", "its",
+            "the",
+            "a",
+            "an",
+            "and",
+            "or",
+            "not",
+            "on",
+            "in",
+            "at",
+            "to",
+            "of",
+            "for",
+            "from",
+            "by",
+            "as",
+            "with",
+            "its",
         }
     )
 
@@ -239,9 +321,7 @@ def filter_stale_open_items(
         open_items = session.get("open_items") or []
         tagged: list[str] = []
         for item in open_items:
-            if _is_resolved(
-                str(item), resolved_ids, resolved_token_sets, key_phrases
-            ):
+            if _is_resolved(str(item), resolved_ids, resolved_token_sets, key_phrases):
                 tagged.append(f"[RESOLVED] {item}")
             else:
                 tagged.append(item)
@@ -289,6 +369,8 @@ def render_briefing_card(
     op_ctx_path: str = "",
     reflective_entries: list[dict[str, Any]] | None = None,
     reflective_total: int = 0,
+    recent_mentions: list[dict[str, Any]] | None = None,
+    recent_mentions_window_days: int = 7,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -406,6 +488,24 @@ def render_briefing_card(
                 "`cortex(tool='entities', arguments='{\"type\": \"todo\"}')`*"
             )
 
+    # ── Recent mentions (entities active in trailing window) ──
+    if recent_mentions:
+        parts.append(
+            f"\n## Recent Mentions — trailing {recent_mentions_window_days}d "
+            f"({len(recent_mentions)})"
+        )
+        parts.append(
+            "*Entities with new assertions or newly created — recognize these names*"
+        )
+        for m in recent_mentions[:10]:
+            name = m.get("entity_name", m.get("entity_id", "?"))
+            etype = m.get("entity_type", "?")
+            cnt = m.get("recent_mention_count", 0)
+            last_mentioned = m.get("last_mentioned_at")
+            rel = _relative_time(last_mentioned, now) if last_mentioned else "?"
+            cnt_tag = f", {cnt} new" if cnt else ", new entity"
+            parts.append(f"- **{name}** ({etype}) — {rel}{cnt_tag}")
+
     # ── Self-observations ──
     if self_reflections:
         parts.append(f"\n## Your Notes ({len(self_reflections)})")
@@ -486,5 +586,16 @@ def render_briefing_card(
             "hint": "cortex(tool='deadlines')",
         }
     )
+    if recent_mentions:
+        manifest.append(
+            {
+                "section": "recent_mentions",
+                "count": len(recent_mentions),
+                "hint": (
+                    "GET /boot-recent-mentions via cortex-api "
+                    "(query params: days, limit, type_exclude)"
+                ),
+            }
+        )
 
     return card, manifest

@@ -168,6 +168,13 @@ def run_cortex_boot(
         f"/boot-reflective?{rj_qs}",
     )
 
+    recent_mentions_qs = urlencode({"days": 7, "limit": 10})
+    futures_spec["recent_mentions"] = (
+        _cx,
+        "GET",
+        f"/boot-recent-mentions?{recent_mentions_qs}",
+    )
+
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
     if self_entity_id and self_reflections_limit > 0:
@@ -201,6 +208,8 @@ def run_cortex_boot(
     rj_raw = raw.get("reflective_journal", {})
     if isinstance(rj_raw, dict):
         rj_total = rj_raw.get("total", 0)
+
+    recent_mentions: list[dict[str, Any]] = safe_list(raw.get("recent_mentions", []))
 
     if agent == "web":
         _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
@@ -296,6 +305,7 @@ def run_cortex_boot(
         op_ctx_path=op_ctx_path,
         reflective_entries=rj_entries or None,
         reflective_total=rj_total,
+        recent_mentions=recent_mentions or None,
     )
 
     logger.info(
