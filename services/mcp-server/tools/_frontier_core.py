@@ -245,6 +245,7 @@ def execute_frontier(
     if tool_calls_total > 0:
         result["tool_calls_made"] = tool_calls_total
 
+    output_tokens = result.get("usage", {}).get("output_tokens", 0)
     record(
         "mcp.frontier.generate.completed",
         duration_s=round(duration, 3),
@@ -254,9 +255,24 @@ def execute_frontier(
         has_thinking=result.get("thinking") is not None,
         has_tool_calls=result.get("tool_calls") is not None,
         input_tokens=result.get("usage", {}).get("input_tokens", 0),
-        output_tokens=result.get("usage", {}).get("output_tokens", 0),
+        output_tokens=output_tokens,
         tool_calls_made=tool_calls_total,
     )
+    # Anomaly: team/full consults returning a tiny final turn are almost
+    # always a silent failure (thinking-budget starvation, model confusion,
+    # tool-loop misrouting). Capture the first ~500 chars of content so the
+    # next triage can answer "nonsense or just short?" from events alone.
+    if output_tokens < 500 and req.boot in ("team", "full"):
+        record(
+            "mcp.frontier.output.short",
+            tool=tool_name,
+            provider=result.get("provider", provider_key),
+            model=result.get("model", api_model),
+            boot_level=req.boot,
+            output_tokens=output_tokens,
+            tool_calls_made=tool_calls_total,
+            content_preview=(result.get("content") or "")[:500],
+        )
     if "error" not in result and req.boot in ("team", "full"):
         result["_next"] = (
             "If this consultation surfaced a decision, insight, or correction "

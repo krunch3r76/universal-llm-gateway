@@ -131,8 +131,14 @@ class GoogleAdapter:
             body["systemInstruction"] = {"parts": [{"text": req.system}]}
 
         gen_config: dict[str, Any] = {}
+        model_lower = req.model.lower()
         if req.max_tokens is not None:
-            gen_config["maxOutputTokens"] = max(req.max_tokens, 8192)
+            gen_config["maxOutputTokens"] = req.max_tokens
+        elif model_lower.startswith(("gemini-2.5", "gemini-3")):
+            # 2.5 thinkingBudget and 3.x thinkingLevel consume generation
+            # cycles; a low maxOutputTokens starves the final answer while
+            # the thought quota spends. Default high when caller declines.
+            gen_config["maxOutputTokens"] = 32768
         if req.temperature is not None:
             gen_config["temperature"] = req.temperature
         if req.top_p is not None:
@@ -146,9 +152,14 @@ class GoogleAdapter:
             level_raw = req.thinking.get("level") or req.thinking.get("effort")
             if level_raw:
                 level = level_raw.upper()
-                model_lower = req.model.lower()
+                # includeThoughts=True surfaces thought-summary parts in the
+                # response so parse_frontier_response can populate `thinking`
+                # — without it, reasoning is invisible for post-hoc triage.
                 if model_lower.startswith("gemini-3"):
-                    gen_config["thinkingConfig"] = {"thinkingLevel": level}
+                    gen_config["thinkingConfig"] = {
+                        "thinkingLevel": level,
+                        "includeThoughts": True,
+                    }
                 elif model_lower.startswith("gemini-2.5"):
                     # Gemini 2.5 rejects thinkingLevel; it requires an
                     # integer thinkingBudget. 1024/8192/24576 lie inside
@@ -157,7 +168,10 @@ class GoogleAdapter:
                     budget_map = {"LOW": 1024, "MEDIUM": 8192, "HIGH": 24576}
                     budget = budget_map.get(level)
                     if budget is not None:
-                        gen_config["thinkingConfig"] = {"thinkingBudget": budget}
+                        gen_config["thinkingConfig"] = {
+                            "thinkingBudget": budget,
+                            "includeThoughts": True,
+                        }
 
         if req.response_format:
             fmt = req.response_format

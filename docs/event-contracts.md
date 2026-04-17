@@ -1790,6 +1790,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.response.retrieved` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Consumer retrieved a stored oversized response via `retrieve` tool |
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
 | `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
+| `mcp.frontier.output.short` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `tool_calls_made`, `content_preview` | Frontier generate (`team`/`full` boot) returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting |
 
 ### Agent-Bus Signals
 
