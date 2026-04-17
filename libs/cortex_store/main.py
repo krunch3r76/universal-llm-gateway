@@ -44,7 +44,7 @@ from .scoring import compact_access_log
 
 logger = logging.getLogger("cortex-api")
 
-_DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
+_DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-8192"
 
 
 def _init_vector_subsystem() -> None:
