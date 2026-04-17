@@ -166,6 +166,29 @@ The browser Compose override (`mcp-server-browser.override.yml`) adds a custom s
 | `BRAVE_SEARCH_API_KEY` | No | — | Brave Search API key for `web_search` |
 | `STARGATE_URL` | No | `http://host.docker.internal:9999` | Stargate URL for RAG pipeline calls |
 
+#### Cortex deployment customization
+
+These variables parameterize personal references in the Cortex-facing tools
+(`observe`, boot narrative, operational-context protocol templates, subagent
+preamble) so the server is clean for public consumption and each deployment
+supplies its own owner identity.
+
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `CORTEX_DEFAULT_USER_ENTITY` | No | *(empty — `entity_id` required on `observe`)* | Default `entity_id` for `observe()` (e.g. `person:jane-doe`) |
+| `CORTEX_OWNER_NAME` | No | `the user` | Owner name rendered into deadline/review/confirm protocol templates |
+| `CORTEX_DEPLOYMENT_VOCABULARY` | No | *(empty)* | JSON array of deployment-specific shared-vocabulary entries |
+| `CORTEX_PERSONA_SEEDS` | No | `{}` | JSON object mapping agent → persona seed file path |
+
+Example:
+
+```bash
+CORTEX_DEFAULT_USER_ENTITY=person:jane-doe
+CORTEX_OWNER_NAME=Jane
+CORTEX_DEPLOYMENT_VOCABULARY='["\"The project\" = entity `project:foo`"]'
+CORTEX_PERSONA_SEEDS='{"web":"notes/system/prompts/web-persona-v2.md"}'
+```
+
 ### Deployment
 
 ```bash
