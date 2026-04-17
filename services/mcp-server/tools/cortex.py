@@ -1159,7 +1159,7 @@ def _enrich_entity_completeness(result: dict[str, Any]) -> None:
 
 
 _CORTEX_FORMAT_HINT = (
-    "arguments must be a JSON string, not a bare object. "
+    "arguments must be an object or a JSON-encoded object. "
     'Example: cortex(tool="entity_get", arguments=\'{"entity_id": "service:mcp-server"}\')'
 )
 
@@ -1185,15 +1185,15 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
 
 
 def _parse_cortex_arguments(arguments: object, tool: str) -> dict[str, Any] | None:
-    """Return parsed arguments dict, or None with side-effect logging on failure."""
+    """Return parsed arguments dict, or None on parse failure.
+
+    Both forms of the ``arguments`` parameter are now advertised on the tool
+    schema: remote-MCP providers (xAI) emit objects; legacy callers emit
+    JSON strings. Either is accepted silently.
+    """
     import json as _json
 
     if isinstance(arguments, dict):
-        logger.warning(
-            "cortex %r: arguments passed as dict (object), not a JSON string — "
-            "format violation. Accepting for compatibility but callers should fix.",
-            tool,
-        )
         return arguments
     if isinstance(arguments, str):
         try:
@@ -1211,11 +1211,11 @@ def register_cortex_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style cortex tool on the MCP server instance."""
 
     @mcp.tool(title="Cortex Knowledge Graph")
-    def cortex(tool: str, arguments: str = "{}") -> Any:
+    def cortex(tool: str, arguments: dict[str, Any] | str = "{}") -> Any:
         """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
         tool: operation name (see table below)
-        arguments: JSON string with operation arguments
+        arguments: operation arguments as an object or a JSON string
 
         Operations:
           entities          (type?, limit?)                          — list entities

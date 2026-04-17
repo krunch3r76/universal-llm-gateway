@@ -193,7 +193,13 @@ TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 
 def _parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
-    """Parse dispatch-style arguments (JSON string or dict). None on failure."""
+    """Parse dispatch-style arguments (JSON string or dict). None on failure.
+
+    Both forms are advertised in the tool schema (``dict[str, Any] | str``) so
+    remote-MCP clients whose provider-side validators reject string-typed
+    ``arguments`` (xAI Responses API) can pass objects while legacy callers
+    (Cursor, web clients) keep passing JSON strings unchanged.
+    """
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, str):

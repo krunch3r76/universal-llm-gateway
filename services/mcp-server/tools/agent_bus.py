@@ -41,6 +41,7 @@ def _post_impl(
     from_agent: str,
     summary: str | None,
     attachments: list[dict[str, Any]] | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, Any]:
     """Atomic thread+turn creation via POST /threads/with-turn."""
     payload: dict[str, Any] = {
@@ -56,6 +57,8 @@ def _post_impl(
         payload["summary"] = summary
     if attachments:
         payload["attachments"] = attachments
+    if tags:
+        payload["tags"] = tags
 
     result = _relay("agent-bus", "POST", "/threads/with-turn", body=payload)
     if "error" in result:
@@ -75,6 +78,14 @@ def _post_impl(
         to=to,
         turn_number=turn_number,
     )
+    if tags:
+        record(
+            "mcp.agentbus.thread.tags.updated",
+            thread=thread_id,
+            tag_count=len(tags),
+            agent=from_agent,
+            op="post",
+        )
     return result
 
 
@@ -88,6 +99,7 @@ def _reply_impl(
     from_agent: str,
     status: str,
     mark_read: bool,
+    close: bool,
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
@@ -127,6 +139,19 @@ def _reply_impl(
         if turn_id is not None:
             _relay("agent-bus", "PATCH", f"/turns/{turn_id}/read")
             logger.info("agent_bus reply: marked turn %s read (self-note)", turn_number)
+
+    if close:
+        close_result = _relay("agent-bus", "PATCH", f"/threads/{thread}/close", body={})
+        if isinstance(close_result, dict) and "error" in close_result:
+            return {
+                "error": (
+                    f"reply posted but close failed: {close_result['error']}. "
+                    f"Turn {effective_turn_number} exists; close manually."
+                )
+            }
+        logger.info("agent_bus reply: closed thread %s after final turn", thread)
+        record("mcp.agentbus.thread.closed", thread=thread, via="reply")
+        result["closed"] = True
 
     return result
 
@@ -204,8 +229,13 @@ def _resolve_turn_id(
     return None, {"error": f"Turn {turn_number} not found in thread {thread}"}
 
 
-def _threads_impl(*, status: str) -> dict[str, Any]:
-    params = {} if status == "all" else {"status": status}
+def _threads_impl(*, status: str, tags: list[str] | None = None) -> dict[str, Any]:
+    params: list[tuple[str, str]] = []
+    if status != "all":
+        params.append(("status", status))
+    tag_list = [t.strip() for t in (tags or []) if t and t.strip()]
+    for tag in tag_list:
+        params.append(("tags", tag))
     qs = urlencode(params)
     path = f"/threads?{qs}" if qs else "/threads"
     result = _relay("agent-bus", "GET", path)
@@ -217,8 +247,18 @@ def _threads_impl(*, status: str) -> dict[str, Any]:
         result if isinstance(result, list) else result.get("threads", [])
     )
     count = len(threads)
-    logger.info("agent_bus threads: status=%s -> %d threads", status, count)
-    record("mcp.agentbus.threads.listed", status=status, count=count)
+    logger.info(
+        "agent_bus threads: status=%s tags=%s -> %d threads",
+        status,
+        ",".join(tag_list) or "-",
+        count,
+    )
+    record(
+        "mcp.agentbus.threads.listed",
+        status=status,
+        tag_count=len(tag_list),
+        count=count,
+    )
     return result
 
 
@@ -245,19 +285,34 @@ def _update_thread_impl(
     thread: str,
     status: str | None,
     summary: str | None,
+    tags: list[str] | None,
+    from_agent: str,
 ) -> dict[str, Any]:
-    payload: dict[str, str] = {}
+    payload: dict[str, Any] = {}
     if status is not None:
         payload["status"] = status
     if summary is not None:
         payload["summary"] = summary
+    if tags is not None:
+        # [] = clear, [...] = replace. None = omit so server leaves unchanged.
+        payload["tags"] = tags
     if not payload:
-        return {"error": "update_thread requires at least one of: status, summary"}
+        return {
+            "error": "update_thread requires at least one of: status, summary, tags"
+        }
     result = _relay("agent-bus", "PATCH", f"/threads/{thread}", body=payload)
     if "error" in result:
         return {"error": f"agent-bus error: {result['error']}"}
     logger.info("agent_bus update_thread: thread=%s status=%s", thread, status)
     record("mcp.agentbus.thread.updated", thread=thread, status=status or "")
+    if tags is not None:
+        record(
+            "mcp.agentbus.thread.tags.updated",
+            thread=thread,
+            tag_count=len(tags),
+            agent=from_agent,
+            op="update_thread",
+        )
     return result
 
 
@@ -381,6 +436,7 @@ def _post_dispatch(
     from_agent: str = "web",
     summary: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, Any]:
     if not slug or not to or not subject or not body:
         return {"error": "post requires: slug, to, subject, body"}
@@ -392,6 +448,7 @@ def _post_dispatch(
         from_agent=from_agent,
         summary=summary,
         attachments=attachments,
+        tags=tags,
     )
 
 
@@ -405,6 +462,7 @@ def _reply_dispatch(
     from_agent: str = "web",
     status: str = "open",
     mark_read: bool = False,
+    close: bool = False,
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not thread or not to or not subject or not body or after_turn < 1:
@@ -418,6 +476,7 @@ def _reply_dispatch(
         from_agent=from_agent,
         status=status,
         mark_read=mark_read,
+        close=close,
         attachments=attachments,
     )
 
@@ -428,8 +487,10 @@ def _get_dispatch(*, thread: str = "", turn_number: int = 0) -> dict[str, Any]:
     return _get_impl(thread=thread, turn_number=turn_number)
 
 
-def _threads_dispatch(*, status: str = "active") -> dict[str, Any]:
-    return _threads_impl(status=status)
+def _threads_dispatch(
+    *, status: str = "active", tags: list[str] | None = None
+) -> dict[str, Any]:
+    return _threads_impl(status=status, tags=tags)
 
 
 def _update_dispatch(
@@ -460,13 +521,21 @@ def _update_thread_dispatch(
     thread: str = "",
     status: str | None = None,
     summary: str | None = None,
+    tags: list[str] | None = None,
+    from_agent: str = "web",
 ) -> dict[str, Any]:
     if not thread:
         return {"error": "update_thread requires: thread"}
     # If an empty string status is not allowed, add explicit validation here.
     # For now, assuming empty string should be treated as None for status updates.
     effective_status = status if (status and status != "open") else None
-    return _update_thread_impl(thread=thread, status=effective_status, summary=summary)
+    return _update_thread_impl(
+        thread=thread,
+        status=effective_status,
+        summary=summary,
+        tags=tags,
+        from_agent=from_agent,
+    )
 
 
 def _close_dispatch(
@@ -535,31 +604,41 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style agent_bus tool on the MCP server instance."""
 
     @mcp.tool(title="Agent Bus")
-    def agent_bus(tool: str, arguments: str = "{}") -> Any:
+    def agent_bus(tool: str, arguments: dict[str, Any] | str = "{}") -> Any:
         """Inter-agent message bus — threads, turns, read/reply coordination.
 
         tool: operation name (see table below)
-        arguments: JSON string with operation arguments
+        arguments: operation arguments as an object or a JSON string
 
         Operations:
-          threads       (status?)                                       — list threads; status: active|blocked|waiting|closed|all (default active)
+          threads       (status?, tags?)                                — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?)  — get turns; at least one of to/thread required
           get           (thread, turn_number)                           — get one specific turn
-          post          (slug, to, subject, body, from_agent?, summary?, attachments?) — start a new thread
-          reply         (thread, to, subject, body, after_turn, from_agent?, status?, mark_read?, attachments?) — reply to a thread
+          post          (slug, to, subject, body, from_agent?, summary?, attachments?, tags?) — start a new thread
+          reply         (thread, to, subject, body, after_turn, from_agent?, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read)
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
-          update_thread (thread, status?, summary?)                     — patch thread metadata
+          update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn
           delete_thread (thread, force?)                                — delete an entire thread
 
+        Tags (free-form strings on threads):
+          Suggested `namespace:value` convention — nothing is enforced:
+            project:<name>   — project scoping (e.g. project:claudeburst)
+            type:<kind>      — intent (bug|feature|discussion|review|post-mortem)
+            agent:<name>     — agent ownership/origin
+            priority:<level> — if useful (high|medium|low)
+          `threads(tags=[a,b])` matches threads that have ALL listed tags.
+
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5}')
-          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n..."}')
+          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n...", "tags": ["project:ulg", "type:bug"]}')
+          agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
+          agent_bus(tool="update_thread", arguments='{"thread": "553", "tags": ["project:claudeburst", "type:restore"]}')
         """
-        import json as _json
+        from ._agent_tools import _parse_dispatch_arguments
 
         handler = _AGENT_BUS_OPS.get(tool)
         if handler is None:
@@ -570,14 +649,12 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         t_prog, prog_timer = toolprogress_begin("agent_bus", inner_tool=tool)
         err: str | None = None
         try:
-            try:
-                parsed = _json.loads(arguments)
-            except _json.JSONDecodeError as exc:
-                return {"error": f"Invalid arguments JSON: {exc}"}
-            if not isinstance(parsed, dict):
+            parsed = _parse_dispatch_arguments(arguments)
+            if parsed is None:
                 return {
                     "error": (
-                        f"arguments must be a JSON object, got {type(parsed).__name__}"
+                        "arguments must be an object or a JSON-encoded object; "
+                        f"got {type(arguments).__name__}"
                     )
                 }
             accepted = set(inspect.signature(handler).parameters)
