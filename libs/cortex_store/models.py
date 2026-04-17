@@ -31,11 +31,20 @@ def _reject_cortex_dropbox_source_uri(value: str | None) -> str | None:
     first_segment = normalized.split("/", 1)[0]
     if first_segment == "dropbox":
         raise ValueError(
-            "source_uri must not point into the cortex sandbox dropbox "
+            "URI must not point into the cortex sandbox dropbox "
             "(temporary, non-persistent staging). Move the file to a "
             "permanent path and record that path instead. "
             f"Rejected: {value!r}"
         )
+    return value
+
+
+def _reject_cortex_dropbox_uri_list(value: list[str] | None) -> list[str] | None:
+    """Apply dropbox rejection to each element of a URI list field."""
+    if value is None:
+        return value
+    for uri in value:
+        _reject_cortex_dropbox_source_uri(uri)
     return value
 
 
@@ -166,6 +175,13 @@ class AssertionCreate(BaseModel):
         description="Assertion to supersede when force=True",
     )
 
+    _validate_artifact_uri = field_validator("artifact_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
+    _validate_evidence_uris = field_validator("evidence_uris")(
+        _reject_cortex_dropbox_uri_list
+    )
+
 
 ReviewStatus = Literal["committed", "flagged", "staged", "rejected"]
 
@@ -227,6 +243,10 @@ class SupersedeRequest(BaseModel):
     derivation_type: DerivationType | None = None
     session_id: str
     agent: str
+
+    _validate_evidence_uris = field_validator("evidence_uris")(
+        _reject_cortex_dropbox_uri_list
+    )
 
 
 class SupersedeResponse(BaseModel):
@@ -375,6 +395,10 @@ class RelationshipCreate(BaseModel):
     session_id: str | None = None
     agent: str | None = None
 
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
+
 
 class RelationshipItem(BaseModel):
     id: int
@@ -488,6 +512,10 @@ class ChunkCreate(BaseModel):
     extraction_run: int | None = None
     token_count: int | None = None
 
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
+
 
 class ChunkItem(BaseModel):
     id: int
@@ -520,6 +548,10 @@ class IngestDocumentRequest(BaseModel):
     observer: str = "web"
     source_date: str | None = None
 
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
+
 
 class ChunkResult(BaseModel):
     chunk_id: int
@@ -550,6 +582,10 @@ class AssertFromChunkRequest(BaseModel):
     resolution_status: str | None = None
     seeded_by: str | None = None
 
+    _validate_evidence_uris = field_validator("evidence_uris")(
+        _reject_cortex_dropbox_uri_list
+    )
+
 
 class AssertFromChunkResponse(BaseModel):
     item: AssertionItem
@@ -565,6 +601,10 @@ class AssertFromChunkResponse(BaseModel):
 class ExtractionCheckRequest(BaseModel):
     source_uri: str
     content_hash: str
+
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
 
 
 class ExtractionCheckResponse(BaseModel):
