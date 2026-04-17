@@ -11,18 +11,20 @@ Supported providers (frontier-only — direct API, no OpenRouter):
 - xai/grok-4-*  (poor vision quality — avoid for scans/photographs)
 - xai/grok-3-mini-*  (no vision support)
 
-All images are auto-resized to fit within _MAX_IMAGE_DIMENSION before encoding
-to avoid provider API errors on oversized payloads.
+Images are resized adaptively per-provider via :mod:`_vision_resize`: a
+saturation+edge classifier picks a JPEG quality floor (text vs. photo), and
+the long side is stepped down until the per-provider token estimator fits
+within ``token_budget`` (defaults to the profile's sweet-spot budget).
 """
 
 from __future__ import annotations
 
 import base64
-import io
 import logging
 from pathlib import Path
 from typing import Any
 
+from ._vision_resize import profile_for_model, resize_to_budget
 from .llm import _call_stargate
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,6 @@ _DEFAULT_DPI = 200
 _MAX_PAGES_PER_BATCH = 4
 _OCR_MODEL = "openai/gpt-5.4"
 _OCR_MAX_TOKENS = 8192
-_MAX_IMAGE_DIMENSION = 1600
 
 _DEFAULT_OCR_PROMPT = (
     "Extract all text from this document. Preserve tables, columns, "
@@ -44,32 +45,15 @@ _OCR_SYSTEM = (
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".bmp"})
 
 
-def _resize_to_limit(
-    png_bytes: bytes, *, max_dim: int = _MAX_IMAGE_DIMENSION
-) -> tuple[bytes, str]:
-    """Resize image bytes so the longest side ≤ *max_dim*; return (jpeg_bytes, media_type).
-
-    If already within limits, returns the original bytes as JPEG for consistency.
-    Converts RGBA/P modes to RGB for JPEG compatibility.
-    """
-    from PIL import Image as PILImage
-
-    img = PILImage.open(io.BytesIO(png_bytes))
-    w, h = img.size
-    if max(w, h) > max_dim:
-        img.thumbnail((max_dim, max_dim), PILImage.Resampling.LANCZOS)
-        logger.info("Resized %dx%d → %dx%d for OCR", w, h, img.width, img.height)
-    if img.mode in ("RGBA", "P"):
-        img = img.convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85, optimize=True)
-    return buf.getvalue(), "image/jpeg"
-
-
 def _pdf_page_to_base64(
-    pdf_path: Path, page_num: int, dpi: int = _DEFAULT_DPI
-) -> tuple[str, str]:
-    """Render a PDF page to image, resize to fit API limits, return (base64, media_type)."""
+    pdf_path: Path,
+    page_num: int,
+    *,
+    dpi: int,
+    model: str,
+    token_budget: int | None,
+) -> tuple[str, str, int]:
+    """Render a PDF page, adaptively resize, return ``(base64, media_type, est_tokens)``."""
     import fitz
 
     doc = fitz.open(str(pdf_path))
@@ -81,15 +65,24 @@ def _pdf_page_to_base64(
         raw_png = pix.tobytes("png")
     finally:
         doc.close()
-    resized_bytes, media_type = _resize_to_limit(raw_png)
-    return base64.b64encode(resized_bytes).decode("ascii"), media_type
+    jpeg_bytes, media_type, est_tokens = resize_to_budget(
+        raw_png, model=model, token_budget=token_budget
+    )
+    return base64.b64encode(jpeg_bytes).decode("ascii"), media_type, est_tokens
 
 
-def _image_file_to_base64(path: Path) -> tuple[str, str]:
-    """Read an image file, resize to fit API limits, return (base64_data, media_type)."""
+def _image_file_to_base64(
+    path: Path,
+    *,
+    model: str,
+    token_budget: int | None,
+) -> tuple[str, str, int]:
+    """Read an image, adaptively resize, return ``(base64_data, media_type, est_tokens)``."""
     raw_bytes = path.read_bytes()
-    resized_bytes, media_type = _resize_to_limit(raw_bytes)
-    return base64.b64encode(resized_bytes).decode("ascii"), media_type
+    jpeg_bytes, media_type, est_tokens = resize_to_budget(
+        raw_bytes, model=model, token_budget=token_budget
+    )
+    return base64.b64encode(jpeg_bytes).decode("ascii"), media_type, est_tokens
 
 
 def _pdf_page_count(pdf_path: Path) -> int:
@@ -147,6 +140,43 @@ def _usage_from_response(resp: dict[str, Any]) -> int:
     return usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
 
 
+def _prompt_tokens_from_response(resp: dict[str, Any]) -> int | None:
+    """Return actual ``prompt_tokens`` from the response, or None if absent."""
+    usage = resp.get("usage") or {}
+    pt = usage.get("prompt_tokens")
+    return int(pt) if isinstance(pt, int | float) else None
+
+
+def _log_estimate_vs_actual(
+    *,
+    model: str,
+    estimated_image_tokens: int,
+    actual_prompt_tokens: int | None,
+    is_proxy: bool,
+) -> None:
+    """Log estimator drift for calibration (agent-bus thread 557).
+
+    ``actual_prompt_tokens`` includes text overhead (system prompt + user
+    text + image markers), so it will be higher than the image-only
+    estimate by a small, roughly fixed amount. We log both raw and delta so
+    Kaywan can eyeball drift while we collect ≥50 samples.
+
+    Level is WARN when ``is_proxy`` (xAI currently) so drift surfaces
+    immediately; INFO otherwise.
+    """
+    if actual_prompt_tokens is None:
+        return
+    delta = actual_prompt_tokens - estimated_image_tokens
+    msg = (
+        "vision token estimate model=%s est_image_tokens=%d "
+        "actual_prompt_tokens=%d delta=%+d"
+    )
+    if is_proxy:
+        logger.warning(msg, model, estimated_image_tokens, actual_prompt_tokens, delta)
+    else:
+        logger.info(msg, model, estimated_image_tokens, actual_prompt_tokens, delta)
+
+
 def ocr_pages(
     abs_path: Path,
     *,
@@ -154,18 +184,33 @@ def ocr_pages(
     pages: list[int] | None = None,
     dpi: int = _DEFAULT_DPI,
     model: str = _OCR_MODEL,
+    token_budget: int | None = None,
 ) -> dict[str, Any]:
     """OCR a PDF or image file, returning extracted text per page.
 
-    For PDFs: renders each page to PNG, batches into groups of 4, sends to
-    a vision model via Stargate. For images: sends the image directly.
+    For PDFs: renders each page, adaptively resizes per-provider profile,
+    batches into groups of 4, sends to a vision model via Stargate.  For
+    images: sends the (resized) image directly.
+
+    ``token_budget`` (image-only token target) defaults to the provider
+    profile's sweet-spot budget (e.g. ~1615 for OpenAI's 1536² sweet spot
+    with ~10% headroom).
     """
     is_image = abs_path.suffix.lower() in _IMAGE_SUFFIXES
+    profile = profile_for_model(model)
 
     if is_image:
-        data, media = _image_file_to_base64(abs_path)
+        data, media, est = _image_file_to_base64(
+            abs_path, model=model, token_budget=token_budget
+        )
         blocks = _build_image_blocks([(data, media)])
         resp = _call_vision(blocks, prompt, model=model)
+        _log_estimate_vs_actual(
+            model=model,
+            estimated_image_tokens=est,
+            actual_prompt_tokens=_prompt_tokens_from_response(resp),
+            is_proxy=profile.is_proxy_estimator,
+        )
         text = _extract_text_from_response(resp)
         tokens = _usage_from_response(resp)
         return {
@@ -186,12 +231,25 @@ def ocr_pages(
 
     for batch_start in range(0, len(page_indices), _MAX_PAGES_PER_BATCH):
         batch = page_indices[batch_start : batch_start + _MAX_PAGES_PER_BATCH]
-        images = [_pdf_page_to_base64(abs_path, idx, dpi) for idx in batch]
+        rendered = [
+            _pdf_page_to_base64(
+                abs_path, idx, dpi=dpi, model=model, token_budget=token_budget
+            )
+            for idx in batch
+        ]
+        images = [(data, media) for data, media, _est in rendered]
+        batch_est = sum(est for _data, _media, est in rendered)
         blocks = _build_image_blocks(images)
 
         page_labels = ", ".join(str(idx + 1) for idx in batch)
         batch_prompt = f"Pages: {page_labels}\n\n{prompt}"
         resp = _call_vision(blocks, batch_prompt, model=model)
+        _log_estimate_vs_actual(
+            model=model,
+            estimated_image_tokens=batch_est,
+            actual_prompt_tokens=_prompt_tokens_from_response(resp),
+            is_proxy=profile.is_proxy_estimator,
+        )
         batch_text = _extract_text_from_response(resp)
         batch_tokens = _usage_from_response(resp)
         used_model = resp.get("model", model)

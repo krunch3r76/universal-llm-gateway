@@ -29,6 +29,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         pages: list[int] | None = None,
         dpi: int = 200,
         model: str = "",
+        token_budget: int | None = None,
     ) -> dict[str, Any]:
         """OCR a scanned PDF or image via a frontier vision model (Stargate-routed).
 
@@ -38,6 +39,12 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         layer), or you need to extract text from photographs or scanned documents.
         Handles rendering, resizing, batching, and vision model routing server-side
         — do not extract base64 manually.
+
+        Images are resized adaptively per provider: a saturation+edge classifier
+        picks JPEG quality (text vs. photo), and the long side is stepped down
+        until the per-provider image-token estimate fits ``token_budget``.
+        Defaults harmonize with the selected model's profile (OpenAI sweet
+        spot ≈1536px long side, ~1615-token image budget).
 
         For financial documents that need structured JSON, prefer
         document_ocr_structured (via private_dispatch) instead.
@@ -50,6 +57,9 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
             model: Model override (default: openai/gpt-5.4). Any Stargate-routable
                 vision model works — e.g. anthropic/claude-sonnet-4,
                 xai/grok-4.20-0309-reasoning.
+            token_budget: Image-only token budget per page (default: derived
+                from provider profile). Raise for max-fidelity single pages;
+                lower for tight batch/bulk runs. Excludes text-prompt overhead.
         """
         t0 = monotonic_now()
         record("mcp.document.ocr.called", path=path)
@@ -67,6 +77,8 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
             kwargs["pages"] = pages
         if model:
             kwargs["model"] = model
+        if token_budget is not None:
+            kwargs["token_budget"] = token_budget
 
         result = ocr_pages(abs_path, **kwargs)
         result["path"] = path
@@ -93,6 +105,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         prompt: str = "",
         dpi: int = 200,
         model: str = "",
+        token_budget: int | None = None,
     ) -> dict[str, Any]:
         """Batch OCR all PDFs and images in a directory.
 
@@ -100,7 +113,11 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
 
         Cost warning: runs one vision model call per page per file — a
         directory with 20 multi-page PDFs can consume thousands of tokens.
-        Prefer document_ocr on individual files when possible.
+        Prefer document_ocr on individual files when possible. Lowering
+        ``token_budget`` tightens per-image cost for bulk runs.
+
+        Images are resized adaptively per provider (see ``document_ocr``
+        for full behavior).
 
         Args:
             directory: Directory path relative to /data/files/.
@@ -109,6 +126,8 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
             model: Model override (default: openai/gpt-5.4). Any Stargate-routable
                 vision model works — e.g. anthropic/claude-sonnet-4,
                 xai/grok-4.20-0309-reasoning.
+            token_budget: Image-only token budget per page (default: derived
+                from provider profile).
         """
         t0 = monotonic_now()
         record("mcp.document.ocr.directory.called", directory=directory)
@@ -134,6 +153,8 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
                     kwargs["prompt"] = prompt
                 if model:
                     kwargs["model"] = model
+                if token_budget is not None:
+                    kwargs["token_budget"] = token_budget
 
                 result = ocr_pages(file_path, **kwargs)
                 result["path"] = rel_path
