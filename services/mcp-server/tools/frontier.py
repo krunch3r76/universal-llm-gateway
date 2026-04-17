@@ -7,7 +7,7 @@ provider-aware signatures and defaults.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ._frontier_core import (
     GOOGLE_SERVER_TOOL_MAP,
@@ -19,6 +19,9 @@ from ._frontier_core import (
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+
+# Shared across all four tools; emitted as JSON-schema enum by FastMCP.
+BootLevel = Literal["none", "mcp", "team", "full"]
 
 _GROK_OPPIE_BOOT_REFS: dict[str, str] = {
     "mcp": "notes/system/prompts/oppie-seed-mcp-v1.5.md",
@@ -59,14 +62,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         stop_sequences: list[str] | None = None,
         seed: int | None = None,
         response_format: dict[str, Any] | None = None,
-        reasoning_effort: str | None = None,
+        reasoning_effort: Literal["low", "medium", "high"] | None = None,
         include_encrypted_reasoning: bool = False,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         server_tools: list[str] | None = None,
         conversation_id: str | None = None,
         reasoning_trace: list[dict[str, Any]] | None = None,
-        boot: str = "mcp",
+        boot: BootLevel = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
         timeout: float | None = None,
@@ -92,6 +95,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           pointing at ``https://mcp.k-1.me/mcp`` is injected instead — xAI
           calls the MCP server directly and manages the tool loop server-side.
 
+        **Upstream xAI bug (2026-04-17)**: ``boot="team"``/``"full"`` on
+        ``grok-4.20-*`` models returns ``"Tool not available"`` for every
+        remote MCP tool. xAI fetches ``tools/list`` successfully but never
+        issues ``tools/call`` — the rejection happens inside xAI's backend
+        before dispatch. Same MCP server works correctly with ``grok-4`` and
+        ``grok-4-1-fast-*``. Workaround: pass ``model="grok-4-1-fast-reasoning"``
+        (or similar non-4.20 model) when tool use is required.
+
         **Model selection**:
 
         - ``grok-4.20-0309-reasoning`` — top model, built-in reasoning, tool
@@ -100,7 +111,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``grok-4.20-multi-agent-0309`` — multi-agent orchestration; full MCP
           tool surface via remote MCP (xAI server-side loop). **Default for
           team/full boot** — Oppie always operates as a multi-agent.
-        - ``grok-4-1-fast-reasoning`` — fast + cheap reasoning.
+          *Currently blocked by upstream xAI remote-MCP bug — see above.*
+        - ``grok-4-1-fast-reasoning`` — fast + cheap reasoning. Remote MCP
+          works; use this with ``boot="team"`` until xAI fixes grok-4.20.
         - ``grok-4-1-fast-non-reasoning`` — fast without reasoning.
         - ``grok-3-mini`` — legacy; supports reasoning_effort
           ("low"/"medium"/"high", silently stripped for grok-4 models).
@@ -180,14 +193,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         top_p: float | None = None,
         stop_sequences: list[str] | None = None,
         response_format: dict[str, Any] | None = None,
-        thinking: str | dict[str, Any] | None = None,
-        effort: str | None = None,
+        thinking: Literal["adaptive", "disabled"] | dict[str, Any] | None = None,
+        effort: Literal["max", "high", "medium", "low"] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         server_tools: list[str] | None = None,
-        speed: str | None = None,
+        speed: Literal["fast"] | None = None,
         provider_options: dict[str, Any] | None = None,
-        boot: str = "mcp",
+        boot: BootLevel = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
         timeout: float | None = None,
@@ -211,6 +224,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``"full"`` also adds Cortex boot narrative.
 
         ``timeout`` overrides read timeout in seconds (default 600, max 1800).
+
+        **Reasoning controls**:
+
+        - ``thinking`` — extended-thinking shape. Accepts:
+          ``"adaptive"`` (model chooses budget), ``"disabled"`` (off), or a
+          dict like ``{"type": "enabled", "budget_tokens": N}`` for explicit
+          budgets (claude-opus-4 benefits most).
+        - ``effort`` — output effort tier. Valid values: ``"max"``, ``"high"``,
+          ``"medium"``, ``"low"``. Silently stripped when ``thinking`` is not
+          enabled.
 
         **Unique capabilities**:
         - Extended thinking with ``budget_tokens`` on claude-opus-4 — deep
@@ -292,12 +315,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         stop_sequences: list[str] | None = None,
         seed: int | None = None,
         response_format: dict[str, Any] | None = None,
-        reasoning_effort: str | None = None,
+        reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         server_tools: list[str] | None = None,
         provider_options: dict[str, Any] | None = None,
-        boot: str = "mcp",
+        boot: BootLevel = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
         timeout: float | None = None,
@@ -322,6 +345,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           observe, supersede, journal_write, edge_create, search, and
           more) and ``agent_bus`` (fetch, reply, post threads).
           ``"full"`` also adds Cortex boot narrative.
+
+        **Reasoning controls**:
+
+        - ``reasoning_effort`` — maps to OpenAI Responses ``reasoning.effort``.
+          Valid values: ``"minimal"``, ``"low"``, ``"medium"``, ``"high"``.
+          Meaningful on reasoning-capable families (gpt-5.x, o-series);
+          silently ignored by non-reasoning models.
 
         Models:
           gpt-5.4              — best intelligence, agentic + coding (DEFAULT)
@@ -389,12 +419,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         stop_sequences: list[str] | None = None,
         seed: int | None = None,
         response_format: dict[str, Any] | None = None,
-        thinking_level: str | None = None,
+        thinking_level: Literal["LOW", "MEDIUM", "HIGH"] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         server_tools: list[str] | None = None,
         provider_options: dict[str, Any] | None = None,
-        boot: str = "mcp",
+        boot: BootLevel = "mcp",
         boot_ref: str | None = None,
         include_raw: bool = False,
         timeout: float | None = None,
@@ -416,13 +446,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``"team"`` / ``"full"`` — full tool surface with Cortex dispatch
           and agent_bus. ``"full"`` also adds Cortex boot narrative.
 
+        **Reasoning controls**:
+
+        - ``thinking_level`` — maps to Gemini ``thinkingConfig``. Valid values
+          are uppercase: ``"LOW"``, ``"MEDIUM"``, ``"HIGH"`` (distinct from the
+          lowercase convention used by OpenAI/Grok ``reasoning_effort``).
+          Meaningful on 2.5+ models.
+
         Models:
           gemini-2.5-flash     — fast, efficient, thinking-capable (DEFAULT)
           gemini-2.5-pro       — strongest reasoning, largest context
           gemini-2.0-flash     — fast multimodal
-
-        thinking_level: Controls thinking depth for 2.5+ models.
-          "LOW", "MEDIUM", "HIGH" — maps to Gemini thinkingConfig.
         """
         full_model = model if "/" in model else f"google/{model}"
 
