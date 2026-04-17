@@ -84,7 +84,7 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
         inner = args.get("tool", "")
         return f"→{inner}" if inner else ""
     if tool_name == "cortex_boot":
-        agent = args.get("agent", "web")
+        agent = args.get("agent", "cursor")
         return f"agent={agent}"
     if tool_name == "agent_bus":
         inner = args.get("tool", "")

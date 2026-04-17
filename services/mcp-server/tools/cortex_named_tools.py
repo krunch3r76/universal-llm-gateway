@@ -100,7 +100,7 @@ def _resolve_transcript(
 
 
 def run_cortex_boot(
-    agent: str = "web",
+    agent: str = "cursor",
     transcript_id: str = "",
 ) -> dict[str, Any]:
     """Build a persona-scoped Cortex boot briefing for internal callers and MCP.
@@ -119,7 +119,7 @@ def run_cortex_boot(
     t_boot = datetime.now(UTC)
     session_id = f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
 
-    profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["web"])
+    profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["cursor"])
 
     unread_turns_qs = urlencode(
         {"to": agent, "unread": "true", "last": 10, "compact": "true"}
@@ -347,7 +347,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         source_uri: str | None = None,
         source_date: str | None = None,
         chunk_index: int | None = None,
-        observer: str = "web",
+        observer: str = "cursor",
         source_hash: str | None = None,
         model_version: str | None = None,
     ) -> dict[str, Any]:
@@ -358,7 +358,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
             source_uri: Path to source (e.g. 'journals/2026/01/15.md').
             source_date: Date of the source material (YYYY-MM-DD).
             chunk_index: Position within the source document.
-            observer: Who created this chunk (default 'web').
+            observer: Who created this chunk (default 'cursor').
             source_hash: Content hash for deduplication.
             model_version: Model used for extraction.
         """
@@ -487,12 +487,14 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         return _cx("GET", f"/staging?{urlencode(params)}")
 
     @mcp.tool(title="Cortex: Reject Staging")
-    def cortex_staging_reject(staging_id: int, reviewer: str = "web") -> dict[str, Any]:
+    def cortex_staging_reject(
+        staging_id: int, reviewer: str = "cursor"
+    ) -> dict[str, Any]:
         """Reject a staging proposal.
 
         Args:
             staging_id: The staging proposal ID.
-            reviewer: Who rejected (default 'web').
+            reviewer: Who rejected (default 'cursor').
 
         Returns:
             Updated StagingItem, or {"error": "<message>"}.
@@ -512,7 +514,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Cortex Boot")
     def cortex_boot(
-        agent: str = "web",
+        agent: str = "cursor",
         transcript_id: str = "",
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
@@ -524,7 +526,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
-          agent         — agent profile: web, cursor, api, api_claude, oppie, orion, subagent (default: "web")
+          agent         — agent profile: cursor, web, api, api_claude, oppie, orion, subagent (default: "cursor")
           transcript_id — if provided, loads continuation context for that transcript
 
         Key response fields:
@@ -542,7 +544,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Session Close (Reminder)")
     def session_close(
-        agent: str = "web",
+        agent: str = "cursor",
         session_id: str = "",
     ) -> dict[str, Any]:
         """DEPRECATED — use cortex(tool="session_close", ...) for atomic closes.
@@ -555,7 +557,7 @@ def register_cortex_named_tools(mcp: FastMCP) -> None:
         Kept for backward compatibility.  Will be removed in a future release.
 
         Args:
-          agent      — agent identity: web, cursor, api (default: "web")
+          agent      — agent identity: cursor, web, api (default: "cursor")
           session_id — session ID from boot (if empty, mints one from current UTC)
         """
         from ._session_close import build_session_close

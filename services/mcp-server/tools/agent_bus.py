@@ -433,7 +433,7 @@ def _post_dispatch(
     to: str = "",
     subject: str = "",
     body: str = "",
-    from_agent: str = "web",
+    from_agent: str = "cursor",
     summary: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
@@ -459,7 +459,7 @@ def _reply_dispatch(
     subject: str = "",
     body: str = "",
     after_turn: int = 0,
-    from_agent: str = "web",
+    from_agent: str = "cursor",
     status: str = "open",
     mark_read: bool = False,
     close: bool = False,
@@ -522,7 +522,7 @@ def _update_thread_dispatch(
     status: str | None = None,
     summary: str | None = None,
     tags: list[str] | None = None,
-    from_agent: str = "web",
+    from_agent: str = "cursor",
 ) -> dict[str, Any]:
     if not thread:
         return {"error": "update_thread requires: thread"}

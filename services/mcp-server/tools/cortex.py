@@ -584,7 +584,7 @@ def _op_edge_types(**_: object) -> Any:
 def _op_ingest_document(
     source_uri: str | None = None,
     content: str | None = None,
-    observer: str = "web",
+    observer: str = "cursor",
     source_date: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
