@@ -340,8 +340,15 @@ def _op_friction(
 ) -> dict[str, Any]:
     """Log a friction event — when tools, schema, or boot context didn't work as expected.
 
-    Categories: tool_mismatch, schema_gap, boot_drift, lesson_gap,
-    lesson_conflict, stale_context, tool_absent.
+    Categories:
+      tool_mismatch  — agent picked wrong tool (agent-side miscategorization)
+      tool_absent    — tool doesn't exist
+      tool_error     — tool exists but failed at runtime (5xx, timeouts, server bugs)
+      schema_gap     — schema rejected a valid-looking request; missing type/enum
+      boot_drift     — boot briefing missing or incorrect signal
+      lesson_gap     — no lesson existed for this surprise
+      lesson_conflict — lesson contradicts observed behavior
+      stale_context  — cached/persisted context outlived its validity
     """
     if not service:
         return {"error": "service is required (e.g. 'mcp-server', 'cortex-api')"}
@@ -349,12 +356,13 @@ def _op_friction(
         return {"error": "note is required — describe what went wrong"}
     valid_categories = {
         "tool_mismatch",
+        "tool_absent",
+        "tool_error",
         "schema_gap",
         "boot_drift",
         "lesson_gap",
         "lesson_conflict",
         "stale_context",
-        "tool_absent",
     }
     if category and category not in valid_categories:
         return {
@@ -1083,7 +1091,7 @@ _WORKFLOW_HINTS: dict[str, str] = {
 _FRICTION_HINT = (
     "If this failure was unexpected, log friction: "
     'cortex(tool="friction", arguments=\'{"service": "...", '
-    '"category": "tool_mismatch", "note": "...", "agent": "..."}\')'
+    '"category": "tool_error", "note": "...", "agent": "..."}\')'
 )
 
 
