@@ -141,6 +141,22 @@ if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker/compose/mcp-server-browser.override.yml)
 fi
 
+cleanup_orphan_mcp_containers() {
+  # `docker compose up` recreate-on-image-change can leave behind a rename-pattern
+  # orphan (e.g. `d1e48bbeb4e3_mcp-server`) in Created state when the rename
+  # succeeds but the subsequent create step fails. These orphans then block
+  # future `up` attempts. Purge any such leftovers before attempting the up.
+  local orphans
+  orphans="$(
+    docker ps -a --format '{{.Names}}' 2>/dev/null \
+      | grep -E '^[a-f0-9]+_mcp-server$' || true
+  )"
+  if [[ -n "$orphans" ]]; then
+    echo "Removing orphan mcp-server containers: $(echo "$orphans" | tr '\n' ' ')"
+    echo "$orphans" | xargs -r docker rm -f >/dev/null 2>&1 || true
+  fi
+}
+
 wait_for_mcp_healthy() {
   local timeout_s="${1:-90}"
   local start_ts status
@@ -175,6 +191,8 @@ else
   echo "Building MCP server (cached, refreshing source layers)..."
   bash docker/scripts/build/build-mcp.sh --refresh-source
 fi
+
+cleanup_orphan_mcp_containers
 
 echo "Starting MCP server..."
 docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
