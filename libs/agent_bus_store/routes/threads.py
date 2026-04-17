@@ -52,6 +52,7 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
         last_subject=row["last_subject"],
         last_turn_from=row["last_turn_from"],
         last_turn_to=row["last_turn_to"],
+        tags=row.get("tags", []) or [],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -63,9 +64,14 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
 )
 async def list_threads_route(
     thread_status: ThreadStatus | None = Query(None, alias="status"),
+    tags: list[str] | None = Query(None),
 ) -> ThreadListResponse:
-    """List threads with optional status filtering from the query parameter."""
-    rows = list_threads_v2(status=thread_status)
+    """List threads with optional status + AND-tag filtering.
+
+    `tags`: repeat the param to filter on multiple tags (AND semantics).
+    Example: `GET /threads?tags=project:X&tags=type:bug`.
+    """
+    rows = list_threads_v2(status=thread_status, tags=tags)
     return ThreadListResponse(threads=[_thread_detail(r) for r in rows])
 
 
@@ -108,6 +114,7 @@ async def get_thread_summary_route(
         turn_count=row["turn_count"],
         unread_count=row["unread_count"],
         recent_subjects=row["recent_subjects"],
+        tags=row.get("tags", []) or [],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -167,7 +174,9 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
     """Create one thread using explicit or auto-generated thread identifiers."""
     if body.id is not None:
         body.id = normalize_thread_id(body.id)
-    row = create_thread(thread_id=body.id, slug=body.slug, summary=body.summary)
+    row = create_thread(
+        thread_id=body.id, slug=body.slug, summary=body.summary, tags=body.tags
+    )
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -197,6 +206,7 @@ async def create_thread_with_turn_route(
             status=body.status,
             after_turn=body.after_turn,
             attachments=att_dicts,
+            tags=body.tags,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(
@@ -244,7 +254,9 @@ async def close_thread_route(thread_id: str, body: ThreadClose) -> ThreadDetail:
 )
 async def update_thread_route(thread_id: str, body: ThreadUpdate) -> ThreadDetail:
     thread_id = normalize_thread_id(thread_id)
-    row = update_thread(thread_id, status=body.status, summary=body.summary)
+    row = update_thread(
+        thread_id, status=body.status, summary=body.summary, tags=body.tags
+    )
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

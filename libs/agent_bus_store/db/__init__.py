@@ -12,6 +12,7 @@ from .threads import (
     list_threads_v2,
     normalize_thread_id,
     rename_thread,
+    set_thread_tags,
     update_thread,
 )
 from .threads_atomic import close_thread, create_thread_with_turn
@@ -51,6 +52,7 @@ __all__ = [
     "mark_turn_read",
     "normalize_thread_id",
     "rename_thread",
+    "set_thread_tags",
     "update_thread",
     "update_turn",
     "update_turn_status",

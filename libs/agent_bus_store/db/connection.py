@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS turn_attachments (
     sha256     TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_attachments_turn ON turn_attachments(turn_id);
+
+CREATE TABLE IF NOT EXISTS thread_tags (
+    thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+    tag       TEXT NOT NULL,
+    PRIMARY KEY (thread_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_thread_tags_tag ON thread_tags(tag);
 """
 
 

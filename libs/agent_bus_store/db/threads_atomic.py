@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .connection import connect, now
-from .threads import _next_auto_id, get_thread
+from .threads import _next_auto_id, get_thread, set_thread_tags
 
 
 def create_thread_with_turn(
@@ -19,6 +19,7 @@ def create_thread_with_turn(
     status: str = "open",
     after_turn: int | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    tags: list[str] | None = None,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Atomically create a thread and its first turn in one transaction.
 
@@ -61,6 +62,9 @@ def create_thread_with_turn(
 
         if attachments:
             _insert_attachments(conn, turn_id, attachments)
+
+        if tags:
+            set_thread_tags(conn, thread_id, tags)
 
     thread_detail = get_thread(thread_id)
     assert thread_detail is not None

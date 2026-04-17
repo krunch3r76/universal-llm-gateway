@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field
 
 from .models import AgentName
 
+# Free-form strings. The agent_bus docstring documents a `namespace:value`
+# convention (e.g. `project:claudeburst`, `type:bug`, `agent:cursor`) but
+# nothing is enforced here — tags are normalized in the DB layer
+# (strip + lowercase + dedupe) via _normalize_tags before storage.
+
 # --- Attachment schemas ---
 
 
@@ -107,6 +112,7 @@ class ThreadCreate(BaseModel):
     id: str | None = None
     slug: str
     summary: str | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class ThreadDetail(BaseModel):
@@ -119,6 +125,7 @@ class ThreadDetail(BaseModel):
     last_subject: str | None = None
     last_turn_from: str | None = None
     last_turn_to: str | None = None
+    tags: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -131,6 +138,7 @@ class ThreadSummaryResponse(BaseModel):
     turn_count: int
     unread_count: int
     recent_subjects: list[str]
+    tags: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -142,6 +150,8 @@ class ThreadListResponse(BaseModel):
 class ThreadUpdate(BaseModel):
     status: ThreadStatus | None = None
     summary: str | None = None
+    # None = leave tags unchanged. [] = clear all. [...] = replace with the new set.
+    tags: list[str] | None = None
 
 
 class TurnDelete(BaseModel):
@@ -170,6 +180,7 @@ class ThreadWithTurnCreate(BaseModel):
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None
+    tags: list[str] = Field(default_factory=list)
 
 
 class ThreadWithTurnCreated(BaseModel):

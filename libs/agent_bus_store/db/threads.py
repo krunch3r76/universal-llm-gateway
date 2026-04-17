@@ -55,23 +55,106 @@ def _thread_detail_sql() -> str:
     """
 
 
-def list_threads_v2(*, status: str | None = None) -> list[dict[str, Any]]:
+def _normalize_tags(tags: list[str] | None) -> list[str]:
+    """Canonicalize a tag list: strip + lowercase + drop empties + dedupe.
+
+    Applied identically on every write path (set_thread_tags) and every
+    read-filter path (list_threads_v2 tag filter) so `Project:ULG` and
+    `project:ulg` are the same tag and queries never silently miss.
+    Order-preserving on first occurrence.
+    """
+    if not tags:
+        return []
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw in tags:
+        tag = str(raw).strip().lower()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        cleaned.append(tag)
+    return cleaned
+
+
+def _load_thread_tags(
+    conn: sqlite3.Connection, thread_ids: list[str]
+) -> dict[str, list[str]]:
+    """Return {thread_id: [tag, ...]} for the given ids, tags sorted asc."""
+    if not thread_ids:
+        return {}
+    placeholders = ",".join("?" * len(thread_ids))
+    rows = conn.execute(
+        f"SELECT thread_id, tag FROM thread_tags "
+        f"WHERE thread_id IN ({placeholders}) "
+        f"ORDER BY thread_id, tag",
+        thread_ids,
+    ).fetchall()
+    out: dict[str, list[str]] = {tid: [] for tid in thread_ids}
+    for row in rows:
+        out[row["thread_id"]].append(row["tag"])
+    return out
+
+
+def set_thread_tags(conn: sqlite3.Connection, thread_id: str, tags: list[str]) -> None:
+    """Replace the full tag set for a thread. Pass [] to clear.
+
+    Tags are normalized via _normalize_tags (strip + lowercase + dedupe) before
+    write. Caller must hold the connection in an active transaction.
+    """
+    cleaned = _normalize_tags(tags)
+    conn.execute("DELETE FROM thread_tags WHERE thread_id = ?", (thread_id,))
+    if cleaned:
+        conn.executemany(
+            "INSERT INTO thread_tags (thread_id, tag) VALUES (?, ?)",
+            [(thread_id, t) for t in cleaned],
+        )
+
+
+def list_threads_v2(
+    *, status: str | None = None, tags: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """List threads with optional status + AND-tag filter.
+
+    `tags`: threads must have ALL listed tags. None or [] = no tag filter.
+    """
     base = _thread_detail_sql()
     params: list[Any] = []
-    where = ""
+    wheres: list[str] = []
     if status is not None:
-        where = "WHERE t.status = ?"
+        wheres.append("t.status = ?")
         params.append(status)
-    sql = f"{base} {where} GROUP BY t.id ORDER BY t.updated_at DESC"
+    tag_list = _normalize_tags(tags)
+    if tag_list:
+        # AND match: join thread_tags and require all N tags matched.
+        placeholders = ",".join("?" * len(tag_list))
+        wheres.append(
+            f"t.id IN ("
+            f"  SELECT thread_id FROM thread_tags "
+            f"  WHERE tag IN ({placeholders}) "
+            f"  GROUP BY thread_id HAVING COUNT(DISTINCT tag) = ?"
+            f")"
+        )
+        params.extend(tag_list)
+        params.append(len(tag_list))
+    where_clause = f"WHERE {' AND '.join(wheres)}" if wheres else ""
+    sql = f"{base} {where_clause} GROUP BY t.id ORDER BY t.updated_at DESC"
     with connect() as conn:
-        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
+        tag_map = _load_thread_tags(conn, [r["id"] for r in rows])
+        for row in rows:
+            row["tags"] = tag_map.get(row["id"], [])
+        return rows
 
 
 def get_thread(thread_id: str) -> dict[str, Any] | None:
     sql = f"{_thread_detail_sql()} WHERE t.id = ? GROUP BY t.id"
     with connect() as conn:
         row = conn.execute(sql, (thread_id,)).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        detail = dict(row)
+        detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+        return detail
 
 
 def get_thread_summary(thread_id: str, *, recent: int = 3) -> dict[str, Any] | None:
@@ -154,7 +237,11 @@ def next_thread_id() -> str:
 
 
 def create_thread(
-    *, thread_id: str | None, slug: str, summary: str | None = None
+    *,
+    thread_id: str | None,
+    slug: str,
+    summary: str | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, Any] | None:
     """Returns thread detail, or None if thread_id was supplied and already exists."""
     if thread_id is None:
@@ -171,6 +258,8 @@ def create_thread(
             "VALUES (?, ?, ?, ?, ?)",
             (thread_id, slug, summary, ts, ts),
         )
+        if tags:
+            set_thread_tags(conn, thread_id, tags)
     thread_detail = get_thread(thread_id)
     if thread_detail is None:
         raise RuntimeError(f"Failed to fetch newly created thread {thread_id}")
@@ -178,7 +267,7 @@ def create_thread(
 
 
 def rename_thread(old_id: str, new_id: str) -> dict[str, Any] | None:
-    """Change a thread's ID, re-pointing all turns and legacy messages.
+    """Change a thread's ID, re-pointing all turns, legacy messages, and tags.
 
     Returns updated thread detail, or None if old_id not found.
     Raises ValueError if new_id already exists.
@@ -204,14 +293,32 @@ def rename_thread(old_id: str, new_id: str) -> dict[str, Any] | None:
         conn.execute(
             "UPDATE messages SET thread = ? WHERE thread = ?", (new_id, old_id)
         )
+        # Re-point tags before deleting the old thread row so ON DELETE CASCADE
+        # doesn't drop them.
+        conn.execute(
+            "UPDATE thread_tags SET thread_id = ? WHERE thread_id = ?",
+            (new_id, old_id),
+        )
         conn.execute("DELETE FROM threads WHERE id = ?", (old_id,))
     return get_thread(new_id)
 
 
 def update_thread(
-    thread_id: str, *, status: str | None = None, summary: str | None = None
+    thread_id: str,
+    *,
+    status: str | None = None,
+    summary: str | None = None,
+    tags: list[str] | None = None,
 ) -> dict[str, Any] | None:
-    """Returns updated thread detail, or None if not found."""
+    """Returns updated thread detail, or None if not found.
+
+    `tags`: None = leave existing unchanged. [] = clear all. [...] = replace.
+
+    Invariant: status transition → 'closed' also marks every unread turn read,
+    matching the dedicated /close route. Closing a thread clears its unread
+    queue regardless of which endpoint is used.
+    """
+    ts = now()
     with connect() as conn:
         row = conn.execute(
             "SELECT id FROM threads WHERE id = ?", (thread_id,)
@@ -219,7 +326,7 @@ def update_thread(
         if row is None:
             return None
         sets: list[str] = ["updated_at = ?"]
-        params: list[Any] = [now()]
+        params: list[Any] = [ts]
         if status is not None:
             sets.append("status = ?")
             params.append(status)
@@ -228,6 +335,13 @@ def update_thread(
             params.append(summary)
         params.append(thread_id)
         conn.execute(f"UPDATE threads SET {', '.join(sets)} WHERE id = ?", params)
+        if status == "closed":
+            conn.execute(
+                "UPDATE turns SET read_at = ? WHERE thread = ? AND read_at IS NULL",
+                (ts, thread_id),
+            )
+        if tags is not None:
+            set_thread_tags(conn, thread_id, tags)
     return get_thread(thread_id)
 
 
