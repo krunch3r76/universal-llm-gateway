@@ -34,36 +34,61 @@ def _is_trivial_default(value: object) -> bool:
     return value in _TRIVIAL_DEFAULT_VALUES.get(vtype, set())
 
 
-def _simplify_nullable(prop: dict[str, Any]) -> dict[str, Any]:
-    """Collapse ``anyOf: [{type: X}, {type: null}]`` → ``type: [X, null]``.
+def _drop_null_branches(prop: dict[str, Any]) -> dict[str, Any]:
+    """Remove ``{type: null}`` branches from ``anyOf``; collapse if only one remains.
 
-    Only applies to the simple case where the non-null branch is a bare
-    ``{type: X}`` with no extra keys (items, properties, etc.).
+    FastMCP emits ``anyOf: [X, {type: null}]`` (and 3-branch variants like
+    ``[string, object, null]``) for optional params. Strict wire-schema
+    validators (xAI, Gemini — see google/adk-python #3424) reject ``anyOf``
+    when the property lacks a sibling top-level ``type``. LLMs treat optional
+    params as "omit if unused" rather than sending ``null`` explicitly, so
+    dropping null branches on the wire is safe: the Python type hint still
+    admits ``None`` and Pydantic validates inputs against the in-memory schema
+    independently of the wire schema.
     """
     any_of = prop.get("anyOf")
-    if not isinstance(any_of, list) or len(any_of) != 2:
+    if not isinstance(any_of, list):
         return prop
 
-    null_branch = None
-    other_branch = None
+    non_null = [b for b in any_of if isinstance(b, dict) and b != {"type": "null"}]
+    if len(non_null) == len(any_of):
+        return prop
+
+    compact = {k: v for k, v in prop.items() if k != "anyOf"}
+    if len(non_null) == 1:
+        compact.update(non_null[0])
+    elif len(non_null) > 1:
+        compact["anyOf"] = non_null
+    return compact
+
+
+def _prefer_object_branch(prop: dict[str, Any]) -> dict[str, Any]:
+    """For ``anyOf: [string, object, ...]``: promote object branch to top level.
+
+    When a union contains an object branch, strict wire-schema validators
+    (xAI, OpenAI strict mode) need a single top-level ``type``. Structured
+    clients (LLMs that emit tool arguments) prefer objects; legacy string-form
+    callers are absorbed by server-side JSON parsing. Picking the object branch
+    satisfies the validator and matches the canonical LLM call shape.
+    """
+    any_of = prop.get("anyOf")
+    if not isinstance(any_of, list) or len(any_of) < 2:
+        return prop
+
+    object_branch: dict[str, Any] | None = None
     for branch in any_of:
-        if not isinstance(branch, dict):
-            return prop
-        if branch == {"type": "null"}:
-            null_branch = branch
-        else:
-            other_branch = branch
+        if isinstance(branch, dict) and branch.get("type") == "object":
+            object_branch = branch
+            break
 
-    if null_branch is None or other_branch is None:
+    if object_branch is None:
         return prop
 
-    if list(other_branch.keys()) == ["type"]:
-        compact = dict(prop)
-        del compact["anyOf"]
-        compact["type"] = [other_branch["type"], "null"]
-        return compact
-
-    return prop
+    compact = {k: v for k, v in prop.items() if k != "anyOf"}
+    compact.update(object_branch)
+    if compact.get("default") == "{}":
+        compact["default"] = {}
+    return compact
 
 
 def minify_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -81,7 +106,8 @@ def minify_schema(schema: dict[str, Any]) -> dict[str, Any]:
             compact_props[name] = prop
             continue
 
-        prop = _simplify_nullable(prop)
+        prop = _drop_null_branches(prop)
+        prop = _prefer_object_branch(prop)
 
         if "default" in prop and _is_trivial_default(prop["default"]):
             prop = {k: v for k, v in prop.items() if k != "default"}

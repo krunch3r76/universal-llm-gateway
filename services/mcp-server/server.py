@@ -498,11 +498,11 @@ def _build_server() -> FastMCP:
     }
 
     @mcp.tool(title="RAG Knowledge Retrieval")
-    async def rag(op: str, arguments: str = "{}") -> Any:
+    async def rag(op: str, arguments: dict[str, Any] | str = "{}") -> Any:
         """RAG knowledge retrieval and index management — dispatch by op name.
 
         op: operation name (see table below)
-        arguments: JSON string with operation arguments
+        arguments: operation arguments as an object or a JSON string
 
         Operations:
           search            (query, scope?, prefix?, top_k?)    — semantic search; scope/prefix are mutually exclusive
@@ -518,7 +518,7 @@ def _build_server() -> FastMCP:
         Example:
           rag(op="search", arguments='{"query": "embedding strategies", "scope": "research"}')
         """
-        import json as _json
+        from tools._agent_tools import _parse_dispatch_arguments
 
         tool_name = rag_op_tool.get(op)
         if tool_name is None:
@@ -544,14 +544,14 @@ def _build_server() -> FastMCP:
         t_prog, prog_timer = toolprogress_begin("rag", op=op)
         err: str | None = None
         try:
-            try:
-                args = _json.loads(arguments)
-                if not isinstance(args, dict):
-                    return {
-                        "error": f"arguments must be a JSON object, got {type(args).__name__}"
-                    }
-            except _json.JSONDecodeError as exc:
-                return {"error": f"Invalid arguments JSON: {exc}"}
+            args = _parse_dispatch_arguments(arguments)
+            if args is None:
+                return {
+                    "error": (
+                        "arguments must be an object or a JSON-encoded object; "
+                        f"got {type(arguments).__name__}"
+                    )
+                }
 
             result = fn(**args)
             if asyncio.iscoroutine(result):
@@ -564,12 +564,13 @@ def _build_server() -> FastMCP:
             toolprogress_end(t_prog, prog_timer, "rag", error=err, op=op)
 
     @mcp.tool(title="Tool Dispatcher")
-    async def dispatch(tool: str, arguments: str = "{}") -> Any:
+    async def dispatch(tool: str, arguments: dict[str, Any] | str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
+        arguments: operation arguments as an object or a JSON string.
         Full catalog: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")
         """
-        import json as _json
+        from tools._agent_tools import _parse_dispatch_arguments
 
         profile = current_profile()
         if not is_dispatch_tool_allowed(profile, tool):
@@ -594,7 +595,17 @@ def _build_server() -> FastMCP:
                 f"Unknown dispatch tool: {tool!r}. "
                 f"Available: {sorted(overflow_registry)}"
             )
-        parsed = _json.loads(arguments)
+        parsed = _parse_dispatch_arguments(arguments)
+        if parsed is None:
+            return {
+                "tool": tool,
+                "result": {
+                    "error": (
+                        "arguments must be an object or a JSON-encoded object; "
+                        f"got {type(arguments).__name__}"
+                    )
+                },
+            }
         record(
             "mcp.profile.dispatch.routed",
             profile=profile,
@@ -612,12 +623,15 @@ def _build_server() -> FastMCP:
         _PRIMARY_TOOLS.add("private_dispatch")
 
         @mcp.tool(title="Private Tool Dispatcher")
-        async def private_dispatch(tool: str, arguments: str = "{}") -> Any:
+        async def private_dispatch(
+            tool: str, arguments: dict[str, Any] | str = "{}"
+        ) -> Any:
             """Call personal/domain-specific tools by name.
 
+            arguments: operation arguments as an object or a JSON string.
             Use `private_dispatch(tool="list")` to see available tools.
             """
-            import json as _json
+            from tools._agent_tools import _parse_dispatch_arguments
 
             if tool == "list":
                 return {"available_tools": sorted(private_overflow)}
@@ -628,7 +642,17 @@ def _build_server() -> FastMCP:
                     f"Unknown private tool: {tool!r}. "
                     f"Available: {sorted(private_overflow)}"
                 )
-            parsed = _json.loads(arguments)
+            parsed = _parse_dispatch_arguments(arguments)
+            if parsed is None:
+                return {
+                    "tool": tool,
+                    "result": {
+                        "error": (
+                            "arguments must be an object or a JSON-encoded object; "
+                            f"got {type(arguments).__name__}"
+                        )
+                    },
+                }
             record("mcp.tool.private.called", tool=tool)
             result = fn(**parsed)
             if asyncio.iscoroutine(result):
