@@ -165,6 +165,8 @@ from .proxy import (
     federated_request_prompt_transformation_skipped,
 )
 from .queue import (
+    CAPACITY_ADMISSION_PAUSED,
+    CAPACITY_ADMISSION_RESUMED,
     CAPACITY_POOL_ADMITTED,
     CAPACITY_POOL_CANCELLED,
     CAPACITY_POOL_FULL,
@@ -174,6 +176,8 @@ from .queue import (
     QUEUE_MASTER_TIMEOUT,
     QUEUE_MASTER_TOCTOU,
     QUEUE_MASTER_WOKEN,
+    CapacityAdmissionPaused,
+    CapacityAdmissionResumed,
     CapacityPoolAdmitted,
     CapacityPoolCancelled,
     CapacityPoolFull,
@@ -416,11 +420,15 @@ __all__ = [
     "CAPACITY_POOL_ADMITTED",
     "CAPACITY_POOL_FULL",
     "CAPACITY_POOL_CANCELLED",
+    "CAPACITY_ADMISSION_PAUSED",
+    "CAPACITY_ADMISSION_RESUMED",
     "CapacityPoolQueued",
     "CapacityPoolWaiting",
     "CapacityPoolAdmitted",
     "CapacityPoolFull",
     "CapacityPoolCancelled",
+    "CapacityAdmissionPaused",
+    "CapacityAdmissionResumed",
     # ── federation_signaling ─────────────────────────────────────────────────
     "FEDERATION_CONNECTION_ESTABLISHED",
     "FEDERATION_CONNECTION_LOST",

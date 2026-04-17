@@ -8,6 +8,10 @@ INVARIANT: ∀ slot: in_flight[slot] ≥ 0
 INVARIANT: token release is idempotent (guard prevents double-release)
 INVARIANT: ∀ dispatch-admitted waiter cancelled before token creation ⟹
            in_flight decremented and next waiter dispatched (no leaked slots)
+INVARIANT: ∀ paused model m: admission suppressed until deadline; in-flight
+           drains naturally; queued waiters remain in FIFO order and wake
+           on resume. The pause is the preemption primitive the scheduler
+           uses to resolve starvation against a continuously-busy model.
 """
 
 from __future__ import annotations
@@ -140,6 +144,9 @@ class CapacityPool:
         self._in_flight: dict[_Slot, int] = {}
         self._queues: dict[str, deque[_Waiter]] = {}
         self._subscribed = False
+        self._paused_until: dict[str, float] = {}
+        self._paused_reason: dict[str, str] = {}
+        self._resume_tasks: dict[str, asyncio.Task[None]] = {}
 
     def _ensure_subscribed(self) -> None:
         """Subscribe to external capacity change events (lazy, once)."""
@@ -436,7 +443,15 @@ class CapacityPool:
         allowed gateways by available capacity (descending, random tiebreak)
         and increments in_flight on the best.  Called both from acquire_token
         (initial attempt) and _dispatch (queued waiter evaluation).
+
+        Returns None when admission for model_id is paused, even if capacity
+        exists. This is the starvation-relief preemption point: the scheduler
+        uses pause_admission() to force the model's in-flight count to drain
+        so a competing model can evict and load.
         """
+        if self.is_paused(model_id):
+            return None
+
         ranked: list[tuple[str, int]] = []
         for gw_id in allowed_gateway_ids:
             available, _in_flight, _capacity = self.get_slot_info(gw_id, model_id)
@@ -453,6 +468,147 @@ class CapacityPool:
         self._in_flight[slot] = self._in_flight.get(slot, 0) + 1
         logger.debug(f"Immediate admit: {request_id} → {gw_id}/{model_id}")
         return gw_id
+
+    # ── Admission pause (starvation preemption) ──
+
+    def is_paused(self, model_id: str) -> bool:
+        """Return True iff admission for model_id is currently suspended.
+
+        Lazy expiration: checks the deadline on every call so callers never
+        observe a pause that has already elapsed, even if the resume task
+        has not yet fired.
+        """
+        deadline = self._paused_until.get(model_id)
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._clear_pause(model_id, reason="expired_lazy")
+            return False
+        return True
+
+    def pause_admission(
+        self,
+        model_id: str,
+        duration_s: float,
+        reason: str = "starvation_relief",
+    ) -> float:
+        """Suspend admission for model_id for up to duration_s seconds.
+
+        In-flight requests complete normally; the routing_key_tracker will
+        eventually report no in-flight keys for model_id, at which point the
+        eviction planner can classify the model as idle and evict it.
+
+        Stacking semantics: if already paused, the deadline extends only if
+        the new deadline is later than the existing one. Re-applying a shorter
+        pause is a no-op. The reason of the longest pause wins.
+
+        Schedules a single resume task that fires when the deadline elapses;
+        the task calls _dispatch(model_id) so queued waiters wake up promptly.
+        """
+        if duration_s <= 0:
+            return 0.0
+
+        now = time.monotonic()
+        new_deadline = now + duration_s
+        existing = self._paused_until.get(model_id, 0.0)
+        if new_deadline <= existing:
+            return max(0.0, existing - now)
+
+        was_paused = existing > now
+        self._paused_until[model_id] = new_deadline
+        self._paused_reason[model_id] = reason
+
+        old_task = self._resume_tasks.pop(model_id, None)
+        if old_task is not None and not old_task.done():
+            old_task.cancel()
+
+        try:
+            self._resume_tasks[model_id] = asyncio.create_task(
+                self._resume_after(model_id, duration_s),
+                name=f"capacity-admission-resume-{model_id}",
+            )
+        except RuntimeError:
+            logger.warning(
+                "pause_admission: no running loop; resume for %s will rely on "
+                "lazy expiration at next _try_immediate / _dispatch",
+                model_id,
+            )
+
+        if was_paused:
+            logger.info(
+                "Admission pause EXTENDED for %s: +%.1fs "
+                "(reason=%s, total_remaining=%.1fs)",
+                model_id,
+                duration_s,
+                reason,
+                new_deadline - now,
+            )
+        else:
+            logger.warning(
+                "Admission pause STARTED for %s: %.1fs (reason=%s)",
+                model_id,
+                duration_s,
+                reason,
+            )
+        self._emit_admission_paused(model_id, duration_s, reason)
+        return duration_s
+
+    def resume_admission(
+        self,
+        model_id: str,
+        reason: str = "explicit",
+    ) -> bool:
+        """Release an active pause and dispatch any queued waiters for model_id.
+
+        Returns True iff a pause was active. Safe to call when no pause exists.
+        """
+        if model_id not in self._paused_until:
+            return False
+        self._clear_pause(model_id, reason=reason)
+        try:
+            asyncio.create_task(
+                self._dispatch(model_id),
+                name=f"capacity-admission-resume-dispatch-{model_id}",
+            )
+        except RuntimeError:
+            logger.warning(
+                "resume_admission: no running loop to dispatch %s; queued waiters "
+                "will wake on the next external trigger",
+                model_id,
+            )
+        return True
+
+    def _clear_pause(self, model_id: str, *, reason: str) -> None:
+        """Drop all pause state for model_id and emit a resume event."""
+        was_paused = model_id in self._paused_until
+        self._paused_until.pop(model_id, None)
+        self._paused_reason.pop(model_id, None)
+        task = self._resume_tasks.pop(model_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        if was_paused:
+            logger.warning(
+                "Admission pause RESUMED for %s (reason=%s)",
+                model_id,
+                reason,
+            )
+            self._emit_admission_resumed(model_id, reason)
+
+    async def _resume_after(self, model_id: str, duration_s: float) -> None:
+        """Wait out a pause deadline then dispatch queued waiters.
+
+        Cancellation via pause_admission (extended) or resume_admission
+        (explicit early release) is expected; silently exit in that case.
+        """
+        try:
+            await asyncio.sleep(duration_s)
+        except asyncio.CancelledError:
+            return
+        deadline = self._paused_until.get(model_id)
+        if deadline is None or time.monotonic() < deadline:
+            return
+        self._clear_pause(model_id, reason="ttl_expired")
+        await self._dispatch(model_id)
 
     async def _wait_for_slot(
         self,
@@ -727,6 +883,43 @@ class CapacityPool:
         except Exception as exc:
             logger.warning("Failed to emit capacity.pool.cancelled: %s", exc)
 
+    def _emit_admission_paused(
+        self, model_id: str, duration_s: float, reason: str
+    ) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityAdmissionPaused
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityAdmissionPaused(
+                        model_id=model_id,
+                        duration_s=duration_s,
+                        reason=reason,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.admission.paused: %s", exc)
+
+    def _emit_admission_resumed(self, model_id: str, reason: str) -> None:
+        if not self._event_bus:
+            return
+        try:
+            from src.scheduling.events import CapacityAdmissionResumed
+
+            asyncio.create_task(
+                self._event_bus.publish_async_nowait(
+                    CapacityAdmissionResumed(
+                        model_id=model_id,
+                        reason=reason,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit capacity.admission.resumed: %s", exc)
+
     def _emit_slot_leak_recovered(
         self, request_id: str, gateway_id: str, model_id: str
     ) -> None:
@@ -826,6 +1019,10 @@ class CapacityPool:
         so we skip them to avoid incrementing in_flight for unclaimed slots.
         Guards against the narrow race where cancellation arrives between
         _try_immediate (which increments in_flight) and set_result.
+
+        When model_id is under an active admission pause, _try_immediate returns
+        None and every waiter is retained in queue order — no admissions fire
+        until the pause expires or is explicitly released.
         """
         queue = self._queues.get(model_id)
         if not queue:
@@ -902,6 +1099,15 @@ class CapacityPool:
         waiter request_ids and allowed gateways, and aggregate totals.  Used
         by health endpoints, logging, and the MCP manage status command.
         """
+        now = time.monotonic()
+        paused = {
+            mid: {
+                "remaining_s": max(0.0, deadline - now),
+                "reason": self._paused_reason.get(mid, ""),
+            }
+            for mid, deadline in self._paused_until.items()
+            if deadline > now
+        }
         return {
             "capacity": {str(s): c for s, c in self._capacity.items()},
             "in_flight": {str(s): c for s, c in self._in_flight.items()},
@@ -916,6 +1122,7 @@ class CapacityPool:
                 ]
                 for mid, q in self._queues.items()
             },
+            "paused_admission": paused,
             "total_capacity": sum(self._capacity.values()),
             "total_in_flight": sum(self._in_flight.values()),
             "total_queued": sum(len(q) for q in self._queues.values()),

@@ -23,7 +23,9 @@ if TYPE_CHECKING:
         FederatedGatewayManager,
     )
     from systems.federation.master.routing.forward import FederatedRequestForwarder
+    from systems.routing.capacity.pool import CapacityPool
     from systems.routing.selection.decision import DecisionEngine
+    from systems.routing.selection.decision.protocols import RoutingKeyTracker
     from systems.routing.selection.decision.stability import StickyPlacementTracker
     from systems.routing.selection.types import Gateway, Placement, SelectionTrace
 
@@ -47,6 +49,8 @@ async def finalize_selection_and_load(
     stability_tracker: "StickyPlacementTracker",
     routing_start_time: float,
     eviction_cooldown_s: float,
+    capacity_pool: "CapacityPool | None" = None,
+    routing_key_tracker: "RoutingKeyTracker | None" = None,
 ) -> tuple[str, None]:
     """
     Execute eviction/load side effects and publish final routing event.
@@ -159,6 +163,8 @@ async def finalize_selection_and_load(
                 placement=placement,
                 event_bus=event_bus,
                 stability_tracker=stability_tracker,
+                capacity_pool=capacity_pool,
+                routing_key_tracker=routing_key_tracker,
             )
 
         context.selected_gateway = selected_gateway
@@ -209,6 +215,8 @@ async def _ensure_remote_model_loaded(
     placement: "Placement",
     event_bus,
     stability_tracker: "StickyPlacementTracker",
+    capacity_pool: "CapacityPool | None" = None,
+    routing_key_tracker: "RoutingKeyTracker | None" = None,
 ) -> None:
     """Load target model on remote gateway with retry path for transient load errors."""
     try:
@@ -225,7 +233,12 @@ async def _ensure_remote_model_loaded(
             and detail.get("retryable", False)
             and federated_manager is not None
         ):
-            timeout_s = (routing_config or {}).get("eviction_wait_timeout_s", 300.0)
+            rc = routing_config or {}
+            timeout_s = rc.get("eviction_wait_timeout_s", 300.0)
+            starvation_drain_threshold_s = float(
+                rc.get("starvation_drain_threshold_s", 15.0)
+            )
+            drain_duration_s = float(rc.get("drain_duration_s", 30.0))
             selected_gateway, trace, waited_ms = await _wait_and_retry_selection(
                 federated_manager=federated_manager,
                 decision_engine=decision_engine,
@@ -234,6 +247,10 @@ async def _ensure_remote_model_loaded(
                 event_bus=event_bus,
                 timeout_s=timeout_s,
                 stability_tracker=stability_tracker,
+                capacity_pool=capacity_pool,
+                routing_key_tracker=routing_key_tracker,
+                starvation_drain_threshold_s=starvation_drain_threshold_s,
+                drain_duration_s=drain_duration_s,
             )
             if selected_gateway is None:
                 raise_capacity_error(

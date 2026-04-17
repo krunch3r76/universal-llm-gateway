@@ -331,3 +331,69 @@ def CapacityPoolCancelled(
             "reason": reason,
         },
     )
+
+
+# ========================================
+# Admission Pause (Starvation Preemption) Signals
+# ========================================
+
+CAPACITY_ADMISSION_PAUSED = "capacity.admission.paused"
+"""
+Admission for a model suspended to allow competing starved model to load.
+
+Emitted by CapacityPool.pause_admission when the scheduler uses admission
+drain as a preemption primitive against a continuously-busy model whose
+eviction has been blocked for > starvation_drain_threshold_s.
+
+Payload: {
+    "model_id": str,       # routing_key of the paused model
+    "duration_s": float,   # requested pause duration
+    "reason": str,         # typically "starvation_relief"
+}
+"""
+
+CAPACITY_ADMISSION_RESUMED = "capacity.admission.resumed"
+"""
+Admission pause released; queued waiters for the model may now be admitted.
+
+Emitted by CapacityPool when either the TTL elapses, an explicit
+resume_admission() call fires, or lazy expiration is detected inside
+_try_immediate/_dispatch.
+
+Payload: {
+    "model_id": str,       # routing_key of the resumed model
+    "reason": str,         # "ttl_expired" | "explicit" | "expired_lazy"
+}
+"""
+
+
+@event_factory
+def CapacityAdmissionPaused(
+    model_id: str,
+    duration_s: float,
+    reason: str,
+) -> Event:
+    """Admission for model_id suspended for duration_s seconds."""
+    return Event(
+        signal=CAPACITY_ADMISSION_PAUSED,
+        payload={
+            "model_id": model_id,
+            "duration_s": duration_s,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def CapacityAdmissionResumed(
+    model_id: str,
+    reason: str,
+) -> Event:
+    """Admission pause cleared for model_id; queued waiters may be admitted."""
+    return Event(
+        signal=CAPACITY_ADMISSION_RESUMED,
+        payload={
+            "model_id": model_id,
+            "reason": reason,
+        },
+    )

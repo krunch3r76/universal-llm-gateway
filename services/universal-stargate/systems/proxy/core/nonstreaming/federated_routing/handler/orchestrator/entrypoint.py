@@ -124,6 +124,8 @@ async def _route_to_federated_gateway(
             placement=placement,
             gateways_for_routing=gateways_for_routing,
             stability_tracker=stability_tracker,
+            capacity_pool=capacity_pool,
+            routing_key_tracker=routing_key_tracker,
         )
         # Post-rejection recovery guarantees non-null selection.
         assert selected_gateway is not None
@@ -159,6 +161,8 @@ async def _route_to_federated_gateway(
         stability_tracker=stability_tracker,
         routing_start_time=routing_start_time,
         eviction_cooldown_s=eviction_cooldown_s,
+        capacity_pool=capacity_pool,
+        routing_key_tracker=routing_key_tracker,
     )
 
 

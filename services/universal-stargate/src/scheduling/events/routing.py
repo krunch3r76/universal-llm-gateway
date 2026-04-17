@@ -1131,6 +1131,51 @@ def RoutingEvictionWaitTimeout(
     )
 
 
+ROUTING_DRAIN_INITIATED = "routing.drain.initiated"
+"""
+Starvation-triggered admission drain initiated for one or more blocking models.
+
+Emitted by _wait_and_retry_selection when a waiter blocked on
+eviction_blocked_by_busy_models has been starving for longer than
+starvation_drain_threshold_s. The wait loop calls capacity_pool.pause_admission
+for each in-flight routing key on every busy-blocked candidate gateway
+(excluding the target model). In-flight drains naturally; the eviction
+planner then sees no in-flight keys and succeeds on its next retry.
+
+Payload: {
+    "request_id": str,           # starved request triggering the drain
+    "target_model_id": str,      # model the starved request is trying to load
+    "gateway_ids": list[str],    # gateways whose in-flight traffic is being paused
+    "drained_model_ids": list[str], # routing keys whose admission was paused
+    "duration_s": float,         # pause duration per model
+    "starved_for_ms": int,       # how long the waiter had been blocked
+}
+"""
+
+
+@event_factory
+def RoutingDrainInitiated(
+    request_id: str,
+    target_model_id: str,
+    gateway_ids: list[str],
+    drained_model_ids: list[str],
+    duration_s: float,
+    starved_for_ms: int,
+) -> Event:
+    """Emit when starvation-triggered admission drain begins."""
+    return Event(
+        signal=ROUTING_DRAIN_INITIATED,
+        payload={
+            "request_id": request_id,
+            "target_model_id": target_model_id,
+            "gateway_ids": gateway_ids,
+            "drained_model_ids": drained_model_ids,
+            "duration_s": duration_s,
+            "starved_for_ms": starved_for_ms,
+        },
+    )
+
+
 @event_factory
 def RoutingEvictionWaitCancelled(
     request_id: str,

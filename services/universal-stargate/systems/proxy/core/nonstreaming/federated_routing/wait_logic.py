@@ -19,11 +19,20 @@ if TYPE_CHECKING:
     from systems.federation.master.manager.federated_gateway_manager import (
         FederatedGatewayManager,
     )
+    from systems.routing.capacity.pool import CapacityPool
+    from systems.routing.selection.decision.protocols import RoutingKeyTracker
     from systems.routing.selection.decision.stability import StickyPlacementTracker
 
     from ..context import RequestContext
 
 logger = get_logger(__name__)
+
+# Starvation-triggered admission drain defaults. A waiter whose only blocker
+# is eviction_blocked_by_busy_models for longer than this threshold causes the
+# wait loop to pause admission on the continuously-busy models — the missing
+# preemption primitive in the scheduler. Tunable via routing.*.
+DEFAULT_STARVATION_DRAIN_THRESHOLD_S: float = 15.0
+DEFAULT_DRAIN_DURATION_S: float = 30.0
 
 # Default startup queue window: hold requests for up to this many seconds
 # while Stargate waits for its first gateway to connect.
@@ -149,6 +158,7 @@ async def wait_for_model_gateway(
         RoutingModelGraceResolved,
         RoutingModelGraceTimeout,
     )
+
     wait_start = time.monotonic()
     sel = context.selected_model
     if event_bus:
@@ -228,11 +238,30 @@ async def _wait_and_retry_selection(
     event_bus: "EventBus | None",
     timeout_s: float,
     stability_tracker: "StickyPlacementTracker",
+    capacity_pool: "CapacityPool | None" = None,
+    routing_key_tracker: "RoutingKeyTracker | None" = None,
+    starvation_drain_threshold_s: float = DEFAULT_STARVATION_DRAIN_THRESHOLD_S,
+    drain_duration_s: float = DEFAULT_DRAIN_DURATION_S,
 ) -> tuple[Any, Any, int]:
     """
     Wait for federated state changes, then retry selection until success or timeout.
+
+    When a waiter remains blocked by eviction_blocked_by_busy_models for longer
+    than starvation_drain_threshold_s, we invoke the admission-drain primitive
+    on the offending model(s): capacity_pool.pause_admission temporarily suspends
+    new admissions for each tracker-busy routing_key on every busy-blocked
+    candidate gateway (excluding the target). In-flight requests drain naturally
+    on the gateway side — typically within one generation window — after which
+    the routing key tracker reports no in-flight keys and the eviction planner
+    succeeds on its next retry.
+
+    If starvation persists past a drain window (e.g. in-flight requests hung
+    or exceeding the initial drain_duration_s), the drain re-fires every
+    drain_duration_s so the pause stays active across long waits rather than
+    relying on an unrelated request to retrigger detection.
     """
     from src.scheduling.events.routing import (
+        RoutingDrainInitiated,
         RoutingEvictionWaitCancelled,
         RoutingEvictionWaitResolved,
         RoutingEvictionWaitStarted,
@@ -245,6 +274,7 @@ async def _wait_and_retry_selection(
     global _eviction_wait_queue_depth
     wait_start = time.monotonic()
     trace: Any = None
+    last_drain_at: float | None = None
 
     _eviction_wait_queue_depth += 1
 
@@ -307,6 +337,29 @@ async def _wait_and_retry_selection(
             if not still_transient:
                 break
 
+            if (
+                capacity_pool is not None
+                and routing_key_tracker is not None
+                and elapsed_s >= starvation_drain_threshold_s
+                and (
+                    last_drain_at is None
+                    or (time.monotonic() - last_drain_at) >= drain_duration_s
+                )
+            ):
+                drain_fired = _trigger_starvation_drain(
+                    capacity_pool=capacity_pool,
+                    routing_key_tracker=routing_key_tracker,
+                    trace=trace,
+                    placement=placement,
+                    context=context,
+                    event_bus=event_bus,
+                    drain_duration_s=drain_duration_s,
+                    starved_for_ms=int(elapsed_s * 1000),
+                    drain_event_factory=RoutingDrainInitiated,
+                )
+                if drain_fired:
+                    last_drain_at = time.monotonic()
+
             remaining = max(0.1, timeout_s - (time.monotonic() - wait_start))
             await federated_manager.wait_for_state_change(state_version, remaining)
 
@@ -339,3 +392,86 @@ async def _wait_and_retry_selection(
             "routing.eviction.wait.timeout",
         )
     return None, trace, waited_ms
+
+
+def _trigger_starvation_drain(
+    *,
+    capacity_pool: "CapacityPool",
+    routing_key_tracker: "RoutingKeyTracker",
+    trace: Any,
+    placement: Any,
+    context: "RequestContext",
+    event_bus: "EventBus | None",
+    drain_duration_s: float,
+    starved_for_ms: int,
+    drain_event_factory: Any,
+) -> bool:
+    """
+    Pause admission on each in-flight routing_key blocking the target placement.
+
+    Computes the drain set from the selection trace: for every candidate gateway
+    reporting eviction_blocked_by_busy_models, enumerate routing_keys currently
+    in-flight there and pause admission for each (minus the target model, which
+    must never be drained against itself). Returns True iff at least one pause
+    was applied. The routing_key tracker is the authoritative source for what
+    is blocking eviction — using it here ensures we pause exactly the set the
+    eviction planner is filtering out.
+    """
+    target_key = placement.model_id.routing_key
+
+    busy_blocked_gateways: list[str] = []
+    for candidate in trace.candidates if trace else []:
+        is_blocked = any(
+            f.constraint == "eviction_blocked_by_busy_models"
+            for f in candidate.constraints_failed
+        )
+        if is_blocked:
+            busy_blocked_gateways.append(candidate.gateway.name)
+
+    if not busy_blocked_gateways:
+        return False
+
+    drained_keys: set[str] = set()
+    for gateway_name in busy_blocked_gateways:
+        in_flight_keys = routing_key_tracker.get_routing_keys_in_flight(gateway_name)
+        for routing_key in in_flight_keys:
+            if routing_key == target_key:
+                continue
+            capacity_pool.pause_admission(
+                routing_key,
+                duration_s=drain_duration_s,
+                reason="starvation_relief",
+            )
+            drained_keys.add(routing_key)
+
+    if not drained_keys:
+        return False
+
+    logger.warning(
+        "Starvation drain INITIATED for %s: paused %d model(s) across %d gateway(s) "
+        "after %dms; drained=%s",
+        placement.model_id,
+        len(drained_keys),
+        len(busy_blocked_gateways),
+        starved_for_ms,
+        sorted(drained_keys),
+    )
+
+    if event_bus:
+        try:
+            asyncio.create_task(
+                event_bus.publish_async_nowait(
+                    drain_event_factory(
+                        request_id=context.request_id,
+                        target_model_id=str(placement.model_id),
+                        gateway_ids=busy_blocked_gateways,
+                        drained_model_ids=sorted(drained_keys),
+                        duration_s=drain_duration_s,
+                        starved_for_ms=starved_for_ms,
+                    )
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit routing.drain.initiated: %s", exc)
+
+    return True

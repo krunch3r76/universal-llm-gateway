@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from systems.federation.master.manager.federated_gateway_manager import (
         FederatedGatewayManager,
     )
+    from systems.routing.capacity.pool import CapacityPool
     from systems.routing.selection.decision import DecisionEngine
+    from systems.routing.selection.decision.protocols import RoutingKeyTracker
     from systems.routing.selection.decision.stability import StickyPlacementTracker
     from systems.routing.selection.types import Gateway, Placement, SelectionTrace
 
@@ -104,6 +106,8 @@ async def handle_selection_rejection(
     placement: "Placement",
     gateways_for_routing: list["Gateway"],
     stability_tracker: "StickyPlacementTracker",
+    capacity_pool: "CapacityPool | None" = None,
+    routing_key_tracker: "RoutingKeyTracker | None" = None,
 ) -> "Gateway":
     """
     Resolve no-selection outcomes by waiting, classifying, or failing with context.
@@ -146,9 +150,12 @@ async def handle_selection_rejection(
                     classification="busy_blocked",
                     failure_reason="No idle models to evict; entering wait queue",
                 )
-            config_timeout = float(
-                (routing_config or {}).get("eviction_wait_timeout_s", 300.0)
+            rc = routing_config or {}
+            config_timeout = float(rc.get("eviction_wait_timeout_s", 300.0))
+            starvation_drain_threshold_s = float(
+                rc.get("starvation_drain_threshold_s", 15.0)
             )
+            drain_duration_s = float(rc.get("drain_duration_s", 30.0))
             deadline = getattr(context, "_capacity_deadline_mono", None)
             if deadline is not None:
                 timeout_s = min(config_timeout, max(0.0, deadline - time.monotonic()))
@@ -162,6 +169,10 @@ async def handle_selection_rejection(
                 event_bus=event_bus,
                 timeout_s=timeout_s,
                 stability_tracker=stability_tracker,
+                capacity_pool=capacity_pool,
+                routing_key_tracker=routing_key_tracker,
+                starvation_drain_threshold_s=starvation_drain_threshold_s,
+                drain_duration_s=drain_duration_s,
             )
             if selected_gateway is None:
                 queue_timeout_info = {"waited_ms": waited_ms}
