@@ -6,7 +6,12 @@ import json
 import logging
 from typing import Any
 
-from .operations import _coerce_limit, _coerce_since_ts, _get_session_start_ts
+from .operations import (
+    _coerce_limit,
+    _coerce_since_ts,
+    _get_session_start_ts,
+    _resolve_window_minutes_and_cutoff,
+)
 from .store import EventStore
 
 logger = logging.getLogger(__name__)
@@ -147,6 +152,82 @@ async def _capacity_snapshot(
         tuple(query_params),
     )
     return {"rows": rows, "count": len(rows)}
+
+
+async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
+    """Aggregate frontier generate health per provider from mcp.frontier.* signals."""
+    minutes, cutoff = await _resolve_window_minutes_and_cutoff(params, store)
+    provider_filter = params.get("provider") or None
+
+    rows = await store.query(
+        "SELECT signal, payload FROM events "
+        "WHERE signal LIKE 'mcp.frontier.%' "
+        "AND role NOT IN ('debug', 'realtime') "
+        "AND ts_unix_ms >= ? "
+        "ORDER BY seq DESC",
+        (cutoff,),
+        limit=5000,
+    )
+
+    providers: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        raw = row.get("payload")
+        payload: dict[str, Any] = {}
+        if isinstance(raw, str) and raw:
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                payload = {}
+        prov = payload.get("provider") or "unknown"
+        if provider_filter and prov != provider_filter:
+            continue
+        bucket = providers.setdefault(
+            prov,
+            {
+                "called": 0,
+                "completed": 0,
+                "errors": {},
+                "output_short": 0,
+                "tool_executed": 0,
+                "_total_output_tokens": 0,
+                "_total_duration_s": 0.0,
+                "_duration_samples": 0,
+            },
+        )
+        sig = row["signal"]
+        if sig == "mcp.frontier.generate.called":
+            bucket["called"] += 1
+        elif sig == "mcp.frontier.generate.completed":
+            bucket["completed"] += 1
+            bucket["_total_output_tokens"] += int(payload.get("output_tokens") or 0)
+            duration = payload.get("duration_s")
+            if isinstance(duration, int | float):
+                bucket["_total_duration_s"] += float(duration)
+                bucket["_duration_samples"] += 1
+        elif sig == "mcp.frontier.generate.error":
+            err = payload.get("error") or "unknown"
+            bucket["errors"][err] = bucket["errors"].get(err, 0) + 1
+        elif sig == "mcp.frontier.output.short":
+            bucket["output_short"] += 1
+        elif sig == "mcp.frontier.tool.executed":
+            bucket["tool_executed"] += 1
+
+    for prov, b in providers.items():
+        completed = b["completed"] or 0
+        samples = b.pop("_duration_samples") or 0
+        total_dur = b.pop("_total_duration_s")
+        total_out = b.pop("_total_output_tokens")
+        b["error_count"] = sum(b["errors"].values())
+        b["avg_output_tokens"] = (total_out // completed) if completed else 0
+        b["avg_duration_s"] = round(total_dur / samples, 3) if samples else 0.0
+        b["short_rate"] = round(b["output_short"] / completed, 3) if completed else 0.0
+
+    return {
+        "window_minutes": minutes,
+        "provider_filter": provider_filter,
+        "providers": providers,
+        "provider_count": len(providers),
+    }
 
 
 async def _realtime_snapshot(

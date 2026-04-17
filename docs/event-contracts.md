@@ -1790,6 +1790,10 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.response.retrieved` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Consumer retrieved a stored oversized response via `retrieve` tool |
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
 | `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
+| `mcp.frontier.generate.called` | `model`, `tool`, `provider`, `boot_level`, `has_thinking`, `has_tools`, `has_conversation_id`, `mcp_tool_loop` | Frontier generate entry — one per `grok_generate`/`claude_generate`/`openai_generate`/`gemini_generate` invocation (including tool-loop-driven calls) |
+| `mcp.frontier.generate.completed` | `tool`, `model`, `provider`, `duration_s`, `input_tokens`, `output_tokens`, `tool_calls_made`, `has_thinking`, `has_tool_calls` | Frontier generate succeeded; `duration_s` covers the full client-side tool loop when `mcp_tool_loop=True` |
+| `mcp.frontier.generate.error` | `provider`, `error`, optional `duration_s` | Frontier generate failed. `error` ∈ {`no_native_path`, `missing_api_key`, `adapter_missing_frontier`, `upstream_{status}`, `timeout`, `connection`, `boot_context_invalid`} |
+| `mcp.frontier.tool.executed` | `tool`, `turn`, `provider` | Individual MCP tool call executed inside the client-side frontier tool loop (one per tool invocation, per turn) |
 | `mcp.frontier.output.short` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `tool_calls_made`, `content_preview` | Frontier generate (`team`/`full` boot) returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting |
 
 ### Agent-Bus Signals

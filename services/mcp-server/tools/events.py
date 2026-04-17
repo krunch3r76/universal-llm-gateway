@@ -47,6 +47,7 @@ _VALID_OPERATIONS = frozenset(
         "pipeline-trace",
         "compare-runs",
         "federation-health",
+        "provider-health",
         "capacity-snapshot",
         "signal-events",
         "stack-last-started",
@@ -151,6 +152,7 @@ def register_event_tools(mcp: FastMCP) -> None:
           pipeline-trace       (execution_id)        — step-by-step execution trace
           compare-runs         (run_a, run_b)        — side-by-side metrics
           federation-health    ()                    — latest relay telemetry
+          provider-health      (provider?)           — frontier generate health per provider
           capacity-snapshot    ()                    — current slot usage
           signal-events        (signal?)             — recent events for a signal pattern
           stack-last-started   ()                    — per-service last startup timestamp

@@ -203,6 +203,24 @@ _register(
 
 _register(
     OperationDef(
+        name="provider-health",
+        description=(
+            "Aggregate frontier generate health per provider from mcp.frontier.* "
+            "signals (default window: since last Stargate restart). Returns "
+            "called/completed/error counts, error-reason histogram, "
+            "mcp.frontier.output.short fires, mcp.frontier.tool.executed count, "
+            "avg output_tokens, and avg duration_s."
+        ),
+        params={
+            "minutes": {"type": "int"},
+            "provider": {"type": "string"},
+        },
+        returns="per-provider health summary",
+    )
+)
+
+_register(
+    OperationDef(
         name="stack-last-started",
         description="Per-service last startup timestamp and overall session start",
         params={},
@@ -296,6 +314,7 @@ from .operations_trace import (  # noqa: E402
     _compare_runs,
     _federation_health,
     _pipeline_trace,
+    _provider_health,
     _realtime_snapshot,
     _stack_last_started,
     _verify_tool_execution,
@@ -314,6 +333,7 @@ _DISPATCH: dict[str, OperationCallable] = {
     "pipeline-trace": _pipeline_trace,
     "compare-runs": _compare_runs,
     "federation-health": _federation_health,
+    "provider-health": _provider_health,
     "capacity-snapshot": _capacity_snapshot,
     "signal-events": _signal_events,
     "stack-last-started": _stack_last_started,
