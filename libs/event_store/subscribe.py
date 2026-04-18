@@ -20,7 +20,7 @@ from .store import EventStore
 
 logger = logging.getLogger(__name__)
 
-_SUBSCRIBER_QUEUE_SIZE = 1000
+_DEFAULT_SUBSCRIBER_QUEUE_SIZE = 1000
 
 
 def _matches_filter(event: dict[str, Any], filt: dict[str, str]) -> bool:
@@ -42,8 +42,18 @@ def _matches_filter(event: dict[str, Any], filt: dict[str, str]) -> bool:
 def create_subscribe_router(
     store: EventStore,
     subscriber_queues: set[asyncio.Queue[dict[str, Any]]],
+    *,
+    subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
 ) -> APIRouter:
-    """Build a FastAPI router for WebSocket subscriptions."""
+    """Build a FastAPI router for WebSocket subscriptions.
+
+    Args:
+        subscriber_queue_maxsize: Per-connection bounded queue depth. Slow
+            clients whose queue fills trigger subscriber-side overflow (oldest
+            event evicted + ``events.dropped.subscribe`` notice). Tune upward
+            for bursty broadcast workloads; tune downward to shed slow consumers
+            faster.
+    """
     router = APIRouter()
 
     @router.websocket("/v1/subscribe")
@@ -57,7 +67,7 @@ def create_subscribe_router(
         await ws.accept()
 
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
-            maxsize=_SUBSCRIBER_QUEUE_SIZE
+            maxsize=subscriber_queue_maxsize
         )
         event_filter: dict[str, str] = {}
         subscriber_queues.add(queue)

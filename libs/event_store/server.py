@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from .ingest import IngestServer
 from .query import create_query_router
 from .store import EventStore
-from .subscribe import create_subscribe_router
+from .subscribe import _DEFAULT_SUBSCRIBER_QUEUE_SIZE, create_subscribe_router
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,15 @@ def create_app(
     store: EventStore,
     subscriber_queues: set[asyncio.Queue[dict[str, Any]]],
     ingest: IngestServer,
+    *,
+    subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
 ) -> FastAPI:
     """Build the FastAPI query/subscribe application."""
     app = FastAPI(title="Event Store")
     query_router = create_query_router(store, ingest, subscriber_queues)
-    subscribe_router = create_subscribe_router(store, subscriber_queues)
+    subscribe_router = create_subscribe_router(
+        store, subscriber_queues, subscriber_queue_maxsize=subscriber_queue_maxsize
+    )
     app.include_router(query_router)
     app.include_router(subscribe_router)
     return app
@@ -104,6 +108,9 @@ async def run_service(
     query_sock_mode: int = _DEFAULT_QUERY_SOCK_MODE,
     bridge_upstream_sock: str | None = None,
     bridge_origin_node: str | None = None,
+    db_queue_maxsize: int = 10000,
+    subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
+    drop_notice_interval_sec: float = 1.0,
 ) -> None:
     """Main service lifecycle - parameterized for library use.
 
@@ -113,6 +120,13 @@ async def run_service(
         bridge_upstream_sock: When set, forward scope=global events to this
                              upstream Event Service ingest socket.
         bridge_origin_node: Node identifier stamped on bridged events.
+        db_queue_maxsize: Ingest queue depth. Publisher events are dropped
+            (with rate-limited ``events.dropped.ingest`` notice) when the queue
+            is full.
+        subscriber_queue_maxsize: Per-subscriber-connection queue depth. Slow
+            client overflow emits ``events.dropped.subscribe``.
+        drop_notice_interval_sec: Minimum seconds between consecutive
+            ``events.dropped.ingest`` emissions.
     """
     effective_db = db_path if persist else ":memory:"
     store = EventStore(effective_db)
@@ -138,10 +152,21 @@ async def run_service(
 
     try:
         await store.open()
-        ingest = IngestServer(store, ingest_sock, subscriber_queues)
+        ingest = IngestServer(
+            store,
+            ingest_sock,
+            subscriber_queues,
+            db_queue_maxsize=db_queue_maxsize,
+            drop_notice_interval_sec=drop_notice_interval_sec,
+        )
         await ingest.start()
 
-        app = create_app(store, subscriber_queues, ingest)
+        app = create_app(
+            store,
+            subscriber_queues,
+            ingest,
+            subscriber_queue_maxsize=subscriber_queue_maxsize,
+        )
 
         query_sock_path = Path(query_sock)
         query_sock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -295,6 +320,9 @@ async def start_event_service(
     persist: bool = True,
     bridge_upstream_sock: str | None = None,
     bridge_origin_node: str | None = None,
+    db_queue_maxsize: int = 10000,
+    subscriber_queue_maxsize: int = _DEFAULT_SUBSCRIBER_QUEUE_SIZE,
+    drop_notice_interval_sec: float = 1.0,
 ) -> asyncio.Task[None]:
     """Start the event service as a background asyncio task.
 
@@ -302,6 +330,9 @@ async def start_event_service(
         persist: When False, uses SQLite :memory: (no disk, no retention).
         bridge_upstream_sock: Forward scope=global events to upstream ingest socket.
         bridge_origin_node: Node identifier stamped on bridged events.
+        db_queue_maxsize: Ingest queue depth (see ``run_service`` docstring).
+        subscriber_queue_maxsize: Per-subscriber queue depth.
+        drop_notice_interval_sec: Min interval between drop-notice emissions.
     """
     db_path = os.path.expanduser(db)
     tcp_enabled = host is not None and port is not None
@@ -318,6 +349,9 @@ async def start_event_service(
             tcp_query_port=(port or 7101) + 1,
             bridge_upstream_sock=bridge_upstream_sock,
             bridge_origin_node=bridge_origin_node,
+            db_queue_maxsize=db_queue_maxsize,
+            subscriber_queue_maxsize=subscriber_queue_maxsize,
+            drop_notice_interval_sec=drop_notice_interval_sec,
         )
     )
     return task

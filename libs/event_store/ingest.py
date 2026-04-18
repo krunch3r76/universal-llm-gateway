@@ -37,23 +37,33 @@ class IngestServer:
         store: EventStore,
         socket_path: str,
         subscriber_queues: set[asyncio.Queue[dict[str, Any]]],
+        *,
+        db_queue_maxsize: int = 10000,
+        drop_notice_interval_sec: float = 1.0,
     ) -> None:
-        """Initialize ingest state and queue-backed write pipeline.
+        """Ingest NDJSON into a bounded queue; one writer batches to SQLite then fans out.
 
-        The ingest socket accepts NDJSON from publishers and places parsed events
-        into an internal bounded queue. A single writer task batches DB writes and
-        fans committed events out to subscriber queues.
+        ``db_queue_maxsize``: queue full ⇒ drop + rate-limited ``events.dropped.ingest``.
+        ``drop_notice_interval_sec``: min seconds between those notices; drops in-between
+        aggregate into the next ``count``.
         """
         self._store = store
         self._socket_path = socket_path
         self._subscriber_queues = subscriber_queues
         self._server: asyncio.Server | None = None
         self._tcp_server: asyncio.Server | None = None
-        self._db_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=10000)
+        self._db_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(
+            maxsize=db_queue_maxsize
+        )
+        self._db_queue_maxsize = db_queue_maxsize
         self._writer_task: asyncio.Task[None] | None = None
         self._running = False
         self._events_ingested = 0
         self._events_dropped_publish = 0
+        self._drop_notice_interval_sec = drop_notice_interval_sec
+        self._drop_notice_last_emit_ts: float = 0.0
+        self._drop_notice_pending_count: int = 0
+        self._drop_notice_last_signal: str = ""
 
     async def start(self) -> None:
         """Bind UDS socket and start the DB writer task."""
@@ -142,6 +152,9 @@ class IngestServer:
                     self._events_ingested += 1
                 except asyncio.QueueFull:
                     self._events_dropped_publish += 1
+                    self._drop_notice_pending_count += 1
+                    self._drop_notice_last_signal = str(event.get("signal", ""))
+                    self._maybe_emit_drop_notice()
                     logger.debug("Ingest queue full, dropping event")
         except (ConnectionResetError, BrokenPipeError):
             logger.debug("Publisher disconnected: %s", peer)
@@ -217,6 +230,33 @@ class IngestServer:
             for ev in accepted:
                 self._fan_out(ev)
 
+    def _maybe_emit_drop_notice(self) -> None:
+        """Rate-limited ``events.dropped.ingest`` fanout (not persisted — DB path saturated)."""
+        now = time.monotonic()
+        if now - self._drop_notice_last_emit_ts < self._drop_notice_interval_sec:
+            return
+
+        count = self._drop_notice_pending_count
+        if count <= 0:
+            return
+
+        self._drop_notice_last_emit_ts = now
+        self._drop_notice_pending_count = 0
+
+        notice: dict[str, Any] = {
+            "signal": "events.dropped.ingest",
+            "role": "coordination",
+            "scope": "global",
+            "payload": {
+                "count": count,
+                "queue_depth": self._db_queue.qsize(),
+                "queue_max": self._db_queue_maxsize,
+                "signal_sample": self._drop_notice_last_signal,
+                "source": "event_service",
+            },
+        }
+        self._fan_out(notice)
+
     def _fan_out(self, event: dict[str, Any]) -> None:
         """Push event to all live subscriber queues (non-blocking)."""
         dead: list[asyncio.Queue[dict[str, Any]]] = []
@@ -229,8 +269,8 @@ class IngestServer:
                     sq.get_nowait()
                     drop_notice = {
                         "signal": "events.dropped.subscribe",
-                        "role": "observation",
-                        "scope": "global",
+                        "role": "coordination",
+                        "scope": "node",
                         "payload": {"count": 1},
                     }
                     sq.put_nowait(drop_notice)

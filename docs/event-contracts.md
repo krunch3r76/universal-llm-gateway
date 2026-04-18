@@ -1954,7 +1954,26 @@ event bus. These are routed to the `events` table like all other events.
 | `event.service.started` | coordination | global | Event service process started, DB opened |
 | `event.service.stopped` | coordination | global | Event service graceful shutdown |
 | `events.db.write.failed` | observation | node | SQLite batch insert failed (e.g. disk full) |
-| `events.dropped.subscribe` | observation | node | Subscriber queue full, oldest event dropped |
+| `events.dropped.subscribe` | coordination | node | Subscriber queue full, oldest event dropped |
+| `events.dropped.ingest` | coordination | global | Ingest ``_db_queue`` full; publisher event dropped (ephemeral fanout only — not persisted; rate-limited, see payload) |
+
+`events.dropped.ingest` is pushed only to live WebSocket subscribers (same path as
+`events.dropped.subscribe`), not written to SQLite, because the DB writer is
+already saturated when the ingest queue overflows.
+
+**`events.dropped.ingest` payload keys**: `count` (int, drops since last notice,
+≥1), `queue_depth` (int), `queue_max` (int), `signal_sample` (str, signal field of
+the last dropped event), `source` (literal `event_service`).
+
+**Saturation interaction — the two drop signals are not independently guaranteed
+under sustained overload.** Both notices fan out through the same per-subscriber
+queue path. If the DB ingest queue overflows at the same moment a subscriber
+queue is also full, the `events.dropped.ingest` notice can itself be evicted by
+the subscribe-overflow path and replaced with a `events.dropped.subscribe` notice
+(`count=1`). A consumer subscribed only to `events.dropped.ingest` may therefore
+miss drops under exactly the conditions that matter most. Throttle handlers
+should subscribe to the `events.dropped.*` wildcard and react to either signal
+class rather than depending on a specific one.
 
 ### Request Snapshot Signals
 

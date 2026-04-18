@@ -123,7 +123,7 @@ def load_env_file(path: Path) -> dict[str, str]:
     for line in lines:
         line = line.strip()
         if line.startswith("export "):
-            line = line[len("export "):]
+            line = line[len("export ") :]
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             key = key.strip()
@@ -171,6 +171,7 @@ class McpConfig:
     openai_api_key: str = ""
     xai_api_key: str = ""
     mcp_server_url: str = ""
+    web_fetcher_url: str = ""
     enable_browser_tools: bool = False
     refresh_cursor_descriptors_after_rebuild: bool = False
 
@@ -296,9 +297,9 @@ def load_event_service_config() -> EventServiceConfig | None:
     if not _EVENT_SERVICE_CONFIG_PATH.exists():
         return None
     try:
-        raw = yaml.safe_load(
-            _EVENT_SERVICE_CONFIG_PATH.read_text(encoding="utf-8")
-        ) or {}
+        raw = (
+            yaml.safe_load(_EVENT_SERVICE_CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        )
     except Exception:
         logger.error(
             "Failed to parse event-service config: %s",
@@ -494,6 +495,7 @@ def load_mcp_config() -> McpConfig | None:
             or os.environ.get("XAI_API_KEY", "").strip()
         ),
         mcp_server_url=_get_stripped_str("mcp_server_url"),
+        web_fetcher_url=_get_stripped_str("WEB_FETCHER_URL", "web_fetcher_url"),
         firefox_profile_dir=_resolve_firefox_profile(
             _get_stripped_str("firefox_profile_dir")
         ),
@@ -594,6 +596,8 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["XAI_API_KEY"] = cfg.xai_api_key
     if cfg.mcp_server_url:
         env["MCP_SERVER_URL"] = cfg.mcp_server_url
+    if cfg.web_fetcher_url:
+        env["WEB_FETCHER_URL"] = cfg.web_fetcher_url
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
     env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"
