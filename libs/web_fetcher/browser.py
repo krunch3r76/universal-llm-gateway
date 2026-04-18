@@ -1,32 +1,34 @@
 """Playwright stealth browser for CF-protected page fetching.
 
 Supports headed mode (real display) for solving Cloudflare Turnstile
-challenges that reject software-rendered headless environments.
+challenges that reject software-rendered headless environments. Also supports
+interactive workflows via the ``actions`` parameter — click / fill / etc.
+sequences that execute server-side in one atomic call, optionally wrapped in
+``page.expect_download()`` when combined with ``save_to`` for click-triggered
+PDF or binary captures.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+import pathlib
+from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import urlparse
+
+from .actions import apply_wait_for, execute_action
+from .cloudflare import handle_cf_challenge, is_cf_challenge
 
 logger = logging.getLogger(__name__)
 
-_CF_INDICATORS = (
-    "Just a moment...",
-    "Checking your browser",
-    "cf-browser-verification",
-    "challenge-platform",
-)
-
-_CF_TITLE = "Just a moment"
-
-
-def is_cf_challenge(html: str) -> bool:
-    """Detect Cloudflare challenge page from early HTML content."""
-    head = html[:3000]
-    return any(ind in head for ind in _CF_INDICATORS)
+# Re-exported for callers that only want the detector (e.g. app.py httpx fast path).
+__all__ = [
+    "BrowserResult",
+    "download_with_browser",
+    "fetch_with_browser",
+    "is_cf_challenge",
+]
 
 
 @dataclass
@@ -39,42 +41,17 @@ class BrowserResult:
     is_html: bool
     screenshot: bytes | None = None
     screenshot_format: str = "jpeg"
+    saved_screenshot_to: str | None = None
+    # Populated only when save_to + actions captured a click-triggered download.
+    download: dict[str, Any] | None = None
+    # Populated on action failure: {error, failed_at, last_url}; also raises upstream
+    # when the executor can't cleanly surface the error without aborting the fetch.
+    action_failure: dict[str, Any] | None = field(default=None)
 
 
 def _same_host(left: str, right: str) -> bool:
     """Return True when both URLs point at the same hostname."""
     return urlparse(left).hostname == urlparse(right).hostname
-
-
-async def _click_turnstile(page: object) -> bool:
-    """Find and click the Turnstile checkbox iframe. Returns True if clicked."""
-    for frame in page.frames:  # type: ignore[attr-defined]
-        if "turnstile" not in frame.url:
-            continue
-        try:
-            el = await frame.frame_element()
-            box = await el.bounding_box()
-            if box:
-                cx = box["x"] + 26
-                cy = box["y"] + box["height"] / 2
-                await page.mouse.click(cx, cy)  # type: ignore[attr-defined]
-                logger.info("Clicked Turnstile checkbox at (%.0f, %.0f)", cx, cy)
-                return True
-        except Exception as exc:
-            logger.warning("Failed to click Turnstile: %s", exc)
-    return False
-
-
-async def _wait_for_cf_resolution(page: object, timeout_ms: int) -> bool:
-    """Wait for CF challenge page to resolve. Returns True if resolved."""
-    try:
-        await page.wait_for_function(  # type: ignore[attr-defined]
-            f"() => !document.title.includes('{_CF_TITLE}')",
-            timeout=timeout_ms,
-        )
-        return True
-    except Exception:
-        return False
 
 
 async def download_with_browser(
@@ -86,17 +63,15 @@ async def download_with_browser(
 ) -> dict[str, object]:
     """Download a file via the authenticated CDP-attached Chrome session.
 
-    Navigates to *url* using the live browser (with its existing cookies/session),
-    captures the download event triggered by Scribd-style signed-URL redirects,
-    and writes the bytes to *save_to* on the local filesystem.
+    Direct-URL path: navigates to *url* and captures a download event triggered
+    by the target (Scribd-style signed-URL redirects, etc.). Used when the
+    download URL is known in advance and no page interaction is needed.
 
-    Works for any site where the user is already authenticated in the attached
-    Chrome — Scribd, court PACER portals, etc.
+    For click-triggered downloads (agent clicks a button and a PDF downloads),
+    use ``fetch_with_browser(..., save_to=..., actions=[...])`` instead.
 
     Returns ``{"saved_to": path, "size": bytes, "url": final_url}``.
     """
-    import pathlib
-
     try:
         from playwright.async_api import async_playwright
     except ImportError as exc:
@@ -110,15 +85,14 @@ async def download_with_browser(
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(cdp_url)
         try:
-            ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-
-            # Allow downloads so Playwright captures them instead of blocking.
+            ctx = (
+                browser.contexts[0] if browser.contexts else await browser.new_context()
+            )
             await ctx.grant_permissions([])
             page = await ctx.new_page()
 
             try:
                 async with page.expect_download(timeout=timeout_ms) as dl_info:
-                    # navigate — Scribd redirect chain ends in a PDF download trigger
                     await page.goto(url, timeout=timeout_ms, wait_until="commit")
 
                 download = await dl_info.value
@@ -129,15 +103,18 @@ async def download_with_browser(
 
             except Exception:
                 # Fallback: some sites serve PDFs as inline navigation (no download event).
-                # Capture the response bytes directly.
                 logger.info("No download event for %s — capturing response bytes", url)
-                resp = await page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+                resp = await page.goto(
+                    url, timeout=timeout_ms, wait_until="networkidle"
+                )
                 if resp is None:
                     raise RuntimeError(f"No response navigating to {url}")
                 body = await resp.body()
                 save_path.write_bytes(body)
                 size = len(body)
-                logger.info("Captured response %s → %s (%d bytes)", url, save_path, size)
+                logger.info(
+                    "Captured response %s → %s (%d bytes)", url, save_path, size
+                )
                 return {"saved_to": str(save_path), "size": size, "url": page.url}
         finally:
             if not page.is_closed():
@@ -155,24 +132,31 @@ async def fetch_with_browser(
     screenshot: bool = False,
     screenshot_format: str = "jpeg",
     screenshot_quality: int = 80,
+    wait_for: dict[str, Any] | None = None,
+    actions: list[dict[str, Any]] | None = None,
+    save_to: str | None = None,
+    save_screenshot_to: str | None = None,
 ) -> BrowserResult:
-    """Fetch *url* with Chromium + stealth patches.
+    """Fetch *url* with Chromium + stealth patches, optionally driving an action sequence.
 
-    When *cdp_url* is set, attach to an already-running Chrome/Chromium
-    session via the DevTools Protocol. This is the most reliable path for
-    CF-protected sites because it reuses a real browser profile that already
-    solved the challenge manually.
+    When *cdp_url* is set, attach to an already-running Chrome/Chromium session
+    via the DevTools Protocol. This is the most reliable path for CF-protected
+    sites and the required path for authenticated workflows (user's live
+    profile on the CDP host).
 
-    When *headless* is None (default), uses headed mode if DISPLAY is set,
-    headless otherwise. Headed mode with a real GPU display is required to
-    pass Cloudflare Turnstile's verification fingerprinting when launching
-    a fresh browser.
+    After navigating and optional CF bypass, the flow is:
+      1. Apply *wait_for* spec (selector/networkidle/timeout_ms), if any
+      2. Execute *actions* sequentially (click/fill/press/select/hover/wait_*)
+      3. If *save_to* is set together with actions, wrap the action sequence in
+         ``page.expect_download()`` — whichever action triggers a browser
+         download event, capture it and save to *save_to*
+      4. Extract content (selector or full HTML) and optional screenshot
+      5. If *save_screenshot_to* is set, persist the screenshot bytes to that
+         path on the local (CDP host) filesystem
 
-    CF bypass flow:
-      1. Load page, detect CF challenge
-      2. Wait briefly for auto-resolution (non-interactive challenges)
-      3. If still blocked, find and click the Turnstile checkbox
-      4. Wait for verification to complete
+    Returns a :class:`BrowserResult` with ``download`` populated when save_to
+    captured a file, and ``action_failure`` populated (plus raised exception
+    chain in logs) when an action could not execute.
     """
     try:
         from playwright.async_api import async_playwright
@@ -183,7 +167,7 @@ async def fetch_with_browser(
 
     stealth_cfg = None
     try:
-        from playwright_stealth import Stealth  # type: ignore[import-untyped]
+        from playwright_stealth import Stealth
 
         stealth_cfg = Stealth()
     except ImportError:
@@ -238,54 +222,58 @@ async def fetch_with_browser(
             status = resp.status if resp else 0
             html = await page.content()
 
-            cf_bypassed = False
-            if is_cf_challenge(html):
-                logger.info("CF challenge detected for %s", url)
-                # Phase 1: wait for auto-resolution (non-interactive challenges)
-                if await _wait_for_cf_resolution(page, timeout_ms=5000):
-                    cf_bypassed = True
-                else:
-                    # Phase 2: click Turnstile checkbox and wait
-                    await page.wait_for_timeout(2000)
-                    if await _click_turnstile(page):
-                        if await _wait_for_cf_resolution(page, timeout_ms=cf_wait_ms):
-                            cf_bypassed = True
-                        else:
-                            logger.warning(
-                                "CF Turnstile verification failed for %s", url
-                            )
-                    else:
-                        logger.warning("No Turnstile widget found for %s", url)
+            cf_bypassed = await handle_cf_challenge(page, html, url, cf_wait_ms)
+            if cf_bypassed:
+                html = await page.content()
 
+            download_meta: dict[str, Any] | None = None
+            action_failure: dict[str, Any] | None = None
+
+            if wait_for:
+                try:
+                    await apply_wait_for(page, wait_for)
+                except Exception as exc:
+                    logger.warning("wait_for failed for %s: %s", url, exc)
+                    action_failure = {
+                        "error": f"wait_for failed: {exc}",
+                        "failed_at": -1,
+                        "last_url": page.url,
+                    }
+
+            if actions and not action_failure:
+                download_meta, action_failure = await _run_actions(
+                    page, actions, save_to=save_to, timeout_ms=timeout_ms
+                )
                 html = await page.content()
 
             title = await page.title()
             final_url = page.url
 
-            img_bytes: bytes | None = None
-            img_format: str = screenshot_format if screenshot_format in ("png", "jpeg") else "jpeg"
-            if screenshot:
-                kwargs: dict[str, object] = {"full_page": True, "type": img_format}
-                if img_format == "jpeg":
-                    kwargs["quality"] = max(1, min(100, screenshot_quality))
-                try:
-                    img_bytes = await page.screenshot(**kwargs)  # type: ignore[arg-type]
-                except Exception as exc:
-                    logger.warning("Screenshot failed for %s: %s", url, exc)
+            img_bytes, img_format = await _maybe_screenshot(
+                page, screenshot, screenshot_format, screenshot_quality
+            )
 
-            if selector and cf_bypassed:
-                elements = await page.query_selector_all(selector)
-                parts = [t for el in elements if (t := (await el.inner_text()).strip())]
-                if parts:
+            saved_screenshot_to: str | None = None
+            if img_bytes and save_screenshot_to:
+                saved_screenshot_to = _save_screenshot_file(
+                    img_bytes, save_screenshot_to
+                )
+
+            if selector and cf_bypassed and not action_failure:
+                extracted = await _extract_by_selector(page, selector)
+                if extracted:
                     return BrowserResult(
                         url=final_url,
                         title=title,
-                        content="\n\n".join(parts),
+                        content=extracted,
                         status=status,
                         cf_bypassed=cf_bypassed,
                         is_html=False,
                         screenshot=img_bytes,
                         screenshot_format=img_format,
+                        saved_screenshot_to=saved_screenshot_to,
+                        download=download_meta,
+                        action_failure=action_failure,
                     )
 
             return BrowserResult(
@@ -297,7 +285,108 @@ async def fetch_with_browser(
                 is_html=True,
                 screenshot=img_bytes,
                 screenshot_format=img_format,
+                saved_screenshot_to=saved_screenshot_to,
+                download=download_meta,
+                action_failure=action_failure,
             )
         finally:
             if not attached_browser:
                 await browser.close()
+
+
+async def _run_actions(
+    page: Any,
+    actions: list[dict[str, Any]],
+    *,
+    save_to: str | None,
+    timeout_ms: int,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Execute *actions* sequentially; optionally capture a click-triggered download.
+
+    Returns ``(download_meta, action_failure)``. At most one is non-None when the
+    sequence completes normally; if a download is expected but the sequence
+    fails before the download event, ``action_failure`` is populated and
+    ``download_meta`` is None.
+    """
+    if save_to:
+        save_path = pathlib.Path(save_to)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            async with page.expect_download(timeout=timeout_ms) as dl_info:
+                await _execute_action_sequence(page, actions)
+            download = await dl_info.value
+            await download.save_as(str(save_path))
+            size = save_path.stat().st_size
+            logger.info("Click-triggered download → %s (%d bytes)", save_path, size)
+            return (
+                {"saved_to": str(save_path), "size": size, "url": download.url},
+                None,
+            )
+        except Exception as exc:
+            logger.warning("Download capture failed during actions: %s", exc)
+            return None, _action_failure_payload(exc, page)
+
+    try:
+        await _execute_action_sequence(page, actions)
+        return None, None
+    except Exception as exc:
+        logger.warning("Action sequence failed: %s", exc)
+        return None, _action_failure_payload(exc, page)
+
+
+async def _execute_action_sequence(page: Any, actions: list[dict[str, Any]]) -> None:
+    """Run actions in order. Tags the raised exception with ``_failed_at`` index."""
+    for idx, action in enumerate(actions):
+        try:
+            await execute_action(page, action)
+        except Exception as exc:
+            exc._failed_at = idx
+            raise
+
+
+def _action_failure_payload(exc: Exception, page: Any) -> dict[str, Any]:
+    """Build the structured action failure dict returned alongside BrowserResult."""
+    failed_at = getattr(exc, "_failed_at", -1)
+    last_url = ""
+    try:
+        last_url = page.url
+    except Exception:
+        pass
+    return {
+        "error": str(exc),
+        "failed_at": failed_at,
+        "last_url": last_url,
+    }
+
+
+async def _maybe_screenshot(
+    page: Any, screenshot: bool, screenshot_format: str, screenshot_quality: int
+) -> tuple[bytes | None, str]:
+    """Capture a full-page screenshot when requested, returning (bytes, format)."""
+    img_format = screenshot_format if screenshot_format in ("png", "jpeg") else "jpeg"
+    if not screenshot:
+        return None, img_format
+    kwargs: dict[str, object] = {"full_page": True, "type": img_format}
+    if img_format == "jpeg":
+        kwargs["quality"] = max(1, min(100, screenshot_quality))
+    try:
+        return await page.screenshot(**kwargs), img_format
+    except Exception as exc:
+        logger.warning("Screenshot failed: %s", exc)
+        return None, img_format
+
+
+def _save_screenshot_file(img_bytes: bytes, save_screenshot_to: str) -> str:
+    """Persist screenshot bytes to the given host path; return the absolute path."""
+    path = pathlib.Path(save_screenshot_to)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(img_bytes)
+    logger.info("Saved screenshot → %s (%d bytes)", path, len(img_bytes))
+    return str(path)
+
+
+async def _extract_by_selector(page: Any, selector: str) -> str:
+    """Concatenate inner_text of all matching elements; empty string if none."""
+    elements = await page.query_selector_all(selector)
+    parts = [t for el in elements if (t := (await el.inner_text()).strip())]
+    return "\n\n".join(parts) if parts else ""

@@ -25,6 +25,8 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import logging
 from typing import TYPE_CHECKING
 
@@ -314,6 +316,28 @@ _CLIENT = httpx.AsyncClient(timeout=None)
 
 # Anthropic research: 50-100 token prefixes are the sweet spot for 1024-token chunks.
 _MAX_CONTEXT_TOKENS = 150
+
+
+# Bump only when invalidation must cross a refactor that does NOT change the
+# sources hashed below (e.g. contributor intent diverges from code change).
+_CONTEXTUALIZE_ALGORITHM_VERSION = "1"
+
+
+def build_contextualize_schema_version() -> str:
+    """Return a stable version covering prompt text, neighbor budgets, and chunk-context assembly source."""
+    material = "\n".join(
+        [
+            _CONTEXTUALIZE_ALGORITHM_VERSION,
+            _CONTEXT_SYSTEM_PROMPT,
+            str(_NEIGHBOR_CHARS),
+            str(_MAX_CONTEXT_TOKENS),
+            inspect.getsource(_build_chunk_context),
+        ]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+CONTEXTUALIZE_PROMPT_HASH: str = build_contextualize_schema_version()
 
 
 async def _call_llm(

@@ -191,6 +191,83 @@ def rag_file_retry_deferred(
 
 
 @event_factory
+def rag_file_indexing_failure_recorded(
+    *,
+    file: str,
+    failure_category: str,
+    failure_reason: str,
+    attempt_count: int,
+) -> Event:
+    """Emitted when a file-level indexing failure is persisted to the
+    indexing_failures table. Drives operator observability of the permanent
+    vs transient classifier decision and the running attempt count."""
+    return Event(
+        signal="rag.file.indexing.failure.recorded",
+        role="coordination",
+        payload={
+            "file": file,
+            "failure_category": failure_category,
+            "failure_reason": failure_reason,
+            "attempt_count": attempt_count,
+        },
+    )
+
+
+@event_factory
+def rag_file_indexing_failure_skipped(
+    *,
+    file: str,
+    failure_reason: str,
+    attempt_count: int,
+) -> Event:
+    """Emitted when the reconcile loop or initial reindex skips a file
+    because a permanent indexing failure is on record with unchanged
+    mtime/size. Coordination signal — gates admission to the worker queue."""
+    return Event(
+        signal="rag.file.indexing.failure.skipped",
+        role="coordination",
+        payload={
+            "file": file,
+            "failure_reason": failure_reason,
+            "attempt_count": attempt_count,
+        },
+    )
+
+
+@event_factory
+def rag_file_indexing_failure_cleared(
+    *,
+    file: str,
+    reason: str,
+) -> Event:
+    """Emitted when a row in indexing_failures is removed. reason ∈
+    {'indexed_successfully', 'source_deleted', 'operator_cleared'}. Fires
+    only after a row was actually deleted (rowcount > 0) to avoid noisy
+    no-op events on first-time indexing."""
+    return Event(
+        signal="rag.file.indexing.failure.cleared",
+        role="coordination",
+        payload={"file": file, "reason": reason},
+    )
+
+
+@event_factory
+def rag_file_indexing_failure_retry_requested(
+    *,
+    file: str,
+    scheduled: bool,
+) -> Event:
+    """Emitted when an operator requests a retry via the admin API. scheduled
+    indicates whether the watcher accepted the reindex admission — useful for
+    distinguishing operator intent from actual scheduling outcome."""
+    return Event(
+        signal="rag.file.indexing.failure.retry.requested",
+        role="coordination",
+        payload={"file": file, "scheduled": scheduled},
+    )
+
+
+@event_factory
 def rag_file_deletion_failed(
     *,
     file: str,
@@ -328,6 +405,140 @@ def rag_contextualization_applied(*, file: str, chunk_count: int, model: str) ->
 
 
 @event_factory
+def rag_contextualize_cache_evaluated(
+    *,
+    file: str,
+    total_chunks: int,
+    cache_hits: int,
+    cache_misses: int,
+    contextualize_model: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted once per file after cache planning decides which chunks reuse vs recompute."""
+    payload: dict[str, object] = {
+        "file": file,
+        "total_chunks": total_chunks,
+        "cache_hits": cache_hits,
+        "cache_misses": cache_misses,
+        "contextualize_model": contextualize_model,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualize.cache.evaluated",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualize_cache_lookup_failed(
+    *,
+    file: str,
+    requested_chunks: int,
+    contextualize_model: str,
+    error: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when cache lookup failed and indexing degraded to full recompute."""
+    payload: dict[str, object] = {
+        "file": file,
+        "requested_chunks": requested_chunks,
+        "contextualize_model": contextualize_model,
+        "error": error,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualize.cache.lookup.failed",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualize_cache_store_completed(
+    *,
+    file: str,
+    stored: int,
+    requested: int,
+    contextualize_model: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted after cache rows persist following successful upsert + source commit."""
+    payload: dict[str, object] = {
+        "file": file,
+        "stored": stored,
+        "requested": requested,
+        "contextualize_model": contextualize_model,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualize.cache.store.completed",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualize_cache_store_failed(
+    *,
+    file: str,
+    requested: int,
+    contextualize_model: str,
+    error: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when cache persistence fails but indexing itself already succeeded."""
+    payload: dict[str, object] = {
+        "file": file,
+        "requested": requested,
+        "contextualize_model": contextualize_model,
+        "error": error,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualize.cache.store.failed",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualize_cache_gc_completed(*, deleted_rows: int) -> Event:
+    """Emitted after the startup orphan sweep for the contextualize cache."""
+    return Event(
+        signal="rag.contextualize.cache.gc.completed",
+        role="observation",
+        payload={"deleted_rows": deleted_rows},
+    )
+
+
+@event_factory
+def rag_contextualize_cache_gc_failed(*, error: str) -> Event:
+    """Emitted when the startup orphan sweep for the contextualize cache fails non-fatally."""
+    return Event(
+        signal="rag.contextualize.cache.gc.failed",
+        role="observation",
+        payload={"error": error},
+    )
+
+
+@event_factory
 def rag_embed_started(
     *,
     file: str,
@@ -374,17 +585,22 @@ def rag_chroma_upsert_started(
     operation_id: str,
     chunk_count: int,
     operation: str | None = None,
+    batch_index: int | None = None,
+    batch_total: int | None = None,
 ) -> Event:
     """Emitted immediately before chunk rows are upserted into ChromaDB."""
-    return Event(
-        signal="rag.chroma.upsert.started",
-        payload={
-            "file": file,
-            "operation_id": operation_id,
-            "chunk_count": chunk_count,
-            **({"operation": operation} if operation is not None else {}),
-        },
-    )
+    payload: dict[str, str | int] = {
+        "file": file,
+        "operation_id": operation_id,
+        "chunk_count": chunk_count,
+    }
+    if operation is not None:
+        payload["operation"] = operation
+    if batch_index is not None:
+        payload["batch_index"] = batch_index
+    if batch_total is not None:
+        payload["batch_total"] = batch_total
+    return Event(signal="rag.chroma.upsert.started", payload=payload)
 
 
 @event_factory
@@ -394,17 +610,22 @@ def rag_chroma_upsert_completed(
     operation_id: str,
     chunk_count: int,
     operation: str | None = None,
+    batch_index: int | None = None,
+    batch_total: int | None = None,
 ) -> Event:
     """Emitted after chunk rows are persisted to ChromaDB."""
-    return Event(
-        signal="rag.chroma.upsert.completed",
-        payload={
-            "file": file,
-            "operation_id": operation_id,
-            "chunk_count": chunk_count,
-            **({"operation": operation} if operation is not None else {}),
-        },
-    )
+    payload: dict[str, str | int] = {
+        "file": file,
+        "operation_id": operation_id,
+        "chunk_count": chunk_count,
+    }
+    if operation is not None:
+        payload["operation"] = operation
+    if batch_index is not None:
+        payload["batch_index"] = batch_index
+    if batch_total is not None:
+        payload["batch_total"] = batch_total
+    return Event(signal="rag.chroma.upsert.completed", payload=payload)
 
 
 @event_factory

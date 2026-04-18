@@ -25,7 +25,10 @@ from typing import TYPE_CHECKING
 from universal_event_bus.actor.sequential import SequentialExecutor
 
 from services.rag.article_registry import ArticleEntry
+from services.rag.contextualize_cache import StoredContextRow
 from services.rag.fts_index import FtsIndex
+
+_SQLITE_MAX_VARIABLES = 900  # conservative bound under SQLite's 999 limit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -130,6 +133,44 @@ CREATE TABLE IF NOT EXISTS extraction_queue (
 );
 """
 
+_V9_INDEXING_FAILURES_SQL = """
+CREATE TABLE IF NOT EXISTS indexing_failures (
+    source TEXT PRIMARY KEY,
+    failure_category TEXT NOT NULL,
+    failure_reason TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    error_type TEXT NOT NULL,
+    first_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_failed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    attempt_count INTEGER NOT NULL DEFAULT 1,
+    source_hash TEXT,
+    source_size_bytes INTEGER,
+    source_mtime_ns INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_indexing_failures_category
+    ON indexing_failures(failure_category);
+CREATE INDEX IF NOT EXISTS idx_indexing_failures_last_failed
+    ON indexing_failures(last_failed_at);
+"""
+
+_V10_CONTEXTUALIZED_CHUNKS_SQL = """
+CREATE TABLE IF NOT EXISTS contextualized_chunks (
+    source_hash TEXT NOT NULL CHECK(source_hash <> ''),
+    chunk_hash TEXT NOT NULL CHECK(chunk_hash <> ''),
+    contextualize_model TEXT NOT NULL CHECK(contextualize_model <> ''),
+    contextualize_schema_version TEXT NOT NULL
+        CHECK(contextualize_schema_version <> ''),
+    context_prefix TEXT NOT NULL CHECK(context_prefix <> ''),
+    cached_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (
+        source_hash, chunk_hash,
+        contextualize_model, contextualize_schema_version
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_contextualized_source
+    ON contextualized_chunks(source_hash);
+"""
+
 _V5_SCOPE_FRESHNESS_SQL = """
 CREATE TABLE IF NOT EXISTS scope_freshness (
     scope TEXT PRIMARY KEY,
@@ -175,8 +216,32 @@ class FailureSnapshot:
 
 
 @dataclass(slots=True, kw_only=True)
+class IndexingFailure:
+    """File-level indexing failure row from ``indexing_failures``."""
+
+    source: str
+    failure_category: str
+    failure_reason: str
+    error_message: str
+    error_type: str
+    first_failed_at: str
+    last_failed_at: str
+    attempt_count: int
+    source_hash: str | None
+    source_size_bytes: int | None
+    source_mtime_ns: int | None
+
+
+@dataclass(slots=True, kw_only=True)
 class IndexedSourceSnapshot:
-    """Cached source freshness row used for stat-first unchanged checks."""
+    """Cached source freshness row used for stat-first unchanged checks.
+
+    `source_hash` empty string ('') means content identity is unknown —
+    typically a row that predates V11 backfill, or a source whose hash
+    was unavailable at write time. Callers MUST treat '' as unknown,
+    never as a reusable identity. Cache lookup, cache store, and orphan
+    GC all skip rows with empty source_hash.
+    """
 
     source: str
     mtime_ns: int
@@ -184,6 +249,7 @@ class IndexedSourceSnapshot:
     extraction_schema_version: int
     extraction_model: str
     updated_at: str
+    source_hash: str = ""
 
 
 class PropertyIndex:
@@ -258,6 +324,21 @@ class PropertyIndex:
     def _migration_v2_metadata(self, conn: sqlite3.Connection) -> None:
         """Create normalized metadata tables used by dual-write generators."""
         conn.executescript(_V2_METADATA_SQL)
+
+    def _migration_v11_indexed_sources_source_hash(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Add source_hash column so cache GC can resolve content identity by source path."""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(indexed_sources)")}
+        if "source_hash" not in columns:
+            conn.execute(
+                "ALTER TABLE indexed_sources "
+                "ADD COLUMN source_hash TEXT NOT NULL DEFAULT ''"
+            )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_indexed_sources_source_hash "
+            "ON indexed_sources(source_hash)"
+        )
 
     def _apply_migrations(self, conn: sqlite3.Connection) -> None:
         """Apply ordered migrations and stamp schema_version rows transactionally."""
@@ -367,6 +448,21 @@ class PropertyIndex:
                 8,
                 "extraction_queue for async decoupled extraction",
                 lambda conn: conn.executescript(_V8_EXTRACTION_QUEUE_SQL),
+            ),
+            (
+                9,
+                "indexing_failures: file-level permanent vs transient failure memory",
+                lambda conn: conn.executescript(_V9_INDEXING_FAILURES_SQL),
+            ),
+            (
+                10,
+                "contextualize cache: per-chunk prefix reuse across retries",
+                lambda conn: conn.executescript(_V10_CONTEXTUALIZED_CHUNKS_SQL),
+            ),
+            (
+                11,
+                "indexed_sources.source_hash for cache cleanup resolution",
+                self._migration_v11_indexed_sources_source_hash,
             ),
         ]
         for version, description, fn in migrations:
@@ -512,6 +608,7 @@ class PropertyIndex:
         size_bytes: int,
         extraction_schema_version: int,
         extraction_model: str,
+        source_hash: str = "",
     ) -> None:
         """Record committed source state for stat-first unchanged skip checks.
 
@@ -528,13 +625,15 @@ class PropertyIndex:
             conn = self._ensure_conn()
             conn.execute(
                 "INSERT INTO indexed_sources ("
-                "  source, mtime_ns, size_bytes, extraction_schema_version, extraction_model, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, datetime('now'))"
+                "  source, mtime_ns, size_bytes, extraction_schema_version,"
+                "  extraction_model, source_hash, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, datetime('now'))"
                 " ON CONFLICT(source) DO UPDATE SET"
                 "  mtime_ns = excluded.mtime_ns,"
                 "  size_bytes = excluded.size_bytes,"
                 "  extraction_schema_version = excluded.extraction_schema_version,"
                 "  extraction_model = excluded.extraction_model,"
+                "  source_hash = excluded.source_hash,"
                 "  updated_at = datetime('now')",
                 (
                     source,
@@ -542,6 +641,7 @@ class PropertyIndex:
                     size_bytes,
                     extraction_schema_version,
                     extraction_model,
+                    source_hash,
                 ),
             )
             conn.commit()
@@ -777,10 +877,25 @@ class PropertyIndex:
 
         async def _write() -> None:
             conn = self._ensure_conn()
+            # MUST capture source_hash BEFORE deleting indexed_sources row —
+            # otherwise the cache cleanup below has no key to use, and orphan
+            # rows wait for startup GC.
+            source_hash_row = conn.execute(
+                "SELECT source_hash FROM indexed_sources WHERE source = ?",
+                (source,),
+            ).fetchone()
+            resolved_source_hash = (
+                _row_str(source_hash_row[0]) if source_hash_row else ""
+            )
             conn.execute("DELETE FROM failed_extractions WHERE source = ?", (source,))
             if remove_article:
                 conn.execute("DELETE FROM articles WHERE source_path = ?", (source,))
             conn.execute("DELETE FROM indexed_sources WHERE source = ?", (source,))
+            if resolved_source_hash:
+                conn.execute(
+                    "DELETE FROM contextualized_chunks WHERE source_hash = ?",
+                    (resolved_source_hash,),
+                )
             if normalized_chunk_ids:
                 placeholders = ",".join("?" for _ in normalized_chunk_ids)
                 conn.execute(
@@ -1095,7 +1210,7 @@ class PropertyIndex:
         conn = self._ensure_conn()
         row = conn.execute(
             "SELECT source, mtime_ns, size_bytes, extraction_schema_version,"
-            " extraction_model, updated_at"
+            " extraction_model, updated_at, source_hash"
             " FROM indexed_sources WHERE source = ?",
             (source,),
         ).fetchone()
@@ -1108,7 +1223,155 @@ class PropertyIndex:
             extraction_schema_version=row[3],
             extraction_model=row[4],
             updated_at=row[5],
+            source_hash=_row_str(row[6]),
         )
+
+    def get_cached_contexts(
+        self,
+        *,
+        source_hash: str,
+        chunk_hashes: list[str],
+        contextualize_model: str,
+        contextualize_schema_version: str,
+    ) -> dict[str, str]:
+        """Return cached context prefixes for the subset of chunk hashes matching all invalidators.
+
+        Synchronous — matches PropertyIndex read convention; safe under single-writer.
+        Returns an empty dict when source_hash is the V11 unknown-identity sentinel ('').
+        Batches the IN clause at _SQLITE_MAX_VARIABLES (999 SQLite limit minus four fixed params).
+        """
+        if not chunk_hashes or not source_hash:
+            return {}
+
+        conn = self._ensure_conn()
+        out: dict[str, str] = {}
+        for start in range(0, len(chunk_hashes), _SQLITE_MAX_VARIABLES):
+            batch = chunk_hashes[start : start + _SQLITE_MAX_VARIABLES]
+            placeholders = ",".join("?" for _ in batch)
+            sql = (
+                "SELECT chunk_hash, context_prefix FROM contextualized_chunks "
+                "WHERE source_hash = ? "
+                "AND contextualize_model = ? "
+                "AND contextualize_schema_version = ? "
+                f"AND chunk_hash IN ({placeholders})"
+            )
+            params = [
+                source_hash,
+                contextualize_model,
+                contextualize_schema_version,
+                *batch,
+            ]
+            for row in conn.execute(sql, params):
+                out[str(row[0])] = _row_str(row[1])
+        return out
+
+    async def store_cached_contexts(
+        self,
+        *,
+        source_hash: str,
+        contextualize_model: str,
+        contextualize_schema_version: str,
+        entries: list[StoredContextRow],
+    ) -> int:
+        """Persist non-empty context prefixes idempotently; returns rows written.
+
+        `entries` MUST come from `build_stored_context_rows(...)` which already
+        filters empty context_prefix and empty chunk_hash. The defensive
+        re-filter below catches mis-use; the V10 CHECK constraint is the
+        final backstop. Returns 0 when source_hash is the V11 unknown-identity
+        sentinel (''). Async because writes serialize through SequentialExecutor.
+        """
+        if not source_hash or not entries:
+            return 0
+        filtered = [row for row in entries if row.context_prefix and row.chunk_hash]
+        if not filtered:
+            return 0
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            rows = [
+                (
+                    source_hash,
+                    row.chunk_hash,
+                    contextualize_model,
+                    contextualize_schema_version,
+                    row.context_prefix,
+                )
+                for row in filtered
+            ]
+            conn.executemany(
+                "INSERT INTO contextualized_chunks ("
+                "  source_hash, chunk_hash, contextualize_model,"
+                "  contextualize_schema_version, context_prefix"
+                ") VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(source_hash, chunk_hash, contextualize_model, "
+                "            contextualize_schema_version) "
+                "DO UPDATE SET "
+                "  context_prefix = excluded.context_prefix, "
+                "  cached_at = datetime('now')",
+                rows,
+            )
+            conn.commit()
+            return len(rows)
+
+        return await self._seq.run(_write())
+
+    async def delete_cached_contexts_for_source_hash(self, source_hash: str) -> int:
+        """Remove cache rows for one content identity; returns rows deleted."""
+        if not source_hash:
+            return 0
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "DELETE FROM contextualized_chunks WHERE source_hash = ?",
+                (source_hash,),
+            )
+            conn.commit()
+            return int(cursor.rowcount)
+
+        return await self._seq.run(_write())
+
+    async def garbage_collect_contextualized_chunks(self) -> int:
+        """Remove cache rows whose source_hash no longer appears in indexed_sources.
+
+        Rows in `indexed_sources` with `source_hash = ''` (V11 sentinel for
+        unknown identity) are NOT considered live references — they cannot
+        be matched anyway because the V10 CHECK constraint forbids empty
+        `source_hash` in `contextualized_chunks`.
+        """
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "DELETE FROM contextualized_chunks "
+                "WHERE source_hash <> '' "
+                "AND source_hash NOT IN ("
+                "  SELECT source_hash FROM indexed_sources WHERE source_hash <> ''"
+                ")"
+            )
+            conn.commit()
+            return int(cursor.rowcount)
+
+        return await self._seq.run(_write())
+
+    def count_contextualized_chunks(self) -> int:
+        """Return total cached context prefix rows for operator capacity reporting."""
+        conn = self._ensure_conn()
+        row = conn.execute("SELECT COUNT(*) FROM contextualized_chunks").fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def get_indexed_source_hash(self, source: str) -> str | None:
+        """Return the currently recorded source_hash for an indexed source path, or None."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT source_hash FROM indexed_sources WHERE source = ?",
+            (source,),
+        ).fetchone()
+        if row is None:
+            return None
+        value = _row_str(row[0])
+        return value or None
 
     def get_pending_snapshot(self, sample_limit: int = 20) -> PendingSnapshot:
         """Return pending journal count plus a bounded file sample.
@@ -1411,6 +1674,169 @@ class PropertyIndex:
             (source,),
         ).fetchone()
         return row is not None
+
+    # ------------------------------------------------------------------
+    # File-level indexing failures (permanent vs transient)
+    # ------------------------------------------------------------------
+
+    async def record_indexing_failure(
+        self,
+        *,
+        source: str,
+        failure_category: str,
+        failure_reason: str,
+        error_message: str,
+        error_type: str,
+        source_hash: str | None,
+        source_size_bytes: int | None,
+        source_mtime_ns: int | None,
+    ) -> int:
+        """Upsert a file-level failure row. Returns the resulting attempt_count.
+
+        ``first_failed_at`` is intentionally NOT in the ON CONFLICT SET clause
+        so the original first-failure timestamp is preserved across retries.
+        """
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            row = conn.execute(
+                "INSERT INTO indexing_failures ("
+                "  source, failure_category, failure_reason, error_message, error_type,"
+                "  source_hash, source_size_bytes, source_mtime_ns"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT(source) DO UPDATE SET"
+                "  failure_category = excluded.failure_category,"
+                "  failure_reason   = excluded.failure_reason,"
+                "  error_message    = excluded.error_message,"
+                "  error_type       = excluded.error_type,"
+                "  source_hash      = excluded.source_hash,"
+                "  source_size_bytes = excluded.source_size_bytes,"
+                "  source_mtime_ns  = excluded.source_mtime_ns,"
+                "  last_failed_at   = datetime('now'),"
+                "  attempt_count    = attempt_count + 1"
+                " RETURNING attempt_count",
+                (
+                    source,
+                    failure_category,
+                    failure_reason,
+                    error_message,
+                    error_type,
+                    source_hash,
+                    source_size_bytes,
+                    source_mtime_ns,
+                ),
+            ).fetchone()
+            conn.commit()
+            return int(row[0]) if row else 1
+
+        return await self._seq.run(_write())
+
+    async def clear_indexing_failure(self, source: str) -> bool:
+        """Delete one indexing_failures row. Returns True iff a row existed."""
+
+        async def _write() -> bool:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "DELETE FROM indexing_failures WHERE source = ?", (source,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+        return await self._seq.run(_write())
+
+    def get_indexing_failure(self, source: str) -> IndexingFailure | None:
+        """Return the indexing_failures row for *source* if present."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT source, failure_category, failure_reason, error_message,"
+            " error_type, first_failed_at, last_failed_at, attempt_count,"
+            " source_hash, source_size_bytes, source_mtime_ns"
+            " FROM indexing_failures WHERE source = ?",
+            (source,),
+        ).fetchone()
+        if row is None:
+            return None
+        return IndexingFailure(
+            source=row[0],
+            failure_category=row[1],
+            failure_reason=row[2],
+            error_message=row[3],
+            error_type=row[4],
+            first_failed_at=row[5],
+            last_failed_at=row[6],
+            attempt_count=int(row[7]),
+            source_hash=row[8],
+            source_size_bytes=row[9],
+            source_mtime_ns=row[10],
+        )
+
+    def list_indexing_failures(
+        self, *, category: str | None = None
+    ) -> list[IndexingFailure]:
+        """List indexing_failures rows, optionally filtered by category."""
+        conn = self._ensure_conn()
+        if category is None:
+            rows = conn.execute(
+                "SELECT source, failure_category, failure_reason, error_message,"
+                " error_type, first_failed_at, last_failed_at, attempt_count,"
+                " source_hash, source_size_bytes, source_mtime_ns"
+                " FROM indexing_failures ORDER BY last_failed_at DESC"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT source, failure_category, failure_reason, error_message,"
+                " error_type, first_failed_at, last_failed_at, attempt_count,"
+                " source_hash, source_size_bytes, source_mtime_ns"
+                " FROM indexing_failures WHERE failure_category = ?"
+                " ORDER BY last_failed_at DESC",
+                (category,),
+            ).fetchall()
+        return [
+            IndexingFailure(
+                source=r[0],
+                failure_category=r[1],
+                failure_reason=r[2],
+                error_message=r[3],
+                error_type=r[4],
+                first_failed_at=r[5],
+                last_failed_at=r[6],
+                attempt_count=int(r[7]),
+                source_hash=r[8],
+                source_size_bytes=r[9],
+                source_mtime_ns=r[10],
+            )
+            for r in rows
+        ]
+
+    def is_indexing_failure_invalidated_by_content(
+        self, source: str, mtime_ns: int, size_bytes: int
+    ) -> bool:
+        """True iff a row exists AND its stored mtime/size differ from current."""
+        conn = self._ensure_conn()
+        row = conn.execute(
+            "SELECT source_mtime_ns, source_size_bytes"
+            " FROM indexing_failures WHERE source = ?",
+            (source,),
+        ).fetchone()
+        if row is None:
+            return False
+        return row[0] != mtime_ns or row[1] != size_bytes
+
+    def get_indexing_failure_counts(self) -> tuple[int, int]:
+        """Return (permanent_count, transient_count) for status endpoints."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT failure_category, COUNT(*) FROM indexing_failures"
+            " GROUP BY failure_category"
+        ).fetchall()
+        permanent = 0
+        transient = 0
+        for category, count in rows:
+            if category == "permanent":
+                permanent = int(count)
+            elif category == "transient":
+                transient = int(count)
+        return permanent, transient
 
     # ------------------------------------------------------------------
     # Extraction queue (async decoupled extraction)

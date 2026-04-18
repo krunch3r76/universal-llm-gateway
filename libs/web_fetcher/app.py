@@ -19,7 +19,12 @@ import trafilatura
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .browser import BrowserResult, download_with_browser, fetch_with_browser, is_cf_challenge
+from .browser import (
+    BrowserResult,
+    download_with_browser,
+    fetch_with_browser,
+    is_cf_challenge,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +47,21 @@ class FetchRequest(BaseModel):
     screenshot: bool = False
     screenshot_format: str = "jpeg"
     screenshot_quality: int = 80
-    save_to: str | None = None  # local path on the web-fetcher host; triggers binary download
+    save_to: str | None = (
+        None  # local path on the web-fetcher host; triggers binary download
+    )
+    # Wait for page readiness before running actions / extraction. Shape:
+    #   {"type": "selector", "value": "css", "timeout_ms": 10000}
+    #   {"type": "networkidle", "timeout_ms": 15000}
+    #   {"type": "timeout_ms", "value": 3000}
+    wait_for: dict[str, Any] | None = None
+    # Sequential browser actions (click/fill/press/select_option/hover/wait_*).
+    # When save_to is also set, actions are wrapped in page.expect_download() to
+    # capture click-triggered file downloads. See libs/web_fetcher/actions.py.
+    actions: list[dict[str, Any]] | None = None
+    # Persist the screenshot bytes to this absolute path on the web-fetcher host
+    # (mirrors save_to for binaries). Only honored when screenshot=True.
+    save_screenshot_to: str | None = None
 
 
 def create_app(*, headless: bool | None = None) -> FastAPI:
@@ -86,21 +105,35 @@ async def _do_fetch(
 ) -> dict[str, Any]:
     """Orchestrate fetch: httpx first (fast), browser fallback (CF bypass).
 
-    When *req.save_to* is set, skip text extraction entirely and save the
-    response bytes to that local path. Requires browser mode (authenticated
-    session via CDP) to handle redirects and Scribd-style download flows.
+    Routing:
+      * ``save_to`` without ``actions`` → direct-URL download via
+        ``download_with_browser`` (existing fast path for Scribd-style flows).
+      * ``save_to`` with ``actions``, or any ``wait_for``/``actions``/``save_screenshot_to``
+        → ``fetch_with_browser`` which wraps the action sequence in
+        ``page.expect_download()`` when ``save_to`` is set.
+      * No save_to / no actions → ``_try_httpx`` fast path, then
+        ``fetch_with_browser`` for CF / SPA rendering.
     """
-    if req.save_to is not None:
+    needs_browser_interaction = bool(
+        req.wait_for or req.actions or req.save_screenshot_to
+    )
+
+    if req.save_to is not None and not req.actions:
         if not cdp_url:
-            return {"error": "save_to requires browser mode (BROWSER_CDP_URL not configured)", "url": req.url}
+            return {
+                "error": "save_to requires browser mode (BROWSER_CDP_URL not configured)",
+                "url": req.url,
+            }
         try:
-            result = await download_with_browser(req.url, save_to=req.save_to, cdp_url=cdp_url)
+            result = await download_with_browser(
+                req.url, save_to=req.save_to, cdp_url=cdp_url
+            )
             return result
         except Exception as exc:
             logger.error("Download failed for %s: %s", req.url, exc)
             return {"error": f"Download failed: {exc}", "url": req.url}
 
-    if req.mode in ("auto", "http"):
+    if not needs_browser_interaction and req.mode in ("auto", "http"):
         httpx_result = await _try_httpx(req.url)
         if httpx_result is not None and not is_cf_challenge(httpx_result["html"]):
             return _extract_and_format(httpx_result, req, method="httpx")
@@ -118,6 +151,10 @@ async def _do_fetch(
             screenshot=req.screenshot,
             screenshot_format=req.screenshot_format,
             screenshot_quality=req.screenshot_quality,
+            wait_for=req.wait_for,
+            actions=req.actions,
+            save_to=req.save_to,
+            save_screenshot_to=req.save_screenshot_to,
         )
     except RuntimeError as exc:
         return {"error": str(exc), "url": req.url}
@@ -173,6 +210,10 @@ def _extract_and_format(
 
 
 def _format_browser(result: BrowserResult, req: FetchRequest) -> dict[str, Any]:
+    # Click-triggered download via actions — mirror the direct-URL save_to shape.
+    if result.download is not None:
+        return dict(result.download)
+
     if not result.is_html or req.raw:
         content = result.content
     else:
@@ -190,4 +231,8 @@ def _format_browser(result: BrowserResult, req: FetchRequest) -> dict[str, Any]:
     if result.screenshot:
         out["screenshot"] = base64.b64encode(result.screenshot).decode()
         out["screenshot_format"] = result.screenshot_format
+    if result.saved_screenshot_to:
+        out["saved_screenshot_to"] = result.saved_screenshot_to
+    if result.action_failure is not None:
+        out["action_failure"] = result.action_failure
     return out

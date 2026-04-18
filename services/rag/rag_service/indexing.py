@@ -14,8 +14,10 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+from chromadb.utils.batch_utils import create_batches
 
 from services.rag.article_registry import (
     get_entry as get_article_entry,
@@ -26,7 +28,13 @@ from services.rag.chunk_filters import (
     normalize_noise_metadata,
 )
 from services.rag.chunkers import Chunk, chunk_file
-from services.rag.contextualize import contextualize_chunks
+from services.rag.contextualize import CONTEXTUALIZE_PROMPT_HASH, contextualize_chunks
+from services.rag.contextualize_cache import (
+    StoredContextRow,
+    build_context_cache_plan,
+    build_stored_context_rows,
+    merge_computed_contexts,
+)
 from services.rag.embeddings import embed_chunks, require_healthy
 from services.rag.events.articles import (
     rag_article_auto_created,
@@ -40,11 +48,17 @@ from services.rag.events.indexing import (
     rag_contextualization_applied,
     rag_contextualization_completed,
     rag_contextualization_started,
+    rag_contextualize_cache_evaluated,
+    rag_contextualize_cache_lookup_failed,
+    rag_contextualize_cache_store_completed,
+    rag_contextualize_cache_store_failed,
     rag_embed_completed,
     rag_embed_started,
     rag_file_deleted,
     rag_file_indexed,
     rag_file_indexing_failed,
+    rag_file_indexing_failure_cleared,
+    rag_file_indexing_failure_recorded,
     rag_file_skipped,
     rag_hints_update_completed,
     rag_hints_update_started,
@@ -94,6 +108,137 @@ def _should_skip_cached_source(
     return bool(
         cached.mtime_ns == source_mtime_ns and cached.size_bytes == source_size_bytes
     )
+
+
+def _classify_indexing_failure(
+    exc: BaseException,
+    chunk_count: int,
+) -> tuple[str, str]:
+    """Classify an indexing exception as permanent vs transient.
+
+    Returns (category, reason) where category ∈ {'permanent', 'transient'}.
+    stargate-model-lifecycle_ws.mdc authoritative: NOT_IN_CATALOG is structural
+    (operator config fix → permanent); PROBE_FAILED is transient.
+
+    NOTE: currently relies on substring matching against exception messages.
+    Fragile if upstream wording changes — tracked as Phase 2 deferred tech debt
+    (typed domain exceptions from chunking/contextualize/embed/chroma layers).
+    """
+    exc_type_name = type(exc).__qualname__
+    msg = str(exc)
+    msg_lower = msg.lower()
+
+    if "max batch size" in msg_lower:
+        return ("permanent", "exceeds_chroma_max_batch_size")
+    if isinstance(exc, PermissionError):
+        return ("permanent", "permission_denied")
+    if isinstance(exc, FileNotFoundError):
+        return ("permanent", "file_not_found")
+    if "embedding dimension" in msg_lower:
+        return ("permanent", "embedding_dimension_mismatch")
+    if "unsupported file type" in msg_lower or exc_type_name == "UnsupportedFileError":
+        return ("permanent", "unsupported_file_type")
+    if "NOT_IN_CATALOG" in msg:
+        return ("permanent", "contextualize_model_not_in_catalog")
+
+    if isinstance(exc, asyncio.TimeoutError | TimeoutError):
+        return ("transient", "timeout")
+    if "PROBE_FAILED" in msg:
+        return ("transient", "contextualize_probe_failed")
+    if "capacity" in msg_lower or "REQUEST_TIMEOUT" in msg:
+        return ("transient", "gateway_capacity")
+    if "Session is closed" in msg or "ConnectionError" in exc_type_name:
+        return ("transient", "event_service_disconnected")
+
+    return ("transient", "unclassified")
+
+
+async def _record_indexing_failure_best_effort(
+    *,
+    exc: BaseException,
+    source: str,
+    source_hash: str | None,
+    source_size_bytes: int | None,
+    source_mtime_ns: int | None,
+    chunk_count: int,
+) -> None:
+    """Persist failure row and emit recorded event; never mask original exc."""
+    if state._property_index is None:
+        return
+    try:
+        category, reason = _classify_indexing_failure(exc, chunk_count=chunk_count)
+        attempt_count = await state._property_index.record_indexing_failure(
+            source=source,
+            failure_category=category,
+            failure_reason=reason,
+            error_message=str(exc) or type(exc).__qualname__,
+            error_type=type(exc).__qualname__,
+            source_hash=source_hash,
+            source_size_bytes=source_size_bytes,
+            source_mtime_ns=source_mtime_ns,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_file_indexing_failure_recorded(
+                    file=source,
+                    failure_category=category,
+                    failure_reason=reason,
+                    attempt_count=attempt_count,
+                )
+            )
+    except Exception as record_exc:
+        logger.error(
+            "failed to persist indexing failure for %s: %s", source, record_exc
+        )
+
+
+async def _store_cached_contexts_best_effort(
+    *,
+    source: str,
+    source_hash: str,
+    contextualize_model: str,
+    entries: list[StoredContextRow],
+    correlation_id: str | None,
+    operation: str | None,
+) -> None:
+    """Persist contextualize cache entries; never propagate failure to caller."""
+    if state._property_index is None or not entries or not source_hash:
+        return
+    try:
+        stored = await state._property_index.store_cached_contexts(
+            source_hash=source_hash,
+            contextualize_model=contextualize_model,
+            contextualize_schema_version=CONTEXTUALIZE_PROMPT_HASH,
+            entries=entries,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_contextualize_cache_store_completed(
+                    file=source,
+                    stored=stored,
+                    requested=len(entries),
+                    contextualize_model=contextualize_model,
+                    operation_id=correlation_id,
+                    operation=operation,
+                )
+            )
+    except Exception as exc:
+        logger.warning(
+            "Context cache store failed for %s (index succeeded): %s",
+            source,
+            exc,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_contextualize_cache_store_failed(
+                    file=source,
+                    requested=len(entries),
+                    contextualize_model=contextualize_model,
+                    error=f"{type(exc).__qualname__}: {exc}",
+                    operation_id=correlation_id,
+                    operation=operation,
+                )
+            )
 
 
 def _derive_subdirectory(source: str, config: RagConfig) -> str:
@@ -172,6 +317,13 @@ async def _delete_file_impl(source: str) -> DeleteResult:
             remove_article=False,
         )
 
+    if state._property_index is not None:
+        cleared = await state._property_index.clear_indexing_failure(source)
+        if cleared and state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_file_indexing_failure_cleared(file=source, reason="source_deleted")
+            )
+
     deleted = len(existing_ids)
     logger.info("Watcher delete complete: source=%s deleted=%d", source, deleted)
     if existing_ids and state._event_bus is not None:
@@ -188,6 +340,63 @@ async def _enqueue_for_extraction(source: str) -> None:
     scope = state._config.get_scope_for_path(source)
     if state._config.knowledge_extraction.should_extract_scope(scope):
         await state._property_index.enqueue_extraction(source)
+
+
+async def _upsert_chroma_chunk_batches(
+    *,
+    chroma_client: Any,
+    collection: Any,
+    event_bus: Any,
+    source: str,
+    correlation_id: str,
+    operation: str | None,
+    ids: list[str],
+    embeddings: Any,
+    texts: list[str],
+    metadatas: list[dict[str, Any]],
+) -> None:
+    """Upsert chunk rows in ChromaDB-sized batches (backend max_batch_size)."""
+    if chroma_client is None:
+        raise RuntimeError("ChromaDB client not initialized")
+    batches = create_batches(
+        chroma_client,
+        ids=ids,
+        embeddings=embeddings,
+        metadatas=metadatas,
+        documents=texts,
+    )
+    batch_total = len(batches)
+    for batch_index, (b_ids, b_embeddings, b_metadatas, b_documents) in enumerate(
+        batches
+    ):
+        if event_bus is not None:
+            await event_bus.publish_async_nowait(
+                rag_chroma_upsert_started(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(b_ids),
+                    operation=operation,
+                    batch_index=batch_index,
+                    batch_total=batch_total,
+                )
+            )
+        collection.upsert(
+            ids=b_ids,
+            embeddings=b_embeddings,
+            documents=b_documents,
+            metadatas=b_metadatas,
+        )
+        if event_bus is not None:
+            await event_bus.publish_async_nowait(
+                rag_chroma_upsert_completed(
+                    file=source,
+                    operation_id=correlation_id,
+                    chunk_count=len(b_ids),
+                    operation=operation,
+                    batch_index=batch_index,
+                    batch_total=batch_total,
+                )
+            )
 
 
 async def _index_file_impl(
@@ -330,6 +539,7 @@ async def _index_file_impl(
                     size_bytes=source_stat.st_size,
                     extraction_schema_version=schema_version,
                     extraction_model=extraction_model,
+                    source_hash=source_hash,
                 )
                 if not prop_index.article_exists(source):
                     scope = state._config.get_scope_for_path(source)
@@ -401,6 +611,7 @@ async def _index_file_impl(
                     size_bytes=source_stat.st_size,
                     extraction_schema_version=schema_version,
                     extraction_model=extraction_model,
+                    source_hash=source_hash,
                 )
             logger.info(
                 "Index complete: file=%s deleted=%d indexed=0",
@@ -429,8 +640,14 @@ async def _index_file_impl(
                 metadata.update(metadata_overrides)
 
         now = datetime.now(UTC).isoformat()
-        for metadata, chunk in zip(metadatas, chunks, strict=True):
-            chunk_hash = hashlib.sha256(chunk.text.encode()).hexdigest()[:16]
+        for chunk_index, (metadata, chunk) in enumerate(
+            zip(metadatas, chunks, strict=True)
+        ):
+            # Positional prefix: same text at different positions must hash
+            # differently so contextualize cache keys don't collide when
+            # neighbor context differs (Task 3.0 invariant).
+            positional_material = f"{chunk_index}|{chunk.text}".encode()
+            chunk_hash = hashlib.sha256(positional_material).hexdigest()[:16]
             metadata["chunk_hash"] = chunk_hash
             metadata["indexed_at"] = existing_timestamps.get(chunk_hash, now)
 
@@ -458,16 +675,65 @@ async def _index_file_impl(
                     )
 
         embed_texts = texts
+        cache_rows_to_store: list[StoredContextRow] = []
         if state._config is not None and state._config.contextualize_model:
             context_model = state._config.contextualize_model
             context_max_concurrency = state._config.contextualize_max_concurrency
             context_client_timeout_s = state._config.contextualize_client_timeout_s
             context_timeout_s = min(30.0, context_client_timeout_s)
+
+            cached_contexts: dict[str, str] = {}
+            if prop_index is not None and source_hash:
+                try:
+                    cached_contexts = prop_index.get_cached_contexts(
+                        source_hash=source_hash,
+                        chunk_hashes=[
+                            str(meta.get("chunk_hash", "")) for meta in metadatas
+                        ],
+                        contextualize_model=context_model,
+                        contextualize_schema_version=CONTEXTUALIZE_PROMPT_HASH,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Context cache lookup failed for %s; recomputing all: %s",
+                        source,
+                        exc,
+                    )
+                    if state._event_bus is not None:
+                        await state._event_bus.publish_async_nowait(
+                            rag_contextualize_cache_lookup_failed(
+                                file=source,
+                                requested_chunks=len(chunks),
+                                contextualize_model=context_model,
+                                error=f"{type(exc).__qualname__}: {exc}",
+                                operation_id=correlation_id,
+                                operation=operation,
+                            )
+                        )
+                    cached_contexts = {}
+
+            plan = build_context_cache_plan(
+                chunks=chunks,
+                metadatas=metadatas,
+                cached_contexts=cached_contexts,
+            )
+
             if state._event_bus is not None:
+                await state._event_bus.publish_async_nowait(
+                    rag_contextualize_cache_evaluated(
+                        file=source,
+                        total_chunks=len(chunks),
+                        cache_hits=plan.cache_hits,
+                        cache_misses=plan.cache_misses_count,
+                        contextualize_model=context_model,
+                        operation_id=correlation_id,
+                        operation=operation,
+                    )
+                )
                 await state._event_bus.publish_async_nowait(
                     rag_contextualization_started(
                         file=source,
-                        chunk_count=len(chunks),
+                        chunk_count=plan.cache_misses_count,
                         model=context_model,
                         max_concurrency=context_max_concurrency,
                         operation_id=correlation_id,
@@ -475,27 +741,41 @@ async def _index_file_impl(
                     )
                 )
             context_start = time.monotonic()
-            contexts = await contextualize_chunks(
-                chunks,
-                source,
-                context_model,
-                timeout_s=context_timeout_s,
-                max_concurrency=context_max_concurrency,
-                client_timeout_s=context_client_timeout_s,
-                probe_timeout_s=state._config.ctx_probe_timeout_s,
-                probe_backoff_initial_s=state._config.ctx_probe_backoff_initial_s,
-                probe_backoff_max_s=state._config.ctx_probe_backoff_max_s,
-                probe_max_probes=state._config.ctx_probe_max_probes,
-                global_gate=state._global_contextualize_gate,
+
+            contexts = plan.contexts
+            if plan.cache_misses:
+                computed = await contextualize_chunks(
+                    [miss.chunk for miss in plan.cache_misses],
+                    source,
+                    context_model,
+                    timeout_s=context_timeout_s,
+                    max_concurrency=context_max_concurrency,
+                    client_timeout_s=context_client_timeout_s,
+                    probe_timeout_s=state._config.ctx_probe_timeout_s,
+                    probe_backoff_initial_s=state._config.ctx_probe_backoff_initial_s,
+                    probe_backoff_max_s=state._config.ctx_probe_backoff_max_s,
+                    probe_max_probes=state._config.ctx_probe_max_probes,
+                    global_gate=state._global_contextualize_gate,
+                )
+                contexts = merge_computed_contexts(
+                    plan=plan,
+                    computed_prefixes=computed,
+                )
+                cache_rows_to_store = build_stored_context_rows(
+                    plan=plan,
+                    computed_prefixes=computed,
+                )
+
+            successful_misses = sum(
+                1 for miss in plan.cache_misses if contexts[miss.index]
             )
-            successful_contexts = sum(1 for ctx in contexts if ctx)
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
                     rag_contextualization_completed(
                         file=source,
-                        chunk_count=len(contexts),
-                        successful=successful_contexts,
-                        failed=len(contexts) - successful_contexts,
+                        chunk_count=plan.cache_misses_count,
+                        successful=successful_misses,
+                        failed=plan.cache_misses_count - successful_misses,
                         duration_seconds=time.monotonic() - context_start,
                         model=context_model,
                         max_concurrency=context_max_concurrency,
@@ -503,7 +783,6 @@ async def _index_file_impl(
                         operation=operation,
                     )
                 )
-            if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
                     rag_contextualization_applied(
                         file=source,
@@ -539,27 +818,18 @@ async def _index_file_impl(
                     operation=operation,
                 )
             )
-        if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
-                rag_chroma_upsert_started(
-                    file=source,
-                    operation_id=correlation_id,
-                    chunk_count=len(ids),
-                    operation=operation,
-                )
-            )
-        collection.upsert(
-            ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas
+        await _upsert_chroma_chunk_batches(
+            chroma_client=state._chroma,
+            collection=collection,
+            event_bus=state._event_bus,
+            source=source,
+            correlation_id=correlation_id,
+            operation=operation,
+            ids=ids,
+            embeddings=embeddings,
+            texts=texts,
+            metadatas=metadatas,
         )
-        if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
-                rag_chroma_upsert_completed(
-                    file=source,
-                    operation_id=correlation_id,
-                    chunk_count=len(ids),
-                    operation=operation,
-                )
-            )
         if prop_index is not None:
             if state._event_bus is not None:
                 await state._event_bus.publish_async_nowait(
@@ -599,6 +869,14 @@ async def _index_file_impl(
                     operation=operation,
                 )
             )
+        await _record_indexing_failure_best_effort(
+            exc=exc,
+            source=source,
+            source_hash=source_hash,
+            source_size_bytes=source_stat.st_size,
+            source_mtime_ns=source_stat.st_mtime_ns,
+            chunk_count=len(locals().get("chunks", []) or []),
+        )
         raise
 
     try:
@@ -625,6 +903,7 @@ async def _index_file_impl(
                 size_bytes=source_stat.st_size,
                 extraction_schema_version=schema_version,
                 extraction_model=extraction_model,
+                source_hash=source_hash,
             )
             scope = state._config.get_scope_for_path(source)
             subdirectory = _derive_subdirectory(source, state._config)
@@ -642,6 +921,20 @@ async def _index_file_impl(
                         content_hash=source_hash,
                         scope=scope,
                     )
+                )
+            if (
+                cache_rows_to_store
+                and source_hash
+                and state._config is not None
+                and state._config.contextualize_model
+            ):
+                await _store_cached_contexts_best_effort(
+                    source=source,
+                    source_hash=source_hash,
+                    contextualize_model=state._config.contextualize_model,
+                    entries=cache_rows_to_store,
+                    correlation_id=correlation_id,
+                    operation=operation,
                 )
         if state._event_bus is not None:
             await state._event_bus.publish_async_nowait(
@@ -681,7 +974,24 @@ async def _index_file_impl(
                     operation=operation,
                 )
             )
+        await _record_indexing_failure_best_effort(
+            exc=exc,
+            source=source,
+            source_hash=source_hash,
+            source_size_bytes=source_stat.st_size,
+            source_mtime_ns=source_stat.st_mtime_ns,
+            chunk_count=len(chunks),
+        )
         raise
+
+    if state._property_index is not None:
+        cleared = await state._property_index.clear_indexing_failure(source)
+        if cleared and state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_file_indexing_failure_cleared(
+                    file=source, reason="indexed_successfully"
+                )
+            )
 
     await _enqueue_for_extraction(source)
 

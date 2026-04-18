@@ -113,6 +113,41 @@ class IndexingStatusResponse(BaseModel):
     failed_extractions_permanent_count: int = 0
     indexed_sources_count: int = 0
     property_index_available: bool = True
+    indexing_failures_permanent_count: int = 0
+    indexing_failures_transient_count: int = 0
+    contextualize_cache_rows: int = 0
+
+
+class IndexingFailureResponse(BaseModel):
+    """File-level indexing failure row exposed via the admin API."""
+
+    source: str
+    failure_category: str
+    failure_reason: str
+    error_message: str
+    error_type: str
+    first_failed_at: str
+    last_failed_at: str
+    attempt_count: int
+    source_hash: str | None = None
+    source_size_bytes: int | None = None
+    source_mtime_ns: int | None = None
+
+
+class IndexingFailuresListResponse(BaseModel):
+    failures: list[IndexingFailureResponse]
+    count: int
+
+
+class DeleteIndexingFailureResponse(BaseModel):
+    source: str
+    deleted: bool
+
+
+class RetryIndexingFailureResponse(BaseModel):
+    source: str
+    cleared: bool
+    scheduled: bool
 
 
 class ClearResponse(BaseModel):

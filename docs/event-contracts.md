@@ -1431,6 +1431,10 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
 | `rag.file.indexing.failed` | `file`, `error`, `model`? | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
+| `rag.file.indexing.failure.recorded` | `file`, `failure_category`, `failure_reason`, `attempt_count` | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. role=coordination. |
+| `rag.file.indexing.failure.skipped` | `file`, `failure_reason`, `attempt_count` | reconcile/initial-reindex skipped the file because a permanent row exists with unchanged mtime/size, or a transient row is inside its backoff window. role=coordination. |
+| `rag.file.indexing.failure.cleared` | `file`, `reason` | row removed from `indexing_failures`. `reason` ∈ {`indexed_successfully`, `source_deleted`, `operator_cleared`}. Emitted only when a row actually existed. role=coordination. |
+| `rag.file.indexing.failure.retry.requested` | `file`, `scheduled` | operator requested a retry via admin API. `scheduled` reflects whether the watcher accepted the admission. role=coordination. |
 | `rag.file.retry.deferred` | `file`, `reason` | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. Optional: `operation_id`, `operation`. |
 | `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
 | `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
@@ -1438,10 +1442,21 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency` | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
 | `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency` | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
 | `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
+| `rag.contextualize.cache.evaluated` | `file`, `total_chunks`, `cache_hits`, `cache_misses`, `contextualize_model` | per-file cache plan summary; `cache_hits + cache_misses == total_chunks`; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.lookup.failed` | `file`, `requested_chunks`, `contextualize_model`, `error` | cache lookup degraded to full recompute (indexing continues); optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.completed` | `file`, `stored`, `requested`, `contextualize_model` | cache rows persisted after successful upsert + source commit; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.failed` | `file`, `requested`, `contextualize_model`, `error` | index succeeded but cache persistence failed (best-effort); optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.gc.completed` | `deleted_rows` | startup orphan sweep succeeded |
+| `rag.contextualize.cache.gc.failed` | `error` | startup orphan sweep failed non-fatally — readiness not blocked |
+
+Note: `rag.contextualization.started` / `.completed` `chunk_count` now reports
+**cache misses only** (actual LLM work), not total chunks. Use
+`rag.contextualize.cache.evaluated.total_chunks` for the full file total and
+`.cache_hits` for the reuse count.
 | `rag.embed.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before chunk embeddings are requested; optional: `operation` |
 | `rag.embed.completed` | `file`, `operation_id`, `chunk_count` | emitted after chunk embeddings return; optional: `operation` |
-| `rag.chroma.upsert.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before ChromaDB upsert begins; optional: `operation` |
-| `rag.chroma.upsert.completed` | `file`, `operation_id`, `chunk_count` | emitted after ChromaDB upsert returns; optional: `operation` |
+| `rag.chroma.upsert.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before each ChromaDB upsert sub-batch begins; optional: `operation`, `batch_index`, `batch_total` (present when a file is split across multiple backend batches) |
+| `rag.chroma.upsert.completed` | `file`, `operation_id`, `chunk_count` | emitted after each ChromaDB upsert sub-batch returns; optional: `operation`, `batch_index`, `batch_total` |
 | `rag.property.write.started` | `file`, `operation_id`, `chunk_count`, `property_entries` | emitted before FTS + property-index writes begin; optional: `operation` |
 | `rag.property.write.completed` | `file`, `operation_id`, `chunk_count`, `property_entries` | emitted after FTS + property-index writes finish; optional: `operation` |
 | `rag.source.commit.started` | `file`, `operation_id`, `chunk_count`, `stale_chunks` | emitted before stale cleanup and source-level metadata commit begin; optional: `operation` |

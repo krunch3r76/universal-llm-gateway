@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -23,6 +24,7 @@ from services.rag.config import BASELINE_EXTENSIONS, RagConfig, WatchDirectory
 from services.rag.events.indexing import (
     rag_file_deletion_failed,
     rag_file_indexing_failed,
+    rag_file_indexing_failure_skipped,
 )
 from services.rag.events.lifecycle import (
     rag_watch_directory_missing,
@@ -39,6 +41,8 @@ from services.rag.events.lifecycle import (
 
 if TYPE_CHECKING:
     from universal_event_bus import Event, EventBus
+
+    from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +128,7 @@ class WatcherManager:
         post_reconcile_repair: PostReconcileRepairFn | None = None,
         scope_repair_runner: ScopeRepairRunnerFn | None = None,
         scope_repair_debounce_s: float = 30.0,
+        property_index: PropertyIndex | None = None,
     ) -> None:
         self._index_fn: IndexFn = index_fn
         self._delete_fn: DeleteFn = (
@@ -145,6 +150,7 @@ class WatcherManager:
         self._repair_debounce_task: asyncio.Task[None] | None = None
         self._pending_repair_scopes: set[str] = set()
         self._rag_config: RagConfig | None = None
+        self._property_index: PropertyIndex | None = property_index
         self._baseline_extensions: tuple[str, ...] = _normalize_extensions(
             BASELINE_EXTENSIONS
         )
@@ -355,6 +361,91 @@ class WatcherManager:
         except TimeoutError:
             return False
 
+    async def _should_attempt(self, fp: Path) -> bool:
+        """Consult indexing_failures to decide if fp may be dispatched.
+
+        Returns False iff a persistent failure row (permanent, unchanged
+        content) or a transient row inside its backoff window is on record.
+        """
+        if self._property_index is None:
+            return True
+        source = str(fp)
+        failure = self._property_index.get_indexing_failure(source)
+        if failure is None:
+            return True
+        try:
+            st = await asyncio.to_thread(fp.stat)
+        except OSError:
+            return True
+        if (
+            failure.source_mtime_ns != st.st_mtime_ns
+            or failure.source_size_bytes != st.st_size
+        ):
+            return True
+        if failure.failure_category == "permanent":
+            await self._emit(
+                rag_file_indexing_failure_skipped(
+                    file=source,
+                    failure_reason=failure.failure_reason,
+                    attempt_count=failure.attempt_count,
+                )
+            )
+            return False
+        base_s = max(int(self._reconcile_interval_s), 60)
+        multiplier = 2 ** min(max(failure.attempt_count - 1, 0), 6)
+        backoff_s = min(3600, base_s * multiplier)
+        try:
+            last = datetime.fromisoformat(failure.last_failed_at)
+        except ValueError:
+            return True
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+        if (datetime.now(UTC) - last).total_seconds() < backoff_s:
+            await self._emit(
+                rag_file_indexing_failure_skipped(
+                    file=source,
+                    failure_reason=failure.failure_reason,
+                    attempt_count=failure.attempt_count,
+                )
+            )
+            return False
+        return True
+
+    async def request_reindex(self, file_path: Path) -> bool:
+        """Admin admission: schedule one file for reindex if watchers are live.
+
+        Runs the indexing function in a background task so admin callers do
+        not block on the indexing pipeline. Returns True iff the watcher
+        manager is active and accepted the request.
+        """
+        if self._reconcile_task is None or self._rag_config is None:
+            return False
+        source = str(file_path)
+        chunk_tokens: int | None = None
+        for wd in self._watch_configs:
+            watch_root = Path(wd.path).expanduser().resolve()
+            try:
+                file_path.expanduser().resolve().relative_to(watch_root)
+            except ValueError:
+                continue
+            chunk_tokens = wd.chunk_tokens
+            break
+
+        async def _run() -> None:
+            try:
+                result = await self._index_fn(
+                    file_path, chunk_tokens, emit_skip_event=False
+                )
+                self._note_index_mutation(file_path, result)
+            except Exception as exc:
+                logger.warning(
+                    "Requested reindex failed for %s: %s", source, exc, exc_info=True
+                )
+                await self._emit(rag_file_indexing_failed(file=source, error=str(exc)))
+
+        asyncio.create_task(_run(), name=f"rag-reindex-request:{file_path.name}")
+        return True
+
     async def _reconcile_loop(self) -> None:
         """Periodically re-sweep watched directories to recover missed files.
 
@@ -419,6 +510,14 @@ class WatcherManager:
             and fp.suffix.lower() in extensions
             and not matches_watch_exclude(fp, watch_root=watch_path, patterns=exclude)
         ]
+        if not file_paths:
+            return 0
+
+        eligible: list[Path] = []
+        for fp in file_paths:
+            if await self._should_attempt(fp):
+                eligible.append(fp)
+        file_paths = eligible
         if not file_paths:
             return 0
 
@@ -502,6 +601,12 @@ class WatcherManager:
             ):
                 continue
             file_paths.append(file_path)
+
+        eligible: list[Path] = []
+        for fp in file_paths:
+            if await self._should_attempt(fp):
+                eligible.append(fp)
+        file_paths = eligible
 
         total_files = len(file_paths)
         await self._emit(

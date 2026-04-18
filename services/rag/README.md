@@ -316,6 +316,49 @@ vocabulary_taxonomy:
 | `reconcile_interval_s` | Base seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled. Reconcile uses the same worker pool as initial reindex; when a sweep recovers files, the next sweep runs after 30 s (busy interval), otherwise after the full interval |
 | `vocabulary_taxonomy` | Ordered list of vocabulary categories for classification. Order = retrieval anchor priority. Extend to add domain-specific categories; re-classify affected scopes to take effect. Default: `[specification, practitioner, academic]` |
 
+## Contextualize Cache
+
+When enabled, RAG reuses previously computed contextualization prefixes for
+unchanged chunks of unchanged source content. The cache is best-effort and
+non-authoritative: lookup failures degrade to full recompute and store
+failures do not fail indexing.
+
+Cache keys: `(source_hash, chunk_hash, contextualize_model,
+contextualize_schema_version)` where:
+
+- `source_hash` = sha-256 of file bytes
+- `chunk_hash` = short hash over chunk text **plus positional info** so
+  identical text at different positions in the same source does not
+  collide
+- `contextualize_schema_version` = sha-256 over the prompt text, neighbor
+  budgets (`_NEIGHBOR_CHARS`, `_MAX_CONTEXT_TOKENS`), and
+  `inspect.getsource(_build_chunk_context)` — editing the assembly
+  function invalidates the cache automatically
+
+Invalidation triggers: file content change, prompt edit, model change, or
+any edit to `_build_chunk_context` / relevant tunables. Empty prefixes
+(per-chunk contextualize failure) are never persisted — the V10 CHECK
+constraint backstops the application-layer filter.
+
+Garbage collection: primary cleanup runs inside `remove_source_metadata`
+(single-file or directory delete). A non-fatal startup sweep backstops
+crashes between `contextualized_chunks` writes and `indexed_sources`
+cleanup.
+
+Operator visibility:
+
+- `/indexing/status.contextualize_cache_rows` — row-count capacity view
+- `rag.contextualize.cache.evaluated` — per-file hit/miss summary
+- `rag.contextualize.cache.gc.completed` / `.failed` — startup sweep result
+- `rag.contextualize.cache.store.completed` / `.failed` — best-effort
+  post-upsert persistence outcome
+- `rag.contextualize.cache.lookup.failed` — lookup degraded to full
+  recompute
+
+Note: after the cache ships, `rag.contextualization.started/.completed`
+`chunk_count` reports **cache misses only** (actual LLM work). Use
+`rag.contextualize.cache.evaluated.total_chunks` for the full file total.
+
 ## Concurrency: Global Contextualization Gate
 
 Contextualization sends one LLM request per chunk per file. When the watcher
@@ -530,3 +573,77 @@ The intended design: breadth-first retrieval across the corpus surfaces which so
 | `watcher_manager.py` | Inotify file watching; reconciliation sweeps (worker pool, adaptive interval) |
 | `embeddings.py` | Embedding model client (via Gateway); batch embedding support |
 | `admin_routes.py` | Administrative API endpoints |
+
+## Indexing Failures
+
+File-level indexing failures are persisted to the `indexing_failures` table in
+`~/.rag/store/rag_metadata.db` so the reconcile loop does not re-burn LLM
+inference and embedding compute on files that cannot succeed.
+
+### Classifier taxonomy
+
+`services/rag/rag_service/indexing.py::_classify_indexing_failure` inspects the
+raised exception and returns `(category, reason)`:
+
+- **`permanent`** — the file will fail the same way until its content changes
+  or operator config changes. Examples: `exceeds_chroma_max_batch_size`,
+  `permission_denied`, `file_not_found`, `embedding_dimension_mismatch`,
+  `unsupported_file_type`, `contextualize_model_not_in_catalog`.
+- **`transient`** — retry may succeed. Examples: `timeout`,
+  `contextualize_probe_failed`, `gateway_capacity`,
+  `event_service_disconnected`, `unclassified`.
+
+The `NOT_IN_CATALOG` / `PROBE_FAILED` split follows
+`stargate-model-lifecycle_ws.mdc`.
+
+### Reconcile behavior
+
+Before dispatching a file, `WatcherManager._should_attempt(fp)` consults the
+table:
+
+1. No row → attempt.
+2. Row exists but `mtime_ns` or `size_bytes` differs from the file on disk →
+   content changed, attempt (classifier will record a fresh row if it fails
+   the same way).
+3. `permanent` row with unchanged mtime/size → emit
+   `rag.file.indexing.failure.skipped`, skip.
+4. `transient` row inside backoff window
+   (`base = max(reconcile_interval_s, 60) s`, doubled per attempt up to 3600 s
+   cap) → skip.
+5. `transient` row outside backoff window → attempt.
+
+### Admin API
+
+All endpoints are served on the RAG UDS (`/tmp/universal-protocol/rag.sock`).
+URL-encode slashes and special characters in source paths.
+
+```bash
+# List failures (category ∈ {all, permanent, transient})
+curl --unix-socket /tmp/universal-protocol/rag.sock \
+  "http://localhost/indexing_failures?category=permanent"
+
+# Clear one row (operator override)
+curl -X DELETE --unix-socket /tmp/universal-protocol/rag.sock \
+  "http://localhost/indexing_failures/$(python -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1], safe=""))' "/abs/path/to/file.pdf")"
+
+# Retry (clears row and enqueues a reindex)
+curl -X POST --unix-socket /tmp/universal-protocol/rag.sock \
+  "http://localhost/indexing_failures/$(python -c 'import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1], safe=""))' "/abs/path/to/file.pdf")/retry"
+```
+
+### Status counts
+
+`GET /indexing/status` exposes `indexing_failures_permanent_count` and
+`indexing_failures_transient_count` for operator dashboards
+(`rag-status --watch`).
+
+### Events
+
+- `rag.file.indexing.failure.recorded` — row persisted.
+- `rag.file.indexing.failure.skipped` — reconcile/initial sweep gated a file.
+- `rag.file.indexing.failure.cleared` — row removed
+  (`indexed_successfully` / `source_deleted` / `operator_cleared`).
+- `rag.file.indexing.failure.retry.requested` — operator issued retry;
+  `scheduled` indicates watcher admission.
+
+All four are `role=coordination`.

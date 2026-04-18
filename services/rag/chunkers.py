@@ -915,6 +915,10 @@ def chunk_code(
     def _append_current_chunk() -> None:
         nonlocal current, current_chars
         chunk_text = "\n".join(current)
+        # Positional prefix ensures identical text at different positions in the
+        # same source yields distinct chunk_hash values (Task 3.0 invariant).
+        chunk_index = len(chunks)
+        positional_material = f"{chunk_index}|{chunk_text}".encode()
         chunks.append(
             Chunk(
                 text=chunk_text,
@@ -924,7 +928,7 @@ def chunk_code(
                     "chunk_type": "statement_block",
                     "chunk_size_nws_chars": _nws_len(chunk_text.encode()),
                     "is_semantically_complete": False,
-                    "chunk_hash": sha256(chunk_text.encode()).hexdigest()[:16],
+                    "chunk_hash": sha256(positional_material).hexdigest()[:16],
                 },
             )
         )
@@ -985,7 +989,9 @@ def chunk_docx(
     if not markdown.strip():
         raise ValueError(f"No extractable text in {path}")
 
-    chunks = chunk_markdown(path, markdown, target_chars=target_chars, pad_chars=pad_chars)
+    chunks = chunk_markdown(
+        path, markdown, target_chars=target_chars, pad_chars=pad_chars
+    )
     for chunk in chunks:
         chunk.metadata["source_format"] = "docx"
         chunk.metadata["normalized_format"] = "markdown"
@@ -1006,7 +1012,15 @@ def chunk_doc(
     with tempfile.TemporaryDirectory() as tmpdir:
         try:
             result = subprocess.run(
-                ["soffice", "--headless", "--convert-to", "txt", "--outdir", tmpdir, path],
+                [
+                    "soffice",
+                    "--headless",
+                    "--convert-to",
+                    "txt",
+                    "--outdir",
+                    tmpdir,
+                    path,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=120,

@@ -44,6 +44,10 @@ from services.rag.embeddings import (
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
+from services.rag.events.indexing import (
+    rag_contextualize_cache_gc_completed,
+    rag_contextualize_cache_gc_failed,
+)
 from services.rag.events.lifecycle import (
     rag_article_registry_failed,
     rag_article_registry_loaded,
@@ -236,6 +240,31 @@ async def _startup() -> None:
 
     state._property_index = PropertyIndex()
     await state._property_index.start()
+
+    # Non-fatal backstop GC for orphaned contextualize cache rows —
+    # primary cleanup happens inside remove_source_metadata; this sweep
+    # recovers from crashes between delete paths.
+    try:
+        deleted_cache_rows = (
+            await state._property_index.garbage_collect_contextualized_chunks()
+        )
+        logger.info(
+            "Contextualize cache startup GC complete (deleted_rows=%d)",
+            deleted_cache_rows,
+        )
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_contextualize_cache_gc_completed(deleted_rows=deleted_cache_rows)
+            )
+    except Exception as gc_exc:
+        logger.warning("Contextualize cache startup GC failed: %s", gc_exc)
+        if state._event_bus is not None:
+            await state._event_bus.publish_async_nowait(
+                rag_contextualize_cache_gc_failed(
+                    error=f"{type(gc_exc).__qualname__}: {gc_exc}",
+                )
+            )
+
     db_path = state._property_index.db_path
     try:
         state._registry = await asyncio.to_thread(load_registry_from_db, db_path)
@@ -663,6 +692,7 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
         reconcile_workers=reconcile_worker_count,
         reconcile_interval_s=config.reconcile_interval_s,
         post_reconcile_repair=_post_reconcile_scope_freshness,
+        property_index=state._property_index,
     )
 
     post_index_steps = list(_POST_INDEX_STEPS)

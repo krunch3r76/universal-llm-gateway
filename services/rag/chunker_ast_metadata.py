@@ -175,7 +175,12 @@ def build_python_chunk_metadata(
     chunk_type, entity_name = _chunk_type_and_entity(source, nodes, class_scope)
     start_line = nodes[0].start_point[0] + 1
     end_line = nodes[-1].end_point[0] + 1
-    chunk_hash = sha256(text.encode()).hexdigest()[:16]
+    # Positional prefix ensures identical text at different positions in the
+    # same source yields distinct chunk_hash values (Task 3.0 invariant).
+    start_byte = nodes[0].start_byte
+    end_byte = nodes[-1].end_byte
+    positional_material = f"{start_byte}|{end_byte}|{text}".encode()
+    chunk_hash = sha256(positional_material).hexdigest()[:16]
     function_name, class_name = chunk_names_from_nodes(source, nodes)
     effective_class = class_name or class_scope
     parent_entity = class_scope if chunk_type == "method" else None
