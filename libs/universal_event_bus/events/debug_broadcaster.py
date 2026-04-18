@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 class DebugClient:
     """Represents a connected debug client."""
 
-    transport: "SimpleTransportWrapper"
+    transport: SimpleTransportWrapper
     last_seen: float
     connected: bool = True
 
@@ -39,13 +39,28 @@ class UDSEventPublisher:
     INVARIANT: buffer_size ≤ maxsize (oldest dropped on overflow)
     """
 
-    def __init__(self, socket_path: str, *, maxsize: int = 500) -> None:
+    def __init__(
+        self,
+        socket_path: str,
+        *,
+        maxsize: int = 500,
+        drop_notice_interval_sec: float = 1.0,
+        source: str = "uds_event_publisher",
+    ) -> None:
         self._socket_path = socket_path
+        self._buffer_maxsize = maxsize
         self._buffer: asyncio.Queue[str] = asyncio.Queue(maxsize=maxsize)
         self._writer: asyncio.StreamWriter | None = None
         self._running = False
         self._flush_task: asyncio.Task[None] | None = None
         self._dropped = 0
+        # Rate-limited publisher-side drop notice state. Mirrors the
+        # server-side pattern in libs/event_store/ingest.py for symmetry.
+        self._source = source
+        self._drop_notice_interval_sec = drop_notice_interval_sec
+        self._drop_notice_last_emit_ts: float = 0.0
+        self._drop_notice_pending_count: int = 0
+        self._drop_notice_last_signal: str = ""
 
     async def start(self) -> None:
         self._running = True
@@ -85,6 +100,61 @@ class UDSEventPublisher:
             except asyncio.QueueFull:
                 pass
             self._dropped += 1
+            self._drop_notice_pending_count += 1
+            self._drop_notice_last_signal = str(event_dict.get("signal", ""))
+            self._maybe_emit_drop_notice()
+
+    def _maybe_emit_drop_notice(self) -> None:
+        """Rate-limited ``publisher.events.dropped`` emission on buffer overflow.
+
+        Scope is ``node``: publisher buffers are per-process and not meaningful
+        when re-emitted on master. Emits at most one notice per
+        ``_drop_notice_interval_sec``; drops in between aggregate into ``count``.
+        Mirrors ``IngestServer._maybe_emit_drop_notice`` in
+        ``libs/event_store/ingest.py``.
+
+        Emission path: the notice is queued into ``_buffer`` like any event; if
+        the buffer is still full (typical under sustained overload), one oldest
+        user event is evicted to make room — same eviction pattern as
+        ``publish_nowait``. One extra user event is lost per notice interval.
+        """
+        now = time.monotonic()
+        if now - self._drop_notice_last_emit_ts < self._drop_notice_interval_sec:
+            return
+
+        count = self._drop_notice_pending_count
+        if count <= 0:
+            return
+
+        self._drop_notice_last_emit_ts = now
+        self._drop_notice_pending_count = 0
+
+        notice: dict[str, Any] = {
+            "signal": "publisher.events.dropped",
+            "role": "coordination",
+            "scope": "node",
+            "timestamp": time.time(),
+            "payload": {
+                "count": count,
+                "buffer_depth": self._buffer.qsize(),
+                "buffer_max": self._buffer_maxsize,
+                "signal_sample": self._drop_notice_last_signal,
+                "source": self._source,
+            },
+            "source": self._source,
+        }
+        line = json.dumps(notice) + "\n"
+        try:
+            self._buffer.put_nowait(line)
+        except asyncio.QueueFull:
+            try:
+                self._buffer.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self._buffer.put_nowait(line)
+            except asyncio.QueueFull:
+                pass
 
     async def _connect_and_flush(self) -> None:
         """Background loop: connect to UDS, drain buffer, reconnect on failure."""
@@ -157,9 +227,13 @@ class MinimalEventDebugBroadcaster:
                 # Start background cleanup task (only if socket enabled)
                 asyncio.create_task(self._cleanup_disconnected_clients())
             except (OSError, ConnectionRefusedError) as e:
-                logger.error(f"❌ Failed to start debug events server on {self.socket_path}: {e}")
+                logger.error(
+                    f"❌ Failed to start debug events server on {self.socket_path}: {e}"
+                )
             except Exception:
-                logger.exception("❌ An unexpected error occurred while starting debug events server.")
+                logger.exception(
+                    "❌ An unexpected error occurred while starting debug events server."
+                )
 
         # Start UDS publisher to event service (independent of socket)
         if self._uds_publisher:

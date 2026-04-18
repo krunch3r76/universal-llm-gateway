@@ -1956,6 +1956,7 @@ event bus. These are routed to the `events` table like all other events.
 | `events.db.write.failed` | observation | node | SQLite batch insert failed (e.g. disk full) |
 | `events.dropped.subscribe` | coordination | node | Subscriber queue full, oldest event dropped |
 | `events.dropped.ingest` | coordination | global | Ingest ``_db_queue`` full; publisher event dropped (ephemeral fanout only — not persisted; rate-limited, see payload) |
+| `publisher.events.dropped` | coordination | node | `UDSEventPublisher._buffer` full; event dropped before reaching UDS (rate-limited, same-buffer emission, see payload) |
 
 `events.dropped.ingest` is pushed only to live WebSocket subscribers (same path as
 `events.dropped.subscribe`), not written to SQLite, because the DB writer is
@@ -1964,6 +1965,21 @@ already saturated when the ingest queue overflows.
 **`events.dropped.ingest` payload keys**: `count` (int, drops since last notice,
 ≥1), `queue_depth` (int), `queue_max` (int), `signal_sample` (str, signal field of
 the last dropped event), `source` (literal `event_service`).
+
+`publisher.events.dropped` is the symmetric publisher-side signal for
+`UDSEventPublisher` buffer overflow (`libs/universal_event_bus/events/debug_broadcaster.py`).
+It is emitted into the publisher's own outbound `_buffer` using the same eviction
+pattern as dropped user events; it travels to the event service over the same
+UDS path and is ingested as a normal event (persisted, subject to the same
+`events.dropped.ingest` risk if the ingest queue is also saturated). `scope=node`
+because publisher buffers are per-process and not meaningful when re-emitted on
+master.
+
+**`publisher.events.dropped` payload keys**: `count` (int, drops since last
+notice, ≥1), `buffer_depth` (int), `buffer_max` (int), `signal_sample` (str,
+signal field of the last dropped event), `source` (str, publisher identity —
+caller-configurable via `UDSEventPublisher(source=...)`, default
+`uds_event_publisher`; e.g. `universal_stargate`).
 
 **Saturation interaction — the two drop signals are not independently guaranteed
 under sustained overload.** Both notices fan out through the same per-subscriber
