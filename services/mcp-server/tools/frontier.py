@@ -15,17 +15,19 @@ agent-bus thread on terminal transition.
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import record
-from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = get_logger(__name__)
+
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 
 # Relay only handles admission (persona enforcement + forward). Long-poll
 # blocking is the caller's responsibility via pipeline(op="result").
@@ -45,7 +47,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         tools: list[str] | None = None,
         generation_options: dict[str, Any] | None = None,
         transcript_id: str | None = None,
-        remote_mcp: bool | None = None,
         result_delivery: dict[str, Any] | None = None,
         caller_agent: str | None = None,
     ) -> dict[str, Any]:
@@ -63,10 +64,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         Args:
           - ``agent``: optional persona slug (e.g. ``oppie``, ``orion``).
             When set, persona rules from cortex (default_model,
-            allowed_models, tools, allowed_options) apply. Omit for raw
-            native call.
-          - ``boot ∈ {none, mcp, team, full}``: persona hydration tier
-            (only applies when ``agent`` is set).
+            allowed_models, tools, allowed_options) apply, and the
+            agent's default model is used when ``model`` is omitted.
+            **Requires** ``boot ∈ {mcp, team, full}`` — ``"none"`` is
+            rejected when ``agent`` is set. Omit for a raw native call.
+          - ``boot ∈ {none, mcp, team, full}``: persona hydration tier.
+            ``"none"`` is only valid when ``agent`` is omitted.
           - ``tools``: explicit tool name list. Subset of persona's tools
             if ``agent`` set; subset of full tool registry otherwise.
             Omit for the persona's default toolset.
@@ -94,6 +97,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``{error: {code, message}, field, request_id}`` with no
         execution_id — admission is refused before tracker entry.
         """
+        if agent is not None and boot == "none":
+            return {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "boot must not be 'none' when agent is set — specify 'mcp', 'team', or 'full'",
+                },
+                "field": "boot",
+            }
+
         body: dict[str, Any] = {
             "messages": messages,
             "boot": boot,
@@ -105,7 +117,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("tools", tools),
             ("generation_options", generation_options),
             ("transcript_id", transcript_id),
-            ("remote_mcp", remote_mcp),
             ("result_delivery", result_delivery),
             ("caller_agent", caller_agent),
         ):
@@ -118,8 +129,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             model=model or "",
             boot=boot,
         )
-        async with make_async_client(
-            DEFAULT_STARGATE_URL, timeout=_RELAY_TIMEOUT
+        async with httpx.AsyncClient(
+            base_url=_STARGATE_URL, timeout=_RELAY_TIMEOUT
         ) as client:
             try:
                 resp = await client.post("/api/v1/frontier/generate", json=body)

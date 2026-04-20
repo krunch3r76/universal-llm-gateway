@@ -572,6 +572,38 @@ def PipelineFrontierDispatchTerminationShadow(  # noqa: N802
 
 
 @event_factory
+def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
+    execution_id: str,
+    agent: str,
+    requested_model: str,
+    valid_family: list[str],
+) -> Event:
+    """Emitted when the dispatch handler rejects an agent + model combination
+    whose provider does not match the agent's identity-bound provider family.
+
+    Precedes the terminal ``pipeline_execution_failed``. Distinguishes a
+    caller misconfiguration (wrong provider for the agent) from MCP
+    misconfiguration or upstream provider errors.
+
+    Payload:
+        execution_id: Pipeline execution UUID
+        agent: Agent slug that was specified (``orion``, ``oppie``, etc.)
+        requested_model: Model string the caller supplied
+        valid_family: Allowed model identifiers for this agent
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.agent.model.mismatch",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "requested_model": requested_model,
+            "valid_family": valid_family,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def PipelineFrontierDispatchExhausted(  # noqa: N802
     agent: str | None,
     execution_id: str,

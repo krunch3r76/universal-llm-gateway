@@ -273,6 +273,47 @@ class RemoteMcpUnsupportedError(PipelineError):
         }
 
 
+@dataclass
+class UnknownPipelineOptionsError(PipelineError):
+    """Raised by ``frontier_dispatch_v1`` when the caller supplies
+    ``pipeline_options`` keys outside the handler's accepted set.
+
+    The raw ``frontier-dispatch`` path silently dropped unrecognized keys
+    historically (e.g. top-level ``effort: "high"`` instead of the canonical
+    ``generation_parameters.reasoning_effort``). That class of bug burned
+    hours of agent debugging when reasoning levers appeared to be ignored.
+    Hard-rejecting unknown keys at admission catches the typo upstream and
+    points the caller at the right key or the right tool
+    (``frontier_generate`` for persona consults).
+    """
+
+    step_name: str
+    unknown_keys: list[str]
+    accepted_keys: list[str]
+    agent: str | None
+
+    def __str__(self) -> str:
+        who = f" agent={self.agent!r}" if self.agent else ""
+        return (
+            f"[Step '{self.step_name}']{who} unknown pipeline_options "
+            f"keys: {self.unknown_keys}. Accepted: {self.accepted_keys}. "
+            "For persona consults (oppie/orion/bard/api_claude) prefer "
+            "`frontier_generate` — it validates options against the "
+            "persona's allowlist."
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "UnknownPipelineOptionsError",
+            "code": "unknown_pipeline_options",
+            "retryable": self.retryable,
+            "step_name": self.step_name,
+            "unknown_keys": self.unknown_keys,
+            "accepted_keys": self.accepted_keys,
+            "agent": self.agent,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class MapPartialFailureError(PipelineError):
     """

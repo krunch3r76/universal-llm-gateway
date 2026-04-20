@@ -68,9 +68,13 @@ from ..events.dispatch import (
     PipelineFrontierDispatchToolCalled,
     PipelineFrontierDispatchToolFailed,
 )
-from ..execution.errors import RemoteMcpUnsupportedError
+from ..execution.errors import RemoteMcpUnsupportedError, UnknownPipelineOptionsError
 from ..execution.resolver import NamespaceResolver, traverse_path
 from .builtin import BaseHandler
+from .frontier_dispatch_admission import (
+    check_agent_model_consistency,
+    prepend_dispatch_context,
+)
 from .frontier_dispatch_observability import emit_post_loop_observability
 from .protocol import StepOutput
 from .registry import register_handler
@@ -88,15 +92,49 @@ class FrontierDispatchHandler(BaseHandler):
 
     step_type: str = "frontier_dispatch_v1"
 
+    # Caller-supplied keys accepted on ``pipeline_options`` for
+    # ``frontier_dispatch_v1``. Anything outside this set is rejected at
+    # admission with ``UnknownPipelineOptionsError`` — silent drops have
+    # cost real debugging time (e.g. top-level ``effort`` ignored when the
+    # canonical key is ``generation_parameters.reasoning_effort``).
+    #
+    # ``_endpoint_request_id`` is a marker set by the public
+    # ``/api/v1/frontier/generate`` endpoint to identify persona-validated
+    # arrivals; included here so the public path passes validation
+    # transparently.
+    _ACCEPTED_RUNTIME_OPTION_KEYS: frozenset[str] = frozenset(
+        {
+            "model",
+            "agent",
+            "mcp",
+            "remote_mcp",
+            "tools",
+            "max_tool_turns",
+            "transcript_id",
+            "system",
+            "generation_parameters",
+            "_endpoint_request_id",
+        }
+    )
+
     async def execute(
         self,
         step: StepConfig,
         context: PipelineContext,
     ) -> StepOutput:
+        self._reject_unknown_runtime_options(step, context)
         opts = context.options
         model = self._resolve_model(opts, step)
         agent = self._resolve_agent(opts, step)
         provider = effective_provider_for_model(ModelId.parse(model).provider)
+        if agent is not None:
+            check_agent_model_consistency(
+                agent=agent,
+                model=model,
+                provider=provider,
+                execution_id=context.execution_id,
+                publish=lambda event: self._publish_bus_event(context, event),
+            )
         mcp_enabled = bool(opts.get("mcp", True))
         remote_mcp = self._resolve_remote_mcp(
             opts=opts,
@@ -133,7 +171,8 @@ class FrontierDispatchHandler(BaseHandler):
             if not mcp_enabled or remote_mcp:
                 tools: list[dict[str, Any]] = []
             else:
-                tools = resolve_tools(resolved_names)
+                tool_defs, _ = resolve_tools(resolved_names)
+                tools = tool_defs
             system = self._resolve_system_prompt(step, context)
             hydration_meta = {"agent": None, "tool_resolution": "endpoint-supplied"}
             skip_legacy_tier_block = True
@@ -186,6 +225,7 @@ class FrontierDispatchHandler(BaseHandler):
             )
 
         step_params, _ = self._build_generation_params(step, resolved_config={})
+        system = prepend_dispatch_context(system)
         opt_params = opts.get("generation_parameters") or {}
         if isinstance(opt_params, dict):
             gen_params: dict[str, Any] = {**step_params, **opt_params}
@@ -396,6 +436,34 @@ class FrontierDispatchHandler(BaseHandler):
                 reason=reason,
             )
         return True
+
+    def _reject_unknown_runtime_options(
+        self, step: StepConfig, context: PipelineContext
+    ) -> None:
+        """Hard-reject caller-supplied ``pipeline_options`` keys outside
+        ``_ACCEPTED_RUNTIME_OPTION_KEYS``.
+
+        Validates ``context.runtime_options`` (HTTP-supplied keys), not
+        ``context.options`` (which also contains YAML defaults the caller
+        did not choose). Framework-level keys such as ``timeout_seconds``
+        are folded in by ``PipelineOptions`` itself and surface to the
+        handler via ``context.options``; rejecting them here would break
+        the public endpoint and any future framework option additions.
+        """
+        runtime = getattr(context, "runtime_options", None) or {}
+        if not runtime:
+            return
+        unknown = sorted(set(runtime.keys()) - self._ACCEPTED_RUNTIME_OPTION_KEYS)
+        if not unknown:
+            return
+        agent_raw = runtime.get("agent")
+        agent = str(agent_raw).strip() if isinstance(agent_raw, str) else None
+        raise UnknownPipelineOptionsError(
+            step_name=step.id,
+            unknown_keys=unknown,
+            accepted_keys=sorted(self._ACCEPTED_RUNTIME_OPTION_KEYS),
+            agent=agent or None,
+        )
 
     def _resolve_model(self, opts: dict[str, Any], step: StepConfig) -> str:
         """Resolve model from ``pipeline_options.model`` or ``step.model_ref``."""
