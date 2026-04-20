@@ -1,20 +1,19 @@
-"""Cortex dispatch op handlers — reflective journal (first-person agent introspection).
-
-Plain handler functions consumed by the _OPS dispatch table in cortex.py.
-Relays to cortex-api /reflective-journal/* endpoints.
-"""
+"""Reflective journal ops."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urlencode
 
-from mcp_events import record
+from ..routes.reflective_journal import (
+    _add_link_impl,
+    _create_entry_impl,
+    _get_entry_impl,
+    _list_entries_impl,
+)
+from ._shared import record
 
-from ._cortex_relay import _cx
-
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cortex-api.dispatch_ops.reflective")
 
 
 def _op_rj_write(
@@ -46,8 +45,7 @@ def _op_rj_write(
         body["links"] = links
     if consolidation_data is not None:
         body["consolidation_data"] = consolidation_data
-
-    result = _cx("POST", "/reflective-journal", body)
+    result = _create_entry_impl(body)
     if "error" not in result:
         logger.info(
             "rj_write: %s/%s (%s) — %s",
@@ -65,13 +63,10 @@ def _op_rj_write(
     return result
 
 
-def _op_rj_read(
-    entry_id: int | None = None,
-    **_: object,
-) -> dict[str, Any]:
+def _op_rj_read(entry_id: int | None = None, **_: object) -> dict[str, Any]:
     if entry_id is None:
         return {"error": "entry_id is required"}
-    return _cx("GET", f"/reflective-journal/{entry_id}")
+    return _get_entry_impl(entry_id)
 
 
 def _op_rj_list(
@@ -81,17 +76,12 @@ def _op_rj_list(
     offset: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    params: dict[str, object] = {}
-    if agent is not None:
-        params["agent"] = agent
-    if kind is not None:
-        params["kind"] = kind
-    if limit is not None:
-        params["limit"] = limit
-    if offset is not None:
-        params["offset"] = offset
-    qs = f"?{urlencode(params)}" if params else ""
-    return _cx("GET", f"/reflective-journal{qs}")
+    return _list_entries_impl(
+        agent=agent,
+        kind=kind,
+        limit=limit or 20,
+        offset=offset or 0,
+    )
 
 
 def _op_rj_link(
@@ -110,7 +100,7 @@ def _op_rj_link(
         body["to_entry"] = to_entry
     if to_entity is not None:
         body["to_entity"] = to_entity
-    return _cx("POST", f"/reflective-journal/{entry_id}/links", body)
+    return _add_link_impl(entry_id, body)
 
 
 def _op_rj_consolidate(
@@ -129,7 +119,6 @@ def _op_rj_consolidate(
     source_entry_ids: list[int] | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    """Convenience wrapper: writes a consolidation entry with structured data."""
     required = {
         "agent": agent,
         "register": register,

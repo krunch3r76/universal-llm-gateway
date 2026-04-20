@@ -162,3 +162,13 @@ def create_relationship(
     item = RelationshipItem(**rows[0])
     response.status_code = status.HTTP_201_CREATED if was_new else status.HTTP_200_OK
     return RelationshipCreateResponse(was_new=was_new, item=item)
+
+
+def _list_relationships_impl(**kwargs: object) -> dict[str, object]:
+    return list_relationships(**kwargs).model_dump(mode="json")
+
+
+def _create_relationship_impl(payload: dict[str, object]) -> dict[str, object]:
+    response = Response()
+    data = create_relationship(RelationshipCreate.model_validate(payload), response)
+    return data.model_dump(mode="json")

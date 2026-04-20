@@ -158,9 +158,23 @@ def _normalize_pipeline_exception(
     if isinstance(proxy_detail, dict):
         data = proxy_detail
 
-    if hasattr(exc, "to_dict"):
+    # Step-level wrappers (e.g. ``PipelineExecutionError`` raised by the DAG
+    # executor) lack ``to_dict`` but preserve the originating step exception
+    # as ``__cause__``. Walk the cause chain so structured ``PipelineError``
+    # subclasses (e.g. ``RemoteMcpUnsupportedError``) surface their ``code``
+    # to the final error envelope rather than collapsing to the generic
+    # ``pipeline_execution_failed`` fallback.
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__
+
+    for candidate in chain:
+        if not hasattr(candidate, "to_dict"):
+            continue
         try:
-            payload = exc.to_dict()
+            payload = candidate.to_dict()
         except Exception:  # noqa: BLE001 — upstream exc shape varies
             payload = None
         if isinstance(payload, dict):
@@ -169,7 +183,7 @@ def _normalize_pipeline_exception(
                 or payload.get("error_type")
                 or "pipeline_execution_failed"
             )
-            message = str(payload.get("message") or payload.get("error") or exc)
+            message = str(payload.get("message") or payload.get("error") or candidate)
             return code, message, data
     return "pipeline_execution_failed", str(exc), data
 

@@ -210,3 +210,24 @@ def list_edge_types() -> list[dict[str, Any]]:
         cortex_conn(),
         "SELECT type, description, directional FROM session_edge_types ORDER BY type",
     )
+
+
+def _create_edge_impl(payload: dict[str, Any]) -> dict[str, Any]:
+    return create_edge(EdgeCreate.model_validate(payload)).model_dump(mode="json")
+
+
+def _list_edges_impl(**kwargs: object) -> dict[str, Any]:
+    return list_edges(**kwargs).model_dump(mode="json")
+
+
+def _traverse_edges_impl(**kwargs: object) -> dict[str, Any]:
+    return traverse(**kwargs).model_dump(mode="json")
+
+
+def _retire_edge_impl(edge_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    body = EdgeRetire.model_validate(payload) if payload else None
+    return retire_edge(edge_id, body).model_dump(mode="json")
+
+
+def _list_edge_types_impl() -> list[dict[str, Any]]:
+    return list_edge_types()

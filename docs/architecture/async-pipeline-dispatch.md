@@ -301,7 +301,7 @@ bounded tool-use loop via `libs/agent_seat/native_loop`, and conditionally
 hydrates the dispatched agent's Cortex boot when the caller specifies a
 persona.
 
-Caller shape:
+Pipeline caller shape:
 
 ```json
 {
@@ -316,8 +316,22 @@ Caller shape:
 }
 ```
 
-`pipeline_options.model` is required; `agent` is optional; everything else
-has sensible defaults.
+`pipeline_options.model` is required; `agent` is optional; everything else has
+sensible defaults.
+
+MCP callers typically reach this via the public `frontier_generate` tool
+(async dispatch to `POST /api/v1/frontier/generate`):
+
+```python
+frontier_generate(
+    agent="orion",
+    messages=[{"role": "user", "content": "..."}],
+    boot="team",
+    generation_options={"reasoning_effort": "high"},
+    caller_agent="cursor",
+)
+# Then: pipeline(op="result", execution_id=<id>, wait_seconds=60.0)
+```
 
 ### Runtime modes
 
@@ -399,7 +413,7 @@ The tool-resolution loop is the single source of truth for both transports:
 | Caller | Transport | Where |
 |---|---|---|
 | Stargate pipeline (`frontier_dispatch_v1`) | In-process `CloudProxyClient` | `systems/pipeline/core/handlers/frontier_dispatch.py` |
-| MCP `frontier_generate` | HTTP → Stargate `/api/v1/providers/{provider}/...` | `services/mcp-server/tools/_frontier_core.py` |
+| MCP `frontier_generate` | HTTP → Stargate `POST /api/v1/frontier/generate` (async dispatch envelope) | `services/mcp-server/tools/frontier.py` |
 
 Both callers depend on `libs/agent_seat/native_loop.run_native_tool_loop`
 (loop), `libs/llm_adapters/*` (provider request/response translation), and

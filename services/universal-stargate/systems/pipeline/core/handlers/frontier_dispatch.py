@@ -8,10 +8,21 @@ MCP's ``frontier_generate``.
 
 Persona is a runtime option:
 
-- ``pipeline_options.agent`` ∈ {orion, oppie, bard, web}: team-seat mode.
+- ``pipeline_options.agent`` ∈ {orion, oppie, bard, api_claude}: team-seat mode.
   Hydrates that agent's Cortex boot, injects birth prompt + team toolset.
+  oppie → xAI, orion → OpenAI, bard → Google, api_claude → Anthropic.
+  web (Claude Web) is not a valid agent — not reachable via API.
 - ``agent`` omitted: persona-free mode. Raw native call. Optional
-  read-only toolset via ``pipeline_options.inject_tools`` (default True).
+  read-only toolset via ``pipeline_options.mcp`` (default True).
+
+MCP + remote_mcp semantics:
+
+- ``pipeline_options.mcp`` (default ``True``) — gate on whether any MCP
+  client-side tooling is available to the model for this call.
+- ``pipeline_options.remote_mcp`` — meaningful only when ``mcp=True`` AND the
+  resolved provider is ``anthropic`` (native ``mcp_toolset`` path). All other
+  providers must have ``remote_mcp=False``; ``remote_mcp=True`` on a
+  non-anthropic provider — or with ``mcp=False`` — is rejected structurally.
 
 YAML shape::
 
@@ -39,6 +50,7 @@ from agent_seat import (
     TOOL_DEFINITIONS,
     assemble_system_prompt,
     hydrate_agent,
+    resolve_tools,
 )
 from agent_seat.native_loop import NativeLoopResult, run_native_tool_loop
 from llm_adapters import FrontierRequest, effective_provider_for_model
@@ -51,10 +63,12 @@ from ..events.dispatch import (
     PipelineFrontierDispatchHydrated,
     PipelineFrontierDispatchRemoteMcpEnabled,
     PipelineFrontierDispatchRemoteMcpMisconfigured,
+    PipelineFrontierDispatchRemoteMcpUnsupported,
     PipelineFrontierDispatchStarted,
     PipelineFrontierDispatchToolCalled,
     PipelineFrontierDispatchToolFailed,
 )
+from ..execution.errors import RemoteMcpUnsupportedError
 from ..execution.resolver import NamespaceResolver, traverse_path
 from .builtin import BaseHandler
 from .frontier_dispatch_observability import emit_post_loop_observability
@@ -82,7 +96,17 @@ class FrontierDispatchHandler(BaseHandler):
         opts = context.options
         model = self._resolve_model(opts, step)
         agent = self._resolve_agent(opts, step)
-        remote_mcp = bool(opts.get("remote_mcp", False))
+        provider = effective_provider_for_model(ModelId.parse(model).provider)
+        mcp_enabled = bool(opts.get("mcp", True))
+        remote_mcp = self._resolve_remote_mcp(
+            opts=opts,
+            step=step,
+            context=context,
+            provider=provider,
+            model=model,
+            agent=agent,
+            mcp_enabled=mcp_enabled,
+        )
         max_turns = int(
             opts.get("max_tool_turns", step.get_domain_field("max_tool_turns", 10))
             or 10
@@ -96,43 +120,60 @@ class FrontierDispatchHandler(BaseHandler):
 
         user_prompt = self._resolve_user_prompt(step, context)
 
-        if agent:
-            bundle = await hydrate_agent(agent, transcript_id)
-            self._publish_bus_event(
-                context,
-                PipelineFrontierDispatchHydrated(
-                    agent=agent,
-                    execution_id=context.execution_id,
-                    briefing_bytes=bundle.section_counts.get("briefing_bytes", 0),
-                    section_counts=bundle.section_counts,
-                    continuation_id=bundle.continuation_id,
-                ),
-            )
-            system = assemble_system_prompt(
-                agent,
-                briefing_card_md=bundle.briefing_card_md,
-                continuation_md=bundle.continuation_md,
-                extra_system=step.system_prompt,
-            )
-            if remote_mcp:
+        # Tool injection matrix — see module docstring for the full semantics.
+        # mcp=False                 → no tools
+        # mcp=True,  remote_mcp=True  → no tools (anthropic server-side mcp_toolset)
+        # mcp=True,  remote_mcp=False → inject client-side TOOL_DEFINITIONS
+        opt_tools = opts.get("tools")
+        skip_legacy_tier_block = False
+        if isinstance(opt_tools, list):
+            resolved_names = [str(name) for name in opt_tools if isinstance(name, str)]
+            if len(resolved_names) != len(opt_tools):
+                raise ValueError("pipeline_options.tools must be a list[str]")
+            if not mcp_enabled or remote_mcp:
                 tools: list[dict[str, Any]] = []
             else:
-                tools = [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
-            hydration_meta: dict[str, Any] = {
-                "agent": agent,
-                "section_counts": bundle.section_counts,
-                "continuation_id": bundle.continuation_id,
-            }
-        else:
+                tools = resolve_tools(resolved_names)
             system = self._resolve_system_prompt(step, context)
-            inject_tools = bool(opts.get("inject_tools", True))
-            if remote_mcp:
-                tools = []
-            else:
-                tools = list(TOOL_DEFINITIONS) if inject_tools else []
-            hydration_meta = {"agent": None}
+            hydration_meta = {"agent": None, "tool_resolution": "endpoint-supplied"}
+            skip_legacy_tier_block = True
 
-        provider = effective_provider_for_model(ModelId.parse(model).provider)
+        if not skip_legacy_tier_block:
+            if agent:
+                bundle = await hydrate_agent(agent, transcript_id)
+                self._publish_bus_event(
+                    context,
+                    PipelineFrontierDispatchHydrated(
+                        agent=agent,
+                        execution_id=context.execution_id,
+                        briefing_bytes=bundle.section_counts.get("briefing_bytes", 0),
+                        section_counts=bundle.section_counts,
+                        continuation_id=bundle.continuation_id,
+                    ),
+                )
+                system = assemble_system_prompt(
+                    agent,
+                    briefing_card_md=bundle.briefing_card_md,
+                    continuation_md=bundle.continuation_md,
+                    extra_system=step.system_prompt,
+                )
+                if not mcp_enabled or remote_mcp:
+                    tools = []
+                else:
+                    tools = [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+                hydration_meta = {
+                    "agent": agent,
+                    "section_counts": bundle.section_counts,
+                    "continuation_id": bundle.continuation_id,
+                }
+            else:
+                system = self._resolve_system_prompt(step, context)
+                if not mcp_enabled or remote_mcp:
+                    tools = []
+                else:
+                    tools = list(TOOL_DEFINITIONS)
+                hydration_meta = {"agent": None}
+
         if remote_mcp:
             self._publish_bus_event(
                 context,
@@ -288,6 +329,73 @@ class FrontierDispatchHandler(BaseHandler):
             "hydration": hydration_meta,
         }
         return output
+
+    # Providers that support native remote MCP (server-side mcp_toolset).
+    # Only anthropic has a production path today — openai/xai/google models
+    # reach MCP tooling through client-side injection only. Attempting
+    # ``remote_mcp=True`` on any other provider short-circuits before the
+    # native call with ``RemoteMcpUnsupportedError``.
+    _REMOTE_MCP_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+
+    def _resolve_remote_mcp(
+        self,
+        *,
+        opts: dict[str, Any],
+        step: StepConfig,
+        context: PipelineContext,
+        provider: str,
+        model: str,
+        agent: str | None,
+        mcp_enabled: bool,
+    ) -> bool:
+        """Resolve and validate ``remote_mcp`` against provider + mcp.
+
+        Default: ``True`` iff ``provider=anthropic`` and ``mcp_enabled`` —
+        otherwise ``False``. Explicit ``remote_mcp=True`` is rejected when
+        either (a) ``mcp_enabled=False`` (remote_mcp requires mcp) or (b)
+        the provider is not in ``_REMOTE_MCP_PROVIDERS`` (anthropic-only).
+        Violations emit ``pipeline.frontier.dispatch.remotemcp.unsupported``
+        and raise ``RemoteMcpUnsupportedError`` before hydration.
+        """
+        supports = provider in self._REMOTE_MCP_PROVIDERS
+        raw = opts.get("remote_mcp")
+        if raw is None:
+            return supports and mcp_enabled
+        requested = bool(raw)
+        if not requested:
+            return False
+        reason: str | None = None
+        if not mcp_enabled:
+            reason = (
+                "remote_mcp=True requires mcp=True — remote MCP is only "
+                "meaningful when client-side MCP tooling is enabled"
+            )
+        elif not supports:
+            reason = (
+                f"remote_mcp=True is only supported for anthropic models; "
+                f"provider={provider!r} has no native mcp_toolset path"
+            )
+        if reason is not None:
+            self._publish_bus_event(
+                context,
+                PipelineFrontierDispatchRemoteMcpUnsupported(
+                    execution_id=context.execution_id,
+                    agent=agent,
+                    model=model,
+                    provider=provider,
+                    requested=requested,
+                    reason=reason,
+                ),
+            )
+            raise RemoteMcpUnsupportedError(
+                step_name=step.id,
+                provider=provider,
+                model=model,
+                agent=agent,
+                requested=requested,
+                reason=reason,
+            )
+        return True
 
     def _resolve_model(self, opts: dict[str, Any], step: StepConfig) -> str:
         """Resolve model from ``pipeline_options.model`` or ``step.model_ref``."""

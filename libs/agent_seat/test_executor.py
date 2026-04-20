@@ -38,57 +38,58 @@ async def test_execute_unknown_tool_returns_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_cortex_entity_get_builds_path(
+async def test_cortex_dispatch_entity_get_relay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_request(method: str, path: str, body: dict | None = None) -> dict:
-        captured.update({"method": method, "path": path, "body": body})
+    async def fake_dispatch(tool: str, arguments: dict[str, Any]) -> dict:
+        captured.update({"tool": tool, "arguments": arguments})
         return {"entity": "ok"}
 
-    monkeypatch.setattr(_ex, "_cortex_request", fake_request)
+    monkeypatch.setattr(_ex, "_cortex_dispatch", fake_dispatch)
 
-    result = await execute_tool("cortex_entity_get", {"entity_id": "person:jane-doe"})
-    assert captured["method"] == "GET"
-    assert captured["path"] == "/entities/person:jane-doe"
+    result = await execute_tool(
+        "cortex",
+        {"tool": "entity_get", "arguments": {"entity_id": "person:jane-doe"}},
+    )
+    assert captured["tool"] == "entity_get"
+    assert captured["arguments"] == {"entity_id": "person:jane-doe"}
     assert json.loads(result) == {"entity": "ok"}
 
 
 @pytest.mark.asyncio
-async def test_execute_cortex_dispatch_entities_lists(
+async def test_execute_cortex_dispatch_entities_forwards(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_request(method: str, path: str, body: dict | None = None) -> dict:
-        captured.update({"method": method, "path": path, "body": body})
+    async def fake_dispatch(tool: str, arguments: dict[str, Any]) -> dict:
+        captured.update({"tool": tool, "arguments": arguments})
         return {"items": []}
 
-    monkeypatch.setattr(_ex, "_cortex_request", fake_request)
+    monkeypatch.setattr(_ex, "_cortex_dispatch", fake_dispatch)
 
     result = await execute_tool(
         "cortex",
         {"tool": "entities", "arguments": '{"type": "todo", "limit": 5}'},
     )
-    assert captured["method"] == "GET"
-    assert "type=todo" in captured["path"]
-    assert "limit=5" in captured["path"]
-    assert captured["body"] is None
+    assert captured["tool"] == "entities"
+    assert captured["arguments"] == {"type": "todo", "limit": 5}
     assert json.loads(result) == {"items": []}
 
 
 @pytest.mark.asyncio
-async def test_execute_cortex_dispatch_assert_posts_body(
+async def test_execute_cortex_dispatch_assert_forwards(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_request(method: str, path: str, body: dict | None = None) -> dict:
-        captured.update({"method": method, "path": path, "body": body})
+    async def fake_dispatch(tool: str, arguments: dict[str, Any]) -> dict:
+        captured.update({"tool": tool, "arguments": arguments})
         return {"id": 42}
 
-    monkeypatch.setattr(_ex, "_cortex_request", fake_request)
+    monkeypatch.setattr(_ex, "_cortex_dispatch", fake_dispatch)
 
     args = {
         "entity_id": "decision:x",
@@ -100,13 +101,23 @@ async def test_execute_cortex_dispatch_assert_posts_body(
         "cortex",
         {"tool": "assert", "arguments": json.dumps(args)},
     )
-    assert captured["method"] == "POST"
-    assert captured["path"] == "/assertions"
-    assert captured["body"] == args
+    assert captured["tool"] == "assert"
+    assert captured["arguments"] == args
 
 
 @pytest.mark.asyncio
-async def test_execute_cortex_dispatch_unknown_op() -> None:
+async def test_execute_cortex_dispatch_unknown_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_dispatch(tool: str, arguments: dict[str, Any]) -> dict:
+        return {
+            "error": (
+                f"Unknown cortex tool {tool!r}. Available: ['assert', 'entities']"
+            ),
+        }
+
+    monkeypatch.setattr(_ex, "_cortex_dispatch", fake_dispatch)
+
     result = await execute_tool(
         "cortex",
         {"tool": "nonsense_op", "arguments": "{}"},

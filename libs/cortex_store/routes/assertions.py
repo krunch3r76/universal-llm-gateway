@@ -1023,3 +1023,29 @@ def enrich_assertion_endpoint(
         enrichments_run=sorted(kinds),
         results=results,
     )
+
+
+def _list_assertions_impl(**kwargs: object) -> dict[str, object]:
+    data = list_assertions(**kwargs)
+    return data.model_dump(mode="json")
+
+
+def _search_assertions_impl(**kwargs: object) -> dict[str, object]:
+    data = search_assertions(**kwargs)
+    return data.model_dump(mode="json")
+
+
+def _create_assertion_impl(payload: dict[str, object]) -> dict[str, object]:
+    response = Response()
+    result = create_assertion(AssertionCreate.model_validate(payload), response)
+    return result.model_dump(mode="json")
+
+
+def _update_assertion_impl(assertion_id: int, payload: dict[str, object]) -> dict[str, object]:
+    result = update_assertion(assertion_id, AssertionUpdate.model_validate(payload))
+    return result.model_dump(mode="json")
+
+
+def _supersede_assertion_impl(payload: dict[str, object]) -> dict[str, object]:
+    result = supersede_assertion(SupersedeRequest.model_validate(payload))
+    return result.model_dump(mode="json")

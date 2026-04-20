@@ -382,6 +382,46 @@ def PipelineFrontierDispatchRemoteMcpMisconfigured(  # noqa: N802
 
 
 @event_factory
+def PipelineFrontierDispatchRemoteMcpUnsupported(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    requested: bool,
+    reason: str,
+) -> Event:
+    """Emitted when the step handler rejects a ``remote_mcp`` request that
+    conflicts with the resolved provider's capability matrix.
+
+    Precedes the terminal ``pipeline_execution_failed`` carrying error
+    ``code=remote_mcp_unsupported``. Distinguishes a structural
+    provider/capability mismatch (caller asked for a mode the provider
+    cannot fulfil) from ``remotemcp.misconfigured`` (env resolution failure)
+    and from upstream provider errors.
+
+    Payload:
+        execution_id: Pipeline execution UUID
+        agent: Persona identity if set, else ``None``
+        model: Raw model string as supplied by the caller
+        provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
+        requested: Value the caller asked for (True or False)
+        reason: Human-readable explanation of the capability violation
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.remotemcp.unsupported",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "requested": requested,
+            "reason": reason,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def PipelineFrontierDispatchStarted(  # noqa: N802
     execution_id: str,
     agent: str | None,

@@ -227,6 +227,52 @@ class HandlerTimeoutError(PipelineError):
         }
 
 
+@dataclass
+class RemoteMcpUnsupportedError(PipelineError):
+    """Raised by ``frontier_dispatch_v1`` when the requested ``remote_mcp``
+    value is incompatible with the resolved provider's current capability.
+
+    Enforcement lives in the step handler so direct pipeline dispatches (not
+    just MCP ``frontier_generate``) are validated. Capability matrix:
+
+    - ``anthropic``: ``remote_mcp`` MUST be True (native MCP is production-stable).
+    - ``openai``: ``remote_mcp`` MUST be False until vortex auth passthrough
+      is fixed on the OpenAI responses path.
+    - ``google``: ``remote_mcp`` MUST be False — Gemini has no native remote
+      MCP protocol.
+    - ``xai``: either value is allowed (False is default; True requires the
+      multi-agent model variant).
+    """
+
+    step_name: str
+    provider: str
+    model: str
+    agent: str | None
+    requested: bool
+    reason: str
+
+    def __str__(self) -> str:
+        who = f" agent={self.agent!r}" if self.agent else ""
+        return (
+            f"[Step '{self.step_name}'] remote_mcp={self.requested} unsupported "
+            f"for provider={self.provider!r} model={self.model!r}{who}: "
+            f"{self.reason}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "RemoteMcpUnsupportedError",
+            "code": "remote_mcp_unsupported",
+            "retryable": self.retryable,
+            "step_name": self.step_name,
+            "provider": self.provider,
+            "model": self.model,
+            "agent": self.agent,
+            "requested": self.requested,
+            "reason": self.reason,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class MapPartialFailureError(PipelineError):
     """

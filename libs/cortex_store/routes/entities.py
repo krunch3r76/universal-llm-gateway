@@ -70,23 +70,19 @@ def _validate_workflow_state(
         )
 
 
-@router.get("", response_model=EntityList)
-def list_entities(
-    type: str | None = None,
-    workflow_state: str | None = Query(
-        None,
-        description="Filter by typed workflow_state column (replaces the "
-        "json_extract(attributes,'$.status') pattern).",
-    ),
-    limit: int = Query(50, ge=1, le=500),
-) -> EntityList:
-    """List entities, optionally constrained to one entity type / workflow_state."""
+def _list_entities_impl(
+    conn: sqlite3.Connection,
+    *,
+    entity_type: str | None = None,
+    workflow_state: str | None = None,
+    limit: int = 50,
+) -> dict[str, list[dict[str, object]]]:
     clauses: list[str] = []
     params: list[str | int] = []
 
-    if type:
+    if entity_type:
         clauses.append("type = ?")
-        params.append(type)
+        params.append(entity_type)
 
     if workflow_state is not None:
         clauses.append("workflow_state = ?")
@@ -98,16 +94,26 @@ def list_entities(
         f"created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
     )
     params.append(limit)
+    rows = query(conn, sql, tuple(params))
+    return {"items": [EntitySummary(**row).model_dump() for row in rows]}
 
-    conn = None
-    try:
-        conn = cortex_conn()
-        rows = query(conn, sql, tuple(params))
-    finally:
-        if conn:
-            conn.close()
 
-    return EntityList(items=[EntitySummary(**row) for row in rows])
+@router.get("", response_model=EntityList)
+def list_entities(
+    type: str | None = None,
+    workflow_state: str | None = Query(
+        None,
+        description="Filter by typed workflow_state column (replaces the "
+        "json_extract(attributes,'$.status') pattern).",
+    ),
+    limit: int = Query(50, ge=1, le=500),
+) -> EntityList:
+    """List entities, optionally constrained to one entity type / workflow_state."""
+    with cortex_conn() as conn:
+        data = _list_entities_impl(
+            conn, entity_type=type, workflow_state=workflow_state, limit=limit
+        )
+    return EntityList(items=[EntitySummary(**item) for item in data["items"]])
 
 
 _ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
@@ -130,6 +136,86 @@ _RELATIONSHIP_FROM = """
 """
 
 
+def _get_entity_impl(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    include_edges: bool = False,
+    edge_limit: int = 20,
+    source: str = "agent",
+    agent: str = "web",
+    session_id: str | None = None,
+) -> dict[str, object]:
+    entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    if not entities:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Entity not found: {entity_id}",
+        )
+    entity = entities[0]
+
+    assertion_rows = query(
+        conn,
+        f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
+        "ORDER BY created_at DESC",
+        (entity_id,),
+    )
+
+    rel_rows = query(
+        conn,
+        f"SELECT {_RELATIONSHIP_SELECT} {_RELATIONSHIP_FROM} "
+        "WHERE (r.from_entity = ? OR r.to_entity = ?) AND r.active = 1 "
+        "ORDER BY r.created_at DESC",
+        (entity_id, entity_id),
+    )
+
+    edge_rows: list[dict] = []
+    if include_edges:
+        edge_rows = query(
+            conn,
+            f"SELECT {_EDGE_COLS} FROM session_edges "
+            "WHERE (from_node = ? OR to_node = ?) "
+            "AND valid_until IS NULL "
+            "ORDER BY created_at DESC LIMIT ?",
+            (entity_id, entity_id, edge_limit),
+        )
+
+    if source != "boot":
+        try:
+            conn.execute(
+                "INSERT INTO entity_access_log "
+                "(entity_id, agent, operation, source, session_id) "
+                "VALUES (?, ?, 'entity_get', ?, ?)",
+                (entity_id, agent, source, session_id),
+            )
+            conn.commit()
+        except Exception:
+            logger.debug("Access log insert failed for %s", entity_id)
+
+    assertions: list[AssertionItem] = []
+    for row in assertion_rows:
+        try:
+            assertions.append(AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS)))
+        except Exception:
+            logger.error(
+                "Skipping assertion %s for entity %s — deserialization failed",
+                row.get("id"),
+                entity_id,
+                exc_info=True,
+            )
+
+    relationships = [RelationshipItem(**row) for row in rel_rows]
+    edges = [EdgeItem(**row) for row in edge_rows]
+    hints = detect_expired_unresolved([a.model_dump() for a in assertions])
+    return EntityDetail(
+        **decode_row(entity, _ENTITY_JSON_FIELDS),
+        assertions=assertions,
+        relationships=relationships,
+        reasoning_edges=edges,
+        action_hints=hints or None,
+    ).model_dump(mode="json")
+
+
 @router.get("/{entity_id}", response_model=EntityDetail)
 def get_entity(
     entity_id: str,
@@ -145,144 +231,65 @@ def get_entity(
     source = request.headers.get("x-cortex-source", "agent")
     agent = request.headers.get("x-cortex-agent", "web")
     session_id = request.headers.get("x-cortex-session")
-
-    conn = None
-    try:
-        conn = cortex_conn()
-        entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
-        if not entities:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Entity not found: {entity_id}",
-            )
-        entity = entities[0]
-
-        assertion_rows = query(
+    with cortex_conn() as conn:
+        result = _get_entity_impl(
             conn,
-            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
-            "ORDER BY created_at DESC",
-            (entity_id,),
+            entity_id=entity_id,
+            include_edges=include_edges,
+            edge_limit=edge_limit,
+            source=source,
+            agent=agent,
+            session_id=session_id,
         )
-
-        rel_rows = query(
-            conn,
-            f"SELECT {_RELATIONSHIP_SELECT} {_RELATIONSHIP_FROM} "
-            "WHERE (r.from_entity = ? OR r.to_entity = ?) AND r.active = 1 "
-            "ORDER BY r.created_at DESC",
-            (entity_id, entity_id),
-        )
-
-        edge_rows: list[dict] = []
-        if include_edges:
-            edge_rows = query(
-                conn,
-                f"SELECT {_EDGE_COLS} FROM session_edges "
-                "WHERE (from_node = ? OR to_node = ?) "
-                "AND valid_until IS NULL "
-                "ORDER BY created_at DESC LIMIT ?",
-                (entity_id, entity_id, edge_limit),
-            )
-
-        if source != "boot":
-            try:
-                conn.execute(
-                    "INSERT INTO entity_access_log "
-                    "(entity_id, agent, operation, source, session_id) "
-                    "VALUES (?, ?, 'entity_get', ?, ?)",
-                    (entity_id, agent, source, session_id),
-                )
-                conn.commit()
-            except Exception:
-                logger.debug("Access log insert failed for %s", entity_id)
-    finally:
-        if conn:
-            conn.close()
-
-    assertions: list[AssertionItem] = []
-    for row in assertion_rows:
-        try:
-            assertions.append(AssertionItem(**decode_row(row, _ASSERTION_JSON_FIELDS)))
-        except Exception:
-            logger.error(
-                "Skipping assertion %s for entity %s — deserialization failed",
-                row.get("id"),
-                entity_id,
-                exc_info=True,
-            )
-    relationships = [RelationshipItem(**row) for row in rel_rows]
-    edges = [EdgeItem(**row) for row in edge_rows]
-    hints = detect_expired_unresolved([a.model_dump() for a in assertions])
-    return EntityDetail(
-        **decode_row(entity, _ENTITY_JSON_FIELDS),
-        assertions=assertions,
-        relationships=relationships,
-        reasoning_edges=edges,
-        action_hints=hints or None,
-    )
+    return EntityDetail(**result)
 
 
 _JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
 
-@router.patch("/{entity_id}", response_model=EntityDetail)
-def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
-    """Update mutable fields on an entity.
-
-    Uses ``model_fields_set`` so omitted keys are untouched while explicitly
-    sending ``null`` clears the field (sets it to SQL NULL).
-    """
-    conn = None
-    try:
-        conn = cortex_conn()
-        existing = query(
-            conn, "SELECT id, type FROM entities WHERE id = ?", (entity_id,)
-        )
-        if not existing:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Entity not found: {entity_id}",
-            )
-
-        if (
-            "workflow_state" in body.model_fields_set
-            and body.workflow_state is not None
-        ):
-            _validate_workflow_state(conn, existing[0]["type"], body.workflow_state)
-
-        sets: list[str] = []
-        params: list[object] = []
-        for field in body.model_fields_set:
-            value = getattr(body, field)
-            if field in _JSON_COLUMNS:
-                value = json_encode(value)
-            sets.append(f"{field} = ?")
-            params.append(value)
-
-        if not sets:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="No updatable fields provided",
-            )
-
-        now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-        sets.append("updated_at = ?")
-        params.append(now)
-        params.append(entity_id)
-
-        execute(
-            conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params)
+def _update_entity_impl(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    updates: dict[str, object],
+) -> dict[str, object]:
+    existing = query(conn, "SELECT id, type FROM entities WHERE id = ?", (entity_id,))
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Entity not found: {entity_id}",
         )
 
-        rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
-        assertion_rows = query(
-            conn,
-            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
-            "ORDER BY created_at DESC",
-            (entity_id,),
+    if "workflow_state" in updates and updates["workflow_state"] is not None:
+        _validate_workflow_state(conn, existing[0]["type"], str(updates["workflow_state"]))
+
+    sets: list[str] = []
+    params: list[object] = []
+    for field, value in updates.items():
+        if field in _JSON_COLUMNS:
+            value = json_encode(value)
+        sets.append(f"{field} = ?")
+        params.append(value)
+
+    if not sets:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No updatable fields provided",
         )
-    finally:
-        if conn:
-            conn.close()
+
+    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sets.append("updated_at = ?")
+    params.append(now)
+    params.append(entity_id)
+    execute(conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
+
+    rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    assertion_rows = query(
+        conn,
+        f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
+        "ORDER BY created_at DESC",
+        (entity_id,),
+    )
 
     assertions: list[AssertionItem] = []
     for row in assertion_rows:
@@ -297,67 +304,84 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
             )
     return EntityDetail(
         **decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=assertions
-    )
+    ).model_dump(mode="json")
 
 
-@router.post("", response_model=EntityDetail, status_code=status.HTTP_201_CREATED)
-def create_entity(body: EntityCreate) -> EntityDetail:
-    """Create an entity and return the stored entity detail payload."""
+@router.patch("/{entity_id}", response_model=EntityDetail)
+def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
+    """Update mutable fields on an entity.
+
+    Uses ``model_fields_set`` so omitted keys are untouched while explicitly
+    sending ``null`` clears the field (sets it to SQL NULL).
+    """
+    updates = {field: getattr(body, field) for field in body.model_fields_set}
+    with cortex_conn() as conn:
+        result = _update_entity_impl(conn, entity_id=entity_id, updates=updates)
+    return EntityDetail(**result)
+
+
+def _create_entity_impl(
+    conn: sqlite3.Connection, payload: dict[str, object]
+) -> dict[str, object]:
+    body = EntityCreate.model_validate(payload)
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    conn = None
-    try:
-        conn = cortex_conn()
+    workflow_state = body.workflow_state
+    if workflow_state is not None:
+        _validate_workflow_state(conn, body.type, workflow_state)
+    else:
+        schema = _workflow_schema(conn, body.type)
+        if schema is not None:
+            workflow_state = str(schema["initial_state"])
 
-        workflow_state = body.workflow_state
-        if workflow_state is not None:
-            _validate_workflow_state(conn, body.type, workflow_state)
-        else:
-            schema = _workflow_schema(conn, body.type)
-            if schema is not None:
-                workflow_state = str(schema["initial_state"])
-
-        conn.execute(
-            "INSERT INTO entities (id, type, name, description, status, "
-            "workflow_state, aliases, "
-            "attributes, notes, source_uri, content_hash, "
-            "retention_policy, retention_ttl_days, "
-            "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                body.id,
-                body.type,
-                body.name,
-                body.description,
-                body.status or "confirmed",
-                workflow_state,
-                json_encode(body.aliases),
-                json_encode(body.attributes),
-                body.notes,
-                body.source_uri,
-                body.content_hash,
-                body.retention_policy or "permanent",
-                body.retention_ttl_days,
-                now,
-                now,
-            ),
-        )
-        conn.commit()
-        rows = query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
-    except sqlite3.IntegrityError:  # Assuming sqlite3 is the underlying DB
-        logger.warning("Entity create conflict for id=%s", body.id)
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Entity already exists: {body.id}",
-        )
-    finally:
-        if conn:
-            conn.close()
-
+    conn.execute(
+        "INSERT INTO entities (id, type, name, description, status, "
+        "workflow_state, aliases, "
+        "attributes, notes, source_uri, content_hash, "
+        "retention_policy, retention_ttl_days, "
+        "created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            body.id,
+            body.type,
+            body.name,
+            body.description,
+            body.status or "confirmed",
+            workflow_state,
+            json_encode(body.aliases),
+            json_encode(body.attributes),
+            body.notes,
+            body.source_uri,
+            body.content_hash,
+            body.retention_policy or "permanent",
+            body.retention_ttl_days,
+            now,
+            now,
+        ),
+    )
+    conn.commit()
+    rows = query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
     if not rows:
         logger.error("Entity create succeeded but no row returned for id=%s", body.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Entity created but could not be read back",
         )
-    return EntityDetail(**decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=[])
+    return EntityDetail(**decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=[]).model_dump(
+        mode="json"
+    )
+
+
+@router.post("", response_model=EntityDetail, status_code=status.HTTP_201_CREATED)
+def create_entity(body: EntityCreate) -> EntityDetail:
+    """Create an entity and return the stored entity detail payload."""
+    with cortex_conn() as conn:
+        try:
+            result = _create_entity_impl(conn, body.model_dump())
+        except sqlite3.IntegrityError:
+            logger.warning("Entity create conflict for id=%s", body.id)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Entity already exists: {body.id}",
+            )
+    return EntityDetail(**result)

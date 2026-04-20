@@ -9,9 +9,16 @@ its birth prompt — that's the closest semantics in the existing edge taxonomy.
 (A dedicated ``has_birth`` type could be registered later; the ID coupling
 ``prompt:{slug}-birth`` ↔ ``ai_agent:{slug}`` already carries the binding.)
 
+Also patches ``ai_agent:{slug}.attributes`` with the persona contract
+(frontier_kind, default_model, allowed_models, tools, allowed_options,
+persona_seed_ref) from ``AGENT_REGISTRY``, for consumers such as
+``libs/agent_seat/hydrate_agent`` and the Stargate ``/api/v1/frontier/generate``
+endpoint.
+
 Idempotence: the sync compares the stored ``content_hash`` (sha256 of the
 file) and only issues an update when it changes. Edges are created only when
-missing. Re-runs with unchanged files are no-ops.
+missing. Persona attributes are patched only when they differ from the desired
+contract. Re-runs with unchanged files and attrs are no-ops.
 
 Usage::
 
@@ -30,6 +37,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "libs"))
@@ -37,23 +45,111 @@ sys.path.insert(0, str(_REPO_ROOT / "libs"))
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
 # ────────────────────────────────────────────────────────────────────────────
-# Agent registry — filename stem → canonical metadata. The filename drives
-# the mapping; this table adds the human-readable name and native provider
-# persisted on the Cortex entity.
+# Agent registry — filename stem → canonical metadata. Drives:
+# (a) the prompt entity (name / native_provider on prompt:{slug}-birth)
+# (b) the persona contract written onto ai_agent:{slug}.attributes
+#     (frontier_kind, default_model, allowed_models, tools, allowed_options,
+#      persona_seed_ref) — consumed by libs/agent_seat/hydrate_agent and the
+#     Stargate /api/v1/frontier/generate endpoint.
+#
+# `tools` / `allowed_options`:
+#   None → permissive (full tool registry / any generation_options key).
+#   list → strict whitelist enforced at the endpoint.
 # ────────────────────────────────────────────────────────────────────────────
 
-AGENT_REGISTRY: dict[str, dict[str, str]] = {
-    "orion": {"name": "Orion", "provider": "OpenAI"},
-    "oppie": {"name": "Oppie", "provider": "xAI"},
-    "bard": {"name": "Bard", "provider": "Google"},
-    "web-claude": {"name": "Web Claude", "provider": "Anthropic"},
-    "api-claude": {"name": "API Claude", "provider": "Anthropic"},
-    "cursor-claude": {"name": "Cursor Claude", "provider": "Anthropic"},
+AGENT_REGISTRY: dict[str, dict[str, object]] = {
+    "orion": {
+        "name": "Orion",
+        "provider": "OpenAI",
+        "frontier_kind": "openai",
+        "default_model": "openai/gpt-5.4",
+        "allowed_models": [
+            "openai/gpt-5.4",
+            "openai/gpt-5.4-mini",
+            "openai/o4-mini",
+            "openai/o3",
+        ],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/orion-birth.md",
+    },
+    "oppie": {
+        "name": "Oppie",
+        "provider": "xAI",
+        "frontier_kind": "xai",
+        "default_model": "xai/grok-4.20-multi-agent-0309",
+        "allowed_models": ["xai/grok-4.20-multi-agent-0309"],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "notes/system/prompts/oppie-seed-mcp-v1.5.md",
+    },
+    "bard": {
+        "name": "Bard",
+        "provider": "Google",
+        "frontier_kind": "google",
+        "default_model": "google/gemini-2.5-pro",
+        "allowed_models": [
+            "google/gemini-2.5-pro",
+            "google/gemini-2.5-flash",
+            "google/gemini-3-flash-preview",
+            "google/gemini-3.1-pro-preview",
+        ],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/bard-birth.md",
+    },
+    "web-claude": {
+        "name": "Web Claude",
+        "provider": "Anthropic",
+        "frontier_kind": "anthropic",
+        # Web Claude is not API-reachable — no default_model / allowed_models.
+        "default_model": None,
+        "allowed_models": [],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/web-claude-birth.md",
+    },
+    "api-claude": {
+        "name": "API Claude",
+        "provider": "Anthropic",
+        "frontier_kind": "anthropic",
+        "default_model": "anthropic/claude-sonnet-4-6",
+        "allowed_models": [
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-opus-4",
+            "anthropic/claude-3-5-sonnet",
+        ],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/api-claude-birth.md",
+    },
+    "cursor-claude": {
+        "name": "Cursor Claude",
+        "provider": "Anthropic",
+        "frontier_kind": "anthropic",
+        "default_model": "anthropic/claude-sonnet-4-6",
+        "allowed_models": [
+            "anthropic/claude-sonnet-4-6",
+            "anthropic/claude-opus-4",
+        ],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/cursor-claude-birth.md",
+    },
 }
 
 EDGE_TYPE = "derived_from"  # ai_agent:{slug} → prompt:{slug}-birth
 DEFAULT_SESSION_ID = "agent-identity-sync"
 DEFAULT_AGENT = "cursor-claude"
+
+_PERSONA_ATTR_KEYS = (
+    "frontier_kind",
+    "default_model",
+    "allowed_models",
+    "tools",
+    "allowed_options",
+    "persona_seed_ref",
+)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -66,6 +162,12 @@ class SyncPlan:
     slug: str
     name: str
     provider: str
+    frontier_kind: str
+    default_model: str | None
+    allowed_models: list[str]
+    tools: list[str] | None
+    allowed_options: list[str] | None
+    persona_seed_ref: str | None
     file_path: Path
     content: str
     content_hash: str
@@ -84,6 +186,7 @@ class SyncOutcome:
     slug: str
     entity_action: str  # "created" | "updated" | "unchanged"
     edge_action: str  # "created" | "present" | "skipped"
+    persona_attrs_action: str  # "updated" | "unchanged" | "skipped"
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -110,6 +213,18 @@ def _resolve_identity_dir() -> Path:
     return base
 
 
+def _meta_str_list(key: str, meta: dict[str, object]) -> list[str]:
+    raw = meta[key]
+    return [str(x) for x in cast(list[object], raw)]
+
+
+def _meta_optional_str_list(key: str, meta: dict[str, object]) -> list[str] | None:
+    raw = meta[key]
+    if raw is None:
+        return None
+    return [str(x) for x in cast(list[object], raw)]
+
+
 def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
     """Walk AGENT_IDENTITY_DIR and build one SyncPlan per birth prompt file."""
     plans: list[SyncPlan] = []
@@ -128,11 +243,21 @@ def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
             continue
         content = path.read_text(encoding="utf-8")
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        dm_raw = meta["default_model"]
+        default_model = None if dm_raw is None else str(dm_raw)
+        seed_raw = meta["persona_seed_ref"]
+        persona_seed_ref = None if seed_raw is None else str(seed_raw)
         plans.append(
             SyncPlan(
                 slug=slug,
-                name=meta["name"],
-                provider=meta["provider"],
+                name=str(meta["name"]),
+                provider=str(meta["provider"]),
+                frontier_kind=str(meta["frontier_kind"]),
+                default_model=default_model,
+                allowed_models=_meta_str_list("allowed_models", meta),
+                tools=_meta_optional_str_list("tools", meta),
+                allowed_options=_meta_optional_str_list("allowed_options", meta),
+                persona_seed_ref=persona_seed_ref,
                 file_path=path,
                 content=content,
                 content_hash=digest,
@@ -151,6 +276,53 @@ def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
 # ────────────────────────────────────────────────────────────────────────────
 # Cortex operations
 # ────────────────────────────────────────────────────────────────────────────
+
+
+def _persona_attrs_payload(plan: SyncPlan) -> dict[str, object]:
+    return {
+        "frontier_kind": plan.frontier_kind,
+        "default_model": plan.default_model,
+        "allowed_models": list(plan.allowed_models),
+        "tools": list(plan.tools) if plan.tools is not None else None,
+        "allowed_options": (
+            list(plan.allowed_options) if plan.allowed_options is not None else None
+        ),
+        "persona_seed_ref": plan.persona_seed_ref,
+    }
+
+
+def _sync_agent_persona_attrs(
+    client: Any, plan: SyncPlan, dry_run: bool, verbose: bool
+) -> str:
+    """Patch ai_agent:{slug}.attributes with the persona contract.
+
+    No-op when stored attrs already match. Returns
+    ``"updated" | "unchanged" | "skipped"``.
+    """
+    probe = client.get(f"/entities/{plan.agent_id}")
+    if probe.status_code == 404:
+        if verbose:
+            print(f"  skip persona attrs — {plan.agent_id} missing")
+        return "skipped"
+    probe.raise_for_status()
+    body = probe.json()
+    existing_attrs = (body.get("attributes") or {}) if isinstance(body, dict) else {}
+    desired = _persona_attrs_payload(plan)
+    if all(existing_attrs.get(k) == desired[k] for k in _PERSONA_ATTR_KEYS):
+        if verbose:
+            print(f"  persona attrs unchanged on {plan.agent_id}")
+        return "unchanged"
+    merged_attrs = {**existing_attrs, **desired}
+    if dry_run:
+        if verbose:
+            print(f"  [dry-run] would PATCH {plan.agent_id} persona attrs")
+        return "updated"
+    r = client.patch(
+        f"/entities/{plan.agent_id}",
+        json={"attributes": merged_attrs},
+    )
+    r.raise_for_status()
+    return "updated"
 
 
 def _entity_payload(plan: SyncPlan) -> dict[str, object]:
@@ -187,7 +359,7 @@ def _update_payload(plan: SyncPlan) -> dict[str, object]:
     }
 
 
-def _sync_entity(client, plan: SyncPlan, dry_run: bool, verbose: bool) -> str:
+def _sync_entity(client: Any, plan: SyncPlan, dry_run: bool, verbose: bool) -> str:
     """Upsert prompt:{slug}-birth; return action taken."""
     resp = client.get(f"/entities/{plan.entity_id}")
     if resp.status_code == 404:
@@ -212,7 +384,7 @@ def _sync_entity(client, plan: SyncPlan, dry_run: bool, verbose: bool) -> str:
     return "updated"
 
 
-def _edge_exists(client, from_node: str, to_node: str) -> bool:
+def _edge_exists(client: Any, from_node: str, to_node: str) -> bool:
     r = client.get(
         "/edges",
         params={
@@ -227,7 +399,12 @@ def _edge_exists(client, from_node: str, to_node: str) -> bool:
 
 
 def _sync_edge(
-    client, plan: SyncPlan, session_id: str, agent: str, dry_run: bool, verbose: bool
+    client: Any,
+    plan: SyncPlan,
+    session_id: str,
+    agent: str,
+    dry_run: bool,
+    verbose: bool,
 ) -> str:
     """Ensure ai_agent:{slug} --derived_from--> prompt:{slug}-birth exists."""
     # Don't seed an edge when the target ai_agent entity isn't in Cortex.
@@ -314,18 +491,25 @@ def main() -> int:
                 dry_run=args.dry_run,
                 verbose=args.verbose,
             )
+            persona_attrs_action = _sync_agent_persona_attrs(
+                client, plan, args.dry_run, args.verbose
+            )
             outcomes.append(
                 SyncOutcome(
                     slug=plan.slug,
                     entity_action=entity_action,
                     edge_action=edge_action,
+                    persona_attrs_action=persona_attrs_action,
                 )
             )
 
     print()
     print("summary:")
     for o in outcomes:
-        print(f"  {o.slug:<14s} entity={o.entity_action:<9s} edge={o.edge_action}")
+        print(
+            f"  {o.slug:<14s} entity={o.entity_action:<9s} "
+            f"edge={o.edge_action:<8s} attrs={o.persona_attrs_action}"
+        )
     return 0
 
 

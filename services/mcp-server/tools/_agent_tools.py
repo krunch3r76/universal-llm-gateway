@@ -2,9 +2,8 @@
 
 Sync tool-call dispatcher used by MCP's ``frontier_generate``. Tool schema
 definitions are sourced from ``libs/agent_seat/tools.py`` (single source of
-truth shared with the pipeline ``frontier_dispatch_v1`` handler); the sync executor
-below stays local to MCP because it depends on MCP-server-private helpers
-(``.cortex._OPS``, ``.agent_bus._AGENT_BUS_OPS``, friction-hint enrichment).
+truth shared with the pipeline ``frontier_dispatch_v1`` handler). Cortex ops
+relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus._AGENT_BUS_OPS``.
 """
 
 from __future__ import annotations
@@ -75,36 +74,16 @@ def _parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
 
 
 def _execute_cortex_dispatch(args: dict[str, Any]) -> str:
-    """Execute the unified cortex dispatch tool via the cortex ops table."""
-    from .cortex import (
-        _FRICTION_HINT,
-        _OPS,
-        _WORKFLOW_HINTS,
-        _enrich_entity_completeness,
-    )
-
+    """Execute the unified cortex dispatch tool via cortex-api POST /dispatch."""
     tool = args.get("tool", "")
-    handler = _OPS.get(tool)
-    if handler is None:
-        return json.dumps(
-            {"error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}"}
-        )
+    if not tool:
+        return json.dumps({"error": "cortex: 'tool' is required"})
 
     parsed = _parse_dispatch_arguments(args.get("arguments", "{}"))
     if parsed is None:
         return json.dumps({"error": f"Invalid arguments JSON for cortex {tool!r}"})
 
-    result = handler(**parsed)
-    if not isinstance(result, dict):
-        return json.dumps(result) if result is not None else "{}"
-    if "error" in result:
-        result["_hint"] = _FRICTION_HINT
-    else:
-        hint = _WORKFLOW_HINTS.get(tool)
-        if hint:
-            result["_next"] = hint
-        if tool == "entity_get":
-            _enrich_entity_completeness(result)
+    result = _cx("POST", "/dispatch", {"tool": tool, "arguments": parsed})
     return json.dumps(result)
 
 
@@ -132,28 +111,6 @@ def _execute_agent_bus_dispatch(args: dict[str, Any]) -> str:
 
 def execute_tool(name: str, args: dict[str, Any]) -> str:
     """Execute a tool call against local REST endpoints. Returns JSON string."""
-    if name == "cortex_entity_get":
-        return json.dumps(_cx("GET", f"/entities/{args.get('entity_id', '')}"))
-
-    if name == "cortex_search_entities":
-        params = []
-        if args.get("type"):
-            params.append(f"type={args['type']}")
-        params.append(f"limit={args.get('limit', 30)}")
-        return json.dumps(_cx("GET", f"/entities?{'&'.join(params)}"))
-
-    if name == "cortex_assertions":
-        params = []
-        if args.get("entity_id"):
-            params.append(f"entity_id={args['entity_id']}")
-        if args.get("confidence"):
-            params.append(f"confidence={args['confidence']}")
-        params.append(f"limit={args.get('limit', 30)}")
-        return json.dumps(_cx("GET", f"/assertions?{'&'.join(params)}"))
-
-    if name == "cortex_deadlines":
-        return json.dumps(_cx("GET", "/deadlines"))
-
     if name == "rag_search":
         return _execute_rag_search(args)
 

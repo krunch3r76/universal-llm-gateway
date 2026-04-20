@@ -51,6 +51,18 @@ _SELF_ENTITY: dict[str, str] = {
 
 
 @dataclass(slots=True)
+class AgentMeta:
+    """Persona contract loaded from ``ai_agent:{slug}.attributes``."""
+
+    frontier_kind: str | None = None
+    default_model: str | None = None
+    allowed_models: list[str] = field(default_factory=list)
+    tools: list[str] | None = None
+    allowed_options: list[str] | None = None
+    persona_seed_ref: str | None = None
+
+
+@dataclass(slots=True)
 class HydrationBundle:
     """Output of ``hydrate_agent``.
 
@@ -67,6 +79,7 @@ class HydrationBundle:
     continuation_md: str | None = None
     continuation_id: str | None = None
     section_counts: dict[str, int] = field(default_factory=dict)
+    agent_meta: AgentMeta = field(default_factory=AgentMeta)
 
 
 async def _cortex_get(path: str) -> Any:
@@ -113,6 +126,45 @@ def _safe_list(raw: Any, key: str = "items") -> list[Any]:
         val = raw.get(key, [])
         return val if isinstance(val, list) else []
     return []
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def _as_optional_str_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return None
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def _parse_agent_meta(entity: Any) -> AgentMeta:
+    if not isinstance(entity, dict):
+        return AgentMeta()
+    attributes = entity.get("attributes")
+    if not isinstance(attributes, dict):
+        return AgentMeta()
+    frontier_kind_raw = attributes.get("frontier_kind")
+    default_model_raw = attributes.get("default_model")
+    persona_seed_ref_raw = attributes.get("persona_seed_ref")
+    return AgentMeta(
+        frontier_kind=(
+            str(frontier_kind_raw) if isinstance(frontier_kind_raw, str) else None
+        ),
+        default_model=(
+            str(default_model_raw) if isinstance(default_model_raw, str) else None
+        ),
+        allowed_models=_as_str_list(attributes.get("allowed_models")),
+        tools=_as_optional_str_list(attributes.get("tools")),
+        allowed_options=_as_optional_str_list(attributes.get("allowed_options")),
+        persona_seed_ref=(
+            str(persona_seed_ref_raw) if isinstance(persona_seed_ref_raw, str) else None
+        ),
+    )
 
 
 async def _resolve_continuation(
@@ -241,11 +293,15 @@ async def hydrate_agent(
     )
     todo_qs = urlencode({"limit": 15})
 
+    normalized_agent = agent.replace("-", "_")
     tasks: dict[str, asyncio.Task[Any]] = {
         "sessions": asyncio.create_task(_cortex_get(f"/session-journals?{session_qs}")),
         "threads": asyncio.create_task(_bus_get("/threads?status=active")),
         "unread_turns": asyncio.create_task(_bus_get(f"/turns?{unread_qs}")),
         "todos": asyncio.create_task(_cortex_get(f"/boot-todos?{todo_qs}")),
+        "agent_entity": asyncio.create_task(
+            _cortex_get(f"/entities/ai_agent:{quote(agent.replace('_', '-'), safe='')}")
+        ),
     }
     if profile["include_deadlines"]:
         tasks["deadlines"] = asyncio.create_task(_cortex_get("/deadlines"))
@@ -254,7 +310,7 @@ async def hydrate_agent(
             _cortex_get("/staging?status=pending&limit=5")
         )
 
-    self_entity = _SELF_ENTITY.get(agent)
+    self_entity = _SELF_ENTITY.get(normalized_agent)
     if self_entity:
         refl_qs = urlencode(
             {
@@ -286,6 +342,7 @@ async def hydrate_agent(
     todos = _safe_list(raw.get("todos"))
     staging = _safe_list(raw.get("staging"))
     self_reflections = _safe_list(raw.get("self_reflections"))
+    agent_meta = _parse_agent_meta(raw.get("agent_entity"))
 
     unread_threads = [
         t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0
@@ -318,4 +375,5 @@ async def hydrate_agent(
         continuation_md=continuation_md,
         continuation_id=continuation_id,
         section_counts=section_counts,
+        agent_meta=agent_meta,
     )

@@ -296,3 +296,21 @@ def add_link(entry_id: int, body: JournalLinkCreate) -> JournalLinkItem:
             detail="Link created but could not be read back",
         )
     return JournalLinkItem(**rows[0])
+
+
+def _list_entries_impl(**kwargs: object) -> dict[str, object]:
+    return list_entries(**kwargs).model_dump(mode="json")
+
+
+def _get_entry_impl(entry_id: int) -> dict[str, object]:
+    return get_entry(entry_id).model_dump(mode="json")
+
+
+def _create_entry_impl(payload: dict[str, object]) -> dict[str, object]:
+    data = create_entry(ReflectiveEntryCreate.model_validate(payload))
+    return data.model_dump(mode="json")
+
+
+def _add_link_impl(entry_id: int, payload: dict[str, object]) -> dict[str, object]:
+    data = add_link(entry_id, JournalLinkCreate.model_validate(payload))
+    return data.model_dump(mode="json")

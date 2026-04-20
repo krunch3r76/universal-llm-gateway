@@ -1,0 +1,464 @@
+"""Assertion ops — list/create/update/supersede/search/graph helpers."""
+
+from __future__ import annotations
+
+import logging
+from datetime import UTC, datetime
+from typing import Any
+
+from ..models import ImpactAnalysisRequest
+from ..routes.assertions import (
+    _create_assertion_impl,
+    _list_assertions_impl,
+    _search_assertions_impl,
+    _supersede_assertion_impl,
+    _update_assertion_impl,
+)
+from ..routes.graph import activate, analyze_impact_semantic
+from ..routes.ingest import _assert_from_chunk_impl
+from ._shared import (
+    _DEFAULT_USER_ENTITY,
+    _FRICTION_CATEGORIES,
+    _VALID_CONFIDENCE,
+    record,
+)
+from .ops_entities import _op_entities
+
+logger = logging.getLogger("cortex-api.dispatch_ops.assertions")
+
+
+def _op_assertions(
+    entity_id: str | None = None,
+    confidence: str | None = None,
+    review_status: str | None = None,
+    superseded: bool | None = None,
+    limit: int | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    return _list_assertions_impl(
+        entity_id=entity_id,
+        confidence=confidence,
+        review_status=review_status,
+        superseded=superseded,
+        limit=limit or 50,
+    )
+
+
+def _op_assert(
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str | None = None,
+    evidence: str | None = None,
+    evidence_uris: list[str] | str | None = None,
+    seeded_by: str | None = None,
+    derivation_type: str | None = None,
+    confidence_score: float | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    chunk_id: int | None = None,
+    reasoning_summary: str | None = None,
+    prospective_summary: str | None = None,
+    events_json: str | None = None,
+    artifact_uri: str | None = None,
+    artifact_storage: str | None = None,
+    force: bool = False,
+    supersedes_id: int | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    required_fields = {
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+    }
+    for field, val in required_fields.items():
+        if not val:
+            return {"error": f"{field} is required"}
+    assert confidence is not None
+    if confidence not in _VALID_CONFIDENCE:
+        return {
+            "error": f"Invalid confidence {confidence!r}. "
+            f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        }
+    body: dict[str, Any] = {
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+    }
+    if evidence_uris:
+        if isinstance(evidence_uris, str):
+            evidence_uris = [evidence_uris]
+        body["evidence_uris"] = [str(u) for u in evidence_uris]
+    if observed_at is None:
+        observed_at = datetime.now(UTC).isoformat()
+    for key, val in [
+        ("seeded_by", seeded_by),
+        ("derivation_type", derivation_type),
+        ("confidence_score", confidence_score),
+        ("observed_at", observed_at),
+        ("valid_from", valid_from),
+        ("chunk_id", chunk_id),
+        ("reasoning_summary", reasoning_summary),
+        ("prospective_summary", prospective_summary),
+        ("events_json", events_json),
+        ("artifact_uri", artifact_uri),
+        ("artifact_storage", artifact_storage),
+    ]:
+        if val is not None:
+            body[key] = val
+    if force:
+        body["force"] = True
+    if supersedes_id is not None:
+        body["supersedes_id"] = supersedes_id
+    if derivation_type is None or confidence_score is None:
+        logger.warning(
+            "cortex assert: missing derivation_type=%s or confidence_score=%s — "
+            "these will become mandatory in a future version",
+            derivation_type,
+            confidence_score,
+        )
+    result = _create_assertion_impl(body)
+    if "error" not in result:
+        logger.info("cortex assert: %s — %s (%s)", entity_id, claim[:60], confidence)
+        record("mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence)
+    return result
+
+
+def _op_observe(
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str = "believed",
+    agent: str | None = None,
+    evidence: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not entity_id:
+        entity_id = _DEFAULT_USER_ENTITY
+    if not entity_id:
+        return {
+            "error": "entity_id is required (set CORTEX_DEFAULT_USER_ENTITY env var for a default)"
+        }
+    if not claim:
+        return {"error": "claim is required"}
+    if confidence not in _VALID_CONFIDENCE:
+        return {
+            "error": f"Invalid confidence {confidence!r}. "
+            f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        }
+    body: dict[str, Any] = {
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence or "Agent observation during session",
+        "derivation_type": "agent_observation",
+        "observed_at": datetime.now(UTC).isoformat(),
+        "confidence_score": 0.8 if confidence == "believed" else 0.6,
+    }
+    if agent:
+        body["seeded_by"] = agent
+    result = _create_assertion_impl(body)
+    if "error" not in result:
+        logger.info(
+            "cortex observe: %s — %s (%s, by %s)",
+            entity_id,
+            claim[:60],
+            confidence,
+            agent or "unknown",
+        )
+        record(
+            "mcp.cortex.observation.seeded",
+            entity_id=entity_id,
+            confidence=confidence,
+            agent=agent,
+        )
+    return result
+
+
+def _op_friction(
+    service: str | None = None,
+    category: str | None = None,
+    note: str | None = None,
+    suggestion: str | None = None,
+    agent: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not service:
+        return {"error": "service is required (e.g. 'mcp-server', 'cortex-api')"}
+    if not note:
+        return {"error": "note is required — describe what went wrong"}
+    if category and category not in _FRICTION_CATEGORIES:
+        return {
+            "error": f"Invalid category {category!r}. Must be one of: {sorted(_FRICTION_CATEGORIES)}"
+        }
+    claim = f"[{category or 'unclassified'}] {note}"
+    if suggestion:
+        claim += f" — Suggestion: {suggestion}"
+    body: dict[str, Any] = {
+        "entity_id": f"service:{service}",
+        "claim": claim,
+        "confidence": "hypothesized",
+        "evidence": f"Friction observed by {agent or 'unknown'} during session",
+        "derivation_type": "agent_observation",
+        "observed_at": datetime.now(UTC).isoformat(),
+        "confidence_score": 0.5,
+    }
+    if agent:
+        body["seeded_by"] = agent
+    result = _create_assertion_impl(body)
+    if "error" not in result:
+        logger.info("cortex friction: %s/%s — %s", service, category, note[:60])
+        record(
+            "mcp.cortex.friction.logged",
+            service=service,
+            category=category or "unclassified",
+            agent=agent,
+        )
+    return result
+
+
+def _op_assertion_update(
+    assertion_id: int | None = None,
+    superseded_by: int | None = None,
+    valid_until: str | None = None,
+    confidence: str | None = None,
+    confidence_score: float | None = None,
+    review_status: str | None = None,
+    reviewer: str | None = None,
+    reviewed_at: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if assertion_id is None:
+        return {"error": "assertion_id is required"}
+    body: dict[str, Any] = {
+        key: val
+        for key, val in [
+            ("superseded_by", superseded_by),
+            ("valid_until", valid_until),
+            ("confidence", confidence),
+            ("confidence_score", confidence_score),
+            ("review_status", review_status),
+            ("reviewer", reviewer),
+            ("reviewed_at", reviewed_at),
+        ]
+        if val is not None
+    }
+    if not body:
+        return {"error": "No fields to update"}
+    result = _update_assertion_impl(assertion_id, body)
+    if "error" not in result:
+        logger.info("cortex assertion_update: %d", assertion_id)
+        record("mcp.cortex.assertion.updated", assertion_id=assertion_id)
+    return result
+
+
+def _op_supersede(
+    old_assertion_id: int | None = None,
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str | None = None,
+    evidence: str | None = None,
+    evidence_uris: list[str] | None = None,
+    valid_from: str | None = None,
+    derivation_type: str | None = None,
+    session_id: str | None = None,
+    agent: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    for field, val in [
+        ("old_assertion_id", old_assertion_id),
+        ("entity_id", entity_id),
+        ("claim", claim),
+        ("confidence", confidence),
+        ("evidence", evidence),
+        ("session_id", session_id),
+        ("agent", agent),
+    ]:
+        if not val:
+            return {"error": f"{field} is required"}
+    body: dict[str, Any] = {
+        "old_assertion_id": old_assertion_id,
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+        "session_id": session_id,
+        "agent": agent,
+    }
+    for key, val in [
+        ("evidence_uris", evidence_uris),
+        ("valid_from", valid_from),
+        ("derivation_type", derivation_type),
+    ]:
+        if val is not None:
+            body[key] = val
+    result = _supersede_assertion_impl(body)
+    if "error" not in result:
+        new_id = result.get("new", {}).get("id")
+        logger.info("cortex supersede: %d -> %s", old_assertion_id, new_id)
+        record(
+            "mcp.cortex.assertion.superseded",
+            old_id=old_assertion_id,
+            new_id=new_id,
+        )
+    return result
+
+
+def _op_search(
+    query: str | None = None,
+    limit: int | None = None,
+    superseded: bool | None = None,
+    entity_type: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not query:
+        return {"error": "query is required"}
+    return _search_assertions_impl(
+        q=query,
+        superseded=bool(superseded),
+        entity_type=entity_type,
+        limit=limit or 20,
+    )
+
+
+def _op_analyze_impact(
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not entity_id:
+        return {"error": "entity_id is required"}
+    if not claim:
+        return {"error": "claim is required"}
+    if confidence is not None and confidence not in _VALID_CONFIDENCE:
+        return {
+            "error": f"Invalid confidence {confidence!r}. "
+            f"Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        }
+    data = analyze_impact_semantic(
+        ImpactAnalysisRequest(entity_id=entity_id, claim=claim, confidence=confidence)
+    )
+    return data.model_dump(mode="json")
+
+
+def _op_activate(
+    entity_ids: list[str] | None = None,
+    depth: int | None = None,
+    max_results: int | None = None,
+    exclude_ids: list[int] | None = None,
+    suppress_hubs: bool | None = None,
+    decay_factor: float | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not entity_ids:
+        return {"error": "entity_ids is required (list of seed entity IDs)"}
+    return activate(
+        entity_ids=",".join(entity_ids),
+        depth=depth or 1,
+        max_results=max_results or 20,
+        exclude_ids=",".join(str(i) for i in exclude_ids) if exclude_ids else None,
+        suppress_hubs=True if suppress_hubs is None else suppress_hubs,
+        decay_factor=0.5 if decay_factor is None else decay_factor,
+    )
+
+
+def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
+    lim = limit or 30
+    flagged_resp = _list_assertions_impl(review_status="flagged", superseded=False, limit=lim)
+    low_conf_resp = _list_assertions_impl(superseded=False, limit=lim)
+    entities = _op_entities(limit=lim)
+    flagged = (
+        [{**a, "priority": 2, "reason": "flagged"} for a in flagged_resp.get("items", [])]
+        if not flagged_resp.get("error")
+        else []
+    )
+
+    low_conf = []
+    if not low_conf_resp.get("error"):
+        for a in low_conf_resp.get("items", []):
+            if a.get("confidence") in ("suspected", "hypothesized"):
+                low_conf.append({**a, "priority": 3, "reason": "low_confidence"})
+
+    provisional = []
+    thin_descriptions = []
+    if not entities.get("error"):
+        for e in entities.get("items", []):
+            if e.get("status") == "provisional":
+                provisional.append({**e, "priority": 1, "reason": "provisional"})
+            desc = e.get("description") or ""
+            if len(desc) < 50:
+                thin_descriptions.append({**e, "priority": 4, "reason": "thin_description"})
+
+    total = len(flagged) + len(provisional) + len(low_conf) + len(thin_descriptions)
+    return {
+        "provisional_entities": provisional,
+        "flagged_assertions": flagged,
+        "low_confidence_assertions": low_conf,
+        "thin_descriptions": thin_descriptions,
+        "total": total,
+    }
+
+
+def _op_assert_from_chunk(
+    chunk_id: int | None = None,
+    entity_id: str | None = None,
+    claim: str | None = None,
+    confidence: str | None = None,
+    evidence: str | None = None,
+    evidence_uris: list[str] | str | None = None,
+    derivation_type: str | None = None,
+    confidence_score: float | None = None,
+    observed_at: str | None = None,
+    valid_from: str | None = None,
+    reasoning_summary: str | None = None,
+    resolution_status: str | None = None,
+    seeded_by: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    required = {
+        "chunk_id": chunk_id,
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+    }
+    for field, val in required.items():
+        if not val and val != 0:
+            return {"error": f"{field} is required"}
+    body: dict[str, Any] = {
+        "chunk_id": chunk_id,
+        "entity_id": entity_id,
+        "claim": claim,
+        "confidence": confidence,
+        "evidence": evidence,
+    }
+    if evidence_uris:
+        if isinstance(evidence_uris, str):
+            evidence_uris = [evidence_uris]
+        body["evidence_uris"] = [str(u) for u in evidence_uris]
+    for key, val in [
+        ("derivation_type", derivation_type),
+        ("confidence_score", confidence_score),
+        ("observed_at", observed_at),
+        ("valid_from", valid_from),
+        ("reasoning_summary", reasoning_summary),
+        ("resolution_status", resolution_status),
+        ("seeded_by", seeded_by),
+    ]:
+        if val is not None:
+            body[key] = val
+    result = _assert_from_chunk_impl(body)
+    if "error" not in result:
+        logger.info(
+            "cortex assert_from_chunk: chunk=%s entity=%s — %s",
+            chunk_id,
+            entity_id,
+            str(claim)[:60],
+        )
+        record(
+            "mcp.cortex.assert_from_chunk",
+            chunk_id=chunk_id,
+            entity_id=entity_id,
+        )
+    return result

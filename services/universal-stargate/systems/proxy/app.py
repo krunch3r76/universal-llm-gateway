@@ -19,6 +19,7 @@ from systems.federation.common.middleware import (
     HopCountMiddleware,
     RemoteModeEndpointGuard,
 )
+from systems.frontier_consult.route import router as frontier_consult_router
 
 from .core.common import ErrorNormalizer
 from .core.streaming import StreamingErrorHandler
@@ -485,6 +486,7 @@ async def root():
 # Include all routers
 app.include_router(v1.router)  # /v1/* endpoints (OpenAI API compatible)
 app.include_router(api.router)  # /api/v1/* endpoints (administrative)
+app.include_router(frontier_consult_router)  # /api/v1/frontier/* endpoint
 app.include_router(
     cloud_passthrough.router
 )  # /api/models, /api/select, /api/refresh (cloud passthrough)

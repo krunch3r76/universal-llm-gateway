@@ -190,3 +190,7 @@ def resolve_cortex_uri(
                 }
 
         return result
+
+
+def _resolve_cortex_uri_impl(*, uri: str, tag: str | None = None) -> dict:
+    return resolve_cortex_uri(uri=uri, tag=tag)

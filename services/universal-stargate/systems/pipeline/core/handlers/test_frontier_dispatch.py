@@ -172,7 +172,7 @@ async def test_handler_persona_free_mode_skips_hydration(
 
     step = _FakeStep(system_prompt="You are a test assistant.")
     context = _make_context(
-        options={"model": "openai/gpt-5.4", "inject_tools": False},
+        options={"model": "openai/gpt-5.4", "mcp": False},
     )
 
     out = await handler.execute(step, context)
@@ -243,6 +243,133 @@ def test_validate_requires_correct_step_type() -> None:
     assert any("frontier_dispatch_v1" in e for e in errs)
     errs2 = h.validate(_FakeStep(type="frontier_dispatch_v1"))
     assert errs2 == []
+
+
+@pytest.mark.asyncio
+async def test_handler_anthropic_allows_remote_mcp_false(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anthropic may opt out of server-side remote_mcp (client-side inject)."""
+
+    async def fake_loop(**_k: Any) -> _FakeLoopResult:
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={"model": "anthropic/claude-sonnet-4-6", "remote_mcp": False}
+    )
+    out = await handler.execute(step, context)
+    assert out.json["provider"] == "anthropic"
+
+
+@pytest.mark.parametrize(
+    "model,provider",
+    [
+        ("openai/gpt-5.4", "openai"),
+        ("google/gemini-2.5-pro", "google"),
+        ("xai/grok-4-fast-reasoning", "xai"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_handler_rejects_non_anthropic_remote_mcp_true(
+    handler: FrontierDispatchHandler,
+    published_events: list[Any],
+    model: str,
+    provider: str,
+) -> None:
+    """remote_mcp=True is anthropic-only — every other provider rejects."""
+    from systems.pipeline.core.execution.errors import RemoteMcpUnsupportedError
+
+    step = _FakeStep()
+    context = _make_context(options={"model": model, "remote_mcp": True})
+    with pytest.raises(RemoteMcpUnsupportedError) as exc_info:
+        await handler.execute(step, context)
+    err = exc_info.value
+    assert err.provider == provider
+    assert err.requested is True
+    assert err.to_dict()["code"] == "remote_mcp_unsupported"
+    assert "anthropic-only" in err.reason or "anthropic" in err.reason
+    evt = next(
+        e
+        for e in published_events
+        if e.signal == "pipeline.frontier.dispatch.remotemcp.unsupported"
+    )
+    assert evt.payload["provider"] == provider
+    assert evt.payload["requested"] is True
+
+
+@pytest.mark.asyncio
+async def test_handler_rejects_remote_mcp_true_without_mcp(
+    handler: FrontierDispatchHandler,
+) -> None:
+    """remote_mcp=True requires mcp=True — rejecting the combination avoids
+    the nonsensical state of asking for server-side MCP when client-side MCP
+    tooling has been turned off entirely."""
+    from systems.pipeline.core.execution.errors import RemoteMcpUnsupportedError
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "anthropic/claude-sonnet-4-6",
+            "mcp": False,
+            "remote_mcp": True,
+        }
+    )
+    with pytest.raises(RemoteMcpUnsupportedError) as exc_info:
+        await handler.execute(step, context)
+    assert "requires mcp=True" in exc_info.value.reason
+
+
+@pytest.mark.asyncio
+async def test_handler_mcp_false_suppresses_tools(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mcp=False short-circuits tool injection regardless of persona mode."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["tools"] = kwargs["req"].tools
+        captured["remote_mcp"] = kwargs["req"].remote_mcp
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "openai/gpt-5.4", "mcp": False})
+    await handler.execute(step, context)
+    assert captured["tools"] is None
+    assert captured["remote_mcp"] is False
+
+
+def test_resolve_remote_mcp_defaults_by_provider() -> None:
+    h = FrontierDispatchHandler()
+    step = _FakeStep()
+    # Default: True iff provider=anthropic AND mcp_enabled.
+    cases = [
+        ("anthropic/claude-sonnet-4-6", "anthropic", True, True),
+        ("anthropic/claude-sonnet-4-6", "anthropic", False, False),
+        ("openai/gpt-5.4", "openai", True, False),
+        ("google/gemini-2.5-pro", "google", True, False),
+        ("xai/grok-4-fast-reasoning", "xai", True, False),
+    ]
+    for model, provider, mcp_enabled, expected in cases:
+        context = _make_context(options={"model": model})
+        result = h._resolve_remote_mcp(
+            opts=context.options,
+            step=step,
+            context=context,
+            provider=provider,
+            model=model,
+            agent=None,
+            mcp_enabled=mcp_enabled,
+        )
+        assert result is expected, (
+            f"{provider} mcp={mcp_enabled}: expected {expected}, got {result}"
+        )
 
 
 def test_resolve_agent_uses_options_then_domain_field() -> None:

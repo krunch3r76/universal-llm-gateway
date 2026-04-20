@@ -124,3 +124,7 @@ def create_surface_form(body: SurfaceFormCreate) -> SurfaceFormItem:
             "Surface form created but could not be read back",
         )
     return SurfaceFormItem(**rows[0])
+
+
+def _list_surface_forms_impl(**kwargs: object) -> dict[str, object]:
+    return list_surface_forms(**kwargs).model_dump(mode="json")

@@ -161,8 +161,6 @@ _PRIMARY_TOOLS: set[str] = {
     # Cortex (dispatch-style + boot)
     "cortex",
     "cortex_boot",
-    # LLM — unified frontier surface
-    "frontier_generate",
     # RAG (consolidated)
     "rag",
     # Response size guard
@@ -171,6 +169,8 @@ _PRIMARY_TOOLS: set[str] = {
     "email",
     "claudeburst",
     "bot_supervisor",
+    # Frontier consult (cortex-driven personas)
+    "frontier_generate",
 }
 
 
@@ -257,6 +257,7 @@ def _build_server() -> FastMCP:
     register_document_ocr_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
+    register_frontier_tools(mcp)
     register_quality_tools(mcp)
     register_agent_bus_tools(mcp)
     register_agent_consult_tools(mcp)
@@ -264,7 +265,6 @@ def _build_server() -> FastMCP:
     register_cortex_named_tools(mcp)
     register_llm_tools(mcp)
     register_advisor_tools(mcp)
-    register_frontier_tools(mcp)
     register_imagine_tools(mcp)
     register_security_tools(mcp)
     register_security_js_tools(mcp)

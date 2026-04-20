@@ -296,3 +296,13 @@ def assert_from_chunk(body: AssertFromChunkRequest) -> AssertFromChunkResponse:
         quality_score=quality_score,
         validation_warnings=validation_warnings,
     )
+
+
+def _ingest_document_impl(payload: dict[str, object]) -> dict[str, object]:
+    result = ingest_document(IngestDocumentRequest.model_validate(payload))
+    return result.model_dump(mode="json")
+
+
+def _assert_from_chunk_impl(payload: dict[str, object]) -> dict[str, object]:
+    result = assert_from_chunk(AssertFromChunkRequest.model_validate(payload))
+    return result.model_dump(mode="json")

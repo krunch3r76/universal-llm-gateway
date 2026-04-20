@@ -9,7 +9,7 @@ Shared between:
 
 Public surface (stable):
 
-``TOOL_DEFINITIONS``        — lean read-only tools (cortex_* + rag_search)
+``TOOL_DEFINITIONS``        — read tier (cortex dispatch + rag_search)
 ``TEAM_TOOL_DEFINITIONS``   — full team toolset (cortex + agent_bus)
 ``RAG_SEARCH_TOOL_DEFINITION`` — single RAG entry reused in both tiers
 
@@ -30,7 +30,7 @@ Public surface (stable):
 from __future__ import annotations
 
 from agent_seat.executor import execute_tool
-from agent_seat.hydration import HydrationBundle, hydrate_agent
+from agent_seat.hydration import AgentMeta, HydrationBundle, hydrate_agent
 from agent_seat.native_loop import (
     NATIVE_PATHS,
     NativeLoopResult,
@@ -47,21 +47,26 @@ from agent_seat.tools import (
     RAG_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
+    TOOL_REGISTRY,
+    resolve_tools,
 )
 
 __all__ = [
     "CORTEX_TOOL_QUICKREF",
     "HydrationBundle",
+    "AgentMeta",
     "NATIVE_PATHS",
     "NativeLoopResult",
     "NativeToolCall",
     "RAG_SEARCH_TOOL_DEFINITION",
     "TEAM_TOOL_DEFINITIONS",
     "TOOL_DEFINITIONS",
+    "TOOL_REGISTRY",
     "assemble_system_prompt",
     "build_subagent_preamble",
     "execute_tool",
     "hydrate_agent",
     "load_birth_prompt",
     "run_native_tool_loop",
+    "resolve_tools",
 ]

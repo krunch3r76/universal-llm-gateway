@@ -46,3 +46,7 @@ def list_deadlines(
         conn.close()
 
     return DeadlineList(items=items, action_hints=hints or None)
+
+
+def _list_deadlines_impl(*, include_resolved: bool = False) -> dict[str, object]:
+    return list_deadlines(include_resolved=include_resolved).model_dump(mode="json")

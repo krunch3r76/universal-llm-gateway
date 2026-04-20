@@ -54,3 +54,7 @@ def get_stats() -> dict:
                 "by_observer": _count_by(conn, "chunks", "observer"),
             },
         }
+
+
+def _get_stats_impl() -> dict:
+    return get_stats()

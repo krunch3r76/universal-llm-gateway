@@ -19,6 +19,16 @@ AGENT_BUS_SOCKET_PATH = os.environ.get(
 )
 DEFAULT_AGENT_BUS_URL = f"unix://{AGENT_BUS_SOCKET_PATH}"
 
+# When Stargate runs in UDS mode (edge deployment), STARGATE_UNIX_SOCKET is set.
+# In TCP mode (master deployment, no UDS), fall back to the local TCP port so that
+# intra-Stargate callers (e.g. frontier_generate → pipelines/dispatch) resolve correctly.
+STARGATE_SOCKET_PATH: str | None = os.environ.get("STARGATE_UNIX_SOCKET") or None
+DEFAULT_STARGATE_URL = (
+    f"unix://{STARGATE_SOCKET_PATH}"
+    if STARGATE_SOCKET_PATH
+    else f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
+)
+
 
 def parse_rag_url(url: str) -> tuple[str | None, str]:
     """Parse a service URL into (uds_path, base_url)."""

@@ -123,3 +123,11 @@ def delete_tag(
             detail=f"Tag {tag_name!r} not found for entity {entity_id}",
         )
     logger.info("Tag deleted: %s on %s", tag_name, entity_id)
+
+
+def _list_tags_impl(*, entity_id: str) -> dict[str, Any]:
+    return list_tags(entity_id=entity_id)
+
+
+def _assign_tag_impl(payload: dict[str, Any]) -> dict[str, Any]:
+    return assign_tag(TagAssignRequest.model_validate(payload))

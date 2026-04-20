@@ -94,6 +94,9 @@ pipelines.local/
 # Local-only MCP tools (not for public release; same idea as pipelines.local)
 services/mcp-server/tools/local/
 
+# Cursor IDE MCP tool descriptor cache (machine-local, managed by Cursor)
+mcps/
+
 # Local-only service controller plugins (not for public release)
 scripts/model_manager/ui/controller/service_ctl/local/
 

@@ -8,6 +8,7 @@ at pytest time rather than at runtime inside a dispatched agent.
 from __future__ import annotations
 
 from agent_seat.tools import (
+    CORTEX_TOOL_DEFINITION,
     RAG_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
@@ -20,13 +21,7 @@ def _tool_names(defs: list[dict]) -> list[str]:
 
 def test_read_tier_has_expected_tools() -> None:
     names = _tool_names(TOOL_DEFINITIONS)
-    assert set(names) == {
-        "cortex_entity_get",
-        "cortex_search_entities",
-        "cortex_assertions",
-        "cortex_deadlines",
-        "rag_search",
-    }
+    assert set(names) == {"cortex", "rag_search"}
 
 
 def test_team_tier_has_expected_tools() -> None:
@@ -64,6 +59,8 @@ def test_rag_search_constant_matches_read_tier_entry() -> None:
 
 
 def test_cortex_dispatch_requires_tool_field() -> None:
-    cortex = next(d for d in TEAM_TOOL_DEFINITIONS if d["function"]["name"] == "cortex")
-    required = cortex["function"]["parameters"]["required"]
-    assert "tool" in required
+    for defs in (TOOL_DEFINITIONS, TEAM_TOOL_DEFINITIONS):
+        cortex = next(d for d in defs if d["function"]["name"] == "cortex")
+        required = cortex["function"]["parameters"]["required"]
+        assert "tool" in required
+        assert cortex is CORTEX_TOOL_DEFINITION

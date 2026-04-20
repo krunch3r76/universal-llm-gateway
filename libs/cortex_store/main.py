@@ -23,6 +23,7 @@ from .routes import (
     boot,
     chunks,
     deadlines,
+    dispatch,
     edges,
     entities,
     entity_status,
@@ -145,6 +146,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(graph.router)
     app.include_router(reaper.router)
     app.include_router(reflective_journal.router)
+    app.include_router(dispatch.router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

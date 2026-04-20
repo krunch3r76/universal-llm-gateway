@@ -386,3 +386,19 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         journal_row_id=journal_row_id,
         session_id=body.session_id,
     )
+
+
+def _list_session_journals_impl(
+    *, agent: str | None = None, limit: int = 3
+) -> dict[str, object]:
+    return list_session_journals(agent=agent, limit=limit).model_dump(mode="json")
+
+
+def _create_session_journal_impl(payload: dict[str, object]) -> dict[str, object]:
+    data = create_session_journal(SessionJournalCreate.model_validate(payload))
+    return data.model_dump(mode="json")
+
+
+def _close_session_impl(payload: dict[str, object]) -> dict[str, object]:
+    data = close_session(SessionCloseRequest.model_validate(payload))
+    return data.model_dump(mode="json")
