@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 async def _emit_event_safe(event_bus: "EventBus", event: Any, event_name: str) -> None:
     """Publish a routing event and downgrade publish failures to debug-only noise."""
     try:
-        await event_bus.publish_async_nowait(event)
+        await event_bus.publish_nowait(event)
     except Exception as exc:
         logger.debug(f"Failed to emit {event_name} event: {exc}")
 
@@ -140,6 +140,19 @@ async def _emit_eviction_classification_event(
         failed_constraints = [f.constraint for f in selected.constraints_failed]
 
     if classification == "busy_blocked":
+        candidate_breakdown: list[dict[str, Any]] = []
+        if trace and trace.candidates:
+            candidate_breakdown = [
+                {
+                    "gateway_id": c.gateway.name,
+                    "loaded_count": len(c.gateway.loaded_models),
+                    "busy_count": len(c.gateway.busy_models),
+                    "loading_count": len(c.gateway.loading_models),
+                    "vram_free": c.gateway.vram_free_mb,
+                    "constraints_failed": [f.constraint for f in c.constraints_failed],
+                }
+                for c in trace.candidates
+            ]
         await _emit_event_safe(
             event_bus,
             RoutingEvictionBlockedBusy(
@@ -149,6 +162,7 @@ async def _emit_eviction_classification_event(
                 loaded_count=loaded_count,
                 busy_count=busy_count,
                 vram_free=vram_free,
+                candidate_breakdown=candidate_breakdown,
             ),
             "routing.eviction.blocked.busy",
         )

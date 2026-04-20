@@ -72,7 +72,7 @@ async def emit_stream_cancelled_nowait(event, event_bus) -> None:
     if not event_bus:
         raise RuntimeError("Event bus not available")
 
-    await event_bus.publish_async_nowait(event)
+    await event_bus.publish_nowait(event)
 
 
 async def fallback_force_idle_on_event_failure(model_id: str, reason: str) -> None:

@@ -37,6 +37,13 @@ ALLOWED_GENERATION_PARAMS: set[str] = {
     "stream",
     "presence_penalty",
     "frequency_penalty",
+    # OpenAI reasoning knob (gpt-5.x) + Google compat endpoint.
+    "reasoning_effort",
+    # Anthropic reasoning knob. Shape:
+    #   {"type": "enabled", "budget_tokens": <int>}
+    # The cloud-proxy Anthropic adapter forwards this untouched; other
+    # providers ignore it (adapter-level filter).
+    "thinking",
 }
 
 

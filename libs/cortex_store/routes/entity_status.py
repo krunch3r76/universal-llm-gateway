@@ -150,7 +150,7 @@ def get_entity_status(
             "SELECT id, name, "
             "json_extract(attributes, '$.priority') as priority "
             "FROM entities WHERE type = 'todo' AND status = 'confirmed' "
-            "AND json_extract(attributes, '$.status') = 'open' "
+            "AND workflow_state = 'open' "
             "AND json_extract(attributes, '$.domain') = ?",
             (entity_slug,),
         )

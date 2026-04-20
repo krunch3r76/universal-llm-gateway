@@ -51,10 +51,10 @@ async def main():
     )
 
     # Publish some test events - they will be automatically broadcasted to debug clients
-    await event_bus.publish_async(
+    await event_bus.publish(
         SystemStarted(pid=os.getpid(), role="master", started_at=time.time())
     )
-    await event_bus.publish_async(
+    await event_bus.publish(
         GatewayStateChanged(
             url="http://localhost:8000",
             connectivity="reachable",
@@ -65,7 +65,7 @@ async def main():
             check_duration_ms=25,
         )
     )
-    await event_bus.publish_async(
+    await event_bus.publish(
         RequestQueued(request_id="test-123", model_id="test-model", priority=1)
     )
 

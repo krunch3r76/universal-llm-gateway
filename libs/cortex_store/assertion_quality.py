@@ -25,6 +25,47 @@ _OBSERVATION_TYPES = frozenset(
     {"agent_observation", "direct_observation", "user_statement"}
 )
 
+# Taxonomy surfaced in 422 bodies so failed writes carry the full valid set
+# + per-type co-requirements inline. Symmetric with /edges 422 valid_types.
+DERIVATION_TYPE_TAXONOMY: dict[str, dict[str, object]] = {
+    "inference": {
+        "description": "agent synthesis from prior context or reasoning chain",
+        "requires": [],
+    },
+    "user_statement": {
+        "description": "claim the user told you directly in conversation",
+        "requires": [],
+    },
+    "agent_observation": {
+        "description": "direct observation from tool output or runtime behavior",
+        "requires": [],
+    },
+    "direct_observation": {
+        "description": "structural/deterministic read (schema, filesystem, config)",
+        "requires": [],
+    },
+    "compression": {
+        "description": "compressed from ingested document chunks",
+        "requires": ["chunk_id", "evidence_uris"],
+    },
+    "quotation": {
+        "description": "verbatim quote from an ingested document chunk",
+        "requires": ["chunk_id", "evidence_uris"],
+    },
+    "commitment": {
+        "description": "promise or commitment made by an agent or user",
+        "requires": [],
+    },
+    "stated": {
+        "description": "stated claim (less structured than user_statement)",
+        "requires": [],
+    },
+    "other": {
+        "description": "none of the above — reasoning_summary strongly recommended",
+        "requires": [],
+    },
+}
+
 
 @dataclass
 class ValidationDiagnostic:
@@ -111,8 +152,9 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
                     field="chunk_id",
                     message=f"derivation_type={body.derivation_type!r} requires chunk_id — "
                     "create chunks via POST /chunks or cortex_ingest_document() first. "
-                    "For session-originated claims (user told you in conversation), "
-                    "use derivation_type='user_statement' instead.",
+                    "For session-originated claims: use 'inference' for agent "
+                    "synthesis from prior context, or 'user_statement' for claims "
+                    "the user told you directly.",
                 )
             )
         if not body.evidence_uris:

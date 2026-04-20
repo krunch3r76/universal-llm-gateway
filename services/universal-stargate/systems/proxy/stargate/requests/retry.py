@@ -326,7 +326,7 @@ async def execute_with_retry(
                 duration = time.time() - start_time
                 if proxy.event_bus:
                     try:
-                        await proxy.event_bus.publish_async_nowait(
+                        await proxy.event_bus.publish_nowait(
                             RequestCompleted(
                                 request_id=context.request_id,
                                 gateway_url=proxy.gateway_url,
@@ -344,7 +344,7 @@ async def execute_with_retry(
                                     if choices
                                     else ""
                                 )
-                                await proxy.event_bus.publish_async_nowait(
+                                await proxy.event_bus.publish_nowait(
                                     RequestSnapshotCompleted(
                                         request_id=context.request_id,
                                         model_id=model_id,
@@ -485,7 +485,7 @@ async def execute_with_retry(
         )
         if proxy.event_bus:
             try:
-                await proxy.event_bus.publish_async_nowait(
+                await proxy.event_bus.publish_nowait(
                     RequestFailed(
                         request_id=context.request_id,
                         gateway_url=proxy.gateway_url,
@@ -496,7 +496,7 @@ async def execute_with_retry(
                 error_code = None
                 if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
                     error_code = exc.detail.get("code")
-                await proxy.event_bus.publish_async_nowait(
+                await proxy.event_bus.publish_nowait(
                     RequestSnapshotFailed(
                         request_id=context.request_id,
                         model_id=model_id,

@@ -442,25 +442,43 @@ class CloudProxyClient:
         self,
         path: str,
         body: dict[str, Any],
+        headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        """POST JSON to cloud-proxy provider-native path (body preserved as-is)."""
+        """POST JSON to cloud-proxy provider-native path (body preserved as-is).
+
+        ``headers`` (optional) are merged with the default Content-Type. Used
+        by pipeline handlers and routers to propagate X-Pipeline-* plus
+        X-Internal-Request-ID to cloud-proxy so the tracker/cancellation
+        machinery participates in every hop.
+        """
+        merged = {"Content-Type": "application/json"}
+        if headers:
+            merged.update(headers)
         return await self._client.post(
             path,
             json=body,
-            headers={"Content-Type": "application/json"},
+            headers=merged,
         )
 
     async def stream_provider_native(
         self,
         path: str,
         body: dict[str, Any],
+        headers: dict[str, str] | None = None,
     ) -> AsyncIterator[bytes]:
-        """Stream POST to cloud-proxy native path preserving raw SSE framing."""
+        """Stream POST to cloud-proxy native path preserving raw SSE framing.
+
+        ``headers`` (optional) are merged with the default Content-Type —
+        see ``post_provider_native_json`` for rationale.
+        """
+        merged = {"Content-Type": "application/json"}
+        if headers:
+            merged.update(headers)
         async with self._client.stream(
             "POST",
             path,
             json=body,
-            headers={"Content-Type": "application/json"},
+            headers=merged,
         ) as response:
             if response.status_code >= 400:
                 error_body = await response.aread()

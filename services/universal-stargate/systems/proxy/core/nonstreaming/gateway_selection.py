@@ -130,7 +130,7 @@ async def select_gateway_and_load_model(
                     context.selected_gateway.ref, "remote_stargate_url", "unknown"
                 )
 
-                await event_bus.publish_async_nowait(
+                await event_bus.publish_nowait(
                     RequestRouted(
                         request_id=context.request_id,
                         model_id=str(model_id),  # Serialize for event payload

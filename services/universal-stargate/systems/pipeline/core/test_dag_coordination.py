@@ -36,7 +36,7 @@ def _build_context(registry: MagicMock) -> MagicMock:
     context.recorder = None
     context._step_model_override = {}
     context._proxy = MagicMock()
-    context._proxy.event_bus.publish_async_nowait = AsyncMock(return_value=None)
+    context._proxy.event_bus.publish_nowait = AsyncMock(return_value=None)
     return context
 
 

@@ -35,7 +35,7 @@ _WAITING_EVENT_INTERVAL_S = 15.0
 class _EventBusLike(Protocol):
     def subscribe_async(self, signal: str, callback: Any) -> None: ...
 
-    async def publish_async_nowait(self, event: Any) -> None: ...
+    async def publish_nowait(self, event: Any) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -761,7 +761,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityPoolQueued
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityPoolQueued(
                         request_id=request_id,
                         model_id=model_id,
@@ -786,7 +786,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityPoolAdmitted
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityPoolAdmitted(
                         request_id=request_id,
                         model_id=model_id,
@@ -824,7 +824,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityPoolWaiting
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityPoolWaiting(
                         request_id=request_id,
                         model_id=model_id,
@@ -846,7 +846,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityPoolFull
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityPoolFull(
                         request_id=request_id,
                         model_id=model_id,
@@ -871,7 +871,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityPoolCancelled
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityPoolCancelled(
                         request_id=request_id,
                         model_id=model_id,
@@ -892,7 +892,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityAdmissionPaused
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityAdmissionPaused(
                         model_id=model_id,
                         duration_s=duration_s,
@@ -910,7 +910,7 @@ class CapacityPool:
             from src.scheduling.events import CapacityAdmissionResumed
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     CapacityAdmissionResumed(
                         model_id=model_id,
                         reason=reason,
@@ -942,7 +942,7 @@ class CapacityPool:
                 model_id=model_id,
                 snapshot=self.get_snapshot(),
             )
-            asyncio.create_task(self._event_bus.publish_async_nowait(event))
+            asyncio.create_task(self._event_bus.publish_nowait(event))
         except RuntimeError as exc:
             logger.warning(
                 "Failed to emit slot leak recovered event for %s/%s: "

@@ -62,7 +62,7 @@ def build_peer_callbacks(
             from src.scheduling.events import FederationConnectionEstablished
 
             task = asyncio.create_task(
-                event_bus.publish_async_nowait(  # type: ignore[union-attr]
+                event_bus.publish_nowait(  # type: ignore[union-attr]
                     FederationConnectionEstablished(
                         remote_id=peer_id,
                         transport="websocket",
@@ -79,7 +79,7 @@ def build_peer_callbacks(
             from src.scheduling.events import FederationConnectionLost
 
             task = asyncio.create_task(
-                event_bus.publish_async_nowait(  # type: ignore[union-attr]
+                event_bus.publish_nowait(  # type: ignore[union-attr]
                     FederationConnectionLost(
                         remote_id=peer_id,
                         reason="disconnected",

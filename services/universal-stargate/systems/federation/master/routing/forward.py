@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 
 
 class _EventBusPublisher(Protocol):
-    def publish_async_nowait(self, event: object) -> object: ...
+    async def publish_nowait(self, event: object) -> object: ...
 
 
 class _CloudForwarder(Protocol):
@@ -246,7 +246,7 @@ class FederatedRequestForwarder:
             from src.scheduling.events import FederationRoutingDelegated
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationRoutingDelegated(
                         request_id=request_id,
                         target_remote=gateway.remote_stargate_id,
@@ -330,7 +330,7 @@ class FederatedRequestForwarder:
             from src.scheduling.events import FederationRoutingDelegated
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationRoutingDelegated(
                         request_id=request_id,
                         target_remote=gateway.remote_stargate_id,

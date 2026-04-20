@@ -10,6 +10,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from llm_adapters._mcp_entry import (
+    openai_xai_mcp_tool_entry,
+    resolve_mcp_env,
+)
+
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
 
@@ -55,8 +60,7 @@ def _normalize_input_content(content: Any) -> Any:
     if not isinstance(content, list):
         return content
     text_only = all(
-        isinstance(b, dict) and b.get("type") in {"text", "input_text"}
-        for b in content
+        isinstance(b, dict) and b.get("type") in {"text", "input_text"} for b in content
     )
     if text_only and len(content) == 1:
         return str(content[0].get("text", ""))
@@ -100,7 +104,8 @@ class ResponsesAPIAdapter:
         return self._vendor
 
     def build_request(
-        self, req: LLMRequest,
+        self,
+        req: LLMRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         headers = {
             "authorization": f"Bearer {self._api_key}",
@@ -130,7 +135,8 @@ class ResponsesAPIAdapter:
         return url, headers, body
 
     def build_frontier_request(
-        self, req: FrontierRequest,
+        self,
+        req: FrontierRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         headers: dict[str, str] = {
             "authorization": f"Bearer {self._api_key}",
@@ -208,12 +214,32 @@ class ResponsesAPIAdapter:
             else:
                 body["text"] = {"format": fmt}
 
-        tools_list: list[dict[str, Any]] = []
-        if req.tools:
-            for tool in req.tools:
-                tools_list.append(_normalize_tool_for_responses_api(tool))
-        if tools_list:
-            body["tools"] = tools_list
+        if req.remote_mcp:
+            if req.mcp_tool_loop:
+                raise ValueError(
+                    "remote_mcp=True is mutually exclusive with mcp_tool_loop=True"
+                )
+            if req.tools:
+                for t in req.tools:
+                    if not isinstance(t, dict) or t.get("type") != "mcp":
+                        raise ValueError(
+                            "remote_mcp=True only accepts provider-native "
+                            'MCP tool entries (type=="mcp"); got '
+                            f"type={t.get('type') if isinstance(t, dict) else type(t).__name__}"
+                        )
+            url, token = resolve_mcp_env()
+            existing_tools = list(req.tools or [])
+            body["tools"] = [
+                *existing_tools,
+                openai_xai_mcp_tool_entry(url, token),
+            ]
+        else:
+            tools_list: list[dict[str, Any]] = []
+            if req.tools:
+                for tool in req.tools:
+                    tools_list.append(_normalize_tool_for_responses_api(tool))
+            if tools_list:
+                body["tools"] = tools_list
         if req.tool_choice is not None:
             body["tool_choice"] = req.tool_choice
 

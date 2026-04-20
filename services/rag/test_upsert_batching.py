@@ -58,7 +58,7 @@ async def test_upsert_emits_started_completed_per_batch() -> None:
     chroma = _FakeChroma(max_bs)
     collection = MagicMock()
     event_bus = MagicMock()
-    event_bus.publish_async_nowait = AsyncMock()
+    event_bus.publish_nowait = AsyncMock()
 
     ids = [f"id{i}" for i in range(total)]
     embeddings = [[0.0] for _ in range(total)]
@@ -78,8 +78,8 @@ async def test_upsert_emits_started_completed_per_batch() -> None:
         metadatas=metadatas,
     )
 
-    assert event_bus.publish_async_nowait.await_count == 4
-    events = [c.args[0] for c in event_bus.publish_async_nowait.call_args_list]
+    assert event_bus.publish_nowait.await_count == 4
+    events = [c.args[0] for c in event_bus.publish_nowait.call_args_list]
     assert all(e.signal.startswith("rag.chroma.upsert.") for e in events)
     assert events[0].signal == "rag.chroma.upsert.started"
     assert events[0].payload["batch_index"] == 0

@@ -75,7 +75,7 @@ async def acquire_admission_token(
             from src.scheduling.events import RoutingCapacityPreseeded
 
             asyncio.create_task(
-                event_bus.publish_async_nowait(
+                event_bus.publish_nowait(
                     RoutingCapacityPreseeded(
                         request_id=context.request_id,
                         model_id=str(model_id),
@@ -96,7 +96,7 @@ async def acquire_admission_token(
             from src.scheduling.events import RoutingCapacityDivergence
 
             asyncio.create_task(
-                event_bus.publish_async_nowait(
+                event_bus.publish_nowait(
                     RoutingCapacityDivergence(
                         request_id=context.request_id,
                         model_id=str(model_id),

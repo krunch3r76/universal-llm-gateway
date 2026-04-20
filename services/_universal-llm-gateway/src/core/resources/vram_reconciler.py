@@ -45,7 +45,7 @@ class _WorkerControllerProto(Protocol):
 
 
 class _EventBusProto(Protocol):
-    async def publish_async_nowait(self, event: object) -> None: ...
+    async def publish_nowait(self, event: object) -> None: ...
 
 
 logger = get_logger(__name__)
@@ -257,7 +257,7 @@ class VramReconciler:
         try:
             from ..events.types import ModelUnloaded
 
-            await self._event_bus.publish_async_nowait(ModelUnloaded(model_id=model_id))
+            await self._event_bus.publish_nowait(ModelUnloaded(model_id=model_id))
             logger.info("📡 Emitted MODEL_UNLOADED for ghost model %s", model_id)
         except Exception:
             logger.error(
@@ -322,7 +322,7 @@ class VramReconciler:
         try:
             from ..events.types import PhantomModelDetected
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 PhantomModelDetected(
                     model_id=model_id,
                     process_status="running",
@@ -400,7 +400,7 @@ class VramReconciler:
         try:
             from ..events.types import VramOrphanDetected
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 VramOrphanDetected(
                     hardware_used_mb=hardware_used,
                     catalog_used_mb=tracked_used,
@@ -423,7 +423,7 @@ class VramReconciler:
         try:
             from ..events.types import VramStalenessDetected
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 VramStalenessDetected(
                     hardware_used_mb=hardware_used,
                     catalog_used_mb=tracked_used,
@@ -487,7 +487,7 @@ class VramReconciler:
         try:
             from ..events.types import PhantomModelCleaned
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 PhantomModelCleaned(
                     model_id=model_id,
                     success=success,
@@ -509,7 +509,7 @@ class VramReconciler:
         try:
             from ..events.types import GhostModelCleaned
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 GhostModelCleaned(
                     model_id=model_id,
                     success=success,

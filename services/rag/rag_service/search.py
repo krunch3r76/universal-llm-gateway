@@ -48,7 +48,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
             and exc.status_code == 400
         ):
             available_scopes = sorted(state._config.scopes) if state._config else []
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_scope_rejected(
                     scope=original_scope,
                     reason="validation_error",
@@ -60,7 +60,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
     if state._event_bus is not None and original_scope is not None:
         resolved_prefixes = request.source_prefixes or []
         if resolved_prefixes:
-            state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_scope_resolved(
                     scope=original_scope, prefix_count=len(resolved_prefixes)
                 )
@@ -83,7 +83,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
                 query_embedding = await embed_query(request.query, scope=request.scope)
             except EmbeddingTransientError as exc:
                 if state._event_bus is not None:
-                    state._event_bus.publish_async_nowait(
+                    await state._event_bus.publish_nowait(
                         rag_search_embedding_failed(
                             model_id=exc.model_id,
                             attempts=exc.attempts,
@@ -205,7 +205,7 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
                 scope=request.scope,
             )
         )
-        state._event_bus.publish_async_nowait(event)
+        await state._event_bus.publish_nowait(event)
 
     return SearchResponse(
         chunks=chunks,

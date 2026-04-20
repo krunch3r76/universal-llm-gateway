@@ -29,7 +29,7 @@ class _FakeEventBus:
     def subscribe_async(self, signal: str, callback: Any) -> None:
         return None
 
-    async def publish_async_nowait(self, event: Any) -> None:
+    async def publish_nowait(self, event: Any) -> None:
         self.events.append(event)
 
 

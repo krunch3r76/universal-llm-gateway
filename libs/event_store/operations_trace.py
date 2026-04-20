@@ -159,9 +159,15 @@ async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[st
     minutes, cutoff = await _resolve_window_minutes_and_cutoff(params, store)
     provider_filter = params.get("provider") or None
 
+    # ``pipeline.frontier.dispatch.output.short`` is the Phase-1 hoisted
+    # successor to ``mcp.frontier.output.short``; both matter for
+    # provider-health aggregation. Other pipeline.frontier.dispatch.* signals
+    # are lifecycle telemetry, not provider health, so we narrow to the one
+    # short-output signal rather than LIKE-matching the whole namespace.
     rows = await store.query(
         "SELECT signal, payload FROM events "
-        "WHERE signal LIKE 'mcp.frontier.%' "
+        "WHERE (signal LIKE 'mcp.frontier.%' "
+        "OR signal = 'pipeline.frontier.dispatch.output.short') "
         "AND role NOT IN ('debug', 'realtime') "
         "AND ts_unix_ms >= ? "
         "ORDER BY seq DESC",
@@ -207,7 +213,10 @@ async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[st
         elif sig == "mcp.frontier.generate.error":
             err = payload.get("error") or "unknown"
             bucket["errors"][err] = bucket["errors"].get(err, 0) + 1
-        elif sig == "mcp.frontier.output.short":
+        elif sig in (
+            "mcp.frontier.output.short",
+            "pipeline.frontier.dispatch.output.short",
+        ):
             bucket["output_short"] += 1
         elif sig == "mcp.frontier.tool.executed":
             bucket["tool_executed"] += 1

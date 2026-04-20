@@ -17,6 +17,7 @@ register_handler(SelectWinnerHandler)
 from .. import assess_loop as _assess_loop  # noqa: E402, F401
 from .. import data_sink as _data_sink  # noqa: E402, F401
 from .. import data_source as _data_source  # noqa: E402, F401
+from .. import frontier_dispatch as _frontier_dispatch  # noqa: E402, F401
 from .. import pipeline_call as _pipeline_call  # noqa: E402, F401
 from .. import rag_search as _rag_search  # noqa: E402, F401
 from .. import select_output as _select_output  # noqa: E402, F401

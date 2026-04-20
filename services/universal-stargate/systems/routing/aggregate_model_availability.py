@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 
 class _EventBusPublish(Protocol):
-    async def publish_async_nowait(self, event: Any) -> None: ...
+    async def publish_nowait(self, event: Any) -> None: ...
 
 
 class AggregateModelAvailabilityEmitter:
@@ -86,7 +86,7 @@ class AggregateModelAvailabilityEmitter:
                 continue
             ev = ModelAvailable(mid) if now else ModelUnavailable(mid)
             try:
-                await self._event_bus.publish_async_nowait(ev)
+                await self._event_bus.publish_nowait(ev)
             except Exception as exc:
                 logger.error(
                     "Failed to emit %s for %s: %s",

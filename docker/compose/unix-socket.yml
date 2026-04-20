@@ -55,6 +55,11 @@ services:
       # Configuration overrides
       # Note: Gateway configuration is now in stargate_config.yaml (no separate gateways.yaml)
 
+      # Agent identity (birth prompts) — lives in Cortex data layer, not repo.
+      # Read-only mount so the pipeline prompt loader can resolve
+      # system_prompt_from entries at registry build time.
+      - ${AGENT_IDENTITY_DIR:-/mnt/torus/mcp-data/files/agent-identity}:/app/agent-identity:ro
+
       # User-specific pipelines and handlers
       - ${HOME}/.local/share/universal-stargate:/root/.local/share/universal-stargate:ro
 
@@ -107,8 +112,24 @@ services:
       # Stargate configuration
       - STARGATE_CONFIG=/app/services/universal-stargate/config/stargate_config.docker.yaml
 
+      # Agent identity base (required by pipeline prompt loader when a
+      # prompts.yaml entry uses system_prompt_from). Bind-mounted above.
+      - AGENT_IDENTITY_DIR=/app/agent-identity
+
       # Debug event socket (enable with DEBUG_EVENT_SOCKET=/sockets/events.sock)
       - DEBUG_EVENT_SOCKET=${DEBUG_EVENT_SOCKET:-}
+
+      # Agent-bus auth token for async-dispatch result delivery (Phase B3).
+      # When unset, Stargate logs a warning and disables result_delivery.
+      - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}
+
+      # Remote-MCP env — required for pipeline/frontier_generate paths that set
+      # remote_mcp=True (Task 7 Phase 0). When either is missing, adapter
+      # build_frontier_request raises RuntimeError and the pipeline handler
+      # emits pipeline.frontier.dispatch.remote.mcp.misconfigured before
+      # surfacing as pipeline_execution_failed.
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
+      - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}
 
     # Start both Gateway and Stargate services
     entrypoint: [ "/app/golem-start.sh" ]

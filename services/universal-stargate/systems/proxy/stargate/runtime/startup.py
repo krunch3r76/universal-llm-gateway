@@ -3,12 +3,18 @@ from __future__ import annotations
 import asyncio
 import os
 from collections.abc import Callable, Coroutine
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
 from systems.federation.common.config.schema import StargateMode
+from systems.pipeline.core.execution.dispatch_journal import (
+    initialize_schema,
+    journal_terminal,
+    prune_expired,
+)
 from systems.pipeline.execution_summary import get_summary_writer
 
 from .component_factory import (
@@ -131,6 +137,32 @@ def _schedule_supervised_task(coro: Coroutine[Any, Any, object], name: str) -> N
             )
 
     task.add_done_callback(_on_done)
+
+
+def _start_dispatch_journal_prune_loop(
+    proxy: StargateProxy,
+    *,
+    retention_seconds: float,
+) -> None:
+    """Run hourly sqlite-journal retention pruning in the background."""
+
+    async def _dispatch_journal_prune_loop() -> None:
+        while True:
+            try:
+                await asyncio.sleep(3600.0)
+                await prune_expired(
+                    retention_seconds,
+                    event_bus=proxy.event_bus,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning("Dispatch journal prune failed: %s", exc)
+
+    _schedule_supervised_task(
+        _dispatch_journal_prune_loop(),
+        name="dispatch-journal-prune-loop",
+    )
 
 
 async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> None:
@@ -317,6 +349,21 @@ async def startup_proxy(proxy: StargateProxy, app: FastAPI | None = None) -> Non
 
     # Initialize pipeline system (depends on request_executor)
     await initialize_pipeline_system(proxy)
+
+    tracker = getattr(proxy, "pipeline_dispatch_tracker", None)
+    if tracker is not None:
+        await initialize_schema()
+        tracker.set_journal_writer(
+            partial(
+                journal_terminal,
+                event_bus=proxy.event_bus,
+            )
+        )
+        _start_dispatch_journal_prune_loop(
+            proxy,
+            retention_seconds=tracker.retention_seconds,
+        )
+        logger.info("✅ Dispatch journal initialized for terminal record persistence")
 
     await initialize_hot_reload(proxy)
 
@@ -644,7 +691,7 @@ def _wire_request_inference_started_event(proxy: StargateProxy) -> None:
         correlation_id: str | None,
     ) -> None:
         try:
-            await proxy.event_bus.publish_async_nowait(
+            await proxy.event_bus.publish_nowait(
                 RequestInferenceStarted(
                     request_id=request_id,
                     model_id=model_id,

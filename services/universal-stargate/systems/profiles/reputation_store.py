@@ -231,7 +231,7 @@ class TaskModelReputationStore:
 
         if self._event_bus is not None:
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     ModelSelectionHealthObservation(
                         task=task,
                         model_id=model_id,

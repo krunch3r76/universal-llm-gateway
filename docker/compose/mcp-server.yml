@@ -78,6 +78,10 @@ services:
       - CLAUDEBURST_COINBASE_HOST=${CLAUDEBURST_COINBASE_HOST:-}
       - CLAUDEBURST_COINBASE_PORT=${CLAUDEBURST_COINBASE_PORT:-}
       - MCP_SERVER_URL=${MCP_SERVER_URL:-}
+      # Canonical remote-MCP URL consumed by libs/llm_adapters/_mcp_entry.resolve_mcp_env.
+      # Required when any caller passes remote_mcp=True (FrontierRequest) or builds an
+      # -mcp-suffixed native-route request. Kept in sync with MCP_SERVER_URL.
+      - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
       # Cortex deployment config — parameterizes personal references
       - CORTEX_DEFAULT_USER_ENTITY=${CORTEX_DEFAULT_USER_ENTITY:-}
       - CORTEX_OWNER_NAME=${CORTEX_OWNER_NAME:-the user}

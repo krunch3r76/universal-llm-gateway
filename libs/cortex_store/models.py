@@ -73,6 +73,7 @@ class EntityCreate(_EntityCommon):
     name: str
     description: str | None = None
     status: EntityStatus | None = None
+    workflow_state: str | None = None
     retention_policy: RetentionPolicy | None = None
     retention_ttl_days: int | None = None
 
@@ -83,6 +84,7 @@ class EntitySummary(BaseModel):
     name: str
     description: str | None = None
     status: EntityStatus | None = None
+    workflow_state: str | None = None
     content_hash: str | None = None
     created_at: str
 
@@ -93,6 +95,7 @@ class EntityDetail(_EntityCommon):
     name: str
     description: str | None = None
     status: EntityStatus | None = None
+    workflow_state: str | None = None
     created_at: str
     updated_at: str
     assertions: list[AssertionItem] = Field(default_factory=list)
@@ -109,6 +112,7 @@ class EntityUpdate(BaseModel):
     source_uri: str | None = None
     description: str | None = None
     status: EntityStatus | None = None
+    workflow_state: str | None = None
     content_hash: str | None = None
     retention_policy: RetentionPolicy | None = None
     retention_ttl_days: int | None = None

@@ -398,7 +398,7 @@ class ProcessLifecycleManager:
                 loop = asyncio.get_running_loop()
                 loop.call_soon(
                     lambda: asyncio.create_task(
-                        get_event_bus().publish_async_nowait(
+                        get_event_bus().publish_nowait(
                             SocketCleanupRequested(
                                 model_id=model_id, socket_path=socket_path
                             )
@@ -503,7 +503,7 @@ class ProcessLifecycleManager:
                 loop = asyncio.get_running_loop()
                 loop.call_soon(
                     lambda: asyncio.create_task(
-                        get_event_bus().publish_async_nowait(
+                        get_event_bus().publish_nowait(
                             SocketCleanupRequested(
                                 model_id=model_id, socket_path=socket_path
                             )

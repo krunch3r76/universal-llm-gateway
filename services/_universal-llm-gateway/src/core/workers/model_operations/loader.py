@@ -96,7 +96,7 @@ class ModelLoader:
                 if self._controller.event_bus:
                     from src.core.events.types import ModelLoadContextMismatch
 
-                    await self._controller.event_bus.publish_async_nowait(
+                    await self._controller.event_bus.publish_nowait(
                         ModelLoadContextMismatch(
                             model_id=model_id,
                             requested_context=requested_ctx,
@@ -243,7 +243,7 @@ class ModelLoader:
                 if self._controller.event_bus and resource_details:
                     from src.core.events.types import ModelLoadBlocked
 
-                    await self._controller.event_bus.publish_async_nowait(
+                    await self._controller.event_bus.publish_nowait(
                         ModelLoadBlocked(
                             model_id=model_id,
                             reason=resource_details["reason"],
@@ -280,7 +280,7 @@ class ModelLoader:
 
                     req = resource_tracker.get_model_requirements(model_id)
                     estimated_vram = req.get("vram_required_mb") or 0
-                    await self._controller.event_bus.publish_async_nowait(
+                    await self._controller.event_bus.publish_nowait(
                         WorkerLoading(
                             model_id=model_id,
                             estimated_vram_mb=estimated_vram,

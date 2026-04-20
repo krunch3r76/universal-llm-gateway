@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from universal_logging import get_logger
 
 from .events import _emit_event_safe
+from .wait_emit import build_exit_constraint_summary
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -335,7 +336,27 @@ async def _wait_and_retry_selection(
                 for c in (trace.candidates if trace else [])
             )
             if not still_transient:
-                break
+                # First-iteration (or later) bail: wait entered because the
+                # rejection-time classifier saw eviction_blocked_by_busy_models,
+                # but the retry's trace no longer carries that constraint. Emit
+                # the timeout signal with exit_reason="non_transient" and skip
+                # the post-loop emission.
+                waited_ms = int((time.monotonic() - wait_start) * 1000)
+                if event_bus:
+                    await _emit_event_safe(
+                        event_bus,
+                        RoutingEvictionWaitTimeout(
+                            request_id=context.request_id,
+                            model_id=str(placement.model_id),
+                            waited_ms=waited_ms,
+                            exit_reason="non_transient",
+                            exit_constraint_summary=build_exit_constraint_summary(
+                                trace
+                            ),
+                        ),
+                        "routing.eviction.wait.timeout",
+                    )
+                return None, trace, waited_ms
 
             if (
                 capacity_pool is not None
@@ -388,6 +409,8 @@ async def _wait_and_retry_selection(
                 request_id=context.request_id,
                 model_id=str(placement.model_id),
                 waited_ms=waited_ms,
+                exit_reason="budget_exhausted",
+                exit_constraint_summary=build_exit_constraint_summary(trace),
             ),
             "routing.eviction.wait.timeout",
         )
@@ -460,7 +483,7 @@ def _trigger_starvation_drain(
     if event_bus:
         try:
             asyncio.create_task(
-                event_bus.publish_async_nowait(
+                event_bus.publish_nowait(
                     drain_event_factory(
                         request_id=context.request_id,
                         target_model_id=str(placement.model_id),

@@ -104,7 +104,7 @@ async def _maybe_update_corpus_hints() -> None:
     except Exception as e:
         logger.warning("Failed to update corpus hints: %s", e, exc_info=True)
         if _event_bus is not None:
-            await _event_bus.publish_async_nowait(
+            await _event_bus.publish_nowait(
                 rag_corpus_hints_update_failed(
                     path=str(_property_index.db_path),
                     error=str(e),

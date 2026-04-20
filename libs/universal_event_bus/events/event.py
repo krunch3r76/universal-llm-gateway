@@ -36,7 +36,7 @@ class Event:
 
         # Usage:
         event = MyEvent(field="value")
-        await event_bus.publish_async(event)
+        await event_bus.publish(event)
 
         # EventBus automatically adds:
         # event.timestamp = "2025-10-06T03:15:30.123Z"

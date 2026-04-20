@@ -38,8 +38,7 @@ def register_model_status_tools(mcp: FastMCP) -> None:
 
         Calls Stargate ``GET /v1/models`` — the same catalog a human client
         or any OpenAI-compatible tool would see.  Use this to discover model
-        IDs before calling ``llm_generate``, ``claude_generate``, or
-        ``grok_generate``.
+        IDs before calling ``llm_generate`` or ``frontier_generate``.
 
         Args:
             filter: Optional provider prefix to narrow results.

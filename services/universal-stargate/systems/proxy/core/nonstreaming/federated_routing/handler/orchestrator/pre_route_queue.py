@@ -86,7 +86,7 @@ async def wait_for_retryable_capacity(
     register_demand(routing_key, context.request_id)
 
     if event_bus:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             RoutingQueued(
                 request_id=context.request_id,
                 model_id=str(context.selected_model),
@@ -127,7 +127,7 @@ async def wait_for_retryable_capacity(
             if selected_gateway:
                 wait_ms = (time.monotonic() - queue_start) * 1000.0
                 if event_bus:
-                    await event_bus.publish_async_nowait(
+                    await event_bus.publish_nowait(
                         RoutingDequeued(
                             request_id=context.request_id,
                             model_id=str(context.selected_model),
@@ -155,7 +155,7 @@ async def wait_for_retryable_capacity(
 
     wait_ms = (time.monotonic() - queue_start) * 1000.0
     if event_bus:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             RoutingTimeout(
                 request_id=context.request_id,
                 model_id=str(context.selected_model),

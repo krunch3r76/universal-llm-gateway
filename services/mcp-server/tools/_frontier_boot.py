@@ -17,11 +17,11 @@ _BOOT_SEPARATOR = "\n\n---\n\n"
 _VALID_BOOT_LEVELS = {"none", "mcp", "minimal", "full", "team"}
 
 _BIRTH_PROMPTS: dict[str, str] = {
-    "oppie": "notes/system/prompts/oppie-birth.md",
-    "orion": "notes/system/prompts/orion-birth.md",
-    "api_claude": "notes/system/prompts/web-claude-birth.md",
-    "web": "notes/system/prompts/web-claude-birth.md",
-    "cursor": "notes/system/prompts/cursor-claude-birth.md",
+    "oppie": "agent-identity/oppie-birth.md",
+    "orion": "agent-identity/orion-birth.md",
+    "api_claude": "agent-identity/api-claude-birth.md",
+    "web": "agent-identity/web-claude-birth.md",
+    "cursor": "agent-identity/cursor-claude-birth.md",
 }
 
 CORTEX_TOOL_QUICKREF = """\
@@ -100,9 +100,14 @@ def compose_system_prompt(boot_context: str, caller_system: str) -> str:
     return f"{boot_context}{_BOOT_SEPARATOR}{caller_system}"
 
 
+_BOOT_REF_ALLOWED_PREFIXES: tuple[str, ...] = ("notes/", "agent-identity/")
+
+
 def _read_boot_ref(boot_ref: str) -> str:
-    if not boot_ref.startswith("notes/"):
-        raise ValueError("boot_ref must point into the notes/ tree")
+    if not boot_ref.startswith(_BOOT_REF_ALLOWED_PREFIXES):
+        raise ValueError(
+            f"boot_ref must point into one of: {', '.join(_BOOT_REF_ALLOWED_PREFIXES)}"
+        )
     result = read_file_result(boot_ref)
     return str(result["content"])
 

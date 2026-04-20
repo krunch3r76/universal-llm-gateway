@@ -58,9 +58,9 @@ class SimpleHealthMonitor:
         if not hasattr(self.config, "event_bus"):
             raise ValueError("event_bus not configured in ProcessHealthConfig")
 
-        if not hasattr(self.config.event_bus, "publish_async"):
+        if not hasattr(self.config.event_bus, "publish"):
             raise ValueError(
-                "event_bus must have publish_async method (universal_event_bus v0.2.0+)"
+                "event_bus must have publish method (universal_event_bus v0.2.0+)"
             )
 
     def _create_event(
@@ -438,7 +438,7 @@ class SimpleHealthMonitor:
     async def _publish_event_async(self, event: Event) -> None:
         """Publish Event instance directly using async API."""
         try:
-            await self.config.event_bus.publish_async(event)
+            await self.config.event_bus.publish(event)
         except Exception as e:
             self._logger.error(f"Error publishing event asynchronously: {e}")
 

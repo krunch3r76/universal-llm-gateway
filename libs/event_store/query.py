@@ -11,6 +11,7 @@ Served over UDS + optional TCP via FastAPI/uvicorn.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -196,5 +197,19 @@ async def _raw_sql(data: dict[str, Any], store: EventStore) -> JSONResponse:
         )
 
     limit = min(data.get("limit", 100), _MAX_QUERY_ROWS)
-    rows = await store.query(sql, tuple(raw_params), limit=limit)
+    try:
+        rows = await store.query(
+            sql, tuple(raw_params), limit=limit, raise_on_error=True
+        )
+    except sqlite3.Error as e:
+        # Surface malformed SQL (bad column, syntax error, etc.) as a 400
+        # instead of silently returning []. The escape hatch is only useful
+        # if failures are visible; silent-empty looks like "no data" and
+        # causes agents to chase ghosts. Columns of `events`: seq, event_id,
+        # signal, role, scope, ts_unix_ms, timestamp, source, request_id,
+        # execution_id, model_id, gateway_id, payload.
+        return JSONResponse(
+            {"error": f"SQL error: {e}", "sql": sql[:200]},
+            status_code=400,
+        )
     return JSONResponse({"type": "result", "rows": rows, "count": len(rows)})

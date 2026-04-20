@@ -118,6 +118,8 @@ class GoogleAdapter:
         req: FrontierRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         """Build Gemini native generateContent request from FrontierRequest."""
+        if req.remote_mcp:
+            raise NotImplementedError("google has no native remote MCP protocol")
         headers: dict[str, str] = {
             "x-goog-api-key": self._api_key,
             "content-type": "application/json",

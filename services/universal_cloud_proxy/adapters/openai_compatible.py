@@ -21,6 +21,67 @@ _APP_URL = "https://github.com/krunch3r76/universal-llm-gateway"
 
 logger = get_logger(__name__)
 
+# OpenAI reasoning-model families reject any non-default value for
+# temperature / top_p / presence_penalty / frequency_penalty. Prefix match
+# future-proofs against minor revisions (gpt-5.0, gpt-5.1, o4-mini, etc.).
+_OPENAI_REASONING_MODEL_PREFIXES: tuple[str, ...] = ("gpt-5", "o1", "o3", "o4")
+_REASONING_UNSUPPORTED_PARAMS: tuple[str, ...] = (
+    "temperature",
+    "top_p",
+    "presence_penalty",
+    "frequency_penalty",
+)
+
+
+def _is_openai_reasoning_model(upstream_model: str) -> bool:
+    """True iff the upstream model ID belongs to an OpenAI reasoning family."""
+    lowered = upstream_model.lower()
+    return any(lowered.startswith(p) for p in _OPENAI_REASONING_MODEL_PREFIXES)
+
+
+def _strip_reasoning_incompatible_params(
+    body: dict[str, Any],
+    *,
+    provider: str,
+    upstream_model: str,
+) -> list[str]:
+    """Drop params OpenAI reasoning models reject. Returns stripped keys.
+
+    Mutates ``body`` in place. No-op unless ``provider == "openai"`` AND the
+    model belongs to a reasoning family; xAI Grok and non-reasoning OpenAI
+    models (gpt-4o, gpt-4-turbo, etc.) pass through unchanged.
+    """
+    if provider != "openai" or not _is_openai_reasoning_model(upstream_model):
+        return []
+    stripped = [key for key in _REASONING_UNSUPPORTED_PARAMS if key in body]
+    for key in stripped:
+        body.pop(key, None)
+    return stripped
+
+
+def _emit_strip_debug(upstream_model: str, stripped: list[str], surface: str) -> None:
+    """Fire-and-forget debug signal when reasoning-incompatible params were dropped."""
+    if not stripped:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Called from a sync context with no running loop — debug emission is
+        # best-effort; the param strip itself already happened.
+        return
+    coro = emit_debug_event(
+        "debug.cloud.params.stripped",
+        {
+            "provider": "openai",
+            "model": upstream_model,
+            "stripped": stripped,
+            "surface": surface,
+        },
+        source="cloud-proxy",
+        scope="global",
+    )
+    loop.create_task(coro)
+
 
 class OpenAICompatibleAdapter:
     """Forward OpenAI-compatible provider requests while preserving model-ID mapping and upstream error semantics."""
@@ -109,15 +170,20 @@ class OpenAICompatibleAdapter:
         self, request_body: dict[str, Any], *, stream: bool | None = None
     ) -> dict[str, Any]:
         model_id = str(request_body.get("model", ""))
+        upstream_model = self.to_upstream_model_id(model_id)
         body = {
             **request_body,
-            "model": self.to_upstream_model_id(model_id),
+            "model": upstream_model,
         }
         if stream is not None:
             body["stream"] = stream
         # GPT-5.x+ rejects max_tokens; the Chat Completions API requires max_completion_tokens.
         if self._config.provider == "openai" and "max_tokens" in body:
             body["max_completion_tokens"] = body.pop("max_tokens")
+        stripped = _strip_reasoning_incompatible_params(
+            body, provider=self._config.provider, upstream_model=upstream_model
+        )
+        _emit_strip_debug(upstream_model, stripped, surface="chat_completions")
         return body
 
     async def _forward_chat_passthrough_stream(
@@ -154,10 +220,16 @@ class OpenAICompatibleAdapter:
                     yield chunk
 
     async def forward_native(self, request_body: dict[str, Any]) -> dict[str, Any]:
-        """POST Responses API JSON unchanged (native xAI/OpenAI-shaped ingress)."""
+        """POST Responses API JSON to upstream; strips reasoning-incompatible params for OpenAI reasoning models."""
+        upstream_model = str(request_body.get("model", ""))
+        body = dict(request_body)
+        stripped = _strip_reasoning_incompatible_params(
+            body, provider=self._config.provider, upstream_model=upstream_model
+        )
+        _emit_strip_debug(upstream_model, stripped, surface="responses")
         response = await self._client.post(
             f"{self._config.base_url}/responses",
-            json=request_body,
+            json=body,
             headers=self._headers(),
         )
         if response.status_code >= 400:
@@ -167,14 +239,19 @@ class OpenAICompatibleAdapter:
     async def forward_native_stream(
         self, request_body: dict[str, Any]
     ) -> AsyncIterator[bytes]:
-        """Stream Responses API SSE bytes unchanged (native xAI/OpenAI-shaped ingress)."""
+        """Stream Responses API SSE bytes; strips reasoning-incompatible params for OpenAI reasoning models."""
         stream_start = time.monotonic()
         first_chunk_seen = False
         requested_model = str(request_body.get("model", ""))
+        body = dict(request_body)
+        stripped = _strip_reasoning_incompatible_params(
+            body, provider=self._config.provider, upstream_model=requested_model
+        )
+        _emit_strip_debug(requested_model, stripped, surface="responses_stream")
         async with self._client.stream(
             "POST",
             f"{self._config.base_url}/responses",
-            json=request_body,
+            json=body,
             headers=self._headers(),
         ) as response:
             if response.status_code >= 400:

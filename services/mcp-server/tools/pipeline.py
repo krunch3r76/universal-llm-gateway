@@ -1,15 +1,17 @@
-"""Pipeline tools — run pipelines and validate configurations.
+"""Pipeline tool — unified ``pipeline(op, …)`` primary MCP surface.
 
-Enables agents to trigger pipeline execution via Stargate HTTP,
-block until completion, and retrieve execution traces. Provides
-empirical feedback for the pipeline iteration loop.
+Single primary tool dispatching by
+``op ∈ {run, async, result, validate, stats, cancel}``
+to per-op private handlers. Enables agents to run pipelines synchronously,
+dispatch async jobs, fetch results, and validate configs — all through
+one first-class schema.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from mcp_events import monotonic_now, record
@@ -25,6 +27,9 @@ _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
 _TIMEOUT_BUFFER = 30.0
 _VALIDATE_TIMEOUT = 15.0
+_DISPATCH_TIMEOUT = 15.0
+_RESULT_MAX_WAIT = 60.0
+_RESULT_POLL_BUFFER = 15.0
 
 _QUERY_SOCKET = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
@@ -53,11 +58,7 @@ def _fetch_pipelines_metadata() -> dict[str, Any]:
 
 
 def _cache_pipeline_timeouts(pipelines: dict[str, Any]) -> None:
-    """Refresh the local timeout cache from a pipelines metadata mapping.
-
-    Args:
-        pipelines: Mapping of pipeline_id -> metadata payload from Stargate.
-    """
+    """Refresh the local timeout cache from a pipelines metadata mapping."""
     _pipeline_timeouts.clear()
     for pid, info in pipelines.items():
         ts = info.get("timeout_seconds")
@@ -66,12 +67,7 @@ def _cache_pipeline_timeouts(pipelines: dict[str, Any]) -> None:
 
 
 def _refresh_pipeline_timeouts() -> None:
-    """Refresh cached pipeline timeouts from the live Stargate registry.
-
-    Keeps the previous cache untouched when the metadata fetch fails so callers
-    can still use the last known timeout values instead of silently clearing the
-    cache and forcing the hardcoded fallback for every pipeline.
-    """
+    """Refresh cached pipeline timeouts from the live Stargate registry."""
     global _last_timeout_refresh_monotonic
     try:
         data = _fetch_pipelines_metadata()
@@ -93,12 +89,8 @@ def _refresh_pipeline_timeouts() -> None:
     _last_timeout_refresh_monotonic = monotonic_now()
 
 
-def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
-    """Determine effective HTTP timeout for a pipeline call.
-
-    Priority: explicit caller override > auto-detected from registry > fallback.
-    Adds _TIMEOUT_BUFFER to pipeline-configured timeouts for HTTP overhead.
-    """
+def _resolve_timeout(pipeline_id: str, explicit: float | None) -> float:
+    """Determine effective HTTP timeout for a pipeline call."""
     if explicit is not None:
         return explicit
 
@@ -106,7 +98,7 @@ def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
     if not _pipeline_timeouts or cache_age > _TIMEOUT_CACHE_TTL_S:
         _refresh_pipeline_timeouts()
 
-    configured = _pipeline_timeouts.get(pipeline)
+    configured = _pipeline_timeouts.get(pipeline_id)
     if configured is not None:
         return configured + _TIMEOUT_BUFFER
 
@@ -114,12 +106,7 @@ def _resolve_timeout(pipeline: str, explicit: float | None) -> float:
 
 
 def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
-    """POST a structured query to the event-service UDS endpoint.
-
-    Returns the decoded JSON response on success. On transport or HTTP failure,
-    logs a warning and returns an error dictionary so MCP callers receive a
-    structured failure instead of an uncaught exception.
-    """
+    """POST a structured query to the event-service UDS endpoint."""
     try:
         with make_sync_client(f"unix://{_QUERY_SOCKET}", timeout=10.0) as client:
             resp = client.post("/v1/query", json=body)
@@ -136,11 +123,11 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Event service query failed: {exc}"}
 
 
-def _validate_error(pipeline: str, message: str) -> dict[str, Any]:
-    """Build a consistent error shape for validate_pipeline failures."""
+def _validate_error(pipeline_id: str, message: str) -> dict[str, Any]:
+    """Build a consistent error shape for validate-op failures."""
     return {
         "valid": False,
-        "pipeline": pipeline,
+        "pipeline": pipeline_id,
         "errors": [message],
         "steps": 0,
         "models": [],
@@ -148,196 +135,403 @@ def _validate_error(pipeline: str, message: str) -> dict[str, Any]:
     }
 
 
-def register_pipeline_tools(mcp: FastMCP) -> None:
-    """Register pipeline execution and validation tools."""
-    _refresh_pipeline_timeouts()
+def _pipeline_run(
+    pipeline_id: str,
+    messages: list[dict[str, str]],
+    options: dict[str, Any] | None,
+    timeout: float | None,
+) -> dict[str, Any]:
+    t0 = monotonic_now()
+    record("mcp.pipeline.run.called", pipeline=pipeline_id)
+    tp_t0, tp_timer = toolprogress_begin("pipeline", pipeline=pipeline_id)
 
-    @mcp.tool(title="Run Pipeline")
-    def pipeline(
-        pipeline: str,
-        messages: list[dict[str, str]],
-        options: dict[str, Any] | None = None,
-        timeout: float | None = None,
-    ) -> dict[str, Any]:
-        """Run a pipeline, block until done, return result with execution_id.
+    effective_timeout = _resolve_timeout(pipeline_id, timeout)
+    body: dict[str, Any] = {"model": pipeline_id, "messages": messages}
+    if options:
+        body["pipeline_options"] = options
 
-        Args:
-          pipeline  (str)        — pipeline ID, e.g. "consensus", "rag-context" — REQUIRED
-          messages  (list[dict]) — chat messages in OpenAI format — REQUIRED
-          options   (dict|None)  — optional pipeline_options overrides
-          timeout   (float|None) — override HTTP timeout (auto-detected from pipeline config when omitted)
+    tp_err: str | None = None
+    tp_exec_id: str | None = None
+    try:
+        toolprogress_phase("pipeline", "stargate_post_begin", pipeline=pipeline_id)
+        url = f"{_STARGATE_URL}/v1/chat/completions"
+        with httpx.Client(timeout=effective_timeout) as client:
+            resp = client.post(url, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        toolprogress_phase("pipeline", "stargate_post_done", pipeline=pipeline_id)
 
-        Blocks until completion. YAML, prompts, and model configs hot-reload on file change.
-        Returns execution summary with execution_id for trace queries.
-        """
-        t0 = monotonic_now()
-        record("mcp.pipeline.run.called", pipeline=pipeline)
-        tp_t0, tp_timer = toolprogress_begin("pipeline", pipeline=pipeline)
-
-        effective_timeout = _resolve_timeout(pipeline, timeout)
-        body: dict[str, Any] = {"model": pipeline, "messages": messages}
-        if options:
-            body["pipeline_options"] = options
-
-        tp_err: str | None = None
-        tp_exec_id: str | None = None
-        try:
-            toolprogress_phase("pipeline", "stargate_post_begin", pipeline=pipeline)
-            url = f"{_STARGATE_URL}/v1/chat/completions"
-            with httpx.Client(timeout=effective_timeout) as client:
-                resp = client.post(url, json=body)
-                resp.raise_for_status()
-                data = resp.json()
-            toolprogress_phase("pipeline", "stargate_post_done", pipeline=pipeline)
-
-            duration = monotonic_now() - t0
-            content = ""
-            choices = data.get("choices", [])
-            if choices:
-                content = choices[0].get("message", {}).get("content", "")
-
-            tp_exec_id = resp.headers.get("x-pipeline-execution-id", "") or None
-
-            result: dict[str, Any] = {
-                "content": content,
-                "model": data.get("model", pipeline),
-                "duration_s": round(duration, 3),
-            }
-            if tp_exec_id:
-                result["execution_id"] = tp_exec_id
-            if "usage" in data:
-                result["usage"] = data["usage"]
-
-            record(
-                "mcp.pipeline.run.completed",
-                pipeline=pipeline,
-                duration_s=round(duration, 3),
-                content_length=len(content),
-            )
-            return result
-        except httpx.TimeoutException:
-            duration = monotonic_now() - t0
-            tp_err = "timeout"
-            record(
-                "mcp.pipeline.run.failed",
-                pipeline=pipeline,
-                error="timeout",
-                duration_s=round(duration, 3),
-            )
-            return {
-                "error": f"Pipeline '{pipeline}' timed out after {effective_timeout}s."
-            }
-        except httpx.ConnectError as e:
-            tp_err = "connect_error"
-            record("mcp.pipeline.run.failed", pipeline=pipeline, error="connect_error")
-            return {"error": f"Stargate not reachable: {e}"}
-        except httpx.HTTPStatusError as e:
-            tp_err = f"http_{e.response.status_code}"
-            record(
-                "mcp.pipeline.run.failed",
-                pipeline=pipeline,
-                error=f"{e.response.status_code}",
-            )
-            result = {
-                "error": f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
-            }
-            try:
-                detail = e.response.text.strip()
-            except Exception as exc:
-                logger.warning("Failed reading pipeline error response body: %s", exc)
-            else:
-                if detail:
-                    result["detail"] = detail[:500]
-            return result
-        except Exception as exc:
-            tp_err = str(exc)
-            raise
-        finally:
-            toolprogress_end(
-                tp_t0,
-                tp_timer,
-                "pipeline",
-                error=tp_err,
-                pipeline=pipeline,
-                execution_id=tp_exec_id,
-            )
-
-    @mcp.tool(title="Validate Pipeline")
-    def validate_pipeline(pipeline: str) -> dict[str, Any]:
-        """Validate pipeline YAML structure and model availability.
-
-        Checks that the pipeline exists, YAML is valid, required models
-        are available, and prompt references resolve. Does NOT consume
-        inference compute.
-
-        Args:
-            pipeline: Pipeline ID to validate.
-
-        Returns:
-            On success: {"valid": true, "pipeline": "<id>", "steps": <count>}
-            On error: {"valid": false, "errors": ["..."]}
-        """
-        t0 = monotonic_now()
-        record("mcp.pipeline.validate.called", pipeline=pipeline)
-
-        try:
-            pipelines_data = _fetch_pipelines_metadata()
-        except httpx.ConnectError as e:
-            logger.warning(
-                "Stargate connection failed during pipeline validation for %s: %s",
-                pipeline,
-                e,
-            )
-            return _validate_error(pipeline, f"Stargate not reachable: {e}")
-        except httpx.HTTPStatusError as e:
-            logger.warning(
-                "HTTP status error during pipeline validation for %s: %s",
-                pipeline,
-                e.response.status_code,
-            )
-            return _validate_error(
-                pipeline,
-                f"Pipeline API error: {e.response.status_code}",
-            )
-        except Exception as e:
-            logger.exception(
-                "Unexpected error during pipeline validation for %s", pipeline
-            )
-            return _validate_error(pipeline, f"Validation failed: {e}")
-
-        pipelines = pipelines_data.get("pipelines", {})
-        if not isinstance(pipelines, dict):
-            logger.error(
-                "Pipeline metadata endpoint returned invalid pipelines payload: %r",
-                type(pipelines).__name__,
-            )
-            return _validate_error(
-                pipeline,
-                "Pipeline API returned invalid metadata payload.",
-            )
-
-        _cache_pipeline_timeouts(pipelines)
-
-        if pipeline not in pipelines:
-            available = sorted(pipelines.keys())
-            return _validate_error(
-                pipeline,
-                f"Pipeline '{pipeline}' not found. Available: {available}",
-            )
-
-        info = pipelines[pipeline]
         duration = monotonic_now() - t0
+        content = ""
+        choices = data.get("choices", [])
+        if choices:
+            content = choices[0].get("message", {}).get("content", "")
+
+        tp_exec_id = resp.headers.get("x-pipeline-execution-id", "") or None
+
+        result: dict[str, Any] = {
+            "content": content,
+            "model": data.get("model", pipeline_id),
+            "duration_s": round(duration, 3),
+        }
+        if tp_exec_id:
+            result["execution_id"] = tp_exec_id
+        if "usage" in data:
+            result["usage"] = data["usage"]
+
         record(
-            "mcp.pipeline.validate.completed",
-            pipeline=pipeline,
+            "mcp.pipeline.run.completed",
+            pipeline=pipeline_id,
+            duration_s=round(duration, 3),
+            content_length=len(content),
+        )
+        return result
+    except httpx.TimeoutException:
+        duration = monotonic_now() - t0
+        tp_err = "timeout"
+        record(
+            "mcp.pipeline.run.failed",
+            pipeline=pipeline_id,
+            error="timeout",
             duration_s=round(duration, 3),
         )
-
         return {
-            "valid": True,
-            "pipeline": pipeline,
-            "errors": [],
-            "steps": info.get("steps", 0),
-            "models": info.get("models", []),
-            "domain": info.get("domain", ""),
+            "error": f"Pipeline '{pipeline_id}' timed out after {effective_timeout}s."
+        }
+    except httpx.ConnectError as e:
+        tp_err = "connect_error"
+        record("mcp.pipeline.run.failed", pipeline=pipeline_id, error="connect_error")
+        return {"error": f"Stargate not reachable: {e}"}
+    except httpx.HTTPStatusError as e:
+        tp_err = f"http_{e.response.status_code}"
+        record(
+            "mcp.pipeline.run.failed",
+            pipeline=pipeline_id,
+            error=f"{e.response.status_code}",
+        )
+        result = {
+            "error": f"Pipeline error: {e.response.status_code} {e.response.reason_phrase}"
+        }
+        try:
+            detail = e.response.text.strip()
+        except Exception as exc:
+            logger.warning("Failed reading pipeline error response body: %s", exc)
+        else:
+            if detail:
+                result["detail"] = detail[:500]
+        return result
+    except Exception as exc:
+        tp_err = str(exc)
+        raise
+    finally:
+        toolprogress_end(
+            tp_t0,
+            tp_timer,
+            "pipeline",
+            error=tp_err,
+            pipeline=pipeline_id,
+            execution_id=tp_exec_id,
+        )
+
+
+def _pipeline_async(
+    pipeline_id: str,
+    messages: list[dict[str, str]],
+    options: dict[str, Any] | None,
+    result_delivery: dict[str, Any] | None,
+    caller_agent: str | None,
+) -> dict[str, Any]:
+    t0 = monotonic_now()
+    record("mcp.pipeline.async.called", pipeline=pipeline_id)
+
+    body: dict[str, Any] = {"model": pipeline_id, "messages": messages}
+    if options:
+        body["pipeline_options"] = options
+    if result_delivery:
+        body["result_delivery"] = result_delivery
+    if caller_agent:
+        body["caller_agent"] = caller_agent
+
+    url = f"{_STARGATE_URL}/api/v1/pipelines/dispatch"
+    try:
+        with httpx.Client(timeout=_DISPATCH_TIMEOUT) as client:
+            resp = client.post(url, json=body)
+        if resp.status_code >= 400:
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {
+                    "error": {
+                        "code": f"http_{resp.status_code}",
+                        "message": resp.text[:500],
+                    }
+                }
+            record(
+                "mcp.pipeline.async.failed",
+                pipeline=pipeline_id,
+                status_code=resp.status_code,
+            )
+            return payload if isinstance(payload, dict) else {"error": payload}
+
+        data = resp.json()
+        record(
+            "mcp.pipeline.async.dispatched",
+            pipeline=pipeline_id,
+            execution_id=data.get("execution_id", ""),
+            duration_s=round(monotonic_now() - t0, 3),
+        )
+        return data
+    except httpx.ConnectError as exc:
+        record("mcp.pipeline.async.failed", pipeline=pipeline_id, error="connect_error")
+        return {
+            "error": {
+                "code": "stargate_unreachable",
+                "message": f"Stargate not reachable: {exc}",
+            }
+        }
+    except httpx.HTTPError as exc:
+        record("mcp.pipeline.async.failed", pipeline=pipeline_id, error=str(exc))
+        return {"error": {"code": "http_error", "message": str(exc)}}
+
+
+def _pipeline_stats() -> dict[str, Any]:
+    """Fetch tracker occupancy snapshot from Stargate."""
+    url = f"{_STARGATE_URL}/api/v1/pipelines/dispatch/stats"
+    try:
+        with httpx.Client(timeout=_VALIDATE_TIMEOUT) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": {"code": "stargate_http_error", "message": str(exc)}}
+
+
+def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
+    """Cancel an in-flight async-dispatched execution."""
+    url = f"{_STARGATE_URL}/api/v1/pipelines/executions/{execution_id}"
+    try:
+        with httpx.Client(timeout=_DISPATCH_TIMEOUT) as client:
+            resp = client.delete(url)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPError as exc:
+        return {"error": {"code": "stargate_http_error", "message": str(exc)}}
+
+
+def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
+    record("mcp.pipeline.result.called", execution_id=execution_id)
+
+    wait_clamped = max(0.0, min(wait_seconds, _RESULT_MAX_WAIT))
+    http_timeout = wait_clamped + _RESULT_POLL_BUFFER
+
+    url = f"{_STARGATE_URL}/api/v1/pipelines/executions/{execution_id}"
+    try:
+        with httpx.Client(timeout=http_timeout) as client:
+            resp = client.get(url, params={"wait": wait_clamped})
+        if resp.status_code >= 400:
+            try:
+                return resp.json()
+            except ValueError:
+                return {
+                    "error": {
+                        "code": f"http_{resp.status_code}",
+                        "message": resp.text[:500],
+                    }
+                }
+        return resp.json()
+    except httpx.ConnectError as exc:
+        return {
+            "error": {
+                "code": "stargate_unreachable",
+                "message": f"Stargate not reachable: {exc}",
+            }
+        }
+    except httpx.HTTPError as exc:
+        return {"error": {"code": "http_error", "message": str(exc)}}
+
+
+def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
+    t0 = monotonic_now()
+    record("mcp.pipeline.validate.called", pipeline=pipeline_id)
+
+    try:
+        pipelines_data = _fetch_pipelines_metadata()
+    except httpx.ConnectError as e:
+        logger.warning(
+            "Stargate connection failed during pipeline validation for %s: %s",
+            pipeline_id,
+            e,
+        )
+        return _validate_error(pipeline_id, f"Stargate not reachable: {e}")
+    except httpx.HTTPStatusError as e:
+        logger.warning(
+            "HTTP status error during pipeline validation for %s: %s",
+            pipeline_id,
+            e.response.status_code,
+        )
+        return _validate_error(
+            pipeline_id,
+            f"Pipeline API error: {e.response.status_code}",
+        )
+    except Exception as e:
+        logger.exception(
+            "Unexpected error during pipeline validation for %s", pipeline_id
+        )
+        return _validate_error(pipeline_id, f"Validation failed: {e}")
+
+    pipelines = pipelines_data.get("pipelines", {})
+    if not isinstance(pipelines, dict):
+        logger.error(
+            "Pipeline metadata endpoint returned invalid pipelines payload: %r",
+            type(pipelines).__name__,
+        )
+        return _validate_error(
+            pipeline_id,
+            "Pipeline API returned invalid metadata payload.",
+        )
+
+    _cache_pipeline_timeouts(pipelines)
+
+    if pipeline_id not in pipelines:
+        available = sorted(pipelines.keys())
+        return _validate_error(
+            pipeline_id,
+            f"Pipeline '{pipeline_id}' not found. Available: {available}",
+        )
+
+    info = pipelines[pipeline_id]
+    duration = monotonic_now() - t0
+    record(
+        "mcp.pipeline.validate.completed",
+        pipeline=pipeline_id,
+        duration_s=round(duration, 3),
+    )
+
+    return {
+        "valid": True,
+        "pipeline": pipeline_id,
+        "errors": [],
+        "steps": info.get("steps", 0),
+        "models": info.get("models", []),
+        "domain": info.get("domain", ""),
+    }
+
+
+def register_pipeline_tools(mcp: FastMCP) -> None:
+    """Register the unified ``pipeline`` tool."""
+    _refresh_pipeline_timeouts()
+
+    @mcp.tool(title="Pipeline")
+    def pipeline(
+        op: Literal["run", "async", "result", "validate", "stats", "cancel"],
+        pipeline_id: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        execution_id: str | None = None,
+        options: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        result_delivery: dict[str, Any] | None = None,
+        caller_agent: str | None = None,
+        wait_seconds: float = 0.0,
+    ) -> dict[str, Any]:
+        """Pipeline execution and inspection — dispatches by ``op``.
+
+        Ops:
+
+        - ``"run"`` — sync block until pipeline completes. Returns
+          ``{content, model, duration_s, execution_id?, usage?}``.
+          Required: ``pipeline_id``, ``messages``. Optional: ``options``,
+          ``timeout`` (auto-detected from pipeline config when omitted).
+          Hot-reload: YAML/prompts/models reload on file change.
+
+        - ``"async"`` — async dispatch; returns ``execution_id`` immediately.
+          Required: ``pipeline_id``, ``messages``. Optional: ``options``,
+          ``result_delivery`` (``{bus_thread, bus_from_agent, bus_to_agent,
+          bus_subject}`` — phase 2 bus delivery hook). Use for long-running
+          pipelines that exceed the MCP 300s client read timeout
+          (Orion-grade reasoning, deep consensus runs, etc.). Poll completion
+          with ``op="result"``.
+
+        - ``"result"`` — fetch or short-block on async-dispatched pipeline
+          result. Returns tracker shape: ``{execution_id, pipeline, status,
+          started_at, completed_at, result, error}``. Required:
+          ``execution_id``. Optional: ``wait_seconds`` (server-side short-poll
+          window; 0 = immediate; clamped to 60s at Stargate).
+
+        - ``"validate"`` — validate pipeline YAML + model availability
+          without consuming inference compute. Returns ``{valid, pipeline,
+          steps, models, domain, errors}``. Required: ``pipeline_id``.
+
+        - ``"stats"`` — tracker occupancy snapshot:
+          ``{running, completed, failed, terminal, max_records,
+          retention_seconds, oldest_terminal_age_seconds,
+          oldest_running_age_seconds}``. No required params.
+
+        - ``"cancel"`` — cancel an in-flight async-dispatched execution.
+          Returns the terminal tracker record. Required: ``execution_id``.
+          Idempotent: cancelling a completed execution returns it unchanged.
+
+        Typical iteration flow: edit → ``op="validate"`` →
+        ``quality_gate(files=[...])`` → ``op="run"`` or ``op="async"`` →
+        ``observability(operation="pipeline-trace", params={"execution_id": "..."})``.
+        """
+        if op == "run":
+            if not pipeline_id or messages is None:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=run requires pipeline_id and messages",
+                    }
+                }
+            return _pipeline_run(pipeline_id, messages, options, timeout)
+        if op == "async":
+            if not pipeline_id or messages is None:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=async requires pipeline_id and messages",
+                    }
+                }
+            return _pipeline_async(
+                pipeline_id,
+                messages,
+                options,
+                result_delivery,
+                caller_agent,
+            )
+        if op == "result":
+            if not execution_id:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=result requires execution_id",
+                    }
+                }
+            return _pipeline_result(execution_id, wait_seconds)
+        if op == "validate":
+            if not pipeline_id:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=validate requires pipeline_id",
+                    }
+                }
+            return _pipeline_validate(pipeline_id)
+        if op == "stats":
+            return _pipeline_stats()
+        if op == "cancel":
+            if not execution_id:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=cancel requires execution_id",
+                    }
+                }
+            return _pipeline_cancel(execution_id)
+        return {
+            "error": {
+                "code": "unknown_op",
+                "message": (
+                    f"Unknown op: {op}. Valid: run|async|result|validate|stats|cancel"
+                ),
+            }
         }

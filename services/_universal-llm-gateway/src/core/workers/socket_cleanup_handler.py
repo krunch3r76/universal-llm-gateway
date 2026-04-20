@@ -81,7 +81,7 @@ class SocketCleanupHandler:
                             socket_path=socket_path,
                             cleanup_successful=True,
                         )
-                        await self.event_bus.publish_async_nowait(cleanup_event)
+                        await self.event_bus.publish_nowait(cleanup_event)
                     else:
                         logger.warning(
                             f"Socket {socket_path} is in use, skipping cleanup"
@@ -96,7 +96,7 @@ class SocketCleanupHandler:
                             cleanup_successful=False,
                             error="Socket is in use",
                         )
-                        await self.event_bus.publish_async_nowait(cleanup_event)
+                        await self.event_bus.publish_nowait(cleanup_event)
 
                 else:
                     logger.warning(f"Socket file not found: {socket_path}")
@@ -109,7 +109,7 @@ class SocketCleanupHandler:
                         socket_path=socket_path,
                         cleanup_successful=True,
                     )
-                    await self.event_bus.publish_async_nowait(cleanup_event)
+                    await self.event_bus.publish_nowait(cleanup_event)
 
             except Exception as e:
                 logger.error(f"Failed to cleanup socket {socket_path}: {e}")
@@ -123,4 +123,4 @@ class SocketCleanupHandler:
                     cleanup_successful=False,
                     error=str(e),
                 )
-                await self.event_bus.publish_async_nowait(cleanup_event)
+                await self.event_bus.publish_nowait(cleanup_event)

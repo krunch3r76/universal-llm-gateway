@@ -338,11 +338,11 @@ class FilteredEventBus:
             f"Registered filtered subscription: {handler.__name__} for signal '{signal}'"
         )
 
-    async def publish_async(self, event: Any):
+    async def publish(self, event: Any):
         """
         Publish event asynchronously (delegates to underlying event bus).
 
         Args:
             event: Event to publish
         """
-        await self.event_bus.publish_async(event)
+        await self.event_bus.publish(event)

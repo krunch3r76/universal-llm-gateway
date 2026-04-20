@@ -14,6 +14,10 @@ from collections.abc import AsyncIterator
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from llm_adapters._mcp_entry import (
+    anthropic_mcp_server_entry,
+    openai_xai_mcp_tool_entry,
+)
 from universal_event_bus import EventBus
 
 from .events import CloudProxyRequestFailed, CloudProxyRequestForwarded
@@ -32,7 +36,10 @@ _MCP_SERVER_NAME = "vortex"
 def _inject_native_mcp(provider_key: str, body: dict) -> None:
     """Inject provider-appropriate MCP entry into a native request body.
 
-    Only applies when -mcp was detected. Each provider has its own format:
+    Delegates to the shared helpers in ``libs/llm_adapters/_mcp_entry`` so
+    the external-wire (``-mcp`` suffix) path and the adapter/pipeline path
+    produce byte-identical descriptor shapes.
+
     - Anthropic: ``mcp_servers`` list in body
     - OpenAI/xAI: ``type: "mcp"`` tool in ``tools`` array
     """
@@ -43,31 +50,24 @@ def _inject_native_mcp(provider_key: str, body: dict) -> None:
         return
 
     config = _get_mcp_config_for_provider(provider_key)
-    if not config:
+    if not config or not config.get("token"):
         return
 
+    url = config["url"]
+    token = config["token"]
+
     if provider_key == "anthropic":
-        mcp_entry: dict = {
-            "type": "url",
-            "name": _MCP_SERVER_NAME,
-            "url": config["url"],
-        }
-        if config.get("token"):
-            mcp_entry["authorization_token"] = config["token"]
         existing = body.get("mcp_servers") or []
-        body["mcp_servers"] = existing + [mcp_entry]
+        body["mcp_servers"] = [
+            *existing,
+            anthropic_mcp_server_entry(url, token, name=_MCP_SERVER_NAME),
+        ]
     elif provider_key in {"openai", "xai"}:
-        tool_entry: dict = {
-            "type": "mcp",
-            "server_url": config["url"],
-            "server_label": _MCP_SERVER_NAME,
-        }
-        if config.get("token"):
-            tool_entry["authorization"] = f"Bearer {config['token']}"
-        if provider_key == "openai":
-            tool_entry["require_approval"] = "never"
         existing_tools = body.get("tools") or []
-        body["tools"] = existing_tools + [tool_entry]
+        body["tools"] = [
+            *existing_tools,
+            openai_xai_mcp_tool_entry(url, token, name=_MCP_SERVER_NAME),
+        ]
 
 
 def _get_mcp_config_for_provider(provider_key: str) -> dict | None:
@@ -98,7 +98,7 @@ async def _publish_failed(
 ) -> None:
     if event_bus is None:
         return
-    await event_bus.publish_async(
+    await event_bus.publish(
         CloudProxyRequestFailed(
             provider=provider,
             model=model,
@@ -171,7 +171,7 @@ async def _forward_native(
                 yield chunk
 
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_key,
                     model=workspace_id,
@@ -187,7 +187,7 @@ async def _forward_native(
             provider=provider_key, request_body=body
         )
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_key,
                     model=workspace_id,
@@ -278,7 +278,7 @@ async def _forward_images(
                 provider=provider_key, request_body=body
             )
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_key,
                     model=workspace_id,
@@ -342,7 +342,7 @@ async def _forward_video_generation(
             provider=provider_key, request_body=body
         )
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_key,
                     model=workspace_id,

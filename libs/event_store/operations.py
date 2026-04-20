@@ -205,11 +205,13 @@ _register(
     OperationDef(
         name="provider-health",
         description=(
-            "Aggregate frontier generate health per provider from mcp.frontier.* "
+            "Aggregate frontier generate health per provider from "
+            "mcp.frontier.* and pipeline.frontier.dispatch.output.short "
             "signals (default window: since last Stargate restart). Returns "
             "called/completed/error counts, error-reason histogram, "
-            "mcp.frontier.output.short fires, mcp.frontier.tool.executed count, "
-            "avg output_tokens, and avg duration_s."
+            "output-short fires (union of MCP + pipeline surfaces), "
+            "mcp.frontier.tool.executed count, avg output_tokens, and "
+            "avg duration_s."
         ),
         params={
             "minutes": {"type": "int"},

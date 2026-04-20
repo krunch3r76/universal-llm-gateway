@@ -32,7 +32,7 @@ def publish_socket_cleanup_event(process_id: str) -> None:
             loop = asyncio.get_running_loop()
             loop.call_soon(
                 lambda: asyncio.create_task(
-                    get_event_bus().publish_async_nowait(
+                    get_event_bus().publish_nowait(
                         SocketCleanupRequested(model_id=process_id, socket_path=socket_path)
                     )
                 )

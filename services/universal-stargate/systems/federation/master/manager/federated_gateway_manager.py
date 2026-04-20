@@ -290,7 +290,7 @@ class FederatedGatewayManager(Sequential):
                 },
             )
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(event),
+                self._event_bus.publish_nowait(event),
                 name=f"emit-capacity-fallback-{gateway_id}-{model_id.routing_key}",
             )
         except Exception as exc:
@@ -345,7 +345,7 @@ class FederatedGatewayManager(Sequential):
         from src.scheduling.events.federation_signaling import FederatedGatewayRemoved
 
         asyncio.create_task(
-            self._event_bus.publish_async_nowait(
+            self._event_bus.publish_nowait(
                 FederatedGatewayRemoved(
                     gateway_id=gateway_id,
                     remote_id=gw.remote_stargate_id,
@@ -354,7 +354,7 @@ class FederatedGatewayManager(Sequential):
         )
         if gw.available_models:
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationGatewayCatalogChanged(
                         gateway_id=gateway_id,
                         old_model_count=len(gw.available_models),
@@ -409,7 +409,7 @@ class FederatedGatewayManager(Sequential):
             from src.scheduling.events import FederationGatewayCatalogChanged
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationGatewayCatalogChanged(
                         gateway_id=gateway.gateway_id,
                         old_model_count=len(old_catalog),
@@ -534,6 +534,16 @@ class FederatedGatewayManager(Sequential):
     def get_all_gateways(self) -> list[FederatedGateway]:
         """Get all federated gateways (for routing)."""
         return list(self._gateways.values())
+
+    def has_any_catalog_data(self) -> bool:
+        """True iff any registered gateway has a populated catalog.
+
+        Used by the pipeline system to detect catalog snapshots that arrived
+        before the FEDERATION_GATEWAY_CATALOG_CHANGED subscriber was wired
+        (startup-race catch-up). Reads committed gateway state; concurrent
+        in-flight @sequential writes may appear on the next event instead.
+        """
+        return any(bool(gw.available_models) for gw in self._gateways.values())
 
     def get_healthy_gateways(self) -> list[FederatedGateway]:
         """Get gateways that are currently considered healthy (reachable).
@@ -702,7 +712,7 @@ class FederatedGatewayManager(Sequential):
             if gw:
                 remote_id = gw.remote_stargate_id
                 asyncio.create_task(
-                    self._event_bus.publish_async_nowait(
+                    self._event_bus.publish_nowait(
                         FederationTelemetryMarkedStale(
                             remote_id=remote_id,
                             age_seconds=age,
@@ -929,7 +939,7 @@ class FederatedGatewayManager(Sequential):
             from src.scheduling.events import RoutingDebugGatewayRegistered
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     RoutingDebugGatewayRegistered(
                         gateway_id=gateway_id,
                         remote_stargate_id=remote_stargate_id,
@@ -1092,7 +1102,7 @@ class FederatedGatewayManager(Sequential):
             )
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationResourceUpdated(
                         gateway_id=gateway_id,
                         vram_free_mb=gw.vram_free_mb,
@@ -1107,7 +1117,7 @@ class FederatedGatewayManager(Sequential):
             )
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationModelLifecycleEvent(
                         gateway_id=gateway_id,
                         msg_type=msg_type,
@@ -1122,7 +1132,7 @@ class FederatedGatewayManager(Sequential):
             from src.scheduling.events import GatewayResourceUpdate
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     GatewayResourceUpdate(
                         url=gw.remote_stargate_url,
                         total_vram_mb=gw.vram_total_mb,
@@ -1300,7 +1310,7 @@ class FederatedGatewayManager(Sequential):
                 from src.scheduling.events import FederationActivationFilteredEmpty
 
                 asyncio.create_task(
-                    self._event_bus.publish_async_nowait(
+                    self._event_bus.publish_nowait(
                         FederationActivationFilteredEmpty(
                             gateway_id=gw.gateway_id,
                             available_count=available_count,
@@ -1318,7 +1328,7 @@ class FederatedGatewayManager(Sequential):
             from src.scheduling.events import FederationGatewayCatalogChanged
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationGatewayCatalogChanged(
                         gateway_id=gw.gateway_id,
                         old_model_count=len(old_catalog),
@@ -1517,7 +1527,7 @@ class FederatedGatewayManager(Sequential):
             from src.scheduling.events import ModelUnloaded
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     ModelUnloaded(
                         url=gw.remote_stargate_url,
                         model_id=model_id,
@@ -1590,7 +1600,7 @@ class FederatedGatewayManager(Sequential):
                 from src.scheduling.events import RoutingDebugGatewayRemoved
 
                 asyncio.create_task(
-                    self._event_bus.publish_async_nowait(
+                    self._event_bus.publish_nowait(
                         RoutingDebugGatewayRemoved(
                             remote_stargate_id=remote_stargate_id,
                             removed_gateway_ids=removed,
@@ -1822,7 +1832,7 @@ class FederatedGatewayManager(Sequential):
                 from src.scheduling.events import FederationGatewayCatalogChanged
 
                 asyncio.create_task(
-                    self._event_bus.publish_async_nowait(
+                    self._event_bus.publish_nowait(
                         FederationGatewayCatalogChanged(
                             gateway_id=gateway_id,
                             old_model_count=len(old_catalog),

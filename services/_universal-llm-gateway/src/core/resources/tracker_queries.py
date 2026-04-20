@@ -174,7 +174,7 @@ async def get_system_resources(tracker: ResourceTracker) -> SystemResourceInfo:
                 f"available_vram={available_vram}MB, available_ram={available_ram}MB, "
                 f"loaded_models={loaded_models_list or 'NONE'}"
             )
-            await tracker.event_bus.publish_async_nowait(
+            await tracker.event_bus.publish_nowait(
                 SystemResourcesUpdated(
                     total_vram_mb=system_info.total_vram_mb,
                     available_vram_mb=system_info.available_vram_mb,

@@ -86,7 +86,7 @@ class FederationCircuitBreaker:
             FederationCircuitBreakerRequestRejected,
         )
 
-        await self._event_bus.publish_async_nowait(
+        await self._event_bus.publish_nowait(
             FederationCircuitBreakerRequestRejected(
                 gateway_id=gateway_id,
                 model_id=model_id,

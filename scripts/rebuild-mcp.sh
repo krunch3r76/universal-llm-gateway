@@ -127,6 +127,9 @@ for key in (
 mcp_url = (cfg.get('mcp_server_url') or '').strip()
 if mcp_url:
     print('export MCP_SERVER_URL=' + shlex.quote(mcp_url))
+    # MCP_PUBLIC_URL is the canonical env name used by libs/llm_adapters/_mcp_entry.resolve_mcp_env;
+    # kept in sync with MCP_SERVER_URL so both strict (adapter) and existing callers resolve.
+    print('export MCP_PUBLIC_URL=' + shlex.quote(mcp_url))
 fp = (cfg.get('firefox_profile_dir') or '').strip()
 if fp:
     print('export FIREFOX_PROFILE_DIR=' + shlex.quote(str(Path(fp).expanduser())))

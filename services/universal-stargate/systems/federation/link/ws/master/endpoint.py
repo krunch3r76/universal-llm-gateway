@@ -94,7 +94,7 @@ def create_master_ws_router(
                 from src.scheduling.events import FederationConnectionAuthenticated
 
                 asyncio.create_task(
-                    event_bus.publish_async_nowait(
+                    event_bus.publish_nowait(
                         FederationConnectionAuthenticated(
                             remote_id=remote_id,
                             method="websocket",

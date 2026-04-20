@@ -431,7 +431,7 @@ class GatewayWebSocketClient:
 
         from src.scheduling.events import RequestInferenceStarted
 
-        await self._event_bus.publish_async_nowait(
+        await self._event_bus.publish_nowait(
             RequestInferenceStarted(
                 request_id=request_id,
                 model_id=model_id,

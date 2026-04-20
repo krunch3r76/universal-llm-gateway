@@ -140,7 +140,7 @@ def _emit_recovery_started(
     """Fire-and-forget recovery started event."""
     from src.scheduling.events.routing import OomRecoveryStarted
 
-    event_bus.publish_async_nowait(
+    event_bus.publish_from_sync(
         OomRecoveryStarted(
             request_id=request_id,
             model_id=model_id,

@@ -82,7 +82,7 @@ def _atexit_handler() -> None:
         if _atexit_event_bus is not None:
             try:
                 asyncio.run(
-                    _atexit_event_bus.publish_async(CloudProxyShutdown(reason="crash"))
+                    _atexit_event_bus.publish(CloudProxyShutdown(reason="crash"))
                 )
             except RuntimeError as exc:
                 logger.debug(
@@ -134,12 +134,12 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     forwarder = ProviderForwarder(adapters=adapters)
 
     async def _emit_catalog_refreshed(provider: str, model_count: int) -> None:
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyCatalogRefreshed(provider=provider, model_count=model_count)
         )
 
     async def _emit_catalog_refresh_failed(provider: str, error: str) -> None:
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyCatalogRefreshFailed(provider=provider, error=error[:300])
         )
 
@@ -154,7 +154,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     browser_cache = BrowserCatalogCache()
     try:
         model_count = await browser_cache.refresh()
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyBrowserCatalogRefreshed(
                 trigger="startup",
                 model_count=model_count,
@@ -164,7 +164,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
         logger.warning(
             "Browser catalog initial fetch failed — will retry on first request"
         )
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyBrowserCatalogRefreshFailed(
                 trigger="startup",
                 error=str(exc)[:300],
@@ -174,7 +174,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     local_cache = LocalCatalogCache(stargate_url=config.stargate_url)
     try:
         local_count = await local_cache.refresh()
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyLocalCatalogRefreshed(
                 stargate_url=config.stargate_url,
                 model_count=local_count,
@@ -185,7 +185,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
             "Local catalog unavailable at startup (Stargate may not be running): %s",
             exc,
         )
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyLocalCatalogUnavailable(
                 stargate_url=config.stargate_url,
                 error=str(exc)[:300],
@@ -209,14 +209,14 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
         browser_ui_ready = False
         browser_ui_error = f"Missing browser assets: {', '.join(missing_assets)}"
         logger.error(browser_ui_error)
-        await event_bus.publish_async(
+        await event_bus.publish(
             CloudProxyBrowserUiUnavailable(missing_files=missing_assets)
         )
     else:
         browser_ui_ready = True
         browser_ui_error = ""
 
-    await event_bus.publish_async(
+    await event_bus.publish(
         CloudProxyStarted(
             pid=os.getpid(),
             mode="uds" if config.socket_path else "tcp",
@@ -225,7 +225,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     )
     for provider_cfg in config.providers:
         if provider_cfg.mcp_server_url:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyMcpConfigured(
                     provider=provider_cfg.provider,
                     mcp_server_url=provider_cfg.mcp_server_url,
@@ -254,7 +254,7 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
     yield
 
     _shutdown_clean = True
-    await event_bus.publish_async(CloudProxyShutdown(reason="clean"))
+    await event_bus.publish(CloudProxyShutdown(reason="clean"))
     await catalog.shutdown()
     if mcp_executor:
         await mcp_executor.shutdown()
@@ -277,7 +277,7 @@ async def _publish_request_failed_event(
 ) -> None:
     if event_bus is None:
         return
-    await event_bus.publish_async(
+    await event_bus.publish(
         CloudProxyRequestFailed(
             provider=provider,
             model=model,
@@ -299,7 +299,7 @@ async def _publish_translation_failed_event(
 ) -> None:
     if event_bus is None:
         return
-    await event_bus.publish_async(
+    await event_bus.publish(
         CloudProxyRequestTranslationFailed(
             provider=provider,
             model=model,
@@ -672,7 +672,7 @@ async def chat_completions(request: Request) -> Response:
 
         response_json = await mcp_executor.run_tool_loop(_proxy_forward, body)
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_catalog.provider,
                     model=model_id,
@@ -694,7 +694,7 @@ async def chat_completions(request: Request) -> Response:
             request_body=body,
         )
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_catalog.provider,
                     model=model_id,
@@ -720,7 +720,7 @@ async def chat_completions(request: Request) -> Response:
             request_body=body,
         )
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_catalog.provider,
                     model=model_id,
@@ -836,7 +836,7 @@ async def embeddings(request: Request) -> JSONResponse:
             request_body=body,
         )
         if event_bus:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyRequestForwarded(
                     provider=provider_catalog.provider,
                     model=model_id,

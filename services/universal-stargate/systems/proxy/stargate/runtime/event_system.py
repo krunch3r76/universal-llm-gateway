@@ -182,7 +182,7 @@ async def emit_system_started_event(proxy: StargateProxy) -> None:
             _version: str | None = pkg_version("universal-stargate")
         except Exception:
             _version = None
-        await proxy.event_bus.publish_async(
+        await proxy.event_bus.publish(
             SystemStarted(
                 pid=os.getpid(),
                 role=role,

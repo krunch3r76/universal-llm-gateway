@@ -838,12 +838,27 @@ Payload: {
 
 ROUTING_EVICTION_WAIT_TIMEOUT = "routing.eviction.wait.timeout"
 """
-Eviction wait timed out before capacity became available.
+Eviction wait exited without a resolved placement.
+
+`exit_reason` distinguishes two terminal conditions under one signal:
+  - "budget_exhausted": waited the full eviction_wait_timeout_s budget
+    without any candidate becoming feasible.
+  - "non_transient": first-iteration exit because no candidate still carries
+    eviction_blocked_by_busy_models — the state that made the wait-entry
+    classifier call this transient no longer holds. Typically accompanies
+    waited_ms ≈ 0.
+
+`exit_constraint_summary` captures the trace candidates' constraint sets at
+exit so post-hoc queries can identify which constraint replaced the transient
+tag (usually can_fit_with_eviction on the non_transient path).
 
 Payload: {
     "request_id": str,
     "model_id": str,
-    "waited_ms": int
+    "waited_ms": int,
+    "exit_reason": str,              # "budget_exhausted" | "non_transient"
+    "exit_constraint_summary": list[dict],
+        # [{gateway_id, constraints_failed: [str]}]
 }
 """
 
@@ -1119,14 +1134,22 @@ def RoutingEvictionWaitTimeout(
     request_id: str,
     model_id: str,
     waited_ms: int,
+    exit_reason: str,
+    exit_constraint_summary: list[dict],
 ) -> Event:
-    """Emit when eviction wait timed out."""
+    """Emit when the eviction wait exits without a resolved placement.
+
+    exit_reason ∈ {"budget_exhausted", "non_transient"}. See signal docstring
+    for semantics.
+    """
     return Event(
         signal=ROUTING_EVICTION_WAIT_TIMEOUT,
         payload={
             "request_id": request_id,
             "model_id": model_id,
             "waited_ms": waited_ms,
+            "exit_reason": exit_reason,
+            "exit_constraint_summary": exit_constraint_summary,
         },
     )
 

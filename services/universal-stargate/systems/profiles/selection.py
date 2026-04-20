@@ -279,7 +279,7 @@ def _apply_anti_thrash(
     if delta < policy.min_switch_delta:
         if event_bus is not None:
             asyncio.create_task(
-                event_bus.publish_async_nowait(
+                event_bus.publish_nowait(
                     ModelSelectionSwitchSuppressed(
                         task=task,
                         sticky_key=sticky_key,
@@ -296,7 +296,7 @@ def _apply_anti_thrash(
     else:
         if event_bus is not None:
             asyncio.create_task(
-                event_bus.publish_async_nowait(
+                event_bus.publish_nowait(
                     ModelSelectionSwitchAllowed(
                         task=task,
                         sticky_key=sticky_key,
@@ -323,7 +323,7 @@ def _emit_reputation_events(
     for model_id in model_ids:
         score = scores_by_id[model_id]
         asyncio.create_task(
-            event_bus.publish_async_nowait(
+            event_bus.publish_nowait(
                 ModelSelectionScoreUpdated(
                     task=task,
                     model_id=model_id,
@@ -340,7 +340,7 @@ def _emit_reputation_events(
             )
         )
     asyncio.create_task(
-        event_bus.publish_async_nowait(
+        event_bus.publish_nowait(
             ModelSelectionRankComputed(
                 task=task,
                 candidates=[

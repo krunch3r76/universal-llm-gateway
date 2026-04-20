@@ -191,7 +191,7 @@ async def _emit_orchestrator_decision(
     alternatives = [gateway.name for gateway in gateways_for_routing[:5]]
 
     asyncio.create_task(
-        event_bus.publish_async_nowait(
+        event_bus.publish_nowait(
             FederationOrchestratorDecided(
                 request_id=context.request_id,
                 decision_type=decision_type,

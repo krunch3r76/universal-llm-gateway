@@ -392,7 +392,7 @@ class FederatedLoadOrchestrator:
                     from src.scheduling.events import FederationLoadRequested
 
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             FederationLoadRequested(
                                 request_id=request_id,
                                 target_remote=gateway.remote_stargate_id,
@@ -429,7 +429,7 @@ class FederatedLoadOrchestrator:
                     from src.scheduling.events import FederationLoadConfirmed
 
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             FederationLoadConfirmed(
                                 request_id=request_id,
                                 remote_id=gateway.remote_stargate_id,
@@ -470,7 +470,7 @@ class FederatedLoadOrchestrator:
                     from src.scheduling.events import FederationLoadFailed
 
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             FederationLoadFailed(
                                 request_id=request_id,
                                 remote_id=gateway.remote_stargate_id,

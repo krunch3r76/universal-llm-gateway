@@ -137,6 +137,11 @@ async def lifespan(app: FastAPI):
     proxy = init_proxy(_federation_config)
     shutdown_reason = "unknown"
 
+    # Retain references to async-dispatched pipeline background tasks so
+    # they can be awaited/inspected at shutdown (¬ rely on create_task's
+    # internal weak reference alone).
+    app.state.pipeline_background_tasks = set()
+
     # Task monitoring
     async def monitor_tasks():
         """Monitor background tasks and log if any complete unexpectedly."""

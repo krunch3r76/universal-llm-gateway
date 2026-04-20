@@ -151,7 +151,7 @@ async def run_initial_selection(
             from src.scheduling.events import RoutingDebugGatewayDropout
 
             asyncio.create_task(
-                event_bus.publish_async_nowait(
+                event_bus.publish_nowait(
                     RoutingDebugGatewayDropout(
                         model_id=str(model_id),
                         stage="health_filter",
@@ -243,7 +243,7 @@ async def run_initial_selection(
                 from src.scheduling.events import RoutingUpstreamAllExcluded
 
                 asyncio.create_task(
-                    event_bus.publish_async_nowait(
+                    event_bus.publish_nowait(
                         RoutingUpstreamAllExcluded(
                             request_id=context.request_id,
                             model_id=str(model_id),

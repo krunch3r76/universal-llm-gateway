@@ -1,14 +1,18 @@
-"""Hybrid heuristic detector for `mcp.frontier.thought.termination.shadow`.
+"""Hybrid heuristic detector for frontier-dispatch thought-termination shadow.
 
 v1 design (agent-bus thread 576): advisory post-hoc detection of silent-failure
 patterns in a frontier model's reasoning trace. Never replaces
-`generate.completed`, never fires on `generate.error`. Known gap: no semantic
-rubric in v1 — phrase-based detection is scaffolding; the semantic detector
-becomes the primary defense post-calibration. Provider scope: Gemini only.
+``generate.completed``, never fires on ``generate.error``. Known gap: no
+semantic rubric in v1 — phrase-based detection is scaffolding; the semantic
+detector becomes the primary defense post-calibration. Provider scope: Gemini
+only (thought summaries are the substrate).
 
 Dimensions: phrase (literal refusal/incapacity/policy/scope), position (leading
 matches weighted higher), counter-phrase suppression (meta-discussion), n-gram
 repetition (loops), token_budget (MAX_TOKENS + non-empty thought).
+
+Pure module — no bus / record coupling. Callers translate the returned
+``TerminationShadowPayload`` into their surface's event factory.
 """
 
 from __future__ import annotations
@@ -16,15 +20,20 @@ from __future__ import annotations
 import re
 import uuid
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from mcp_events import record
+DETECTOR_VERSION = "v1"
+DETECTOR_MODE = "hybrid"
+DETECTOR_ADAPTER = "llm_adapter_google"
 
 _MAX_EXCERPT_CHARS = 120
 _LEADING_POSITION_FRACTION = 0.20  # first 20% of thought = "leading"
 _REPETITION_NGRAM = 4
 _REPETITION_MIN_COUNT = 3
+
+_GATED_BOOT_LEVELS: frozenset[str] = frozenset({"team", "full"})
+_GATED_PROVIDER: str = "google"
 
 # Reason -> ordered list of regex patterns (lowercase, literal-phrase flavored).
 # Word-boundary anchoring keeps "I cannot" from matching inside "significantly".
@@ -80,23 +89,44 @@ _COUNTER_PHRASES: list[str] = [
 
 _COUNTER_WINDOW = 80
 
+_SUGGESTED_ACTIONS: dict[str, str] = {
+    "refusal": "escalate_to_user",
+    "incapacity": "switch_model",
+    "policy": "escalate_to_user",
+    "scope": "retry_with_context",
+    "token_exhaustion": "retry_with_context",
+    "loop": "switch_model",
+    "coherence_collapse": "switch_model",
+    "user_directed": "none",
+}
 
-@dataclass
+
+@dataclass(slots=True)
 class TerminationEvidence:
     kind: str  # "phrase" | "position" | "repetition" | "token_budget"
     score: float
     excerpt: str
 
 
-@dataclass
-class TerminationDetection:
+@dataclass(slots=True)
+class TerminationShadowPayload:
+    """Full emission payload for ``*.termination.shadow`` signals.
+
+    Caller forwards these fields to its own event factory. Includes the
+    minted ``generate_id`` so a retry inside any adapter cannot fork it,
+    and the ``detector`` descriptor so consumers can distinguish hybrid/v1
+    from future semantic/v2 emissions.
+    """
+
     reason: str
     confidence: float
     evidence: list[TerminationEvidence]
     suggested_next_action: str
     trace_visibility: str  # "full" | "partial" | "none"
+    generate_id: str
+    detector: dict[str, str] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, object]:
+    def as_dict(self) -> dict[str, object]:
         return asdict(self)
 
 
@@ -173,117 +203,103 @@ def _detect_repetition(thinking_lower: str) -> TerminationEvidence | None:
     )
 
 
-def detect_termination(
-    *,
-    thinking_text: str | None,
-    content: str,
-    finish_reason: str | None,
-    output_tokens: int,
-) -> TerminationDetection | None:
-    """Detect likely silent-termination patterns. Returns None if no signal.
+def _extract_thinking_text(reasoning: Any) -> str | None:
+    """Surface the reasoning substrate across adapter output shapes.
 
-    ``thinking_text`` is the provider's surfaced reasoning (Gemini thought
-    summaries when includeThoughts=True). Without it, the detector has no
-    substrate and returns None — by design, not a bug.
+    Google adapter returns a dict ``{"text": "...", "tokens": N}``; other
+    providers may return a bare string or ``None``. The detector only has
+    a useful substrate for Google, but the extractor stays generous so a
+    future provider exposing thought text benefits without a code change.
     """
-    if not thinking_text or not thinking_text.strip():
+    if reasoning is None:
         return None
+    if isinstance(reasoning, str):
+        return reasoning
+    if isinstance(reasoning, dict):
+        text = reasoning.get("text")
+        return text if isinstance(text, str) else None
+    return None
 
-    thinking_lower = thinking_text.lower()
-    trace_visibility = "partial"  # Gemini exposes summaries, not full CoT
 
-    reason, evidence = _find_phrase_matches(thinking_lower)
-    rep_ev = _detect_repetition(thinking_lower)
-    if rep_ev is not None:
-        evidence.append(rep_ev)
-        if reason is None:
-            reason = "loop"
+class TerminationShadowDetector:
+    """Gate + detect + assemble a termination-shadow payload.
 
-    # Token-budget exhaustion: MAX_TOKENS with non-trivial thinking + short
-    # content = model ran out of budget mid-reasoning, not substantive complete.
-    if finish_reason == "MAX_TOKENS" and len(content) < 500:
-        evidence.append(
-            TerminationEvidence(
-                kind="token_budget",
-                score=0.85,
-                excerpt=f"finish_reason=MAX_TOKENS, output_tokens={output_tokens}",
+    Thin wrapper so callers can express intent as
+    ``TerminationShadowDetector().detect(...)`` without importing the
+    gating logic and payload assembly separately. Stateless — safe to
+    instantiate per-call or module-level.
+    """
+
+    def detect(
+        self,
+        *,
+        provider: str,
+        boot_level: str,
+        reasoning: Any,
+        content: str | None,
+        finish_reason: str | None,
+        output_tokens: int,
+    ) -> TerminationShadowPayload | None:
+        """Return a payload when a termination-shadow is detected, else None.
+
+        Gates: provider must be Google AND boot_level ∈ {team, full}. The
+        substrate (reasoning text) is extracted via ``_extract_thinking_text``;
+        if the provider exposes no reasoning, the detector returns None by
+        design (not a bug).
+        """
+        if provider != _GATED_PROVIDER or boot_level not in _GATED_BOOT_LEVELS:
+            return None
+        thinking_text = _extract_thinking_text(reasoning)
+        if not thinking_text or not thinking_text.strip():
+            return None
+
+        thinking_lower = thinking_text.lower()
+        trace_visibility = "partial"  # Gemini exposes summaries, not full CoT
+
+        reason, evidence = _find_phrase_matches(thinking_lower)
+        rep_ev = _detect_repetition(thinking_lower)
+        if rep_ev is not None:
+            evidence.append(rep_ev)
+            if reason is None:
+                reason = "loop"
+
+        # Token-budget exhaustion: MAX_TOKENS with non-trivial thinking + short
+        # content = model ran out of budget mid-reasoning, not substantive
+        # completion.
+        if finish_reason == "MAX_TOKENS" and len(content or "") < 500:
+            evidence.append(
+                TerminationEvidence(
+                    kind="token_budget",
+                    score=0.85,
+                    excerpt=(
+                        f"finish_reason=MAX_TOKENS, output_tokens={output_tokens}"
+                    ),
+                )
             )
+            if reason is None:
+                reason = "token_exhaustion"
+
+        if reason is None or not evidence:
+            return None
+
+        confidence = min(1.0, max(e.score for e in evidence))
+        if len(evidence) > 1:
+            # Multiple independent signals → small boost, capped.
+            confidence = min(1.0, confidence + 0.05 * (len(evidence) - 1))
+
+        suggested = _SUGGESTED_ACTIONS.get(reason, "none")
+
+        return TerminationShadowPayload(
+            reason=reason,
+            confidence=round(confidence, 3),
+            evidence=evidence,
+            suggested_next_action=suggested,
+            trace_visibility=trace_visibility,
+            generate_id=str(uuid.uuid4()),
+            detector={
+                "mode": DETECTOR_MODE,
+                "version": DETECTOR_VERSION,
+                "provider": provider,
+                "adapter": DETECTOR_ADAPTER,
+            },
         )
-        if reason is None:
-            reason = "token_exhaustion"
-
-    if reason is None or not evidence:
-        return None
-
-    confidence = min(1.0, max(e.score for e in evidence))
-    if len(evidence) > 1:
-        # Multiple independent signals → small boost, capped.
-        confidence = min(1.0, confidence + 0.05 * (len(evidence) - 1))
-
-    suggested = {
-        "refusal": "escalate_to_user",
-        "incapacity": "switch_model",
-        "policy": "escalate_to_user",
-        "scope": "retry_with_context",
-        "token_exhaustion": "retry_with_context",
-        "loop": "switch_model",
-        "coherence_collapse": "switch_model",
-        "user_directed": "none",
-    }.get(reason, "none")
-
-    return TerminationDetection(
-        reason=reason,
-        confidence=round(confidence, 3),
-        evidence=evidence,
-        suggested_next_action=suggested,
-        trace_visibility=trace_visibility,
-    )
-
-
-def emit_termination_shadow_if_detected(
-    result: dict[str, Any],
-    tool_name: str,
-    api_model: str,
-    provider_key: str,
-    boot_level: str,
-    output_tokens: int,
-    finish_reason: str | None,
-    block_reason: str | None,
-) -> None:
-    """Gate + detect + emit `mcp.frontier.thought.termination.shadow`.
-
-    v1 scope: provider=google AND boot_level ∈ {team, full}. `generate_id`
-    is minted here at the execute_frontier retry boundary (API Claude mod
-    #2, thread 576 t5) — a retry inside the adapter cannot fork it.
-    """
-    provider = result.get("provider", provider_key)
-    if provider != "google" or boot_level not in ("team", "full"):
-        return
-    thinking_obj = result.get("thinking") or {}
-    thinking_text = thinking_obj.get("text") if isinstance(thinking_obj, dict) else None
-    detection = detect_termination(
-        thinking_text=thinking_text,
-        content=result.get("content") or "",
-        finish_reason=finish_reason,
-        output_tokens=output_tokens,
-    )
-    if detection is None:
-        return
-    record(
-        "mcp.frontier.thought.termination.shadow",
-        tool=tool_name,
-        provider=provider,
-        model=result.get("model", api_model),
-        boot_level=boot_level,
-        output_tokens=output_tokens,
-        finish_reason=finish_reason,
-        block_reason=block_reason,
-        generate_id=str(uuid.uuid4()),
-        detector={
-            "mode": "hybrid",
-            "version": "v1",
-            "provider": provider,
-            "adapter": "llm_adapter_google",
-        },
-        **detection.to_dict(),
-    )

@@ -85,7 +85,7 @@ class EventLogger:
                 logger.debug(
                     f"📤 MONITORING: Event data sample: {str(event_data)[:200]}..."
                 )
-                await self.event_bus.publish_async_nowait(
+                await self.event_bus.publish_nowait(
                     MonitoringChatCompletion(
                         event_id=event_data["id"],
                         timestamp=event_data["timestamp"],
@@ -146,7 +146,7 @@ class EventLogger:
                     logger.debug(
                         f"Publishing streaming_chunk to EventBus for request {request_id}"
                     )
-                    await self.event_bus.publish_async_nowait(
+                    await self.event_bus.publish_nowait(
                         MonitoringStreamingChunk(
                             event_id=event_data["id"],
                             timestamp=event_data["timestamp"],
@@ -194,7 +194,7 @@ class EventLogger:
             # Primary: Publish to EventBus for TransportServer to broadcast
             if self.event_bus:
                 try:
-                    await self.event_bus.publish_async_nowait(
+                    await self.event_bus.publish_nowait(
                         MonitoringStreamingChunk(
                             event_id=event_data["id"],
                             timestamp=event_data["timestamp"],
@@ -244,7 +244,7 @@ class EventLogger:
             # Primary: Publish to EventBus for TransportServer to broadcast
             if self.event_bus:
                 try:
-                    await self.event_bus.publish_async_nowait(
+                    await self.event_bus.publish_nowait(
                         MonitoringStreamingChunk(
                             event_id=event_data["id"],
                             timestamp=event_data["timestamp"],
@@ -305,7 +305,7 @@ class EventLogger:
                 logger.debug(
                     "📤 MONITORING: Publishing parameter_comparison to EventBus"
                 )
-                await self.event_bus.publish_async_nowait(
+                await self.event_bus.publish_nowait(
                     MonitoringParameterComparison(
                         event_id=event_data["id"],
                         timestamp=event_data["timestamp"],
@@ -367,7 +367,7 @@ class EventLogger:
             # Publish to EventBus
             if self.event_bus:
                 logger.debug("📤 MONITORING: Publishing error to EventBus")
-                await self.event_bus.publish_async_nowait(
+                await self.event_bus.publish_nowait(
                     MonitoringError(
                         event_id=event_data["id"],
                         timestamp=event_data["timestamp"],
@@ -420,7 +420,7 @@ class EventLogger:
                 logger.debug(
                     f"📤 MONITORING: Publishing request_info to EventBus for request {request_id}"
                 )
-                await self.event_bus.publish_async_nowait(
+                await self.event_bus.publish_nowait(
                     MonitoringRequestInfo(
                         event_id=event_data["id"],
                         timestamp=event_data["timestamp"],
@@ -485,7 +485,7 @@ class EventLogger:
                 logger.debug(
                     f"📤 MONITORING: Publishing {event_type} to EventBus for request {request_id}"
                 )
-                await self.event_bus.publish_async_nowait(
+                await self.event_bus.publish_nowait(
                     MonitoringPreProcessing(
                         event_id=event_data["id"],
                         timestamp=event_data["timestamp"],

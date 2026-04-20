@@ -18,7 +18,7 @@ Usage:
         previous_health=None,
         transition_type="initial",
     )
-    await event_bus.publish_async_nowait(event)
+    await event_bus.publish_nowait(event)
 
 Domain modules:
     routing             — routing metrics, model load, token count, decision

@@ -395,7 +395,7 @@ async def _emit_pipeline_unavailable_events(proxy: StargateProxy) -> None:
             missing_models=missing_models,
         )
         try:
-            await proxy.event_bus.publish_async_nowait(event)
+            await proxy.event_bus.publish_nowait(event)
         except Exception as e:
             logger.error(
                 "Failed to publish pipeline unavailable event for %s: %s",
@@ -692,12 +692,64 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             _subscribe_pipeline_reload_on_gateway_connected(proxy)
         else:
             _subscribe_pipeline_reload_on_catalog_change(proxy)
+            # Catch up on catalog snapshots that arrived before the subscriber
+            # above was wired (Master startup race: cloud + edge gateways fire
+            # FEDERATION_GATEWAY_CATALOG_CHANGED during federated_manager setup,
+            # which precedes pipeline system init). Symmetric with the local
+            # path's `if healthy_gateway` branch.
+            if (
+                proxy.federated_manager is not None
+                and proxy.federated_manager.has_any_catalog_data()
+            ):
+                _old, _new = proxy.pipeline_registry.reload_pipelines()
+                proxy.pipeline_catalog_synced = True
+                logger.info(
+                    "🔄 Pipelines reloaded on startup (federation catalog "
+                    "pre-populated): %d → %d",
+                    _old,
+                    _new,
+                )
+                await _emit_pipeline_unavailable_events(proxy)
 
         proxy.pipeline_executor = PipelineExecutor(
             registry=proxy.pipeline_registry,
             request_executor=proxy.request_executor,
             proxy=proxy,
         )
+
+        # Async dispatch tracker (phase 1: in-process, TTL-pruned records).
+        # Shared by POST /api/v1/pipelines/dispatch + GET .../executions/{id}.
+        from functools import partial
+
+        from systems.pipeline.core.execution.async_tracker import (
+            PipelineExecutionTracker,
+        )
+        from systems.pipeline.core.execution.async_tracker_delivery import (
+            deliver_result,
+        )
+
+        _agent_bus_token = os.environ.get("AGENT_BUS_TOKEN", "")
+        if not _agent_bus_token:
+            logger.warning(
+                "AGENT_BUS_TOKEN not set; async-dispatch result delivery to "
+                "agent-bus will be disabled. Set AGENT_BUS_TOKEN in the "
+                "Stargate env to enable."
+            )
+        _delivery_sender = (
+            partial(
+                deliver_result,
+                event_bus=proxy.event_bus,
+                auth_token=_agent_bus_token,
+            )
+            if _agent_bus_token
+            else None
+        )
+
+        proxy.pipeline_dispatch_tracker = PipelineExecutionTracker(
+            event_bus=proxy.event_bus,
+            delivery_sender=_delivery_sender,
+        )
+        logger.info("✅ PipelineExecutionTracker initialized for async dispatch")
 
         # Initialize pipeline hot-reload
         hot_reload_config = pipelines_config.get("hot_reload", {})

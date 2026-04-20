@@ -177,7 +177,7 @@ class CheckpointManager:
         event = event_factory(
             pipeline_id=self._pipeline_id, execution_id=self._execution_id, **kwargs
         )
-        self._event_bus.publish_async_nowait(event)
+        await self._event_bus.publish_nowait(event)
 
     async def _emit_saved(self, step_name: str, key: str) -> None:
         """Emit CheckpointSaved event."""

@@ -161,17 +161,16 @@ _PRIMARY_TOOLS: set[str] = {
     # Cortex (dispatch-style + boot)
     "cortex",
     "cortex_boot",
-    # LLM — provider-specific surfaces
-    "grok_generate",
-    "claude_generate",
-    "openai_generate",
-    "gemini_generate",
+    # LLM — unified frontier surface
+    "frontier_generate",
     # RAG (consolidated)
     "rag",
     # Response size guard
     "retrieve",
     # Domain dispatch (private layer — discovered from tools.local/)
     "email",
+    "claudeburst",
+    "bot_supervisor",
 }
 
 

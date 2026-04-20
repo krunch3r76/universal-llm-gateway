@@ -82,7 +82,7 @@ class ProcessCrashBridge:
         )
 
         try:
-            await self.event_bus.publish_async_nowait(worker_crash_event)
+            await self.event_bus.publish_nowait(worker_crash_event)
             logger.info(
                 f"🌉 Bridged crash event: PROCESS_CRASH_DETECTED → WORKER_CRASH_DETECTED for {process_id}"
             )

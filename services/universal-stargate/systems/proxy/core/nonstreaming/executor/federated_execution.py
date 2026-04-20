@@ -157,7 +157,7 @@ async def execute_federated_request(
     if not transformation_engine or input_schema != "prompt":
         reason = "no_engine" if not transformation_engine else "schema_not_prompt"
         if event_bus:
-            event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 federated_request_prompt_transformation_skipped(
                     request_id=request_id,
                     model_id=model_id.routing_key,
@@ -174,7 +174,7 @@ async def execute_federated_request(
             prompt = request_body.get("prompt", "")
             prompt_chars = len(prompt) if isinstance(prompt, str) else 0
             if event_bus:
-                event_bus.publish_async_nowait(
+                await event_bus.publish_nowait(
                     federated_request_prompt_transformation_applied(
                         request_id=request_id,
                         model_id=model_id.routing_key,
@@ -184,7 +184,7 @@ async def execute_federated_request(
                 )
         else:
             if event_bus:
-                event_bus.publish_async_nowait(
+                await event_bus.publish_nowait(
                     federated_request_prompt_transformation_failed(
                         request_id=request_id,
                         model_id=model_id.routing_key,

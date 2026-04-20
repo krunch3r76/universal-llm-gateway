@@ -30,7 +30,7 @@ async def emit_inference_started(
     - RequestInferenceStarted (request-scoped): forwarded to Stargate via WebSocket
       so pipeline timeout diagnostics can distinguish queued vs executing
 
-    Uses EventBus publish_async_nowait for non-blocking emission.
+    Uses EventBus publish_nowait for non-blocking emission.
     """
     if not event_bus:
         return
@@ -38,7 +38,7 @@ async def emit_inference_started(
         from src.core.events.types import InferenceStarted, RequestInferenceStarted
 
         logger.debug(f"🔔 Emitting INFERENCE_STARTED for {model_id}")
-        await event_bus.publish_async_nowait(InferenceStarted(model_id=model_id))
+        await event_bus.publish_nowait(InferenceStarted(model_id=model_id))
 
         if request_id:
             gateway_url = _resolve_gateway_identity()
@@ -46,7 +46,7 @@ async def emit_inference_started(
                 f"🔔 Emitting REQUEST_INFERENCE_STARTED for {model_id} "
                 f"request_id={request_id}"
             )
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 RequestInferenceStarted(
                     request_id=request_id,
                     model_id=model_id,
@@ -62,7 +62,7 @@ async def emit_inference_completed(
 ) -> None:
     """Emit INFERENCE_COMPLETED event with last_inference_time (fire-and-forget).
 
-    Uses EventBus publish_async_nowait for non-blocking emission.
+    Uses EventBus publish_nowait for non-blocking emission.
 
     Args:
         event_bus: EventBus instance for event emission
@@ -75,7 +75,7 @@ async def emit_inference_completed(
         from src.core.events.types import InferenceCompleted
 
         logger.debug(f"🔔 Emitting INFERENCE_COMPLETED for {model_id}")
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             InferenceCompleted(
                 model_id=model_id, last_inference_time=last_inference_time
             )

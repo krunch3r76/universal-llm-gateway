@@ -384,7 +384,7 @@ class RequestExecutor:
         from src.scheduling.events import TokenCountingFailed
 
         asyncio.create_task(
-            self.event_bus.publish_async_nowait(
+            self.event_bus.publish_nowait(
                 TokenCountingFailed(
                     request_id=context.request_id,
                     model_id=context.selected_model.routing_key,

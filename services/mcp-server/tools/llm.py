@@ -166,8 +166,8 @@ def register_llm_tools(mcp: FastMCP) -> None:
 
         All requests go through ``/v1/chat/completions`` on Stargate.
         Stargate resolves the model: local inference, pipeline dispatch,
-        or cloud proxy passthrough. Use ``claude_generate`` / ``grok_generate``
-        only when you need provider-native features (thinking, full MCP tool loop,
+        or cloud proxy passthrough. Use ``frontier_generate`` only when you
+        need provider-native features (thinking, full MCP tool loop,
         structured output).
 
         **Model ID format** (CRITICAL — wrong format → 404):
@@ -176,7 +176,8 @@ def register_llm_tools(mcp: FastMCP) -> None:
         - ``xai/grok-4.20-0309-reasoning`` — direct xAI API
         - ``openai/gpt-5.4`` — direct OpenAI API
         - ``openai/gpt-5-search-api`` — OpenAI search model (Chat Completions only —
-          do NOT use ``openai_generate`` for search models; they are unavailable on
+          do NOT use ``frontier_generate(frontier="openai")`` for search models;
+          they are unavailable on
           the Responses API and reject custom tool definitions)
         - ``openrouter/google/gemini-2.5-flash`` — OpenRouter (note triple-segment ID)
         - ``openrouter/qwen/qwen3-32b`` — OpenRouter
@@ -193,8 +194,8 @@ def register_llm_tools(mcp: FastMCP) -> None:
         request before forwarding to the provider. The provider may then respond
         with ``finish_reason="tool_calls"``. This tool forwards ``tool_calls``
         in its response so the caller can execute them and drive the loop manually.
-        ``openai_generate`` / ``claude_generate`` run the tool loop automatically;
-        use those when you don't want to manage the loop yourself.
+        ``frontier_generate`` runs the tool loop automatically;
+        use it when you don't want to manage the loop yourself.
 
         Use ``list_models()`` to discover available model IDs — call with an optional
         provider filter (e.g. ``list_models(filter="openrouter")``).  ``model_status()``

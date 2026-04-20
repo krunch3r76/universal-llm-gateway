@@ -397,11 +397,13 @@ def _fallback_to_zero_vector(text_len: int) -> list[list[float]] | None:
         _embed_dim,
     )
     if _event_bus is not None:
-        _event_bus.publish_async_nowait(
-            rag_embedding_chunk_fallback(
-                model=_embed_model,
-                text_len=text_len,
-                dim=_embed_dim,
+        asyncio.create_task(
+            _event_bus.publish_nowait(
+                rag_embedding_chunk_fallback(
+                    model=_embed_model,
+                    text_len=text_len,
+                    dim=_embed_dim,
+                )
             )
         )
     return [[0.0] * _embed_dim]
@@ -683,7 +685,7 @@ async def embed_queries_batch(
             last_status=None,
         )
     if _event_bus is not None:
-        _event_bus.publish_async_nowait(
+        await _event_bus.publish_nowait(
             rag_embedding_query_success(
                 model_id=_embed_model,
                 query_len=sum(len(t) for t in texts),
@@ -734,7 +736,7 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
                 data = response.json()
                 embedding = data["data"][0]["embedding"]
                 if _event_bus is not None:
-                    _event_bus.publish_async_nowait(
+                    await _event_bus.publish_nowait(
                         rag_embedding_query_success(
                             model_id=_embed_model,
                             query_len=len(text),
@@ -772,7 +774,7 @@ async def embed_query(text: str, scope: str | list[str] | None = None) -> list[f
     if _event_bus is not None:
         from services.rag.events.query import rag_embedding_query_failed
 
-        _event_bus.publish_async_nowait(
+        await _event_bus.publish_nowait(
             rag_embedding_query_failed(
                 model_id=_embed_model,
                 attempts=_QUERY_RETRY_ATTEMPTS,

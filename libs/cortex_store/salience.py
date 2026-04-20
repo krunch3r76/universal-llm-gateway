@@ -187,8 +187,7 @@ def compute_all_salience(
             conn,
             "SELECT id, type, name, attributes FROM entities "
             "WHERE status != 'reaped' AND NOT ("
-            "  type = 'todo' "
-            "  AND json_extract(attributes, '$.status') != 'open'"
+            "  type = 'todo' AND workflow_state != 'open'"
             ")",
         )
 

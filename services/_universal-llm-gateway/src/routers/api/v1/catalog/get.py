@@ -341,7 +341,7 @@ async def reload_catalog(request: Request) -> dict[str, Any]:
 
             event_bus: EventBus = request.app.state.event_bus
             catalog_event = CatalogReloaded(reason="api_reload")
-            await event_bus.publish_async_nowait(catalog_event)
+            await event_bus.publish_nowait(catalog_event)
             logger.info("Emitted CATALOG_RELOADED event after API reload")
 
         return {

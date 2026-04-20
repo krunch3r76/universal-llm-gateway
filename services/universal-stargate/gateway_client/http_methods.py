@@ -87,7 +87,7 @@ class HTTPMethods:
         from src.scheduling.events import GatewayRetryAttempted
 
         asyncio.create_task(
-            self._event_bus.publish_async_nowait(
+            self._event_bus.publish_nowait(
                 GatewayRetryAttempted(
                     gateway_url=self.base_url,
                     method=method,

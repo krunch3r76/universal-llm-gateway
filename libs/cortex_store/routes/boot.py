@@ -470,7 +470,7 @@ _BOOT_TODOS_SQL = """
            e.description, e.source_uri
     FROM entities e
     WHERE e.type = 'todo'
-    AND json_extract(e.attributes, '$.status') = 'open'
+    AND e.workflow_state = 'open'
     {context_filter}
     {domain_filter}
     ORDER BY

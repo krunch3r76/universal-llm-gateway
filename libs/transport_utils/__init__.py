@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from transport_utils.client_factory import (
+    AGENT_BUS_SOCKET_PATH,
     CORTEX_SOCKET_PATH,
+    DEFAULT_AGENT_BUS_URL,
     DEFAULT_CORTEX_URL,
     DEFAULT_RAG_URL,
     RAG_SOCKET_PATH,
@@ -19,8 +21,11 @@ def resolve_rag_base_url() -> str:
 
     return _resolve_rag_base_url()
 
+
 __all__ = [
+    "AGENT_BUS_SOCKET_PATH",
     "CORTEX_SOCKET_PATH",
+    "DEFAULT_AGENT_BUS_URL",
     "DEFAULT_CORTEX_URL",
     "DEFAULT_RAG_URL",
     "RAG_SOCKET_PATH",

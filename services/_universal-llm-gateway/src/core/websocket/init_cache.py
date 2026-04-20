@@ -92,7 +92,7 @@ class InitDataCache:
             from src.core.events.types import GatewaySnapshotResourceGap
 
             event_bus = get_event_bus()
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 GatewaySnapshotResourceGap(
                     all_models_count=all_models_count,
                     resource_models_count=resource_models_count,

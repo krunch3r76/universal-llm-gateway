@@ -484,7 +484,7 @@ class GatewayResourceManager(Sequential):
                 loop = asyncio.get_running_loop()
                 loop.call_soon(
                     lambda: asyncio.create_task(
-                        self._event_bus.publish_async_nowait(event)
+                        self._event_bus.publish_nowait(event)
                     )
                 )
             except RuntimeError:
@@ -527,7 +527,7 @@ class GatewayResourceManager(Sequential):
                 loop = asyncio.get_running_loop()
                 loop.call_soon(
                     lambda: asyncio.create_task(
-                        self._event_bus.publish_async_nowait(event)
+                        self._event_bus.publish_nowait(event)
                     )
                 )
             except RuntimeError:

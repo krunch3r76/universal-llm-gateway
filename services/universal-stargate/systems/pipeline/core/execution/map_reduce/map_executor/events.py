@@ -44,7 +44,7 @@ class RecorderProtocol(Protocol):
 class EventBusProtocol(Protocol):
     """Event bus contract required by map event publishing paths."""
 
-    async def publish_async_nowait(self, event: Event) -> None:
+    async def publish_nowait(self, event: Event) -> None:
         """Publish one bus event asynchronously."""
 
 
@@ -88,7 +88,7 @@ class MapEventPublisher:
         proxy = cast(ProxyProtocol | None, getattr(self._runtime, "_proxy", None))
         event_bus = proxy.event_bus if proxy is not None else None
         if event_bus is not None:
-            task = asyncio.create_task(event_bus.publish_async_nowait(event))
+            task = asyncio.create_task(event_bus.publish_nowait(event))
             task.add_done_callback(self._log_publish_failure)
 
     @staticmethod

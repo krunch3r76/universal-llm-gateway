@@ -87,12 +87,30 @@ async def _passthrough(
             content={"detail": str(exc)},
         )
 
+    forwarded_headers: dict[str, str] = {}
+    for header_name in (
+        "X-Pipeline-Internal",
+        "X-Pipeline-Execution-Id",
+        "X-Pipeline-Step-Id",
+        "X-Pipeline-Cancel-Group",
+        "X-Internal-Request-ID",
+        "X-Request-Timeout",
+        "X-Skip-Token-Counting",
+    ):
+        val = request.headers.get(header_name)
+        if val is not None:
+            forwarded_headers[header_name] = val
+
     streaming = bool(body.get("stream", False))
     try:
         if streaming:
 
             async def _relay() -> AsyncIterator[bytes]:
-                async for chunk in client.stream_provider_native(cloud_path, body):
+                async for chunk in client.stream_provider_native(
+                    cloud_path,
+                    body,
+                    headers=forwarded_headers,
+                ):
                     yield chunk
 
             return StreamingResponse(
@@ -100,7 +118,11 @@ async def _passthrough(
                 media_type="text/event-stream",
             )
 
-        resp = await client.post_provider_native_json(cloud_path, body)
+        resp = await client.post_provider_native_json(
+            cloud_path,
+            body,
+            headers=forwarded_headers,
+        )
         media = resp.headers.get("content-type", "application/json")
         return Response(
             content=resp.content,
@@ -158,6 +180,7 @@ async def native_openai_responses(request: Request) -> Response:
 
 # ── Image generation / editing ─────────────────────────────────────────────
 
+
 @router.post("/xai/images/generations")
 async def xai_images_generations(request: Request) -> Response:
     """xAI image generation (grok-imagine-image / grok-imagine-image-pro)."""
@@ -183,6 +206,7 @@ async def openai_images_edits(request: Request) -> Response:
 
 
 # ── Video generation ────────────────────────────────────────────────────────
+
 
 @router.post("/xai/videos/generations")
 async def xai_videos_generations(request: Request) -> Response:

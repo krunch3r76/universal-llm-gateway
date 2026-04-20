@@ -294,7 +294,7 @@ class BaseHandler(AbstractStepHandler):
         proxy = getattr(context, "_proxy", None)
         event_bus = getattr(proxy, "event_bus", None) if proxy else None
         if event_bus:
-            asyncio.create_task(event_bus.publish_async_nowait(event))
+            asyncio.create_task(event_bus.publish_nowait(event))
 
     def _report_progress(
         self,

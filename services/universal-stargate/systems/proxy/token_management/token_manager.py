@@ -373,7 +373,7 @@ class TokenManager:
                 try:
                     from src.scheduling.events import TokenCountCompleted
 
-                    await self.event_bus.publish_async_nowait(
+                    await self.event_bus.publish_nowait(
                         TokenCountCompleted(
                             request_id="unknown",  # Request ID not available in this context
                             model_id=model_name,

@@ -132,7 +132,7 @@ class ResourceTrackerCrashHandler:
             if crashed_while_loading:
                 from src.core.events.types import ModelLoadFailed
 
-                await self.event_bus.publish_async_nowait(
+                await self.event_bus.publish_nowait(
                     ModelLoadFailed(
                         model_id=model_id,
                         error_message=classified_error,

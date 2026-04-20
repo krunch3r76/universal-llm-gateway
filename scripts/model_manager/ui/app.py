@@ -116,7 +116,7 @@ class ModelManagerApp(App):
         self._broadcaster = MinimalEventDebugBroadcaster()
         self._event_bus = EventBus(debug_broadcaster=self._broadcaster)
         await self._broadcaster.start_debug_server()
-        await self._event_bus.publish_async(TuiStarted(pid=os.getpid()))
+        await self._event_bus.publish(TuiStarted(pid=os.getpid()))
 
         self._api_server = ManageAPIServer(self._service_controller, self._event_bus)
         try:
@@ -140,7 +140,7 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping Manage API server: %s", e)
         if self._event_bus is not None:
-            await self._event_bus.publish_async(TuiExited(reason="quit"))
+            await self._event_bus.publish(TuiExited(reason="quit"))
         if self._broadcaster is not None:
             await self._broadcaster.stop_debug_server()
 

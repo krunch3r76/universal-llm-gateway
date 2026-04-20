@@ -253,13 +253,13 @@ async def _startup() -> None:
             deleted_cache_rows,
         )
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_contextualize_cache_gc_completed(deleted_rows=deleted_cache_rows)
             )
     except Exception as gc_exc:
         logger.warning("Contextualize cache startup GC failed: %s", gc_exc)
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_contextualize_cache_gc_failed(
                     error=f"{type(gc_exc).__qualname__}: {gc_exc}",
                 )
@@ -286,7 +286,7 @@ async def _startup() -> None:
                 await asyncio.to_thread(replace_article_rows, db_path, rows)
                 state._registry = yaml_registry
         if state._event_bus is not None:
-            await state._event_bus.publish_async(
+            await state._event_bus.publish(
                 rag_article_registry_loaded(
                     path=str(db_path),
                     article_count=len(state._registry) if state._registry else 0,
@@ -300,7 +300,7 @@ async def _startup() -> None:
             exc_info=True,
         )
         if state._event_bus is not None:
-            await state._event_bus.publish_async(
+            await state._event_bus.publish(
                 rag_article_registry_failed(
                     path=str(db_path),
                     error=str(e),
@@ -308,7 +308,7 @@ async def _startup() -> None:
             )
         state._registry = None
 
-    await state._event_bus.publish_async(rag_started())
+    await state._event_bus.publish(rag_started())
 
     if state._config.automatic_indexing_enabled and state._config.watch_directories:
         state._dependency_activation.phase = "activating"
@@ -446,7 +446,7 @@ async def _reconcile_pending(config: RagConfig) -> None:
                 )
 
     if state._event_bus is not None:
-        await state._event_bus.publish_async(
+        await state._event_bus.publish(
             rag_pending_reconciled(
                 reconciled=reconciled,
                 cleared=cleared,
@@ -490,7 +490,7 @@ async def _purge_orphans(config: RagConfig) -> None:
         sorted(Path(s).name for s in purged_sources) if purged_sources else None
     )
     if state._event_bus is not None:
-        await state._event_bus.publish_async(
+        await state._event_bus.publish(
             rag_orphan_purged(
                 files=files_purged, chunks=chunks_purged, sources=source_names
             )
@@ -529,7 +529,7 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
                 sources_to_purge.add(source)
     if not sources_to_purge:
         if state._event_bus is not None:
-            await state._event_bus.publish_async(
+            await state._event_bus.publish(
                 rag_exclusion_purged(files=0, chunks=0)
             )
         return
@@ -552,7 +552,7 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
         )
     source_names = sorted(Path(s).name for s in sources_to_purge)
     if state._event_bus is not None:
-        await state._event_bus.publish_async(
+        await state._event_bus.publish(
             rag_exclusion_purged(
                 files=files_purged, chunks=chunks_purged, sources=source_names
             )
@@ -588,7 +588,7 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
             await _start_watcher_runtime(config)
             state._dependency_activation.phase = "ready"
             state._dependency_activation.waiting_on = None
-            await state._event_bus.publish_async(
+            await state._event_bus.publish(
                 rag_dependencies_activated(dependencies=["stargate", "embeddings"])
             )
             # Scope freshness repair sends LLM requests to Stargate (vocabulary
@@ -610,14 +610,14 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
         except EmbeddingDependencyUnavailableError as exc:
             waiting_on = "embeddings"
             error = str(exc)
-            await state._event_bus.publish_async(
+            await state._event_bus.publish(
                 rag_embeddings_unavailable(error=error)
             )
         except TimeoutError as exc:
             waiting_on = state._dependency_activation.waiting_on or "dependencies"
             error = str(exc)
             if waiting_on == "embeddings":
-                await state._event_bus.publish_async(
+                await state._event_bus.publish(
                     rag_embeddings_unavailable(error=error)
                 )
         except Exception as exc:
@@ -642,11 +642,11 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
         state._dependency_activation.waiting_on = waiting_on
         state._dependency_activation.last_error = error
         if not degraded_emitted:
-            await state._event_bus.publish_async(
+            await state._event_bus.publish(
                 rag_start_degraded(waiting_on=waiting_on, error=error)
             )
             degraded_emitted = True
-        await state._event_bus.publish_async(
+        await state._event_bus.publish(
             rag_dependency_retry_scheduled(
                 waiting_on=waiting_on,
                 attempt=attempt,
@@ -705,7 +705,7 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
                 stale,
             )
             if state._event_bus is not None:
-                await state._event_bus.publish_async(
+                await state._event_bus.publish(
                     rag_post_index_stale(stale_steps=stale)
                 )
             if config.post_index_enforcement != "warn":
@@ -792,7 +792,7 @@ async def _shutdown() -> None:
 
     state._global_contextualize_gate = None
     if state._event_bus is not None:
-        await state._event_bus.publish_async(rag_shutdown())
+        await state._event_bus.publish(rag_shutdown())
     if state._watcher_manager is not None:
         await state._watcher_manager.stop()
         state._watcher_manager = None

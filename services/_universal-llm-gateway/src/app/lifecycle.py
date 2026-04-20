@@ -89,7 +89,7 @@ async def graceful_shutdown(
                 timeout=timeout,
                 timestamp=time.time(),
             )
-            await app.state.event_bus.publish_async_nowait(drain_event)
+            await app.state.event_bus.publish_nowait(drain_event)
             if gateway_logger is not None:
                 gateway_logger.info(
                     f"Emitted GATEWAY_DRAINING event (timeout={timeout}s)"
@@ -377,7 +377,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
                         from ..core.events.types import ModelUnloaded
 
                         # Broadcast MODEL_UNLOADED to notify Stargate
-                        await event_bus.publish_async_nowait(
+                        await event_bus.publish_nowait(
                             ModelUnloaded(model_id=model_id)
                         )
 
@@ -458,7 +458,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
                         catalog_event = CatalogReloaded(
                             reason=f"hot_reload:{reload_event.file_path}",
                         )
-                        await event_bus.publish_async_nowait(catalog_event)
+                        await event_bus.publish_nowait(catalog_event)
                         gateway_logger.info(
                             f"Emitted CATALOG_RELOADED for {reload_event.model_key}"
                         )
@@ -595,7 +595,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: PLR0912
             )
             # True fire-and-forget: schedule but don't await
             asyncio.create_task(
-                app.state.event_bus.publish_async_nowait(shutdown_event)
+                app.state.event_bus.publish_nowait(shutdown_event)
             )
             if gateway_logger is not None:
                 gateway_logger.info(

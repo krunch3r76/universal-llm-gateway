@@ -179,7 +179,7 @@ async def execute_eviction_plan(
                             )
 
                             trigger = eviction_plan.trigger_model_id or "unknown"
-                            await event_bus.publish_async_nowait(
+                            await event_bus.publish_nowait(
                                 WorkerEvicted(
                                     model_id=model_id_str,
                                     trigger_model_id=trigger,

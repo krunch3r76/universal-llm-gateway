@@ -26,6 +26,11 @@ class StreamTranslator:
         self._finish_emitted = False
         self._mcp_tool_names: list[str] = []
         self._tool_search_ref_count: int = 0
+        self._thinking_blocks: list[dict[str, Any]] = []
+        self._current_thinking_parts: list[str] = []
+        self._current_thinking_signature: str | None = None
+        self._in_thinking_block: bool = False
+        self._in_redacted_thinking_block: bool = False
 
     def _chunk(self, delta: dict[str, Any], finish: str | None = None) -> bytes:
         payload = {
@@ -71,6 +76,8 @@ class StreamTranslator:
                 return self._on_content_block_start(payload)
             case "content_block_delta":
                 return self._on_content_block_delta(payload)
+            case "content_block_stop":
+                return self._on_content_block_stop(payload)
             case "message_stop":
                 return self._on_message_stop()
             case "error":
@@ -107,6 +114,15 @@ class StreamTranslator:
             return []
 
         block_type = str(block.get("type", ""))
+
+        if block_type == "thinking":
+            self._in_thinking_block = True
+            self._current_thinking_parts = []
+            self._current_thinking_signature = None
+            return []
+        if block_type == "redacted_thinking":
+            self._in_redacted_thinking_block = True
+            return []
 
         skip_block_types = {
             "server_tool_use",
@@ -156,6 +172,19 @@ class StreamTranslator:
         if not isinstance(delta, dict):
             return []
 
+        delta_type = delta.get("type")
+
+        if self._in_thinking_block:
+            if delta_type == "thinking_delta":
+                thinking = delta.get("thinking")
+                if isinstance(thinking, str) and thinking:
+                    self._current_thinking_parts.append(thinking)
+            elif delta_type == "signature_delta":
+                sig = delta.get("signature")
+                if isinstance(sig, str) and sig:
+                    self._current_thinking_signature = sig
+            return []
+
         text = delta.get("text")
         if isinstance(text, str) and text:
             return [self._chunk({"content": text})]
@@ -191,10 +220,45 @@ class StreamTranslator:
 
         return []
 
+    def _on_content_block_stop(self, payload: dict[str, Any]) -> list[bytes]:
+        if self._in_thinking_block:
+            text = "".join(self._current_thinking_parts)
+            if text:
+                self._thinking_blocks.append(
+                    {
+                        "type": "thinking",
+                        "thinking": text,
+                        "signature": self._current_thinking_signature,
+                    }
+                )
+            self._in_thinking_block = False
+            self._current_thinking_parts = []
+            self._current_thinking_signature = None
+            return []
+        if self._in_redacted_thinking_block:
+            self._thinking_blocks.append({"type": "redacted_thinking"})
+            self._in_redacted_thinking_block = False
+            return []
+        return []
+
     def _on_message_stop(self) -> list[bytes]:
         self._finish_emitted = True
         fr = "tool_calls" if self._tool_meta else "stop"
-        return [self._chunk({}, finish=fr), b"data: [DONE]\n\n"]
+        frames: list[bytes] = []
+        if self._thinking_blocks:
+            # Aggregate reasoning into a single pre-finish delta frame so
+            # SSE consumers reassembling the final message pick up
+            # ``reasoning_content`` with the same shape non-streaming
+            # callers see from ``convert_response_content``.
+            frames.append(self._chunk({"reasoning_content": self._thinking_blocks}))
+        frames.append(self._chunk({}, finish=fr))
+        frames.append(b"data: [DONE]\n\n")
+        return frames
+
+    @property
+    def reasoning_content(self) -> list[dict[str, Any]]:
+        """Accumulated thinking blocks (B2b) for post-stream aggregation."""
+        return list(self._thinking_blocks)
 
     @staticmethod
     def _raise_error(

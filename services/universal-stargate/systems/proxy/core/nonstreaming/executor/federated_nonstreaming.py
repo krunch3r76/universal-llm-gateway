@@ -267,7 +267,7 @@ async def _forward_or_recover(
     elif event_bus:
         from src.scheduling.events.routing import OomRecoverySucceeded
 
-        event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             OomRecoverySucceeded(
                 request_id=request_id,
                 model_id=model_id.routing_key,

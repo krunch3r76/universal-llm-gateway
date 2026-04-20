@@ -89,7 +89,7 @@ async def finalize_selection_and_load(
             if plan and plan.cooldown_protected_count > 0:
                 from src.scheduling.events.routing import EvictionCooldownApplied
 
-                await event_bus.publish_async_nowait(
+                await event_bus.publish_nowait(
                     EvictionCooldownApplied(
                         model_id=str(model_id),
                         gateway_id=selected_gateway.name,
@@ -110,7 +110,7 @@ async def finalize_selection_and_load(
                             count = count_demand_for(evict_model.routing_key)
                             if count > 0:
                                 waiter_counts[evict_model.routing_key] = count
-                await event_bus.publish_async_nowait(
+                await event_bus.publish_nowait(
                     EvictionDemandApplied(
                         model_id=str(model_id),
                         gateway_id=selected_gateway.name,
@@ -122,7 +122,7 @@ async def finalize_selection_and_load(
             if plan and plan.escape_hatch_used:
                 from src.scheduling.events.routing import EvictionCooldownBlocked
 
-                await event_bus.publish_async_nowait(
+                await event_bus.publish_nowait(
                     EvictionCooldownBlocked(
                         model_id=str(model_id),
                         gateway_id=selected_gateway.name,
@@ -177,7 +177,7 @@ async def finalize_selection_and_load(
             was_queued = (
                 context.capacity_token is not None and context.capacity_token.queued
             )
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 RequestRouted(
                     request_id=context.request_id,
                     model_id=str(model_id),

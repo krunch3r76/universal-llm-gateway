@@ -53,7 +53,7 @@ class _FakeEventBus:
     def __init__(self) -> None:
         self.events: list[Any] = []
 
-    async def publish_async_nowait(self, event: Any) -> None:
+    async def publish_nowait(self, event: Any) -> None:
         self.events.append(event)
 
 

@@ -219,12 +219,13 @@ class EventBus:
         else:
             logger.info("🔍 Debug event broadcasting disabled")
 
-    async def publish_async(self, event: Event) -> None:
+    async def publish(self, event: Event) -> None:
         """
         Publish event and wait for all subscribers to complete.
 
         Use this when you need delivery guarantees or ordering constraints.
-        For request-path events, use publish_async_nowait instead.
+        For request-path events, use publish_nowait instead.
+        For sync callers, use publish_from_sync instead.
 
         Automatically injects timestamp and global ID into the event.
 
@@ -272,12 +273,15 @@ class EventBus:
             except Exception as e:
                 logger.debug(f"UDP bridge forward failed: {e}")
 
-    async def publish_async_nowait(self, event: Event) -> None:
+    async def publish_nowait(self, event: Event) -> None:
         """
         Publish event without waiting for subscribers (fire-and-forget).
 
         Use this for request-path events where handler latency should not
         block the caller. Handler errors are logged but not propagated.
+
+        This method is async (returns a coroutine) — callers must `await`.
+        Sync callers must use `publish_from_sync` instead.
 
         Automatically injects timestamp and global ID into the event.
 
@@ -322,6 +326,39 @@ class EventBus:
                 self.udp_bridge.forward_event(event)
             except Exception as e:
                 logger.debug(f"UDP bridge forward failed: {e}")
+
+    def publish_from_sync(self, event: Event) -> asyncio.Task:
+        """
+        Publish event from synchronous code (fire-and-forget).
+
+        Schedules `publish_nowait(event)` on the running event loop and returns
+        immediately. This is the only safe entrypoint for sync callers — the
+        async `publish_nowait` would be silently dropped if called bare from
+        sync code.
+
+        Args:
+            event: Event instance to publish
+
+        Returns:
+            The asyncio.Task scheduling the publish (usually ignored).
+
+        Raises:
+            RuntimeError: If no event loop is running in the current thread.
+                Sync callers must be inside a thread that has a loop (e.g.
+                a `run_in_executor` worker is NOT such a thread — use the
+                loop's `call_soon_threadsafe` pattern instead).
+            TypeError: If event is not an Event instance (raised when the
+                scheduled coroutine runs, not at schedule time).
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"publish_from_sync({event.signal!r}) called with no running "
+                f"event loop; sync callers must run inside a thread with an "
+                f"active asyncio loop"
+            ) from e
+        return loop.create_task(self.publish_nowait(event))
 
     def _log_handler_error(self, task: asyncio.Task, handler: Callable) -> None:
         """Log errors from background event handlers."""

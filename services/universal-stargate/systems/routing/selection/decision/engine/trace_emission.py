@@ -58,7 +58,7 @@ def emit_decision_trace(
 
         try:
             asyncio.get_running_loop()
-            task = asyncio.create_task(event_bus.publish_async_nowait(event))
+            task = asyncio.create_task(event_bus.publish_nowait(event))
 
             def _on_done(done_task: asyncio.Task) -> None:
                 try:

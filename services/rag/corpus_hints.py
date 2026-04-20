@@ -165,7 +165,7 @@ def load_corpus_hints(
     except sqlite3.Error as e:
         logger.warning("Failed to load corpus hints from DB %s: %s", resolved, e)
         if event_bus is not None:
-            event_bus.publish_async_nowait(
+            event_bus.publish_from_sync(
                 rag_corpus_hints_load_failed(path=str(resolved), error=str(e))
             )
         return {}
@@ -206,7 +206,7 @@ def load_scope_vocabulary(
     except sqlite3.Error as e:
         logger.warning("Failed to load scope vocabulary from DB %s: %s", resolved, e)
         if event_bus is not None:
-            event_bus.publish_async_nowait(
+            event_bus.publish_from_sync(
                 rag_scope_vocabulary_load_failed(path=str(resolved), error=str(e))
             )
         return {}
@@ -445,14 +445,14 @@ def filter_hints_by_cooccurrence(
     except sqlite3.OperationalError as exc:
         logger.warning("Cannot open property index DB read-only: %s", db_path)
         if event_bus is not None:
-            event_bus.publish_async_nowait(
+            event_bus.publish_from_sync(
                 rag_corpus_hints_filter_failed(error=str(exc))
             )
         return []
     except Exception as exc:
         logger.debug("Co-occurrence query failed", exc_info=True)
         if event_bus is not None:
-            event_bus.publish_async_nowait(
+            event_bus.publish_from_sync(
                 rag_corpus_hints_filter_failed(error=str(exc))
             )
         return []
@@ -553,7 +553,7 @@ async def update_corpus_hints(
     if property_index.get_total_chunks() == 0:
         logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")
         if event_bus is not None:
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 rag_corpus_hints_skipped(reason="property index has zero chunks")
             )
         return {}
@@ -680,7 +680,7 @@ async def update_corpus_hints(
 
     if event_bus is not None:
         update_timestamp = datetime.now(UTC).isoformat()
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             rag_corpus_hints_updated(
                 path=str(property_index.db_path),
                 scopes_updated=sorted(result),

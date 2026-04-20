@@ -17,6 +17,11 @@ from provider_model_limits import (
     clamp_anthropic_max_tokens,
 )
 
+from llm_adapters._mcp_entry import (
+    anthropic_mcp_server_entry,
+    resolve_mcp_env,
+)
+
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
 
@@ -164,7 +169,8 @@ class AnthropicAdapter:
         return "anthropic"
 
     def build_request(
-        self, req: LLMRequest,
+        self,
+        req: LLMRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         resolved_max_tokens = clamp_anthropic_max_tokens(req.model, req.max_tokens)
         if resolved_max_tokens != req.max_tokens:
@@ -196,7 +202,8 @@ class AnthropicAdapter:
         return url, headers, body
 
     def build_frontier_request(
-        self, req: FrontierRequest,
+        self,
+        req: FrontierRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         headers: dict[str, str] = {
             "x-api-key": self._api_key,
@@ -242,14 +249,41 @@ class AnthropicAdapter:
                 model_max,
             )
 
-        tools_list: list[dict[str, Any]] = []
-        if req.tools:
-            for t in req.tools:
-                mapped_tool = _build_anthropic_tool(t)
-                if mapped_tool is not None:
-                    tools_list.append(mapped_tool)
-        if tools_list:
-            body["tools"] = tools_list
+        if req.remote_mcp:
+            if req.mcp_tool_loop:
+                raise ValueError(
+                    "remote_mcp=True is mutually exclusive with mcp_tool_loop=True"
+                )
+            # Anthropic's MCP descriptor lives in body["mcp_servers"], never in
+            # req.tools. Any tool present alongside remote_mcp=True is a client-
+            # side function that cannot fire (loop disabled) — fail loudly.
+            if req.tools:
+                raise ValueError(
+                    "remote_mcp=True rejects any req.tools for Anthropic "
+                    "(client-side tools cannot fire with the loop disabled)"
+                )
+            url, token = resolve_mcp_env()
+            server_entry = anthropic_mcp_server_entry(url, token)
+            existing_servers = body.get("mcp_servers") or []
+            body["mcp_servers"] = [*existing_servers, server_entry]
+            # Anthropic (2026-04) requires each defined mcp_servers entry to be
+            # referenced by an `mcp_toolset` tool; otherwise the API 400s with
+            # "MCP server '<name>' is defined but not referenced". The adapter
+            # synthesizes this entry — caller-supplied req.tools is still
+            # rejected above (strict contract intact).
+            body["tools"] = [
+                *(body.get("tools") or []),
+                {"type": "mcp_toolset", "mcp_server_name": server_entry["name"]},
+            ]
+        else:
+            tools_list: list[dict[str, Any]] = []
+            if req.tools:
+                for t in req.tools:
+                    mapped_tool = _build_anthropic_tool(t)
+                    if mapped_tool is not None:
+                        tools_list.append(mapped_tool)
+            if tools_list:
+                body["tools"] = tools_list
         if req.tool_choice is not None:
             body["tool_choice"] = req.tool_choice
 

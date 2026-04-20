@@ -84,7 +84,7 @@ class MasterTelemetryReceiver:
                 model_id = data.get("model_id")
                 if request_id and model_id:
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             RequestInferenceStarted(
                                 request_id=request_id,
                                 model_id=str(model_id),
@@ -140,7 +140,7 @@ class MasterTelemetryReceiver:
                 count_source = "unknown"
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationTelemetryReceived(
                         remote_id=remote_id,
                         model_count=model_count,

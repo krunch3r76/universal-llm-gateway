@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query, Response, status
 from .. import embeddings as cortex_embeddings
 from .. import vector_store
 from ..action_hints import detect_expired_unresolved
-from ..assertion_quality import validate_assertion
+from ..assertion_quality import DERIVATION_TYPE_TAXONOMY, validate_assertion
 from ..belief_guard import (
     analyze_assertion_impact,
     guard_assertion_write,
@@ -463,6 +463,7 @@ def create_assertion(
                 "error": "assertion_quality_rejected",
                 "quality_score": validation.quality_score,
                 "diagnostics": diagnostics,
+                "valid_derivation_types": DERIVATION_TYPE_TAXONOMY,
             },
         )
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import sqlite3
 
@@ -25,12 +26,61 @@ logger = logging.getLogger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
 
 
+def _workflow_schema(
+    conn: sqlite3.Connection, entity_type: str
+) -> dict[str, object] | None:
+    """Fetch the workflow schema for *entity_type* if registered, else None."""
+    rows = query(
+        conn,
+        "SELECT enum_values, initial_state, terminal_states "
+        "FROM workflow_schemas WHERE entity_type = ?",
+        (entity_type,),
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "enum_values": json.loads(row["enum_values"]),
+        "initial_state": row["initial_state"],
+        "terminal_states": (
+            json.loads(row["terminal_states"]) if row["terminal_states"] else None
+        ),
+    }
+
+
+def _validate_workflow_state(
+    conn: sqlite3.Connection, entity_type: str, value: str
+) -> None:
+    """Reject *value* if entity_type has a registered enum that excludes it.
+
+    Types without a registered schema accept any value (free-form).
+    """
+    schema = _workflow_schema(conn, entity_type)
+    if schema is None:
+        return
+    enum_values = schema["enum_values"]
+    assert isinstance(enum_values, list)
+    if value not in enum_values:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Invalid workflow_state {value!r} for type {entity_type!r}. "
+                f"Must be one of: {enum_values}"
+            ),
+        )
+
+
 @router.get("", response_model=EntityList)
 def list_entities(
     type: str | None = None,
+    workflow_state: str | None = Query(
+        None,
+        description="Filter by typed workflow_state column (replaces the "
+        "json_extract(attributes,'$.status') pattern).",
+    ),
     limit: int = Query(50, ge=1, le=500),
 ) -> EntityList:
-    """List entities, optionally constrained to one entity type."""
+    """List entities, optionally constrained to one entity type / workflow_state."""
     clauses: list[str] = []
     params: list[str | int] = []
 
@@ -38,8 +88,15 @@ def list_entities(
         clauses.append("type = ?")
         params.append(type)
 
+    if workflow_state is not None:
+        clauses.append("workflow_state = ?")
+        params.append(workflow_state)
+
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-    sql = f"SELECT id, type, name, description, status, content_hash, created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
+    sql = (
+        "SELECT id, type, name, description, status, workflow_state, content_hash, "
+        f"created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
+    )
     params.append(limit)
 
     conn = None
@@ -177,12 +234,20 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
     conn = None
     try:
         conn = cortex_conn()
-        existing = query(conn, "SELECT id FROM entities WHERE id = ?", (entity_id,))
+        existing = query(
+            conn, "SELECT id, type FROM entities WHERE id = ?", (entity_id,)
+        )
         if not existing:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Entity not found: {entity_id}",
             )
+
+        if (
+            "workflow_state" in body.model_fields_set
+            and body.workflow_state is not None
+        ):
+            _validate_workflow_state(conn, existing[0]["type"], body.workflow_state)
 
         sets: list[str] = []
         params: list[object] = []
@@ -243,18 +308,29 @@ def create_entity(body: EntityCreate) -> EntityDetail:
     conn = None
     try:
         conn = cortex_conn()
+
+        workflow_state = body.workflow_state
+        if workflow_state is not None:
+            _validate_workflow_state(conn, body.type, workflow_state)
+        else:
+            schema = _workflow_schema(conn, body.type)
+            if schema is not None:
+                workflow_state = str(schema["initial_state"])
+
         conn.execute(
-            "INSERT INTO entities (id, type, name, description, status, aliases, "
+            "INSERT INTO entities (id, type, name, description, status, "
+            "workflow_state, aliases, "
             "attributes, notes, source_uri, content_hash, "
             "retention_policy, retention_ttl_days, "
             "created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.id,
                 body.type,
                 body.name,
                 body.description,
                 body.status or "confirmed",
+                workflow_state,
                 json_encode(body.aliases),
                 json_encode(body.attributes),
                 body.notes,

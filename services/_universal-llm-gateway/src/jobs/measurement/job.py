@@ -403,7 +403,7 @@ class MeasurementJob(Job):
                 f"  Embedding model: finding minimum gpu_memory_utilization "
                 f"at context {ctx}"
             )
-            await get_event_bus().publish_async_nowait(
+            await get_event_bus().publish_nowait(
                 MeasurementEmbeddingDetected(
                     model_id=self.request.model_id, context_length=ctx
                 )
@@ -503,7 +503,7 @@ class MeasurementJob(Job):
         self.emit_log(
             f"  Engine: llama-cpp (embedding {mode_label}, contexts: {contexts})"
         )
-        await get_event_bus().publish_async_nowait(
+        await get_event_bus().publish_nowait(
             MeasurementEmbeddingDetected(
                 model_id=self.request.model_id, context_length=contexts[0]
             )

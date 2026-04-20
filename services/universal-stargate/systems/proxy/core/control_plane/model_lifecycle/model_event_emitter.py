@@ -49,7 +49,7 @@ async def emit_model_loaded(
     from src.scheduling.events import ModelLoaded
 
     try:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             ModelLoaded(
                 url=gateway_url,
                 model_id=str(model_id),
@@ -83,7 +83,7 @@ async def emit_model_unloaded(
     from src.scheduling.events import ModelUnloaded
 
     try:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             ModelUnloaded(
                 url=gateway_url,
                 model_id=str(model_id),
@@ -117,7 +117,7 @@ async def emit_model_loading_failed(
     from src.scheduling.events import ModelLoadingFailed
 
     try:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             ModelLoadingFailed(
                 url=gateway_url,
                 model_id=str(model_id),

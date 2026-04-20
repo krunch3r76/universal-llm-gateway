@@ -26,7 +26,7 @@ async def shutdown_proxy(proxy: StargateProxy) -> None:
 
     if proxy.event_bus:
         try:
-            await proxy.event_bus.publish_async(SystemShutdown())
+            await proxy.event_bus.publish(SystemShutdown())
             logger.info("📢 Published SYSTEM_SHUTDOWN event")
         except Exception as exc:  # pragma: no cover - defensive logging
             logger.debug("Failed to emit SYSTEM_SHUTDOWN event: %s", exc)

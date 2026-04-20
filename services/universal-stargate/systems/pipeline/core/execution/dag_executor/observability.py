@@ -67,7 +67,7 @@ class StepObservability:
         proxy = getattr(self._executor.context, "_proxy", None)
         event_bus = getattr(proxy, "event_bus", None) if proxy else None
         if event_bus:
-            asyncio.create_task(event_bus.publish_async_nowait(event))
+            asyncio.create_task(event_bus.publish_nowait(event))
         elif not self._event_bus_warned:
             logger.warning("Event bus unavailable - events will not be published")
             self._event_bus_warned = True

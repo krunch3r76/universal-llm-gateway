@@ -33,6 +33,15 @@ class ModelCallResult:
     snapshot_request_id: str | None
     system_prompt: str | None
     user_prompt: str
+    # Reasoning trace preserved from OpenAI-family responses.
+    # ``reasoning`` is whatever shape the upstream returned — structured
+    # (summary blocks + content) or a flat string. Callers stringify if needed;
+    # they cannot un-flatten, so we preserve structure here.
+    reasoning: Any = None
+    # From OpenAI ``usage.completion_tokens_details.reasoning_tokens``.
+    # ``completion_tokens`` includes reasoning; ``reasoning_tokens`` surfaces
+    # the breakdown so consumers can tell output tokens from reasoning tokens.
+    reasoning_tokens: int = 0
 
 
 @dataclass(slots=True, kw_only=True)

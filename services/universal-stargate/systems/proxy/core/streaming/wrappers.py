@@ -82,7 +82,7 @@ def wrap_streaming_response_for_tracking(
             # Emit lifecycle event first (success/failure)
             try:
                 if stream_succeeded:
-                    await event_bus.publish_async_nowait(
+                    await event_bus.publish_nowait(
                         RequestCompleted(
                             request_id=context.request_id,
                             gateway_url=gateway_url,
@@ -91,7 +91,7 @@ def wrap_streaming_response_for_tracking(
                         )
                     )
                 elif client_disconnected:
-                    await event_bus.publish_async_nowait(
+                    await event_bus.publish_nowait(
                         RequestClientDisconnected(
                             request_id=context.request_id,
                             model_id=model_id,
@@ -101,7 +101,7 @@ def wrap_streaming_response_for_tracking(
                         )
                     )
                 elif stream_error is not None:
-                    await event_bus.publish_async_nowait(
+                    await event_bus.publish_nowait(
                         RequestFailed(
                             request_id=context.request_id,
                             model_id=model_id,

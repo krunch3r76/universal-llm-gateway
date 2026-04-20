@@ -19,8 +19,20 @@ def convert_response_content(
 ) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], dict[str, Any]]:
     """Convert Anthropic response content blocks to an OpenAI assistant message.
 
-    Returns (message_dict, finish_reason_override, citations, mcp_meta).
-    mcp_meta keys: mcp_tool_names (list[str]), tool_search_ref_count (int).
+    Returns ``(message_dict, finish_reason_override, citations, mcp_meta)``.
+
+    ``message_dict`` carries ``content`` (visible text) and, when the
+    response contains one or more ``thinking`` blocks, a
+    ``reasoning_content`` field preserving Anthropic's structured shape:
+
+        [{"type": "thinking", "thinking": "...", "signature": "..."}, ...]
+
+    Upstream pipeline consumers (``call_model.py``) read
+    ``message.reasoning_content`` when populated; see B2b phase doc for
+    the end-to-end contract.
+
+    ``mcp_meta`` keys: ``mcp_tool_names`` (list[str]),
+    ``tool_search_ref_count`` (int).
     """
     if not isinstance(content, list):
         return {"role": "assistant", "content": ""}, None, [], {}
@@ -30,6 +42,7 @@ def convert_response_content(
     citations: list[dict[str, Any]] = []
     mcp_tool_names: list[str] = []
     tool_search_ref_count: int = 0
+    thinking_blocks: list[dict[str, Any]] = []
 
     for block in content:
         if not isinstance(block, dict):
@@ -41,6 +54,20 @@ def convert_response_content(
                 text = block.get("text")
                 if isinstance(text, str) and text:
                     text_parts.append(text)
+
+            case "thinking":
+                thinking_text = block.get("thinking")
+                if isinstance(thinking_text, str) and thinking_text:
+                    thinking_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": thinking_text,
+                            "signature": block.get("signature"),
+                        }
+                    )
+
+            case "redacted_thinking":
+                thinking_blocks.append({"type": "redacted_thinking"})
 
             case "tool_use":
                 tool_calls.append(_tool_use_to_openai(block, index=len(tool_calls)))
@@ -81,6 +108,11 @@ def convert_response_content(
     }
     if tool_calls:
         message["tool_calls"] = tool_calls
+    if thinking_blocks:
+        # Name matches the field `call_model.py` reads; shape is
+        # provider-native (Anthropic thinking blocks). Flat-text consumers
+        # can concatenate `b["thinking"]` across the list.
+        message["reasoning_content"] = thinking_blocks
 
     mcp_meta: dict[str, Any] = {}
     if mcp_tool_names:

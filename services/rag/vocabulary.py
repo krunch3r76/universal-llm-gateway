@@ -468,12 +468,12 @@ async def run_scope_freshness_repair(
             )
 
     if hints_updated and event_bus is not None:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             rag_hints_gaps_repaired(scopes=hints_updated, trigger=trigger)
         )
 
     if no_model_scopes and event_bus is not None:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             rag_vocabulary_gaps_detected(
                 scopes=no_model_scopes,
                 reason="no_model_available",
@@ -481,7 +481,7 @@ async def run_scope_freshness_repair(
         )
 
     if vocab_ok and event_bus is not None:
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             rag_vocabulary_gaps_repaired(
                 scopes=sorted(vocab_ok),
                 model=model or "local",

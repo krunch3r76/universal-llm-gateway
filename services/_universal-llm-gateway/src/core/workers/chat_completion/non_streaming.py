@@ -197,7 +197,7 @@ class NonStreamingChatCompletion:
             if peak and self._controller.event_bus:
                 from src.core.events.types import InferenceResourceUpdate
 
-                await self._controller.event_bus.publish_async_nowait(
+                await self._controller.event_bus.publish_nowait(
                     InferenceResourceUpdate(
                         model_id=model_id,
                         request_id=request_id,

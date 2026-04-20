@@ -148,6 +148,21 @@ def main() -> None:
         )
         sys.exit(1)
     except Exception as e:
+        # Surface the server's structured error body when present (e.g. a 400
+        # from raw_sql with the sqlite error message) so the user sees the
+        # actual cause, not just the HTTP status line.
+        import httpx
+
+        if isinstance(e, httpx.HTTPStatusError):
+            try:
+                body_json = e.response.json()
+                print(
+                    json.dumps(body_json, indent=indent, default=str),
+                    file=sys.stderr,
+                )
+            except Exception:
+                print(e.response.text, file=sys.stderr)
+            sys.exit(1)
         print(f"Query failed: {e}", file=sys.stderr)
         sys.exit(1)
 

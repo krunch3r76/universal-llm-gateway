@@ -267,10 +267,21 @@ class EventStore:
         params: tuple[Any, ...] = (),
         *,
         limit: int = 1000,
+        raise_on_error: bool = False,
     ) -> list[dict[str, Any]]:
-        """Execute a read query and return rows as dicts."""
+        """Execute a read query and return rows as dicts.
+
+        ``raise_on_error`` controls error visibility. Named operations keep the
+        default (lenient: log + empty rows) so a hard-coded query bug does not
+        crash an agent's investigation. User-facing raw SQL (the ``_raw_sql``
+        handler) opts in to ``raise_on_error=True`` so typos and missing-column
+        errors surface as structured 4xx responses instead of silent empty
+        results.
+        """
         if not self._db:
             logger.error("query called before EventStore.open(); sql=%s", sql[:120])
+            if raise_on_error:
+                raise sqlite3.OperationalError("EventStore not open")
             return []
         try:
             cursor = self._db.execute(sql, params)
@@ -278,9 +289,13 @@ class EventStore:
             return [dict(r) for r in raw_rows]
         except sqlite3.Error as e:
             logger.error("Query failed: %s params=%s - %s", sql[:120], params, e)
+            if raise_on_error:
+                raise
             return []
         except Exception as e:
             logger.exception("Unexpected query failure: %s", e)
+            if raise_on_error:
+                raise
             return []
 
     async def run_retention(self, max_age_ms: int) -> int:

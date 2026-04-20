@@ -32,7 +32,7 @@ async def _publish_event(event_bus, event) -> bool:
     if not event_bus:
         return False
     try:
-        await event_bus.publish_async_nowait(event)
+        await event_bus.publish_nowait(event)
         return True
     except Exception as e:
         get_logger(__name__).warning(f"⚠️ Failed to publish event: {e}")

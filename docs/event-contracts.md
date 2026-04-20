@@ -937,11 +937,11 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `scheduler.routing.timeout` | `request_id`, `model_id`, `constraint`, `wait_ms`, `timestamp` | - |
 | `routing.resource.data.missing` | `request_id`, `model_id`, `gateway_ids` | - |
 | `routing.model.infeasible` | `request_id`, `model_id`, `gateway_constraints`, `excluded_gateway_ids` | - |
-| `routing.eviction.blocked.busy` | `request_id`, `model_id`, `gateway_id`, `loaded_count`, `busy_count`, `vram_free` | - |
+| `routing.eviction.blocked.busy` | `request_id`, `model_id`, `gateway_id`, `loaded_count`, `busy_count`, `vram_free`, `candidate_breakdown` | - |
 | `routing.eviction.insufficient.permanent` | `request_id`, `model_id`, `gateway_id`, `reason`, `failed_constraints` | - |
 | `routing.eviction.wait.started` | `request_id`, `model_id`, `timeout_s`, `queue_depth` | - |
 | `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
-| `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms` | - |
+| `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms`, `exit_reason`, `exit_constraint_summary` | - |
 | `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | - |
 | `routing.startup.queued` | `request_id`, `model_id`, `uptime_s`, `timeout_s` | - |
 | `routing.startup.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms`, `uptime_s` | - |
@@ -1165,10 +1165,11 @@ should be treated as retryable/queueable.
 |-------|------|-------------|
 | `request_id` | string | Request that hit transient eviction block |
 | `model_id` | string | Model requested |
-| `gateway_id` | string | Gateway where eviction was blocked |
-| `loaded_count` | int | Number of loaded models on gateway |
-| `busy_count` | int | Number of loaded models marked busy |
-| `vram_free` | int | Current free VRAM on gateway (MB) |
+| `gateway_id` | string | Primary candidate gateway used for the summary fields (back-compat) |
+| `loaded_count` | int | Loaded-model count on primary candidate |
+| `busy_count` | int | Busy-model count on primary candidate |
+| `vram_free` | int | Free VRAM on primary candidate (MB) |
+| `candidate_breakdown` | list[dict] | Per-candidate snapshot — each entry carries `gateway_id`, `loaded_count`, `busy_count`, `loading_count`, `vram_free`, `constraints_failed`. Additive; existing consumers that read only the primary fields are unaffected. `loading_count` lets post-hoc queries correlate entry-time loading state with wait-exit constraint flips. |
 
 ### routing.eviction.insufficient.permanent
 
@@ -1195,10 +1196,22 @@ sticky/non-sticky failure split. These signals track the wait lifecycle.
 |--------|------|
 | `routing.eviction.wait.started` | Request enters wait queue; payload includes `queue_depth` (current waiters) and `timeout_s` |
 | `routing.eviction.wait.resolved` | State changed, selection succeeded; payload includes `gateway_id` and `waited_ms` |
-| `routing.eviction.wait.timeout` | Wait budget expired before capacity became available |
+| `routing.eviction.wait.timeout` | Wait exited without resolution; payload includes `waited_ms`, `exit_reason`, `exit_constraint_summary` |
 | `routing.eviction.wait.cancelled` | Client disconnected or task cancelled during wait |
 
 `queue_depth` in `.started` is a gauge for SRE capacity planning and monitoring.
+
+`routing.eviction.wait.timeout.exit_reason` distinguishes two terminal paths
+under one signal:
+
+| `exit_reason` | Meaning |
+|---------------|---------|
+| `budget_exhausted` | Waited the full `eviction_wait_timeout_s` budget; `waited_ms ≈ timeout_s`. Genuine capacity timeout. |
+| `non_transient` | First-iteration exit because the retry's trace no longer carries `eviction_blocked_by_busy_models`. Typically `waited_ms ≈ 0`. Indicates the rejection-time classifier saw a transient condition that the retry resolved as permanent — often a parallel load consuming VRAM between rejection and retry. |
+
+`exit_constraint_summary` is a per-candidate snapshot
+(`[{gateway_id, constraints_failed: [str]}]`) captured at exit so consumers
+can inspect which constraint replaced the transient tag.
 
 ### routing.startup.* (startup gateway wait)
 
@@ -1311,9 +1324,19 @@ assignment to move from the original saturated gateway to an alternate gateway.
 | `cloud.proxy.request.forwarded` | `provider`, `model`, `streaming`, `adapter_type` |
 | `cloud.proxy.request.failed` | `provider`, `model`, `status_code`, `error`, `adapter_type` |
 | `cloud.proxy.request.translation.failed` | `provider`, `model`, `error`, `direction`, `adapter_type` |
-| `cloud.proxy.mcp.configured` | `provider`, `mcp_server_url` |**INVARIANT**: `cloud.proxy.request.translation.failed` is emitted for adapter
+| `cloud.proxy.mcp.configured` | `provider`, `mcp_server_url` |
+| `debug.cloud.params.stripped` | `provider`, `model`, `stripped` (list[str]), `surface` (`chat_completions` \| `responses` \| `responses_stream`) |
+
+**INVARIANT**: `cloud.proxy.request.translation.failed` is emitted for adapter
 conversion failures (`request`, `response`, `stream_chunk`) and is distinct from
 provider HTTP failures.
+
+**Note**: `debug.cloud.params.stripped` fires only when the OpenAI-compatible
+adapter drops params (`temperature`, `top_p`, `presence_penalty`,
+`frequency_penalty`) that OpenAI reasoning-model families (`gpt-5`, `o1`,
+`o3`, `o4`) reject at the upstream API. xAI Grok and non-reasoning OpenAI
+models (gpt-4o, gpt-4-turbo) pass through unchanged and do not emit this
+signal.
 
 ### Model Events
 
@@ -1517,6 +1540,26 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | - |
 | `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | - |
 | `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | - |
+| `pipeline.dispatch.async` | `pipeline_id`, `execution_id`, `has_delivery_hook` | `caller_agent` | async tracker admitted a new execution (POST /api/v1/pipelines/dispatch) |
+| `pipeline.dispatch.completed` | `pipeline_id`, `execution_id`, `status`, `duration_s` | `caller_agent` | terminal tracker transition (`status` ∈ {`completed`, `failed`}) |
+| `pipeline.dispatch.cancelled` | `pipeline_id`, `execution_id`, `source` | - | explicit operator cancellation of async dispatch (`DELETE /api/v1/pipelines/executions/{id}`) |
+| `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | admission refused (e.g. `capacity_exhausted`) |
+| `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | terminal record TTL-pruned from the in-process tracker |
+| `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent` | agent-bus turn posted successfully for a terminal dispatch record (node-scoped) |
+| `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
+| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason` | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config}` (node-scoped) |
+| `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | terminal dispatch record persisted to sqlite journal (node-scoped) |
+| `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | tracker miss served from sqlite journal fallback (node-scoped) |
+| `pipeline.dispatch.journal.pruned` | `records_deleted` | `oldest_deleted_age_seconds` | hourly retention prune summary for sqlite journal (node-scoped) |
+| `pipeline.frontier.dispatch.hydrated` | `agent`, `execution_id`, `briefing_bytes`, `section_counts`, `continuation_id` | `frontier_dispatch_v1` team-seat step loaded dispatched-agent Cortex boot; omitted in persona-free mode (node-scoped) |
+| `pipeline.frontier.dispatch.tool.called` | `agent` (nullable), `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `provider` | tool executed successfully inside native-endpoint tool-use loop (node-scoped) |
+| `pipeline.frontier.dispatch.tool.failed` | `agent` (nullable), `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `error`, `provider` | tool call returned error envelope or raised inside loop (node-scoped) |
+| `pipeline.frontier.dispatch.completed` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `reasoning_present`, `prompt_tokens`, `completion_tokens`, `provider` | native-endpoint loop returned terminal content (node-scoped) |
+| `pipeline.frontier.dispatch.exhausted` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `provider` | native-endpoint loop hit `max_tool_turns` without terminal content (node-scoped) |
+| `pipeline.frontier.dispatch.remote.mcp.enabled` | `execution_id`, `agent` (nullable), `model`, `provider` | remote-MCP path selected for this execution; adapter attached provider-native MCP descriptor before the native call; implies client-side tool loop disabled (node-scoped) |
+| `pipeline.frontier.dispatch.remote.mcp.misconfigured` | `execution_id`, `agent` (nullable), `model`, `reason` | `resolve_mcp_env()` raised because `MCP_PUBLIC_URL`/`MCP_AUTH_TOKEN` is unset in the Stargate container env; precedes `pipeline_execution_failed` (node-scoped) |
+| `pipeline.frontier.dispatch.output.short` | `agent` (nullable), `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview` | Team-seat `frontier_dispatch_v1` dispatch returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. Only emitted when `agent` is set (persona-free dispatches skip). Replaces the deprecated `mcp.frontier.output.short` signal as of Task-7 Phase 1 (node-scoped) |
+| `pipeline.frontier.dispatch.termination.shadow` | `agent` (nullable), `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `generate_id`, `detector` ({`mode`, `version`, `provider`, `adapter`}), `reason`, `confidence`, `evidence` (list of {`kind`, `score`, `excerpt`}), `suggested_next_action`, `trace_visibility` | Advisory post-`pipeline.frontier.dispatch.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion) in the model's reasoning trace. v1 scope: provider=`google` + team-seat dispatch + thought summaries available. `.shadow` topic suffix marks v1 as NOT production-consumable during the calibration window — orchestrators MUST filter on suffix, not on a shadow boolean. Never replaces `.completed`, never fires on `.exhausted`. Replaces the deprecated `mcp.frontier.thought.termination.shadow` signal as of Task-7 Phase 1 (node-scoped) |
 | `pipeline.execution.timed.out` | `pipeline_id`, `execution_id`, `timeout_seconds`, `incomplete_steps` | emitted before timeout failure raise |
 | `pipeline.deadlock.detected` | `pipeline_id`, `execution_id`, `incomplete_steps`, `pending_task_count` | emitted before deadlock failure raise |
 | `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
@@ -1809,24 +1852,27 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.frontier.generate.completed` | `tool`, `model`, `provider`, `duration_s`, `input_tokens`, `output_tokens`, `tool_calls_made`, `has_thinking`, `has_tool_calls`, `finish_reason`, `block_reason` | Frontier generate succeeded; `duration_s` covers the full client-side tool loop when `mcp_tool_loop=True`. `finish_reason` and `block_reason` are populated for providers whose adapter surfaces them (Google) and `None` otherwise — disambiguates empty/short outputs across {`STOP`, `MAX_TOKENS`, `SAFETY`, `RECITATION`, `MALFORMED_FUNCTION_CALL`, `OTHER`} |
 | `mcp.frontier.generate.error` | `provider`, `error`, optional `duration_s` | Frontier generate failed. `error` ∈ {`no_native_path`, `missing_api_key`, `adapter_missing_frontier`, `upstream_{status}`, `timeout`, `connection`, `boot_context_invalid`} |
 | `mcp.frontier.tool.executed` | `tool`, `turn`, `provider` | Individual MCP tool call executed inside the client-side frontier tool loop (one per tool invocation, per turn) |
-| `mcp.frontier.output.short` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview` | Frontier generate (`team`/`full` boot) returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. `finish_reason`/`block_reason` distinguish provider-reported termination cause from silent empty candidates |
-| `mcp.frontier.thought.termination.shadow` | `tool`, `provider`, `model`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `generate_id`, `detector` ({`mode`, `version`, `provider`, `adapter`}), `reason`, `confidence`, `evidence` (list of {`kind`, `score`, `excerpt`}), `suggested_next_action`, `trace_visibility` | Advisory post-`generate.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion / coherence_collapse / user_directed / unknown) in the model's reasoning trace. v1 scope: provider=`google` + boot ∈ {`team`,`full`} + thought summaries available. `.shadow` topic prefix (not a flag) marks v1 as NOT production-consumable during the 7–14 day calibration window — orchestrators MUST filter on prefix, not on a shadow boolean. `generate_id` is minted at the `execute_frontier` retry boundary and inherits the upstream generation scope per call. Never replaces `generate.completed`, never fires on `generate.error`. Known gap: no semantic rubric in v1 — phrase-based detection is scaffolding; the semantic detector becomes the primary defense post-calibration |
+| ~~`mcp.frontier.output.short`~~ | _(deprecated Task-7 Phase 1 — hoisted to `pipeline.frontier.dispatch.output.short`)_ | Emission removed from `services/mcp-server/tools/_frontier_core.py` at Phase 1. Direct `frontier_generate` MCP callers lose this anomaly until Phase 2+ collapses the MCP surface onto the pipeline; pipeline-originated team dispatches (including async `pipeline(op='async', pipeline_id='frontier-dispatch', ...)`) emit the replacement signal transparently |
+| ~~`mcp.frontier.thought.termination.shadow`~~ | _(deprecated Task-7 Phase 1 — hoisted to `pipeline.frontier.dispatch.termination.shadow`)_ | Emission removed from `services/mcp-server/tools/_frontier_core.py` at Phase 1. Same transition semantics as `output.short` — pipeline-originated dispatches keep the signal; direct `frontier_generate` MCP callers regain it after the Phase 2+ collapse |
 
 ### Generation Quality Signal Family
 
-`mcp.frontier.output.short` and `mcp.frontier.thought.termination` (currently
-shadow) are members of a pre-declared **`mcp.frontier.generation.quality`**
-signal family. The family is a taxonomic label on this doc and a consumer-side
-query grouping — it is NOT a literal wire-level prefix. Membership criteria
-(agent-bus thread 576, turn 6):
+`pipeline.frontier.dispatch.output.short` and
+`pipeline.frontier.dispatch.termination.shadow` (currently shadow) are
+members of a pre-declared **frontier generation-quality** signal family. The
+family is a taxonomic label on this doc and a consumer-side query grouping —
+it is NOT a literal wire-level prefix. Members previously lived at
+`mcp.frontier.*` (see deprecation rows above); Task-7 Phase 1 moved emission
+into the Stargate pipeline handler so every dispatch surface benefits
+uniformly. Membership criteria (agent-bus thread 576, turn 6):
 
 1. Signal is about whether a completed generation was *substantively* complete,
    not merely token-terminated.
-2. Emission is post-hoc (after `generate.completed`), advisory, and never
-   replaces or blocks completion/error events.
+2. Emission is post-hoc (after `pipeline.frontier.dispatch.completed`),
+   advisory, and never replaces or blocks completion/exhausted events.
 3. Schema includes `detector.mode`, `confidence`, `generate_id`
    (inherited from the upstream generation), and family-consistent correlation
-   fields (`tool`, `provider`, `model`, `boot_level`, `finish_reason`, `block_reason`).
+   fields (`agent`, `provider`, `model`, `boot_level`, `finish_reason`, `block_reason`).
 
 Rationale: threads 570, 575, 576 surfaced the same failure-class — event
 surface treating `generate.completed` as a proxy for substantive success when

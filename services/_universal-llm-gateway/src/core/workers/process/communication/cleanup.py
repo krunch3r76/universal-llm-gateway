@@ -128,7 +128,7 @@ async def cleanup_failed_worker(
 
     try:
         # 1. Publish resource tracker update event
-        await event_bus.publish_async(
+        await event_bus.publish(
             ResourceStateUpdateRequested(
                 model_id=model_id,
                 state="failed",
@@ -143,7 +143,7 @@ async def cleanup_failed_worker(
                 await supervisor.stop(force=True, timeout=timeout)
 
                 if hasattr(supervisor, "id"):
-                    await event_bus.publish_async(
+                    await event_bus.publish(
                         SupervisorTerminationRequested(
                             model_id=model_id,
                             supervisor_id=supervisor.id,
@@ -155,7 +155,7 @@ async def cleanup_failed_worker(
                 )
 
         # 3. Publish socket cleanup event
-        await event_bus.publish_async(
+        await event_bus.publish(
             SocketCleanupRequested(
                 model_id=model_id,
                 socket_path=socket_path,
@@ -163,7 +163,7 @@ async def cleanup_failed_worker(
         )
 
         # 4. Publish overall cleanup event
-        await event_bus.publish_async(
+        await event_bus.publish(
             WorkerCleanupRequested(
                 model_id=model_id,
                 socket_path=socket_path,
@@ -257,7 +257,7 @@ async def cleanup_syntax_error_worker(
             await supervisor.stop(force=True, timeout=timeout)
 
             if hasattr(supervisor, "id"):
-                await event_bus.publish_async(
+                await event_bus.publish(
                     SupervisorTerminationRequested(
                         model_id=model_id,
                         supervisor_id=supervisor.id,
@@ -265,7 +265,7 @@ async def cleanup_syntax_error_worker(
                 )
 
         # Publish socket cleanup event
-        await event_bus.publish_async(
+        await event_bus.publish(
             SocketCleanupRequested(
                 model_id=model_id,
                 socket_path=socket_path,

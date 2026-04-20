@@ -52,6 +52,7 @@ _ENTITY_MUTABLE = frozenset(
         "source_uri",
         "description",
         "status",
+        "workflow_state",
         "content_hash",
     }
 )
@@ -73,11 +74,16 @@ def _compute_content_hash(source_uri: str) -> str | None:
 
 
 def _op_entities(
-    type: str | None = None, limit: int | None = None, **_: object
+    type: str | None = None,
+    workflow_state: str | None = None,
+    limit: int | None = None,
+    **_: object,
 ) -> dict[str, Any]:
     params: dict[str, object] = {"limit": limit or 50}
     if type is not None:
         params["type"] = type
+    if workflow_state is not None:
+        params["workflow_state"] = workflow_state
     return _cx("GET", f"/entities?{urlencode(params)}")
 
 
@@ -107,6 +113,7 @@ def _op_entity_create(
     name: str | None = None,
     description: str | None = None,
     status: str | None = None,
+    workflow_state: str | None = None,
     notes: str | None = None,
     aliases: list[str] | None = None,
     attributes: dict[str, Any] | None = None,
@@ -131,6 +138,7 @@ def _op_entity_create(
         "name": name,
         **({} if description is None else {"description": description}),
         **({} if status is None else {"status": status}),
+        **({} if workflow_state is None else {"workflow_state": workflow_state}),
         **({} if notes is None else {"notes": notes}),
         **({} if aliases is None else {"aliases": aliases}),
         **({} if attributes is None else {"attributes": attributes}),
@@ -238,6 +246,8 @@ def _op_assert(
         if isinstance(evidence_uris, str):
             evidence_uris = [evidence_uris]
         body["evidence_uris"] = [str(u) for u in evidence_uris]
+    if observed_at is None:
+        observed_at = datetime.now(UTC).isoformat()
     for key, val in [
         ("seeded_by", seeded_by),
         ("derivation_type", derivation_type),
@@ -1226,12 +1236,12 @@ def register_cortex_tools(mcp: FastMCP) -> None:
         arguments: operation arguments as an object or a JSON string
 
         Operations:
-          entities          (type?, limit?)                          — list entities
+          entities          (type?, workflow_state?, limit?)         — list entities (workflow_state filters the typed column; replaces json_extract(attributes,'$.status'))
           entity_get        (entity_id, include_edges?, edge_limit?) — get entity with assertions + relationships + optional reasoning edges
-          entity_create     (id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?) — create entity
-          entity_update     (entity_id, name?, description?, status?, notes?, aliases?, attributes?)  — update entity
+          entity_create     (id, type, name, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?) — create entity. workflow_state is the typed per-type workflow column (e.g. todo: open|in_progress|done|deferred|cancelled); auto-filled to type's initial_state when omitted and the type has a registered schema.
+          entity_update     (entity_id, name?, description?, status?, workflow_state?, notes?, aliases?, attributes?)  — update entity
           assertions        (entity_id?, confidence?, review_status?, superseded?, limit?) — list assertions
-          assert            (entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, force?, supersedes_id?) — write assertion
+          assert            (entity_id, claim, confidence, evidence, derivation_type, confidence_score?, evidence_uris?, seeded_by?, observed_at?, valid_from?, reasoning_summary?, force?, supersedes_id?) — write assertion. observed_at auto-fills to now() if absent. valid_from REQUIRED when claim contains a date pattern (YYYY-MM-DD, ISO ts, named dates) unless derivation_type is an observation type. derivation_type values: inference (agent synthesis from prior context), user_statement (user told you directly), agent_observation (tool output / runtime), direct_observation (deterministic read), compression (requires chunk_id + evidence_uris — ingested document), quotation (requires chunk_id + evidence_uris — verbatim quote), commitment, stated, other. Full taxonomy + co-requirements returned inline in 422 body as valid_derivation_types.
           assertion_update  (assertion_id, superseded_by?, valid_until?, confidence?, review_status?) — update assertion
           supersede         (old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent) — atomic close+create
           relationships     (entity_id?, type_id?, limit?)          — list with names, strength
@@ -1242,7 +1252,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?, markdown_content?) — [DEPRECATED: use session_close] write journal; auto-creates transcript entity + continues edge
           session_close     (session_id, agent, transcript_md, summary, domains?, decisions?, open_items?, entity_ids?, prior_session_id?) — ATOMIC session close: validates transcript, writes file, creates entity + journal row + continues edge in one call. Rejects stubs.
           review_queue      (limit?)                                 — provisional entities + flagged assertions
-          edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection
+          edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection. Common edge_types: depends_on, leads_to, caused_by, contradicts, supersedes, relates_to, evidence_for, corroborates, derived_from, extends, promises, expects, continues, analogous_to, reasoned_about. Call edge_types for full taxonomy + directionality.
           edges             (from_node?, to_node?, edge_type?, agent?, session_id?, limit?) — query edges
           edge_traverse     (node, hops?, edge_type?, min_strength?) — graph traversal (1-2 hops)
           edge_retire       (edge_id, valid_until?)                  — retire an edge
@@ -1266,7 +1276,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           journal_write [DEPRECATED] → use session_close instead
 
         Example:
-          cortex(tool="entities", arguments='{"type": "todo", "limit": 20}')
+          cortex(tool="entities", arguments='{"type": "todo", "workflow_state": "open", "limit": 20}')
           cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
         """
         handler = _OPS.get(tool)

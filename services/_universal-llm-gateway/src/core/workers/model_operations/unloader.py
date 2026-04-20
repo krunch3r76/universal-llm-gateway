@@ -30,7 +30,7 @@ async def _publish_socket_cleanup(model_id: str) -> None:
         Publishes SocketCleanupRequested event to event bus
 
     Note:
-        Uses publish_async_nowait() to avoid blocking caller.
+        Uses publish_nowait() to avoid blocking caller.
         Event handler executes asynchronously.
     """
     from ...events import get_event_bus
@@ -38,7 +38,7 @@ async def _publish_socket_cleanup(model_id: str) -> None:
     from ..utils import get_universal_protocol_socket_path
 
     socket_path = get_universal_protocol_socket_path(model_id)
-    await get_event_bus().publish_async_nowait(
+    await get_event_bus().publish_nowait(
         SocketCleanupRequested(model_id=model_id, socket_path=socket_path)
     )
 
@@ -78,7 +78,7 @@ async def _publish_event(event_bus, event) -> bool:
     if not event_bus:
         return False
     try:
-        await event_bus.publish_async_nowait(event)
+        await event_bus.publish_nowait(event)
         return True
     except Exception as e:
         get_logger(__name__).warning(f"⚠️ Failed to publish event: {e}")

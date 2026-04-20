@@ -54,7 +54,7 @@ class EventPublisher:
 
         from src.scheduling.events import GatewayStateChanged
 
-        await self._event_bus.publish_async_nowait(
+        await self._event_bus.publish_nowait(
             GatewayStateChanged(
                 url=transition.url,
                 connectivity=transition.connectivity,
@@ -97,7 +97,7 @@ class EventPublisher:
         try:
             from src.scheduling.events import FederationCatalogVramDrift
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 FederationCatalogVramDrift(
                     gateway_id=self._gateway_name,
                     model_id=model_id,
@@ -143,7 +143,7 @@ class EventPublisher:
         try:
             from src.scheduling.events import ModelCapacityFreed
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 ModelCapacityFreed(
                     url=ws_url_to_http(self._ws_url),
                     model_id=model_id,

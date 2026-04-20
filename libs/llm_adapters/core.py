@@ -1,8 +1,9 @@
-"""Provider adapters for MCP LLM proxy and frontier tools — types, protocols, factory.
+"""Provider adapters for frontier LLM calls — types, protocols, factory.
 
-Adapter implementations live in ``llm_adapter_anthropic`` and
-``llm_adapter_responses``.  This module re-exports them so existing importers
-(``from llm_adapters import AnthropicAdapter``) keep working.
+Adapter implementations live in ``llm_adapters.anthropic``,
+``llm_adapters.responses``, and ``llm_adapters.google``. This module re-exports
+them from the ``llm_adapters`` package so existing importers (``from
+llm_adapters import AnthropicAdapter``) keep working.
 
 MCP Connector pattern (``mcp_servers`` in body) is NOT injected by any adapter.
 API calls use client-side tool resolution.  The Connector field only appears if
@@ -16,8 +17,8 @@ import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from llm_adapter_anthropic import AnthropicAdapter
-from llm_adapter_responses import ResponsesAPIAdapter
+from llm_adapters.anthropic import AnthropicAdapter
+from llm_adapters.responses import ResponsesAPIAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,13 @@ class FrontierRequest:
     reasoning_trace: list[dict[str, Any]] | None = None
     provider_options: dict[str, Any] | None = None
     mcp_tool_loop: bool = False
+    remote_mcp: bool = False
+    """When True, adapter injects a provider-native MCP-server descriptor
+    before POST. Anthropic: body.mcp_servers; OpenAI/xAI (Responses API):
+    body.tools[{type:'mcp', ...}]; Google: NotImplementedError. Env
+    MCP_PUBLIC_URL + MCP_AUTH_TOKEN must be set or build_frontier_request
+    raises. Client-side tool loop MUST be disabled when True — enforced
+    by runtime check (mcp_tool_loop=False)."""
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +97,8 @@ class FrontierAdapter(Protocol):
     """Build vendor-native requests and parse structured responses preserving full fidelity."""
 
     def build_frontier_request(
-        self, req: FrontierRequest,
+        self,
+        req: FrontierRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         """Return (full_url, headers, json_body) for a frontier request."""
         ...
@@ -120,7 +129,8 @@ class LLMAdapter(Protocol):
         ...
 
     def build_request(
-        self, req: LLMRequest,
+        self,
+        req: LLMRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
         """Return (full_url, headers, json_body)."""
 
@@ -222,12 +232,10 @@ def resolve_llm_adapter(provider: str | None) -> LLMAdapter | None:
             key = os.environ.get("OPENAI_API_KEY", "").strip()
             if not key:
                 return None
-            base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip(
-                "/"
-            )
+            base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
             return ResponsesAPIAdapter(api_key=key, base_url=base, vendor=p)
         case "google":
-            from llm_adapter_google import GoogleAdapter as GeminiAdapter
+            from llm_adapters.google import GoogleAdapter as GeminiAdapter
 
             key = os.environ.get("GOOGLE_API_KEY", "").strip()
             if not key:

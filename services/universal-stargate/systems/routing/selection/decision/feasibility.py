@@ -14,7 +14,11 @@ from universal_logging import get_logger
 
 from .eviction_planning import _compute_eviction_plan
 from .model_checks import _is_model_available, _is_model_loaded
-from .resource_checks import _check_resources, resolve_gateway_requirements
+from .resource_checks import (
+    _check_resources,
+    _compute_loading_reservation,
+    resolve_gateway_requirements,
+)
 from .types import ConstraintFailure, EvictionPlanSummary, FeasibilityTier
 
 if TYPE_CHECKING:
@@ -54,8 +58,30 @@ def _can_fit_after_eviction_including_busy(
     vram_pct = int(gw_vram_mb * (1.0 + vram_margin_pct / 100))
     vram_needed = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
 
-    reclaimable_vram = gateway.vram_free_mb
-    reclaimable_ram = gateway.ram_free_mb
+    # Mirror _check_resources / _compute_eviction_plan: loading models consume
+    # VRAM/RAM that is NOT reclaimable by eviction. Not subtracting here caused
+    # the classifier to flip from transient (eviction_blocked_by_busy_models) to
+    # permanent (can_fit_with_eviction) on the first wait-loop retry whenever a
+    # parallel load started between rejection and retry — producing silent
+    # waited_ms=0 bails for knife-edge models (e.g. 14b/26b variants).
+    vram_reserved = 0
+    ram_reserved = 0
+    if gateway.loading_models:
+        try:
+            vram_reserved, ram_reserved, _ = _compute_loading_reservation(
+                gateway, placement.model_id, requirements_lookup
+            )
+        except ValueError:
+            # Missing requirements for a loading model: fail-conservative —
+            # downgrade to can_fit_with_eviction (permanent). Same rationale
+            # as _check_resources' loading_model_requirements_missing path.
+            return False, {}
+
+    effective_vram_free = gateway.vram_free_mb - vram_reserved
+    effective_ram_free = gateway.ram_free_mb - ram_reserved
+
+    reclaimable_vram = effective_vram_free
+    reclaimable_ram = effective_ram_free
     for loaded_model_id in gateway.loaded_models:
         measured_vram = gateway.model_measured_vram.get(loaded_model_id)
         catalog_vram, catalog_ram = gateway.get_model_resource_usage(loaded_model_id)
@@ -82,6 +108,8 @@ def _can_fit_after_eviction_including_busy(
         "max_freeable_ram": reclaimable_ram,
         "required_ram": ram_needed,
         "ram_deficit_mb": max(0, ram_needed - reclaimable_ram),
+        "vram_reserved_loading": vram_reserved,
+        "ram_reserved_loading": ram_reserved,
     }
     return vram_ok and ram_ok, diagnostics
 

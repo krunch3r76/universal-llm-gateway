@@ -142,7 +142,7 @@ class ManageAPIServer:
         service = params.get("service", "")
         t0 = time.monotonic()
 
-        await self._event_bus.publish_async(
+        await self._event_bus.publish(
             ManageServiceRequested(method=method, service=service)
         )
 
@@ -150,7 +150,7 @@ class ManageAPIServer:
             result = await _execute(self._controller, method, service, params)
         except ValueError as exc:
             duration = round(time.monotonic() - t0, 3)
-            await self._event_bus.publish_async(
+            await self._event_bus.publish(
                 ManageServiceFailed(
                     method=method, service=service, error=str(exc), duration_s=duration
                 )
@@ -159,7 +159,7 @@ class ManageAPIServer:
         except Exception as exc:
             duration = round(time.monotonic() - t0, 3)
             logger.error("Manage API %s(%s) failed: %s", method, service, exc)
-            await self._event_bus.publish_async(
+            await self._event_bus.publish(
                 ManageServiceFailed(
                     method=method, service=service, error=str(exc), duration_s=duration
                 )
@@ -167,7 +167,7 @@ class ManageAPIServer:
             return None, {"code": -32000, "message": str(exc)}
 
         duration = round(time.monotonic() - t0, 3)
-        await self._event_bus.publish_async(
+        await self._event_bus.publish(
             ManageServiceCompleted(method=method, service=service, duration_s=duration)
         )
         return result, None

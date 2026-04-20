@@ -5,6 +5,7 @@ Subscribes to MODEL_LOADING_STARTED / MODEL_LOADED / MODEL_LOAD_FAILED events
 to maintain loading state visibility and detect failures.
 """
 
+import asyncio
 from collections import defaultdict
 from datetime import datetime
 
@@ -140,11 +141,13 @@ class ModelLoadingConsumer:
                     elapsed_s,
                     _LOADING_TTL_SECONDS,
                 )
-                self.event_bus.publish_async_nowait(
-                    ModelLoadingStuck(
-                        url=gateway_url,
-                        model_id=model_id,
-                        elapsed_s=elapsed_s,
-                        ttl_s=_LOADING_TTL_SECONDS,
+                asyncio.create_task(
+                    self.event_bus.publish_nowait(
+                        ModelLoadingStuck(
+                            url=gateway_url,
+                            model_id=model_id,
+                            elapsed_s=elapsed_s,
+                            ttl_s=_LOADING_TTL_SECONDS,
+                        )
                     )
                 )

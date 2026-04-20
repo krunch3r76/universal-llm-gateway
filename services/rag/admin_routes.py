@@ -242,7 +242,7 @@ def register_admin_routes(
             force,
         )
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_directory_index_started(
                     path=str(dir_path), total_files=candidate_count
                 )
@@ -308,7 +308,7 @@ def register_admin_routes(
             await prop_idx.stamp_watermark("reindex")
 
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_directory_index_completed(
                     path=str(dir_path),
                     total_files=candidate_count,
@@ -385,7 +385,7 @@ def register_admin_routes(
         )
         eb = get_event_bus_fn() if get_event_bus_fn else None
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_directory_cleared(
                     path=str(dir_path),
                     sources_cleared=sources_cleared,
@@ -455,7 +455,7 @@ def register_admin_routes(
         items.sort(key=lambda x: (x.source, x.chunk_index))
         # Add event emission here
         # if eb:
-        #     await eb.publish_async_nowait(
+        #     await eb.publish_nowait(
         #         rag_extraction_exported(
         #             prefix=prefix,
         #             include_text=include_text,
@@ -787,7 +787,7 @@ def register_admin_routes(
 
         eb = get_event_bus_fn() if get_event_bus_fn else None
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_source_deleted(
                     source=path,
                     chunks_deleted=chunks_deleted,
@@ -860,7 +860,7 @@ def register_admin_routes(
 
         eb = get_event_bus_fn() if get_event_bus_fn else None
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_directory_sources_deleted(
                     path=path,
                     sources_deleted=len(sources),
@@ -1084,7 +1084,7 @@ def register_admin_routes(
         )
         event_bus = get_event_bus_fn() if get_event_bus_fn else None
         if event_bus:
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 rag_article_upserted(
                     source_path=request.source_path,
                     created=created,
@@ -1141,7 +1141,7 @@ def register_admin_routes(
             )
         eb = get_event_bus_fn() if get_event_bus_fn else None
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_file_indexing_failure_cleared(
                     file=source, reason="operator_cleared"
                 )
@@ -1159,7 +1159,7 @@ def register_admin_routes(
         cleared = await prop_idx.clear_indexing_failure(source)
         eb = get_event_bus_fn() if get_event_bus_fn else None
         if cleared and eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_file_indexing_failure_cleared(
                     file=source, reason="operator_cleared"
                 )
@@ -1169,7 +1169,7 @@ def register_admin_routes(
         if wm is not None:
             scheduled = await wm.request_reindex(Path(source))
         if eb:
-            await eb.publish_async_nowait(
+            await eb.publish_nowait(
                 rag_file_indexing_failure_retry_requested(
                     file=source, scheduled=scheduled
                 )

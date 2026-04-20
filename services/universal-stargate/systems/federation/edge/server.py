@@ -155,7 +155,7 @@ class EdgeFederationServer:
                     )
 
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             FederationPeerAuthFailed(
                                 peer_id=peer_id,
                                 reason="unknown_peer",
@@ -174,7 +174,7 @@ class EdgeFederationServer:
                     )
 
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             FederationPeerAuthFailed(
                                 peer_id=peer_id,
                                 reason="invalid_api_key",
@@ -201,7 +201,7 @@ class EdgeFederationServer:
             )
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationConnectionAuthenticated(
                         remote_id=peer_id,
                         method=(
@@ -279,7 +279,7 @@ class EdgeFederationServer:
                 )
 
                 asyncio.create_task(
-                    self._event_bus.publish_async_nowait(
+                    self._event_bus.publish_nowait(
                         FederationPeerDisconnected(
                             peer_id=peer_id,
                             remaining_peers=remaining,
@@ -454,7 +454,7 @@ class EdgeFederationServer:
                         )
 
                         asyncio.create_task(
-                            self._event_bus.publish_async_nowait(
+                            self._event_bus.publish_nowait(
                                 FederationVramRequestSent(
                                     request_id=request_id,
                                     peer_id=peer_id,
@@ -483,7 +483,7 @@ class EdgeFederationServer:
                     )
 
                     asyncio.create_task(
-                        self._event_bus.publish_async_nowait(
+                        self._event_bus.publish_nowait(
                             FederationVramRequestFailed(
                                 request_id=request_id,
                                 reason="no_peer_dispatch_succeeded",
@@ -511,7 +511,7 @@ class EdgeFederationServer:
                 )
 
                 asyncio.create_task(
-                    self._event_bus.publish_async_nowait(
+                    self._event_bus.publish_nowait(
                         FederationVramResponseReceived(
                             request_id=request_id,
                             matched=True,
@@ -527,7 +527,7 @@ class EdgeFederationServer:
             )
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationVramResponseReceived(
                         request_id=request_id,
                         matched=False,
@@ -601,7 +601,7 @@ class EdgeFederationServer:
             )
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationTelemetryWired(
                         gateway_url=gateway_url,
                         gateway_id=self._source.gateway_id,
@@ -656,7 +656,7 @@ class EdgeFederationServer:
 
         if self._event_bus is not None:
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationSnapshotSent(
                         gateway_id=self._source.gateway_id,
                         all_models_count=all_models_count,
@@ -776,7 +776,7 @@ class EdgeFederationServer:
             from src.scheduling.events import FederationSnapshotSent
 
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationSnapshotSent(
                         gateway_id=self._source.gateway_id,
                         all_models_count=model_count,
@@ -806,7 +806,7 @@ class EdgeFederationServer:
                 FederationRequestInferenceStartedForwarded,
             )
 
-            await self._event_bus.publish_async_nowait(
+            await self._event_bus.publish_nowait(
                 FederationRequestInferenceStartedForwarded(
                     request_id=payload.get("request_id"),
                     peer_count=len(self._authenticated_peers),

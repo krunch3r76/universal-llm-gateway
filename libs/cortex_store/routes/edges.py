@@ -33,8 +33,19 @@ def create_edge(body: EdgeCreate) -> EdgeItem:
     if not query(
         conn, "SELECT 1 FROM session_edge_types WHERE type = ?", (body.edge_type,)
     ):
+        valid = [
+            r["type"]
+            for r in query(
+                conn, "SELECT type FROM session_edge_types ORDER BY type", ()
+            )
+        ]
         raise HTTPException(
-            status_code=422, detail=f"Unknown edge_type: {body.edge_type}"
+            status_code=422,
+            detail={
+                "error": f"Unknown edge_type: {body.edge_type!r}",
+                "valid_types": valid,
+                "hint": "Use one of valid_types above, or GET /edges/types for descriptions and directionality.",
+            },
         )
     ins = (
         "INSERT INTO session_edges (session_id, agent, from_node, to_node, edge_type, strength, "

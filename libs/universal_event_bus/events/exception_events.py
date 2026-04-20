@@ -86,7 +86,7 @@ async def capture_exception(
     Catches Exception (not BaseException — KeyboardInterrupt, SystemExit, and
     GeneratorExit are not intercepted). On exception, builds an ExceptionCaught
     event from the live exception context and publishes it via
-    event_bus.publish_async_nowait() before optionally re-raising.
+    event_bus.publish_nowait() before optionally re-raising.
 
     Bus publish errors are silently swallowed so the original exception is never
     masked by event bus failures.
@@ -119,7 +119,7 @@ async def capture_exception(
             traceback=tb_str[:_MAX_TB_LEN],
         )
         try:
-            await event_bus.publish_async_nowait(event)
+            await event_bus.publish_nowait(event)
         except Exception:
             pass  # ∀ bus error: ¬mask original exception
         if reraise:

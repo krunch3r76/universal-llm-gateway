@@ -100,7 +100,7 @@ class TelemetryApplicator:
             }
 
         asyncio.create_task(
-            self._event_bus.publish_async_nowait(
+            self._event_bus.publish_nowait(
                 FederationTelemetryReceived(
                     remote_id=response.remote_stargate_id,
                     model_count=model_count,
@@ -179,7 +179,7 @@ class TelemetryApplicator:
         """
         # Fire-and-forget
         asyncio.create_task(
-            self._event_bus.publish_async_nowait(
+            self._event_bus.publish_nowait(
                 FederationGatewayResourceUpdateSignal(
                     gateway_id=gateway_id,
                     source="http_polling",
@@ -206,7 +206,7 @@ class TelemetryApplicator:
 
         if event_type == "MODEL_LOADED":
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationModelLoaded(
                         gateway_id=gateway_id,
                         model_id=ModelId.parse(model_id),
@@ -215,7 +215,7 @@ class TelemetryApplicator:
             )
         elif event_type == "MODEL_UNLOADED":
             asyncio.create_task(
-                self._event_bus.publish_async_nowait(
+                self._event_bus.publish_nowait(
                     FederationModelUnloaded(
                         gateway_id=gateway_id,
                         model_id=ModelId.parse(model_id),

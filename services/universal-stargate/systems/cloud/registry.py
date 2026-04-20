@@ -279,7 +279,7 @@ class CloudProxyCatalogPoller:
             for gid in ids_snapshot
             if (gw := self._gateway_manager.get_gateway(gid))
         )
-        await self._event_bus.publish_async(
+        await self._event_bus.publish(
             CloudProxyAvailable(proxy_url=self._proxy_url, model_count=total_models)
         )
 
@@ -290,7 +290,7 @@ class CloudProxyCatalogPoller:
             return
         from src.scheduling.events import CloudProxyUnavailable
 
-        await self._event_bus.publish_async(
+        await self._event_bus.publish(
             CloudProxyUnavailable(
                 proxy_url=self._proxy_url,
                 reason=reason,
@@ -304,7 +304,7 @@ class CloudProxyCatalogPoller:
         from src.scheduling.events import CloudProxyCatalogUpdated
 
         gateway_count = len(self._gateway_ids)
-        await self._event_bus.publish_async(
+        await self._event_bus.publish(
             CloudProxyCatalogUpdated(
                 proxy_url=self._proxy_url,
                 model_count=model_count,
@@ -317,6 +317,6 @@ class CloudProxyCatalogPoller:
             return
         from src.scheduling.events import CloudProxyCatalogFetchFailed
 
-        await self._event_bus.publish_async(
+        await self._event_bus.publish(
             CloudProxyCatalogFetchFailed(proxy_url=self._proxy_url, error=error)
         )

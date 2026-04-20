@@ -375,13 +375,13 @@ class AnthropicAdapter:
             req_headers = dict(self._headers(include_mcp_beta=has_mcp))
             req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
             if self._event_bus:
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpCorrelationAssigned(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
                     )
                 )
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpRequestStarted(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
@@ -407,7 +407,7 @@ class AnthropicAdapter:
             return result
         except Exception as exc:
             if self._event_bus:
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpPathFailed(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
@@ -419,7 +419,7 @@ class AnthropicAdapter:
         finally:
             if self._event_bus:
                 duration = time.monotonic() - t0
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpRequestCompleted(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
@@ -447,13 +447,13 @@ class AnthropicAdapter:
                 req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
                 translator = StreamTranslator(requested_model)
                 if self._event_bus:
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpCorrelationAssigned(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
                         )
                     )
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpRequestStarted(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -498,7 +498,7 @@ class AnthropicAdapter:
                             )
                             if not done:
                                 if self._event_bus:
-                                    await self._event_bus.publish_async(
+                                    await self._event_bus.publish(
                                         CloudproxyMcpStreamHeartbeat(
                                             correlation_id=correlation_id,
                                             provider=self._config.provider,
@@ -553,7 +553,7 @@ class AnthropicAdapter:
             except asyncio.CancelledError:
                 outcome = "cancelled"
                 if self._event_bus:
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpStreamCancelled(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -566,7 +566,7 @@ class AnthropicAdapter:
                 raise
             except Exception as exc:
                 if self._event_bus:
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpPathFailed(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -578,7 +578,7 @@ class AnthropicAdapter:
             finally:
                 if self._event_bus:
                     duration = time.monotonic() - t0
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpRequestCompleted(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -603,13 +603,13 @@ class AnthropicAdapter:
             )
             req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
             if self._event_bus:
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpCorrelationAssigned(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
                     )
                 )
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpRequestStarted(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
@@ -629,7 +629,7 @@ class AnthropicAdapter:
             return response.json()
         except Exception as exc:
             if self._event_bus:
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpPathFailed(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
@@ -641,7 +641,7 @@ class AnthropicAdapter:
         finally:
             if self._event_bus:
                 duration = time.monotonic() - t0
-                await self._event_bus.publish_async(
+                await self._event_bus.publish(
                     CloudproxyMcpRequestCompleted(
                         correlation_id=correlation_id,
                         provider=self._config.provider,
@@ -670,13 +670,13 @@ class AnthropicAdapter:
                 )
                 req_headers["X-Cloudproxy-Correlation-Id"] = correlation_id
                 if self._event_bus:
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpCorrelationAssigned(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
                         )
                     )
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpRequestStarted(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -709,7 +709,7 @@ class AnthropicAdapter:
             except asyncio.CancelledError:
                 outcome = "cancelled"
                 if self._event_bus:
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpStreamCancelled(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -722,7 +722,7 @@ class AnthropicAdapter:
                 raise
             except Exception as exc:
                 if self._event_bus:
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpPathFailed(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -734,7 +734,7 @@ class AnthropicAdapter:
             finally:
                 if self._event_bus:
                     duration = time.monotonic() - t0
-                    await self._event_bus.publish_async(
+                    await self._event_bus.publish(
                         CloudproxyMcpRequestCompleted(
                             correlation_id=correlation_id,
                             provider=self._config.provider,
@@ -756,7 +756,7 @@ class AnthropicAdapter:
         if not mcp_meta or not self._event_bus:
             return
         for tool_name in mcp_meta.get("mcp_tool_names", []):
-            await self._event_bus.publish_async(
+            await self._event_bus.publish(
                 McpAdapterMcpToolUseSeen(
                     tool_name=tool_name,
                     server_name=_MCP_SERVER_NAME,
@@ -765,7 +765,7 @@ class AnthropicAdapter:
             )
         ref_count = mcp_meta.get("tool_search_ref_count", 0)
         if ref_count:
-            await self._event_bus.publish_async(
+            await self._event_bus.publish(
                 McpAdapterToolSearchSeen(
                     references_count=ref_count,
                     correlation_id=correlation_id,

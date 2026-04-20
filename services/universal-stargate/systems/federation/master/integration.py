@@ -280,7 +280,7 @@ class MasterIntegration:
         if event_bus is not None and edge_config is not None:
             from src.scheduling.events import FederationConnectionEstablished
 
-            await event_bus.publish_async(
+            await event_bus.publish(
                 FederationConnectionEstablished(
                     remote_id=edge_config.stargate_id,
                     transport="websocket",
@@ -295,7 +295,7 @@ class MasterIntegration:
         if event_bus is not None and edge_config is not None:
             from src.scheduling.events import FederationConnectionLost
 
-            await event_bus.publish_async(
+            await event_bus.publish(
                 FederationConnectionLost(
                     remote_id=edge_config.stargate_id,
                     reason="disconnected",

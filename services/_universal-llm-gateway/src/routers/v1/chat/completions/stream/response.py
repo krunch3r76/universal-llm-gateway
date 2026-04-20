@@ -94,7 +94,7 @@ async def generate_streaming_response(
                 raise RuntimeError(f"Failed to load model {model_id}")
 
         # Request-scoped runtime-start boundary (execution handoff begins here)
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             RequestInferenceStarted(
                 request_id=request_id,
                 model_id=model_id,

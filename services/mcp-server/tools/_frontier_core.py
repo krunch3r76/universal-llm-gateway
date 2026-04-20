@@ -1,50 +1,48 @@
-"""Shared helpers for frontier generation tools (grok_generate, claude_generate, frontier_generate).
+"""Shared helpers for the unified ``frontier_generate`` tool.
 
-Handles Stargate HTTP calls, client-side tool resolution loop, response parsing,
-and event recording. Boot context assembly lives in _frontier_boot.
+Thin MCP-side wrapper around ``libs/agent_seat/native_loop.run_native_tool_loop``.
+Owns MCP-specific concerns: Stargate HTTP transport, event recording, boot
+context assembly (via ``_frontier_boot``), termination-shadow detection, and
+synchronous bridging (MCP tool handlers run in a threadpool, so the async
+native loop is dispatched via ``asyncio.run`` at the tool boundary).
+
+Boot context assembly lives in ``_frontier_boot``; the tool-resolution loop
+and response parsing live in ``libs/agent_seat/native_loop``.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import os
 from typing import Any
 
 import httpx
+from agent_seat import TEAM_TOOL_DEFINITIONS, TOOL_DEFINITIONS
+from agent_seat.native_loop import (
+    NATIVE_PATHS,
+    NativeLoopResult,
+    run_native_tool_loop,
+)
 from llm_adapters import (
     FrontierRequest,
     effective_provider_for_model,
-    resolve_llm_adapter,
 )
 from mcp_events import monotonic_now, record
 from model_id import ModelId
 from universal_logging import get_logger
 
-from ._agent_tools import TEAM_TOOL_DEFINITIONS, TOOL_DEFINITIONS, execute_tool
 from ._frontier_boot import (
     assemble_boot_context,
     compose_system_prompt,
     normalize_boot_level,
     should_inject_tools,
 )
-from ._frontier_termination import emit_termination_shadow_if_detected
 
 logger = get_logger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-_MCP_PUBLIC_URL = os.environ.get("MCP_PUBLIC_URL", "https://mcp.k-1.me/mcp")
 _DEFAULT_READ_TIMEOUT = 600.0
-_TIMEOUT = httpx.Timeout(
-    connect=10.0, read=_DEFAULT_READ_TIMEOUT, write=30.0, pool=10.0
-)
 _MAX_TOOL_TURNS = 10
-
-_PROVIDER_NATIVE_PATHS: dict[str, str] = {
-    "anthropic": "/api/v1/providers/anthropic/messages",
-    "xai": "/api/v1/providers/xai/responses",
-    "openai": "/api/v1/providers/openai/responses",
-    "google": "/api/v1/providers/google/generateContent",
-}
 
 XAI_SERVER_TOOL_MAP: dict[str, dict[str, str]] = {
     "web_search": {"type": "web_search"},
@@ -64,54 +62,57 @@ GOOGLE_SERVER_TOOL_MAP: dict[str, dict[str, Any]] = {
 }
 
 
-def _execute_tool_calls(
-    tool_calls: list[dict[str, Any]],
+def _build_mcp_tool_event_callback(
     provider_key: str,
-    turn: int,
-) -> list[dict[str, Any]]:
-    """Execute MCP tool calls locally and return results for the adapter."""
-    results: list[dict[str, Any]] = []
-    for tc in tool_calls:
-        tc_name = tc.get("name", "")
-        tc_args = tc.get("input")
-        if tc_args is None:
-            raw_args = tc.get("arguments", "{}")
-            tc_args = (
-                json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
-            )
+) -> Any:
+    """Translate native_loop tool events to MCP-side ``mcp.frontier.tool.executed`` records."""
 
-        logger.info("frontier tool [%s] turn %d: %s", provider_key, turn, tc_name)
+    def _cb(signal: str, payload: dict[str, Any]) -> None:
         record(
             "mcp.frontier.tool.executed",
-            tool=tc_name,
-            turn=turn,
+            tool=str(payload.get("tool_name", "")),
+            turn=int(payload.get("turn", 0)),
             provider=provider_key,
+            ok=bool(payload.get("ok", signal.endswith(".called"))),
+            elapsed_ms=float(payload.get("elapsed_ms", 0.0)),
         )
 
-        result_str = execute_tool(tc_name, tc_args)
-        results.append({"id": tc.get("id"), "name": tc_name, "content": result_str})
-    return results
+    return _cb
 
 
-def _handle_error_response(
-    resp: httpx.Response,
-    model: str,
-    provider_key: str,
-) -> dict[str, Any]:
-    """Parse and record an HTTP error response from Stargate."""
-    detail_text = resp.text[:500]
-    error_key = f"upstream_{resp.status_code}"
-    error_msg = f"Upstream error ({resp.status_code})"
+def _build_stargate_sender(timeout_seconds: float) -> Any:
+    """Return an async ``send_native(path, body) -> dict`` that posts to Stargate.
 
-    logger.warning(
-        "Frontier upstream %d for model=%s provider=%s: %s",
-        resp.status_code,
-        model,
-        provider_key,
-        error_key,
-    )
-    record("mcp.frontier.generate.error", error=error_key, provider=provider_key)
-    return {"error": error_msg, "detail": detail_text}
+    Constructs a fresh ``httpx.AsyncClient`` per loop run so the client's
+    lifecycle is scoped to the synchronous MCP tool call — no shared client
+    to clean up across threads.
+    """
+    clamped = min(max(timeout_seconds, 30.0), 1800.0)
+    timeout = httpx.Timeout(connect=10.0, read=clamped, write=30.0, pool=10.0)
+
+    async def _send(path: str, json_body: dict[str, Any]) -> dict[str, Any]:
+        url = f"{_STARGATE_URL}{path}"
+        async with httpx.AsyncClient(timeout=timeout) as http:
+            resp = await http.post(
+                url,
+                json=json_body,
+                headers={"Content-Type": "application/json"},
+            )
+            if resp.status_code >= 400:
+                detail = resp.text[:500] if resp.text else ""
+                raise _UpstreamHTTPError(resp.status_code, detail)
+            return resp.json()
+
+    return _send
+
+
+class _UpstreamHTTPError(Exception):
+    """Raised by the MCP send_native closure on >=400 response."""
+
+    def __init__(self, status_code: int, detail: str) -> None:
+        super().__init__(f"upstream {status_code}: {detail[:200]}")
+        self.status_code = status_code
+        self.detail = detail
 
 
 def execute_frontier(
@@ -122,16 +123,15 @@ def execute_frontier(
     tool_name: str = "frontier",
     timeout: float | None = None,
 ) -> dict[str, Any]:
-    """Resolve adapter, POST to Stargate, and run client-side tool loop if needed.
+    """Dispatch an MCP ``frontier_generate`` call through ``run_native_tool_loop``.
 
-    When ``req.mcp_tool_loop`` is True, the function implements a multi-turn
-    tool resolution loop: POST → detect tool_use → execute locally → POST
-    results → repeat, up to ``_MAX_TOOL_TURNS``.  This replaces the former
-    MCP Connector pattern (injecting ``mcp_servers`` for provider-side callback).
+    The MCP tool runs synchronously on a threadpool worker; this function
+    bridges to the async native loop via ``asyncio.run``. Emits the existing
+    ``mcp.frontier.generate.*`` event family so the observability surface
+    stays stable.
 
     ``timeout`` overrides the default read timeout (seconds). Downstream hops
-    (Stargate → cloud-proxy → provider) allow up to 1800s, so callers may
-    request up to that ceiling for long-running subagent dispatches.
+    (Stargate → cloud-proxy → provider) allow up to 1800s.
     """
     parsed = ModelId.parse(model)
     provider_key = effective_provider_for_model(parsed.provider)
@@ -149,83 +149,46 @@ def execute_frontier(
         mcp_tool_loop=req.mcp_tool_loop,
     )
 
-    native_path = _PROVIDER_NATIVE_PATHS.get(provider_key)
-    if native_path is None:
+    if provider_key not in NATIVE_PATHS:
         record(
-            "mcp.frontier.generate.error", error="no_native_path", provider=provider_key
+            "mcp.frontier.generate.error",
+            error="no_native_path",
+            provider=provider_key,
         )
         return {"error": f"No native endpoint for provider {provider_key}"}
 
-    adapter = resolve_llm_adapter(parsed.provider)
-    if adapter is None:
-        record(
-            "mcp.frontier.generate.error",
-            error="missing_api_key",
-            provider=provider_key,
-        )
-        return {"error": f"Provider {provider_key} not configured (missing API key)"}
-    if not hasattr(adapter, "build_frontier_request"):
-        record(
-            "mcp.frontier.generate.error",
-            error="adapter_missing_frontier",
-            provider=provider_key,
-        )
-        return {"error": f"Provider {provider_key} does not support frontier requests"}
-
-    _url, _headers, json_body = adapter.build_frontier_request(req)
-
-    stargate_url = f"{_STARGATE_URL}{native_path}"
-    effective_timeout = _TIMEOUT
-    if timeout is not None:
-        clamped = min(max(timeout, 30.0), 1800.0)
-        effective_timeout = httpx.Timeout(
-            connect=10.0, read=clamped, write=30.0, pool=10.0
-        )
-
+    effective_timeout = timeout if timeout is not None else _DEFAULT_READ_TIMEOUT
+    send_native = _build_stargate_sender(effective_timeout)
+    on_tool_event = _build_mcp_tool_event_callback(provider_key)
     max_turns = _MAX_TOOL_TURNS if req.mcp_tool_loop else 1
-    tool_calls_total = 0
-    result: dict[str, Any] = {}
-    raw: dict[str, Any] = {}
 
     try:
-        with httpx.Client(timeout=effective_timeout) as http:
-            for turn in range(max_turns):
-                resp = http.post(
-                    stargate_url,
-                    json=json_body,
-                    headers={"Content-Type": "application/json"},
-                )
-
-                if resp.status_code >= 400:
-                    return _handle_error_response(resp, model, provider_key)
-
-                try:
-                    raw = resp.json()
-                except json.JSONDecodeError:
-                    return {"error": "Upstream returned invalid JSON"}
-                if not isinstance(raw, dict):
-                    return {"error": "Upstream returned non-object JSON"}
-
-                result = adapter.parse_frontier_response(raw)
-                tool_calls = result.get("tool_calls")
-
-                if not tool_calls or not req.mcp_tool_loop:
-                    break
-
-                tool_results = _execute_tool_calls(tool_calls, provider_key, turn)
-                tool_calls_total += len(tool_results)
-
-                if hasattr(adapter, "append_tool_round"):
-                    adapter.append_tool_round(json_body, raw, tool_results)
-                else:
-                    logger.warning(
-                        "Adapter %s lacks append_tool_round; stopping tool loop",
-                        provider_key,
-                    )
-                    break
-            else:
-                if req.mcp_tool_loop:
-                    result["warning"] = f"Tool loop reached max turns ({max_turns})"
+        loop_result: NativeLoopResult = asyncio.run(
+            run_native_tool_loop(
+                model=model,
+                req=req,
+                send_native=send_native,
+                max_turns=max_turns,
+                on_tool_event=on_tool_event,
+            )
+        )
+    except _UpstreamHTTPError as exc:
+        error_key = f"upstream_{exc.status_code}"
+        logger.warning(
+            "Frontier upstream %d for model=%s provider=%s",
+            exc.status_code,
+            model,
+            provider_key,
+        )
+        record(
+            "mcp.frontier.generate.error",
+            error=error_key,
+            provider=provider_key,
+        )
+        return {
+            "error": f"Upstream error ({exc.status_code})",
+            "detail": exc.detail,
+        }
     except httpx.TimeoutException:
         duration = monotonic_now() - t0
         record(
@@ -237,22 +200,56 @@ def execute_frontier(
         return {"error": f"Upstream timeout after {int(duration)}s."}
     except httpx.RequestError as exc:
         logger.error("Frontier upstream request failed: %s", exc)
-        record("mcp.frontier.generate.error", error="connection", provider=provider_key)
+        record(
+            "mcp.frontier.generate.error",
+            error="connection",
+            provider=provider_key,
+        )
         return {"error": "Upstream connection failed"}
+    except ValueError as exc:
+        # Provider misconfiguration: no native path, no API key, or adapter
+        # lacks build_frontier_request. Classify as structural.
+        logger.warning(
+            "Frontier native loop misconfigured for provider=%s: %s",
+            provider_key,
+            exc,
+        )
+        record(
+            "mcp.frontier.generate.error",
+            error="adapter_misconfigured",
+            provider=provider_key,
+        )
+        return {"error": str(exc)}
 
-    duration = monotonic_now() - t0
-    if include_raw:
-        result["raw"] = raw
+    result: dict[str, Any] = {
+        "content": loop_result.content,
+        "thinking": loop_result.reasoning,
+        "usage": loop_result.usage,
+        "provider": loop_result.provider,
+        "model": (
+            (loop_result.raw or {}).get("model") or api_model
+            if isinstance(loop_result.raw, dict)
+            else api_model
+        ),
+        "finish_reason": loop_result.finish_reason,
+        "block_reason": loop_result.block_reason,
+    }
+    if loop_result.reasoning is None:
+        result.pop("thinking", None)
+    if loop_result.finish_reason is None:
+        result.pop("finish_reason", None)
+    if loop_result.block_reason is None:
+        result.pop("block_reason", None)
+    if include_raw and loop_result.raw is not None:
+        result["raw"] = loop_result.raw
+    tool_calls_total = loop_result.tool_calls_made
     if tool_calls_total > 0:
         result["tool_calls_made"] = tool_calls_total
+    if loop_result.exhausted and req.mcp_tool_loop:
+        result["warning"] = f"Tool loop reached max turns ({max_turns})"
 
+    duration = monotonic_now() - t0
     output_tokens = result.get("usage", {}).get("output_tokens", 0)
-    # finish_reason / block_reason are the provider's own description of why
-    # a generation ended. Without them, an empty candidate (0 output tokens,
-    # no tool calls, no thinking) is indistinguishable from MAX_TOKENS,
-    # SAFETY, RECITATION, MALFORMED_FUNCTION_CALL, or a transient STOP-with-
-    # nothing from the upstream API. Only the Google adapter populates
-    # these today; other adapters return None and the fields stay absent.
     finish_reason = result.get("finish_reason")
     block_reason = result.get("block_reason")
     record(
@@ -261,42 +258,20 @@ def execute_frontier(
         tool=tool_name,
         model=result.get("model", api_model),
         provider=result.get("provider", provider_key),
-        has_thinking=result.get("thinking") is not None,
-        has_tool_calls=result.get("tool_calls") is not None,
+        has_thinking="thinking" in result,
+        has_tool_calls=tool_calls_total > 0,
         input_tokens=result.get("usage", {}).get("input_tokens", 0),
         output_tokens=output_tokens,
         tool_calls_made=tool_calls_total,
         finish_reason=finish_reason,
         block_reason=block_reason,
     )
-    # Anomaly: team/full consults returning a tiny final turn are almost
-    # always a silent failure (thinking-budget starvation, model confusion,
-    # tool-loop misrouting). Capture the first ~500 chars of content so the
-    # next triage can answer "nonsense or just short?" from events alone.
-    if output_tokens < 500 and req.boot in ("team", "full"):
-        record(
-            "mcp.frontier.output.short",
-            tool=tool_name,
-            provider=result.get("provider", provider_key),
-            model=result.get("model", api_model),
-            boot_level=req.boot,
-            output_tokens=output_tokens,
-            tool_calls_made=tool_calls_total,
-            finish_reason=finish_reason,
-            block_reason=block_reason,
-            content_preview=(result.get("content") or "")[:500],
-        )
-
-    emit_termination_shadow_if_detected(
-        result,
-        tool_name,
-        api_model,
-        provider_key,
-        req.boot,
-        output_tokens,
-        finish_reason,
-        block_reason,
-    )
+    # NOTE: ``mcp.frontier.output.short`` and
+    # ``mcp.frontier.thought.termination.shadow`` were hoisted to the
+    # ``frontier_dispatch_v1`` pipeline handler in Task-7 Phase 1. Callers
+    # on the MCP ``frontier_generate`` surface still benefit transparently
+    # once ``frontier_generate`` is collapsed onto the pipeline in Phase 2+;
+    # until then, only pipeline-originated dispatches emit these anomalies.
     if "error" not in result and req.boot in ("team", "full"):
         result["_next"] = (
             "If this consultation surfaced a decision, insight, or correction "
@@ -342,7 +317,7 @@ def build_frontier_request(
       manages the tool loop server-side. mcp_tool_loop=False.
 
     ``remote_mcp`` is caller-driven — the calling tool decides when remote MCP
-    is appropriate (e.g. grok_generate for team/full boot where Oppie needs the
+    is appropriate (e.g. frontier="grok" for team/full boot where Oppie needs the
     full MCP surface including fs).
 
     When ``agent`` is provided, ``team`` and ``full`` boot levels prepend the
@@ -364,21 +339,10 @@ def build_frontier_request(
     inject_tools = should_inject_tools(boot_level)
     use_remote_mcp = inject_tools and remote_mcp
 
-    if inject_tools:
-        if use_remote_mcp:
-            auth_token = os.environ.get("MCP_AUTH_TOKEN", "")
-            merged_tools.append(
-                {
-                    "type": "mcp",
-                    "server_url": _MCP_PUBLIC_URL,
-                    "server_label": "mcp",
-                    "authorization": f"Bearer {auth_token}",
-                }
-            )
-        else:
-            merged_tools.extend(TOOL_DEFINITIONS)
-            if boot_level in ("team", "full"):
-                merged_tools.extend(TEAM_TOOL_DEFINITIONS)
+    if inject_tools and not use_remote_mcp:
+        merged_tools.extend(TOOL_DEFINITIONS)
+        if boot_level in ("team", "full"):
+            merged_tools.extend(TEAM_TOOL_DEFINITIONS)
 
     return FrontierRequest(
         messages=messages,
@@ -400,4 +364,5 @@ def build_frontier_request(
         reasoning_trace=reasoning_trace,
         provider_options=provider_options,
         mcp_tool_loop=inject_tools and not use_remote_mcp,
+        remote_mcp=use_remote_mcp,
     )

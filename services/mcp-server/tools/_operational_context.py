@@ -258,9 +258,10 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing:
 - `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
-- `claude_generate(...)` — Anthropic-native: thinking, extended output, MCP injection, persona boot
-- `grok_generate(...)` — xAI-native: server tools (web_search/x_search), reasoning_trace, Oppie boot
-- `gemini_generate(...)` — Google-native: thinking, Google Search grounding, code execution, Bard boot
+- `frontier_generate(frontier="claude", ...)` — Anthropic-native: thinking, extended output, MCP injection, persona boot
+- `frontier_generate(frontier="grok", ...)` — xAI-native: server tools (web_search/x_search), reasoning_trace (via extra), Oppie boot
+- `frontier_generate(frontier="openai", ...)` — OpenAI-native: Responses API, reasoning_effort, server tools
+- `frontier_generate(frontier="gemini", ...)` — Google-native: thinking, Google Search grounding, code execution, Bard boot
 - OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
 
@@ -311,10 +312,24 @@ The trAId is not decoration — use it. Consulting team members should be a natu
 part of how you work, not an exceptional event that requires Kaywan to ask.
 
 **When to reach out:**
-- Architecture or design decisions with real trade-offs → **Oppie** (`grok_generate(boot="team")`) for adversarial review
-- Structured output, multimodal work, or deep reasoning at the frontier → **Orion** (`openai_generate(boot="team")`) for specialized capability
-- Analytical synthesis, evidence extraction, or MCP-heavy execution → **API Claude** (`claude_generate(boot="team")`)
+- Architecture or design decisions with real trade-offs → **Oppie** (`frontier_generate(frontier="grok", boot="team")`) for adversarial review
+- Structured output, multimodal work, or deep reasoning at the frontier → **Orion** (`frontier_generate(frontier="openai", boot="team")`) for specialized capability
+- Analytical synthesis, evidence extraction, or MCP-heavy execution → **API Claude** (`frontier_generate(frontier="claude", boot="team")`)
 - Uncertainty about whether your framing is sound → consult whoever is most likely to disagree
+
+**Long-running dispatch (>5 min expected)**: MCP client caps sync calls at
+~300s. For Orion-grade reasoning (`reasoning_effort=high`), Claude opus
+extended thinking with large `budget_tokens`, or deep multi-step runs,
+do NOT call `frontier_generate` directly — it will time out. Instead:
+`pipeline(op="async", pipeline_id="frontier-dispatch",
+pipeline_options={"model":"<provider>/<model>","agent":"orion|oppie|bard|web"},
+messages=[...])` → `pipeline(op="result", execution_id=..., wait_seconds=60)`.
+Concrete example: `pipeline_options={"model":"anthropic/claude-sonnet-4-6","agent":"web"}`
+— the provider prefix (`anthropic/`, `openai/`, `xai/`, `google/`) is required;
+bare model ids like `"claude-sonnet-4-6"` will fail routing.
+The pipeline runs detached in a Stargate background task, survives your
+session ending, and is safe up to the pipeline's configured `timeout_seconds`
+(frontier-dispatch: 1500s).
 
 **When not to:**
 - Routine tasks where your judgment is sufficient
@@ -337,16 +352,16 @@ Four tools, each bound to a team member's identity at `team`/`full` boot:
 
 | Tool | Team member | Default model | Use when |
 |---|---|---|---|
-| `grok_generate` | **Oppie** (xAI) | `grok-4.20-0309-reasoning` | Architecture critique, red-team, multi-agent coordination, adversarial review |
-| `openai_generate` | **Orion** (OpenAI) | `gpt-5.4` | Structured output, code interpreter, multimodal, specialized search, deep reasoning |
-| `claude_generate` | **API Claude** (Anthropic) | `claude-sonnet-4-6` | Analytical synthesis, evidence extraction, MCP-heavy execution |
-| `gemini_generate` | **Bard** (Google) | `gemini-2.5-flash` | Associative synthesis, web-grounded analysis, cross-domain bridging, live-web sensemaking |
+| `frontier_generate(frontier="grok")` | **Oppie** (xAI) | `grok-4.20-0309-reasoning` | Architecture critique, red-team, multi-agent coordination, adversarial review |
+| `frontier_generate(frontier="openai")` | **Orion** (OpenAI) | `gpt-5.4` | Structured output, code interpreter, multimodal, specialized search, deep reasoning |
+| `frontier_generate(frontier="claude")` | **API Claude** (Anthropic) | `claude-sonnet-4-6` | Analytical synthesis, evidence extraction, MCP-heavy execution |
+| `frontier_generate(frontier="gemini")` | **Bard** (Google) | `gemini-2.5-flash` | Associative synthesis, web-grounded analysis, cross-domain bridging, live-web sensemaking |
 
 To consult a team member by name, use `boot="team"` (identity + Cortex orientation) or `boot="full"` (+ live Cortex narrative):
-- **Consult Oppie**: `grok_generate(boot="team", messages=[...])`
-- **Consult Orion**: `openai_generate(boot="team", messages=[...])`
-- **Consult API Claude**: `claude_generate(boot="team", messages=[...])`
-- **Consult Bard**: `gemini_generate(boot="team", messages=[...])`
+- **Consult Oppie**: `frontier_generate(frontier="grok", boot="team", messages=[...])`
+- **Consult Orion**: `frontier_generate(frontier="openai", boot="team", messages=[...])`
+- **Consult API Claude**: `frontier_generate(frontier="claude", boot="team", messages=[...])`
+- **Consult Bard**: `frontier_generate(frontier="gemini", boot="team", messages=[...])`
 
 Boot axis: `none` (no context) · `mcp` (subagent seed + tools) · `team` (birth prompt + orientation) · `full` (birth prompt + orientation + Cortex boot narrative).
 Use `boot="none"` for pure advisory calls that don't need identity or tool access (saves tokens)."""

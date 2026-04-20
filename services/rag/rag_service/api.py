@@ -161,7 +161,7 @@ async def get_scopes() -> ScopesResponse:
     """Return configured search scopes and their source-prefix mappings."""
     loaded_config = require_loaded_config(state._config)
     if state._event_bus is not None:
-        await state._event_bus.publish_async_nowait(
+        await state._event_bus.publish_nowait(
             rag_scopes_listed(count=len(loaded_config.scopes))
         )
     return ScopesResponse(

@@ -24,8 +24,8 @@ Usage (New UML Message Structure):
     event_bus.subscribe_async(MODEL_LOADED, on_model_loaded)
 
     # Publish events using Event(signal, payload)
-    # Use publish_async_nowait() for fire-and-forget (non-blocking)
-    event_bus.publish_async_nowait(Event(
+    # Use await publish_nowait() for fire-and-forget (non-blocking)
+    await event_bus.publish_nowait(Event(
         signal="ModelLoaded",  # or MODEL_LOADED constant
         payload={
             "model_id": "llama-3-8b",
@@ -38,8 +38,8 @@ Usage (New UML Message Structure):
     # - timestamp: ISO 8601 string
     # - id: global counter
 
-    # Or use await publish_async() if you need confirmation:
-    # await event_bus.publish_async(Event(...))  # Waits for delivery
+    # Or use await publish() if you need confirmation:
+    # await event_bus.publish(Event(...))  # Waits for delivery
 """
 
 # Import core event infrastructure from universal-event-bus

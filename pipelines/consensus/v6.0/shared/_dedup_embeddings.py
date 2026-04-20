@@ -119,7 +119,7 @@ async def get_embeddings(
 
     if event_bus:
         asyncio.create_task(
-            event_bus.publish_async_nowait(
+            event_bus.publish_nowait(
                 PipelineStepEmbeddingStarted(
                     execution_id=execution_id,
                     step_id=step_id,
@@ -159,7 +159,7 @@ async def get_embeddings(
                 embedding_dim = embeddings.shape[1] if embeddings.ndim > 1 else 0
 
                 asyncio.create_task(
-                    event_bus.publish_async_nowait(
+                    event_bus.publish_nowait(
                         PipelineStepEmbeddingCompleted(
                             execution_id=execution_id,
                             step_id=step_id,
@@ -184,7 +184,7 @@ async def get_embeddings(
             if event_bus:
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 asyncio.create_task(
-                    event_bus.publish_async_nowait(
+                    event_bus.publish_nowait(
                         PipelineStepEmbeddingFailed(
                             execution_id=execution_id,
                             step_id=step_id,
@@ -202,7 +202,7 @@ async def get_embeddings(
             if event_bus:
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 asyncio.create_task(
-                    event_bus.publish_async_nowait(
+                    event_bus.publish_nowait(
                         PipelineStepEmbeddingFailed(
                             execution_id=execution_id,
                             step_id=step_id,

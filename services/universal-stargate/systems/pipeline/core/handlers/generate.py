@@ -56,9 +56,7 @@ def _strip_markdown_fence(text: str) -> str:
         if match:
             return match.group(1).strip()
 
-    fence_match = re.search(
-        r"```(?:json|\w*)\s*\n(.*?)```", stripped, re.DOTALL
-    )
+    fence_match = re.search(r"```(?:json|\w*)\s*\n(.*?)```", stripped, re.DOTALL)
     if fence_match:
         return fence_match.group(1).strip()
 
@@ -821,6 +819,8 @@ class GenericGenerateHandler(BaseHandler):
             latency_ms=latency_ms,
             prompt_tokens=call_result.prompt_tokens,
             completion_tokens=call_result.completion_tokens,
+            reasoning=call_result.reasoning,
+            reasoning_tokens=call_result.reasoning_tokens,
             system_prompt=call_result.system_prompt,
             user_prompt=call_result.user_prompt,
             temperature=resolved_config.get("temperature"),

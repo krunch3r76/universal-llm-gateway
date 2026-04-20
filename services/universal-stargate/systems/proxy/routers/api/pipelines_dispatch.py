@@ -1,0 +1,430 @@
+"""Async pipeline dispatch endpoints.
+
+Routes:
+- ``POST /api/v1/pipelines/dispatch`` — admit a pipeline run and return
+  ``execution_id`` immediately (HTTP 202). The DAG runs in a background
+  task retained on ``app.state.pipeline_background_tasks``.
+- ``GET  /api/v1/pipelines/executions/{execution_id}`` — fetch current
+  tracker state; optional ``?wait=<seconds>`` short-blocks (clamped to
+  stay well under the MCP 300s client read-timeout ceiling).
+
+Invariants:
+- ∀ error response: ``{"error": {"code", "message"}}`` via ``JSONResponse``
+  (¬ ``HTTPException(detail=...)``) — canonical envelope for ``/api/v1/*``.
+- Registry lookup happens before tracker registration so unknown-pipeline
+  errors never pollute the tracker.
+- Tracker ``TrackerCapacityError`` → HTTP 503; ``pipeline.dispatch.rejected``
+  is emitted inside the tracker before raising.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field, ValidationError
+from universal_logging import get_logger
+
+from src.schemas.chat_completion import ChatCompletionRequest
+from systems.pipeline.core.execution.dispatch_journal import fetch_terminal
+
+from ...dependencies import get_auth_dependency, get_proxy
+from ...stargate_core import StargateProxy
+
+if TYPE_CHECKING:
+    from systems.pipeline.core.execution.async_tracker import (
+        PipelineExecutionTracker,
+    )
+
+logger = get_logger(__name__)
+router = APIRouter(tags=["pipelines-dispatch"])
+
+
+_MAX_WAIT_SECONDS = 60.0
+
+
+class ResultDeliveryConfig(BaseModel):
+    """Optional delivery hook for async pipeline results.
+
+    Phase 1 validates and stores this config but does NOT act on it — phase
+    2 wires agent-bus self-posting. Validation happens now to keep arbitrary
+    keys out of the tracker record.
+    """
+
+    bus_thread: str | None = None
+    bus_from_agent: str | None = None
+    bus_to_agent: str | None = None
+    bus_subject: str | None = None
+
+
+class DispatchRequest(BaseModel):
+    """Async pipeline dispatch request body.
+
+    Mirrors the ``/v1/chat/completions`` pipeline invocation shape plus an
+    optional ``result_delivery`` hook. Unknown keys are accepted (forwarded
+    onto the synthesized ``ChatCompletionRequest`` where appropriate).
+
+    ``caller_agent`` is optional provenance — when set, it flows into the
+    tracker record and into the ``pipeline.dispatch.*`` event payloads so
+    downstream observability can attribute dispatches to a specific agent.
+    Not authenticated; callers can claim any identity.
+    """
+
+    model_config = {"extra": "allow"}
+
+    model: str
+    messages: list[dict[str, Any]] = Field(default_factory=list)
+    pipeline_options: dict[str, Any] | None = None
+    result_delivery: ResultDeliveryConfig | None = None
+    caller_agent: str | None = None
+
+
+def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
+    """Build the canonical ``{"error": {code, message}}`` envelope."""
+    return JSONResponse(
+        status_code=status_code,
+        content={"error": {"code": code, "message": message}},
+    )
+
+
+def _build_chat_completion_request(dispatch: DispatchRequest) -> ChatCompletionRequest:
+    """Produce a ``ChatCompletionRequest`` from a validated ``DispatchRequest``.
+
+    ``ChatCompletionRequest`` has ``extra="allow"``, so ``pipeline_options``
+    and any unknown fields are preserved for downstream ``prepare_request``.
+    """
+    payload = dispatch.model_dump(exclude_none=True, exclude={"result_delivery"})
+    return ChatCompletionRequest(**payload)
+
+
+def _get_tracker(proxy: StargateProxy) -> PipelineExecutionTracker | None:
+    """Return the shared dispatch tracker if the pipeline system is live."""
+    return getattr(proxy, "pipeline_dispatch_tracker", None)
+
+
+def _iso_utc_now() -> str:
+    """Return current UTC ISO-8601 Z timestamp."""
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+@router.post("/pipelines/dispatch", status_code=202)
+async def dispatch_pipeline(
+    request: Request,
+    proxy: StargateProxy = Depends(get_proxy),
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> JSONResponse:
+    """Admit a pipeline run for async execution and return ``execution_id``.
+
+    Flow:
+    1. Parse + validate body (``DispatchRequest`` + ``ResultDeliveryConfig``).
+    2. Verify pipeline exists in the registry (fast 404 path).
+    3. Mint ``execution_id`` via the executor.
+    4. Register with the tracker (emits ``pipeline.dispatch.async`` or 503
+       if capacity exhausted by running executions).
+    5. Prepare the ``RequestContext`` via the proxy's request preparer.
+    6. Spawn ``executor.execute_async`` as a retained background task.
+    7. Return HTTP 202 with ``execution_id`` and ``started_at``.
+    """
+    try:
+        body = await request.json()
+    except Exception as exc:  # noqa: BLE001 — caller supplied invalid JSON
+        return _error_response(
+            400, "invalid_json", f"Request body is not valid JSON: {exc}"
+        )
+
+    try:
+        dispatch = DispatchRequest.model_validate(body)
+    except ValidationError as exc:
+        return _error_response(
+            422,
+            "validation_error",
+            f"Invalid dispatch request: {exc.errors()}",
+        )
+
+    if not proxy.is_pipeline_system_ready or proxy.pipeline_registry is None:
+        return _error_response(
+            503, "pipeline_system_unavailable", "Pipeline execution unavailable"
+        )
+
+    if not proxy.pipeline_registry.is_pipeline(dispatch.model):
+        return _error_response(
+            404,
+            "pipeline_not_found",
+            f"Pipeline '{dispatch.model}' is not registered.",
+        )
+
+    tracker = _get_tracker(proxy)
+    if tracker is None:
+        return _error_response(
+            503,
+            "pipeline_dispatch_unavailable",
+            "Async pipeline dispatch tracker is not initialized.",
+        )
+
+    executor = proxy.pipeline_executor
+    if executor is None:
+        return _error_response(
+            503,
+            "pipeline_executor_unavailable",
+            "Pipeline executor is not initialized.",
+        )
+
+    execution_id = executor.generate_execution_id()
+    started_at = _iso_utc_now()
+
+    from systems.pipeline.core.execution.async_tracker import TrackerCapacityError
+
+    delivery_payload = (
+        dispatch.result_delivery.model_dump(exclude_none=True)
+        if dispatch.result_delivery is not None
+        else None
+    )
+
+    try:
+        tracker.register_execution(
+            execution_id=execution_id,
+            pipeline=dispatch.model,
+            started_at=started_at,
+            result_delivery=delivery_payload,
+            caller_agent=dispatch.caller_agent,
+        )
+    except TrackerCapacityError as exc:
+        logger.warning("Dispatch rejected (capacity): %s", exc)
+        return _error_response(
+            503,
+            "pipeline_dispatch_capacity_exhausted",
+            str(exc),
+        )
+
+    chat_request = _build_chat_completion_request(dispatch)
+
+    if dispatch.messages:
+        request.state.pipeline_full_messages = list(dispatch.messages)
+
+    try:
+        context = await proxy.request_preparer.prepare_request(
+            request,
+            chat_request,
+            model_override=None,
+            profile_override=None,
+            disable_profile=False,
+            is_pipeline=True,
+            skip_token_counting=True,
+            requested_model=dispatch.model,
+        )
+    except Exception as exc:
+        logger.error("Failed to prepare async dispatch request: %s", exc, exc_info=True)
+        tracker.fail_execution(
+            execution_id,
+            code="pipeline_dispatch_preparation_failed",
+            message=f"Failed to prepare request: {exc}",
+        )
+        return _error_response(
+            500,
+            "pipeline_dispatch_preparation_failed",
+            f"Failed to prepare request: {exc}",
+        )
+
+    background_tasks: set[asyncio.Task[Any]] = (
+        getattr(request.app.state, "pipeline_background_tasks", None) or set()
+    )
+    request.app.state.pipeline_background_tasks = background_tasks
+    task_index: dict[str, asyncio.Task[Any]] = (
+        getattr(request.app.state, "pipeline_task_index", None) or {}
+    )
+    request.app.state.pipeline_task_index = task_index
+
+    task = asyncio.create_task(
+        executor.execute_async(
+            context,
+            execution_id=execution_id,
+            started_at=started_at,
+            tracker=tracker,
+        ),
+        name=f"pipeline-dispatch-{execution_id[:8]}",
+    )
+    background_tasks.add(task)
+    task_index[execution_id] = task
+
+    def _on_task_done(completed_task: asyncio.Task[Any]) -> None:
+        background_tasks.discard(completed_task)
+        task_index.pop(execution_id, None)
+
+    task.add_done_callback(_on_task_done)
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "execution_id": execution_id,
+            "pipeline": dispatch.model,
+            "started_at": started_at,
+            "status": "running",
+        },
+    )
+
+
+@router.get("/pipelines/executions/{execution_id}")
+async def get_pipeline_execution(
+    execution_id: str,
+    wait: float = Query(
+        0.0,
+        ge=0.0,
+        description=(
+            "Optional short-poll window in seconds (clamped to 60). "
+            "Stays well under the MCP 300s client read-timeout."
+        ),
+    ),
+    proxy: StargateProxy = Depends(get_proxy),
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> JSONResponse:
+    """Fetch tracker state for an async-dispatched pipeline execution."""
+    tracker = _get_tracker(proxy)
+    if tracker is None:
+        return _error_response(
+            503,
+            "pipeline_dispatch_unavailable",
+            "Async pipeline dispatch tracker is not initialized.",
+        )
+
+    wait_clamped = min(max(0.0, wait), _MAX_WAIT_SECONDS)
+    record = await tracker.wait_for_terminal(execution_id, wait_clamped)
+    if record is None:
+        journal_record = await fetch_terminal(
+            execution_id,
+            event_bus=getattr(proxy, "event_bus", None),
+        )
+        if journal_record is not None:
+            return JSONResponse(status_code=200, content=journal_record)
+        return _error_response(
+            404,
+            "execution_id_expired_or_unknown",
+            f"Unknown or expired execution_id '{execution_id}'.",
+        )
+
+    return JSONResponse(status_code=200, content=record.to_dict())
+
+
+@router.get("/pipelines/dispatch/stats")
+async def get_dispatch_stats(
+    proxy: StargateProxy = Depends(get_proxy),
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> JSONResponse:
+    """Return tracker occupancy snapshot."""
+    tracker = _get_tracker(proxy)
+    if tracker is None:
+        return _error_response(
+            503,
+            "pipeline_dispatch_unavailable",
+            "Async pipeline dispatch tracker is not initialized.",
+        )
+
+    now = time.monotonic()
+    running = 0
+    completed = 0
+    failed = 0
+    oldest_terminal: float | None = None
+    oldest_running: float | None = None
+    for record in tracker.records.values():
+        if record.status == "running":
+            running += 1
+            age = now - record.started_at_monotonic
+            if oldest_running is None or age > oldest_running:
+                oldest_running = age
+        elif record.status == "completed":
+            completed += 1
+            if record.completed_at_monotonic is not None:
+                age = now - record.completed_at_monotonic
+                if oldest_terminal is None or age > oldest_terminal:
+                    oldest_terminal = age
+        elif record.status == "failed":
+            failed += 1
+            if record.completed_at_monotonic is not None:
+                age = now - record.completed_at_monotonic
+                if oldest_terminal is None or age > oldest_terminal:
+                    oldest_terminal = age
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "running": running,
+            "completed": completed,
+            "failed": failed,
+            "terminal": completed + failed,
+            "max_records": tracker.max_records,
+            "retention_seconds": tracker.retention_seconds,
+            "oldest_terminal_age_seconds": oldest_terminal,
+            "oldest_running_age_seconds": oldest_running,
+        },
+    )
+
+
+@router.delete("/pipelines/executions/{execution_id}")
+async def cancel_pipeline_execution(
+    request: Request,
+    execution_id: str,
+    proxy: StargateProxy = Depends(get_proxy),
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> JSONResponse:
+    """Cancel an in-flight async-dispatched pipeline execution."""
+    tracker = _get_tracker(proxy)
+    if tracker is None:
+        return _error_response(
+            503,
+            "pipeline_dispatch_unavailable",
+            "Async pipeline dispatch tracker is not initialized.",
+        )
+
+    record = tracker.get(execution_id)
+    if record is None:
+        return _error_response(
+            404,
+            "execution_id_expired_or_unknown",
+            f"Unknown or expired execution_id '{execution_id}'.",
+        )
+
+    if record.status in {"completed", "failed"}:
+        return JSONResponse(status_code=200, content=record.to_dict())
+
+    task_index: dict[str, asyncio.Task[Any]] = getattr(
+        request.app.state, "pipeline_task_index", {}
+    )
+    task = task_index.get(execution_id)
+    if task is None or task.done():
+        logger.warning(
+            "Cancel requested for execution_id=%s but no task tracked; "
+            "marking tracker failed.",
+            execution_id,
+        )
+        tracker.fail_execution(
+            execution_id,
+            code="pipeline_execution_cancelled",
+            message="Cancel requested; no live task found.",
+        )
+    else:
+        task.cancel()
+
+    event_bus = getattr(proxy, "event_bus", None)
+    if event_bus is not None:
+        from systems.pipeline.core.events.dispatch import PipelineDispatchCancelled
+
+        asyncio.create_task(
+            event_bus.publish_nowait(
+                PipelineDispatchCancelled(
+                    pipeline_id=record.pipeline,
+                    execution_id=execution_id,
+                    source="operator",
+                )
+            )
+        )
+
+    terminal_record = await tracker.wait_for_terminal(execution_id, timeout_seconds=5.0)
+    payload = (
+        terminal_record.to_dict()
+        if terminal_record is not None
+        else {"execution_id": execution_id, "status": "unknown"}
+    )
+    return JSONResponse(status_code=200, content=payload)

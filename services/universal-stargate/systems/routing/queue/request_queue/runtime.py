@@ -73,7 +73,7 @@ class RequestQueueRuntime:
                     from src.scheduling.events import RequestQueued
 
                     asyncio.create_task(
-                        self.event_bus.publish_async(
+                        self.event_bus.publish(
                             RequestQueued(
                                 request_id=request_id,
                                 model_id=model_id,
@@ -117,7 +117,7 @@ class RequestQueueRuntime:
                         from src.scheduling.events import RequestTimeout
 
                         asyncio.create_task(
-                            self.event_bus.publish_async(
+                            self.event_bus.publish(
                                 RequestTimeout(
                                     request_id=queued_request.request_id,
                                     gateway_url=None,

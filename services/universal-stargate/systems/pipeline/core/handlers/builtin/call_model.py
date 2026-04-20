@@ -290,6 +290,8 @@ async def call_model(
     usage = response.get("usage", {})
     prompt_tokens = usage.get("prompt_tokens", 0)
     completion_tokens = usage.get("completion_tokens", 0)
+    completion_tokens_details = usage.get("completion_tokens_details") or {}
+    reasoning_tokens = int(completion_tokens_details.get("reasoning_tokens") or 0)
 
     # Extract actual inference duration from llama.cpp timings.
     # predicted_ms = generation time only (excludes queue wait + prompt eval).
@@ -300,8 +302,18 @@ async def call_model(
     # Extract content and finish_reason with validation
     try:
         choice = response["choices"][0]
-        content = choice["message"]["content"]
+        message = choice["message"]
+        content = message["content"]
         finish_reason = choice.get("finish_reason", "unknown")
+        # OpenAI reasoning models surface reasoning via either
+        # ``message.reasoning_content`` (structured blocks) or
+        # ``message.reasoning`` / ``message.reasoning_summary`` (text). Prefer
+        # the structured form when present; fall back to whichever exists.
+        reasoning = (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+            or message.get("reasoning_summary")
+        )
         if content is None:
             raise ProxyClientError(
                 "Response content is None",
@@ -362,6 +374,8 @@ async def call_model(
         snapshot_request_id=snapshot_request_id,
         system_prompt=system_prompt,
         user_prompt=prompt,
+        reasoning=reasoning,
+        reasoning_tokens=reasoning_tokens,
     )
 
     # Emit observability event for every successful call

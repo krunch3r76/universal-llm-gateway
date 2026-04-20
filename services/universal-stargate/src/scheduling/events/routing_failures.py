@@ -75,11 +75,18 @@ Diagnostic query:
 Payload: {
     "request_id": str,
     "model_id": str,
-    "gateway_id": str,
-    "loaded_count": int,
-    "busy_count": int,
-    "vram_free": int
+    "gateway_id": str,                      # primary candidate (back-compat)
+    "loaded_count": int,                    # primary candidate (back-compat)
+    "busy_count": int,                      # primary candidate (back-compat)
+    "vram_free": int,                       # primary candidate (back-compat)
+    "candidate_breakdown": list[dict],      # per-candidate snapshot:
+        # {gateway_id, loaded_count, busy_count, loading_count, vram_free,
+        #  constraints_failed: [str]}
 }
+
+The `candidate_breakdown` field is additive: consumers that read only the
+primary fields continue to work. `loading_count` is included so entry-time
+loading state can be correlated with wait-exit constraint flips.
 """
 
 ROUTING_EVICTION_INSUFFICIENT_PERMANENT = "routing.eviction.insufficient.permanent"
@@ -267,6 +274,7 @@ def RoutingEvictionBlockedBusy(
     loaded_count: int,
     busy_count: int,
     vram_free: int,
+    candidate_breakdown: list[dict],
 ) -> Event:
     """
     Create ROUTING_EVICTION_BLOCKED_BUSY event.
@@ -274,10 +282,13 @@ def RoutingEvictionBlockedBusy(
     Args:
         request_id: Request that failed routing
         model_id: Target model identifier
-        gateway_id: Gateway where eviction was evaluated
-        loaded_count: Number of loaded models on gateway
-        busy_count: Number of loaded models currently busy
-        vram_free: Free VRAM in MB
+        gateway_id: Primary candidate gateway (the one picked for the summary)
+        loaded_count: Number of loaded models on primary candidate
+        busy_count: Number of loaded models currently busy on primary candidate
+        vram_free: Free VRAM on primary candidate (MB)
+        candidate_breakdown: Per-candidate snapshot of loaded_count, busy_count,
+            loading_count, vram_free, constraints_failed. Additive — enables
+            post-hoc correlation between wait-entry state and wait-exit flips.
 
     Returns:
         Event with RoutingEvictionBlockedBusy signal
@@ -291,6 +302,7 @@ def RoutingEvictionBlockedBusy(
             "loaded_count": loaded_count,
             "busy_count": busy_count,
             "vram_free": vram_free,
+            "candidate_breakdown": candidate_breakdown,
         },
     )
 

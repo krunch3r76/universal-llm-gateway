@@ -48,7 +48,7 @@ def _publish_event(context: PipelineContext, event: object) -> None:
     event_bus = getattr(proxy, "event_bus", None) if proxy else None
     if event_bus is None:
         return
-    _ = asyncio.create_task(event_bus.publish_async_nowait(event))
+    _ = asyncio.create_task(event_bus.publish_nowait(event))
 
 
 def _repo_root() -> Path:

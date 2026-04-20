@@ -146,7 +146,7 @@ def register_browser_routes(
         except Exception as exc:
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserCatalogRefreshFailed(
                         trigger="auto",
                         error=str(exc)[:300],
@@ -176,7 +176,7 @@ def register_browser_routes(
             count = await browser_cache.refresh()
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserCatalogRefreshed(
                         trigger="manual",
                         model_count=count,
@@ -186,7 +186,7 @@ def register_browser_routes(
         except Exception as exc:
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserCatalogRefreshFailed(
                         trigger="manual",
                         error=str(exc)[:300],
@@ -217,7 +217,7 @@ def register_browser_routes(
         except Exception as exc:
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserCatalogRefreshFailed(
                         trigger="lookup_auto",
                         error=str(exc)[:300],
@@ -235,7 +235,7 @@ def register_browser_routes(
         if model is None:
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserModelLookupMiss(model_id=model_id)
                 )
             return _error_response(
@@ -261,7 +261,7 @@ def register_browser_routes(
         except ValidationError as exc:
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserSelectFailed(error=str(exc)[:300])
                 )
             return _error_response(
@@ -285,7 +285,7 @@ def register_browser_routes(
         except Exception as exc:
             event_bus = get_event_bus()
             if event_bus is not None:
-                await event_bus.publish_async(
+                await event_bus.publish(
                     CloudProxyBrowserSelectFailed(error=str(exc)[:300])
                 )
             return _error_response(
@@ -325,7 +325,7 @@ def register_browser_routes(
             ]
         event_bus = get_event_bus()
         if event_bus is not None:
-            await event_bus.publish_async(
+            await event_bus.publish(
                 CloudProxyBrowserSelectCompleted(
                     selected_count=len(selected),
                     tags=req.tags,

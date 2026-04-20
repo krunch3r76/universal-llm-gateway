@@ -109,7 +109,7 @@ async def process_chat_completion(
                 m.model_dump() if hasattr(m, "model_dump") else m
                 for m in (chat_request.messages or [])
             ]
-            await proxy.event_bus.publish_async_nowait(
+            await proxy.event_bus.publish_nowait(
                 RequestSnapshotReceived(
                     request_id=context.request_id,
                     model_id=context.requested_model,
@@ -199,7 +199,7 @@ async def process_chat_completion(
             if getattr(context, "persona_alias_id", None) and getattr(
                 context, "persona_backing_model", None
             ):
-                await proxy.event_bus.publish_async_nowait(
+                await proxy.event_bus.publish_nowait(
                     RequestAliasResolved(
                         request_id=context.request_id,
                         alias_id=context.persona_alias_id,
@@ -207,21 +207,21 @@ async def process_chat_completion(
                     )
                 )
             if profile_name:
-                await proxy.event_bus.publish_async_nowait(
+                await proxy.event_bus.publish_nowait(
                     RequestProfileResolved(
                         request_id=context.request_id,
                         model_id=model_id,
                         profile_name=profile_name,
                     )
                 )
-            await proxy.event_bus.publish_async_nowait(
+            await proxy.event_bus.publish_nowait(
                 RequestProcessing(
                     request_id=context.request_id,
                     gateway_url=proxy.gateway_url,
                     model_id=model_id,
                 )
             )
-            await proxy.event_bus.publish_async_nowait(
+            await proxy.event_bus.publish_nowait(
                 RequestSnapshotRouted(
                     request_id=context.request_id,
                     model_id=model_id,

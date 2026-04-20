@@ -803,7 +803,7 @@ class WatcherManager:
 
     async def _emit(self, event: Event) -> None:
         if self._event_bus is not None:
-            await self._event_bus.publish_async(event)
+            await self._event_bus.publish(event)
 
     def get_status(self) -> list[dict[str, str | int | bool]]:
         """Return watcher status for diagnostics endpoints."""

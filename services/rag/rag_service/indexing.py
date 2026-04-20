@@ -178,7 +178,7 @@ async def _record_indexing_failure_best_effort(
             source_mtime_ns=source_mtime_ns,
         )
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_file_indexing_failure_recorded(
                     file=source,
                     failure_category=category,
@@ -212,7 +212,7 @@ async def _store_cached_contexts_best_effort(
             entries=entries,
         )
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_contextualize_cache_store_completed(
                     file=source,
                     stored=stored,
@@ -229,7 +229,7 @@ async def _store_cached_contexts_best_effort(
             exc,
         )
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_contextualize_cache_store_failed(
                     file=source,
                     requested=len(entries),
@@ -320,14 +320,14 @@ async def _delete_file_impl(source: str) -> DeleteResult:
     if state._property_index is not None:
         cleared = await state._property_index.clear_indexing_failure(source)
         if cleared and state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_file_indexing_failure_cleared(file=source, reason="source_deleted")
             )
 
     deleted = len(existing_ids)
     logger.info("Watcher delete complete: source=%s deleted=%d", source, deleted)
     if existing_ids and state._event_bus is not None:
-        await state._event_bus.publish_async_nowait(
+        await state._event_bus.publish_nowait(
             rag_file_deleted(file=source, deleted=deleted)
         )
     return DeleteResult(file=source, deleted=deleted)
@@ -370,7 +370,7 @@ async def _upsert_chroma_chunk_batches(
         batches
     ):
         if event_bus is not None:
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 rag_chroma_upsert_started(
                     file=source,
                     operation_id=correlation_id,
@@ -387,7 +387,7 @@ async def _upsert_chroma_chunk_batches(
             metadatas=b_metadatas,
         )
         if event_bus is not None:
-            await event_bus.publish_async_nowait(
+            await event_bus.publish_nowait(
                 rag_chroma_upsert_completed(
                     file=source,
                     operation_id=correlation_id,
@@ -437,7 +437,7 @@ async def _index_file_impl(
         ):
             await prop_index.clear_pending(source)
             if emit_skip_event and state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_file_skipped(
                         file=source,
                         reason="unchanged",
@@ -473,7 +473,7 @@ async def _index_file_impl(
                     prop_index.get_article_row(source),
                 )
                 if state._event_bus is not None:
-                    await state._event_bus.publish_async_nowait(
+                    await state._event_bus.publish_nowait(
                         rag_article_path_moved(
                             old_path=orphan["source_path"],
                             new_path=source,
@@ -492,7 +492,7 @@ async def _index_file_impl(
                     source_hash,
                 )
                 if state._event_bus is not None:
-                    await state._event_bus.publish_async_nowait(
+                    await state._event_bus.publish_nowait(
                         rag_article_content_hash_mismatch(
                             file=source,
                             expected_hash=entry.content_hash,
@@ -512,7 +512,7 @@ async def _index_file_impl(
                     dup_result.duplicate_of,
                 )
             if state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_file_skipped(
                         file=source,
                         reason="duplicate_pdf",
@@ -526,7 +526,7 @@ async def _index_file_impl(
     existing_ids: list[str] = existing.get("ids", [])
 
     if prop_index is None and state._event_bus is not None:
-        await state._event_bus.publish_async_nowait(
+        await state._event_bus.publish_nowait(
             rag_property_index_unavailable(file=source)
         )
 
@@ -552,7 +552,7 @@ async def _index_file_impl(
                         subdirectory=subdirectory,
                     )
                     if created and state._event_bus is not None:
-                        await state._event_bus.publish_async_nowait(
+                        await state._event_bus.publish_nowait(
                             rag_article_auto_created(
                                 source_path=source,
                                 content_hash=source_hash,
@@ -561,7 +561,7 @@ async def _index_file_impl(
                         )
                 await _enqueue_for_extraction(source)
             if emit_skip_event and state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_file_skipped(
                         file=source,
                         reason="unchanged",
@@ -581,20 +581,20 @@ async def _index_file_impl(
 
         target_chars = chunk_tokens * _CHARS_PER_TOKEN if chunk_tokens else None
         if is_html_file and state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_html_normalization_started(file=source)
             )
         try:
             chunks: list[Chunk] = chunk_file(file_path, target_chars=target_chars)
         except Exception as exc:
             if is_html_file and state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_html_normalization_failed(file=source, error=str(exc))
                 )
             raise
         if is_html_file and state._event_bus is not None:
             total_chars = sum(len(c.text) for c in chunks)
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_html_normalization_completed(file=source, output_chars=total_chars)
             )
         if not chunks:
@@ -619,7 +619,7 @@ async def _index_file_impl(
                 len(existing_ids),
             )
             if state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_file_deleted(
                         file=source,
                         deleted=len(existing_ids),
@@ -666,7 +666,7 @@ async def _index_file_impl(
         if state._event_bus is not None:
             for cid, meta in zip(ids, metadatas, strict=True):
                 if chunk_metadata_is_noise(meta):
-                    await state._event_bus.publish_async_nowait(
+                    await state._event_bus.publish_nowait(
                         rag_chunk_noise_tagged(
                             chunk_id=cid,
                             source=source,
@@ -700,7 +700,7 @@ async def _index_file_impl(
                         exc,
                     )
                     if state._event_bus is not None:
-                        await state._event_bus.publish_async_nowait(
+                        await state._event_bus.publish_nowait(
                             rag_contextualize_cache_lookup_failed(
                                 file=source,
                                 requested_chunks=len(chunks),
@@ -719,7 +719,7 @@ async def _index_file_impl(
             )
 
             if state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_contextualize_cache_evaluated(
                         file=source,
                         total_chunks=len(chunks),
@@ -730,7 +730,7 @@ async def _index_file_impl(
                         operation=operation,
                     )
                 )
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_contextualization_started(
                         file=source,
                         chunk_count=plan.cache_misses_count,
@@ -770,7 +770,7 @@ async def _index_file_impl(
                 1 for miss in plan.cache_misses if contexts[miss.index]
             )
             if state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_contextualization_completed(
                         file=source,
                         chunk_count=plan.cache_misses_count,
@@ -783,7 +783,7 @@ async def _index_file_impl(
                         operation=operation,
                     )
                 )
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_contextualization_applied(
                         file=source,
                         chunk_count=len(contexts),
@@ -800,7 +800,7 @@ async def _index_file_impl(
                     metadatas[i]["contextualize_model"] = context_model
 
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_embed_started(
                     file=source,
                     operation_id=correlation_id,
@@ -810,7 +810,7 @@ async def _index_file_impl(
             )
         embeddings = await embed_chunks(embed_texts)
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_embed_completed(
                     file=source,
                     operation_id=correlation_id,
@@ -832,7 +832,7 @@ async def _index_file_impl(
         )
         if prop_index is not None:
             if state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_property_write_started(
                         file=source,
                         operation_id=correlation_id,
@@ -845,7 +845,7 @@ async def _index_file_impl(
                 [(cid, source, text) for cid, text in zip(ids, texts, strict=True)]
             )
             if state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_property_write_completed(
                         file=source,
                         operation_id=correlation_id,
@@ -859,7 +859,7 @@ async def _index_file_impl(
         stale_ids = list(set(existing_ids) - new_id_set)
     except Exception as exc:
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_file_indexing_failed(
                     file=source,
                     error=f"{type(exc).__qualname__}: {exc}"
@@ -881,7 +881,7 @@ async def _index_file_impl(
 
     try:
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_source_commit_started(
                     file=source,
                     operation_id=correlation_id,
@@ -915,7 +915,7 @@ async def _index_file_impl(
                 subdirectory=subdirectory,
             )
             if created and state._event_bus is not None:
-                await state._event_bus.publish_async_nowait(
+                await state._event_bus.publish_nowait(
                     rag_article_auto_created(
                         source_path=source,
                         content_hash=source_hash,
@@ -937,7 +937,7 @@ async def _index_file_impl(
                     operation=operation,
                 )
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_source_commit_completed(
                     file=source,
                     operation_id=correlation_id,
@@ -946,7 +946,7 @@ async def _index_file_impl(
                     operation=operation,
                 )
             )
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_hints_update_started(
                     file=source,
                     operation_id=correlation_id,
@@ -955,7 +955,7 @@ async def _index_file_impl(
             )
         await state._maybe_update_corpus_hints()
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_hints_update_completed(
                     file=source,
                     operation_id=correlation_id,
@@ -964,7 +964,7 @@ async def _index_file_impl(
             )
     except Exception as exc:
         if state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_file_indexing_failed(
                     file=source,
                     error=f"{type(exc).__qualname__}: {exc}"
@@ -987,7 +987,7 @@ async def _index_file_impl(
     if state._property_index is not None:
         cleared = await state._property_index.clear_indexing_failure(source)
         if cleared and state._event_bus is not None:
-            await state._event_bus.publish_async_nowait(
+            await state._event_bus.publish_nowait(
                 rag_file_indexing_failure_cleared(
                     file=source, reason="indexed_successfully"
                 )
@@ -1003,7 +1003,7 @@ async def _index_file_impl(
     )
     if state._event_bus is not None:
         n_noise = sum(1 for m in metadatas if chunk_metadata_is_noise(m))
-        await state._event_bus.publish_async_nowait(
+        await state._event_bus.publish_nowait(
             rag_file_indexed(
                 file=source,
                 deleted=len(stale_ids),

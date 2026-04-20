@@ -80,7 +80,7 @@ async def _emit_terminal_routing_failure(
     original_model_id = trace.original_model_id if trace else None
     timestamp = time.time()
 
-    await event_bus.publish_async_nowait(
+    await event_bus.publish_nowait(
         RoutingDecisionFailed(
             model_id=str(context.selected_model),
             candidate_count=candidate_count,
@@ -123,7 +123,7 @@ async def handle_selection_rejection(
     if event_bus:
         from src.scheduling.events import FederationRoutingRejected
 
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             FederationRoutingRejected(
                 request_id=context.request_id,
                 model_id=str(context.selected_model),

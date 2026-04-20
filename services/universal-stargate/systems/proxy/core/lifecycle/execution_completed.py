@@ -62,7 +62,7 @@ async def emit_execution_completed(
     try:
         from src.scheduling.events import ModelExecutionCompleted
 
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             ModelExecutionCompleted(
                 url=url,
                 model_id=model_id,
@@ -122,7 +122,7 @@ async def emit_execution_failed(
     try:
         from src.scheduling.events import ModelExecutionFailed
 
-        await event_bus.publish_async_nowait(
+        await event_bus.publish_nowait(
             ModelExecutionFailed(
                 url=url,
                 model_id=model_id,

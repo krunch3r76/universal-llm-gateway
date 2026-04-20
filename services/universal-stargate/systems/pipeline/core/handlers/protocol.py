@@ -81,6 +81,15 @@ class StepOutput:
     # Full request body sent to LLM (for complete reproducibility)
     request_body: dict[str, Any] | None = None
 
+    # Reasoning trace from OpenAI-family reasoning models. Shape is whatever
+    # the upstream returned (structured blocks or a flat string). ``None`` for
+    # non-reasoning models or providers that don't surface the trace.
+    reasoning: Any = None
+    # From OpenAI ``usage.completion_tokens_details.reasoning_tokens`` — part
+    # of ``completion_tokens``, exposed separately so consumers can distinguish
+    # reasoning spend from visible output.
+    reasoning_tokens: int = 0
+
     # Embedded provenance (auto-populated from model_id + step_id)
     provenance: dict[str, Any] | None = None
 
@@ -249,9 +258,7 @@ class PipelineContext:
             map_iteration_request_id=map_iteration_request_id,
         )
 
-    def with_inference_request_id(
-        self, inference_request_id: str
-    ) -> PipelineContext:
+    def with_inference_request_id(self, inference_request_id: str) -> PipelineContext:
         """
         Return context copy with pre-generated inference request ID.
 

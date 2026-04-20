@@ -1,6 +1,6 @@
 """Request-scoped event emission helpers.
 
-Non-blocking event publishing using EventBus publish_async_nowait.
+Non-blocking event publishing using EventBus publish_nowait.
 
 Contract: event_bus is a hard dependency - fail fast if missing.
 """
@@ -38,7 +38,7 @@ async def emit_request_queued_nowait(
     if event_bus is None:
         raise ValueError("event_bus is required for request event emission")
 
-    await event_bus.publish_async_nowait(
+    await event_bus.publish_nowait(
         RequestQueued(
             model_id=model_id,
             request_id=request_id,
@@ -70,7 +70,7 @@ async def emit_inference_failed_nowait(
     if event_bus is None:
         raise ValueError("event_bus is required for failure event emission")
 
-    await event_bus.publish_async_nowait(
+    await event_bus.publish_nowait(
         InferenceFailed(
             model_id=model_id,
             request_id=request_id,
