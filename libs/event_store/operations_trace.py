@@ -155,19 +155,22 @@ async def _capacity_snapshot(
 
 
 async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
-    """Aggregate frontier generate health per provider from mcp.frontier.* signals."""
+    """Aggregate frontier dispatch health per provider across MCP + pipeline surfaces.
+
+    Reads both the legacy ``mcp.frontier.*`` family (still emitted by
+    ``_frontier_core.execute_frontier`` for direct MCP ``frontier_generate``
+    callers) and the hoisted ``pipeline.frontier.dispatch.*`` family emitted
+    by ``frontier_dispatch_v1``. Bucket shape is provider-symmetric so
+    Phase 2+ collapse of the MCP surface onto the pipeline leaves the
+    response envelope unchanged.
+    """
     minutes, cutoff = await _resolve_window_minutes_and_cutoff(params, store)
     provider_filter = params.get("provider") or None
 
-    # ``pipeline.frontier.dispatch.output.short`` is the Phase-1 hoisted
-    # successor to ``mcp.frontier.output.short``; both matter for
-    # provider-health aggregation. Other pipeline.frontier.dispatch.* signals
-    # are lifecycle telemetry, not provider health, so we narrow to the one
-    # short-output signal rather than LIKE-matching the whole namespace.
     rows = await store.query(
         "SELECT signal, payload FROM events "
         "WHERE (signal LIKE 'mcp.frontier.%' "
-        "OR signal = 'pipeline.frontier.dispatch.output.short') "
+        "OR signal LIKE 'pipeline.frontier.dispatch.%') "
         "AND role NOT IN ('debug', 'realtime') "
         "AND ts_unix_ms >= ? "
         "ORDER BY seq DESC",
@@ -201,7 +204,10 @@ async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[st
             },
         )
         sig = row["signal"]
-        if sig == "mcp.frontier.generate.called":
+        if sig in (
+            "mcp.frontier.generate.called",
+            "pipeline.frontier.dispatch.started",
+        ):
             bucket["called"] += 1
         elif sig == "mcp.frontier.generate.completed":
             bucket["completed"] += 1
@@ -210,15 +216,29 @@ async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[st
             if isinstance(duration, int | float):
                 bucket["_total_duration_s"] += float(duration)
                 bucket["_duration_samples"] += 1
+        elif sig in (
+            "pipeline.frontier.dispatch.completed",
+            "pipeline.frontier.dispatch.exhausted",
+        ):
+            bucket["completed"] += 1
+            bucket["_total_output_tokens"] += int(payload.get("completion_tokens") or 0)
         elif sig == "mcp.frontier.generate.error":
             err = payload.get("error") or "unknown"
             bucket["errors"][err] = bucket["errors"].get(err, 0) + 1
+        elif sig == "pipeline.frontier.dispatch.remotemcp.misconfigured":
+            bucket["errors"]["remotemcp_misconfigured"] = (
+                bucket["errors"].get("remotemcp_misconfigured", 0) + 1
+            )
         elif sig in (
             "mcp.frontier.output.short",
             "pipeline.frontier.dispatch.output.short",
         ):
             bucket["output_short"] += 1
-        elif sig == "mcp.frontier.tool.executed":
+        elif sig in (
+            "mcp.frontier.tool.executed",
+            "pipeline.frontier.dispatch.tool.called",
+            "pipeline.frontier.dispatch.tool.failed",
+        ):
             bucket["tool_executed"] += 1
 
     for prov, b in providers.items():

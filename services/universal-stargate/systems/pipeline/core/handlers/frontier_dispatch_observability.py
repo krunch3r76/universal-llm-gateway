@@ -9,9 +9,10 @@ orchestrates both detectors and their Stargate event-factory translations:
 - ``pipeline.frontier.dispatch.termination.shadow`` — fires when Gemini's
   thought trace looks like a silent refusal / loop / MAX_TOKENS-on-thought.
 
-The handler calls this unconditionally after a non-exhausted success;
-persona-free dispatches short-circuit here (``agent is None``) since both
-anomalies are only meaningful for team/full boot-level equivalents.
+The handler calls this unconditionally after the native loop returns on both
+exhausted and completed paths; persona-free dispatches pass
+``boot_level="none"`` and short-circuit inside the detectors, which own
+boot-level gating.
 """
 
 from __future__ import annotations
@@ -36,35 +37,30 @@ if TYPE_CHECKING:
 # Module-level detector — stateless, safe to share across dispatches.
 _TERMINATION_DETECTOR = TerminationShadowDetector()
 
-# Boot-level equivalent for a hydrated persona dispatch. The pipeline handler
-# has no multi-tier boot concept (team vs full); ``agent is not None`` gates
-# the emission, so the detector sees the level that matches
-# ``_frontier_core``'s ``boot='team'`` path.
-_PIPELINE_BOOT_LEVEL = "team"
-
 
 def emit_post_loop_observability(
     *,
     context: PipelineContext,
     publish: Any,
     agent: str | None,
+    boot_level: str,
     model: str,
     result: NativeLoopResult,
 ) -> None:
-    """Fire the Phase-1 hoisted observability signals on success.
+    """Fire the Phase-1 hoisted observability signals.
 
-    No-op when ``agent is None`` (persona-free dispatch) — both detectors
-    internally gate on team/full boot equivalence. Both helpers fall
-    through quietly when their own gates (provider, substrate, threshold)
-    don't match, so this can be called unconditionally on the success path.
+    Called on both exhausted and completed branches; both detectors gate
+    internally on ``boot_level ∈ {team, full}`` and (for termination
+    shadow) ``provider = google``. Persona-free dispatches land here with
+    ``boot_level='none'`` and short-circuit inside the detectors — no
+    handler-side agent check needed.
     """
-    if agent is None:
-        return
     output_tokens = int(result.usage.get("output_tokens", 0))
     _emit_output_short(
         publish=publish,
         execution_id=context.execution_id,
         agent=agent,
+        boot_level=boot_level,
         model=model,
         provider=result.provider,
         output_tokens=output_tokens,
@@ -77,6 +73,7 @@ def emit_post_loop_observability(
         publish=publish,
         execution_id=context.execution_id,
         agent=agent,
+        boot_level=boot_level,
         model=model,
         provider=result.provider,
         output_tokens=output_tokens,
@@ -91,7 +88,8 @@ def _emit_output_short(
     *,
     publish: Any,
     execution_id: str,
-    agent: str,
+    agent: str | None,
+    boot_level: str,
     model: str,
     provider: str,
     output_tokens: int,
@@ -101,7 +99,7 @@ def _emit_output_short(
     content: str | None,
 ) -> None:
     payload = detect_output_short(
-        boot_level=_PIPELINE_BOOT_LEVEL,
+        boot_level=boot_level,
         output_tokens=output_tokens,
         tool_calls_made=tool_calls_made,
         finish_reason=finish_reason,
@@ -130,7 +128,8 @@ def _emit_termination_shadow(
     *,
     publish: Any,
     execution_id: str,
-    agent: str,
+    agent: str | None,
+    boot_level: str,
     model: str,
     provider: str,
     output_tokens: int,
@@ -141,7 +140,7 @@ def _emit_termination_shadow(
 ) -> None:
     payload = _TERMINATION_DETECTOR.detect(
         provider=provider,
-        boot_level=_PIPELINE_BOOT_LEVEL,
+        boot_level=boot_level,
         reasoning=reasoning,
         content=content,
         finish_reason=finish_reason,
@@ -159,7 +158,7 @@ def _emit_termination_shadow(
             execution_id=execution_id,
             model=model,
             provider=provider,
-            boot_level=_PIPELINE_BOOT_LEVEL,
+            boot_level=boot_level,
             output_tokens=output_tokens,
             finish_reason=finish_reason,
             block_reason=block_reason,

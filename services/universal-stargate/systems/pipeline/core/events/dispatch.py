@@ -338,7 +338,7 @@ def PipelineFrontierDispatchRemoteMcpEnabled(  # noqa: N802
         provider: Effective provider (``anthropic``, ``openai``, ``xai``)
     """
     return Event(
-        signal="pipeline.frontier.dispatch.remote.mcp.enabled",
+        signal="pipeline.frontier.dispatch.remotemcp.enabled",
         payload={
             "execution_id": execution_id,
             "agent": agent,
@@ -370,12 +370,51 @@ def PipelineFrontierDispatchRemoteMcpMisconfigured(  # noqa: N802
         reason: Human-readable ``RuntimeError`` message from ``resolve_mcp_env``
     """
     return Event(
-        signal="pipeline.frontier.dispatch.remote.mcp.misconfigured",
+        signal="pipeline.frontier.dispatch.remotemcp.misconfigured",
         payload={
             "execution_id": execution_id,
             "agent": agent,
             "model": model,
             "reason": reason,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineFrontierDispatchStarted(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    boot_level: str,
+    remote_mcp: bool,
+) -> Event:
+    """Emitted when a ``frontier_dispatch_v1`` execution begins its native call.
+
+    Fires once per step execution, after hydration (for team-seat dispatches)
+    and before ``run_native_tool_loop``. The ``.started`` / ``.completed`` /
+    ``.exhausted`` triple gives ``_provider_health`` per-provider call and
+    completion rates previously derived from
+    ``mcp.frontier.generate.called`` / ``mcp.frontier.generate.completed``.
+
+    Payload:
+        execution_id: Pipeline execution UUID
+        agent: Persona identity if set, else ``None`` for persona-free dispatches
+        model: Raw model string as supplied by the caller
+        provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
+        boot_level: ``team`` (persona dispatch) or ``none`` (persona-free)
+        remote_mcp: True iff adapter-level remote MCP injection is active
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.started",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "boot_level": boot_level,
+            "remote_mcp": remote_mcp,
         },
         scope="node",
     )
@@ -399,10 +438,11 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
     Replaces the deprecated ``mcp.frontier.output.short`` signal: the same
     anomaly is now observable for every ``frontier_dispatch_v1`` caller
     (MCP sugar, pipeline callers, future HTTP surfaces) instead of only
-    callers entering through ``frontier_generate``. Gate is parity with the
-    old signal — ``boot_level ∈ {team, full}`` plus the short-output
-    threshold — represented here as ``agent is not None`` at emission time
-    in the handler.
+    callers entering through ``frontier_generate``. Gate is ``boot_level ∈
+    {team, full}`` plus the short-output threshold — enforced inside
+    ``detect_output_short``. The handler passes ``boot_level="team"`` for
+    persona dispatches and ``"none"`` otherwise; the detector filters the
+    latter.
 
     Payload:
         agent: Persona identity (gate: only emitted when set)

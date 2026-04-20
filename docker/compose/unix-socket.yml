@@ -126,7 +126,7 @@ services:
       # Remote-MCP env — required for pipeline/frontier_generate paths that set
       # remote_mcp=True (Task 7 Phase 0). When either is missing, adapter
       # build_frontier_request raises RuntimeError and the pipeline handler
-      # emits pipeline.frontier.dispatch.remote.mcp.misconfigured before
+      # emits pipeline.frontier.dispatch.remotemcp.misconfigured before
       # surfacing as pipeline_execution_failed.
       - MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-}
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:-}

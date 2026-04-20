@@ -135,12 +135,26 @@ def load_env_file(path: Path) -> dict[str, str]:
 def build_service_env(
     workspace_root: Path, node_env_path: Path | None = None
 ) -> dict[str, str]:
-    """Build env dict from os.environ + .env.local + secrets.env + optional node env."""
+    """Build env dict from os.environ + .env.local + secrets.env + optional node env.
+
+    Also backfills ``MCP_PUBLIC_URL`` and ``MCP_AUTH_TOKEN`` from
+    ``~/.gateway/mcp.yaml`` when missing — required by the gateway/Stargate
+    container for the frontier-dispatch ``remote_mcp`` code path
+    (``libs/llm_adapters/_mcp_entry.resolve_mcp_env``). Both env vars must be
+    set in the ``manage`` process environment for the compose passthrough in
+    ``docker/compose/unix-socket.yml`` to populate the container.
+    """
     env = dict(os.environ)
     env.update(load_env_file(workspace_root / ".env.local"))
     env.update(load_env_file(GATEWAY_DIR / "secrets.env"))
     if node_env_path:
         env.update(load_env_file(node_env_path))
+    cfg = load_mcp_config()
+    if cfg is not None:
+        if not env.get("MCP_AUTH_TOKEN") and cfg.auth_token:
+            env["MCP_AUTH_TOKEN"] = cfg.auth_token
+        if not env.get("MCP_PUBLIC_URL") and cfg.mcp_server_url:
+            env["MCP_PUBLIC_URL"] = cfg.mcp_server_url
     return env
 
 

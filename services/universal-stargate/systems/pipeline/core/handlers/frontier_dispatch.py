@@ -51,6 +51,7 @@ from ..events.dispatch import (
     PipelineFrontierDispatchHydrated,
     PipelineFrontierDispatchRemoteMcpEnabled,
     PipelineFrontierDispatchRemoteMcpMisconfigured,
+    PipelineFrontierDispatchStarted,
     PipelineFrontierDispatchToolCalled,
     PipelineFrontierDispatchToolFailed,
 )
@@ -173,6 +174,18 @@ class FrontierDispatchHandler(BaseHandler):
         cancel_check = self._build_cancel_check(context)
         on_tool_event = self._build_on_tool_event(context, agent)
 
+        self._publish_bus_event(
+            context,
+            PipelineFrontierDispatchStarted(
+                execution_id=context.execution_id,
+                agent=agent,
+                model=model,
+                provider=provider,
+                boot_level="team" if agent else "none",
+                remote_mcp=remote_mcp,
+            ),
+        )
+
         call_start = time.monotonic()
         try:
             result: NativeLoopResult = await run_native_tool_loop(
@@ -226,17 +239,20 @@ class FrontierDispatchHandler(BaseHandler):
                     provider=result.provider,
                 ),
             )
-            # Post-loop observability (Task-7 Phase 1 hoist). Only emit on
-            # the non-exhausted success path; helpers in the sibling module
-            # gate internally on agent/provider/substrate so persona-free
-            # dispatches short-circuit.
-            emit_post_loop_observability(
-                context=context,
-                publish=lambda event: self._publish_bus_event(context, event),
-                agent=agent,
-                model=model,
-                result=result,
-            )
+        # Post-loop observability (Task-7 Phase 1 hoist). Emitted on both
+        # exhausted and completed branches — the anomalies (short output,
+        # termination shadow) are response-fact detections independent of
+        # whether the tool loop hit max turns. Helpers gate internally on
+        # boot_level / provider so persona-free or non-Gemini dispatches
+        # short-circuit inside the detector.
+        emit_post_loop_observability(
+            context=context,
+            publish=lambda event: self._publish_bus_event(context, event),
+            agent=agent,
+            boot_level="team" if agent else "none",
+            model=model,
+            result=result,
+        )
 
         tool_calls_payload: list[dict[str, Any]] = [
             {
@@ -316,7 +332,15 @@ class FrontierDispatchHandler(BaseHandler):
         return str(value)
 
     def _resolve_system_prompt(self, step: StepConfig, context: PipelineContext) -> str:
-        """Persona-free system prompt: step.system_prompt, else first system msg."""
+        """Persona-free system prompt.
+
+        Precedence: ``pipeline_options.system`` > ``step.system_prompt`` >
+        first system message in ``context.messages``. ``pipeline_options.system``
+        is used by MCP ``frontier_generate`` when ``boot='mcp'``.
+        """
+        opt_system = context.options.get("system")
+        if isinstance(opt_system, str) and opt_system:
+            return opt_system
         if step.system_prompt:
             return step.system_prompt
         msgs = context.messages or []

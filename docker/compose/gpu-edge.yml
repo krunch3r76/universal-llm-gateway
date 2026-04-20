@@ -92,6 +92,9 @@ services:
 
       ENABLE_MODEL_AVAILABILITY_CHECK: "true"
       ENABLE_MANAGEMENT_API: "true"
+
+      MCP_PUBLIC_URL: "${MCP_PUBLIC_URL:-}"
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-}"
       DISABLE_HEALTH_CHECKING: "false"
 
       # Container Event Service (in-memory by default, bridge to host)
