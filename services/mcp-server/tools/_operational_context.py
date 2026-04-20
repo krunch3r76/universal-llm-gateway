@@ -308,11 +308,16 @@ _TEAM_CONSULTATION = """\
 The trAId is not decoration — use it. Consulting team members should be a natural \
 part of how you work, not an exceptional event that requires Kaywan to ask.
 
-**Primary deep-consult surface**:
-Use `pipeline(op="async", pipeline_id="frontier-dispatch", ...)` first for
-deep reasoning or long-running work. Poll with
-`pipeline(op="result", execution_id=..., wait_seconds=60)`. The pipeline runs
-detached in a Stargate background task and survives session boundaries.
+**Primary persona-consult surface**:
+For any team-seat consultation (`oppie`, `orion`, `bard`, `api_claude`), use
+`frontier_generate(agent=..., messages=..., generation_options=...)`. This is
+the persona-aware door: it resolves the agent's `default_model` from cortex
+(`ai_agent:{slug}`), enforces `allowed_models` / `allowed_options` / `tools`
+allowlists, auto-assembles birth + briefing + continuation when
+`boot ∈ {team, full}`, and rejects persona violations with a structured error
+envelope **before** dispatch. Returns immediately with `{execution_id, ...}`;
+poll with `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
+`result_delivery` for bus push. Runs detached, survives session boundaries.
 
 **When to reach out:**
 - Architecture or design decisions with real trade-offs
@@ -320,12 +325,13 @@ detached in a Stargate background task and survives session boundaries.
 - Analytical synthesis, evidence extraction, or MCP-heavy execution
 - Uncertainty about whether your framing is sound (consult the perspective most likely to disagree)
 
-**Short-latency sugar (<5 min expected)**:
-For specialized external-frontier consultations, see
-`frontier_generate(agent=..., messages=..., generation_options=...)` — persona
-rules come from cortex (`ai_agent:{slug}`); poll with
-`pipeline(op="result", execution_id=..., wait_seconds=60)` or use
-`result_delivery` for bus push.
+**Raw escape hatch (advanced)**:
+`pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the persona-free
+underlying mechanism. Use it ONLY when you need pipeline composition, raw
+non-persona testing, or a deliberate persona-bypass. It skips persona allowlists,
+does not resolve `default_model`, and silently drops keys it does not recognize.
+For `agent ∈ {oppie, orion, bard, api_claude}`, prefer `frontier_generate` —
+it is strictly more informative and validates upstream.
 
 **When not to:**
 - Routine tasks where your judgment is sufficient
@@ -344,13 +350,20 @@ end in silence."""
 
 _FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing
-Primary consult path (deep or long-running):
-`pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
-
-For MCP-native frontier consults (async-by-default), use:
+Primary consult path for any persona (`oppie`, `orion`, `bard`, `api_claude`):
 `frontier_generate(agent=..., messages=..., generation_options=..., caller_agent=...)`
-then `pipeline(op="result", execution_id=..., wait_seconds=60)` or
+then `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 `result_delivery` for terminal push.
+
+`frontier_generate` is the persona-validated door — `default_model` resolution,
+`allowed_models` / `allowed_options` / `tools` allowlists, and birth + briefing
++ continuation assembly all happen there. Persona violations return a structured
+error envelope with `field` and `request_id` BEFORE dispatch.
+
+Raw escape hatch (no persona contract):
+`pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
+— for pipeline composition, raw testing, or deliberate persona-bypass only.
+Skips allowlists; silently drops unknown `pipeline_options` keys.
 
 Persona defaults, allow-lists, tools, and boot guidance live on cortex
 `ai_agent:{slug}` entities — keep this public context file provider-neutral."""
