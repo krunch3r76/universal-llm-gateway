@@ -51,7 +51,7 @@ _VALID_SERVICES = frozenset(
 )  # All recognized service names for API operations
 # Services that support the 'rebuild' operation (container services with local Dockerfiles).
 _REBUILD_SERVICES = frozenset(
-    {"gateway", "mcp", "event_service", "cortex_api", "agent_bus", "email_bridge"}
+    {"gateway", "event_service", "cortex_api", "agent_bus", "email_bridge"}
 )
 
 
@@ -331,7 +331,13 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         start_msg = await ctl.start_gateway()
         return f"{last}\n{start_msg}"
     if service == "mcp":
-        return await ctl.rebuild_mcp()
+        raise ValueError(
+            "rebuild is not supported for 'mcp' via MCP tool. "
+            "Python source changes are bind-mounted — use "
+            "manage(action='restart', service='mcp') instead. "
+            "Rebuild is only needed when pip dependencies or the "
+            "Dockerfile itself change — that is a human/ops operation."
+        )
     if service == "event_service":
         return await ctl.rebuild_event_service()
     if service == "cortex_api":

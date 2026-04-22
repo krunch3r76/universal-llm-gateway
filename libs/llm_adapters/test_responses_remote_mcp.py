@@ -89,4 +89,52 @@ def test_remote_mcp_off_preserves_normal_tool_flow() -> None:
     tools = [{"type": "function", "function": {"name": "f", "parameters": {}}}]
     req = _base_req("grok-4-fast-reasoning", tools=tools)
     _url, _headers, body = _adapter("xai").build_frontier_request(req)
-    assert body["tools"] == [{"type": "function", "name": "f", "parameters": {}}]
+    assert body["tools"] == [
+        {
+            "type": "function",
+            "name": "f",
+            "parameters": {"type": "object", "properties": {}},
+        }
+    ]
+
+
+def test_client_side_function_tools_are_sanitized() -> None:
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web_fetch",
+                "description": "Fetch a URL",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "title": "URL"},
+                        "headers": {
+                            "anyOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "Authorization": {"type": "string"}
+                                    },
+                                    "additionalProperties": False,
+                                },
+                                {"type": "null"},
+                            ],
+                            "default": None,
+                        },
+                    },
+                    "required": ["url"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+    ]
+    req = _base_req("gpt-5.4", tools=tools)
+    _url, _headers, body = _adapter("openai").build_frontier_request(req)
+    params = body["tools"][0]["parameters"]
+
+    assert body["tools"][0]["name"] == "web_fetch"
+    assert "additionalProperties" not in params
+    assert "title" not in params["properties"]["url"]
+    assert params["properties"]["headers"]["type"] == "object"
+    assert "default" not in params["properties"]["headers"]

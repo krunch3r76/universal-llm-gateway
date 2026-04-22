@@ -16,6 +16,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from llm_adapters._tool_schema import sanitize_tool_parameters
+
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
 
@@ -36,7 +38,11 @@ def _openai_tool_to_gemini(tool: dict[str, Any]) -> dict[str, Any] | None:
     if "description" in fn:
         decl["description"] = fn["description"]
     if "parameters" in fn:
-        decl["parameters"] = fn["parameters"]
+        params = fn["parameters"]
+        if isinstance(params, dict):
+            decl["parameters"] = sanitize_tool_parameters(params)
+        else:
+            decl["parameters"] = params
     return decl
 
 

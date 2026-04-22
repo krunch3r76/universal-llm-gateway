@@ -46,6 +46,39 @@ router = APIRouter(tags=["pipelines-dispatch"])
 
 _MAX_WAIT_SECONDS = 60.0
 
+# Pipeline ID of the raw native-frontier dispatch path. Bare callers that
+# reach it with ``pipeline_options.agent`` set are bypassing the persona
+# contract layer at ``/api/v1/frontier/generate`` (which sets
+# ``_endpoint_request_id`` on its outgoing pipeline_options). We attach a
+# ``hint`` to the 202 envelope so those callers see the right tool on the
+# very response that returned ``execution_id``.
+_FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
+_FRONTIER_GENERATE_HINT = (
+    "agent personas are best dispatched via `frontier_generate` — persona "
+    "allowlists (allowed_models / allowed_options / tools), default_model "
+    "resolution, and birth + briefing assembly are bypassed on the raw "
+    '`pipeline(pipeline_id="frontier-dispatch")` path.'
+)
+
+
+def _frontier_generate_hint_for(dispatch: DispatchRequest) -> str | None:
+    """Return the persona-bypass hint when applicable, else ``None``.
+
+    Triggers iff the dispatch targets ``frontier-dispatch`` with an
+    ``agent`` in ``pipeline_options`` AND lacks the ``_endpoint_request_id``
+    marker that ``/api/v1/frontier/generate`` injects. Both clauses are
+    required so the public persona endpoint (the canonical door) does not
+    self-warn.
+    """
+    if dispatch.model != _FRONTIER_DISPATCH_PIPELINE_ID:
+        return None
+    opts = dispatch.pipeline_options or {}
+    if not opts.get("agent"):
+        return None
+    if opts.get("_endpoint_request_id"):
+        return None
+    return _FRONTIER_GENERATE_HINT
+
 
 class ResultDeliveryConfig(BaseModel):
     """Optional delivery hook for async pipeline results.
@@ -256,15 +289,17 @@ async def dispatch_pipeline(
 
     task.add_done_callback(_on_task_done)
 
-    return JSONResponse(
-        status_code=202,
-        content={
-            "execution_id": execution_id,
-            "pipeline": dispatch.model,
-            "started_at": started_at,
-            "status": "running",
-        },
-    )
+    response_body: dict[str, Any] = {
+        "execution_id": execution_id,
+        "pipeline": dispatch.model,
+        "started_at": started_at,
+        "status": "running",
+    }
+    hint = _frontier_generate_hint_for(dispatch)
+    if hint is not None:
+        response_body["hint"] = hint
+
+    return JSONResponse(status_code=202, content=response_body)
 
 
 @router.get("/pipelines/executions/{execution_id}")

@@ -47,7 +47,7 @@ class LLMRequest:
 
     messages: list[dict[str, Any]]
     model: str
-    max_tokens: int = 4096
+    max_tokens: int | None = None
     system: str = ""
     temperature: float | None = None
     top_p: float | None = None
@@ -173,9 +173,8 @@ def body_to_llm_request(
         messages = []
     system_raw = body.get("system", "")
     system = flatten_anthropic_system(system_raw)
-    max_tok = body.get("max_tokens", 4096)
-    if not isinstance(max_tok, int) or max_tok < 1:
-        max_tok = 4096
+    max_tok_raw = body.get("max_tokens")
+    max_tok: int | None = max_tok_raw if isinstance(max_tok_raw, int) and max_tok_raw >= 1 else None
     temperature = body.get("temperature")
     if isinstance(temperature, bool) or not isinstance(temperature, int | float):
         temperature = None

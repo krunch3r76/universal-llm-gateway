@@ -15,11 +15,11 @@ agent-bus thread on terminal transition.
 
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp_events import record
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -27,11 +27,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-
 # Relay only handles admission (persona enforcement + forward). Long-poll
 # blocking is the caller's responsibility via pipeline(op="result").
-_RELAY_TIMEOUT = httpx.Timeout(connect=10.0, read=20.0, write=15.0, pool=10.0)
+_RELAY_TIMEOUT = 20.0
 
 
 def register_frontier_tools(mcp: FastMCP) -> None:
@@ -45,6 +43,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         boot: str = "none",
         system: str = "",
         tools: list[str] | None = None,
+        reasoning_effort: str | None = None,
         generation_options: dict[str, Any] | None = None,
         transcript_id: str | None = None,
         result_delivery: dict[str, Any] | None = None,
@@ -73,9 +72,20 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           - ``tools``: explicit tool name list. Subset of persona's tools
             if ``agent`` set; subset of full tool registry otherwise.
             Omit for the persona's default toolset.
-          - ``generation_options``: max_tokens, temperature,
-            reasoning_effort, thinking, etc. Adapter handles per-provider
-            shaping.
+          - ``reasoning_effort`` ∈ ``{"low", "medium", "high"}``:
+            convenience knob. Translated to the provider-native thinking
+            config automatically (Anthropic: ``thinking.budget_tokens``;
+            OpenAI/xAI: ``reasoning.effort``; Google: ``thinkingBudget``
+            / ``thinkingLevel``). Only applied if ``generation_options``
+            does not set ``thinking`` explicitly.
+          - ``generation_options``: pass-through generation params
+            forwarded untranslated (``temperature``, ``max_tokens``,
+            ``top_p``, ``top_k``, ``stop``, ``seed``,
+            ``response_format``, ``tool_choice``, ``thinking``). For
+            full per-provider control, pass ``thinking`` directly using
+            the vendor's native shape; for params not surfaced here,
+            dispatch via ``pipeline(pipeline_id="frontier-dispatch",
+            pipeline_options={"generation_parameters": {...}})``.
           - ``result_delivery``: ``{bus_thread, bus_from_agent,
             bus_to_agent, bus_subject}`` — Stargate posts the terminal
             envelope to the configured agent-bus thread when the pipeline
@@ -115,6 +125,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("agent", agent),
             ("model", model),
             ("tools", tools),
+            ("reasoning_effort", reasoning_effort),
             ("generation_options", generation_options),
             ("transcript_id", transcript_id),
             ("result_delivery", result_delivery),
@@ -129,9 +140,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             model=model or "",
             boot=boot,
         )
-        async with httpx.AsyncClient(
-            base_url=_STARGATE_URL, timeout=_RELAY_TIMEOUT
-        ) as client:
+        async with make_async_client(DEFAULT_STARGATE_URL, timeout=_RELAY_TIMEOUT) as client:
             try:
                 resp = await client.post("/api/v1/frontier/generate", json=body)
             except httpx.RequestError as exc:

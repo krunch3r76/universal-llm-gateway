@@ -47,9 +47,9 @@ def _call_anthropic(
     if not isinstance(messages, list):
         return {"error": "Invalid Anthropic payload: messages must be a list"}
 
-    max_tokens = payload.get("max_tokens", 4096)
-    if not isinstance(max_tokens, int) or max_tokens < 1:
-        max_tokens = 4096
+    max_tokens = payload.get("max_tokens")
+    if max_tokens is not None and (not isinstance(max_tokens, int) or max_tokens < 1):
+        max_tokens = None
 
     system = payload.get("system", "")
     if not isinstance(system, str):
@@ -102,7 +102,7 @@ def _call_stargate(
     *,
     model: str,
     system: str = "",
-    max_tokens: int = 4096,
+    max_tokens: int | None = None,
 ) -> dict[str, Any]:
     """POST to Stargate /v1/chat/completions — returns raw OpenAI-format response."""
     wire: list[dict[str, Any]] = []
@@ -112,9 +112,10 @@ def _call_stargate(
     body: dict[str, Any] = {
         "model": model,
         "messages": wire,
-        "max_tokens": max_tokens,
         "stream": False,
     }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
             resp = client.post(f"{_STARGATE_URL}/v1/chat/completions", json=body)
@@ -156,7 +157,7 @@ def register_llm_tools(mcp: FastMCP) -> None:
         messages: list[dict[str, Any]],
         system: str = "",
         model: str = "anthropic/claude-sonnet-4",
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         stop_sequences: list[str] | None = None,

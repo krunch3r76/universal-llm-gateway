@@ -124,8 +124,27 @@ def _op_session_close(
 
     transcript_path = f"notes/system/transcripts/{session_id}.md"
     abs_path = _FILES_ROOT / transcript_path
-    abs_path.parent.mkdir(parents=True, exist_ok=True)
-    abs_path.write_text(transcript_md, encoding="utf-8")
+    try:
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text(transcript_md, encoding="utf-8")
+    except OSError as exc:
+        logger.error(
+            "session_close: failed to write transcript to %s: %s", abs_path, exc
+        )
+        return {"error": f"Transcript file write failed: {exc}"}
+    if not abs_path.is_file():
+        logger.error(
+            "session_close: transcript absent after write — "
+            "CORTEX_FILES_ROOT=%s abs_path=%s",
+            _FILES_ROOT,
+            abs_path,
+        )
+        return {
+            "error": (
+                f"Transcript write appeared to succeed but file is absent at {abs_path}. "
+                f"CORTEX_FILES_ROOT={_FILES_ROOT}"
+            )
+        }
 
     body: dict[str, Any] = {
         "session_id": session_id,

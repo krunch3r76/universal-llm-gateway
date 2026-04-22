@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from mcp_events import monotonic_now, record
+from provider_model_limits import local_model_inference_timeout, rag_pipeline_timeout
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -23,9 +24,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-_CONTEXT_TIMEOUT = 90.0
-_ANSWER_TIMEOUT = 180.0
+# Default rerank/answer model names used by the rag-context and rag-answer pipelines.
+# Override via env vars when pipelines are reconfigured to use different models.
+_RERANK_MODEL_DEFAULT = os.environ.get("RAG_RERANK_MODEL", "qwen3_9b")
+_ANSWER_MODEL_DEFAULT = os.environ.get("RAG_ANSWER_MODEL", "phi4")
+# Extra seconds added to the httpx client timeout beyond the pipeline wall-clock.
+_HTTP_BUFFER_S = 10.0
 _SCOPES_TIMEOUT = 15.0
+# Direct RAG REST API calls (no model inference — retrieval + ranking only).
+_RAG_API_TIMEOUT = 30.0
 _RAG_METADATA_DB = os.environ.get(
     "RAG_METADATA_DB_PATH", "/data/rag-store/rag_metadata.db"
 )
@@ -466,12 +473,16 @@ def register_rag_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.rag.pipeline.called", **record_args)
 
+        rerank_model = pipeline_options.get("rerank_model", _RERANK_MODEL_DEFAULT)
+        pipeline_timeout = rag_pipeline_timeout(rerank_model)
+        pipeline_options["timeout_seconds"] = pipeline_timeout
+
         try:
             result = _pipeline_call(
                 "rag-context",
                 [{"role": "user", "content": query}],
                 pipeline_options=pipeline_options,
-                timeout=_CONTEXT_TIMEOUT,
+                timeout=pipeline_timeout + _HTTP_BUFFER_S,
             )
         except httpx.TimeoutException as e:
             user_message = "Pipeline timed out. The query may be too complex."
@@ -597,12 +608,19 @@ def register_rag_tools(mcp: FastMCP) -> None:
             record_args["prefix"] = prefixes
         record("mcp.rag.pipeline.called", **record_args)
 
+        rerank_model = pipeline_options.get("rerank_model", _RERANK_MODEL_DEFAULT)
+        answer_model = pipeline_options.get("model", _ANSWER_MODEL_DEFAULT)
+        pipeline_timeout = rag_pipeline_timeout(rerank_model) + local_model_inference_timeout(
+            answer_model
+        )
+        pipeline_options["timeout_seconds"] = pipeline_timeout
+
         try:
             result = _pipeline_call(
                 pipeline,
                 [{"role": "user", "content": question}],
                 pipeline_options=pipeline_options,
-                timeout=_ANSWER_TIMEOUT,
+                timeout=pipeline_timeout + _HTTP_BUFFER_S,
             )
         except httpx.TimeoutException as e:
             user_message = "Pipeline timed out. The question may be too complex — try without deep=True."
@@ -694,7 +712,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.rag.preview.called", top_k=safe_k)
         try:
-            payload = _rag_post("api/v1/rag/search", body, timeout=_CONTEXT_TIMEOUT)
+            payload = _rag_post("api/v1/rag/search", body, timeout=_RAG_API_TIMEOUT)
         except (
             httpx.ConnectError,
             httpx.TimeoutException,
@@ -760,7 +778,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             payload = _rag_post(
                 "api/v1/rag/chunks_by_index",
                 body,
-                timeout=_CONTEXT_TIMEOUT,
+                timeout=_RAG_API_TIMEOUT,
             )
         except (
             httpx.ConnectError,

@@ -21,9 +21,11 @@ import json
 import logging
 import re
 import time
+from copy import deepcopy
 from typing import Any
 
 import httpx
+from llm_adapters._tool_schema import sanitize_tool_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +37,32 @@ _JSONRPC_VERSION = "2.0"
 _BOOT_DIRECTIVE_RE = re.compile(
     r"""cortex_boot\(\s*agent\s*=\s*["'](\w+)["']\s*\)""",
 )
+
+_DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
+    "web_fetch": {
+        "type": "function",
+        "function": {
+            "name": "web_fetch",
+            "description": (
+                "Fetch a public HTTP(S) URL and return extracted readable content "
+                "or the raw response body."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "max_chars": {"type": "integer"},
+                    "start_offset": {"type": "integer"},
+                    "method": {"type": "string"},
+                    "headers": {"type": "object", "properties": {}},
+                    "body": {"type": "string"},
+                    "raw": {"type": "boolean"},
+                },
+                "required": ["url"],
+            },
+        },
+    }
+}
 
 
 def _jsonrpc_request(
@@ -78,6 +106,7 @@ def _mcp_schema_to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
         params["properties"] = input_schema["properties"]
     if "required" in input_schema:
         params["required"] = input_schema["required"]
+    params = sanitize_tool_parameters(params)
     return {
         "type": "function",
         "function": {
@@ -88,6 +117,15 @@ def _mcp_schema_to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _compat_dispatch_tool_defs(discovered_names: set[str]) -> list[dict[str, Any]]:
+    """Return synthetic tool defs for known overflow tools hidden from tools/list."""
+    return [
+        deepcopy(defn)
+        for name, defn in _DISPATCH_COMPAT_TOOL_DEFS.items()
+        if name not in discovered_names
+    ]
+
+
 class McpToolExecutor:
     """Proxy-side MCP client: discovers tools at startup, executes them during the agentic loop."""
 
@@ -96,6 +134,7 @@ class McpToolExecutor:
         self._auth_token = auth_token
         self._tools: list[dict[str, Any]] = []
         self._openai_defs: list[dict[str, Any]] = []
+        self._dispatch_compat_names: set[str] = set()
         self._client: httpx.AsyncClient | None = None
 
     async def startup(self) -> None:
@@ -114,10 +153,22 @@ class McpToolExecutor:
             tools = body.get("result", {}).get("tools", [])
             self._tools = [t for t in tools if isinstance(t, dict) and "name" in t]
             self._openai_defs = [_mcp_schema_to_openai_tool(t) for t in self._tools]
+            discovered_names = {
+                t["name"] for t in self._tools if isinstance(t.get("name"), str)
+            }
+            compat_defs = _compat_dispatch_tool_defs(discovered_names)
+            self._dispatch_compat_names = {
+                d["function"]["name"]
+                for d in compat_defs
+                if isinstance(d.get("function"), dict)
+                and isinstance(d["function"].get("name"), str)
+            }
+            self._openai_defs.extend(compat_defs)
             logger.info(
-                "McpToolExecutor: discovered %d tools from %s",
+                "McpToolExecutor: discovered %d tools from %s (+%d dispatch-compat)",
                 len(self._tools),
                 self._mcp_url,
+                len(self._dispatch_compat_names),
             )
         except Exception:
             logger.warning(
@@ -142,11 +193,17 @@ class McpToolExecutor:
         """Execute a single tool call via JSON-RPC ``tools/call``."""
         if not self._client:
             return json.dumps({"error": "MCP executor not initialized"})
+        target_name = name
+        target_arguments = arguments
+        if name in self._dispatch_compat_names:
+            target_name = "dispatch"
+            target_arguments = {"tool": name, "arguments": arguments}
         try:
             resp = await self._client.post(
                 self._mcp_url,
                 json=_jsonrpc_request(
-                    "tools/call", {"name": name, "arguments": arguments}
+                    "tools/call",
+                    {"name": target_name, "arguments": target_arguments},
                 ),
                 headers=self._headers(),
                 timeout=_MAX_TOOL_CALL_TIMEOUT,

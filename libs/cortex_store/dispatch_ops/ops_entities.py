@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import Any
+
+from fastapi import HTTPException
 
 from ..db import cortex_conn
 from ..routes.entities import (
@@ -84,8 +87,39 @@ def _op_entity_create(
         **({} if source_uri is None else {"source_uri": source_uri}),
         **({} if content_hash is None else {"content_hash": content_hash}),
     }
-    with cortex_conn() as conn:
-        result = _create_entity_impl(conn, payload)
+    try:
+        with cortex_conn() as conn:
+            result = _create_entity_impl(conn, payload)
+    except sqlite3.IntegrityError:
+        logger.warning("entity_create conflict for id=%s", id)
+        try:
+            with cortex_conn() as conn:
+                existing = _get_entity_impl(conn, entity_id=str(id))
+        except HTTPException:
+            existing = None
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": f"Entity already exists: {id}",
+                "existing_entity": existing,
+                "retryable": False,
+            },
+        )
+    except sqlite3.OperationalError as exc:
+        # Transient sqlite condition (locked, busy, IO error, disk full).
+        # Distinct from IntegrityError above (caller error) — this is upstream
+        # degradation that the agent should retry rather than treat as a fatal
+        # malformed-input signal.
+        logger.error(
+            "entity_create transient cortex degradation for id=%s: %s", id, exc
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "detail": f"Cortex temporarily unavailable: {exc}",
+                "retryable": True,
+            },
+        )
     if "error" not in result:
         logger.info("cortex entity_create: %s (%s)", id, type)
         record("mcp.cortex.entity.created", entity_id=id, entity_type=type)
@@ -98,7 +132,9 @@ def _op_entity_update(
 ) -> dict[str, Any]:
     if not entity_id:
         return {"error": "entity_id is required"}
-    updates: dict[str, object] = {k: v for k, v in kwargs.items() if k in _ENTITY_MUTABLE}
+    updates: dict[str, object] = {
+        k: v for k, v in kwargs.items() if k in _ENTITY_MUTABLE
+    }
     if (
         "source_uri" in updates
         and updates["source_uri"] is not None

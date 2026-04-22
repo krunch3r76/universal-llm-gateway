@@ -49,8 +49,9 @@ from agent_seat import (
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
     assemble_system_prompt,
+    get_mcp_tool_definitions,
     hydrate_agent,
-    resolve_tools,
+    resolve_tool_definitions,
 )
 from agent_seat.native_loop import NativeLoopResult, run_native_tool_loop
 from llm_adapters import FrontierRequest, effective_provider_for_model
@@ -86,11 +87,50 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+# Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
+# knob on ``frontier_generate`` / ``/api/v1/frontier/generate``.
+#
+# - Anthropic: ``budget_tokens`` (max_tokens auto-bumped by the adapter).
+#   Numbers parallel Google's 2.5 budget map for predictable behavior.
+# - OpenAI / xAI / OpenRouter: lowercase string consumed by the Responses
+#   API as ``reasoning.effort``. grok-4 strips it adapter-side (built-in
+#   reasoning, no effort control) — observable via INFO log.
+# - Google: uppercase string; the adapter normalizes via ``.upper()`` and
+#   maps to ``thinkingBudget`` (2.5) or ``thinkingLevel`` (3.x).
+_REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
+    "low": 2048,
+    "medium": 8192,
+    "high": 24000,
+}
+
+
+def _translate_reasoning_effort(
+    effort: str, provider: str
+) -> dict[str, Any] | None:
+    """Map ``reasoning_effort`` to a provider-native ``thinking`` dict."""
+    normalized = effort.strip().lower()
+    if normalized not in _REASONING_EFFORT_BUDGET_TOKENS:
+        logger.warning(
+            "reasoning_effort=%r is not in {low, medium, high}; passing "
+            "through to adapter unchanged",
+            effort,
+        )
+    if provider == "anthropic":
+        budget = _REASONING_EFFORT_BUDGET_TOKENS.get(normalized)
+        if budget is None:
+            return None
+        return {"type": "enabled", "budget_tokens": budget}
+    if provider == "google":
+        return {"effort": normalized.upper()}
+    return {"effort": normalized}
+
+
 @register_handler
 class FrontierDispatchHandler(BaseHandler):
     """Native-endpoint frontier dispatch with persona-conditional hydration."""
 
     step_type: str = "frontier_dispatch_v1"
+    _REMOTE_MCP_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
 
     # Caller-supplied keys accepted on ``pipeline_options`` for
     # ``frontier_dispatch_v1``. Anything outside this set is rejected at
@@ -159,9 +199,11 @@ class FrontierDispatchHandler(BaseHandler):
         user_prompt = self._resolve_user_prompt(step, context)
 
         # Tool injection matrix — see module docstring for the full semantics.
-        # mcp=False                 → no tools
-        # mcp=True,  remote_mcp=True  → no tools (anthropic server-side mcp_toolset)
-        # mcp=True,  remote_mcp=False → inject client-side TOOL_DEFINITIONS
+        # mcp=False                    → no tools
+        # mcp=True, remote_mcp=True    → no local tools (provider-native MCP path)
+        # mcp=True, remote_mcp=False   → inject client-side tools
+        #   - anthropic persona defaults keep the historical curated tier
+        #   - non-anthropic personas default to the full live MCP catalog
         opt_tools = opts.get("tools")
         skip_legacy_tier_block = False
         if isinstance(opt_tools, list):
@@ -171,8 +213,7 @@ class FrontierDispatchHandler(BaseHandler):
             if not mcp_enabled or remote_mcp:
                 tools: list[dict[str, Any]] = []
             else:
-                tool_defs, _ = resolve_tools(resolved_names)
-                tools = tool_defs
+                tools = await resolve_tool_definitions(resolved_names)
             system = self._resolve_system_prompt(step, context)
             hydration_meta = {"agent": None, "tool_resolution": "endpoint-supplied"}
             skip_legacy_tier_block = True
@@ -198,8 +239,11 @@ class FrontierDispatchHandler(BaseHandler):
                 )
                 if not mcp_enabled or remote_mcp:
                     tools = []
-                else:
+                elif provider == "anthropic":
                     tools = [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+                else:
+                    live_defs = await get_mcp_tool_definitions()
+                    tools = live_defs or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
                 hydration_meta = {
                     "agent": agent,
                     "section_counts": bundle.section_counts,
@@ -231,6 +275,22 @@ class FrontierDispatchHandler(BaseHandler):
             gen_params: dict[str, Any] = {**step_params, **opt_params}
         else:
             gen_params = step_params
+
+        # Translate convenience ``reasoning_effort`` to a provider-native
+        # ``thinking`` config when the caller did not supply ``thinking``
+        # explicitly. Explicit ``thinking`` always wins. The raw
+        # ``reasoning_effort`` value is left in gen_params so the
+        # Anthropic adapter can also surface it as ``output_config.effort``
+        # alongside the enabled thinking config.
+        effort_raw = gen_params.get("reasoning_effort")
+        if (
+            isinstance(effort_raw, str)
+            and effort_raw
+            and not gen_params.get("thinking")
+        ):
+            translated = _translate_reasoning_effort(effort_raw, provider)
+            if translated is not None:
+                gen_params["thinking"] = translated
 
         thinking = gen_params.get("thinking")
         req = FrontierRequest(
@@ -369,13 +429,6 @@ class FrontierDispatchHandler(BaseHandler):
             "hydration": hydration_meta,
         }
         return output
-
-    # Providers that support native remote MCP (server-side mcp_toolset).
-    # Only anthropic has a production path today — openai/xai/google models
-    # reach MCP tooling through client-side injection only. Attempting
-    # ``remote_mcp=True`` on any other provider short-circuits before the
-    # native call with ``RemoteMcpUnsupportedError``.
-    _REMOTE_MCP_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
 
     def _resolve_remote_mcp(
         self,

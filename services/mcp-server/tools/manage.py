@@ -210,15 +210,35 @@ def register_manage_tools(mcp: FastMCP) -> None:
           stop        (service)           — stop a running service
           restart     (service)           — stop then start
           rebuild     (service)           — rebuild container image and restart
+                                           FORBIDDEN for 'mcp' — always use restart.
+                                           Python source is bind-mounted; rebuild
+                                           is only needed when pip dependencies or
+                                           the Dockerfile change (ops-only, not agent).
           wait_healthy (service, timeout?) — block until RUNNING or timeout
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus
 
-        Post-code-change workflow:
+        Post-code-change workflow (mcp):
+          1. quality_gate(files=[...])
+          2. manage(action="restart", service="mcp")
+          3. manage(action="wait_healthy", service="mcp", timeout=60)
+
+        Post-code-change workflow (gateway/stargate — container rebuild):
           1. quality_gate(files=[...])
           2. manage(action="rebuild", service="gateway")
           3. manage(action="wait_healthy", service="gateway", timeout=120)
         """
+        if action == "rebuild" and service == "mcp":
+            return {
+                "error": (
+                    "rebuild is forbidden for 'mcp'. "
+                    "Python source is bind-mounted into the container — "
+                    "use manage(action='restart', service='mcp') instead. "
+                    "Rebuild is only required when pip dependencies or the "
+                    "Dockerfile itself change, which is an ops operation, not an agent one."
+                )
+            }
+
         if action not in _VALID_ACTIONS:
             return {
                 "error": (

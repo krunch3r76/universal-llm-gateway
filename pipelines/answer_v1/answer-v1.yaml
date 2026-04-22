@@ -13,14 +13,14 @@ description: >
 output: answer
 
 options:
-  timeout_seconds: 140
+  timeout_seconds: 400  # load budget (180s) + retrieval (60s) + relevance + answer (90s)
 
 steps:
   - name: get_context
     type: pipeline_call_v1
     pipeline_id: "rag-context"
     consumer_model_ref: answer   # resolved at runtime → retrieval-profiles.yaml lookup
-    timeout_seconds: 70
+    timeout_seconds: 250  # load budget (180s) + rag-context inference (60s) + 10s buffer
 
   - name: relevance_check
     type: generate

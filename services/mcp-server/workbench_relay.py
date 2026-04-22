@@ -92,7 +92,12 @@ async def handle_relay(request: Request) -> JSONResponse:
 
     system = body.get("system", "")
     user_msg = body.get("user_msg", "")
-    max_tokens = body.get("max_tokens", 4096)
+    max_tokens_raw = body.get("max_tokens")
+    model_max_tokens = anthropic_max_output_tokens(_DEFAULT_MODEL)
+    if isinstance(max_tokens_raw, int) and max_tokens_raw >= 1:
+        max_tokens = clamp_anthropic_max_tokens(_DEFAULT_MODEL, max_tokens_raw)
+    else:
+        max_tokens = model_max_tokens
 
     if not user_msg or not isinstance(user_msg, str):
         return JSONResponse(
@@ -100,11 +105,6 @@ async def handle_relay(request: Request) -> JSONResponse:
             status_code=400,
             headers=_CORS_HEADERS,
         )
-
-    if not isinstance(max_tokens, int) or max_tokens < 1:
-        max_tokens = 4096
-    model_max_tokens = anthropic_max_output_tokens(_DEFAULT_MODEL)
-    max_tokens = clamp_anthropic_max_tokens(_DEFAULT_MODEL, max_tokens)
 
     mcp_auth = _get_mcp_auth_token()
     mcp_server_def: dict = {

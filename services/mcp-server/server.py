@@ -146,6 +146,7 @@ _PRIMARY_TOOLS: set[str] = {
     # Meta
     "dispatch",
     "web_search",
+    "web_fetch",
     # Consolidated file surface
     "fs",
     # SQLite

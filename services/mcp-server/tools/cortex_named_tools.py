@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote, urlencode
+from zoneinfo import ZoneInfo
 
 from mcp_events import record
 
@@ -26,6 +27,8 @@ from ._local_relay import relay as _relay
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+
+_LA = ZoneInfo("America/Los_Angeles")
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +178,12 @@ def run_cortex_boot(
         f"/boot-recent-mentions?{recent_mentions_qs}",
     )
 
+    # Skills manifest — every registered agent_skill entity. Always-on discovery
+    # layer per the skills-infra design (cortex_boot surfaces the menu so agents
+    # don't have to remember to look).
+    skills_qs = urlencode({"type": "agent_skill", "limit": 50})
+    futures_spec["skills"] = (_cx, "GET", f"/entities?{skills_qs}")
+
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
     if self_entity_id and self_reflections_limit > 0:
@@ -210,6 +219,7 @@ def run_cortex_boot(
         rj_total = rj_raw.get("total", 0)
 
     recent_mentions: list[dict[str, Any]] = safe_list(raw.get("recent_mentions", []))
+    skills: list[dict[str, Any]] = safe_list(raw.get("skills", []))
 
     if agent == "web":
         _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
@@ -306,6 +316,7 @@ def run_cortex_boot(
         reflective_entries=rj_entries or None,
         reflective_total=rj_total,
         recent_mentions=recent_mentions or None,
+        skills=skills or None,
     )
 
     logger.info(
@@ -319,6 +330,7 @@ def run_cortex_boot(
     result: dict[str, Any] = {
         "session_id": session_id,
         "utc_now": t_boot.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "local_time": t_boot.astimezone(_LA).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "briefing_card": card,
         "sections_available": manifest,
         "operational_context_ref": op_ctx_path,

@@ -56,6 +56,7 @@ def _make_context(
     options: dict[str, Any] | None = None,
     source_text: str = "what's up?",
     messages: list[dict[str, Any]] | None = None,
+    runtime_options: dict[str, Any] | None = None,
 ) -> SimpleNamespace:
     """Return a stub PipelineContext covering the fields the handler touches."""
     return SimpleNamespace(
@@ -63,6 +64,7 @@ def _make_context(
         source_text=source_text,
         messages=messages,
         options=options or {},
+        runtime_options=runtime_options or {},
         _proxy=SimpleNamespace(pipeline_dispatch_tracker=None, event_bus=None),
     )
 
@@ -131,7 +133,7 @@ async def test_handler_team_mode_fires_hydrated_event(
         return f"SYSTEM[{agent}]"
 
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
-        return _FakeLoopResult()
+        return _FakeLoopResult(provider="xai")
 
     monkeypatch.setattr(fd_mod, "hydrate_agent", fake_hydrate)
     monkeypatch.setattr(fd_mod, "assemble_system_prompt", fake_assemble)
@@ -139,7 +141,7 @@ async def test_handler_team_mode_fires_hydrated_event(
 
     step = _FakeStep()
     context = _make_context(
-        options={"model": "anthropic/claude-sonnet-4-6", "agent": "oppie"}
+        options={"model": "xai/grok-4-fast-reasoning", "agent": "oppie"},
     )
 
     out = await handler.execute(step, context)
@@ -147,9 +149,9 @@ async def test_handler_team_mode_fires_hydrated_event(
     signals = [e.signal for e in published_events]
     assert "pipeline.frontier.dispatch.hydrated" in signals
     assert "pipeline.frontier.dispatch.completed" in signals
-    assert out.system_prompt == "SYSTEM[oppie]"
+    assert out.system_prompt.endswith("SYSTEM[oppie]")
     assert out.json["hydration"]["agent"] == "oppie"
-    assert out.json["provider"] == "anthropic"
+    assert out.json["provider"] == "xai"
 
 
 @pytest.mark.asyncio
@@ -181,7 +183,7 @@ async def test_handler_persona_free_mode_skips_hydration(
     signals = [e.signal for e in published_events]
     assert "pipeline.frontier.dispatch.hydrated" not in signals
     assert "pipeline.frontier.dispatch.completed" in signals
-    assert out.system_prompt == "You are a test assistant."
+    assert out.system_prompt.endswith("You are a test assistant.")
     assert out.json["hydration"] == {"agent": None}
 
 
@@ -345,6 +347,83 @@ async def test_handler_mcp_false_suppresses_tools(
     assert captured["remote_mcp"] is False
 
 
+@pytest.mark.asyncio
+async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_hydrate(agent: str, transcript_id: str | None) -> _FakeBundle:
+        return _FakeBundle()
+
+    def fake_assemble(agent: str, **_k: Any) -> str:
+        return f"SYSTEM[{agent}]"
+
+    async def fake_defs() -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["tools"] = kwargs["req"].tools
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(fd_mod, "assemble_system_prompt", fake_assemble)
+    monkeypatch.setattr(fd_mod, "get_mcp_tool_definitions", fake_defs)
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "openai/gpt-5.4", "agent": "orion"})
+    await handler.execute(step, context)
+
+    assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
+
+
+@pytest.mark.asyncio
+async def test_handler_endpoint_supplied_tools_accept_live_mcp_names(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_resolve(names: list[str]) -> list[dict[str, Any]]:
+        assert names == ["web_search"]
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["tools"] = kwargs["req"].tools
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "resolve_tool_definitions", fake_resolve)
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={"model": "openai/gpt-5.4", "tools": ["web_search"]}
+    )
+    await handler.execute(step, context)
+
+    assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
+
+
 def test_resolve_remote_mcp_defaults_by_provider() -> None:
     h = FrontierDispatchHandler()
     step = _FakeStep()
@@ -379,3 +458,100 @@ def test_resolve_agent_uses_options_then_domain_field() -> None:
     assert h._resolve_agent({"agent": "web"}, step_with_domain) == "web"
     assert h._resolve_agent({"agent": ""}, step_with_domain) == "bard"
     assert h._resolve_agent({}, _FakeStep()) is None
+
+
+# ---------------------------------------------------------------------------
+# Admission guard tests
+# ---------------------------------------------------------------------------
+
+
+def test_reject_unknown_runtime_options_raises_on_unknown_keys(
+    handler: FrontierDispatchHandler,
+) -> None:
+    """Unknown ``runtime_options`` keys must raise ``UnknownPipelineOptionsError``."""
+    from systems.pipeline.core.execution.errors import UnknownPipelineOptionsError
+
+    step = _FakeStep()
+    context = _make_context(
+        options={"model": "anthropic/claude-sonnet-4-6"},
+        runtime_options={"unknown_key": True, "another_bad_key": 42},
+    )
+    with pytest.raises(UnknownPipelineOptionsError) as exc_info:
+        handler._reject_unknown_runtime_options(step, context)
+    assert "unknown_key" in str(exc_info.value)
+
+
+def test_reject_unknown_runtime_options_passes_on_accepted_keys(
+    handler: FrontierDispatchHandler,
+) -> None:
+    """All keys in ``_ACCEPTED_RUNTIME_OPTION_KEYS`` must be admitted without error."""
+    step = _FakeStep()
+    context = _make_context(
+        options={"model": "anthropic/claude-sonnet-4-6"},
+        runtime_options={
+            k: True for k in FrontierDispatchHandler._ACCEPTED_RUNTIME_OPTION_KEYS
+        },
+    )
+    handler._reject_unknown_runtime_options(step, context)
+
+
+def test_check_agent_model_consistency_rejects_mismatch() -> None:
+    """agent/model provider mismatch raises ValueError and emits the mismatch event."""
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        check_agent_model_consistency,
+    )
+
+    published: list[Any] = []
+
+    with pytest.raises(ValueError, match="expects provider"):
+        check_agent_model_consistency(
+            agent="oppie",
+            model="anthropic/claude-sonnet-4-6",
+            provider="anthropic",
+            execution_id="exec-test-0001",
+            publish=published.append,
+        )
+
+    assert len(published) == 1
+    assert published[0].signal == "pipeline.frontier.dispatch.mismatch"
+    assert published[0].payload["agent"] == "oppie"
+    assert published[0].payload["requested_model"] == "anthropic/claude-sonnet-4-6"
+
+
+def test_check_agent_model_consistency_accepts_valid_family() -> None:
+    """Matching agent/provider must not raise or emit an event."""
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        check_agent_model_consistency,
+    )
+
+    published: list[Any] = []
+
+    check_agent_model_consistency(
+        agent="oppie",
+        model="xai/grok-4-fast-reasoning",
+        provider="xai",
+        execution_id="exec-test-0001",
+        publish=published.append,
+    )
+
+    assert published == []
+
+
+def test_check_agent_model_consistency_passes_unknown_agent() -> None:
+    """Unknown agents (not in registry) are not checked — custom slugs are allowed."""
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        check_agent_model_consistency,
+    )
+
+    published: list[Any] = []
+
+    check_agent_model_consistency(
+        agent="custom-bot",
+        model="anthropic/claude-sonnet-4-6",
+        provider="anthropic",
+        execution_id="exec-test-0001",
+        publish=published.append,
+    )
+
+    assert published == []
+

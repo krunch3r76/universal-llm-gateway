@@ -29,6 +29,38 @@ logger = logging.getLogger(__name__)
 _PREVIEW_MAX_LAST = max(1, int(os.getenv("MCP_AGENT_BUS_PREVIEW_MAX_LAST", "20")))
 
 
+def _structured_body_too_large(
+    result: dict[str, Any], *, op: str
+) -> dict[str, Any] | None:
+    """Re-shape a relay 413 detail into the legacy structured error envelope.
+
+    REST returns ``{"detail": {"reason": "body_too_large", "limit_chars": ...,
+    "body_chars": ..., "suggestion": ..., "message": ...}}`` on 413; the relay
+    surfaces ``detail`` alongside ``error``. Agents previously got
+    ``{error, reason, limit_chars, body_chars, suggestion}`` from the MCP
+    preflight — preserve that shape so existing callers keep their
+    discriminator fields.
+    """
+    detail = result.get("detail")
+    if not (isinstance(detail, dict) and detail.get("reason") == "body_too_large"):
+        return None
+    limit = detail.get("limit_chars")
+    body_chars = detail.get("body_chars")
+    return {
+        "error": (
+            f"{op}: turn body exceeds limit "
+            f"({body_chars:,} chars, limit {limit:,}). "
+            "Agent-bus convention: short briefing + sidecar markdown reference. "
+            "Write long content to notes/system/threads/<thread>-<subject>.md "
+            "and reference it in a brief body."
+        ),
+        "reason": "body_too_large",
+        "limit_chars": limit,
+        "body_chars": body_chars,
+        "suggestion": detail.get("suggestion", "sidecar_markdown_or_trim"),
+    }
+
+
 # ── Impl helpers ────────────────────────────────────────────────────
 
 
@@ -63,6 +95,9 @@ def _post_impl(
     result = _relay("agent-bus", "POST", "/threads/with-turn", body=payload)
     if "error" in result:
         record("mcp.agentbus.post.failed", slug=slug, to=to, error=str(result["error"]))
+        structured = _structured_body_too_large(result, op="post")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error creating thread: {result['error']}"}
 
     thread_data = result.get("thread", {})
@@ -116,6 +151,9 @@ def _reply_impl(
     result = _relay("agent-bus", "POST", "/turns", body=payload)
 
     if "error" in result:
+        structured = _structured_body_too_large(result, op="reply")
+        if structured is not None:
+            return structured
         return {"error": f"agent-bus error: {result['error']}"}
 
     turn_number = result.get("turn_number") or result.get("id")

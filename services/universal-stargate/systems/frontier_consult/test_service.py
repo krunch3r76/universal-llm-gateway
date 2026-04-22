@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from agent_seat import TOOL_REGISTRY, AgentMeta, HydrationBundle
+from agent_seat import AgentMeta, HydrationBundle
 
 from .service import (
     FrontierEndpointError,
@@ -46,6 +46,7 @@ async def test_permissive_persona_accepts_anything(
     body = await build_dispatch_body(req)
     options = body["pipeline_options"]
     assert body["model"] == "frontier-dispatch"
+    assert options["agent"] == "orion"
     assert options["model"] == "openai/gpt-5.4-mini"
     assert options["tools"] == ["cortex"]
     assert options["_endpoint_request_id"]
@@ -155,6 +156,7 @@ async def test_default_model_used_when_omitted(monkeypatch: pytest.MonkeyPatch) 
         messages=[{"role": "user", "content": "x"}], agent="orion"
     )
     body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["agent"] == "orion"
     assert body["pipeline_options"]["model"] == "openai/gpt-5.4-mini"
 
 
@@ -166,4 +168,5 @@ async def test_request_id_is_propagated_and_permissive_tools_fallback() -> None:
     body = await build_dispatch_body(req)
     options: dict[str, Any] = body["pipeline_options"]
     assert options["_endpoint_request_id"]
-    assert sorted(options["tools"]) == sorted(TOOL_REGISTRY)
+    assert "tools" not in options
+    assert options["mcp"] is True

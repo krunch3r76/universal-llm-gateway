@@ -4,8 +4,7 @@ All paths are resolved relative to _SANDBOX_ROOT. Traversal attempts
 (../) are rejected before resolution so that the container volume mount
 is complemented by explicit code-level defense in depth.
 
-Supported read formats: .md, .txt, .csv, .docx, .odt, .eml, .pdf, .html, .json, .yaml.
-Supported write formats: .md, .txt, .csv, .docx, .pdf, .yaml, .yml.
+The sandbox is the security boundary — no file extension restrictions are applied.
 """
 
 from __future__ import annotations
@@ -38,18 +37,12 @@ _SHARED_IMAGE_DIR = Path(
 _SHARED_IMAGE_HOST_ROOT = Path(
     os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(_SHARED_IMAGE_DIR))
 )
-_ALLOWED_WRITE_SUFFIXES = {
-    ".md",
-    ".txt",
-    ".csv",
-    ".docx",
-    ".pdf",
-    ".yaml",
-    ".yml",
-    ".py",
-}
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
-_EDITABLE_SUFFIXES = {".md", ".txt"}
+_EDITABLE_SUFFIXES = {
+    ".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml",
+    ".csv", ".sh", ".bash", ".js", ".ts", ".html", ".css",
+    ".xml", ".ini", ".cfg", ".conf", ".env", ".log",
+}
 _BINARY_MAX_BYTES = 20 * 1024 * 1024
 
 _FS_WORKFLOW_HINTS: dict[str, str] = {
@@ -172,7 +165,6 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
     def write_file(path: str, content: str) -> dict[str, str]:
         """Write *content* to *path* inside the sandboxed files directory.
 
-        Supported extensions: .md, .txt, .csv, .docx, .pdf, .yaml, .yml, .py.
         Intermediate directories are created automatically.
 
         Args:
@@ -184,17 +176,6 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         """
         dest = _safe_path(path)
         suffix = dest.suffix.lower()
-        if suffix not in _ALLOWED_WRITE_SUFFIXES:
-            record(
-                "mcp.tool.file.write_failed",
-                path=path,
-                reason="unsupported_format",
-                suffix=suffix,
-            )
-            raise ValueError(
-                f"Unsupported format {suffix!r}. "
-                f"Allowed: {', '.join(sorted(_ALLOWED_WRITE_SUFFIXES))}"
-            )
         try:
             write_handlers = {
                 ".docx": _write_docx,
@@ -231,8 +212,6 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         (for example OCR, binary ingest, or vision workflows). Prefer
         ``view_image()`` when the goal is visual inspection rather than moving
         bytes between tools.
-
-        Supported text formats: .md, .txt, .csv, .docx, .odt, .eml, .pdf, .html, .json, .yaml
 
         Args:
             path: Relative file path, e.g. "documents/notes.md".
@@ -369,7 +348,8 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         Performs a server-side read-modify-write so the model never needs
         to read the full file content just to prepend or append.
 
-        Allowed extensions: .md, .txt
+        Editing is limited to plain-text formats; binary formats (.docx, .pdf, etc.)
+        must be written in full via write_file().
 
         Args:
             path: Relative file path (e.g. "notes/daily.md").
@@ -392,8 +372,8 @@ def register_filesystem_tools(mcp: FastMCP) -> None:
         dest = _safe_path(path)
         if dest.suffix.lower() not in _EDITABLE_SUFFIXES:
             raise ValueError(
-                f"Unsupported format {dest.suffix!r} for editing. Allowed: "
-                + ", ".join(sorted(_EDITABLE_SUFFIXES))
+                f"Cannot edit binary format {dest.suffix!r} in place. "
+                f"Use write_file() instead."
             )
 
         try:

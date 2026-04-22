@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ._operational_context import (
     AGENT_PERSONA_SEEDS as AGENT_PERSONA_SEEDS,  # noqa: PLC0414
@@ -12,6 +13,8 @@ from ._operational_context import (
 from ._operational_context import (
     render_operational_context as render_operational_context,  # noqa: PLC0414
 )
+
+_LA = ZoneInfo("America/Los_Angeles")
 
 
 def _relative_time(iso_str: str | None, now: datetime) -> str:
@@ -371,6 +374,7 @@ def render_briefing_card(
     reflective_total: int = 0,
     recent_mentions: list[dict[str, Any]] | None = None,
     recent_mentions_window_days: int = 7,
+    skills: list[dict[str, Any]] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -380,8 +384,9 @@ def render_briefing_card(
     and fetch hints in the manifest.
     """
     now = datetime.now(UTC)
-    today = now.date()
-    parts: list[str] = [f"# Boot Briefing — {today.isoformat()}"]
+    local_now = now.astimezone(_LA)
+    today = local_now.date()
+    parts: list[str] = [f"# Boot Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"]
 
     if transcript_continuation:
         tc = transcript_continuation
@@ -389,6 +394,22 @@ def render_briefing_card(
         summary = tc.get("summary", tc.get("description", ""))
         if summary:
             parts.append(f"**Summary**: {summary}")
+
+    # ── Agent skills (always-on discovery layer) ──
+    # Lists every registered agent_skill entity by slug + trigger descriptor.
+    # Surfaced near the top so agents see the menu before doing work; the full
+    # SKILL.md is fetched on trigger match via the path noted in the heading.
+    if skills:
+        parts.append(
+            "\n## Agent Skills "
+            "(read on trigger match — "
+            "`fs(sandbox='cortex', op='read', "
+            "path='agent-skills/<NAME>.md')`)"
+        )
+        for s in skills:
+            slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
+            trigger = (s.get("description") or "").strip()
+            parts.append(f"- **{slug}** — {trigger}")
 
     # ── Deadlines (never truncated) ──
     if deadlines is not None:
@@ -594,6 +615,19 @@ def render_briefing_card(
                 "hint": (
                     "GET /boot-recent-mentions via cortex-api "
                     "(query params: days, limit, type_exclude)"
+                ),
+            }
+        )
+    if skills:
+        manifest.append(
+            {
+                "section": "skills",
+                "count": len(skills),
+                "hint": (
+                    "cortex(tool='entities', "
+                    'arguments=\'{"type": "agent_skill"}\') — '
+                    "then fs(sandbox='cortex', op='read', path=<source_uri>) "
+                    "for the full SKILL.md"
                 ),
             }
         )

@@ -1,0 +1,48 @@
+# todo-close — atomic todo audit-trail closure pipeline
+#
+# Per architecture (todo:cortex-todo-closure-payload):
+#   Agent → MCP (thin proxy) → Stargate pipeline:todo-close → cortex-api (pure data)
+#
+# Anchor assertions:
+#   - 220: cortex-api is pure data layer
+#   - 221: pipelines are the named home for compound operations
+#   - 5184: existing pipeline interface IS the consumption surface
+#
+# Closure payload is delivered via pipeline_options. The single step
+# orchestrates: assert → relationships → depends_on edges → custom edges →
+# workflow_state update. Best-effort with structured per-call results;
+# partial failures are reported, not retried.
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="todo-close",
+#            messages=[{"role":"user","content":"close"}],  # marker
+#            options={
+#              "todo_id": "todo:...",
+#              "summary": "...",
+#              "evidence_uris": [...],            # optional
+#              "evidence_text": "...",            # optional
+#              "reasoning_summary": "...",        # optional
+#              "references": [{...}],             # optional
+#              "depends_on_resolved": [int, ...], # optional
+#              "edges": [{...}],                  # optional
+#              "skip_workflow_update": false,     # optional
+#              "agent": "cursor",                 # optional, for edge attribution
+#              "session_id": "cursor-...",        # optional, for edge attribution
+#            })
+
+schema_version: 6
+id: todo-close
+version: "1.0"
+type: todo_close
+description: >
+  Atomic todo audit-trail closure. Orchestrates assertion + relationships +
+  reasoning edges + workflow_state update against cortex-api in one call.
+  Best-effort with compensating writes; partial failures returned per step.
+output: apply
+
+options:
+  timeout_seconds: 60
+
+steps:
+  - name: apply
+    type: todo_close_apply_v1

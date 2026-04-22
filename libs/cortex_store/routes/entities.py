@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ..action_hints import detect_expired_unresolved
 from ..db import cortex_conn, decode_row, execute, json_encode, query
+from ..dispatch_ops._shared import record
 from ..models import (
     AssertionItem,
     EdgeItem,
@@ -247,21 +248,76 @@ def get_entity(
 _JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
 
+def _emit_todo_closure_gap_if_needed(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    entity_type: str,
+    new_workflow_state: str,
+    prior_workflow_state: str | None,
+) -> None:
+    """Emit a structured signal when a todo closes without an audit assertion.
+
+    Per todo:cortex-todo-closure-payload AC5 — making the audit gap visible
+    without blocking. Fires when ALL of:
+      - entity is type=todo
+      - workflow_state transitions TO 'done' (was != 'done', now == 'done')
+      - the entity has zero assertions at the moment of transition
+
+    Visibility, not enforcement. The agent or operator sees the signal via
+    Event Service / cortex-api logs and can either re-close via the
+    pipeline:todo-close path or backfill the audit trail manually.
+    """
+    if entity_type != "todo":
+        return
+    if new_workflow_state != "done":
+        return
+    if prior_workflow_state == "done":
+        return
+    rows = query(
+        conn,
+        "SELECT COUNT(*) AS n FROM assertions WHERE entity_id = ?",
+        (entity_id,),
+    )
+    count = int(rows[0]["n"]) if rows else 0
+    if count > 0:
+        return
+    logger.warning(
+        "todo closure gap: %s transitioned to workflow_state=done with no "
+        "assertions on the entity. Prefer pipeline:todo-close to capture "
+        "summary + relationships + reasoning edges atomically.",
+        entity_id,
+    )
+    record(
+        "cortex.todo.closure.gap",
+        entity_id=entity_id,
+        prior_workflow_state=prior_workflow_state or "",
+    )
+
+
 def _update_entity_impl(
     conn: sqlite3.Connection,
     *,
     entity_id: str,
     updates: dict[str, object],
 ) -> dict[str, object]:
-    existing = query(conn, "SELECT id, type FROM entities WHERE id = ?", (entity_id,))
+    existing = query(
+        conn,
+        "SELECT id, type, workflow_state FROM entities WHERE id = ?",
+        (entity_id,),
+    )
     if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Entity not found: {entity_id}",
         )
 
+    prior_workflow_state = existing[0]["workflow_state"]
+
     if "workflow_state" in updates and updates["workflow_state"] is not None:
-        _validate_workflow_state(conn, existing[0]["type"], str(updates["workflow_state"]))
+        _validate_workflow_state(
+            conn, existing[0]["type"], str(updates["workflow_state"])
+        )
 
     sets: list[str] = []
     params: list[object] = []
@@ -282,6 +338,18 @@ def _update_entity_impl(
     params.append(now)
     params.append(entity_id)
     execute(conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
+
+    new_workflow_state = updates.get("workflow_state")
+    if isinstance(new_workflow_state, str):
+        _emit_todo_closure_gap_if_needed(
+            conn,
+            entity_id=entity_id,
+            entity_type=str(existing[0]["type"]),
+            new_workflow_state=new_workflow_state,
+            prior_workflow_state=(
+                str(prior_workflow_state) if prior_workflow_state is not None else None
+            ),
+        )
 
     rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     assertion_rows = query(
@@ -367,14 +435,20 @@ def _create_entity_impl(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Entity created but could not be read back",
         )
-    return EntityDetail(**decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=[]).model_dump(
-        mode="json"
-    )
+    return EntityDetail(
+        **decode_row(rows[0], _ENTITY_JSON_FIELDS), assertions=[]
+    ).model_dump(mode="json")
 
 
 @router.post("", response_model=EntityDetail, status_code=status.HTTP_201_CREATED)
 def create_entity(body: EntityCreate) -> EntityDetail:
-    """Create an entity and return the stored entity detail payload."""
+    """Create an entity and return the stored entity detail payload.
+
+    Failure modes are explicitly disambiguated so callers can react correctly:
+      - 409 Conflict: duplicate ID (caller error, ¬retryable)
+      - 503 Service Unavailable: transient sqlite degradation (retryable)
+      - 500: unknown structural failure (fall-through)
+    """
     with cortex_conn() as conn:
         try:
             result = _create_entity_impl(conn, body.model_dump())
@@ -382,6 +456,22 @@ def create_entity(body: EntityCreate) -> EntityDetail:
             logger.warning("Entity create conflict for id=%s", body.id)
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=f"Entity already exists: {body.id}",
+                detail={
+                    "detail": f"Entity already exists: {body.id}",
+                    "retryable": False,
+                },
+            )
+        except sqlite3.OperationalError as exc:
+            logger.error(
+                "Entity create transient cortex degradation for id=%s: %s",
+                body.id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "detail": f"Cortex temporarily unavailable: {exc}",
+                    "retryable": True,
+                },
             )
     return EntityDetail(**result)

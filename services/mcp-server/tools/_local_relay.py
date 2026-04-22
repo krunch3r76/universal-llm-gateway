@@ -114,11 +114,23 @@ def relay(
                     status=response.status_code,
                     duration=duration,
                 )
-                return {
+                err: dict[str, Any] = {
                     "error": f"HTTP {response.status_code}",
                     "status_code": response.status_code,
                     "body": response.text,
                 }
+                # Surface structured FastAPI `detail` payloads (e.g. 413
+                # body_too_large) so callers can discriminate on `reason`
+                # without parsing the body string.
+                try:
+                    parsed_err = response.json()
+                except Exception:
+                    parsed_err = None
+                if isinstance(parsed_err, dict):
+                    detail_value = parsed_err.get("detail")
+                    if isinstance(detail_value, dict):
+                        err["detail"] = detail_value
+                return err
 
             try:
                 parsed = response.json()

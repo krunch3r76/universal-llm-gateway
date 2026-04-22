@@ -12,6 +12,12 @@ from .models import AgentName
 # nothing is enforced here — tags are normalized in the DB layer
 # (strip + lowercase + dedupe) via _normalize_tags before storage.
 
+# Agent-bus convention: turns are short briefings with sidecar markdown
+# references. Full documents belong in notes/system/threads/ and are
+# referenced, not inlined. Enforced at the REST surface — see the
+# RequestValidationError handler in server.py for the structured 413 envelope.
+MAX_TURN_BODY_CHARS = 8_000
+
 # --- Attachment schemas ---
 
 
@@ -59,7 +65,7 @@ class TurnCreate(BaseModel):
     from_agent: AgentName = Field(alias="from")
     to: AgentName
     subject: str
-    body: str
+    body: str = Field(max_length=MAX_TURN_BODY_CHARS)
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     supersedes_turn: int | None = None
@@ -176,7 +182,7 @@ class ThreadWithTurnCreate(BaseModel):
     from_agent: AgentName = Field(alias="from")
     to: AgentName
     subject: str
-    body: str
+    body: str = Field(max_length=MAX_TURN_BODY_CHARS)
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None

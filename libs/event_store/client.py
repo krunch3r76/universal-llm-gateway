@@ -32,7 +32,7 @@ async def subscribe_events(
     """
     import websockets.client
 
-    ws_uri = f"ws+unix://{query_sock}//v1/subscribe"
+    ws_uri = f"ws+unix://{query_sock}:/v1/subscribe"
     async with websockets.client.connect(ws_uri, max_size=None) as ws:
         subscribe_msg: dict[str, Any] = {"type": "subscribe"}
         if filter:

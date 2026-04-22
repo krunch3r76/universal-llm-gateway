@@ -24,12 +24,18 @@ Public surface (stable):
 ``NativeLoopResult`` / ``NativeToolCall`` — dataclasses
 ``NATIVE_PATHS``            — provider → native endpoint path map
 
-``execute_tool(name, args)`` — async dispatcher for cortex/agent_bus/rag_search
+``execute_tool(name, args)`` — async dispatcher for local tools + live MCP tools
+``get_mcp_tool_definitions()`` — discover live MCP tool defs for client-side injection
+``resolve_tool_definitions(names)`` — resolve static or live MCP tool names
 """
 
 from __future__ import annotations
 
-from agent_seat.executor import execute_tool
+from agent_seat.executor import (
+    execute_tool,
+    get_mcp_tool_definitions,
+    resolve_tool_definitions,
+)
 from agent_seat.hydration import AgentMeta, HydrationBundle, hydrate_agent
 from agent_seat.native_loop import (
     NATIVE_PATHS,
@@ -65,8 +71,10 @@ __all__ = [
     "assemble_system_prompt",
     "build_subagent_preamble",
     "execute_tool",
+    "get_mcp_tool_definitions",
     "hydrate_agent",
     "load_birth_prompt",
+    "resolve_tool_definitions",
     "run_native_tool_loop",
     "resolve_tools",
 ]

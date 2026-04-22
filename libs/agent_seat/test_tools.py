@@ -7,11 +7,15 @@ at pytest time rather than at runtime inside a dispatched agent.
 
 from __future__ import annotations
 
+import pytest
+
 from agent_seat.tools import (
     CORTEX_TOOL_DEFINITION,
     RAG_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
+    TOOL_REGISTRY,
+    resolve_tools,
 )
 
 
@@ -64,3 +68,26 @@ def test_cortex_dispatch_requires_tool_field() -> None:
         required = cortex["function"]["parameters"]["required"]
         assert "tool" in required
         assert cortex is CORTEX_TOOL_DEFINITION
+
+
+def test_tool_registry_resolve_known() -> None:
+    defs, execs = resolve_tools(["cortex", "agent_bus"])
+    assert len(defs) == 2
+    assert execs == ["cortex_dispatch", "agent_bus_dispatch"]
+    assert defs[0] == TOOL_REGISTRY["cortex"]["definition"]
+
+
+def test_tool_registry_resolve_unknown_raises() -> None:
+    with pytest.raises(ValueError, match="unknown tool"):
+        resolve_tools(["cortex", "nonsense"])
+
+
+def test_legacy_tier_constants_match_registry() -> None:
+    assert TOOL_DEFINITIONS == [
+        TOOL_REGISTRY["cortex"]["definition"],
+        TOOL_REGISTRY["rag_search"]["definition"],
+    ]
+    assert TEAM_TOOL_DEFINITIONS == [
+        TOOL_REGISTRY["cortex"]["definition"],
+        TOOL_REGISTRY["agent_bus"]["definition"],
+    ]

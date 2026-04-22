@@ -19,7 +19,7 @@ from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer
 from .controller.onboarding import OnboardingController
-from .controller.service_config import ensure_event_service_config
+from .controller.service_config import ensure_event_service_config, ensure_socket_dir
 from .controller.service_ctl import ServiceController
 from .model.catalog_state import CatalogState
 from .model.local_env import LocalEnv
@@ -124,6 +124,33 @@ class ModelManagerApp(App):
         except Exception as e:
             logger.exception("Failed to start Manage API server: %s", e)
             self._api_server = None
+            self.notify(
+                f"manage.sock unavailable: {e} — restart ./manage to recover",
+                severity="error",
+                timeout=30,
+            )
+            self.set_timer(10, self._retry_api_server)
+
+    async def _retry_api_server(self) -> None:
+        """Retry binding manage.sock after a startup failure.
+
+        Called 10s after on_mount if the initial bind failed (typically because
+        /tmp/universal-protocol was root-owned at launch and has since been
+        fixed). Backs off to 30s intervals until it succeeds.
+        """
+        if self._api_server is not None:
+            return  # already running
+        if self._event_bus is None:
+            return
+        server = ManageAPIServer(self._service_controller, self._event_bus)
+        try:
+            await server.start()
+            self._api_server = server
+            self.notify("manage.sock recovered — agent tools now available", timeout=10)
+            logger.info("Manage API server recovered on retry")
+        except Exception as e:
+            logger.warning("Manage API server retry failed: %s", e)
+            self.set_timer(30, self._retry_api_server)
 
     async def on_unmount(self) -> None:
         # Kill build process group directly — the worker's finally block may
@@ -185,6 +212,17 @@ def run() -> None:
         logging.getLogger(_logger).setLevel(logging.WARNING)
 
     _TUI_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    # Claim /tmp/universal-protocol as the current user before any container
+    # starts. /tmp is 1777 so mkdir succeeds unconditionally when the path is
+    # absent. This prevents the Docker daemon from racing ahead and creating
+    # the bind-mount source dir as root (which blocks all host-side UDS writes).
+    _sock_err = ensure_socket_dir()
+    if _sock_err:
+        logging.getLogger(__name__).warning(
+            "ensure_socket_dir at startup: %s", _sock_err
+        )
+
     app = ModelManagerApp()
     try:
         app.run()

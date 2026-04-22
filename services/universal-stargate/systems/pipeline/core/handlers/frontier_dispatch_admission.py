@@ -51,7 +51,7 @@ def check_agent_model_consistency(
 
     ∀ agent ∈ registry: model.provider MUST equal agent.expected_provider.
     Unknown agents (not in registry) are not checked — they may be custom
-    non-team-seat slugs. Emits ``pipeline.frontier.dispatch.agent.model.mismatch``
+    non-team-seat slugs. Emits ``pipeline.frontier.dispatch.mismatch``
     and raises ``ValueError`` on violation.
     """
     expected = resolve_agent_provider(agent)

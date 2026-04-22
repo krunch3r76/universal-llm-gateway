@@ -27,6 +27,7 @@ class FrontierGenerateRequest:
     boot: str = "none"
     system: str = ""
     tools: list[str] | None = None
+    reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
     transcript_id: str | None = None
     remote_mcp: bool | None = None
@@ -143,12 +144,14 @@ def _enforce_options(
     )
 
 
-def _resolve_effective_tools(requested: list[str] | None, meta: AgentMeta) -> list[str]:
+def _resolve_effective_tools(
+    requested: list[str] | None, meta: AgentMeta
+) -> list[str] | None:
     if requested is not None:
         return list(requested)
     if meta.tools is not None:
         return list(meta.tools)
-    return list(TOOL_REGISTRY)
+    return None
 
 
 async def build_dispatch_body(
@@ -213,6 +216,11 @@ async def build_dispatch_body(
         event_publisher=event_publisher,
     )
     generation_options = dict(req.generation_options or {})
+    if req.reasoning_effort is not None:
+        # Typed param surfaces in generation_options so persona
+        # allowed_options enforcement applies uniformly. setdefault so an
+        # explicit dict entry wins over the typed convenience arg.
+        generation_options.setdefault("reasoning_effort", req.reasoning_effort)
     _enforce_options(
         request_id=request_id,
         agent=req.agent,
@@ -229,15 +237,19 @@ async def build_dispatch_body(
             event_publisher=event_publisher,
         )
     effective_tools = _resolve_effective_tools(req.tools, meta)
+    mcp_enabled = effective_tools is None or bool(effective_tools)
 
     pipeline_options: dict[str, Any] = {
         "model": effective_model,
         "system": system_assembled,
-        "tools": effective_tools,
         "generation_parameters": generation_options,
-        "mcp": bool(effective_tools),
+        "mcp": mcp_enabled,
         "_endpoint_request_id": request_id,
     }
+    if req.agent:
+        pipeline_options["agent"] = req.agent
+    if effective_tools is not None:
+        pipeline_options["tools"] = effective_tools
     if req.transcript_id:
         pipeline_options["transcript_id"] = req.transcript_id
     if req.remote_mcp is not None:

@@ -12,7 +12,7 @@ description: >
 output: rerank_assemble
 
 options:
-  timeout_seconds: 66
+  timeout_seconds: 250
   rewrite_enabled: false
   hyde_enabled: false
   rag_top_k_per_query: 15

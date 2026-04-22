@@ -14,7 +14,12 @@ from typing import Any
 import pytest
 
 from agent_seat import executor as _ex
-from agent_seat.executor import _parse_dispatch_arguments, execute_tool
+from agent_seat.executor import (
+    _parse_dispatch_arguments,
+    execute_tool,
+    get_mcp_tool_definitions,
+    resolve_tool_definitions,
+)
 
 
 def test_parse_dispatch_arguments_dict_passthrough() -> None:
@@ -32,9 +37,32 @@ def test_parse_dispatch_arguments_malformed_returns_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_execute_unknown_tool_returns_error() -> None:
+async def test_execute_unknown_tool_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", None)
     result = await execute_tool("nonsense", {})
     assert json.loads(result) == {"error": "Unknown tool: nonsense"}
+
+
+@pytest.mark.asyncio
+async def test_execute_unknown_tool_uses_mcp_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeMcpExecutor:
+        async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+            return json.dumps({"name": name, "arguments": arguments, "source": "mcp"})
+
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
+
+    result = await execute_tool("web_search", {"query": "test"})
+    assert json.loads(result) == {
+        "name": "web_search",
+        "arguments": {"query": "test"},
+        "source": "mcp",
+    }
 
 
 @pytest.mark.asyncio
@@ -186,3 +214,51 @@ async def test_execute_agent_bus_reply_posts_body(
     assert captured["method"] == "POST"
     assert captured["path"] == "/turns"
     assert captured["body"] == args
+
+
+@pytest.mark.asyncio
+async def test_get_mcp_tool_definitions_returns_live_defs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeMcpExecutor:
+        def get_openai_tool_defs(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
+
+    defs = await get_mcp_tool_definitions()
+    assert defs[0]["function"]["name"] == "web_search"
+
+
+@pytest.mark.asyncio
+async def test_resolve_tool_definitions_combines_static_and_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeMcpExecutor:
+        def get_openai_tool_defs(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "web_search",
+                        "description": "Search the web",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
+
+    defs = await resolve_tool_definitions(["cortex", "web_search"])
+    assert [d["function"]["name"] for d in defs] == ["cortex", "web_search"]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import httpx
@@ -31,6 +30,7 @@ class FrontierGenerateBody(BaseModel):
     boot: str = "none"
     system: str = ""
     tools: list[str] | None = None
+    reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
     transcript_id: str | None = None
     remote_mcp: bool | None = None
@@ -50,6 +50,7 @@ async def frontier_generate(
         boot=body.boot,
         system=body.system,
         tools=body.tools,
+        reasoning_effort=body.reasoning_effort,
         generation_options=body.generation_options,
         transcript_id=body.transcript_id,
         remote_mcp=body.remote_mcp,
@@ -65,7 +66,7 @@ async def frontier_generate(
         def _publish_event(event: Any) -> None:
             if event_bus is None:
                 return
-            asyncio.create_task(event_bus.publish_nowait(event))
+            event_bus.publish_from_sync(event)
 
         dispatch_body = await build_dispatch_body(req, event_publisher=_publish_event)
     except FrontierEndpointError as exc:

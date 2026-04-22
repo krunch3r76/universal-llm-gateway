@@ -17,6 +17,7 @@ from ...controller.service_config import (
     is_agent_bus_configured,
     is_cloud_proxy_configured,
     is_cortex_configured,
+    is_email_bridge_configured,
     is_mcp_configured,
     is_rag_configured,
 )
@@ -111,6 +112,7 @@ class ServicesScreen(Screen):
             yield Static("  Cortex:   —", id="svc-cortex")
             yield Static("  AgentBus: —", id="svc-agentbus")
             yield Static("  Events:   checking...", id="svc-events")
+            yield Static("  EmailBridge: —", id="svc-emailbridge")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -188,6 +190,19 @@ class ServicesScreen(Screen):
                 )
                 yield Button(
                     "Sync + Restart Local", id="btn-restart-local", variant="warning"
+                )
+            with Horizontal(classes="svc-button-row"):
+                yield Button(
+                    "Start Email Bridge",
+                    id="btn-start-emailbridge",
+                    variant="success",
+                    disabled=True,
+                )
+                yield Button(
+                    "Stop Email Bridge",
+                    id="btn-stop-emailbridge",
+                    variant="error",
+                    disabled=True,
                 )
 
         yield LogStream(id="svc-log")
@@ -297,6 +312,13 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_agent_bus(), exclusive=True)
                 else:
                     self.run_worker(self._stop_agent_bus(), exclusive=True)
+            case "btn-start-emailbridge" | "btn-stop-emailbridge":
+                self.query_one("#btn-start-emailbridge", Button).disabled = True
+                self.query_one("#btn-stop-emailbridge", Button).disabled = True
+                if event.button.id == "btn-start-emailbridge":
+                    self.run_worker(self._start_email_bridge(), exclusive=True)
+                else:
+                    self.run_worker(self._stop_email_bridge(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-refresh":
@@ -384,6 +406,7 @@ class ServicesScreen(Screen):
         mcp_cfg = is_mcp_configured(workspace_root)
         cortex_cfg = is_cortex_configured()
         bus_cfg = is_agent_bus_configured()
+        email_bridge_cfg = is_email_bridge_configured()
 
         if rag_cfg:
             self.query_one("#svc-rag", Static).update(
@@ -402,6 +425,7 @@ class ServicesScreen(Screen):
         mcp = svc.service_state.check_mcp() if mcp_cfg else None
         cortex = svc.service_state.check_cortex_api() if cortex_cfg else None
         agent_bus = svc.service_state.check_agent_bus() if bus_cfg else None
+        email_bridge = svc.service_state.check_email_bridge() if email_bridge_cfg else None
 
         if mcp is not None:
             self.query_one("#svc-mcp", Static).update(
@@ -448,6 +472,24 @@ class ServicesScreen(Screen):
             )
             self.query_one("#btn-start-agentbus", Button).disabled = True
             self.query_one("#btn-stop-agentbus", Button).disabled = True
+
+        if email_bridge is not None:
+            self.query_one("#svc-emailbridge", Static).update(
+                f"  EmailBridge: {email_bridge.detail or email_bridge.status}"
+            )
+            eb_managed = email_bridge.ownership is ServiceOwnership.MANAGED
+            self.query_one("#btn-start-emailbridge", Button).disabled = (
+                email_bridge.status is not ServiceStatus.STOPPED
+            )
+            self.query_one("#btn-stop-emailbridge", Button).disabled = not (
+                email_bridge.status is not ServiceStatus.STOPPED and eb_managed
+            )
+        else:
+            self.query_one("#svc-emailbridge", Static).update(
+                "  EmailBridge: (not configured)"
+            )
+            self.query_one("#btn-start-emailbridge", Button).disabled = True
+            self.query_one("#btn-stop-emailbridge", Button).disabled = True
 
         events = svc.service_state.check_event_service()
         self.query_one("#svc-events", Static).update(
@@ -664,6 +706,20 @@ class ServicesScreen(Screen):
     async def _stop_agent_bus(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
         result = await svc.stop_agent_bus()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _start_email_bridge(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.start_email_bridge()
+        self.query_one("#svc-log", LogStream).write_line(result)
+        await asyncio.sleep(2)
+        self._refresh_status()
+
+    async def _stop_email_bridge(self) -> None:
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        result = await svc.stop_email_bridge()
         self.query_one("#svc-log", LogStream).write_line(result)
         await asyncio.sleep(2)
         self._refresh_status()

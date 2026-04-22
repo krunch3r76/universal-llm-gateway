@@ -17,12 +17,22 @@ from typing import Any
 logger = logging.getLogger("cortex-api.dispatch_ops")
 
 
-_FILES_ROOT = Path(
-    os.environ.get(
-        "CORTEX_FILES_ROOT",
-        str(Path.home() / "mcp-data" / "files"),
+_CORTEX_FILES_ROOT_ENV = os.environ.get("CORTEX_FILES_ROOT")
+if _CORTEX_FILES_ROOT_ENV:
+    _FILES_ROOT = Path(_CORTEX_FILES_ROOT_ENV)
+else:
+    # Per workspace defaults-policy: log ERROR when relying on a default for a
+    # resource path. The default must match the MCP container's data_dir bind
+    # mount (~/.gateway/mcp.yaml -> data_dir) — when they diverge, fs(cortex)
+    # cannot read what cortex-api wrote (mcp-data path alias gap).
+    _FILES_ROOT = Path.home() / "mcp-data" / "files"
+    logger.error(
+        "CORTEX_FILES_ROOT is unset — falling back to %s. This MUST match the "
+        "MCP container's data_dir/files bind mount or fs(cortex) writes/reads "
+        "will diverge. Set CORTEX_FILES_ROOT explicitly (manage TUI does this "
+        "from ~/.gateway/mcp.yaml).",
+        _FILES_ROOT,
     )
-)
 _DEFAULT_USER_ENTITY = os.getenv("CORTEX_DEFAULT_USER_ENTITY", "")
 
 _VALID_STATUS = frozenset({"confirmed", "provisional", "merged", "deprecated"})

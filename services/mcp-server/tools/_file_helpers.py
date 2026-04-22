@@ -8,21 +8,6 @@ from pathlib import Path
 from typing import Any
 
 FILES_ROOT = Path("/data/files")
-ALLOWED_READ_SUFFIXES = {
-    ".md",
-    ".txt",
-    ".csv",
-    ".docx",
-    ".odt",
-    ".eml",
-    ".pdf",
-    ".doc",
-    ".html",
-    ".json",
-    ".yaml",
-    ".py",
-}
-
 
 def _read_plain(path: Path) -> str:
     """Reads the content of a plain text file, replacing decoding errors."""
@@ -194,12 +179,6 @@ def read_file_result(
         return build_binary_read_result(src)
 
     suffix = src.suffix.lower()
-    if suffix not in ALLOWED_READ_SUFFIXES:
-        raise ValueError(
-            f"Unsupported format {suffix!r} for reading. "
-            f"Allowed: {', '.join(sorted(ALLOWED_READ_SUFFIXES))}"
-        )
-
     content = extract_text_content(src)
     result: dict[str, Any] = {"content": content, "path": str(src)}
     if suffix == ".pdf":

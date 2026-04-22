@@ -16,6 +16,7 @@ class AgentName(StrEnum):
     ORION = "orion"
     BARD = "bard"
     ALL = "all"
+    TEAM = "team"
 
 
 class MessageCreate(BaseModel):

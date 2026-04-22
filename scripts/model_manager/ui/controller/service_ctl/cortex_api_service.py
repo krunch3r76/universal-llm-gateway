@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from ...model.service_state import ServiceState
-from ..service_config import GATEWAY_DIR
+from ..service_config import GATEWAY_DIR, load_mcp_config
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 
 _CORTEX_APP_MODULE = "cortex_store.main:app"
@@ -30,6 +30,17 @@ async def start_cortex_api(
     kill_and_wait: Callable[..., Awaitable[str]],  # noqa: ARG001
 ) -> str:
     """Start cortex-api as host process via uvicorn on UDS."""
+    # CORTEX_FILES_ROOT must match the data_dir that the MCP Docker container
+    # bind-mounts as /data/files (set via MCP_DATA_DIR in build_mcp_env).
+    # Without this, session_close writes transcripts to ~/mcp-data/files while
+    # the container's fs(cortex) sandbox reads from the configured data_dir —
+    # a silent mismatch that produces confirmed session entities with no file.
+    extra_env: dict[str, str] | None = None
+    cfg = load_mcp_config()
+    if cfg is not None:
+        extra_env = {
+            "CORTEX_FILES_ROOT": str(Path(cfg.data_dir).expanduser() / "files")
+        }
     return await _start_uvicorn_service(
         service_state=service_state,
         root=root,
@@ -41,6 +52,7 @@ async def start_cortex_api(
         tcp_config=None,
         log_dir=_CORTEX_LOG_DIR,
         log_filename="cortex-api.log",
+        extra_env=extra_env,
     )
 
 

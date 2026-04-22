@@ -359,6 +359,54 @@ def _action_failure_payload(exc: Exception, page: Any) -> dict[str, Any]:
     }
 
 
+async def _capture_root_scroll_state(page: Any) -> dict[str, Any] | None:
+    """Snapshot root scroll position and inline overflow styles before screenshot."""
+    try:
+        return await page.evaluate("""() => {
+            const html = document.documentElement;
+            const body = document.body;
+            const styleState = (el) => ({
+                overflow: el?.style?.overflow ?? "",
+                overflowX: el?.style?.overflowX ?? "",
+                overflowY: el?.style?.overflowY ?? "",
+            });
+            return {
+                scrollX: window.scrollX,
+                scrollY: window.scrollY,
+                html: styleState(html),
+                body: styleState(body),
+            };
+        }""")
+    except Exception as exc:
+        logger.debug("Unable to snapshot scroll state before screenshot: %s", exc)
+        return None
+
+
+async def _restore_root_scroll_state(page: Any, state: dict[str, Any] | None) -> None:
+    """Restore root scrolling after Playwright full-page screenshot side effects."""
+    if state is None:
+        return
+    try:
+        await page.evaluate(
+            """(state) => {
+                const html = document.documentElement;
+                const body = document.body;
+                const restore = (el, styles) => {
+                    if (!el || !styles) return;
+                    el.style.overflow = styles.overflow ?? "";
+                    el.style.overflowX = styles.overflowX ?? "";
+                    el.style.overflowY = styles.overflowY ?? "";
+                };
+                restore(html, state.html);
+                restore(body, state.body);
+                window.scrollTo(state.scrollX ?? 0, state.scrollY ?? 0);
+            }""",
+            state,
+        )
+    except Exception as exc:
+        logger.warning("Failed to restore scroll state after screenshot: %s", exc)
+
+
 async def _maybe_screenshot(
     page: Any, screenshot: bool, screenshot_format: str, screenshot_quality: int
 ) -> tuple[bytes | None, str]:
@@ -369,11 +417,14 @@ async def _maybe_screenshot(
     kwargs: dict[str, object] = {"full_page": True, "type": img_format}
     if img_format == "jpeg":
         kwargs["quality"] = max(1, min(100, screenshot_quality))
+    scroll_state = await _capture_root_scroll_state(page)
     try:
         return await page.screenshot(**kwargs), img_format
     except Exception as exc:
         logger.warning("Screenshot failed: %s", exc)
         return None, img_format
+    finally:
+        await _restore_root_scroll_state(page, scroll_state)
 
 
 def _save_screenshot_file(img_bytes: bytes, save_screenshot_to: str) -> str:

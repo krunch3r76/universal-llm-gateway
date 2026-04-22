@@ -29,7 +29,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TASKS_ROOT = Path(os.environ.get("TASKS_ROOT", "/data/tasks"))
-_ALLOWED_WRITE_SUFFIXES = {".md", ".txt", ".yaml", ".yml"}
+_EDITABLE_SUFFIXES = {
+    ".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml",
+    ".csv", ".sh", ".bash", ".js", ".ts", ".html", ".css",
+    ".xml", ".ini", ".cfg", ".conf", ".env", ".log",
+}
 _TASKS_READ_ONLY = os.environ.get("TASKS_READ_ONLY", "false").strip().lower() in {
     "1",
     "true",
@@ -330,8 +334,6 @@ def register_context_tools(mcp: FastMCP) -> None:
         formatting and indexing. Use this for discoveries, lessons, specs,
         and other free-form context files.
 
-        Allowed extensions: .md, .txt, .yaml, .yml
-
         Args:
             path: Relative file path within tasks/ (e.g. "discoveries/new-insight.md").
             content: Text content to write.
@@ -348,18 +350,6 @@ def register_context_tools(mcp: FastMCP) -> None:
         except ValueError as exc:
             record("mcp.tool.context.file.write.failed", path=path, reason="path_error")
             return {"error": str(exc)}
-        suffix = target.suffix.lower()
-        if suffix not in _ALLOWED_WRITE_SUFFIXES:
-            record(
-                "mcp.tool.context.file.write.failed",
-                path=path,
-                reason="unsupported_suffix",
-                suffix=suffix,
-            )
-            return {
-                "error": f"Unsupported format {suffix!r}. "
-                f"Allowed: {', '.join(sorted(_ALLOWED_WRITE_SUFFIXES))}"
-            }
 
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -384,7 +374,8 @@ def register_context_tools(mcp: FastMCP) -> None:
         For structured data like journal entries, prefer specific tools
         like write_journal_entry. Use this for general text editing.
 
-        Allowed extensions: .md, .txt, .yaml, .yml
+        Editing is limited to plain-text formats; binary formats must be
+        written in full via write_context_file().
 
         Args:
             path: Relative file path (e.g. "discoveries/new-insight.md").
@@ -420,10 +411,10 @@ def register_context_tools(mcp: FastMCP) -> None:
         except ValueError as exc:
             return {"error": str(exc)}
 
-        if target_path.suffix.lower() not in _ALLOWED_WRITE_SUFFIXES:
+        if target_path.suffix.lower() not in _EDITABLE_SUFFIXES:
             return {
-                "error": f"Unsupported format {target_path.suffix!r} for editing. Allowed: "
-                + ", ".join(sorted(_ALLOWED_WRITE_SUFFIXES))
+                "error": f"Cannot edit binary format {target_path.suffix!r} in place. "
+                "Use write_context_file() instead."
             }
 
         try:

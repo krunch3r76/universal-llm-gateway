@@ -19,12 +19,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlencode
+from zoneinfo import ZoneInfo
 
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
     DEFAULT_CORTEX_URL,
     make_async_client,
 )
+
+_LA = ZoneInfo("America/Los_Angeles")
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,16 @@ _SELF_ENTITY: dict[str, str] = {
     "api_claude": "ai_agent:api-claude",
     "cursor": "ai_agent:cursor-claude",
 }
+
+
+def _normalize_slug_to_entity(agent: str) -> str:
+    """Map runtime agent slug → cortex ``ai_agent:{...}`` entity id.
+
+    ``_SELF_ENTITY`` carries hyphenation aliases (``web`` → ``web-claude``
+    etc.).  Falls back to ``ai_agent:{agent}`` for unknown slugs, which is
+    correct for callers that already pass the canonical hyphenated form.
+    """
+    return _SELF_ENTITY.get(agent, f"ai_agent:{agent}")
 
 
 @dataclass(slots=True)
@@ -167,6 +180,17 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
     )
 
 
+async def _fetch_agent_meta(agent: str) -> AgentMeta:
+    """Fetch and parse the persona attributes for *agent* from cortex.
+
+    Returns a default ``AgentMeta()`` on any fetch or parse error so the
+    caller is never blocked by a missing or malformed entity.
+    """
+    entity_id = _normalize_slug_to_entity(agent)
+    raw = await _cortex_get(f"/entities/{quote(entity_id, safe=':')}")
+    return _parse_agent_meta(raw)
+
+
 async def _resolve_continuation(
     transcript_id: str,
 ) -> tuple[str | None, str | None]:
@@ -210,6 +234,7 @@ def _render_briefing(
     unread_threads: list[dict[str, Any]],
     self_reflections: list[dict[str, Any]],
     review_total: int,
+    skills: list[dict[str, Any]],
 ) -> str:
     """Render the compact briefing card for the dispatched agent.
 
@@ -218,8 +243,20 @@ def _render_briefing(
     fetch-hint code snippets) because the agent has the team toolset wired
     directly. Keeps hydration self-contained.
     """
-    today = datetime.now(UTC).date().isoformat()
-    parts: list[str] = [f"# Boot Briefing — {agent} — {today}"]
+    today = datetime.now(UTC).astimezone(_LA)
+    parts: list[str] = [f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}"]
+
+    if skills:
+        parts.append(
+            "\n## Agent Skills "
+            "(read on trigger match — "
+            "`fs(sandbox='cortex', op='read', "
+            "path='agent-skills/<NAME>.md')`)"
+        )
+        for s in skills:
+            slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
+            trigger = (s.get("description") or "").strip()
+            parts.append(f"- **{slug}** — {trigger}")
 
     if deadlines:
         parts.append(f"\n## Deadlines ({len(deadlines)})")
@@ -292,6 +329,7 @@ async def hydrate_agent(
         {"to": agent, "unread": "true", "last": 10, "compact": "true"}
     )
     todo_qs = urlencode({"limit": 15})
+    skills_qs = urlencode({"type": "agent_skill", "limit": 50})
 
     normalized_agent = agent.replace("-", "_")
     tasks: dict[str, asyncio.Task[Any]] = {
@@ -299,9 +337,8 @@ async def hydrate_agent(
         "threads": asyncio.create_task(_bus_get("/threads?status=active")),
         "unread_turns": asyncio.create_task(_bus_get(f"/turns?{unread_qs}")),
         "todos": asyncio.create_task(_cortex_get(f"/boot-todos?{todo_qs}")),
-        "agent_entity": asyncio.create_task(
-            _cortex_get(f"/entities/ai_agent:{quote(agent.replace('_', '-'), safe='')}")
-        ),
+        "agent_meta": asyncio.create_task(_fetch_agent_meta(normalized_agent)),
+        "skills": asyncio.create_task(_cortex_get(f"/entities?{skills_qs}")),
     }
     if profile["include_deadlines"]:
         tasks["deadlines"] = asyncio.create_task(_cortex_get("/deadlines"))
@@ -342,7 +379,8 @@ async def hydrate_agent(
     todos = _safe_list(raw.get("todos"))
     staging = _safe_list(raw.get("staging"))
     self_reflections = _safe_list(raw.get("self_reflections"))
-    agent_meta = _parse_agent_meta(raw.get("agent_entity"))
+    skills = _safe_list(raw.get("skills"))
+    agent_meta = raw["agent_meta"]
 
     unread_threads = [
         t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0
@@ -357,6 +395,7 @@ async def hydrate_agent(
         unread_threads=unread_threads,
         self_reflections=self_reflections,
         review_total=len(staging),
+        skills=skills,
     )
 
     section_counts = {
@@ -368,6 +407,7 @@ async def hydrate_agent(
         "unread_threads": len(unread_threads),
         "review_queue": len(staging),
         "self_reflections": len(self_reflections),
+        "skills": len(skills),
     }
 
     return HydrationBundle(

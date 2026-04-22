@@ -186,6 +186,17 @@ class McpConfig:
     xai_api_key: str = ""
     mcp_server_url: str = ""
     web_fetcher_url: str = ""
+    # ClaudeBurst bot endpoints (TCP) — bots run on a separate host, so the
+    # MCP container must reach them by IP/port instead of the in-container
+    # UDS fallback (which targets a socket path that does not exist on the
+    # MCP host).  Mirrors the keyset exported by
+    # ``scripts/restart-and-sync-mcp.sh``.
+    claudeburst_host: str = ""
+    claudeburst_port: str = ""
+    claudeburst_perps_host: str = ""
+    claudeburst_perps_port: str = ""
+    claudeburst_coinbase_host: str = ""
+    claudeburst_coinbase_port: str = ""
     enable_browser_tools: bool = False
     refresh_cursor_descriptors_after_rebuild: bool = False
 
@@ -510,6 +521,12 @@ def load_mcp_config() -> McpConfig | None:
         ),
         mcp_server_url=_get_stripped_str("mcp_server_url"),
         web_fetcher_url=_get_stripped_str("WEB_FETCHER_URL", "web_fetcher_url"),
+        claudeburst_host=_get_stripped_str("CLAUDEBURST_HOST"),
+        claudeburst_port=_get_stripped_str("CLAUDEBURST_PORT"),
+        claudeburst_perps_host=_get_stripped_str("CLAUDEBURST_PERPS_HOST"),
+        claudeburst_perps_port=_get_stripped_str("CLAUDEBURST_PERPS_PORT"),
+        claudeburst_coinbase_host=_get_stripped_str("CLAUDEBURST_COINBASE_HOST"),
+        claudeburst_coinbase_port=_get_stripped_str("CLAUDEBURST_COINBASE_PORT"),
         firefox_profile_dir=_resolve_firefox_profile(
             _get_stripped_str("firefox_profile_dir")
         ),
@@ -551,6 +568,14 @@ def is_cortex_configured() -> bool:
 def is_agent_bus_configured() -> bool:
     """Return True when Agent Bus data directory or sqlite DB exists locally."""
     return _AGENT_BUS_DATA_DIR.exists() or _AGENT_BUS_DB_PATH.exists()
+
+
+def is_email_bridge_configured() -> bool:
+    """Return True when EMAIL_BRIDGE_ROOT is set to an existing directory."""
+    import os
+
+    root = os.environ.get("EMAIL_BRIDGE_ROOT", "").strip()
+    return bool(root) and Path(root).expanduser().is_dir()
 
 
 def is_rag_configured() -> bool:
@@ -612,6 +637,21 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["MCP_SERVER_URL"] = cfg.mcp_server_url
     if cfg.web_fetcher_url:
         env["WEB_FETCHER_URL"] = cfg.web_fetcher_url
+    # ClaudeBurst endpoints — without these the in-container claudeburst tool
+    # falls back to a UDS path that does not exist on the MCP host (bots run
+    # on a separate machine), producing intermittent ``bot_unreachable`` after
+    # any ``manage``-driven restart.
+    for attr, env_key in (
+        ("claudeburst_host", "CLAUDEBURST_HOST"),
+        ("claudeburst_port", "CLAUDEBURST_PORT"),
+        ("claudeburst_perps_host", "CLAUDEBURST_PERPS_HOST"),
+        ("claudeburst_perps_port", "CLAUDEBURST_PERPS_PORT"),
+        ("claudeburst_coinbase_host", "CLAUDEBURST_COINBASE_HOST"),
+        ("claudeburst_coinbase_port", "CLAUDEBURST_COINBASE_PORT"),
+    ):
+        value = getattr(cfg, attr)
+        if value:
+            env[env_key] = value
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
     env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"

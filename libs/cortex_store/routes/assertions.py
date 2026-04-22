@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 
@@ -136,20 +137,25 @@ def list_assertions(
     confidence: str | None = None,
     review_status: str | None = None,
     superseded: bool | None = None,
-    entity_type: str | None = Query(
-        None, description="Filter to assertions on entities of this type"
-    ),
-    entity_type_exclude: str | None = Query(
-        None,
-        description="Comma-separated entity types to exclude (e.g. 'legal_matter,person')",
-    ),
-    valid_at: str | None = Query(
-        None, description="World-state: what was true at this date (YYYY-MM-DD)"
-    ),
-    known_at: str | None = Query(
-        None, description="System-state: what the DB knew at this date (YYYY-MM-DD)"
-    ),
-    limit: int = Query(50, ge=1, le=500),
+    entity_type: Annotated[
+        str | None,
+        Query(description="Filter to assertions on entities of this type"),
+    ] = None,
+    entity_type_exclude: Annotated[
+        str | None,
+        Query(
+            description="Comma-separated entity types to exclude (e.g. 'legal_matter,person')",
+        ),
+    ] = None,
+    valid_at: Annotated[
+        str | None,
+        Query(description="World-state: what was true at this date (YYYY-MM-DD)"),
+    ] = None,
+    known_at: Annotated[
+        str | None,
+        Query(description="System-state: what the DB knew at this date (YYYY-MM-DD)"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> AssertionList:
     """List assertions with entity, confidence, review_status, superseded, entity type, and temporal filters."""
     clauses: list[str] = []
@@ -907,9 +913,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             detail="Supersession committed but could not read back results",
         )
 
-    threading.Thread(
-        target=reindex_assertion_fts, args=(new_id,), daemon=True
-    ).start()
+    threading.Thread(target=reindex_assertion_fts, args=(new_id,), daemon=True).start()
     enrich_background(new_id, body.claim, body.entity_id, body.confidence)
 
     vector_store.delete_assertion_embedding(body.old_assertion_id)
@@ -1041,7 +1045,9 @@ def _create_assertion_impl(payload: dict[str, object]) -> dict[str, object]:
     return result.model_dump(mode="json")
 
 
-def _update_assertion_impl(assertion_id: int, payload: dict[str, object]) -> dict[str, object]:
+def _update_assertion_impl(
+    assertion_id: int, payload: dict[str, object]
+) -> dict[str, object]:
     result = update_assertion(assertion_id, AssertionUpdate.model_validate(payload))
     return result.model_dump(mode="json")
 

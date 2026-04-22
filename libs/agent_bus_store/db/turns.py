@@ -103,7 +103,11 @@ def insert_turn(
             )
             thread = actual_id
         elif row["status"] == "closed":
-            raise ValueError(f"Thread {thread} is closed - reopen before posting")
+            # Replying to a closed thread reopens it — matches session-close protocol.
+            conn.execute(
+                "UPDATE threads SET status = 'active', updated_at = ? WHERE id = ?",
+                (ts, thread),
+            )
 
         if supersedes_turn is not None:
             target = conn.execute(
@@ -113,10 +117,16 @@ def insert_turn(
                 raise ValueError(f"supersedes_turn {supersedes_turn} does not exist")
 
         if after_turn is not None:
+            # Mirror the broadcast semantics from get_turns: kaywan only sees
+            # 'all', AI seats see 'all' + 'team'.
+            if from_agent == "kaywan":
+                broadcast_clause = "to_agent IN (?, 'all')"
+            else:
+                broadcast_clause = "to_agent IN (?, 'all', 'team')"
             unread_rows = conn.execute(
-                "SELECT id, turn_number, subject FROM turns "
-                "WHERE thread = ? AND to_agent IN (?, 'all') "
-                "AND turn_number > ? AND read_at IS NULL",
+                f"SELECT id, turn_number, subject FROM turns "
+                f"WHERE thread = ? AND {broadcast_clause} "
+                f"AND turn_number > ? AND read_at IS NULL",
                 (thread, from_agent, after_turn),
             ).fetchall()
             if unread_rows:
@@ -186,7 +196,12 @@ def get_turns(
         clauses.append("thread = ?")
         params.append(thread)
     if to is not None:
-        clauses.append("(to_agent = ? OR to_agent = 'all')")
+        # kaywan is a human seat — only sees 'all' broadcasts, not 'team'.
+        # All AI seats see both 'all' and 'team' broadcasts.
+        if to == "kaywan":
+            clauses.append("(to_agent = ? OR to_agent = 'all')")
+        else:
+            clauses.append("(to_agent = ? OR to_agent = 'all' OR to_agent = 'team')")
         params.append(to)
     if unread:
         clauses.append("read_at IS NULL")

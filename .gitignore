@@ -45,7 +45,6 @@ config/env/*.local
 !.env.example
 !.env.*.example
 tmp/
-docs/agent-guides/
 docs/engram/
 docs/prompts/
 docs/research/

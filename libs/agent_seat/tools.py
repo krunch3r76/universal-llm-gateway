@@ -116,65 +116,79 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+_AGENT_BUS_TOOL_DEFINITION: dict[str, Any] = _fn(
+    "agent_bus",
+    "Inter-agent message bus — threads, turns, read/reply coordination.\n\n"
+    "Operations:\n"
+    "  fetch   (thread, last?, compact?, mark_read?) — get turns\n"
+    "  reply   (thread, to, subject, body, after_turn, from_agent?) — reply\n"
+    "  post    (slug, to, subject, body, from_agent?) — new thread\n"
+    "  threads (status?) — list threads; status: active/archived/all\n"
+    "  get     (thread, turn_number) — single turn lookup\n\n"
+    "arguments MUST be a JSON string or an object.",
+    {
+        "tool": {
+            "type": "string",
+            "description": "Operation: fetch, reply, post, threads, get",
+        },
+        "arguments": {
+            "type": "string",
+            "description": (
+                "JSON string (or object) of operation arguments. "
+                'Example: \'{"thread": "480", "last": 3, "compact": true}\''
+            ),
+        },
+    },
+    ["tool"],
+)
+
+
 TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     CORTEX_TOOL_DEFINITION,
-    _fn(
-        "agent_bus",
-        "Inter-agent message bus — threads, turns, read/reply coordination.\n\n"
-        "Operations:\n"
-        "  fetch   (thread, last?, compact?, mark_read?) — get turns\n"
-        "  reply   (thread, to, subject, body, after_turn, from_agent?) — reply\n"
-        "  post    (slug, to, subject, body, from_agent?) — new thread\n"
-        "  threads (status?) — list threads; status: active/archived/all\n"
-        "  get     (thread, turn_number) — single turn lookup\n\n"
-        "arguments MUST be a JSON string or an object.",
-        {
-            "tool": {
-                "type": "string",
-                "description": "Operation: fetch, reply, post, threads, get",
-            },
-            "arguments": {
-                "type": "string",
-                "description": (
-                    "JSON string (or object) of operation arguments. "
-                    'Example: \'{"thread": "480", "last": 3, "compact": true}\''
-                ),
-            },
-        },
-        ["tool"],
-    ),
+    _AGENT_BUS_TOOL_DEFINITION,
 ]
 
 
-def _tool_name(definition: dict[str, Any]) -> str:
-    """Extract function name from an OpenAI tool definition."""
-    fn = definition.get("function")
-    if not isinstance(fn, dict):
-        return ""
-    name = fn.get("name")
-    return str(name) if isinstance(name, str) else ""
+# Tool-registry entry: definition + async executor reference name. The
+# executor name is resolved by libs/agent_seat/executor.py at tool-loop
+# build time — keeps this module free of concrete executor imports
+# (avoids agent_seat → executor → tools cycle).
+TOOL_REGISTRY: dict[str, dict[str, Any]] = {
+    "cortex": {
+        "definition": CORTEX_TOOL_DEFINITION,
+        "executor": "cortex_dispatch",
+    },
+    "rag_search": {
+        "definition": RAG_SEARCH_TOOL_DEFINITION,
+        "executor": "rag_search",
+    },
+    "agent_bus": {
+        "definition": _AGENT_BUS_TOOL_DEFINITION,
+        "executor": "agent_bus_dispatch",
+    },
+}
 
 
-TOOL_REGISTRY: dict[str, dict[str, Any]] = {}
-for _definition in [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]:
-    _name = _tool_name(_definition)
-    if _name:
-        TOOL_REGISTRY[_name] = _definition
+def resolve_tools(
+    names: list[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Resolve tool names to ``(definitions, executor_names)``.
 
-
-def resolve_tools(tool_names: list[str]) -> list[dict[str, Any]]:
-    """Resolve ordered tool names to OpenAI function definitions."""
-    resolved: list[dict[str, Any]] = []
+    Raises ``ValueError`` for unknown names — callers should validate
+    against ``TOOL_REGISTRY`` before calling.
+    """
+    definitions: list[dict[str, Any]] = []
+    executors: list[str] = []
     unknown: list[str] = []
-    for name in tool_names:
-        definition = TOOL_REGISTRY.get(name)
-        if definition is None:
+    for name in names:
+        entry = TOOL_REGISTRY.get(name)
+        if entry is None:
             unknown.append(name)
             continue
-        resolved.append(definition)
+        definitions.append(entry["definition"])
+        executors.append(entry["executor"])
     if unknown:
         raise ValueError(
-            f"Unknown tool name(s): {sorted(set(unknown))}; "
-            f"available: {sorted(TOOL_REGISTRY)}"
+            f"unknown tool {sorted(set(unknown))!r}; available: {sorted(TOOL_REGISTRY)}"
         )
-    return resolved
+    return definitions, executors

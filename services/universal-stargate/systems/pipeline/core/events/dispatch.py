@@ -592,7 +592,7 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
         valid_family: Allowed model identifiers for this agent
     """
     return Event(
-        signal="pipeline.frontier.dispatch.agent.model.mismatch",
+        signal="pipeline.frontier.dispatch.mismatch",
         payload={
             "execution_id": execution_id,
             "agent": agent,

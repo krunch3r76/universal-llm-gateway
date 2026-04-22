@@ -46,7 +46,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "trading/intraday": "trading_intraday",
     "trading/prediction-markets": "trading_prediction_markets",
     "constitutional-ai": "constitutional_ai",
-    "agent-skills": "agent_skills",
+    "agent-skills": "agent_skills_research",
     "legal-reasoning": "legal_reasoning_llm",
 }
 

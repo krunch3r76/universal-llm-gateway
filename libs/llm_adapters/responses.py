@@ -14,6 +14,7 @@ from llm_adapters._mcp_entry import (
     openai_xai_mcp_tool_entry,
     resolve_mcp_env,
 )
+from llm_adapters._tool_schema import sanitize_tool_parameters
 
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
@@ -38,7 +39,11 @@ def _normalize_tool_for_responses_api(tool: dict[str, Any]) -> dict[str, Any]:
     if "description" in fn:
         flat["description"] = fn["description"]
     if "parameters" in fn:
-        flat["parameters"] = fn["parameters"]
+        params = fn["parameters"]
+        if isinstance(params, dict):
+            flat["parameters"] = sanitize_tool_parameters(params)
+        else:
+            flat["parameters"] = params
     for k, v in fn.items():
         if k not in flat:
             flat[k] = v
@@ -120,9 +125,10 @@ class ResponsesAPIAdapter:
         body: dict[str, Any] = {
             "model": req.model,
             "input": input_msgs,
-            "max_output_tokens": req.max_tokens,
             "store": False,
         }
+        if req.max_tokens is not None:
+            body["max_output_tokens"] = req.max_tokens
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.top_p is not None:

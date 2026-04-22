@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Rebuild MCP server image and start the container.
+# Sync MCP source into the container, restart, and wait for healthy.
+# Not a true Docker rebuild — pip deps/Dockerfile changes still need ./manage.
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
-# Usage: ./scripts/rebuild-mcp.sh [--no-cache] [from repo root or any subdir]
+# Usage: ./scripts/restart-and-sync-mcp.sh [--no-cache] [from repo root or any subdir]
 
 set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/rebuild-mcp.sh [--no-cache]
+Usage: ./scripts/restart-and-sync-mcp.sh [--no-cache]
 
 Options:
   --no-cache   Force full rebuild without cache (pulls fresh base images).
