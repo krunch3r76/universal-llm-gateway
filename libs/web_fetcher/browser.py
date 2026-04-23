@@ -249,13 +249,13 @@ async def fetch_with_browser(
             title = await page.title()
             final_url = page.url
 
-            img_bytes, img_format = await _maybe_screenshot(
+            img_bytes, img_format = await maybe_screenshot(
                 page, screenshot, screenshot_format, screenshot_quality
             )
 
             saved_screenshot_to: str | None = None
             if img_bytes and save_screenshot_to:
-                saved_screenshot_to = _save_screenshot_file(
+                saved_screenshot_to = save_screenshot_file(
                     img_bytes, save_screenshot_to
                 )
 
@@ -407,7 +407,7 @@ async def _restore_root_scroll_state(page: Any, state: dict[str, Any] | None) ->
         logger.warning("Failed to restore scroll state after screenshot: %s", exc)
 
 
-async def _maybe_screenshot(
+async def maybe_screenshot(
     page: Any, screenshot: bool, screenshot_format: str, screenshot_quality: int
 ) -> tuple[bytes | None, str]:
     """Capture a full-page screenshot when requested, returning (bytes, format)."""
@@ -427,7 +427,7 @@ async def _maybe_screenshot(
         await _restore_root_scroll_state(page, scroll_state)
 
 
-def _save_screenshot_file(img_bytes: bytes, save_screenshot_to: str) -> str:
+def save_screenshot_file(img_bytes: bytes, save_screenshot_to: str) -> str:
     """Persist screenshot bytes to the given host path; return the absolute path."""
     path = pathlib.Path(save_screenshot_to)
     path.parent.mkdir(parents=True, exist_ok=True)

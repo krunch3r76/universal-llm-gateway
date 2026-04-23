@@ -19,6 +19,7 @@ import trafilatura
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from .active_tab import ActiveTabResult, list_tabs_op, read_active_tab
 from .browser import (
     BrowserResult,
     download_with_browser,
@@ -39,7 +40,7 @@ _USER_AGENT = (
 
 
 class FetchRequest(BaseModel):
-    url: str
+    url: str = ""
     selector: str | None = None
     mode: str = "auto"
     max_chars: int = _DEFAULT_MAX_CHARS
@@ -62,6 +63,12 @@ class FetchRequest(BaseModel):
     # Persist the screenshot bytes to this absolute path on the web-fetcher host
     # (mirrors save_to for binaries). Only honored when screenshot=True.
     save_screenshot_to: str | None = None
+    # Read the currently-focused tab from the CDP-attached Chrome instead of
+    # navigating to a URL. Mutually exclusive with url/save_to/wait_for.
+    active_tab: bool = False
+    # List all open http(s) tabs (title, URL, visibility, focus state).
+    # Mutually exclusive with url/active_tab/actions/save_to/wait_for.
+    list_tabs: bool = False
 
 
 def create_app(*, headless: bool | None = None) -> FastAPI:
@@ -103,17 +110,71 @@ async def _do_fetch(
     headless: bool | None = None,
     cdp_url: str | None = None,
 ) -> dict[str, Any]:
-    """Orchestrate fetch: httpx first (fast), browser fallback (CF bypass).
+    """Orchestrate fetch: list_tabs → active_tab → httpx → browser fallback."""
+    if req.list_tabs:
+        if not cdp_url:
+            return {
+                "error": "list_tabs requires browser mode (BROWSER_CDP_URL not configured)",
+                "tabs": [],
+            }
+        if req.url or req.active_tab:
+            return {
+                "error": "list_tabs is mutually exclusive with url/active_tab",
+                "tabs": [],
+            }
+        try:
+            tabs = await list_tabs_op(cdp_url=cdp_url)
+        except RuntimeError as exc:
+            return {"error": str(exc), "tabs": []}
+        except Exception as exc:
+            logger.error("list_tabs failed: %s", exc)
+            return {"error": f"list_tabs failed: {exc}", "tabs": []}
+        return {
+            "method": "list_tabs",
+            "tabs": [
+                {
+                    "index": t.index,
+                    "title": t.title,
+                    "url": t.url,
+                    "visible": t.visible,
+                    "focused": t.focused,
+                }
+                for t in tabs
+            ],
+        }
 
-    Routing:
-      * ``save_to`` without ``actions`` → direct-URL download via
-        ``download_with_browser`` (existing fast path for Scribd-style flows).
-      * ``save_to`` with ``actions``, or any ``wait_for``/``actions``/``save_screenshot_to``
-        → ``fetch_with_browser`` which wraps the action sequence in
-        ``page.expect_download()`` when ``save_to`` is set.
-      * No save_to / no actions → ``_try_httpx`` fast path, then
-        ``fetch_with_browser`` for CF / SPA rendering.
-    """
+    if req.active_tab:
+        if not cdp_url:
+            return {
+                "error": "active_tab requires browser mode (BROWSER_CDP_URL not configured)",
+                "url": "",
+            }
+        if req.url or req.save_to or req.wait_for:
+            return {
+                "error": "active_tab is mutually exclusive with url/save_to/wait_for",
+                "url": req.url,
+            }
+        try:
+            tab = await read_active_tab(
+                cdp_url=cdp_url,
+                selector=req.selector,
+                screenshot=req.screenshot,
+                screenshot_format=req.screenshot_format,
+                screenshot_quality=req.screenshot_quality,
+                save_screenshot_to=req.save_screenshot_to,
+                actions=req.actions,
+            )
+        except RuntimeError as exc:
+            logger.warning("Active-tab read failed: %s", exc)
+            return {"error": str(exc), "url": ""}
+        except Exception as exc:
+            logger.error("Active-tab read failed: %s", exc)
+            return {"error": f"Active-tab read failed: {exc}", "url": ""}
+        return _format_active_tab(tab, req)
+
+    if not req.url:
+        return {"error": "url is required when active_tab is False", "url": ""}
+
     needs_browser_interaction = bool(
         req.wait_for or req.actions or req.save_screenshot_to
     )
@@ -157,6 +218,7 @@ async def _do_fetch(
             save_screenshot_to=req.save_screenshot_to,
         )
     except RuntimeError as exc:
+        logger.warning("Browser fetch failed for %s: %s", req.url, exc)
         return {"error": str(exc), "url": req.url}
     except Exception as exc:
         logger.error("Browser fetch failed for %s: %s", req.url, exc)
@@ -227,6 +289,32 @@ def _format_browser(result: BrowserResult, req: FetchRequest) -> dict[str, Any]:
         "truncated": total > req.max_chars,
         "method": "browser",
         "cf_bypassed": result.cf_bypassed,
+    }
+    if result.screenshot:
+        out["screenshot"] = base64.b64encode(result.screenshot).decode()
+        out["screenshot_format"] = result.screenshot_format
+    if result.saved_screenshot_to:
+        out["saved_screenshot_to"] = result.saved_screenshot_to
+    if result.action_failure is not None:
+        out["action_failure"] = result.action_failure
+    return out
+
+
+def _format_active_tab(result: ActiveTabResult, req: FetchRequest) -> dict[str, Any]:
+    """Shape the active-tab read result to match the URL-fetch JSON envelope."""
+    if not result.is_html or req.raw:
+        content = result.content
+    else:
+        content = _extract_text(result.content)
+    total = len(content)
+    out: dict[str, Any] = {
+        "url": result.url,
+        "title": result.title,
+        "content": content[: req.max_chars],
+        "total_chars": total,
+        "truncated": total > req.max_chars,
+        "method": "active_tab",
+        "cf_bypassed": False,
     }
     if result.screenshot:
         out["screenshot"] = base64.b64encode(result.screenshot).decode()

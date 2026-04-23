@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import logging
 import os
 import time
 from pathlib import Path
@@ -23,11 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from mcp.types import ImageContent, TextContent
+from mcp_events import record
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
-
-logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_CHARS = 36_000
 
@@ -67,7 +65,7 @@ def register_browse_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Web Browse")
     def browse(
-        url: str,
+        url: str = "",
         selector: str | None = None,
         mode: str = "auto",
         max_chars: int = _DEFAULT_MAX_CHARS,
@@ -80,6 +78,8 @@ def register_browse_tool(mcp: FastMCP) -> None:
         wait_for: dict[str, Any] | None = None,
         actions: list[dict[str, Any]] | None = None,
         save_screenshot_to: str | None = None,
+        active_tab: bool = False,
+        list_tabs: bool = False,
     ) -> list[TextContent | ImageContent] | dict[str, Any]:
         """Fetch a URL via a browser proxy with Cloudflare bypass and optional actions.
 
@@ -88,6 +88,22 @@ def register_browse_tool(mcp: FastMCP) -> None:
         the target site uses Cloudflare challenges, requires JavaScript
         rendering (SPAs), needs the user's live session, or requires clicking
         through UI to reach the content.
+
+        list_tabs — enumerate all open tabs:
+          When True, returns {method: "list_tabs", tabs: [{index, title, url,
+          visible, focused}, ...]}. Use to identify which tab to interact with
+          or to confirm which tab is active before using active_tab.
+          Mutually exclusive with url, active_tab.
+
+        active_tab — read the currently-focused tab without navigating:
+          When True, ``url`` is ignored and the tool reads the title/URL/DOM
+          (and optional screenshot) of whichever http(s) tab the user has
+          focused on the CDP-attached Chrome. Use when the user says
+          "look at the page I'm on" or "what am I looking at right now".
+          Composable with ``actions`` (run click/fill sequences on the active
+          tab before extracting), ``selector``, and ``screenshot``.
+          Mutually exclusive with ``url``, ``save_to``, ``wait_for``.
+          The response includes ``method: "active_tab"`` for confirmation.
 
         Modes:
           auto (default): Try plain HTTP first, fall back to headless Chromium
@@ -136,7 +152,7 @@ def register_browse_tool(mcp: FastMCP) -> None:
             view_image(path="/data/files/.shared-images/...")
 
         Args:
-            url: http(s) URL to fetch.
+            url: http(s) URL to fetch. Required unless ``active_tab=True``.
             selector: Optional CSS selector — extract only matching elements.
             mode: "auto" (default), "browser", or "http".
             max_chars: Maximum characters to return (default 36000).
@@ -154,8 +170,14 @@ def register_browse_tool(mcp: FastMCP) -> None:
             actions: Sequential browser actions (see above).
             save_screenshot_to: Absolute path on the web-fetcher host for a
                 persistent screenshot copy (optional).
+            active_tab: If True, read the currently-focused tab from the
+                CDP-attached Chrome instead of navigating to ``url``.
+            list_tabs: If True, enumerate all open http(s) tabs and return
+                their title, URL, index, visibility, and focus state.
 
         Returns:
+            list_tabs=True: {method: "list_tabs", tabs: [{index, title, url,
+                visible, focused}, ...]}
             save_to captured: {saved_to, size, url}
             screenshot=True without screenshot_raw (default):
               [TextContent (json of {url, title, content, screenshot_path, ...}),
@@ -174,6 +196,12 @@ def register_browse_tool(mcp: FastMCP) -> None:
                     "in the MCP server environment."
                 ),
                 "url": url,
+            }
+
+        if not active_tab and not list_tabs and not url:
+            return {
+                "error": "url is required unless active_tab=True or list_tabs=True",
+                "url": "",
             }
 
         # Downloads and multi-step action sequences may take longer than normal fetches.
@@ -196,39 +224,49 @@ def register_browse_tool(mcp: FastMCP) -> None:
                         "wait_for": wait_for,
                         "actions": actions,
                         "save_screenshot_to": save_screenshot_to,
+                        "active_tab": active_tab,
+                        "list_tabs": list_tabs,
                     },
                 )
                 resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            logger.warning("browse: fetcher HTTP error for %s: %s", url, exc)
+            record(
+                "mcp.browse.fetch.failed",
+                url=url,
+                kind="http_status",
+                status=exc.response.status_code,
+                error=str(exc),
+            )
             return {
                 "error": f"Fetcher HTTP {exc.response.status_code}",
                 "url": url,
             }
         except httpx.RequestError as exc:
-            logger.warning("browse: fetcher request error for %s: %s", url, exc)
+            record(
+                "mcp.browse.fetch.failed", url=url, kind="unreachable", error=str(exc)
+            )
             return {"error": f"Fetcher unreachable: {exc}", "url": url}
 
         data = resp.json()
 
         # save_to mode (direct or click-triggered) — return download metadata as-is.
         if save_to is not None and "saved_to" in data:
-            logger.info(
-                "browse download: %s → %s (%s bytes)",
-                url,
-                data.get("saved_to"),
-                data.get("size"),
+            record(
+                "mcp.browse.download.completed",
+                url=url,
+                saved_to=data.get("saved_to"),
+                size=data.get("size"),
             )
             return data
 
-        logger.info(
-            "browse: %s → %s chars via %s (cf_bypassed=%s, screenshot=%s, actions=%s)",
-            url,
-            data.get("total_chars"),
-            data.get("method"),
-            data.get("cf_bypassed"),
-            screenshot,
-            bool(actions),
+        record(
+            "mcp.browse.fetch.completed",
+            url=url,
+            total_chars=data.get("total_chars"),
+            method=data.get("method"),
+            cf_bypassed=data.get("cf_bypassed"),
+            screenshot=screenshot,
+            actions=bool(actions),
         )
 
         img_b64: str | None = data.pop("screenshot", None)
@@ -240,7 +278,7 @@ def register_browse_tool(mcp: FastMCP) -> None:
                 data["screenshot_path"] = shared_info["screenshot_path"]
                 data["screenshot_host_path"] = shared_info["screenshot_host_path"]
             except Exception as exc:
-                logger.warning("browse: shared-image copy failed: %s", exc)
+                record("mcp.browse.screenshot.failed", error=str(exc))
 
         if screenshot and img_b64 and not screenshot_raw:
             mime = "image/jpeg" if img_fmt == "jpeg" else "image/png"
