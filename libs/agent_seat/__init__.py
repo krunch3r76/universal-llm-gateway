@@ -50,6 +50,7 @@ from agent_seat.prompts import (
     load_birth_prompt,
 )
 from agent_seat.tools import (
+    BRAVE_SEARCH_TOOL_DEFINITION,
     RAG_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
@@ -58,6 +59,7 @@ from agent_seat.tools import (
 )
 
 __all__ = [
+    "BRAVE_SEARCH_TOOL_DEFINITION",
     "CORTEX_TOOL_QUICKREF",
     "HydrationBundle",
     "AgentMeta",

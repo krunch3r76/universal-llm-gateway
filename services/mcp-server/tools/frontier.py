@@ -72,6 +72,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           - ``tools``: explicit tool name list. Subset of persona's tools
             if ``agent`` set; subset of full tool registry otherwise.
             Omit for the persona's default toolset.
+            **Name collision warning**: pass ``"brave_search"`` (not
+            ``"web_search"``) for live Brave Search results.
+            ``"web_search"`` collides with Claude's and Gemini's native
+            search tool name — the model may silently call its own
+            capability instead of the Brave API, returning stale
+            training-data knowledge. ``"brave_search"`` is the safe
+            alias; the executor remaps it to the MCP ``web_search`` call.
           - ``reasoning_effort`` ∈ ``{"low", "medium", "high"}``:
             convenience knob. Translated to the provider-native thinking
             config automatically (Anthropic: ``thinking.budget_tokens``;
@@ -87,10 +94,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             dispatch via ``pipeline(pipeline_id="frontier-dispatch",
             pipeline_options={"generation_parameters": {...}})``.
           - ``result_delivery``: ``{bus_thread, bus_from_agent,
-            bus_to_agent, bus_subject}`` — Stargate posts the terminal
-            envelope to the configured agent-bus thread when the pipeline
-            completes. Agents do NOT receive this automatically — they
-            only read bus messages when instructed to. Practical uses:
+            bus_to_agent, bus_subject, bus_brief_summary, bus_attachments}``
+            — Stargate posts a compact pointer envelope to the configured
+            agent-bus thread when the pipeline completes.  The body contains
+            execution_id, status, usage, duration_s, and a poll pointer —
+            full model output is never inlined (use the poll endpoint to
+            fetch it).  Optional ``bus_brief_summary`` adds a caller-supplied
+            text summary to the envelope; ``bus_attachments`` forwards a list
+            of attachment dicts (filename, path, …) to the bus turn.  Agents
+            do NOT receive this automatically — they only read bus messages
+            when instructed to. Practical uses:
             (a) automated scripts / pipeline steps monitoring the bus,
             (b) the same session explicitly fetching the thread later,
             (c) multi-agent chains where a coordinator instructs the next
@@ -107,15 +120,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``{error: {code, message}, field, request_id}`` with no
         execution_id — admission is refused before tracker entry.
         """
-        if agent is not None and boot == "none":
-            return {
-                "error": {
-                    "code": "invalid_request",
-                    "message": "boot must not be 'none' when agent is set — specify 'mcp', 'team', or 'full'",
-                },
-                "field": "boot",
-            }
-
         body: dict[str, Any] = {
             "messages": messages,
             "boot": boot,
@@ -140,7 +144,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             model=model or "",
             boot=boot,
         )
-        async with make_async_client(DEFAULT_STARGATE_URL, timeout=_RELAY_TIMEOUT) as client:
+        async with make_async_client(
+            DEFAULT_STARGATE_URL, timeout=_RELAY_TIMEOUT
+        ) as client:
             try:
                 resp = await client.post("/api/v1/frontier/generate", json=body)
             except httpx.RequestError as exc:
@@ -155,7 +161,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         try:
             payload = resp.json()
-        except ValueError:
+        except ValueError as exc:
+            logger.error(
+                "frontier_generate relay returned non-JSON response: status=%s error=%s",
+                resp.status_code,
+                exc,
+            )
             return {
                 "error": {
                     "code": f"http_{resp.status_code}",
@@ -163,6 +174,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 }
             }
         if resp.status_code >= 400:
+            if isinstance(payload, dict) and "error" in payload:
+                # Top-level error envelope — FrontierEndpointError shape
+                # {error, field, request_id} or pipeline dispatch error
+                # {error: {code, message}}.  Pass through directly so
+                # callers receive the structured field/request_id contract.
+                record(
+                    "mcp.frontier.generate.rejected",
+                    status=resp.status_code,
+                    field=payload.get("field") or "",
+                )
+                return payload
+            # FastAPI 422 wraps validation errors under "detail"
             detail_obj = payload.get("detail") if isinstance(payload, dict) else None
             field = detail_obj.get("field", "") if isinstance(detail_obj, dict) else ""
             record(

@@ -48,7 +48,8 @@ def _parse_dispatch_arguments(raw: Any) -> dict[str, Any] | None:
         try:
             parsed = json.loads(raw)
             return parsed if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            logger.warning("dispatch arguments JSON invalid: %s", exc)
             return None
     return None
 
@@ -73,16 +74,21 @@ async def _get_mcp_executor() -> McpToolExecutor | None:
         url = os.environ.get("MCP_PUBLIC_URL", "").strip()
         token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
         if not url or not token:
-            logger.info(
-                "agent_seat MCP executor unavailable: MCP_PUBLIC_URL/MCP_AUTH_TOKEN not configured"
+            logger.error(
+                "agent_seat live MCP disabled — falling back to static tools only: "
+                "MCP_PUBLIC_URL/MCP_AUTH_TOKEN not configured"
             )
             _MCP_EXECUTOR_INITIALIZED = True
             return None
 
         try:
             from services.universal_cloud_proxy.mcp_executor import McpToolExecutor
-        except ImportError:
-            logger.info("agent_seat MCP executor unavailable: services/ not on PYTHONPATH")
+        except ImportError as exc:
+            logger.error(
+                "agent_seat live MCP disabled — falling back to static tools only: "
+                "McpToolExecutor unavailable: %s",
+                exc,
+            )
             _MCP_EXECUTOR_INITIALIZED = True
             return None
 
@@ -91,9 +97,7 @@ async def _get_mcp_executor() -> McpToolExecutor | None:
         if executor.available:
             _MCP_EXECUTOR = executor
         else:
-            logger.warning(
-                "agent_seat MCP executor discovered no tools from %s", url
-            )
+            logger.warning("agent_seat MCP executor discovered no tools from %s", url)
         _MCP_EXECUTOR_INITIALIZED = True
         return _MCP_EXECUTOR
 
@@ -125,7 +129,8 @@ async def resolve_tool_definitions(names: list[str]) -> list[dict[str, Any]]:
         return definitions
 
     live_defs = {
-        d.get("function", {}).get("name", ""): d for d in await get_mcp_tool_definitions()
+        d.get("function", {}).get("name", ""): d
+        for d in await get_mcp_tool_definitions()
     }
     still_unknown: list[str] = []
     for name in unresolved:
@@ -163,7 +168,8 @@ async def _cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, An
         }
     try:
         return resp.json()
-    except Exception:
+    except Exception as exc:
+        logger.warning("cortex-api returned invalid JSON: %s", exc)
         return {"error": f"cortex-api returned invalid JSON: {resp.text[:200]}"}
 
 
@@ -245,7 +251,8 @@ async def _agent_bus_request(
         }
     try:
         return resp.json()
-    except Exception:
+    except Exception as exc:
+        logger.warning("agent-bus returned invalid JSON: %s", exc)
         return {"error": f"agent-bus returned invalid JSON: {resp.text[:200]}"}
 
 
@@ -297,6 +304,7 @@ async def _execute_rag_search(args: dict[str, Any]) -> str:
             resp.raise_for_status()
             data = resp.json()
     except (httpx.HTTPError, httpx.TimeoutException) as exc:
+        logger.error("RAG search relay failed: query=%r error=%s", query, exc)
         return json.dumps({"error": f"RAG search failed: {exc}"})
 
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -312,9 +320,10 @@ async def execute_tool(name: str, args: dict[str, Any]) -> str:
     """Dispatch a single tool call to its REST backend. Returns JSON string.
 
     Supported tools (match libs/agent_seat/tools.TEAM_TOOL_DEFINITIONS):
-      - ``cortex``     — unified op dispatch to cortex-api /dispatch
-      - ``agent_bus``  — unified op dispatch to agent-bus
-      - ``rag_search`` — RAG context retrieval via Stargate rag-context pipeline
+      - ``cortex``       — unified op dispatch to cortex-api /dispatch
+      - ``agent_bus``    — unified op dispatch to agent-bus
+      - ``rag_search``   — RAG context retrieval via Stargate rag-context pipeline
+      - ``brave_search`` — Brave Search API via MCP (safe alias; MCP name: web_search)
 
     Unknown names fall back to the live MCP server catalog when available.
     """
@@ -324,7 +333,10 @@ async def execute_tool(name: str, args: dict[str, Any]) -> str:
         return await _execute_agent_bus(args)
     if name == "rag_search":
         return await _execute_rag_search(args)
+    # brave_search is the safe alias for the MCP-side "web_search" tool.
+    # ¬call "web_search" directly — name collides with native model capability.
+    mcp_name = "web_search" if name == "brave_search" else name
     executor = await _get_mcp_executor()
     if executor is not None:
-        return await executor.execute_tool(name, args)
+        return await executor.execute_tool(mcp_name, args)
     return json.dumps({"error": f"Unknown tool: {name}"})

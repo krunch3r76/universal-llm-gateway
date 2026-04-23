@@ -191,7 +191,7 @@ def _get_entity_impl(
             )
             conn.commit()
         except Exception:
-            logger.debug("Access log insert failed for %s", entity_id)
+            logger.warning("Access log insert failed for %s", entity_id)
 
     assertions: list[AssertionItem] = []
     for row in assertion_rows:

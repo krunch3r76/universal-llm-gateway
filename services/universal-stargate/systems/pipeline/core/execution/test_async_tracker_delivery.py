@@ -116,7 +116,8 @@ async def test_deliver_skipped_on_incomplete_config() -> None:
     assert "pipeline.dispatch.delivery.skipped" in signals
 
 
-def test_envelope_contains_reasoning_and_error_fields() -> None:
+def test_envelope_is_brief_pointer() -> None:
+    """Brief envelope: pointer + error code/message; no content or error.data."""
     record = _make_record(
         status="failed",
         result=None,
@@ -133,4 +134,21 @@ def test_envelope_contains_reasoning_and_error_fields() -> None:
     )
     envelope = _build_envelope(record)
     assert "upstream_rejected" in envelope
-    assert "invalid_request_error" in envelope
+    assert "400" in envelope
+    # error.data is intentionally omitted to keep bodies under the 8 000-char limit
+    assert "invalid_request_error" not in envelope
+    # pointer line present so consumers know where to fetch the full result
+    assert "poll" in envelope
+    assert "exec-1" in envelope
+
+
+def test_envelope_brief_summary_included() -> None:
+    """bus_brief_summary appears in the envelope when provided."""
+    import json
+
+    record = _make_record()
+    envelope = _build_envelope(record, brief_summary="Code review finished.")
+    assert "Code review finished." in envelope
+    # full model output must not be inlined (content key absent)
+    parsed = json.loads(envelope)
+    assert "content" not in parsed

@@ -110,6 +110,28 @@ CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
 )
 
 
+# Safe alias for the Brave Search MCP tool. The MCP tool is named
+# "web_search" at the server layer, but that name collides with
+# Claude's and Gemini's native search capability when injected into
+# frontier model tool lists.  Callers MUST use "brave_search" — the
+# executor translates the call to "web_search" on the MCP side.
+BRAVE_SEARCH_TOOL_DEFINITION: dict[str, Any] = _fn(
+    "brave_search",
+    "Live web search via the Brave Search API. Returns current search "
+    "results for the given query. Use this for real-time lookups — "
+    "prices, news, recent events, URLs. ALWAYS use this tool, never "
+    "the model's native web_search capability.",
+    {
+        "query": {"type": "string", "description": "Search query"},
+        "max_results": {
+            "type": "integer",
+            "description": "Max results to return (default 5, max 10)",
+        },
+    },
+    ["query"],
+)
+
+
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     CORTEX_TOOL_DEFINITION,
     RAG_SEARCH_TOOL_DEFINITION,
@@ -165,6 +187,13 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "agent_bus": {
         "definition": _AGENT_BUS_TOOL_DEFINITION,
         "executor": "agent_bus_dispatch",
+    },
+    # Safe alias — executor remaps to MCP "web_search" (see executor.py).
+    # ¬use "web_search" directly in frontier dispatches: collides with
+    # Claude's and Gemini's native search tool name.
+    "brave_search": {
+        "definition": BRAVE_SEARCH_TOOL_DEFINITION,
+        "executor": "brave_search",
     },
 }
 

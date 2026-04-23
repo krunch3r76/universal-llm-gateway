@@ -43,8 +43,16 @@ class _EventBusProtocol(Protocol):
     async def publish_nowait(self, event: Event) -> Any: ...
 
 
-def _build_envelope(record: PipelineExecutionRecord) -> str:
-    """Render the delivery body as a structured JSON envelope."""
+def _build_envelope(
+    record: PipelineExecutionRecord,
+    brief_summary: str | None = None,
+) -> str:
+    """Render the delivery body as a compact JSON pointer envelope.
+
+    Full model output is never inlined — callers poll via the execution
+    endpoint if they need the complete result.  Stays well under the
+    agent-bus 8 000-char body limit for any realistic payload.
+    """
     result = record.result
     error = record.error
     envelope: dict[str, Any] = {
@@ -52,18 +60,18 @@ def _build_envelope(record: PipelineExecutionRecord) -> str:
         "pipeline": record.pipeline,
         "status": record.status,
         "completed_at": record.completed_at,
+        "poll": f"GET /api/v1/pipelines/executions/{record.execution_id}",
     }
     if result is not None:
-        envelope["content"] = result.content
-        envelope["reasoning"] = result.reasoning
         envelope["usage"] = result.usage
         envelope["duration_s"] = result.duration_s
     if error is not None:
         envelope["error"] = {
             "code": error.code,
             "message": error.message,
-            "data": error.data,
         }
+    if brief_summary is not None:
+        envelope["summary"] = brief_summary
     return json.dumps(envelope, indent=2, default=str)
 
 
@@ -83,24 +91,28 @@ async def _post_turn(
     to_agent: str,
     subject: str,
     body: str,
+    attachments: list[dict[str, Any]] | None = None,
 ) -> tuple[int, str]:
     """POST /turns; return ``(status_code, response_text)``.
 
     Never raises — wraps network errors into a 599 synthetic status so
     the caller's emit logic stays straight-line.
     """
+    payload: dict[str, Any] = {
+        "thread": thread,
+        "from": from_agent,
+        "to": to_agent,
+        "subject": subject,
+        "body": body,
+    }
+    if attachments:
+        payload["attachments"] = attachments
     try:
         async with make_async_client(url, timeout=_HTTP_TIMEOUT_S) as client:
             response = await client.post(
                 "/turns",
                 headers={"Authorization": f"Bearer {auth_token}"},
-                json={
-                    "thread": thread,
-                    "from": from_agent,
-                    "to": to_agent,
-                    "subject": subject,
-                    "body": body,
-                },
+                json=payload,
             )
             return response.status_code, response.text
     except httpx.HTTPError as exc:
@@ -133,7 +145,7 @@ async def deliver_result(
         )
         return
 
-    body = _build_envelope(record)
+    body = _build_envelope(record, brief_summary=cfg.get("bus_brief_summary"))
     subject = _build_subject(record, subject_override)
     status_code, response_text = await _post_turn(
         url=url,
@@ -143,6 +155,7 @@ async def deliver_result(
         to_agent=to_agent,
         subject=subject,
         body=body,
+        attachments=cfg.get("bus_attachments"),
     )
 
     if 200 <= status_code < 300:

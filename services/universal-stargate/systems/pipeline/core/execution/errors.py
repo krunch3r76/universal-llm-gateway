@@ -314,7 +314,41 @@ class UnknownPipelineOptionsError(PipelineError):
         }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
+class AgentModelMismatchError(PipelineError):
+    """Raised when the caller-supplied model's provider conflicts with the
+    agent's identity-bound provider family.
+
+    Replaces the bare ``ValueError`` that ``check_agent_model_consistency``
+    used to raise so ``_normalize_pipeline_exception`` can extract a
+    structured ``code`` rather than collapsing to ``pipeline_execution_failed``.
+    """
+
+    agent: str
+    model: str
+    provider: str
+    expected_provider: str
+
+    def __str__(self) -> str:
+        return (
+            f"Agent {self.agent!r} expects provider {self.expected_provider!r}; "
+            f"model {self.model!r} resolves to {self.provider!r}. "
+            f"Use a {self.expected_provider!r} model for {self.agent!r} dispatches."
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "AgentModelMismatchError",
+            "code": "agent_model_mismatch",
+            "retryable": self.retryable,
+            "agent": self.agent,
+            "model": self.model,
+            "provider": self.provider,
+            "expected_provider": self.expected_provider,
+        }
+
+
+@dataclass
 class MapPartialFailureError(PipelineError):
     """
     Raised when map step completes with partial success below threshold.

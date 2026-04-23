@@ -9,6 +9,7 @@ from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
+from universal_logging import get_logger
 
 from .service import (
     FrontierEndpointError,
@@ -17,6 +18,7 @@ from .service import (
 )
 
 router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])
+logger = get_logger(__name__)
 
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
@@ -70,6 +72,12 @@ async def frontier_generate(
 
         dispatch_body = await build_dispatch_body(req, event_publisher=_publish_event)
     except FrontierEndpointError as exc:
+        logger.warning(
+            "frontier_generate rejected: request_id=%s field=%s reason=%s",
+            exc.request_id,
+            exc.field,
+            exc.reason,
+        )
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
     async with make_async_client(
@@ -80,7 +88,12 @@ async def frontier_generate(
     response.status_code = forward.status_code
     try:
         return forward.json()
-    except ValueError:
+    except ValueError as exc:
+        logger.error(
+            "frontier_generate forward returned non-JSON: status=%s error=%s",
+            forward.status_code,
+            exc,
+        )
         return {
             "error": {
                 "code": "dispatch_invalid_response",

@@ -496,14 +496,15 @@ def test_reject_unknown_runtime_options_passes_on_accepted_keys(
 
 
 def test_check_agent_model_consistency_rejects_mismatch() -> None:
-    """agent/model provider mismatch raises ValueError and emits the mismatch event."""
+    """agent/model provider mismatch raises AgentModelMismatchError."""
+    from systems.pipeline.core.execution.errors import AgentModelMismatchError
     from systems.pipeline.core.handlers.frontier_dispatch_admission import (
         check_agent_model_consistency,
     )
 
     published: list[Any] = []
 
-    with pytest.raises(ValueError, match="expects provider"):
+    with pytest.raises(AgentModelMismatchError) as exc_info:
         check_agent_model_consistency(
             agent="oppie",
             model="anthropic/claude-sonnet-4-6",
@@ -512,6 +513,11 @@ def test_check_agent_model_consistency_rejects_mismatch() -> None:
             publish=published.append,
         )
 
+    err = exc_info.value
+    assert err.agent == "oppie"
+    assert err.provider == "anthropic"
+    assert err.expected_provider == "xai"
+    assert err.to_dict()["code"] == "agent_model_mismatch"
     assert len(published) == 1
     assert published[0].signal == "pipeline.frontier.dispatch.mismatch"
     assert published[0].payload["agent"] == "oppie"
@@ -554,4 +560,3 @@ def test_check_agent_model_consistency_passes_unknown_agent() -> None:
     )
 
     assert published == []
-

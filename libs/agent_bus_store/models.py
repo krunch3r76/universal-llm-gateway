@@ -1,22 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import StrEnum
 
 from pydantic import BaseModel, Field
 
-
-class AgentName(StrEnum):
-    WEB = "web"
-    API = "api"
-    CURSOR = "cursor"
-    GROK = "grok"
-    KAYWAN = "kaywan"
-    OPPIE = "oppie"
-    ORION = "orion"
-    BARD = "bard"
-    ALL = "all"
-    TEAM = "team"
+# Free-form string — any agent name or pipeline-generated sender (e.g.
+# "frontier:openai") is valid.  Historical enum values ("web", "cursor",
+# etc.) are still valid; no new validation is enforced at the model layer.
+AgentName = str
 
 
 class MessageCreate(BaseModel):

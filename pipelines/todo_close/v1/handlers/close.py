@@ -33,156 +33,21 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 from transport_utils import DEFAULT_CORTEX_URL, make_async_client
 
+from ._ops import (
+    _DEFAULT_EDGE_TYPE,
+    _DEPENDS_ON_CONTEXT,
+    default_evidence,
+    do_assert,
+    do_edge,
+    do_relationship,
+    do_workflow_update,
+    extract_id,
+    missing_keys,
+)
+
 logger = logging.getLogger(__name__)
 
-_DEFAULT_REL_TYPE = "references"
-_DEFAULT_EDGE_TYPE = "depends_on"
-_DEPENDS_ON_CONTEXT = "Dependency closed in same cycle as todo."
 _REQUEST_TIMEOUT = 15.0
-
-
-def _missing(payload: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
-    return [k for k in keys if not payload.get(k)]
-
-
-def _default_evidence(todo_id: str, agent: str | None, session_id: str | None) -> str:
-    parts = [f"Closure of {todo_id}"]
-    if agent:
-        parts.append(f"by {agent}")
-    if session_id:
-        parts.append(f"in session {session_id}")
-    parts.append(f"at {datetime.now(UTC).isoformat()}")
-    return " ".join(parts) + "."
-
-
-async def _dispatch(
-    client: Any, tool: str, arguments: dict[str, Any]
-) -> dict[str, Any]:
-    """POST /dispatch and normalize the response into a dict.
-
-    cortex-api `/dispatch` returns either a JSON object (success or
-    structured `{"error": "..."}`) or a non-200 with a body. We surface
-    everything as a dict; the caller decides whether `"error"` is present.
-    """
-    try:
-        resp = await client.post(
-            "/dispatch", json={"tool": tool, "arguments": arguments}
-        )
-    except Exception as exc:
-        logger.warning("cortex dispatch %s failed: %s", tool, exc)
-        return {"error": f"transport_error: {exc}"}
-    if resp.status_code >= 400:
-        try:
-            body = resp.json()
-            if isinstance(body, dict):
-                return body if "error" in body else {"error": json.dumps(body)[:300]}
-        except Exception:
-            pass
-        return {"error": f"http_{resp.status_code}: {resp.text[:300]}"}
-    try:
-        data = resp.json()
-    except Exception as exc:
-        return {"error": f"invalid_json_response: {exc}"}
-    return data if isinstance(data, dict) else {"error": "non_object_response"}
-
-
-async def _do_assert(
-    client: Any,
-    *,
-    todo_id: str,
-    summary: str,
-    evidence: str,
-    evidence_uris: list[str] | None,
-    reasoning_summary: str | None,
-    agent: str | None,
-) -> dict[str, Any]:
-    args: dict[str, Any] = {
-        "entity_id": todo_id,
-        "claim": summary,
-        "confidence": "confirmed",
-        "evidence": evidence,
-        "derivation_type": "agent_observation",
-        "confidence_score": 0.8,
-    }
-    if evidence_uris:
-        args["evidence_uris"] = list(evidence_uris)
-    if reasoning_summary:
-        args["reasoning_summary"] = reasoning_summary
-    if agent:
-        args["seeded_by"] = agent
-    return await _dispatch(client, "assert", args)
-
-
-async def _do_relationship(
-    client: Any,
-    *,
-    todo_id: str,
-    item: dict[str, Any],
-    agent: str | None,
-    session_id: str | None,
-) -> dict[str, Any]:
-    target = item.get("target")
-    if not target:
-        return {"error": "references[].target is required"}
-    args: dict[str, Any] = {
-        "source_id": todo_id,
-        "target_id": target,
-        "type_id": item.get("type_id") or _DEFAULT_REL_TYPE,
-    }
-    for k in ("role", "evidence", "strength"):
-        if item.get(k) is not None:
-            args[k] = item[k]
-    if agent:
-        args["agent"] = agent
-    if session_id:
-        args["session_id"] = session_id
-    return await _dispatch(client, "relationship_create", args)
-
-
-async def _do_edge(
-    client: Any,
-    *,
-    from_node: str,
-    to_node: str,
-    edge_type: str,
-    context_text: str | None,
-    strength: float | None,
-    agent: str,
-    session_id: str,
-) -> dict[str, Any]:
-    args: dict[str, Any] = {
-        "session_id": session_id,
-        "agent": agent,
-        "from_node": from_node,
-        "to_node": to_node,
-        "edge_type": edge_type,
-    }
-    if context_text:
-        args["context"] = context_text
-    if strength is not None:
-        args["strength"] = strength
-    return await _dispatch(client, "edge_create", args)
-
-
-async def _do_workflow_update(client: Any, todo_id: str) -> dict[str, Any]:
-    return await _dispatch(
-        client,
-        "entity_update",
-        {"entity_id": todo_id, "workflow_state": "done"},
-    )
-
-
-def _extract_id(result: dict[str, Any], *keys: str) -> Any:
-    """Pull an id out of a dispatch result, tolerant of nested shapes."""
-    for k in keys:
-        if k in result:
-            return result[k]
-    inner = result.get("data") or result.get("item")
-    if isinstance(inner, dict):
-        for k in keys:
-            if k in inner:
-                return inner[k]
-    return None
 
 
 class TodoCloseApplyHandler(BaseHandler):
@@ -198,7 +63,7 @@ class TodoCloseApplyHandler(BaseHandler):
         agent = opts.get("agent")
         session_id = opts.get("session_id")
 
-        missing = _missing(opts, ("todo_id", "summary"))
+        missing = missing_keys(opts, ("todo_id", "summary"))
         if missing:
             err = {
                 "ok": False,
@@ -219,7 +84,7 @@ class TodoCloseApplyHandler(BaseHandler):
             }
             return StepOutput(raw=json.dumps(err), json=err, error=err["error"])
 
-        evidence = opts.get("evidence_text") or _default_evidence(
+        evidence = opts.get("evidence_text") or default_evidence(
             todo_id, agent, session_id
         )
         evidence_uris = opts.get("evidence_uris") or None
@@ -245,7 +110,7 @@ class TodoCloseApplyHandler(BaseHandler):
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_REQUEST_TIMEOUT
         ) as client:
-            assertion_resp = await _do_assert(
+            assertion_resp = await do_assert(
                 client,
                 todo_id=todo_id,
                 summary=summary,
@@ -261,7 +126,7 @@ class TodoCloseApplyHandler(BaseHandler):
                     {"step": "assert", "error": assertion_resp["error"]}
                 )
             else:
-                aid = _extract_id(assertion_resp, "id", "assertion_id")
+                aid = extract_id(assertion_resp, "id", "assertion_id")
                 if isinstance(aid, int):
                     result["assertion_id"] = aid
 
@@ -274,7 +139,7 @@ class TodoCloseApplyHandler(BaseHandler):
                     )
                     result["relationships"].append({"error": err})
                     continue
-                rel_resp = await _do_relationship(
+                rel_resp = await do_relationship(
                     client,
                     todo_id=todo_id,
                     item=item,
@@ -288,7 +153,7 @@ class TodoCloseApplyHandler(BaseHandler):
                         {"step": f"relationship[{idx}]", "error": rel_resp["error"]}
                     )
                 else:
-                    rid = _extract_id(rel_resp, "id", "relationship_id")
+                    rid = extract_id(rel_resp, "id", "relationship_id")
                     if isinstance(rid, int):
                         result["relationship_ids"].append(rid)
 
@@ -307,7 +172,7 @@ class TodoCloseApplyHandler(BaseHandler):
                     )
                     result["edges"].append({"error": err})
                     continue
-                edge_resp = await _do_edge(
+                edge_resp = await do_edge(
                     client,
                     from_node=todo_id,
                     to_node=f"assertion:{dep}",
@@ -324,7 +189,7 @@ class TodoCloseApplyHandler(BaseHandler):
                         {"step": f"depends_on[{idx}]", "error": edge_resp["error"]}
                     )
                 else:
-                    eid = _extract_id(edge_resp, "id", "edge_id")
+                    eid = extract_id(edge_resp, "id", "edge_id")
                     if isinstance(eid, int):
                         result["edge_ids"].append(eid)
 
@@ -343,7 +208,7 @@ class TodoCloseApplyHandler(BaseHandler):
                     result["errors"].append({"step": f"edge[{idx}]", "error": err})
                     result["edges"].append({"error": err})
                     continue
-                edge_resp = await _do_edge(
+                edge_resp = await do_edge(
                     client,
                     from_node=todo_id,
                     to_node=to_node,
@@ -360,12 +225,12 @@ class TodoCloseApplyHandler(BaseHandler):
                         {"step": f"edge[{idx}]", "error": edge_resp["error"]}
                     )
                 else:
-                    eid = _extract_id(edge_resp, "id", "edge_id")
+                    eid = extract_id(edge_resp, "id", "edge_id")
                     if isinstance(eid, int):
                         result["edge_ids"].append(eid)
 
             if not skip_workflow_update:
-                wf_resp = await _do_workflow_update(client, todo_id)
+                wf_resp = await do_workflow_update(client, todo_id)
                 result["workflow_update"] = wf_resp
                 if "error" in wf_resp:
                     result["ok"] = False

@@ -92,6 +92,12 @@ class ResultDeliveryConfig(BaseModel):
     bus_from_agent: str | None = None
     bus_to_agent: str | None = None
     bus_subject: str | None = None
+    # Caller-supplied plain-text summary appended to the delivery envelope as
+    # the ``"summary"`` key — useful for pre-composed human-readable context.
+    bus_brief_summary: str | None = None
+    # Attachment metadata forwarded verbatim to the agent-bus turn POST body.
+    # Each dict must satisfy the AttachmentCreate schema (filename, path, …).
+    bus_attachments: list[dict[str, Any]] | None = None
 
 
 class DispatchRequest(BaseModel):

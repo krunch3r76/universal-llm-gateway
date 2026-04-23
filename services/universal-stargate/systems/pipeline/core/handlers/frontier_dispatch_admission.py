@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from agent_seat.registry import resolve_agent_provider, resolve_agent_valid_family
 
 from ..events.dispatch import PipelineFrontierDispatchAgentModelMismatch
+from ..execution.errors import AgentModelMismatchError
 
 
 def prepend_dispatch_context(system: str) -> str:
@@ -52,7 +53,7 @@ def check_agent_model_consistency(
     ∀ agent ∈ registry: model.provider MUST equal agent.expected_provider.
     Unknown agents (not in registry) are not checked — they may be custom
     non-team-seat slugs. Emits ``pipeline.frontier.dispatch.mismatch``
-    and raises ``ValueError`` on violation.
+    and raises ``AgentModelMismatchError`` on violation.
     """
     expected = resolve_agent_provider(agent)
     if expected is None:
@@ -68,8 +69,9 @@ def check_agent_model_consistency(
             valid_family=valid_family,
         )
     )
-    raise ValueError(
-        f"Agent {agent!r} expects provider {expected!r}; "
-        f"model {model!r} resolves to {provider!r}. "
-        f"Use a {expected!r} model for {agent!r} dispatches."
+    raise AgentModelMismatchError(
+        agent=agent,
+        model=model,
+        provider=provider,
+        expected_provider=expected,
     )

@@ -66,6 +66,29 @@ async def test_execute_unknown_tool_uses_mcp_executor(
 
 
 @pytest.mark.asyncio
+async def test_brave_search_alias_remaps_to_mcp_web_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """brave_search must invoke MCP with name='web_search', not 'brave_search'."""
+
+    class _FakeMcpExecutor:
+        async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+            return json.dumps({"name": name, "arguments": arguments, "source": "mcp"})
+
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
+
+    result = await execute_tool("brave_search", {"query": "eth price"})
+    data = json.loads(result)
+    assert data["name"] == "web_search", (
+        "brave_search must remap to MCP 'web_search'; got "
+        f"{data['name']!r}. Native model tools would shadow 'brave_search' "
+        "if it were passed as-is to the MCP server."
+    )
+    assert data["arguments"] == {"query": "eth price"}
+
+
+@pytest.mark.asyncio
 async def test_cortex_dispatch_entity_get_relay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
