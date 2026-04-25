@@ -10,16 +10,25 @@ schema papers and enterprise KG surveys) get distinct embedding vectors
 because their context prefixes anchor them to different documents.
 
 Architecture:
-  - Before dispatching the full batch, a single probe request is sent with a
-    tight client timeout (ctx_probe_timeout_s). If the probe succeeds the model
-    is warm and the full batch fires immediately. On retryable failure (httpx
-    timeout or 503/429) the probe is retried with exponential backoff until the
-    model is reachable or ctx_probe_max_probes is exhausted.
-  - After a successful probe, the full batch (up to max_concurrency workers)
-    fires normally. Each worker uses client_timeout_s as the outer HTTP timeout.
+  - Workers send chunk requests directly to Stargate. Stargate is the sole
+    authority over model loading; if the contextualize_model is cold, the
+    request blocks until Stargate loads it on demand.
+  - Stampede protection has three layers, each strictly optimization:
+      1. ``max_concurrency`` bounds in-flight workers per file.
+      2. ``global_gate`` (FifoCapacityGate) bounds total in-flight requests
+         across all concurrent files.
+      3. ``coordinator`` pauses new acquisitions while the contextualize
+         model is mid-load (subscribed to Stargate's `model.loading.started`
+         coordination signal — see contextualize_coordinator.py).
+    None of these are correctness gates. Per the stargate-model-lifecycle
+    invariant, callers MUST proceed when coordination signals are
+    unavailable; the per-chunk ``client_timeout_s`` is the correctness
+    backstop.
   - X-Request-Timeout header enforces per-chunk inference deadline from the
     moment Stargate acquires the slot, not from enqueue time.
-  - Returns context strings; empty string on per-chunk failure (graceful).
+  - Per-chunk failures propagate so indexing fails loudly. Silently
+    embedding chunks without a context prefix is a retrieval-quality
+    regression, not a graceful degradation.
 """
 
 from __future__ import annotations
@@ -30,16 +39,16 @@ import inspect
 import logging
 from typing import TYPE_CHECKING
 
-import httpx
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 
 from services.rag.chunkers import Chunk
 
 if TYPE_CHECKING:
     from universal_concurrency import FifoCapacityGate
 
-logger = logging.getLogger(__name__)
+    from services.rag.contextualize_coordinator import ContextualizeModelCoordinator
 
-STARGATE_URL = "http://localhost:9999"
+logger = logging.getLogger(__name__)
 
 # TODO: Detect Persian/Arabic-script chunks and request Farsi context prefixes.
 # Mixed-language prefixes are acceptable for now because embedding quality remains
@@ -55,9 +64,6 @@ _CONTEXT_SYSTEM_PROMPT = (
 )
 
 _NEIGHBOR_CHARS = 800
-
-# Retryable HTTP status codes — model is busy or overloaded but will recover.
-_RETRYABLE_STATUS_CODES = frozenset({429, 503})
 
 
 def _build_chunk_context(
@@ -92,87 +98,14 @@ def _build_chunk_context(
     return "\n\n".join(parts)
 
 
-async def _probe_model(
-    model: str,
-    timeout_s: float,
-    inference_timeout_s: float,
-    *,
-    backoff_initial_s: float,
-    backoff_max_s: float,
-    max_probes: int,
-) -> bool:
-    """Test model readiness with a minimal request before committing the full batch.
+class ContextualizationError(RuntimeError):
+    """Raised when one or more chunks failed to contextualize.
 
-    Sends a single short probe with a tight client timeout. On retryable failure
-    (httpx.TimeoutException or 503/429) waits with exponential backoff and retries.
-    Returns True when the model responds, False after max_probes exhausted.
-
-    ∀ retryable_failure: wait exponential_backoff, retry; never more than max_probes.
-    ∀ non_retryable_failure (4xx except 429): return False immediately.
+    Indexing must fail loudly when contextualization is configured but cannot
+    complete — silently embedding chunks without context prefixes degrades
+    retrieval quality without any visible signal. The reconcile sweep retries
+    failed files; transient failures (cold load, eviction) eventually succeed.
     """
-    if max_probes <= 0:
-        return True  # Probe disabled; proceed directly to full batch.
-
-    backoff = backoff_initial_s
-    for attempt in range(1, max_probes + 1):
-        try:
-            await _call_llm(
-                "ping",
-                model,
-                inference_timeout_s,
-                client_timeout_s=timeout_s,
-            )
-            logger.debug(
-                "Contextualization probe succeeded (model=%s, attempt=%d)",
-                model,
-                attempt,
-            )
-            return True
-        except httpx.TimeoutException:
-            logger.info(
-                "Contextualization probe timeout (model=%s, attempt=%d/%d, "
-                "next_wait=%.1fs)",
-                model,
-                attempt,
-                max_probes,
-                backoff,
-            )
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code in _RETRYABLE_STATUS_CODES:
-                logger.info(
-                    "Contextualization probe got %d (model=%s, attempt=%d/%d, "
-                    "next_wait=%.1fs)",
-                    exc.response.status_code,
-                    model,
-                    attempt,
-                    max_probes,
-                    backoff,
-                )
-            else:
-                logger.warning(
-                    "Contextualization probe non-retryable %d (model=%s)",
-                    exc.response.status_code,
-                    model,
-                )
-                return False
-        except Exception as exc:
-            logger.warning(
-                "Contextualization probe unexpected error (model=%s): %s",
-                model,
-                exc,
-            )
-            return False
-
-        if attempt < max_probes:
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2.0, backoff_max_s)
-
-    logger.warning(
-        "Contextualization probe exhausted after %d attempts (model=%s)",
-        max_probes,
-        model,
-    )
-    return False
 
 
 async def contextualize_chunks(
@@ -183,11 +116,8 @@ async def contextualize_chunks(
     timeout_s: float = 30.0,
     max_concurrency: int = 32,
     client_timeout_s: float = 60.0,
-    probe_timeout_s: float = 8.0,
-    probe_backoff_initial_s: float = 5.0,
-    probe_backoff_max_s: float = 60.0,
-    probe_max_probes: int = 10,
     global_gate: FifoCapacityGate | None = None,
+    coordinator: ContextualizeModelCoordinator | None = None,
 ) -> list[str]:
     """Generate context prefixes for chunks via LLM.
 
@@ -195,10 +125,15 @@ async def contextualize_chunks(
     contextual retrieval findings). Neighboring chunk excerpts are included
     to help the LLM resolve references and identify structural position.
 
-    Before dispatching the full batch, one probe request with tight client
-    timeout verifies the model is warm. On retryable failure the probe retries
-    with exponential backoff. This prevents all concurrent workers from entering
-    a cold-load window simultaneously (stampede prevention).
+    Workers send requests directly to Stargate; Stargate handles model loading
+    transparently per the stargate-model-lifecycle invariant. Stampede
+    protection comes from ``max_concurrency`` (per-file), the optional
+    ``global_gate`` (cross-file), and the optional ``coordinator`` (pauses
+    new acquisitions while the model is actively cold-loading).
+
+    Per-chunk failures propagate as :class:`ContextualizationError` after
+    workers drain — silent degradation to no-context embeddings is a
+    retrieval-quality regression and not allowed.
 
     Args:
         chunks: Chunks to contextualize.
@@ -210,43 +145,29 @@ async def contextualize_chunks(
         max_concurrency: Maximum number of in-flight contextualization requests
             for this file.
         client_timeout_s: Outer HTTP timeout covering queue wait and inference.
-        probe_timeout_s: Client timeout for the probe request (tight, used only
-            to test model availability before committing the full batch).
-        probe_backoff_initial_s: Initial wait (s) after a probe retryable failure.
-        probe_backoff_max_s: Maximum per-retry wait (s) for probe backoff.
-        probe_max_probes: Max probe attempts. 0 = disable probe-first pattern.
+            Must be wide enough to cover Stargate's load-on-demand window for
+            a cold model.
         global_gate: Optional cross-file capacity gate. When provided, each
             worker acquires a slot before calling the LLM, bounding total
             in-flight contextualization requests across all concurrent files.
+        coordinator: Optional batch-pipeline coordinator subscribed to
+            Stargate's model lifecycle signals. When provided, each worker
+            awaits the coordinator's "model believed available" hint before
+            acquiring the global gate — pure optimization, never a
+            correctness gate.
 
     Returns:
-        List of context strings (one per chunk). Empty string on per-chunk failure.
+        List of context strings (one per chunk).
+
+    Raises:
+        ContextualizationError: One or more chunks failed; the file should be
+            re-attempted (the reconcile sweep handles retries).
     """
     if not chunks:
         return []
 
-    # Probe-first: verify model is reachable before committing the full batch.
-    # Uses a tight timeout so a cold-loading model is detected quickly.
-    if probe_max_probes > 0:
-        model_ready = await _probe_model(
-            model,
-            timeout_s=probe_timeout_s,
-            inference_timeout_s=timeout_s,
-            backoff_initial_s=probe_backoff_initial_s,
-            backoff_max_s=probe_backoff_max_s,
-            max_probes=probe_max_probes,
-        )
-        if not model_ready:
-            logger.warning(
-                "Skipping contextualization for %s: probe failed after %d attempts "
-                "(model=%s)",
-                source,
-                probe_max_probes,
-                model,
-            )
-            return [""] * len(chunks)
-
     results: list[str] = [""] * len(chunks)
+    failures: list[tuple[int, BaseException]] = []
     worker_count = max(1, min(max_concurrency, len(chunks)))
     queue: asyncio.Queue[int | None] = asyncio.Queue()
     for idx in range(len(chunks)):
@@ -259,6 +180,10 @@ async def contextualize_chunks(
                 if idx is None:
                     return
                 try:
+                    if coordinator is not None:
+                        await coordinator.wait_for_available(
+                            model, timeout=client_timeout_s
+                        )
                     if global_gate is not None:
                         await global_gate.acquire(
                             f"ctx-{source}-{idx}",
@@ -276,15 +201,13 @@ async def contextualize_chunks(
                     finally:
                         if global_gate is not None:
                             await global_gate.release()
-                except TimeoutError:
+                except Exception as exc:
+                    failures.append((idx, exc))
                     logger.warning(
-                        "Contextualization gate timeout for chunk %d of %s",
+                        "Contextualization failed for chunk %d of %s: %r",
                         idx,
                         source,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Contextualization failed for chunk %d of %s", idx, source
+                        exc,
                     )
             finally:
                 queue.task_done()
@@ -307,12 +230,18 @@ async def contextualize_chunks(
         model,
         worker_count,
     )
+    if failures:
+        first_idx, first_exc = failures[0]
+        raise ContextualizationError(
+            f"contextualization failed for {len(failures)}/{len(chunks)} chunks "
+            f"of {source} (first failure: chunk {first_idx}: {first_exc!r})"
+        ) from first_exc
     return results
 
 
 # Timeout is supplied per call so config can shrink the queue wait budget
 # without rebuilding the shared client.
-_CLIENT = httpx.AsyncClient(timeout=None)
+_CLIENT = make_async_client(DEFAULT_STARGATE_URL, timeout=None)
 
 # Anthropic research: 50-100 token prefixes are the sweet spot for 1024-token chunks.
 _MAX_CONTEXT_TOKENS = 150
@@ -356,7 +285,7 @@ async def _call_llm(
     Returns the context string, or empty string on failure.
     """
     response = await _CLIENT.post(
-        f"{STARGATE_URL}/v1/chat/completions",
+        "/v1/chat/completions",
         headers={"X-Request-Timeout": str(timeout_s)},
         json={
             "model": model,

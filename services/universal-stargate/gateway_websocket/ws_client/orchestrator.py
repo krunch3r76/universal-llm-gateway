@@ -13,6 +13,7 @@ from universal_logging import get_logger
 from ..messages import ResourcesData
 from .connection import ConnectionManager, ConnectionState
 from .events import EventPublisher
+from .gateway_state_snapshot import build_gateway_state_snapshot
 from .queries import QueryManager
 from .registry_wiring import build_handler_context, create_handler_registry
 from .state import GatewayState
@@ -94,7 +95,12 @@ class GatewayWebSocketClient:
             socket_path=socket_path,  # NEW: Pass socket_path
         )
         self._state = GatewayState()
-        self._event_publisher = EventPublisher(self._ws_url, gateway_name, event_bus)
+        self._event_publisher = EventPublisher(
+            self._ws_url,
+            gateway_name,
+            event_bus,
+            gateway_state_snapshot_provider=self._build_gateway_state_snapshot,
+        )
         self._query_manager = QueryManager()
         self._event_bus = event_bus
         self._on_after_init = on_after_init
@@ -108,7 +114,12 @@ class GatewayWebSocketClient:
         self._on_model_loading_started: Callable[[str], Awaitable[None]] | None = None
         self._on_model_loaded: Callable[[str, dict], Awaitable[None]] | None = None
         self._on_model_unloaded: Callable[[str], Awaitable[None]] | None = None
-        self._on_model_load_failed: Callable[[str, str], Awaitable[None]] | None = None
+        self._on_model_load_failed: (
+            Callable[
+                [str, str, dict | None, dict | None], Awaitable[None]
+            ]
+            | None
+        ) = None
         self._on_model_busy: Callable[[str], Awaitable[None]] | None = None
         self._on_model_idle: Callable[[str, dict], Awaitable[None]] | None = None
         self._on_resource_update: Callable[[dict], Awaitable[None]] | None = None
@@ -440,6 +451,18 @@ class GatewayWebSocketClient:
             )
         )
 
+    def _build_gateway_state_snapshot(self) -> dict[str, Any] | None:
+        """Snapshot cached GatewayState for model.load.failed forensics.
+
+        Wired into EventPublisher; called synchronously when the
+        MODEL_LOAD_FAILED handler schedules emission so the snapshot
+        reflects state at the failure moment, not after subsequent
+        telemetry has overwritten it.
+        """
+        return build_gateway_state_snapshot(
+            self._state, self._gateway_name, self._ws_url
+        )
+
     def _subscribe_to_reservation_events(self) -> None:
         """Subscribe to RESOURCE_RESERVED and RESOURCE_RELEASED events."""
         if not self._event_bus:
@@ -649,12 +672,18 @@ class GatewayWebSocketClient:
         self._on_model_unloaded = callback
 
     def on_model_load_failed(
-        self, callback: Callable[[str, str], Awaitable[None]]
+        self,
+        callback: Callable[
+            [str, str, dict | None, dict | None], Awaitable[None]
+        ],
     ) -> None:
         """
         Set callback for model-load-failed events.
 
-        The callback receives `(model_id, error_message)` for failed loads.
+        The callback receives `(model_id, error_message, worker_snapshot,
+        gateway_state_snapshot)` for failed loads. Snapshots may be None when
+        the gateway did not produce a worker dump or when the GatewayState
+        snapshot provider was unavailable; consumers must tolerate either.
         """
         self._on_model_load_failed = callback
 

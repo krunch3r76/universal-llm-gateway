@@ -28,7 +28,11 @@ from services.rag.chunk_filters import (
     normalize_noise_metadata,
 )
 from services.rag.chunkers import Chunk, chunk_file
-from services.rag.contextualize import CONTEXTUALIZE_PROMPT_HASH, contextualize_chunks
+from services.rag.contextualize import (
+    CONTEXTUALIZE_PROMPT_HASH,
+    ContextualizationError,
+    contextualize_chunks,
+)
 from services.rag.contextualize_cache import (
     StoredContextRow,
     build_context_cache_plan,
@@ -143,6 +147,11 @@ def _classify_indexing_failure(
 
     if isinstance(exc, asyncio.TimeoutError | TimeoutError):
         return ("transient", "timeout")
+    if isinstance(exc, ContextualizationError):
+        # Contextualization stalls are dominated by cold-load and eviction
+        # windows; reconcile sweeps and watcher retries succeed once the
+        # lifecycle stabilizes.
+        return ("transient", "contextualize_failed")
     if "PROBE_FAILED" in msg:
         return ("transient", "contextualize_probe_failed")
     if "capacity" in msg_lower or "REQUEST_TIMEOUT" in msg:
@@ -167,12 +176,14 @@ async def _record_indexing_failure_best_effort(
         return
     try:
         category, reason = _classify_indexing_failure(exc, chunk_count=chunk_count)
+        error_type = type(exc).__qualname__
+        error_message = str(exc) or error_type
         attempt_count = await state._property_index.record_indexing_failure(
             source=source,
             failure_category=category,
             failure_reason=reason,
-            error_message=str(exc) or type(exc).__qualname__,
-            error_type=type(exc).__qualname__,
+            error_message=error_message,
+            error_type=error_type,
             source_hash=source_hash,
             source_size_bytes=source_size_bytes,
             source_mtime_ns=source_mtime_ns,
@@ -184,6 +195,8 @@ async def _record_indexing_failure_best_effort(
                     failure_category=category,
                     failure_reason=reason,
                     attempt_count=attempt_count,
+                    error_type=error_type,
+                    error_head=error_message[:200],
                 )
             )
     except Exception as record_exc:
@@ -751,11 +764,8 @@ async def _index_file_impl(
                     timeout_s=context_timeout_s,
                     max_concurrency=context_max_concurrency,
                     client_timeout_s=context_client_timeout_s,
-                    probe_timeout_s=state._config.ctx_probe_timeout_s,
-                    probe_backoff_initial_s=state._config.ctx_probe_backoff_initial_s,
-                    probe_backoff_max_s=state._config.ctx_probe_backoff_max_s,
-                    probe_max_probes=state._config.ctx_probe_max_probes,
                     global_gate=state._global_contextualize_gate,
+                    coordinator=state._contextualize_coordinator,
                 )
                 contexts = merge_computed_contexts(
                     plan=plan,

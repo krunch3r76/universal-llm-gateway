@@ -94,12 +94,67 @@ Payload: {
 REQUEST_FAILED = "request.failed"
 """
 Request failed
+
 Payload: {
     "request_id": str,
     "gateway_url": Optional[str],
     "model_id": str,
-    "error": str
+    "error": str,                  # raw exception string (legacy)
+    "error_code": Optional[str],   # envelope code, e.g. "MODEL_NOT_FOUND"
+    "error_source": Optional[str], # envelope source ("master", "edge", provider)
+    "error_data": Optional[dict],  # envelope data dict (model_id, etc.)
+                                   # MODEL_NOT_FOUND: includes topology_snapshot
+                                   # {connected_edge_count, total_edges_known,
+                                   #  configured_remote_count,
+                                   #  not_seen_remote_count, not_seen_remotes[],
+                                   #  unreachable_edges[{gateway_id, remote_id,
+                                   #    last_heartbeat_age_ms,
+                                   #    cached_catalog_match}],
+                                   #  cached_only_edges[{gateway_id,
+                                   #    cached_catalog_match}],
+                                   #  connected_cloud_gateway_count,
+                                   #  connected_cloud_gateways[]}
+                                   # Edges (federated remotes) and cloud
+                                   # gateways are reported separately so the
+                                   # edge denominator reflects configured
+                                   # remotes, not provider count.
+                                   # not_seen_remotes is the configured-but-
+                                   # never-connected set, sourced from
+                                   # FederationConfig.remotes
+    "caller_hint": Optional[dict]  # {user_agent, x_caller,
+                                   #  pipeline_execution_id, pipeline_step_id}
 }
+
+Diagnostic queries:
+    -- All MODEL_NOT_FOUND grouped by caller
+    SELECT json_extract(payload,'$.model_id') as model,
+           json_extract(payload,'$.caller_hint.user_agent') as ua,
+           json_extract(payload,'$.caller_hint.x_caller') as caller,
+           COUNT(*) FROM events
+    WHERE signal='request.failed'
+      AND json_extract(payload,'$.error_code')='MODEL_NOT_FOUND'
+    GROUP BY model, ua, caller;
+
+    -- Pipeline-unavailable failures (model_id is a registered pipeline
+    -- whose model deps could not be resolved)
+    SELECT json_extract(payload,'$.model_id') as pipeline,
+           json_extract(payload,'$.error_data.unavailable_pipeline.missing_models')
+             as missing
+    FROM events
+    WHERE signal='request.failed'
+      AND json_extract(payload,'$.error_data.unavailable_pipeline') IS NOT NULL;
+
+    -- MODEL_NOT_FOUND failures whose model is cached on an offline edge
+    -- (the topology-self-explanatory case: "target edge is down")
+    SELECT json_extract(payload,'$.model_id') as model,
+           json_extract(payload,'$.error_data.topology_snapshot.connected_edge_count')
+             as connected,
+           json_extract(payload,'$.error_data.topology_snapshot.unreachable_edges')
+             as unreachable
+    FROM events
+    WHERE signal='request.failed'
+      AND json_extract(payload,'$.error_code')='MODEL_NOT_FOUND'
+      AND json_extract(payload,'$.error_data.topology_snapshot') IS NOT NULL;
 """
 
 REQUEST_TIMEOUT = "request.timed.out"
@@ -394,6 +449,10 @@ def RequestFailed(
     model_id: str,
     error: str,
     gateway_url: str | None = None,
+    error_code: str | None = None,
+    error_source: str | None = None,
+    error_data: dict[str, object] | None = None,
+    caller_hint: dict[str, object] | None = None,
 ) -> Event:
     """
     Create REQUEST_FAILED event.
@@ -403,8 +462,15 @@ def RequestFailed(
     Args:
         request_id: Proxy request ID for tracking and tracing
         model_id: Model requested
-        error: Error message
+        error: Raw exception string (legacy compatibility)
         gateway_url: Gateway URL (optional)
+        error_code: Structured envelope code (e.g. "MODEL_NOT_FOUND") for SQL filtering
+        error_source: Envelope source ("master", "edge", upstream provider)
+        error_data: Envelope data dict — may include "unavailable_pipeline":
+            {pipeline_id, missing_models} when the requested ID is a registered
+            pipeline whose model deps could not be resolved
+        caller_hint: Best-effort caller identification:
+            {user_agent, x_caller, pipeline_execution_id, pipeline_step_id}
 
     Returns:
         Event with RequestFailed signal
@@ -416,6 +482,10 @@ def RequestFailed(
             "gateway_url": gateway_url,
             "model_id": model_id,
             "error": error,
+            "error_code": error_code,
+            "error_source": error_source,
+            "error_data": error_data,
+            "caller_hint": caller_hint,
         },
     )
 

@@ -77,10 +77,13 @@ class EventBridge:
 
     async def _run_subscription(self) -> None:
         """Single subscription session — connect, filter, forward."""
-        import websockets.client
+        from websockets.asyncio.client import unix_connect
 
-        ws_uri = f"ws+unix://{self._local_query_sock}//v1/subscribe"
-        async with websockets.client.connect(ws_uri, max_size=None) as ws:
+        async with unix_connect(
+            self._local_query_sock,
+            uri="ws://localhost/v1/subscribe",
+            max_size=None,
+        ) as ws:
             subscribe_msg = json.dumps(
                 {
                     "type": "subscribe",

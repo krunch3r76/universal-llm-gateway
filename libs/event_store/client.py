@@ -30,10 +30,13 @@ async def subscribe_events(
     Yields:
         Event dicts as they arrive.
     """
-    import websockets.client
+    from websockets.asyncio.client import unix_connect
 
-    ws_uri = f"ws+unix://{query_sock}:/v1/subscribe"
-    async with websockets.client.connect(ws_uri, max_size=None) as ws:
+    async with unix_connect(
+        query_sock,
+        uri="ws://localhost/v1/subscribe",
+        max_size=None,
+    ) as ws:
         subscribe_msg: dict[str, Any] = {"type": "subscribe"}
         if filter:
             subscribe_msg["filter"] = filter

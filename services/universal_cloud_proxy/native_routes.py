@@ -335,7 +335,13 @@ async def _forward_video_generation(
     if not raw_model:
         raise HTTPException(status_code=400, detail="Missing required field: model")
 
+    try:
+        _ = model_id_from_native(provider_key, raw_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     workspace_id = workspace_catalog_id_from_native(provider_key, raw_model)
+    adapter = forwarder.adapter_type(provider_key)
 
     try:
         result = await forwarder.forward_video_generation(
@@ -347,23 +353,48 @@ async def _forward_video_generation(
                     provider=provider_key,
                     model=workspace_id,
                     streaming=False,
-                    adapter_type=forwarder.adapter_type(provider_key),
+                    adapter_type=adapter,
                     surface="video_generation",
                 )
             )
         return JSONResponse(content=result)
-    except (httpx.HTTPStatusError, httpx.HTTPError, ValueError) as exc:
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 502
         error_text = str(exc)[:300]
-        status = getattr(getattr(exc, "response", None), "status_code", None) or 502
         await _publish_failed(
             event_bus,
             provider=provider_key,
             model=workspace_id,
             status_code=status,
             error=error_text,
-            adapter_type=forwarder.adapter_type(provider_key),
+            adapter_type=adapter,
         )
-        raise HTTPException(status_code=status, detail=error_text) from exc
+        raise HTTPException(
+            status_code=status,
+            detail=f"Upstream provider error: {error_text}",
+        ) from exc
+    except httpx.HTTPError as exc:
+        error_text = str(exc)[:300]
+        await _publish_failed(
+            event_bus,
+            provider=provider_key,
+            model=workspace_id,
+            status_code=502,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(status_code=502, detail=error_text) from exc
+    except ValueError as exc:
+        error_text = str(exc)[:300]
+        await _publish_failed(
+            event_bus,
+            provider=provider_key,
+            model=workspace_id,
+            status_code=500,
+            error=error_text,
+            adapter_type=adapter,
+        )
+        raise HTTPException(status_code=500, detail=error_text) from exc
 
 
 @router.post("/xai/images/generations")
@@ -429,12 +460,42 @@ async def xai_videos_generations(request: Request) -> Response:
     )
 
 
+@router.post("/google/videos/generations")
+async def google_videos_generations(request: Request) -> Response:
+    """Google Veo video generation — submit async operation, returns request_id."""
+    return await _forward_video_generation(
+        request,
+        provider_key="google",
+        forwarder=_get_forwarder(),
+        event_bus=_get_event_bus(),
+    )
+
+
 @router.get("/xai/videos/{request_id}")
 async def xai_video_status(request_id: str) -> Response:
     """xAI video status — poll for completion by request_id."""
     fwd = _get_forwarder()
     try:
         result = await fwd.forward_video_status(provider="xai", request_id=request_id)
+        return JSONResponse(content=result)
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 502
+        raise HTTPException(
+            status_code=status,
+            detail=f"Upstream provider error: {str(exc)[:300]}",
+        ) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)[:300]) from exc
+
+
+@router.get("/google/videos/{request_id:path}")
+async def google_video_status(request_id: str) -> Response:
+    """Google Veo video status — poll for operation completion by request_id."""
+    fwd = _get_forwarder()
+    try:
+        result = await fwd.forward_video_status(
+            provider="google", request_id=request_id
+        )
         return JSONResponse(content=result)
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response else 502

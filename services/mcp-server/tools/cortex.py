@@ -29,7 +29,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
         arguments: operation arguments as an object or a JSON string
 
         Operations:
-          entities          (type?, workflow_state?, limit?)         — list entities (workflow_state filters the typed column; replaces json_extract(attributes,'$.status'))
+          entities          (type?, workflow_state?, limit?)         — list entities (workflow_state filters the typed column; use todo_candidates for routine TODO retrieval)
           entity_get        (entity_id, include_edges?, edge_limit?) — get entity with assertions + relationships + optional reasoning edges
           entity_create     (id, type, name, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?) — create entity. workflow_state is the typed per-type workflow column (e.g. todo: open|in_progress|done|deferred|cancelled); auto-filled to type's initial_state when omitted and the type has a registered schema.
           entity_update     (entity_id, name?, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?)  — update entity. source_uri auto-recomputes content_hash when set.
@@ -68,6 +68,8 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           rj_link           (entry_id, to_entry?, to_entity?, link_type?) — link entry to another entry or entity
           rj_consolidate    (agent, register, entry, throughline, before, now, tension_points?, contradiction_set?, falsifier?, rendered_shift?, confidence?, source_entry_ids?) — write consolidation entry
           deadlines         ()                                          — active deadlines
+          todo_candidates   (q/query?, limit?, workflow_state?, priority?, domain?, domain_exclude?, context?) — ranked TODO retrieval for user intent; prefer over broad open TODO enumeration
+          todo_audit        (stale_days?, limit?, domain?, priority?) — old/open TODO audit for deferral, closure, merge, or spec conversion
 
         confidence values: confirmed / believed / suspected / hypothesized
         review_status values: committed / flagged / staged / rejected
@@ -80,7 +82,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           journal_write [DEPRECATED] → use session_close instead
 
         Example:
-          cortex(tool="entities", arguments='{"type": "todo", "workflow_state": "open", "limit": 20}')
+          cortex(tool="todo_candidates", arguments='{"query": "cortex retrieval", "limit": 5}')
           cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
         """
         return _cx("POST", "/dispatch", {"tool": tool, "arguments": arguments})

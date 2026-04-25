@@ -386,7 +386,9 @@ def render_briefing_card(
     now = datetime.now(UTC)
     local_now = now.astimezone(_LA)
     today = local_now.date()
-    parts: list[str] = [f"# Boot Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"]
+    parts: list[str] = [
+        f"# Boot Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
+    ]
 
     if transcript_continuation:
         tc = transcript_continuation
@@ -506,7 +508,7 @@ def render_briefing_card(
         if todo_total > 5:
             parts.append(
                 f"- *…{todo_total - 5} more — "
-                "`cortex(tool='entities', arguments='{\"type\": \"todo\"}')`*"
+                "`cortex(tool='todo_candidates', arguments='{\"query\": \"<intent>\"}')`*"
             )
 
     # ── Recent mentions (entities active in trailing window) ──
@@ -563,7 +565,10 @@ def render_briefing_card(
             {
                 "section": "todos",
                 "count": todo_total,
-                "hint": "cortex(tool='entities', arguments='{\"type\": \"todo\"}')",
+                "hint": (
+                    "cortex(tool='todo_candidates', "
+                    'arguments=\'{"query": "<intent>"}\')'
+                ),
             }
         )
     manifest.append(

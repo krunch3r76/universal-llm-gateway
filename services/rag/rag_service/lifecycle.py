@@ -28,6 +28,7 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
+from services.rag.contextualize_coordinator import ContextualizeModelCoordinator
 from services.rag.corpus_hints import (
     detect_stale_scopes,
     scopes_touching_watch_path,
@@ -226,6 +227,14 @@ async def _startup() -> None:
         logger.info(
             "Global contextualization gate initialized (limit=%d)",
             state._config.contextualize_global_max_concurrency,
+        )
+        state._contextualize_coordinator = ContextualizeModelCoordinator(
+            [state._config.contextualize_model]
+        )
+        state._contextualize_coordinator.start()
+        logger.info(
+            "Contextualize coordinator started (model=%s)",
+            state._config.contextualize_model,
         )
 
     ke = state._config.knowledge_extraction
@@ -529,9 +538,7 @@ async def _purge_excluded_sources(config: RagConfig) -> None:
                 sources_to_purge.add(source)
     if not sources_to_purge:
         if state._event_bus is not None:
-            await state._event_bus.publish(
-                rag_exclusion_purged(files=0, chunks=0)
-            )
+            await state._event_bus.publish(rag_exclusion_purged(files=0, chunks=0))
         return
     remove_source_fn = (
         state._property_index.remove_source_metadata
@@ -610,16 +617,12 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
         except EmbeddingDependencyUnavailableError as exc:
             waiting_on = "embeddings"
             error = str(exc)
-            await state._event_bus.publish(
-                rag_embeddings_unavailable(error=error)
-            )
+            await state._event_bus.publish(rag_embeddings_unavailable(error=error))
         except TimeoutError as exc:
             waiting_on = state._dependency_activation.waiting_on or "dependencies"
             error = str(exc)
             if waiting_on == "embeddings":
-                await state._event_bus.publish(
-                    rag_embeddings_unavailable(error=error)
-                )
+                await state._event_bus.publish(rag_embeddings_unavailable(error=error))
         except Exception as exc:
             # Any unexpected exception from _start_watcher_runtime (e.g. RuntimeError
             # from a double-start on WatcherManager) must not escape the loop — that
@@ -705,9 +708,7 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
                 stale,
             )
             if state._event_bus is not None:
-                await state._event_bus.publish(
-                    rag_post_index_stale(stale_steps=stale)
-                )
+                await state._event_bus.publish(rag_post_index_stale(stale_steps=stale))
             if config.post_index_enforcement != "warn":
                 state._post_index_stale = True
 
@@ -716,9 +717,7 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
         (_purge_orphans(config), "rag-orphan-purge"),
         (_purge_excluded_sources(config), "rag-exclusion-purge"),
     ):
-        task = asyncio.create_task(coro, name=name)
-        state._background_tasks.add(task)
-        task.add_done_callback(state._background_tasks.discard)
+        _track_background_task(asyncio.create_task(coro, name=name))
 
     await state._watcher_manager.start(config)
 
@@ -791,6 +790,9 @@ async def _shutdown() -> None:
     state._init_task = None
 
     state._global_contextualize_gate = None
+    if state._contextualize_coordinator is not None:
+        await state._contextualize_coordinator.stop()
+        state._contextualize_coordinator = None
     if state._event_bus is not None:
         await state._event_bus.publish(rag_shutdown())
     if state._watcher_manager is not None:

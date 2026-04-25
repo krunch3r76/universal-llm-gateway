@@ -384,11 +384,19 @@ class RemoteTelemetrySender:
         )
         await self.send_message(msg)
 
-    async def on_model_load_failed(self, model_id: str, error: str) -> None:
+    async def on_model_load_failed(
+        self,
+        model_id: str,
+        error: str,
+        worker_snapshot: dict | None = None,
+        gateway_state_snapshot: dict | None = None,
+    ) -> None:
         """Handle model load failed from local Gateway."""
         msg_payload = ModelLoadFailed(
             model_id=model_id,
             error=error,
+            worker_snapshot=worker_snapshot,
+            gateway_state_snapshot=gateway_state_snapshot,
             source=self._source,
         )
         msg = MessageEnvelope(

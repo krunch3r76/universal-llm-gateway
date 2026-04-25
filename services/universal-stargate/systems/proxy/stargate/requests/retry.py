@@ -152,6 +152,92 @@ def _extract_upstream_error_context(exc: HTTPException) -> dict[str, Any]:
     return ctx
 
 
+def _extract_failure_envelope(
+    exc: BaseException,
+) -> tuple[str | None, str | None, dict[str, Any] | None]:
+    """Extract (error_code, error_source, error_data) from an HTTPException envelope.
+
+    Returns (None, None, None) for non-HTTPException or non-dict detail.
+    """
+    if not isinstance(exc, HTTPException):
+        return None, None, None
+    detail = exc.detail
+    if not isinstance(detail, dict):
+        return None, None, None
+    code = detail.get("code")
+    source = detail.get("source")
+    data = detail.get("data")
+    return (
+        str(code) if code is not None else None,
+        str(source) if source is not None else None,
+        dict(data) if isinstance(data, dict) else None,
+    )
+
+
+def _build_caller_hint(context: RequestContext) -> dict[str, Any] | None:
+    """Best-effort caller identification from headers and pipeline context.
+
+    Pulls User-Agent and X-Stargate-Caller from the originating HTTP request
+    (when available), plus pipeline_execution_id / pipeline_step_id from
+    request context so agents can pinpoint which producer a failure came from.
+    Returns None when no useful fields can be populated.
+    """
+    hint: dict[str, Any] = {}
+    http_request = context.http_request
+    if http_request is not None:
+        headers = http_request.headers
+        user_agent = headers.get("user-agent")
+        if user_agent:
+            hint["user_agent"] = user_agent[:200]
+        x_caller = headers.get("x-stargate-caller") or headers.get("x-caller")
+        if x_caller:
+            hint["x_caller"] = x_caller[:200]
+    if context.pipeline_execution_id:
+        hint["pipeline_execution_id"] = context.pipeline_execution_id
+    if context.pipeline_step_id:
+        hint["pipeline_step_id"] = context.pipeline_step_id
+    return hint or None
+
+
+def _attach_unavailable_pipeline_info(
+    proxy: StargateProxy,
+    model_id: str,
+    error_code: str | None,
+    error_data: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Annotate error_data with unavailable_pipeline info when applicable.
+
+    When the requested ID matches a registered pipeline whose model deps could
+    not be resolved (``pipeline_registry._permanently_unavailable``), surface
+    {pipeline_id, missing_models} so agents can distinguish caller misconfig
+    (model never existed) from pipeline-dep gaps (pipeline known, deps missing).
+    Only meaningful for MODEL_NOT_FOUND; no-op for other error codes.
+    """
+    if error_code != "MODEL_NOT_FOUND":
+        return error_data
+    registry = proxy.pipeline_registry
+    if registry is None:
+        return error_data
+    try:
+        unavailable = registry.unavailable_pipelines
+    except Exception:  # pragma: no cover — defensive: registry may be re-loading
+        logger.warning(
+            "Pipeline registry unavailable_pipelines lookup failed for %s",
+            model_id,
+            exc_info=True,
+        )
+        return error_data
+    for pipeline_id, missing_models in unavailable:
+        if pipeline_id == model_id:
+            enriched: dict[str, Any] = dict(error_data) if error_data else {}
+            enriched["unavailable_pipeline"] = {
+                "pipeline_id": pipeline_id,
+                "missing_models": list(missing_models),
+            }
+            return enriched
+    return error_data
+
+
 def _read_positive_float(
     config: dict[str, object], key: str, default: float, label: str
 ) -> float:
@@ -485,23 +571,32 @@ async def execute_with_retry(
         )
         if proxy.event_bus:
             try:
+                error_code, error_source, error_data = _extract_failure_envelope(exc)
+                error_data = _attach_unavailable_pipeline_info(
+                    proxy, model_id, error_code, error_data
+                )
+                caller_hint = _build_caller_hint(context)
                 await proxy.event_bus.publish_nowait(
                     RequestFailed(
                         request_id=context.request_id,
                         gateway_url=proxy.gateway_url,
                         model_id=model_id,
                         error=str(exc),
+                        error_code=error_code,
+                        error_source=error_source,
+                        error_data=error_data,
+                        caller_hint=caller_hint,
                     )
                 )
-                error_code = None
-                if isinstance(exc, HTTPException) and isinstance(exc.detail, dict):
-                    error_code = exc.detail.get("code")
                 await proxy.event_bus.publish_nowait(
                     RequestSnapshotFailed(
                         request_id=context.request_id,
                         model_id=model_id,
                         error=str(exc),
                         error_code=error_code,
+                        error_source=error_source,
+                        error_data=error_data,
+                        caller_hint=caller_hint,
                     )
                 )
             except Exception as emit_err:  # pragma: no cover - defensive logging

@@ -1,6 +1,6 @@
-"""Image and video generation MCP tools — grok_imagine and openai_imagine.
+"""Image and video generation MCP tools — grok_imagine, openai_imagine, and google_imagine.
 
-Both tools are thin wrappers over provider-native image generation APIs routed
+These tools are thin wrappers over provider-native image generation APIs routed
 through Stargate's /api/v1/providers/{provider}/images/* and /videos/* surfaces.
 """
 
@@ -16,29 +16,50 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 # xAI image models available via /v1/images/generations or /v1/images/edits
-_XAI_IMAGE_MODELS = frozenset({
-    "grok-imagine-image",
-    "grok-imagine-image-pro",
-})
+_XAI_IMAGE_MODELS = frozenset(
+    {
+        "grok-imagine-image",
+        "grok-imagine-image-pro",
+    }
+)
 
 # xAI video model — uses async submit + poll
-_XAI_VIDEO_MODELS = frozenset({
-    "grok-imagine-video",
-})
+_XAI_VIDEO_MODELS = frozenset(
+    {
+        "grok-imagine-video",
+    }
+)
+
+# Google Veo video models — uses async submit + poll
+_GOOGLE_VIDEO_MODELS = frozenset(
+    {
+        "veo-2.0-generate-001",
+        "veo-3.0-generate-001",
+        "veo-3.0-fast-generate-001",
+        "veo-3.1-generate-preview",
+        "veo-3.1-fast-generate-preview",
+    }
+)
 
 # OpenAI image models
-_OPENAI_IMAGE_MODELS = frozenset({
-    "gpt-image-1",
-    "gpt-image-1-mini",
-    "gpt-image-1.5",
-    "dall-e-3",
-    "dall-e-2",
-    "chatgpt-image-latest",
-})
+_OPENAI_IMAGE_MODELS = frozenset(
+    {
+        "gpt-image-1",
+        "gpt-image-1-mini",
+        "gpt-image-1.5",
+        "dall-e-3",
+        "dall-e-2",
+        "chatgpt-image-latest",
+    }
+)
+
+
+def _inline_image(image_base64: str, mime_type: str) -> dict[str, Any]:
+    return {"inlineData": {"mimeType": mime_type, "data": image_base64}}
 
 
 def register_imagine_tools(mcp: FastMCP) -> None:
-    """Register grok_imagine and openai_imagine."""
+    """Register grok_imagine, openai_imagine, and google_imagine."""
 
     @mcp.tool(title="Grok Imagine")
     def grok_imagine(
@@ -51,7 +72,6 @@ def register_imagine_tools(mcp: FastMCP) -> None:
         image_url: str | None = None,
         duration: int | None = None,
         poll_timeout: float = 180.0,
-        include_raw: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Generate images or videos with xAI Grok Imagine models.
@@ -91,7 +111,7 @@ def register_imagine_tools(mcp: FastMCP) -> None:
         full_model = model if "/" in model else f"xai/{model}"
         api_model = ModelId.parse(full_model).api_model_id
 
-        is_video = base_model in _XAI_VIDEO_MODELS or "video" in base_model
+        is_video = base_model in _XAI_VIDEO_MODELS
 
         if is_video:
             body: dict[str, Any] = {"model": api_model, "prompt": prompt}
@@ -103,7 +123,11 @@ def register_imagine_tools(mcp: FastMCP) -> None:
                 body["resolution"] = resolution
             if image_url is not None:
                 body["image"] = {"url": image_url}
-            return execute_frontier_video(body=body, poll_timeout=poll_timeout)
+            return execute_frontier_video(
+                provider="xai",
+                body=body,
+                poll_timeout=poll_timeout,
+            )
 
         # Image generation or editing
         endpoint = "edits" if image_url else "generations"
@@ -123,7 +147,6 @@ def register_imagine_tools(mcp: FastMCP) -> None:
             provider="xai",
             endpoint=endpoint,
             body=body,
-            include_raw=include_raw,
             timeout=timeout,
         )
 
@@ -137,7 +160,6 @@ def register_imagine_tools(mcp: FastMCP) -> None:
         style: str | None = None,
         response_format: str | None = None,
         image_url: str | None = None,
-        include_raw: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Generate or edit images with OpenAI image models.
@@ -187,6 +209,90 @@ def register_imagine_tools(mcp: FastMCP) -> None:
             provider="openai",
             endpoint=endpoint,
             body=body,
-            include_raw=include_raw,
             timeout=timeout,
+        )
+
+    @mcp.tool(title="Google Imagine")
+    def google_imagine(
+        prompt: str,
+        model: str = "veo-3.1-generate-preview",
+        aspect_ratio: str | None = None,
+        resolution: str | None = None,
+        duration: int | None = None,
+        person_generation: str | None = None,
+        seed: int | None = None,
+        image: dict[str, Any] | None = None,
+        image_base64: str | None = None,
+        image_mime_type: str = "image/png",
+        last_frame: dict[str, Any] | None = None,
+        last_frame_base64: str | None = None,
+        reference_images: list[dict[str, Any]] | None = None,
+        poll_timeout: float = 240.0,
+    ) -> dict[str, Any]:
+        """Generate videos with Google Veo models.
+
+        **Models**:
+          veo-3.1-generate-preview       — flagship video model with native audio (DEFAULT)
+          veo-3.1-fast-generate-preview  — faster video model with native audio
+          veo-3.0-generate-001           — stable Veo 3
+          veo-3.0-fast-generate-001      — stable fast Veo 3
+          veo-2.0-generate-001           — Veo 2, silent video
+
+        **Text-to-video**:
+          Provide ``prompt`` only.
+
+        **Image-to-video / interpolation**:
+          Provide ``image`` as a Gemini Image object, or ``image_base64`` plus
+          ``image_mime_type``. Provide ``last_frame`` or ``last_frame_base64``
+          with ``image`` for first-to-last-frame transitions.
+
+        **Reference images**:
+          For Veo 3.1, pass ``reference_images`` in Gemini REST shape:
+          ``[{"image": {"inlineData": {...}}, "referenceType": "asset"}]``.
+
+        **Key parameters**:
+        - ``aspect_ratio`` maps to Google ``aspectRatio`` (``"16:9"`` or ``"9:16"``).
+        - ``duration`` maps to ``durationSeconds`` (typically 4, 6, or 8).
+        - ``resolution`` maps to ``"720p"``, ``"1080p"``, or ``"4k"``.
+        - ``person_generation`` maps to ``personGeneration``.
+        """
+        base_model = model.split("/")[-1] if "/" in model else model
+        full_model = model if "/" in model else f"google/{model}"
+        api_model = ModelId.parse(full_model).api_model_id
+
+        if base_model not in _GOOGLE_VIDEO_MODELS and not base_model.startswith("veo-"):
+            return {"error": f"Unsupported Google video model: {model}"}
+
+        instance: dict[str, Any] = {"prompt": prompt}
+        if image is not None:
+            instance["image"] = image
+        elif image_base64 is not None:
+            instance["image"] = _inline_image(image_base64, image_mime_type)
+        if last_frame is not None:
+            instance["lastFrame"] = last_frame
+        elif last_frame_base64 is not None:
+            instance["lastFrame"] = _inline_image(last_frame_base64, image_mime_type)
+        if reference_images is not None:
+            instance["referenceImages"] = reference_images
+
+        parameters: dict[str, Any] = {}
+        if aspect_ratio is not None:
+            parameters["aspectRatio"] = aspect_ratio
+        if resolution is not None:
+            parameters["resolution"] = resolution
+        if duration is not None:
+            parameters["durationSeconds"] = duration
+        if person_generation is not None:
+            parameters["personGeneration"] = person_generation
+        if seed is not None:
+            parameters["seed"] = seed
+
+        body: dict[str, Any] = {"model": api_model, "instances": [instance]}
+        if parameters:
+            body["parameters"] = parameters
+
+        return execute_frontier_video(
+            provider="google",
+            body=body,
+            poll_timeout=poll_timeout,
         )

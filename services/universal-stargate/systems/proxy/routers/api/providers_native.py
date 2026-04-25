@@ -37,6 +37,7 @@ _VALID_ROUTES: dict[tuple[str, str], str] = {
     ("openai", "images.edits"): "/api/v1/providers/openai/images/edits",
     # Video generation (submit)
     ("xai", "videos.generations"): "/api/v1/providers/xai/videos/generations",
+    ("google", "videos.generations"): "/api/v1/providers/google/videos/generations",
 }
 
 _CLOUD_UNAVAILABLE = JSONResponse(
@@ -214,6 +215,12 @@ async def xai_videos_generations(request: Request) -> Response:
     return await _passthrough(request, "xai", "videos.generations")
 
 
+@router.post("/google/videos/generations")
+async def google_videos_generations(request: Request) -> Response:
+    """Google Veo video generation — submit async operation, returns request_id."""
+    return await _passthrough(request, "google", "videos.generations")
+
+
 @router.get("/xai/videos/{request_id}")
 async def xai_video_status(request_id: str) -> Response:
     """xAI video status poll — GET until status == done."""
@@ -237,4 +244,32 @@ async def xai_video_status(request_id: str) -> Response:
         return JSONResponse(status_code=status, content={"detail": preview})
     except httpx.HTTPError as exc:
         logger.warning("Video status poll transport error [%s]: %s", request_id, exc)
+        return JSONResponse(status_code=502, content={"detail": str(exc)[:300]})
+
+
+@router.get("/google/videos/{request_id:path}")
+async def google_video_status(request_id: str) -> Response:
+    """Google Veo video status poll — GET until operation done."""
+    client = _get_cloud_forwarder()
+    if not client:
+        return _CLOUD_UNAVAILABLE
+    cloud_path = f"/api/v1/providers/google/videos/{request_id}"
+    try:
+        resp = await client.proxy_request("GET", cloud_path)
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response else 502
+        preview = (
+            exc.response.text[:500] if exc.response is not None else str(exc)[:500]
+        )
+        logger.warning("Google video status poll failed [%s]: %s", request_id, preview)
+        return JSONResponse(status_code=status, content={"detail": preview})
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Google video status poll transport error [%s]: %s", request_id, exc
+        )
         return JSONResponse(status_code=502, content={"detail": str(exc)[:300]})

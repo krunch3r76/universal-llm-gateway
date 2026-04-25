@@ -52,6 +52,12 @@ class ModelLoadingStartedHandler(SyncMessageHandler):
         ctx.loading_since[model_id] = time.monotonic()
         logger.info(f"Model loading started on Gateway: {model_id}")
 
+        # Emit MODEL_LOADING_STARTED to EventBus directly from handler.
+        # Decoupled from the on_model_loading_started callback chain because
+        # downstream wiring (federation, gateway manager) overwrites those
+        # callbacks via the public setters and breaks the EventBus bridge.
+        ctx.schedule_model_loading_started(model_id)
+
         if ctx.on_model_loading_started:
             ctx.schedule_callback(ctx.on_model_loading_started, (model_id,))
 
@@ -90,6 +96,10 @@ class ModelLoadedHandler(SyncMessageHandler):
             f"Model loaded on Gateway: {model_id} (VRAM={vram_mb}MB, RAM={ram_mb}MB)"
         )
 
+        # Emit MODEL_LOADED to EventBus directly from handler (see
+        # ModelLoadingStartedHandler for rationale).
+        ctx.schedule_model_loaded(model_id, vram_mb, ram_mb)
+
         # Dispatch to model-specific callbacks first (LoadOutcomeTracker)
         # Multiple trackers may be waiting for the same model
         # Copy set to prevent RuntimeError from concurrent registrations
@@ -122,6 +132,7 @@ class ModelLoadFailedHandler(SyncMessageHandler):
     def handle(self, data: dict[str, Any], ctx: HandlerContext) -> None:
         model_id = data.get("model_id")
         error_message = data.get("error_message", "Unknown error")
+        worker_snapshot = data.get("worker_snapshot")
         if not model_id:
             logger.debug("MODEL_LOAD_FAILED missing model_id")
             return
@@ -129,6 +140,17 @@ class ModelLoadFailedHandler(SyncMessageHandler):
         ctx.loading_models.discard(model_id)
         _ = ctx.loading_since.pop(model_id, None)
         logger.error(f"Model load failed on Gateway: {model_id}: {error_message}")
+
+        # Capture gateway_state_snapshot ONCE here so local EventBus emission
+        # and the federation forward observe identical state. GatewayState
+        # mutates under subsequent telemetry; double-capture would diverge.
+        gateway_state_snapshot = ctx.capture_gateway_state_snapshot()
+
+        # Emit MODEL_LOAD_FAILED to EventBus directly from handler (see
+        # ModelLoadingStartedHandler for rationale).
+        ctx.schedule_model_load_failed(
+            model_id, error_message, worker_snapshot, gateway_state_snapshot
+        )
 
         # Dispatch to model-specific callbacks first (LoadOutcomeTracker)
         # Multiple trackers may be waiting for the same model
@@ -138,9 +160,14 @@ class ModelLoadFailedHandler(SyncMessageHandler):
             for callback in list(ctx.model_load_failed_callbacks[routing_key]):
                 ctx.schedule_callback(callback, (model_id, error_message))
 
-        # Dispatch to global callback (EdgeFederationServer telemetry)
+        # Dispatch to global callback (EdgeFederationServer telemetry).
+        # Snapshots are forwarded so federation telemetry to the master can
+        # carry the same forensics that local EventBus emission carries.
         if ctx.on_model_load_failed:
-            ctx.schedule_callback(ctx.on_model_load_failed, (model_id, error_message))
+            ctx.schedule_callback(
+                ctx.on_model_load_failed,
+                (model_id, error_message, worker_snapshot, gateway_state_snapshot),
+            )
 
 
 class ModelBusyHandler(SyncMessageHandler):

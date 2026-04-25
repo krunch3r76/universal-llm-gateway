@@ -345,7 +345,7 @@ def _short_error(error: str) -> str:
     if "504 Gateway Timeout" in error:
         return "504 gateway timeout"
     if "ReadTimeout" in error:
-        return "read timeout (model loading?)"
+        return "stargate read timeout (queue saturation or stargate down)"
     if "ConnectError" in error:
         return "connection refused"
     if "extraction failed below threshold" in error:

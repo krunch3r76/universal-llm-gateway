@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
+from urllib.parse import quote, unquote
 
 import httpx
 from model_id import ModelId
@@ -37,6 +38,7 @@ class GoogleAdapter:
     ) -> None:
         self._config = config
         self._client = client
+        self._event_bus = event_bus
 
     @property
     def adapter_type(self) -> str:
@@ -185,6 +187,10 @@ class GoogleAdapter:
         """Build ``/models/{model}:streamGenerateContent?alt=sse`` URL."""
         return f"{self._config.base_url}/models/{model}:streamGenerateContent?alt=sse"
 
+    def _video_generation_url(self, model: str) -> str:
+        """Build Veo ``predictLongRunning`` URL."""
+        return f"{self._config.base_url}/models/{model}:predictLongRunning"
+
     @staticmethod
     def _extract_model(request_body: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Extract ``model`` from body and return (model, body_without_model).
@@ -248,7 +254,103 @@ class GoogleAdapter:
         self,
         request_body: dict[str, Any],
     ) -> dict[str, Any]:
-        raise NotImplementedError("Google video generation not yet supported")
+        model, body = self._extract_model(request_body)
+        if not body.get("instances"):
+            prompt = body.pop("prompt", None)
+            if not prompt:
+                raise ValueError("Google video generation requires instances or prompt")
+            instance: dict[str, Any] = {"prompt": prompt}
+            for source_key, google_key in (
+                ("image", "image"),
+                ("last_frame", "lastFrame"),
+                ("reference_images", "referenceImages"),
+                ("video", "video"),
+            ):
+                value = body.pop(source_key, None)
+                if value is not None:
+                    instance[google_key] = value
+            parameters: dict[str, Any] = {}
+            for source_key, google_key in (
+                ("aspect_ratio", "aspectRatio"),
+                ("duration", "durationSeconds"),
+                ("resolution", "resolution"),
+                ("person_generation", "personGeneration"),
+                ("seed", "seed"),
+                ("number_of_videos", "numberOfVideos"),
+            ):
+                value = body.pop(source_key, None)
+                if value is not None:
+                    parameters[google_key] = value
+            body = {"instances": [instance], **body}
+            if parameters:
+                body["parameters"] = parameters
+
+        response = await self._client.post(
+            self._video_generation_url(self.to_upstream_model_id(model)),
+            json=body,
+            headers=self._native_headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        result = response.json()
+        operation_name = str(result.get("name", ""))
+        if not operation_name:
+            raise ValueError("Google video generation response missing operation name")
+        request_id = quote(operation_name, safe="")
+        return {
+            **result,
+            "id": request_id,
+            "request_id": request_id,
+            "operation_name": operation_name,
+            "status": "pending",
+        }
 
     async def forward_video_status(self, request_id: str) -> dict[str, Any]:
-        raise NotImplementedError("Google video status not yet supported")
+        operation_name = unquote(request_id)
+        response = await self._client.get(
+            f"{self._config.base_url}/{operation_name}",
+            headers=self._native_headers(),
+        )
+        if response.status_code >= 400:
+            await self._raise_provider_http_error(response)
+        result = response.json()
+        if result.get("done") is True:
+            error = result.get("error")
+            if isinstance(error, dict):
+                return {
+                    **result,
+                    "request_id": request_id,
+                    "operation_name": operation_name,
+                    "status": "failed",
+                }
+            video = _first_google_video(result)
+            return {
+                **result,
+                "request_id": request_id,
+                "operation_name": operation_name,
+                "status": "succeeded",
+                "video": video,
+            }
+        return {
+            **result,
+            "request_id": request_id,
+            "operation_name": operation_name,
+            "status": "pending",
+        }
+
+
+def _first_google_video(result: dict[str, Any]) -> dict[str, Any] | None:
+    response = result.get("response")
+    if not isinstance(response, dict):
+        return None
+    generate_response = response.get("generateVideoResponse")
+    if not isinstance(generate_response, dict):
+        return None
+    samples = generate_response.get("generatedSamples")
+    if not isinstance(samples, list) or not samples:
+        return None
+    first = samples[0]
+    if not isinstance(first, dict):
+        return None
+    video = first.get("video")
+    return video if isinstance(video, dict) else None

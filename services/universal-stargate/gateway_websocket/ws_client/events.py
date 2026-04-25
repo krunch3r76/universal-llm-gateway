@@ -4,6 +4,7 @@ Publishes GATEWAY_STATE_CHANGED and model.execution.completed events.
 """
 
 import asyncio
+from collections.abc import Callable
 from typing import Any
 
 from universal_logging import get_logger
@@ -21,11 +22,18 @@ class EventPublisher:
     Consumers (routing, metrics, monitoring) react to these events.
     """
 
-    def __init__(self, ws_url: str, gateway_name: str, event_bus: Any = None) -> None:
+    def __init__(
+        self,
+        ws_url: str,
+        gateway_name: str,
+        event_bus: Any = None,
+        gateway_state_snapshot_provider: Callable[[], dict | None] | None = None,
+    ) -> None:
         self._ws_url = ws_url
         self._gateway_name = gateway_name
         self._event_bus = event_bus
         self._previous_connected: bool | None = None
+        self._gateway_state_snapshot_provider = gateway_state_snapshot_provider
 
     async def emit_gateway_state_changed(self, connected: bool) -> None:
         """
@@ -158,3 +166,150 @@ class EventPublisher:
                 f"Failed to emit model.capacity.freed for {model_id}: {e}",
                 exc_info=True,
             )
+
+    def schedule_model_loading_started(self, model_id: str) -> None:
+        """Schedule model.loading.started event emission (non-blocking).
+
+        Coordination signal: batch pipelines (e.g. RAG contextualization)
+        subscribe to anticipate the cold-load window.
+
+        Emitted directly from the MODEL_LOADING_STARTED message handler so
+        emission is decoupled from the lifecycle-callback chain (which is
+        overwritten by federation/manager wiring after registration).
+        """
+        if self._event_bus is None:
+            return
+        asyncio.create_task(
+            self._publish_model_loading_started(model_id),
+            name=f"model_loading_started_{model_id}",
+        )
+
+    async def _publish_model_loading_started(self, model_id: str) -> None:
+        try:
+            from src.scheduling.events import ModelLoadingStarted
+
+            await self._event_bus.publish_nowait(
+                ModelLoadingStarted(
+                    url=ws_url_to_http(self._ws_url),
+                    model_id=model_id,
+                )
+            )
+            logger.debug(
+                f"Emitted MODEL_LOADING_STARTED for {model_id} on {self._gateway_name}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to emit model.loading.started for {model_id}: {e}")
+
+    def schedule_model_loaded(
+        self,
+        model_id: str,
+        vram_mb: int = 0,
+        ram_mb: int = 0,
+    ) -> None:
+        """Schedule model.loaded event emission (non-blocking).
+
+        Coordination signal: batch pipelines resume submissions when the
+        cold-load window closes.
+
+        Emitted directly from the MODEL_LOADED message handler (see
+        schedule_model_loading_started for rationale).
+        """
+        if self._event_bus is None:
+            return
+        asyncio.create_task(
+            self._publish_model_loaded(model_id, vram_mb, ram_mb),
+            name=f"model_loaded_{model_id}",
+        )
+
+    async def _publish_model_loaded(
+        self,
+        model_id: str,
+        vram_mb: int,
+        ram_mb: int,
+    ) -> None:
+        try:
+            from src.scheduling.events import ModelLoaded
+
+            await self._event_bus.publish_nowait(
+                ModelLoaded(
+                    url=ws_url_to_http(self._ws_url),
+                    model_id=model_id,
+                    gateway_name=self._gateway_name,
+                    vram_mb=vram_mb,
+                    ram_mb=ram_mb,
+                )
+            )
+            logger.debug(f"Emitted MODEL_LOADED for {model_id} on {self._gateway_name}")
+        except Exception as e:
+            logger.warning(f"Failed to emit model.loaded for {model_id}: {e}")
+
+    def schedule_model_load_failed(
+        self,
+        model_id: str,
+        error: str,
+        worker_snapshot: dict | None = None,
+        gateway_state_snapshot: dict | None = None,
+    ) -> None:
+        """Schedule model.load.failed event emission (non-blocking).
+
+        Coordination signal: batch pipelines restore optimism — the next
+        submission will retry and surface the failure loudly.
+
+        Both snapshots are caller-provided. The MODEL_LOAD_FAILED handler
+        captures gateway_state_snapshot once via capture_gateway_state_snapshot()
+        and passes it to both this scheduler and the federation callback so
+        local emission and federation forwarding observe identical state.
+        """
+        if self._event_bus is None:
+            return
+        asyncio.create_task(
+            self._publish_model_load_failed(
+                model_id, error, gateway_state_snapshot, worker_snapshot
+            ),
+            name=f"model_load_failed_{model_id}",
+        )
+
+    def capture_gateway_state_snapshot(self) -> dict | None:
+        """Capture master-side snapshot from cached GatewayState (best-effort).
+
+        Public so the MODEL_LOAD_FAILED handler can capture once and fan out
+        to both event bus emission and federation forwarding without double-
+        snapshotting (GatewayState mutates rapidly under telemetry).
+        """
+        if self._gateway_state_snapshot_provider is None:
+            return None
+        try:
+            return self._gateway_state_snapshot_provider()
+        except Exception as e:
+            logger.warning(
+                "gateway_state_snapshot capture failed for %s: %s",
+                self._gateway_name,
+                e,
+            )
+            return None
+
+    async def _publish_model_load_failed(
+        self,
+        model_id: str,
+        error: str,
+        gateway_state_snapshot: dict | None,
+        worker_snapshot: dict | None,
+    ) -> None:
+        try:
+            from src.scheduling.events import ModelLoadingFailed
+
+            await self._event_bus.publish_nowait(
+                ModelLoadingFailed(
+                    url=ws_url_to_http(self._ws_url),
+                    model_id=model_id,
+                    error=error,
+                    gateway_name=self._gateway_name,
+                    gateway_state_snapshot=gateway_state_snapshot,
+                    worker_snapshot=worker_snapshot,
+                )
+            )
+            logger.debug(
+                f"Emitted MODEL_LOAD_FAILED for {model_id} on {self._gateway_name}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to emit model.load.failed for {model_id}: {e}")

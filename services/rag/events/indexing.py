@@ -197,19 +197,33 @@ def rag_file_indexing_failure_recorded(
     failure_category: str,
     failure_reason: str,
     attempt_count: int,
+    error_type: str | None = None,
+    error_head: str | None = None,
 ) -> Event:
     """Emitted when a file-level indexing failure is persisted to the
     indexing_failures table. Drives operator observability of the permanent
-    vs transient classifier decision and the running attempt count."""
+    vs transient classifier decision and the running attempt count.
+
+    error_type: ``type(exc).__qualname__`` of the underlying exception. Lets
+        operators discriminate (e.g.) ``ReadTimeout`` from ``ContextualizationError``
+        without consulting RAG logs.
+    error_head: first ~200 chars of ``str(exc)`` — head of the exception
+        message, suitable for one-line diagnostic display.
+    """
+    payload: dict[str, str | int] = {
+        "file": file,
+        "failure_category": failure_category,
+        "failure_reason": failure_reason,
+        "attempt_count": attempt_count,
+    }
+    if error_type is not None:
+        payload["error_type"] = error_type
+    if error_head is not None:
+        payload["error_head"] = error_head
     return Event(
         signal="rag.file.indexing.failure.recorded",
         role="coordination",
-        payload={
-            "file": file,
-            "failure_category": failure_category,
-            "failure_reason": failure_reason,
-            "attempt_count": attempt_count,
-        },
+        payload=payload,
     )
 
 

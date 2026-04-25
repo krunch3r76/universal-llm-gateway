@@ -62,8 +62,23 @@ Model loading failed on gateway
 Payload: {
     "url": str,
     "model_id": str,
-    "error": str
+    "error": str,
+    "gateway_name": str | None,
+    "gateway_state_snapshot": dict | None,
+        # Master-side cached view of the gateway at failure time:
+        # loaded_models, busy_models, loading_models, model_details (VRAM/RAM
+        # per model), and aggregate resource availability. Built from
+        # GatewayState — the Stargate WebSocket client's cached projection.
+    "worker_snapshot": dict | None,
+        # Edge-side dump captured by the gateway at failure time:
+        # failed_worker (pid, status, child llama-cpp/vLLM processes with
+        # rss_mb), peer_workers, and live hardware VRAM/RAM totals.
+        # Forwarded over the WebSocket MODEL_LOAD_FAILED message.
 }
+
+Both snapshots are best-effort forensics for batch-pipeline / oncall debugging
+and may be absent when capture fails. Subscribers MUST tolerate either being
+None — coordination correctness does not depend on them.
 """
 
 MODEL_LOADING_STUCK = "model.loading.stuck"
@@ -290,6 +305,12 @@ def ModelLoadingStarted(url: str, model_id: str) -> Event:
     """
     Create MODEL_LOADING_STARTED event.
 
+    Coordination signal: batch pipelines (e.g. RAG contextualization) subscribe
+    to anticipate the cold-load window and pause new submissions before
+    Stargate's queue saturates. Stargate retains sole authority over the
+    actual load decision — subscribers MUST NOT gate correctness on this
+    signal (per the stargate-model-lifecycle invariant).
+
     Args:
         url: Gateway URL
         model_id: Model starting to load
@@ -298,7 +319,9 @@ def ModelLoadingStarted(url: str, model_id: str) -> Event:
         Event with ModelLoadingStarted signal
     """
     return Event(
-        signal=MODEL_LOADING_STARTED, payload={"url": url, "model_id": model_id}
+        signal=MODEL_LOADING_STARTED,
+        payload={"url": url, "model_id": model_id},
+        role="coordination",
     )
 
 
@@ -308,6 +331,8 @@ def ModelLoadingFailed(
     model_id: str,
     error: str,
     gateway_name: str | None = None,
+    gateway_state_snapshot: dict | None = None,
+    worker_snapshot: dict | None = None,
 ) -> Event:
     """
     Create MODEL_LOAD_FAILED event.
@@ -317,6 +342,13 @@ def ModelLoadingFailed(
         model_id: Model that failed to load
         error: Error message
         gateway_name: Optional gateway name (for enriched events)
+        gateway_state_snapshot: Optional master-side cached view of the
+            gateway at failure time (loaded/busy/loading models, per-model
+            VRAM/RAM, aggregate resource availability). Built from
+            GatewayState. Forensics-only, may be None.
+        worker_snapshot: Optional edge-side worker/process/resource dump
+            forwarded over the WebSocket MODEL_LOAD_FAILED message.
+            Forensics-only, may be None.
 
     Returns:
         Event with MODEL_LOAD_FAILED signal.
@@ -326,6 +358,8 @@ def ModelLoadingFailed(
         "model_id": model_id,
         "error": error,
         "gateway_name": gateway_name,
+        "gateway_state_snapshot": gateway_state_snapshot,
+        "worker_snapshot": worker_snapshot,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     return Event(

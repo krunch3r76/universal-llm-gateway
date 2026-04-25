@@ -100,6 +100,7 @@ class WebSocketEventForwarder:
         self._connection_manager = connection_manager
         self._init_cache = init_cache
         self._subscribed = False
+        self._pending_tasks: set[asyncio.Task[Any]] = set()
 
     def start(self) -> None:
         """Subscribe to FORWARDED_EVENTS on the event bus.
@@ -142,7 +143,9 @@ class WebSocketEventForwarder:
             return
 
         # Create task for async message conversion and broadcast
-        _ = asyncio.create_task(self._process_and_broadcast(event))
+        task = asyncio.create_task(self._process_and_broadcast(event))
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
 
     async def _process_and_broadcast(self, event: Event) -> None:
         """Convert event to message and broadcast."""
@@ -166,7 +169,6 @@ class WebSocketEventForwarder:
             )
         except Exception:
             logger.exception("Unexpected failure processing event %s", event.signal)
-            raise
 
     async def _broadcast_with_logging(
         self, message: WebSocketMessage, signal: str
@@ -254,6 +256,7 @@ class WebSocketEventForwarder:
             MODEL_LOAD_FAILED: lambda p: create_model_load_failed_message(
                 model_id=p.get("model_id", "unknown"),
                 error_message=p.get("error_message", "Unknown error"),
+                worker_snapshot=p.get("worker_snapshot"),
             ),
             MODEL_UNLOADED: lambda p: create_model_unloaded_message(
                 model_id=p.get("model_id", "unknown")

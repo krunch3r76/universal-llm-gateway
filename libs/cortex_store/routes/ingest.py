@@ -11,6 +11,7 @@ import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, status
+from pydantic import ValidationError
 
 from ..assertion_quality import validate_assertion
 from ..claim_hash import compute_claim_hash
@@ -25,7 +26,7 @@ from ..models import (
     IngestDocumentResponse,
 )
 from ..near_dup import check_near_duplicate, record_near_duplicate
-from .assertions import _ASSERTION_COLS, _JSON_FIELDS
+from .assertions import _ASSERTION_COLS, _JSON_FIELDS, _payload_validation_exception
 
 logger = logging.getLogger("cortex-api.ingest")
 router = APIRouter(tags=["ingest"])
@@ -177,21 +178,24 @@ def assert_from_chunk(body: AssertFromChunkRequest) -> AssertFromChunkResponse:
         valid_from = body.valid_from or suggested_valid_from
         observed_at = body.observed_at or now
 
-        assertion_body = AssertionCreate(
-            entity_id=body.entity_id,
-            claim=body.claim,
-            confidence=body.confidence,  # type: ignore[arg-type]
-            evidence=body.evidence,
-            evidence_uris=evidence_uris,
-            chunk_id=body.chunk_id,
-            derivation_type=derivation_type,  # type: ignore[arg-type]
-            confidence_score=body.confidence_score,
-            observed_at=observed_at,
-            valid_from=valid_from,
-            reasoning_summary=body.reasoning_summary,
-            resolution_status=body.resolution_status,  # type: ignore[arg-type]
-            seeded_by=body.seeded_by,
-        )
+        try:
+            assertion_body = AssertionCreate(
+                entity_id=body.entity_id,
+                claim=body.claim,
+                confidence=body.confidence,  # type: ignore[arg-type]
+                evidence=body.evidence,
+                evidence_uris=evidence_uris,
+                chunk_id=body.chunk_id,
+                derivation_type=derivation_type,  # type: ignore[arg-type]
+                confidence_score=body.confidence_score,
+                observed_at=observed_at,
+                valid_from=valid_from,
+                reasoning_summary=body.reasoning_summary,
+                resolution_status=body.resolution_status,  # type: ignore[arg-type]
+                seeded_by=body.seeded_by,
+            )
+        except ValidationError as exc:
+            raise _payload_validation_exception(exc) from exc
 
         validation = validate_assertion(assertion_body)
         quality_score = validation.quality_score
@@ -299,10 +303,18 @@ def assert_from_chunk(body: AssertFromChunkRequest) -> AssertFromChunkResponse:
 
 
 def _ingest_document_impl(payload: dict[str, object]) -> dict[str, object]:
-    result = ingest_document(IngestDocumentRequest.model_validate(payload))
+    try:
+        body = IngestDocumentRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise _payload_validation_exception(exc) from exc
+    result = ingest_document(body)
     return result.model_dump(mode="json")
 
 
 def _assert_from_chunk_impl(payload: dict[str, object]) -> dict[str, object]:
-    result = assert_from_chunk(AssertFromChunkRequest.model_validate(payload))
+    try:
+        body = AssertFromChunkRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise _payload_validation_exception(exc) from exc
+    result = assert_from_chunk(body)
     return result.model_dump(mode="json")

@@ -19,7 +19,7 @@ Invariants:
 
 Records are node-local and non-durable across Stargate restart. Callers that
 require durable result delivery must use the ``result_delivery`` hook
-(phase 2) rather than polling after a restart.
+rather than polling after a restart.
 """
 
 from __future__ import annotations
@@ -190,6 +190,7 @@ class PipelineExecutionTracker:
         self.records: dict[str, PipelineExecutionRecord] = {}
         self._delivery_sender = delivery_sender
         self._journal_writer = journal_writer
+        self._pending_tasks: set[asyncio.Task[Any]] = set()
 
     def _emit(self, event: Event) -> None:
         """Fire-and-forget publish; drop silently if no bus is wired.
@@ -203,7 +204,9 @@ class PipelineExecutionTracker:
         if self.event_bus is None:
             return
         try:
-            asyncio.create_task(self.event_bus.publish_nowait(event))
+            task = asyncio.create_task(self.event_bus.publish_nowait(event))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to publish dispatch event: %s", exc)
 
@@ -230,7 +233,9 @@ class PipelineExecutionTracker:
             )
             return
         try:
-            asyncio.create_task(self._delivery_sender(record))
+            task = asyncio.create_task(self._delivery_sender(record))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Failed to schedule dispatch delivery: %s", exc)
 
@@ -246,7 +251,9 @@ class PipelineExecutionTracker:
         if self._journal_writer is None:
             return
         try:
-            asyncio.create_task(self._journal_writer(record))
+            task = asyncio.create_task(self._journal_writer(record))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to schedule dispatch journaling: %s", exc)
 

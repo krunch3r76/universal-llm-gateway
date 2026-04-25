@@ -103,8 +103,15 @@ def RequestSnapshotFailed(
     model_id: str,
     error: str,
     error_code: str | None = None,
+    error_source: str | None = None,
+    error_data: dict[str, Any] | None = None,
+    caller_hint: dict[str, Any] | None = None,
 ) -> Event:
     """Snapshot a request failure.
+
+    Mirrors the enriched fields on the lifecycle ``request.failed`` event so
+    snapshot consumers (pipeline evaluator, agent diagnostics) see the same
+    structured envelope and caller hint.
 
     Note: `error` is truncated to 2048 characters before emission.
     """
@@ -115,6 +122,9 @@ def RequestSnapshotFailed(
             "model_id": model_id,
             "error": error[:2048],
             "error_code": error_code,
+            "error_source": error_source,
+            "error_data": error_data,
+            "caller_hint": caller_hint,
             "phase": "failed",
         },
     )

@@ -107,6 +107,11 @@ async def emit_loading_event(
     Publishes MODEL_LOADING_STARTED or MODEL_LOAD_FAILED via the controller's
     event bus. Does not handle the "loaded" status - MODEL_LOADED is emitted
     by finalize_load() after resource measurement.
+
+    On status="failed": attaches a best-effort worker_snapshot capturing
+    peer worker processes, llama-cpp/vLLM child processes, and live
+    hardware VRAM/RAM at failure time. Forensics-only — snapshot capture
+    failures degrade silently and never block event emission.
     """
     model_load_failed, _, model_loading_started = _get_event_classes()
     event_to_publish = None
@@ -114,10 +119,14 @@ async def emit_loading_event(
         event_to_publish = model_loading_started(model_id=model_id)
     elif status == "failed":
         classified_error, failure_reason = _classify_load_failure(error or "Unknown")
+        from .failure_snapshot import build_worker_snapshot
+
+        worker_snapshot = build_worker_snapshot(controller, model_id)
         event_to_publish = model_load_failed(
             model_id=model_id,
             error_message=classified_error,
             failure_reason=failure_reason,
+            worker_snapshot=worker_snapshot,
         )
     if event_to_publish:
         await _publish_event(controller.event_bus, event_to_publish)
@@ -266,7 +275,9 @@ async def send_model_config(
         error_msg, _ = _resolve_load_failure(
             model_id, "No supervisor available during model config send"
         )
-        logger.error("No supervisor for %s during model config send: %s", model_id, error_msg)
+        logger.error(
+            "No supervisor for %s during model config send: %s", model_id, error_msg
+        )
         _get_resource_tracker().set_model_error(model_id, error_msg)
         await emit_loading_event(controller, model_id, "failed", error_msg)
         await cleanup_failed_worker(controller, model_id, "Model config send failed")

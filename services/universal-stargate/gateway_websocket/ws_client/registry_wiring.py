@@ -124,7 +124,12 @@ def build_handler_context(
     on_model_loading_started: Callable[[str], Awaitable[None]] | None,
     on_model_loaded: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
     on_model_unloaded: Callable[[str], Awaitable[None]] | None,
-    on_model_load_failed: Callable[[str, str], Awaitable[None]] | None,
+    on_model_load_failed: (
+        Callable[
+            [str, str, dict[str, Any] | None, dict[str, Any] | None], Awaitable[None]
+        ]
+        | None
+    ),
     on_model_busy: Callable[[str], Awaitable[None]] | None,
     on_model_idle: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
     on_resource_update: Callable[[dict[str, Any]], Awaitable[None]] | None,
@@ -209,6 +214,10 @@ def build_handler_context(
         # Side-effect schedulers
         schedule_callback=schedule_callback,
         schedule_capacity_freed=event_publisher.schedule_capacity_freed,
+        schedule_model_loading_started=event_publisher.schedule_model_loading_started,
+        schedule_model_loaded=event_publisher.schedule_model_loaded,
+        schedule_model_load_failed=event_publisher.schedule_model_load_failed,
+        capture_gateway_state_snapshot=event_publisher.capture_gateway_state_snapshot,
         # I/O
         send_message=send_message,
         # Query handling

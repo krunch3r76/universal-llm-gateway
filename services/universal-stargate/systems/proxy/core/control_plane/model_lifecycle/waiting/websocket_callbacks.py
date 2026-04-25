@@ -4,7 +4,14 @@ WebSocket callback implementations for model lifecycle events.
 Handles MODEL_LOADED, MODEL_UNLOADED, MODEL_LOAD_FAILED, MODEL_LOADING_STARTED,
 and connection state changes.
 
-Phase 6 Enhancement: Emits events to EventBus for BatchModelTracker and cache sync.
+EventBus emission for MODEL_LOADING_STARTED, MODEL_LOADED, and MODEL_LOAD_FAILED
+is performed directly in the WebSocket message handlers
+(gateway_websocket/handler/model_loading.py) via EventPublisher. The lifecycle
+callbacks here are still wrapped to drive load/unload waiters and the global
+load coordinator, but EventBus emission no longer rides this chain — it was
+fragile to overwrite by federation/manager wiring through the public callback
+setters. MODEL_UNLOADED still emits here because its master-side path is
+already wired and reliable.
 """
 
 from __future__ import annotations
@@ -48,7 +55,10 @@ class WebSocketCallbackFactory:
         self.event_bus = event_bus
 
     def create_on_loading_started(self, original_callback):
-        """Create MODEL_LOADING_STARTED callback."""
+        """Create MODEL_LOADING_STARTED callback.
+
+        EventBus emission moved to gateway_websocket/handler/model_loading.py.
+        """
         gateway_name = self.gateway_name
         coordinator = self.global_load_coordinator
 
@@ -63,13 +73,14 @@ class WebSocketCallbackFactory:
         return on_model_loading_started
 
     def create_on_loaded(self, original_callback):
-        """Create MODEL_LOADED callback with EventBus emission."""
-        gateway = self.gateway
+        """Create MODEL_LOADED callback (signals load waiters + coordinator).
+
+        EventBus emission moved to gateway_websocket/handler/model_loading.py.
+        """
         gateway_name = self.gateway_name
         pending_loads = self.pending_loads
         coordinator = self.global_load_coordinator
         to_event_key = self.to_event_key_func
-        factory = self  # Capture factory for accessing event_bus
 
         async def on_model_loaded(model_id: str, data: dict) -> None:
             from model_id import ModelId
@@ -84,11 +95,6 @@ class WebSocketCallbackFactory:
                 gateway_name,
                 parsed_model_id,
                 event_key,
-            )
-
-            # Phase 6: Emit to EventBus for cache sync and batch routing
-            await _emit_model_loaded_event(
-                model_id, gateway, gateway_name, data, factory.event_bus
             )
 
             if original_callback:
@@ -143,15 +149,21 @@ class WebSocketCallbackFactory:
         return on_model_unloaded
 
     def create_on_load_failed(self, original_callback):
-        """Create MODEL_LOAD_FAILED callback with EventBus emission."""
-        gateway = self.gateway
+        """Create MODEL_LOAD_FAILED callback (signals load waiters + coordinator).
+
+        EventBus emission moved to gateway_websocket/handler/model_loading.py.
+        """
         gateway_name = self.gateway_name
         pending_loads = self.pending_loads
         coordinator = self.global_load_coordinator
         to_event_key = self.to_event_key_func
-        factory = self  # Capture factory for accessing event_bus
 
-        async def on_model_load_failed(model_id: str, error_message: str) -> None:
+        async def on_model_load_failed(
+            model_id: str,
+            error_message: str,
+            worker_snapshot: dict | None = None,
+            gateway_state_snapshot: dict | None = None,
+        ) -> None:
             from model_id import ModelId
 
             from .signals import signal_load_failed
@@ -176,13 +188,15 @@ class WebSocketCallbackFactory:
                     f"{gateway_name} - {error_message}"
                 )
 
-            # Phase 6: Emit to EventBus
-            await _emit_model_loading_failed_event(
-                model_id, gateway, gateway_name, error_message, factory.event_bus
-            )
-
+            # Forward snapshots transparently to downstream callback (federation
+            # telemetry sender / edge telemetry forwarder).
             if original_callback:
-                await original_callback(model_id, error_message)
+                await original_callback(
+                    model_id,
+                    error_message,
+                    worker_snapshot,
+                    gateway_state_snapshot,
+                )
 
         return on_model_load_failed
 
@@ -208,34 +222,6 @@ class WebSocketCallbackFactory:
         return on_connected
 
 
-async def _emit_model_loaded_event(
-    model_id: str,
-    gateway: GatewayInstance,
-    gateway_name: str,
-    data: dict,
-    event_bus,
-) -> None:
-    """Emit MODEL_LOADED event to EventBus."""
-    if not event_bus:
-        return
-
-    try:
-        from model_id import ModelId
-
-        from ..model_event_emitter import emit_model_loaded
-
-        await emit_model_loaded(
-            event_bus=event_bus,
-            model_id=ModelId.parse(model_id),
-            gateway_url=gateway.config.base_url,
-            gateway_name=gateway_name,
-            vram_mb=data.get("vram_mb", 0),
-            ram_mb=data.get("ram_mb", 0),
-        )
-    except Exception as e:
-        logger.debug(f"Failed to emit MODEL_LOADED event: {e}")
-
-
 async def _emit_model_unloaded_event(
     model_id: str,
     gateway: GatewayInstance,
@@ -259,30 +245,3 @@ async def _emit_model_unloaded_event(
         )
     except Exception as e:
         logger.debug(f"Failed to emit MODEL_UNLOADED event: {e}")
-
-
-async def _emit_model_loading_failed_event(
-    model_id: str,
-    gateway: GatewayInstance,
-    gateway_name: str,
-    error_message: str,
-    event_bus,
-) -> None:
-    """Emit MODEL_LOAD_FAILED event to EventBus."""
-    if not event_bus:
-        return
-
-    try:
-        from model_id import ModelId
-
-        from ..model_event_emitter import emit_model_loading_failed
-
-        await emit_model_loading_failed(
-            event_bus=event_bus,
-            model_id=ModelId.parse(model_id),
-            gateway_url=gateway.config.base_url,
-            gateway_name=gateway_name,
-            error_message=error_message,
-        )
-    except Exception as e:
-        logger.debug(f"Failed to emit MODEL_LOAD_FAILED event: {e}")

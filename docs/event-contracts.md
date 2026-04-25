@@ -96,13 +96,19 @@ Signals that MUST carry `role="coordination"`. Suppressing these breaks system c
 | `model.execution.completed` | CapacityWaiter, GatewayTracker | Slot release, queue wake |
 | `model.execution.failed` | CapacityWaiter, GatewayTracker | Slot release, queue wake |
 | `model.capacity.freed` | CapacityWaiter | Queue wake (model unloaded) |
-| `model.loaded` | SequentialLoader | Load completion |
-| `model.unloaded` | SequentialLoader | Unload completion |
-| `model.load.failed` | SequentialLoader | Load failure |
+| `model.loading.started` | RAG ContextualizeModelCoordinator | Cold-load window opened; batch coordinators pause new submissions for this `model_id` |
+| `model.loaded` | SequentialLoader, RAG ContextualizeModelCoordinator | Load completion; batch coordinators resume submissions |
+| `model.unloaded` | SequentialLoader | Unload/eviction; informational for resident-state observers. Batch coordinators MUST NOT pause on bare unloads — without a paired `model.loading.started`, the next submission simply triggers Stargate to reload on demand. |
+| `model.load.failed` | SequentialLoader, RAG ContextualizeModelCoordinator | Load failure; batch coordinators restore optimism so the next submission triggers a loud retry. Carries optional `gateway_state_snapshot` (master-side cached view) and `worker_snapshot` (edge-side process tree + live VRAM/RAM) for forensics — see "Forensics payloads" below. |
+| `worker.evicted` | (eviction observers only) | Eviction with `trigger_model_id` provenance (paired with `model.unloaded`); informational. Same rule as `model.unloaded` — not a coordinator clear signal. |
 | `model.available` | RAG, admission tooling | Aggregate catalog: at least one connected path can serve `model_id` (union of Stargate-visible catalogs). Not resident load state. |
 | `model.unavailable` | RAG, admission tooling | Aggregate catalog: no path can serve `model_id`. Emitted only when the last serving path disappears. |
 
 **Disambiguation**: `model.loaded` / `model.unloaded` describe **resident** lifecycle on a gateway URL. `model.available` / `model.unavailable` describe **aggregate routability** at the Stargate view (federation + local). Downstream services that gate work on “can this ID be routed?” MUST use `model.available` / `model.unavailable` (or the equivalent HTTP catalog), not `model.loaded` alone.
+
+**Batch-coordinator surface (advisory, not correctness)**: `model.loading.started`, `model.loaded`, and `model.load.failed` form the published surface for batch pipelines (RAG indexing/contextualization, fine-tuning prep, bulk eval) to coordinate cold-load windows. Per the `stargate-model-lifecycle` invariant, subscribers MUST treat these as hints — every wait MUST cap on a timeout and fall through to the optimistic submit path. A subscriber that ignores the entire stream MUST still produce the correct result; only throughput differs. ¬gate first-request correctness on these signals.
+
+**Bare unloads are NOT coordinator-clear signals.** A `model.unloaded` (or `worker.evicted`) without a paired `model.loading.started` describes a routine VRAM eviction; the next inference request will re-trigger load-on-demand. Coordinators that pause on bare unloads will stall indefinitely whenever the upstream `model.loading.started` / `model.loaded` stream is partial — exactly the failure mode `todo:stargate-model-load-event-emission-gap` tracks.
 
 All signals not listed above default to `role="observation"` and are safe to suppress,
 deduplicate, or scope to the originating node.
@@ -229,6 +235,74 @@ model.load.initiated
   └─> model.loading.started + worker.loading
       └─> model.loaded | model.load.failed
 ```
+
+#### `model.load.failed` Forensics Payloads
+
+`model.load.failed` carries two optional diagnostic payloads. Both are
+best-effort and may be absent — coordination correctness does not depend
+on them; they exist for oncall debugging.
+
+**`gateway_state_snapshot`** (master-side, lagging view): captured by
+Stargate from the WebSocket client's cached projection of the gateway at
+the moment the failure was observed.
+
+```
+{
+  gateway_name: str,
+  gateway_url: str,
+  captured_at: float,         # epoch seconds
+  loaded_models: list[str],
+  loading_models: list[str],
+  busy_models: list[str],
+  model_details: { model_id: { ...scalar VRAM/RAM fields... } },
+  measured_model_vram_mb: { model_id: int },
+  resources: { total_vram_mb, available_vram_mb, total_ram_mb, available_ram_mb },
+}
+```
+
+**`worker_snapshot`** (edge-side, live view): captured on the gateway at
+the actual failure point and forwarded over the WebSocket
+`telemetry.model.loading.failed` message.
+
+```
+{
+  failed_worker: {
+    model_id: str,
+    pid: int | None,
+    supervisor_status: str | None,
+    child_processes: [
+      { pid: int, name: str|None, rss_mb: int|None, status: str|None,
+        tree_vram_mb?: int }
+    ],
+  },
+  peer_workers: [
+    { model_id: str, pid: int|None, status: str|None,
+      child_processes: [...] }
+  ],
+  resources: {
+    total_vram_mb: int, available_vram_mb: int, hardware_used_vram_mb: int,
+    total_ram_mb: int,  available_ram_mb: int,  hardware_used_ram_mb: int,
+  },
+}
+```
+
+The two snapshots are intentionally complementary: `gateway_state_snapshot`
+reflects what Stargate *believed* about the gateway via telemetry;
+`worker_snapshot` reflects what the gateway *actually had running* when the
+load failed (peer llama-cpp/vLLM EngineCore subprocesses, real psutil RSS,
+live nvidia-smi VRAM totals).
+
+**Federation pass-through**: Both snapshots ride the federation
+`telemetry.model.loading.failed` envelope from edge Stargate to master
+Stargate. The master applier (`FederatedGatewayManager._apply_model_load_failed`)
+extracts them from the parsed payload and passes them to its own
+`ModelLoadingFailed` emission, so master-published `model.load.failed` events
+carry the same forensics as the originating edge event. Three `model.load.failed`
+events therefore appear in the host event store for a single failure: the
+gateway-origin observation event (with `worker_snapshot` only, captured at the
+process), the edge Stargate coordination event (with both snapshots, enriched
+locally), and the master Stargate coordination event (with both snapshots,
+enriched via federation pass-through).
 
 ### Worker Lifecycle Signals
 
@@ -927,7 +1001,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `request.processing` | `request_id` | `correlation_id` |
 | `request.inference.started` | `request_id`, `model_id`, `gateway_url` | `correlation_id` |
 | `request.completed` | `request_id` | `correlation_id`, `tokens`, `duration_ms` |
-| `request.failed` | `request_id`, `error` | `correlation_id` |
+| `request.failed` | `request_id`, `error` | `correlation_id`, `error_code`, `error_source`, `error_data` (incl. `topology_snapshot` for `MODEL_NOT_FOUND`), `caller_hint` |
 | `request.timed.out` | `request_id` | `correlation_id`, `timeout_ms` |
 | `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
 | `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id`, `gateway_url`, `duration` |
@@ -1344,6 +1418,7 @@ signal.
 |--------|------------------|------------------|
 | `model.loaded` | `model_id` | `ram_mb`, `vram_mb` |
 | `model.unloaded` | `model_id` | `reason` |
+| `model.loading.started` | `url`, `model_id` | `role=coordination`, `scope=global` — bridged from gateway WebSocket telemetry; opens cold-load window for batch coordinators |
 | `model.load.initiated` | `request_id`, `model_id` | `correlation_id` |
 | `model.load.completed` | `request_id`, `model_id`, `duration_ms` | `correlation_id` |
 | `model.loading.stuck` | `url`, `model_id`, `elapsed_s`, `ttl_s` | - |
@@ -1454,7 +1529,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
 | `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
 | `rag.file.indexing.failed` | `file`, `error`, `model`? | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
-| `rag.file.indexing.failure.recorded` | `file`, `failure_category`, `failure_reason`, `attempt_count` | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. role=coordination. |
+| `rag.file.indexing.failure.recorded` | `file`, `failure_category`, `failure_reason`, `attempt_count` | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. Optional: `error_type` (`type(exc).__qualname__` of the underlying exception), `error_head` (first ~200 chars of `str(exc)`) — both let `query-events --signal rag.file.indexing.failure.recorded` reveal the actual exception without consulting RAG logs. role=coordination. |
 | `rag.file.indexing.failure.skipped` | `file`, `failure_reason`, `attempt_count` | reconcile/initial-reindex skipped the file because a permanent row exists with unchanged mtime/size, or a transient row is inside its backoff window. role=coordination. |
 | `rag.file.indexing.failure.cleared` | `file`, `reason` | row removed from `indexing_failures`. `reason` ∈ {`indexed_successfully`, `source_deleted`, `operator_cleared`}. Emitted only when a row actually existed. role=coordination. |
 | `rag.file.indexing.failure.retry.requested` | `file`, `scheduled` | operator requested a retry via admin API. `scheduled` reflects whether the watcher accepted the admission. role=coordination. |
@@ -1543,11 +1618,11 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.dispatch.async` | `pipeline_id`, `execution_id`, `has_delivery_hook` | `caller_agent` | async tracker admitted a new execution (POST /api/v1/pipelines/dispatch) |
 | `pipeline.dispatch.completed` | `pipeline_id`, `execution_id`, `status`, `duration_s` | `caller_agent` | terminal tracker transition (`status` ∈ {`completed`, `failed`}) |
 | `pipeline.dispatch.cancelled` | `pipeline_id`, `execution_id`, `source` | - | explicit operator cancellation of async dispatch (`DELETE /api/v1/pipelines/executions/{id}`) |
-| `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | admission refused (e.g. `capacity_exhausted`) |
-| `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | terminal record TTL-pruned from the in-process tracker |
-| `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent` | agent-bus turn posted successfully for a terminal dispatch record (node-scoped) |
-| `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
-| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason` | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config}` (node-scoped) |
+| `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | - | admission refused (e.g. `capacity_exhausted`) |
+| `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | - | terminal record TTL-pruned from the in-process tracker |
+| `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent` | - | agent-bus turn posted successfully for a terminal dispatch record (node-scoped) |
+| `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | - | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
+| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason` | - | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config}` (node-scoped) |
 | `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | terminal dispatch record persisted to sqlite journal (node-scoped) |
 | `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | tracker miss served from sqlite journal fallback (node-scoped) |
 | `pipeline.dispatch.journal.pruned` | `records_deleted` | `oldest_deleted_age_seconds` | hourly retention prune summary for sqlite journal (node-scoped) |
@@ -2070,7 +2145,7 @@ structured lifecycle queries).
 | `request.snapshot.received` | received | Raw request as received by Stargate |
 | `request.snapshot.routed` | routed | Routing decision (model, gateway, profile) |
 | `request.snapshot.completed` | completed | Response body for non-streaming requests |
-| `request.snapshot.failed` | failed | Error details on failure |
+| `request.snapshot.failed` | failed | Error details on failure (`error`, `error_code`, `error_source`, `error_data` — incl. `topology_snapshot` for `MODEL_NOT_FOUND`, `caller_hint`) |
 
 ## System Signals
 

@@ -1434,6 +1434,23 @@ class FederatedGatewayManager(Sequential):
             f"📊 Telemetry MODEL_LOADING_STARTED: {model_id} on {gw.gateway_id} "
             f"(loading_count={len(gw.loading_models)})"
         )
+
+        # Emit MODEL_LOADING_STARTED to master EventBus so host-side subscribers
+        # (RAG ContextualizeModelCoordinator, etc.) see the cold-load window.
+        # Edge process emits to its own bus; this bridges the federation hop
+        # so the host's central Event Service receives the signal.
+        if self._event_bus:
+            from src.scheduling.events import ModelLoadingStarted
+
+            asyncio.create_task(
+                self._event_bus.publish_nowait(
+                    ModelLoadingStarted(
+                        url=gw.remote_stargate_url,
+                        model_id=model_id,
+                    )
+                )
+            )
+
         return gw
 
     def _apply_model_loaded_with_logging(
@@ -1489,6 +1506,29 @@ class FederatedGatewayManager(Sequential):
             f"📊 Telemetry hint updated: {model_id} loaded on {gw.gateway_id} "
             f"(total: {len(gw.loaded_models)} loaded)"
         )
+
+        # Emit MODEL_LOADED to master EventBus (symmetric with _apply_model_unloaded).
+        # Required so host-side subscribers (RAG ContextualizeModelCoordinator,
+        # ModelCacheConsumer, etc.) see the cold-load completion. Edge emits to
+        # its own bus; this bridges the federation hop into the host's central
+        # Event Service. parsed payload may include vram_mb/ram_mb hints.
+        if self._event_bus:
+            from src.scheduling.events import ModelLoaded
+
+            vram_mb_raw = parsed.get("vram_mb")
+            ram_mb_raw = parsed.get("ram_mb")
+            asyncio.create_task(
+                self._event_bus.publish_nowait(
+                    ModelLoaded(
+                        url=gw.remote_stargate_url,
+                        model_id=model_id,
+                        gateway_name=gw.gateway_id,
+                        vram_mb=vram_mb_raw if isinstance(vram_mb_raw, int) else None,
+                        ram_mb=ram_mb_raw if isinstance(ram_mb_raw, int) else None,
+                    )
+                )
+            )
+
         return gw
 
     def _apply_model_unloaded(
@@ -1560,6 +1600,45 @@ class FederatedGatewayManager(Sequential):
             f"📊 Telemetry MODEL_LOAD_FAILED: cleared loading for {model_id} "
             f"on {gw.gateway_id} (loading_count={len(gw.loading_models)})"
         )
+
+        # Emit MODEL_LOAD_FAILED to master EventBus so host-side subscribers
+        # (RAG coordinator restores optimism so the next request retries) see
+        # the failure. Bridges the federation hop into the central Event Service.
+        #
+        # Snapshots (when present) were captured edge-side at failure time and
+        # forwarded over the federation telemetry message; we pass them through
+        # so the master-published event carries the same forensics local edge
+        # subscribers see.
+        if self._event_bus:
+            from src.scheduling.events import ModelLoadingFailed
+
+            error_raw = parsed.get("error")
+            error_str = error_raw if isinstance(error_raw, str) else "unknown"
+            worker_snapshot_raw = parsed.get("worker_snapshot")
+            worker_snapshot = (
+                worker_snapshot_raw
+                if isinstance(worker_snapshot_raw, dict)
+                else None
+            )
+            gateway_state_snapshot_raw = parsed.get("gateway_state_snapshot")
+            gateway_state_snapshot = (
+                gateway_state_snapshot_raw
+                if isinstance(gateway_state_snapshot_raw, dict)
+                else None
+            )
+            asyncio.create_task(
+                self._event_bus.publish_nowait(
+                    ModelLoadingFailed(
+                        url=gw.remote_stargate_url,
+                        model_id=model_id,
+                        error=error_str,
+                        gateway_name=gw.gateway_id,
+                        worker_snapshot=worker_snapshot,
+                        gateway_state_snapshot=gateway_state_snapshot,
+                    )
+                )
+            )
+
         return gw
 
     def _apply_model_busy(

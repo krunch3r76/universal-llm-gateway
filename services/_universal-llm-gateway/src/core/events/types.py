@@ -45,6 +45,11 @@ Payload:
     model_id: str - Unique identifier for the model that failed to load
     error_message: str - Description of the error that occurred
     failure_reason: str - Categorized reason code (see below)
+    worker_snapshot: dict | None - Optional best-effort dump of supervised
+        worker processes, llama-cpp/vLLM child processes, and live hardware
+        VRAM/RAM at failure time. Forwarded to Stargate via the WebSocket
+        MODEL_LOAD_FAILED message and surfaced on the master-side
+        model.load.failed event for forensics.
 
 Failure Reason Codes:
     "insufficient_vram" - Not enough VRAM available
@@ -466,7 +471,10 @@ def ModelLoaded(
 
 @event_factory
 def ModelLoadFailed(
-    model_id: str, error_message: str, failure_reason: str = "unknown"
+    model_id: str,
+    error_message: str,
+    failure_reason: str = "unknown",
+    worker_snapshot: dict[str, Any] | None = None,
 ) -> Event:
     """
     Create MODEL_LOAD_FAILED event.
@@ -475,17 +483,24 @@ def ModelLoadFailed(
         model_id: Model that failed to load
         error_message: Description of the failure
         failure_reason: Categorized reason code (default: "unknown")
+        worker_snapshot: Optional best-effort dump of supervised worker
+            processes, llama-cpp/vLLM child processes, and live hardware
+            VRAM/RAM at failure time. Forwarded to Stargate via the
+            WebSocket MODEL_LOAD_FAILED message.
 
     Returns:
         Event with ModelLoadFailed signal
     """
+    payload: dict[str, Any] = {
+        "model_id": model_id,
+        "error_message": error_message,
+        "failure_reason": failure_reason,
+    }
+    if worker_snapshot is not None:
+        payload["worker_snapshot"] = worker_snapshot
     return Event(
         signal=MODEL_LOAD_FAILED,
-        payload={
-            "model_id": model_id,
-            "error_message": error_message,
-            "failure_reason": failure_reason,
-        },
+        payload=payload,
     )
 
 

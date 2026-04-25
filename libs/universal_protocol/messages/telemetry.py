@@ -357,16 +357,27 @@ class ModelLoadingStartedPayload(TelemetryPayload):
 
 @dataclass(slots=True, kw_only=True)
 class ModelLoadFailedPayload(TelemetryPayload):
-    """Payload for MODEL_LOAD_FAILED telemetry."""
+    """Payload for MODEL_LOAD_FAILED telemetry.
+
+    Snapshots are forensics-only diagnostic enrichment. Both are optional and
+    forwarded as opaque dicts so the protocol does not need to track every
+    field the gateway/edge stargate decides to capture.
+    """
 
     model_id: str
     error: str | None = None
+    worker_snapshot: dict[str, Any] | None = None
+    gateway_state_snapshot: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         result = TelemetryPayload.to_dict(self)
         result["model_id"] = self.model_id
         if self.error is not None:
             result["error"] = self.error
+        if self.worker_snapshot is not None:
+            result["worker_snapshot"] = self.worker_snapshot
+        if self.gateway_state_snapshot is not None:
+            result["gateway_state_snapshot"] = self.gateway_state_snapshot
         return result
 
     @classmethod
@@ -381,6 +392,8 @@ class ModelLoadFailedPayload(TelemetryPayload):
         return ModelLoadFailed(
             model_id=data["model_id"],
             error=data.get("error"),
+            worker_snapshot=data.get("worker_snapshot"),
+            gateway_state_snapshot=data.get("gateway_state_snapshot"),
             source=source,
         )
 
@@ -616,6 +629,8 @@ def ModelLoadingStarted(  # noqa: N802
 def ModelLoadFailed(  # noqa: N802
     model_id: str,
     error: str | None = None,
+    worker_snapshot: dict[str, Any] | None = None,
+    gateway_state_snapshot: dict[str, Any] | None = None,
     source: TelemetrySource | None = None,
 ) -> ModelLoadFailedPayload:
     """
@@ -623,7 +638,13 @@ def ModelLoadFailed(  # noqa: N802
 
     Signal: TELEMETRY_MODEL_LOADING_FAILED
     """
-    return ModelLoadFailedPayload(model_id=model_id, error=error, source=source)
+    return ModelLoadFailedPayload(
+        model_id=model_id,
+        error=error,
+        worker_snapshot=worker_snapshot,
+        gateway_state_snapshot=gateway_state_snapshot,
+        source=source,
+    )
 
 
 @telemetry_factory

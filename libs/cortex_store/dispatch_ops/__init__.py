@@ -61,6 +61,7 @@ from .ops_reflective import (
     _op_rj_write,
 )
 from .ops_relationships import _op_relationship_create, _op_relationships
+from .ops_todos import _op_todo_audit, _op_todo_candidates
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
     _CORTEX_HALLUCINATED_TOOLS,
@@ -108,6 +109,8 @@ _OPS: dict[str, Any] = {
     "tag_assign": _op_tag_assign,
     "tag_list": _op_tag_list,
     "tag_resolve": _op_tag_resolve,
+    "todo_candidates": _op_todo_candidates,
+    "todo_audit": _op_todo_audit,
     "rj_write": _op_rj_write,
     "rj_read": _op_rj_read,
     "rj_list": _op_rj_list,

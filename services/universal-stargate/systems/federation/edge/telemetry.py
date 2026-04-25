@@ -331,15 +331,51 @@ def create_model_lifecycle_callbacks(
         forward_callback: Callback to forward telemetry (cache_and_forward_telemetry)
 
     Returns:
-        Dict with callbacks: on_model_loaded, on_model_unloaded,
-        on_model_busy, on_model_idle
+        Dict with callbacks: on_model_loading_started, on_model_loaded,
+        on_model_load_failed, on_model_unloaded, on_model_busy, on_model_idle
     """
+
+    async def on_model_loading_started(model_id: str) -> None:
+        """Forward MODEL_LOADING_STARTED to connected peers.
+
+        Required so the master can apply loading-state telemetry and emit a
+        coordination event for host-side subscribers (e.g. RAG
+        ContextualizeModelCoordinator). Without this forward the master has
+        no signal that a cold-load window opened on this gateway.
+        """
+        payload = {"model_id": model_id}
+        await forward_callback(
+            FederationMessageType.MODEL_LOADING_STARTED.value,
+            payload,
+        )
 
     async def on_model_loaded(model_id: str, data: dict[str, Any]) -> None:
         """Forward MODEL_LOADED to connected peers."""
         payload = {"model_id": model_id, **data}
         await forward_callback(
             FederationMessageType.MODEL_LOADED.value,
+            payload,
+        )
+
+    async def on_model_load_failed(
+        model_id: str,
+        error: str,
+        worker_snapshot: dict[str, Any] | None = None,
+        gateway_state_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        """Forward MODEL_LOAD_FAILED to connected peers.
+
+        Snapshots are forensics-only and forwarded as opaque dicts so the
+        master can enrich its own MODEL_LOAD_FAILED event with the same
+        worker / gateway-state context the edge captured at failure time.
+        """
+        payload: dict[str, Any] = {"model_id": model_id, "error": error}
+        if worker_snapshot is not None:
+            payload["worker_snapshot"] = worker_snapshot
+        if gateway_state_snapshot is not None:
+            payload["gateway_state_snapshot"] = gateway_state_snapshot
+        await forward_callback(
+            FederationMessageType.MODEL_LOAD_FAILED.value,
             payload,
         )
 
@@ -368,7 +404,9 @@ def create_model_lifecycle_callbacks(
         )
 
     return {
+        "on_model_loading_started": on_model_loading_started,
         "on_model_loaded": on_model_loaded,
+        "on_model_load_failed": on_model_load_failed,
         "on_model_unloaded": on_model_unloaded,
         "on_model_busy": on_model_busy,
         "on_model_idle": on_model_idle,

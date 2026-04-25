@@ -166,11 +166,19 @@ def create_model_loading_started(
 def create_model_load_failed(
     model_id: str,
     error: str | None = None,
+    worker_snapshot: dict[str, Any] | None = None,
+    gateway_state_snapshot: dict[str, Any] | None = None,
     source: dict[str, Any] | None = None,
 ) -> MessageEnvelope:
     """Create MODEL_LOAD_FAILED message with typed payload."""
     typed_source = TelemetrySource.from_dict(source) if source else None
-    payload = ModelLoadFailed(model_id=model_id, error=error, source=typed_source)
+    payload = ModelLoadFailed(
+        model_id=model_id,
+        error=error,
+        worker_snapshot=worker_snapshot,
+        gateway_state_snapshot=gateway_state_snapshot,
+        source=typed_source,
+    )
     return MessageEnvelope(
         type=FederationMessageType.MODEL_LOAD_FAILED.value,
         data=payload.to_dict(),

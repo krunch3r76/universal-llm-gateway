@@ -574,7 +574,11 @@ class EdgeFederationServer:
         lifecycle_callbacks = create_model_lifecycle_callbacks(
             self.cache_and_forward_telemetry
         )
+        ws_client.on_model_loading_started(
+            lifecycle_callbacks["on_model_loading_started"]
+        )
         ws_client.on_model_loaded(lifecycle_callbacks["on_model_loaded"])
+        ws_client.on_model_load_failed(lifecycle_callbacks["on_model_load_failed"])
         ws_client.on_model_unloaded(lifecycle_callbacks["on_model_unloaded"])
         ws_client.on_model_busy(lifecycle_callbacks["on_model_busy"])
         ws_client.on_model_idle(lifecycle_callbacks["on_model_idle"])

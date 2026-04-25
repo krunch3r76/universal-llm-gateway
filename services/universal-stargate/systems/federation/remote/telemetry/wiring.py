@@ -75,7 +75,20 @@ def _wire_model_callbacks(
     ws_client: "GatewayWebSocketClient",
     telemetry_sender: "RemoteTelemetrySender",
 ) -> None:
-    """Wire MODEL_LOADED and MODEL_UNLOADED callbacks."""
+    """Wire lifecycle callbacks (LOADING_STARTED, LOADED, LOAD_FAILED, UNLOADED)."""
+
+    async def on_model_loading_started(model_id: str) -> None:
+        """Forward MODEL_LOADING_STARTED to Master.
+
+        Required so master-side subscribers (RAG ContextualizeModelCoordinator,
+        etc.) see the cold-load window. Without this forward, master receives
+        only MODEL_LOADED and MODEL_UNLOADED — the loading-window signal is
+        invisible to host-side coordination.
+        """
+        _ = asyncio.create_task(
+            telemetry_sender.on_model_loading_started(model_id),
+            name=f"federation-telemetry-loading-started-{model_id}",
+        )
 
     async def on_model_loaded(model_id: str, _data: dict[str, Any]) -> None:
         """Forward MODEL_LOADED to Master."""
@@ -83,6 +96,27 @@ def _wire_model_callbacks(
         _ = asyncio.create_task(
             telemetry_sender.on_model_loaded(payload),
             name=f"federation-telemetry-loaded-{model_id}",
+        )
+
+    async def on_model_load_failed(
+        model_id: str,
+        error: str,
+        worker_snapshot: dict[str, Any] | None = None,
+        gateway_state_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        """Forward MODEL_LOAD_FAILED to Master.
+
+        Snapshots are forwarded so master-side ModelLoadingFailed emission
+        carries the same worker/gateway-state forensics the edge captured.
+        """
+        _ = asyncio.create_task(
+            telemetry_sender.on_model_load_failed(
+                model_id,
+                error,
+                worker_snapshot=worker_snapshot,
+                gateway_state_snapshot=gateway_state_snapshot,
+            ),
+            name=f"federation-telemetry-load-failed-{model_id}",
         )
 
     async def on_model_unloaded(model_id: str) -> None:
@@ -93,7 +127,9 @@ def _wire_model_callbacks(
             name=f"federation-telemetry-unloaded-{model_id}",
         )
 
+    ws_client.on_model_loading_started(on_model_loading_started)
     ws_client.on_model_loaded(on_model_loaded)
+    ws_client.on_model_load_failed(on_model_load_failed)
     ws_client.on_model_unloaded(on_model_unloaded)
     logger.debug("Wired model lifecycle callbacks")
 

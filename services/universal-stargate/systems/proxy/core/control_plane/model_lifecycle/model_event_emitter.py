@@ -1,13 +1,14 @@
 """
 Model event emitter - bridges WebSocket callbacks to EventBus.
 
-Problem: WebSocket message handlers call callbacks directly but don't
-publish events to the EventBus. Many consumers (ModelCacheConsumer,
-ResourceVerifier, BatchModelTracker) subscribe to MODEL_LOADED events
-that never arrive.
+MODEL_LOADING_STARTED, MODEL_LOADED, and MODEL_LOAD_FAILED are emitted
+directly from the WebSocket message handlers via EventPublisher
+(gateway_websocket/ws_client/events.py) — that path is decoupled from the
+lifecycle-callback chain that was prone to being overwritten by
+federation/manager wiring.
 
-Solution: This module provides functions to emit model lifecycle events
-to the EventBus, called from the WebSocket callback handlers.
+This module retains only emit_model_unloaded, used by the unloaded-callback
+wrapper in waiting/websocket_callbacks.py.
 
 Domain: Proxy
 """
@@ -23,44 +24,6 @@ if TYPE_CHECKING:
     from universal_event_bus import EventBus
 
 logger = get_logger(__name__)
-
-
-async def emit_model_loaded(
-    event_bus: EventBus,
-    model_id: ModelId,
-    gateway_url: str,
-    gateway_name: str,
-    vram_mb: int = 0,
-    ram_mb: int = 0,
-) -> None:
-    """
-    Emit MODEL_LOADED event to EventBus.
-
-    Call this from WebSocket MODEL_LOADED callback handler.
-
-    Args:
-        event_bus: EventBus instance
-        model_id: Model that finished loading
-        gateway_url: Gateway HTTP URL (e.g., "http://localhost:9998")
-        gateway_name: Gateway name (e.g., "gateway-1")
-        vram_mb: VRAM used by model (optional, for observability)
-        ram_mb: RAM used by model (optional, for observability)
-    """
-    from src.scheduling.events import ModelLoaded
-
-    try:
-        await event_bus.publish_nowait(
-            ModelLoaded(
-                url=gateway_url,
-                model_id=str(model_id),
-                gateway_name=gateway_name,
-                vram_mb=vram_mb,
-                ram_mb=ram_mb,
-            )
-        )
-        logger.debug(f"Emitted MODEL_LOADED for {model_id} on {gateway_name}")
-    except Exception as e:
-        logger.warning(f"Failed to emit MODEL_LOADED for {model_id}: {e}")
 
 
 async def emit_model_unloaded(
@@ -93,38 +56,3 @@ async def emit_model_unloaded(
         logger.debug(f"Emitted MODEL_UNLOADED for {model_id} on {gateway_name}")
     except Exception as e:
         logger.warning(f"Failed to emit MODEL_UNLOADED for {model_id}: {e}")
-
-
-async def emit_model_loading_failed(
-    event_bus: EventBus,
-    model_id: ModelId,
-    gateway_url: str,
-    gateway_name: str,
-    error_message: str,
-) -> None:
-    """
-    Emit MODEL_LOAD_FAILED event to EventBus.
-
-    Call this from WebSocket MODEL_LOAD_FAILED callback handler.
-
-    Args:
-        event_bus: EventBus instance
-        model_id: Model that failed to load
-        gateway_url: Gateway HTTP URL
-        gateway_name: Gateway name
-        error_message: Error message from gateway
-    """
-    from src.scheduling.events import ModelLoadingFailed
-
-    try:
-        await event_bus.publish_nowait(
-            ModelLoadingFailed(
-                url=gateway_url,
-                model_id=str(model_id),
-                gateway_name=gateway_name,
-                error=error_message,
-            )
-        )
-        logger.debug(f"Emitted MODEL_LOAD_FAILED for {model_id} on {gateway_name}")
-    except Exception as e:
-        logger.warning(f"Failed to emit MODEL_LOAD_FAILED for {model_id}: {e}")

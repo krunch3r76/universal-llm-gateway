@@ -81,16 +81,19 @@ def _frontier_generate_hint_for(dispatch: DispatchRequest) -> str | None:
 
 
 class ResultDeliveryConfig(BaseModel):
-    """Optional delivery hook for async pipeline results.
+    """Delivery hook for async pipeline results — posts to an agent-bus thread.
 
-    Phase 1 validates and stores this config but does NOT act on it — phase
-    2 wires agent-bus self-posting. Validation happens now to keep arbitrary
-    keys out of the tracker record.
+    When present on a dispatch request, Stargate posts a compact pointer
+    envelope to the configured agent-bus thread at terminal transition
+    (completed or failed).  The three bus fields are required; without all
+    three the dispatch is rejected with HTTP 422 so callers discover the
+    misconfiguration immediately rather than at delivery time.
     """
 
-    bus_thread: str | None = None
-    bus_from_agent: str | None = None
-    bus_to_agent: str | None = None
+    # ∀ delivery request: bus_thread ∧ bus_from_agent ∧ bus_to_agent required.
+    bus_thread: str
+    bus_from_agent: str
+    bus_to_agent: str
     bus_subject: str | None = None
     # Caller-supplied plain-text summary appended to the delivery envelope as
     # the ``"summary"`` key — useful for pre-composed human-readable context.

@@ -143,7 +143,7 @@ def _run_stop(node_id: str) -> int:
     return 0 if result.returncode == 0 else result.returncode
 
 
-def _stop_existing_container(node_id: str) -> None:
+def _stop_existing_container(node_id: str, compose_env: dict[str, str]) -> None:
     """Stop an existing edge container if running.
 
     Best-effort — failures are logged but not fatal. The subsequent
@@ -162,6 +162,7 @@ def _stop_existing_container(node_id: str) -> None:
             "10",
         ],
         cwd=str(_ROOT),
+        env=compose_env,
         capture_output=True,
         text=True,
     )
@@ -183,19 +184,18 @@ def _run_start(
     if not _COMPOSE_PATH.exists():
         print("ERROR: Compose file not found:", _COMPOSE_PATH, file=sys.stderr)
         return 1
-    # Stop existing container to prevent bind-mount ownership races.
-    # Docker daemon may have auto-restarted a previous container after reboot,
-    # creating /tmp/universal-protocol as root via bind-mount auto-creation.
-    _stop_existing_container(node_id)
     model_path = Path(
         node_env.get("MODEL_PATH", str(Path.home() / ".models"))
     ).expanduser()
+    # Claim bind-mount sources before any Compose command. If /tmp was cleared
+    # on reboot, Docker would otherwise create /tmp/universal-protocol as root.
     err = ensure_relay_dirs(_ROOT, node_id, model_path)
     if err:
         print("ERROR:", err, file=sys.stderr)
         return 1
     env = _build_env(node_env)
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    _stop_existing_container(node_id, env)
     result = subprocess.run(
         ["docker", "compose", "-f", str(_COMPOSE_PATH), "up", "-d", "--force-recreate"],
         env=env,

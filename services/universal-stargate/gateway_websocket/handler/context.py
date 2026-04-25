@@ -54,6 +54,18 @@ class HandlerContext:
         [Callable[..., Awaitable[None]], tuple[Any, ...]], None
     ] = field(default=lambda cb, args: None)
     schedule_capacity_freed: Callable[[str], None] = field(default=lambda m: None)
+    schedule_model_loading_started: Callable[[str], None] = field(
+        default=lambda m: None
+    )
+    schedule_model_loaded: Callable[[str, int, int], None] = field(
+        default=lambda m, v, r: None
+    )
+    schedule_model_load_failed: Callable[
+        [str, str, dict[str, Any] | None, dict[str, Any] | None], None
+    ] = field(default=lambda m, e, w, g: None)
+    capture_gateway_state_snapshot: Callable[[], dict[str, Any] | None] = field(
+        default=lambda: None
+    )
 
     # I/O (for async handlers only - PING)
     send_message: Callable[[str], Awaitable[None]] | None = None
@@ -66,7 +78,12 @@ class HandlerContext:
     on_model_loading_started: Callable[[str], Awaitable[None]] | None = None
     on_model_loaded: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     on_model_unloaded: Callable[[str], Awaitable[None]] | None = None
-    on_model_load_failed: Callable[[str, str], Awaitable[None]] | None = None
+    on_model_load_failed: (
+        Callable[
+            [str, str, dict[str, Any] | None, dict[str, Any] | None], Awaitable[None]
+        ]
+        | None
+    ) = None
     on_model_busy: Callable[[str], Awaitable[None]] | None = None
     on_model_idle: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     on_resource_update: Callable[[dict[str, Any]], Awaitable[None]] | None = None

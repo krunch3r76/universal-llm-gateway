@@ -72,18 +72,75 @@ def raise_capacity_error(
     )
 
 
-def raise_model_unavailable_error(model_id: str) -> None:
-    """Raise error when model genuinely absent from all gateway catalogs."""
+def raise_model_unavailable_error(
+    model_id: str,
+    *,
+    topology_snapshot: dict[str, Any] | None = None,
+) -> None:
+    """Raise error when model genuinely absent from all gateway catalogs.
+
+    When ``topology_snapshot`` is supplied (built by the rejection path from
+    the live :class:`FederatedGatewayManager`), the snapshot is merged into
+    ``error_data`` and the HTTP message is enriched with a topology hint so
+    the failure explains itself:
+
+      - connected/total edge counts (was the federation healthy at all?)
+      - unreachable_edges that historically served this model
+        (the "target edge is down" case)
+      - cached_only_edges from disconnects whose catalog still matches
+
+    The snapshot fields land in ``error_data.topology_snapshot`` of the
+    request.failed event via the existing envelope-passthrough in
+    ``stargate.requests.retry._extract_failure_envelope``.
+    """
+    data: dict[str, Any] = {"model_id": str(model_id)}
+    message = f"Model {model_id} not found in any gateway catalog"
+
+    if topology_snapshot is not None:
+        data["topology_snapshot"] = topology_snapshot
+        message = f"{message} ({_format_topology_hint(topology_snapshot)})"
+
     raise HTTPException(
         status_code=get_http_status(ErrorCode.MODEL_NOT_FOUND),
         detail=error_envelope(
             code=ErrorCode.MODEL_NOT_FOUND,
-            message=f"Model {model_id} not found in any gateway catalog",
+            message=message,
             source="master",
             retryable=False,
-            data={"model_id": str(model_id)},
+            data=data,
         ),
     )
+
+
+def _format_topology_hint(snapshot: dict[str, Any]) -> str:
+    """Render a one-line topology hint for the MODEL_NOT_FOUND HTTP message.
+
+    Denominator includes configured-but-not-yet-connected remotes so an
+    operator who configured 2 edges but only has 1 up sees ``1/2`` rather
+    than a misleadingly self-consistent ``1/1``.
+    """
+    connected = snapshot.get("connected_edge_count", 0)
+    total = snapshot.get("total_edges_known", 0)
+
+    matched_unreachable = [
+        edge["gateway_id"]
+        for edge in snapshot.get("unreachable_edges", [])
+        if edge.get("cached_catalog_match")
+    ]
+    matched_cached = [
+        edge["gateway_id"]
+        for edge in snapshot.get("cached_only_edges", [])
+        if edge.get("cached_catalog_match")
+    ]
+    matched = matched_unreachable + matched_cached
+    not_seen = snapshot.get("not_seen_remotes", [])
+
+    parts = [f"connected_edges={connected}/{total}"]
+    if matched:
+        parts.append(f"model_seen_on_offline_edges={matched}")
+    if not_seen:
+        parts.append(f"not_seen_configured_remotes={not_seen}")
+    return "; ".join(parts)
 
 
 def raise_no_feasible_gateway_error(

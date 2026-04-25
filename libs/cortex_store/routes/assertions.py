@@ -5,6 +5,7 @@ import threading
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
+from pydantic import ValidationError
 
 from .. import embeddings as cortex_embeddings
 from .. import vector_store
@@ -129,6 +130,20 @@ _ASSERTION_COLS = (
 )
 
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}
+
+
+def _payload_validation_exception(exc: ValidationError) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "error": "assertion_payload_invalid",
+            "diagnostics": exc.errors(
+                include_url=False,
+                include_context=False,
+                include_input=False,
+            ),
+        },
+    )
 
 
 @router.get("", response_model=AssertionList)
@@ -1041,17 +1056,29 @@ def _search_assertions_impl(**kwargs: object) -> dict[str, object]:
 
 def _create_assertion_impl(payload: dict[str, object]) -> dict[str, object]:
     response = Response()
-    result = create_assertion(AssertionCreate.model_validate(payload), response)
+    try:
+        body = AssertionCreate.model_validate(payload)
+    except ValidationError as exc:
+        raise _payload_validation_exception(exc) from exc
+    result = create_assertion(body, response)
     return result.model_dump(mode="json")
 
 
 def _update_assertion_impl(
     assertion_id: int, payload: dict[str, object]
 ) -> dict[str, object]:
-    result = update_assertion(assertion_id, AssertionUpdate.model_validate(payload))
+    try:
+        body = AssertionUpdate.model_validate(payload)
+    except ValidationError as exc:
+        raise _payload_validation_exception(exc) from exc
+    result = update_assertion(assertion_id, body)
     return result.model_dump(mode="json")
 
 
 def _supersede_assertion_impl(payload: dict[str, object]) -> dict[str, object]:
-    result = supersede_assertion(SupersedeRequest.model_validate(payload))
+    try:
+        body = SupersedeRequest.model_validate(payload)
+    except ValidationError as exc:
+        raise _payload_validation_exception(exc) from exc
+    result = supersede_assertion(body)
     return result.model_dump(mode="json")
