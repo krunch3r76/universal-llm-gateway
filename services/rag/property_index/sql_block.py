@@ -1,4 +1,5 @@
 """Property index: DDL / migration SQL strings."""
+
 from __future__ import annotations
 
 _V1_BASELINE_SQL = """
@@ -87,7 +88,11 @@ CREATE TABLE IF NOT EXISTS extraction_queue (
     source TEXT PRIMARY KEY,
     queued_at TEXT NOT NULL DEFAULT (datetime('now')),
     attempts INTEGER NOT NULL DEFAULT 0,
-    last_attempt_at TEXT
+    last_attempt_at TEXT,
+    last_error TEXT,
+    last_error_type TEXT,
+    last_failure_category TEXT,
+    last_failure_at TEXT
 );
 """
 
@@ -171,5 +176,14 @@ CREATE TABLE IF NOT EXISTS schema_version (
 """
 
 
-
-__all__ = ['_V1_BASELINE_SQL', '_V2_METADATA_SQL', '_V4_SOURCE_CACHE_SQL', '_V8_EXTRACTION_QUEUE_SQL', '_V9_INDEXING_FAILURES_SQL', '_V10_CONTEXTUALIZED_CHUNKS_SQL', '_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL', '_V5_SCOPE_FRESHNESS_SQL', '_CREATE_SCHEMA_VERSION_SQL']
+__all__ = [
+    "_V1_BASELINE_SQL",
+    "_V2_METADATA_SQL",
+    "_V4_SOURCE_CACHE_SQL",
+    "_V8_EXTRACTION_QUEUE_SQL",
+    "_V9_INDEXING_FAILURES_SQL",
+    "_V10_CONTEXTUALIZED_CHUNKS_SQL",
+    "_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL",
+    "_V5_SCOPE_FRESHNESS_SQL",
+    "_CREATE_SCHEMA_VERSION_SQL",
+]

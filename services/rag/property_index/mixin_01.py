@@ -1,7 +1,28 @@
 """_PropertyIndexPart01 — PropertyIndex method chunk (SLOC split)."""
+
 from __future__ import annotations
 
-from ._spec import *  # noqa: F401,F403
+from ._spec import (
+    _CREATE_SCHEMA_VERSION_SQL,
+    _DEFAULT_DB_PATH,
+    _LEGACY_DB_PATH,
+    _V1_BASELINE_SQL,
+    _V2_METADATA_SQL,
+    _V4_SOURCE_CACHE_SQL,
+    _V5_SCOPE_FRESHNESS_SQL,
+    _V8_EXTRACTION_QUEUE_SQL,
+    _V9_INDEXING_FAILURES_SQL,
+    _V10_CONTEXTUALIZED_CHUNKS_SQL,
+    _V12_CONTEXTUALIZATION_EXCEPTIONS_SQL,
+    Callable,
+    FtsIndex,
+    Path,
+    SequentialExecutor,
+    logger,
+    shutil,
+    sqlite3,
+)
+
 
 class _PropertyIndexPart01:
     """SQLite-backed inverted index mapping property keys to chunk IDs.
@@ -90,6 +111,22 @@ class _PropertyIndexPart01:
             "CREATE INDEX IF NOT EXISTS idx_indexed_sources_source_hash "
             "ON indexed_sources(source_hash)"
         )
+
+    def _migration_v13_extraction_queue_failure_details(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Add durable queue-level extraction failure diagnostics."""
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(extraction_queue)")
+        }
+        for name in (
+            "last_error",
+            "last_error_type",
+            "last_failure_category",
+            "last_failure_at",
+        ):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE extraction_queue ADD COLUMN {name} TEXT")
 
     def _apply_migrations(self, conn: sqlite3.Connection) -> None:
         """Apply ordered migrations and stamp schema_version rows transactionally."""
@@ -220,6 +257,11 @@ class _PropertyIndexPart01:
                 "contextualization_exceptions: durable partial-context diagnostics",
                 lambda conn: conn.executescript(_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL),
             ),
+            (
+                13,
+                "extraction_queue: durable source-level extraction failure diagnostics",
+                self._migration_v13_extraction_queue_failure_details,
+            ),
         ]
         for version, description, fn in migrations:
             if version <= current:
@@ -292,5 +334,3 @@ class _PropertyIndexPart01:
             conn.commit()
 
         await self._seq.run(_write())
-
-

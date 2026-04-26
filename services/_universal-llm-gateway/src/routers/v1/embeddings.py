@@ -12,6 +12,7 @@ from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope
 
+from src.core.errors import is_variant_sm_error
 from src.core.model_registry import ModelRegistry
 from src.routers.dependencies import (
     get_model_registry,
@@ -121,7 +122,11 @@ async def create_embeddings(
         )
     except RuntimeError as e:
         error_str = str(e).lower()
-        is_transient = "not loaded" in error_str or "not ready" in error_str
+        is_transient = (
+            "not loaded" in error_str
+            or "not ready" in error_str
+            or is_variant_sm_error(error_str)
+        )
         status = 503 if is_transient else 500
         code = (
             ErrorCode.RESOURCE_UNAVAILABLE

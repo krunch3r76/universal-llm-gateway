@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING
 
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig
 from services.rag.events.lifecycle import rag_post_index_stale
-from services.rag.extraction_admission import ExtractionAdmissionGate
-from services.rag.extraction_worker import run_extraction_worker
 from services.rag.watcher_manager import WatcherManager
 
 from . import indexing, state
@@ -89,28 +87,3 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
         track_background_task(asyncio.create_task(coro, name=name))
 
     await state._watcher_manager.start(config)
-
-    state._extraction_shutdown = asyncio.Event()
-    extraction_pipeline_id = state._config.knowledge_extraction.pipeline
-    if extraction_pipeline_id:
-        state._extraction_admission_gate = ExtractionAdmissionGate(
-            pipeline_id=extraction_pipeline_id,
-            event_bus=state._event_bus,
-        )
-        state._extraction_admission_gate.start()
-        logger.info(
-            "ExtractionAdmissionGate started (pipeline=%s)",
-            extraction_pipeline_id,
-        )
-    extraction_task = asyncio.create_task(
-        run_extraction_worker(
-            config=config,
-            collection_fn=state._get_collection,
-            property_index=state._property_index,
-            event_bus=state._event_bus,
-            shutdown_event=state._extraction_shutdown,
-            admission_gate=state._extraction_admission_gate,
-        ),
-        name="rag-extraction-worker",
-    )
-    track_background_task(extraction_task)

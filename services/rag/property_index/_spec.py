@@ -108,6 +108,54 @@ class ContextualizationException:
 
 
 @dataclass(slots=True, kw_only=True)
+class ExtractionQueueClaim:
+    """One source row atomically claimed by the extraction worker."""
+
+    source: str
+    attempts: int
+    queued_at: str
+    claimed_at: str
+
+
+@dataclass(slots=True, kw_only=True)
+class RecoveredExtractionClaim:
+    """One abandoned source claim recovered during startup."""
+
+    source: str
+    attempts: int
+    queued_at: str
+    claimed_at: str
+    claimed_age_seconds: float
+
+
+@dataclass(slots=True, kw_only=True)
+class ExtractionQueueBreakdown:
+    """Aggregate extraction queue buckets for health and status endpoints."""
+
+    total: int
+    ready: int
+    in_flight: int
+    cooling_off: int
+    capacity_blocked: int
+    exhausted: int
+
+
+@dataclass(slots=True, kw_only=True)
+class ExtractionQueueRow:
+    """One extraction queue row with computed operational state."""
+
+    source: str
+    queued_at: str
+    attempts: int
+    last_attempt_at: str | None
+    last_error: str | None
+    last_error_type: str | None
+    last_failure_category: str | None
+    last_failure_at: str | None
+    state: str
+
+
+@dataclass(slots=True, kw_only=True)
 class IndexedSourceSnapshot:
     """Cached source freshness row used for stat-first unchanged checks.
 
@@ -133,6 +181,9 @@ __all__ = [  # noqa: F405
     "ArticleEntry",
     "Callable",
     "ContextualizationException",
+    "ExtractionQueueBreakdown",
+    "ExtractionQueueClaim",
+    "ExtractionQueueRow",
     "FailedChunk",
     "FailureSnapshot",
     "FtsIndex",
@@ -140,6 +191,7 @@ __all__ = [  # noqa: F405
     "IndexingFailure",
     "Path",
     "PendingSnapshot",
+    "RecoveredExtractionClaim",
     "SequentialExecutor",
     "StoredContextRow",
     "defaultdict",

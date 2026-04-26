@@ -21,6 +21,9 @@ from services.rag.models import (
     ChunksByIndexResponse,
     EmbedBatchRequest,
     EmbedBatchResponse,
+    ExtractionQueueBreakdownModel,
+    ExtractionQueueResponse,
+    ExtractionQueueRowModel,
     FailedChunkItem,
     FailedExtractionResponse,
     ScopeInfo,
@@ -44,9 +47,14 @@ router = APIRouter()
 
 @router.get("/health")
 def health() -> dict[str, object]:
-    """Return liveness plus dependency-activation state for startup-order tolerant probes."""
+    """Return liveness plus dependency and extraction-queue state."""
     collection = state._collection
     activation = state._dependency_activation
+    queue_breakdown = (
+        state._property_index.get_extraction_queue_breakdown()
+        if state._property_index is not None
+        else None
+    )
     return {
         "status": "ok" if activation.phase == "ready" else "degraded",
         "phase": activation.phase,
@@ -60,6 +68,22 @@ def health() -> dict[str, object]:
         else "unavailable",
         "embedding_model": get_embed_model_id() or "unconfigured",
         "watcher": "running" if state._watcher_manager is not None else "inactive",
+        "extraction_queue": {
+            "total": queue_breakdown.total if queue_breakdown is not None else 0,
+            "ready": queue_breakdown.ready if queue_breakdown is not None else 0,
+            "in_flight": queue_breakdown.in_flight
+            if queue_breakdown is not None
+            else 0,
+            "cooling_off": queue_breakdown.cooling_off
+            if queue_breakdown is not None
+            else 0,
+            "capacity_blocked": queue_breakdown.capacity_blocked
+            if queue_breakdown is not None
+            else 0,
+            "exhausted": queue_breakdown.exhausted
+            if queue_breakdown is not None
+            else 0,
+        },
     }
 
 
@@ -222,6 +246,50 @@ async def register_scope(request: ScopeRegisterRequest) -> ScopeRegisterResponse
         name=request.name,
         created=not already_exists,
         watching=watching,
+    )
+
+
+@router.get("/extraction/queue", response_model=ExtractionQueueResponse)
+def get_extraction_queue(limit: int = 100) -> ExtractionQueueResponse:
+    """Return extraction queue buckets and source-level rows."""
+    if state._property_index is None:
+        return ExtractionQueueResponse(
+            breakdown=ExtractionQueueBreakdownModel(
+                total=0,
+                ready=0,
+                in_flight=0,
+                cooling_off=0,
+                capacity_blocked=0,
+                exhausted=0,
+            ),
+            rows=[],
+        )
+
+    breakdown = state._property_index.get_extraction_queue_breakdown()
+    rows = state._property_index.list_extraction_queue_rows(limit=limit)
+    return ExtractionQueueResponse(
+        breakdown=ExtractionQueueBreakdownModel(
+            total=breakdown.total,
+            ready=breakdown.ready,
+            in_flight=breakdown.in_flight,
+            cooling_off=breakdown.cooling_off,
+            capacity_blocked=breakdown.capacity_blocked,
+            exhausted=breakdown.exhausted,
+        ),
+        rows=[
+            ExtractionQueueRowModel(
+                source=row.source,
+                queued_at=row.queued_at,
+                attempts=row.attempts,
+                last_attempt_at=row.last_attempt_at,
+                last_error=row.last_error,
+                last_error_type=row.last_error_type,
+                last_failure_category=row.last_failure_category,
+                last_failure_at=row.last_failure_at,
+                state=row.state,
+            )
+            for row in rows
+        ],
     )
 
 

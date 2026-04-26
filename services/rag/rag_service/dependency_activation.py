@@ -23,6 +23,7 @@ from services.rag.model_availability_tracker import (
 
 from . import state
 from .background_tasks import track_background_task
+from .extraction_runtime import start_extraction_runtime
 from .lifecycle_constants import (
     DEPENDENCY_RETRY_BASE_S,
     DEPENDENCY_RETRY_MAX_S,
@@ -43,6 +44,7 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
 
     attempt = 0
     degraded_emitted = False
+    deps_activated_emitted = False
     while True:
         attempt += 1
         state._dependency_activation.phase = "activating"
@@ -58,13 +60,29 @@ async def _activate_dependencies_when_ready(config: RagConfig) -> None:
             state._dependency_activation.waiting_on = "embeddings"
             await wait_until_healthy()
 
-            state._dependency_activation.waiting_on = "watcher_registration"
-            await _start_watcher_runtime(config)
+            state._dependency_activation.waiting_on = "extraction_runtime"
+            await start_extraction_runtime(config)
+
+            if not deps_activated_emitted:
+                await state._event_bus.publish(
+                    rag_dependencies_activated(
+                        dependencies=["stargate", "embeddings", "extraction_runtime"]
+                    )
+                )
+                deps_activated_emitted = True
+
+            if config.automatic_indexing_enabled and config.watch_directories:
+                state._dependency_activation.waiting_on = "watcher_registration"
+                await _start_watcher_runtime(config)
+            else:
+                logger.info(
+                    "Watcher runtime not started "
+                    "(automatic_indexing_enabled=%s, watch_directories=%d)",
+                    config.automatic_indexing_enabled,
+                    len(config.watch_directories),
+                )
             state._dependency_activation.phase = "ready"
             state._dependency_activation.waiting_on = None
-            await state._event_bus.publish(
-                rag_dependencies_activated(dependencies=["stargate", "embeddings"])
-            )
             # Scope freshness repair sends LLM requests to Stargate (vocabulary
             # classification). On cold restart the local model is still loading,
             # so these requests 504/timeout for several minutes. Fire it as a

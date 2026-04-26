@@ -76,8 +76,8 @@ async def finalize_selection_and_load(
 
         from ....eviction_execution import execute_master_eviction
 
-        if event_bus and trace.candidates:
-            selected_candidate = next(
+        selected_candidate = (
+            next(
                 (
                     candidate
                     for candidate in trace.candidates
@@ -85,7 +85,12 @@ async def finalize_selection_and_load(
                 ),
                 None,
             )
-            plan = selected_candidate.eviction_plan if selected_candidate else None
+            if trace.candidates
+            else None
+        )
+        plan = selected_candidate.eviction_plan if selected_candidate else None
+
+        if event_bus and trace.candidates:
             if plan and plan.cooldown_protected_count > 0:
                 from src.scheduling.events.routing import EvictionCooldownApplied
 
@@ -146,6 +151,46 @@ async def finalize_selection_and_load(
                 event_bus=event_bus,
             )
             if not eviction_ok:
+                if event_bus:
+                    from src.scheduling.events.routing import (
+                        RoutingEvictionExecuteFailed,
+                    )
+
+                    candidate_breakdown = [
+                        {
+                            "gateway_id": c.gateway.name,
+                            "feasibility_tier": c.tier.name,
+                            "constraints_failed": [
+                                f.constraint for f in (c.constraints_failed or [])
+                            ],
+                        }
+                        for c in (trace.candidates or [])
+                    ]
+                    await event_bus.publish_nowait(
+                        RoutingEvictionExecuteFailed(
+                            request_id=context.request_id,
+                            model_id=str(model_id),
+                            gateway_id=selected_gateway.name,
+                            selection_tier=trace.selection_tier.name,
+                            selection_reason=trace.selection_reason,
+                            models_to_evict=(
+                                [str(m) for m in plan.models_to_evict]
+                                if plan
+                                else []
+                            ),
+                            freed_vram_mb=plan.freed_vram_mb if plan else 0,
+                            freed_ram_mb=plan.freed_ram_mb if plan else 0,
+                            estimated_cost=plan.estimated_cost if plan else 0.0,
+                            cooldown_protected_count=(
+                                plan.cooldown_protected_count if plan else 0
+                            ),
+                            demand_protected_count=(
+                                plan.demand_protected_count if plan else 0
+                            ),
+                            candidate_breakdown=candidate_breakdown,
+                            timestamp=time.time(),
+                        )
+                    )
                 raise_eviction_failed_error(
                     str(model_id),
                     selected_gateway.name,

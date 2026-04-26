@@ -1047,6 +1047,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
 | `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms`, `exit_reason`, `exit_constraint_summary` | - |
 | `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | - |
+| `routing.eviction.execute.failed` | `request_id`, `model_id`, `gateway_id`, `selection_tier`, `selection_reason`, `models_to_evict`, `freed_vram_mb`, `freed_ram_mb`, `estimated_cost`, `cooldown_protected_count`, `demand_protected_count`, `candidate_breakdown`, `timestamp` | - |
 | `routing.startup.queued` | `request_id`, `model_id`, `uptime_s`, `timeout_s` | - |
 | `routing.startup.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms`, `uptime_s` | - |
 | `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | - |
@@ -1303,6 +1304,7 @@ sticky/non-sticky failure split. These signals track the wait lifecycle.
 | `routing.eviction.wait.resolved` | State changed, selection succeeded; payload includes `gateway_id` and `waited_ms` |
 | `routing.eviction.wait.timeout` | Wait exited without resolution; payload includes `waited_ms`, `exit_reason`, `exit_constraint_summary` |
 | `routing.eviction.wait.cancelled` | Client disconnected or task cancelled during wait |
+| `routing.eviction.execute.failed` | T2 finalize-time eviction execution failed after admission; payload carries the planned eviction (`models_to_evict`, `freed_vram_mb`, `freed_ram_mb`), hysteresis context (`cooldown_protected_count`, `demand_protected_count`), and per-candidate `candidate_breakdown` for forensics. Always emitted before the 503 EVICTION_FAILED response. |
 
 `queue_depth` in `.started` is a gauge for SRE capacity planning and monitoring.
 
@@ -1523,7 +1525,7 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.started` | - | emitted after core boot (event bus, config, property index, registry load attempt) completes |
 | `rag.start.degraded` | `waiting_on`, `error` | first transition from core boot into dependency-waiting mode |
 | `rag.dependency.retry.scheduled` | `waiting_on`, `attempt`, `delay_seconds`, `error` | emitted once per retry while Stargate-backed activation is still blocked |
-| `rag.dependencies.activated` | `dependencies` | emitted when Stargate watch registration, embedding readiness, and extraction readiness have all succeeded |
+| `rag.dependencies.activated` | `dependencies` | emitted when Stargate readiness, embedding readiness, and extraction runtime startup have succeeded, before optional watcher registration begins. |
 | `rag.shutdown` | - | - |
 | `rag.watch.directory.missing` | `path` | - |
 | `rag.watch.started` | `path`, `extensions`, `recursive` | - |
@@ -1534,6 +1536,10 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
 | `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | - |
 | `rag.watch.stopped` | `watchers` | - |
+| `rag.extraction.source.claimed` | `source`, `attempts`, `queued_at`, `claimed_at` | source row atomically claimed from `extraction_queue`; row remains in-flight until completion, failure, or startup claim recovery |
+| `rag.extraction.source.completed` | `source`, `duration_seconds` | source extraction completed and the queue row was deleted |
+| `rag.extraction.source.failed` | `source`, `failure_category`, `error_type`, `increment_attempt` | source extraction failed and the row remains queued for backoff or exhaustion; `increment_attempt=false` means capacity-class failure did not consume source defect budget |
+| `rag.extraction.claim.recovered` | `source`, `claimed_at`, `claimed_age_seconds` | RAG startup cleared a claim left by a previous process before starting the worker |
 | `rag.extraction.batch.started` | `file`, `chunk_count` | - |
 | `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model`, `finish_reason` (both optional; `finish_reason` present when stop ≠ "stop", e.g. `"length"`) |
 | `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | re-extraction due to model mismatch |

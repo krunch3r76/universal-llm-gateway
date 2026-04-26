@@ -21,45 +21,21 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from universal_logging import format_json_for_log, get_logger
 
-from src.core.errors import (
-    ErrorCode,
-    GatewayError,
-    ModelLoadingError,
-    SyntaxErrorException,
-    WorkerInitializationError,
-    create_error_response,
-    is_connection_error,
-    is_crash_error,
-)
-from src.core.events.types import RequestInferenceStarted
-from src.core.gateway_config import GatewayConfig
 from src.core.model_registry import ModelRegistry
 from src.routers.dependencies import (
     get_event_bus,
-    get_gateway_config,
     get_model_registry,
     get_worker_controller,
 )
-from src.schemas.chat_completion import (
-    ChatCompletionChoice,
-    ChatCompletionRequest,
-    ChatCompletionResponse,
-    ChatCompletionUsage,
-    ChatMessage,
-)
+from src.schemas.chat_completion import ChatCompletionRequest, ChatCompletionResponse
 
-from .disconnect import inference_with_disconnect_watch
-from .events import emit_inference_failed_nowait, emit_request_queued_nowait
 from .model_resolution import resolve_model_id
-from .openai_errors import (
-    create_model_crash_error_response,
-    create_openai_error_response,
-)
+from .non_streaming import generate_non_streaming_response
+from .response_build import build_generation_params, resolve_gateway_url
 from .stream import generate_streaming_response
 
 router = APIRouter()
 logger = get_logger(__name__)
-api_logger = get_logger("universal_llm_gateway.api")
 
 
 def _extract_internal_request_id(request: Request) -> str | None:
@@ -82,7 +58,6 @@ async def create_chat_completion(
     model: str | None = Query(None, description="Model ID (query param override)"),
     model_registry: ModelRegistry = Depends(get_model_registry),
     worker_controller=Depends(get_worker_controller),
-    gateway_config: GatewayConfig = Depends(get_gateway_config),
     event_bus=Depends(get_event_bus),
 ):
     """OpenAI-compatible chat completion endpoint."""
@@ -120,7 +95,7 @@ async def create_chat_completion(
     # Extract generation parameters (exclude_unset for passthrough)
     # INVARIANT: Pure passthrough - Gateway forwards params unchanged to worker/engine
     # No validation, no defaults, no transformation (Stargate's responsibility)
-    generation_params = _build_generation_params(completion_request)
+    generation_params = build_generation_params(completion_request)
     stream = completion_request.stream or False
 
     # Log generation parameters explicitly for verification
@@ -145,7 +120,7 @@ async def create_chat_completion(
 
     # Handle streaming vs non-streaming
     if stream:
-        gateway_url = _resolve_gateway_url(request)
+        gateway_url = resolve_gateway_url(request)
         return StreamingResponse(
             generate_streaming_response(
                 worker_controller=worker_controller,
@@ -166,7 +141,7 @@ async def create_chat_completion(
             },
         )
     else:
-        return await _generate_non_streaming_response(
+        return await generate_non_streaming_response(
             worker_controller=worker_controller,
             model_id=model_id_str,
             messages=messages_or_prompt,
@@ -174,256 +149,10 @@ async def create_chat_completion(
             correlation_id=correlation_id,
             start_time=start_time,
             event_bus=event_bus,
-            gateway_config=gateway_config,
             generation_params=generation_params,
             timeout_hint=timeout_hint,
             request=request,
         )
-
-
-def _build_generation_params(
-    completion_request: ChatCompletionRequest,
-) -> dict:
-    """
-    Extract generation parameters from request (pure passthrough).
-
-    INVARIANT: Pure passthrough - ¬defaults, ¬override, ¬validation
-
-    Removes only routing metadata (model, messages, stream) that workers
-    don't need. All generation parameters (temperature, max_tokens, etc.)
-    pass through unchanged.
-
-    Args:
-        completion_request: The completion request
-
-    Returns:
-        dict: Generation parameters for worker (passthrough only)
-    """
-    generation_params = completion_request.model_dump(exclude_unset=True)
-    for key in ["model", "messages", "prompt", "stream"]:
-        generation_params.pop(key, None)
-    return generation_params
-
-
-def _build_completion_response(
-    completion_result: dict,
-    model_id: str,
-) -> ChatCompletionResponse:
-    """
-    Build ChatCompletionResponse from worker result.
-
-    Args:
-        completion_result: Worker completion result dict
-        model_id: Model identifier
-
-    Returns:
-        ChatCompletionResponse: OpenAI-format response
-    """
-    content = completion_result.get("content", "")
-    finish_reason = completion_result.get("finish_reason", "stop")
-    message_args: dict = {"role": "assistant", "content": content}
-    if tool_calls := completion_result.get("tool_calls"):
-        message_args["tool_calls"] = tool_calls
-    response_message = ChatMessage(**message_args)
-    choice = ChatCompletionChoice(
-        index=0, message=response_message, finish_reason=finish_reason
-    )
-    usage = ChatCompletionUsage(
-        prompt_tokens=completion_result.get("prompt_tokens", 0),
-        completion_tokens=completion_result.get("completion_tokens", 0),
-        total_tokens=completion_result.get("total_tokens", 0),
-    )
-    return ChatCompletionResponse(
-        model=model_id,
-        choices=[choice],
-        usage=usage,
-        timings=completion_result.get("timings"),
-    )
-
-
-def _resolve_gateway_url(request: Request | None) -> str:
-    """Resolve gateway URL/identity for request-scoped runtime telemetry."""
-    if request is None:
-        return "unknown"
-    base_url = str(request.base_url).rstrip("/")
-    return base_url or "unknown"
-
-
-async def _generate_non_streaming_response(
-    worker_controller,
-    model_id: str,
-    messages,
-    request_id: str,
-    correlation_id: str,
-    start_time: float,
-    event_bus,
-    gateway_config: GatewayConfig,
-    generation_params: dict,
-    timeout_hint: float | None = None,
-    request: Request | None = None,
-):
-    """Generate non-streaming completion response."""
-    try:
-        logger.info(f"Processing inference request for model: {model_id}")
-
-        # Emit REQUEST_QUEUED event
-        await emit_request_queued_nowait(
-            event_bus, model_id, request_id, messages, generation_params, stream=False
-        )
-
-        # Ensure model is loaded
-        if not await worker_controller.ensure_model_loaded(model_id):
-            if not worker_controller.auto_load_on_request:
-                return create_openai_error_response(
-                    status_code=400,
-                    message=f"Model '{model_id}' is not loaded",
-                    error_type="invalid_request_error",
-                    error_code="model_not_loaded",
-                    param="model",
-                    suggestion=f"POST /api/v1/models/{model_id}/load",
-                )
-            else:
-                from src.core.resources import resource_tracker
-
-                tracker = resource_tracker.get_resource_tracker()
-                model_info = tracker.get_model_info(model_id)
-                if model_info and model_info.status.name == "FAILED":
-                    error_msg = model_info.error_message or "Unknown error"
-                    context = {"request_id": request_id, "model_id": model_id}
-                    raise ModelLoadingError(f"Model failed: {error_msg}", context)
-
-                raise ModelLoadingError(
-                    f"Model '{model_id}' is not available after auto-load attempt.",
-                    {"request_id": request_id, "model_id": model_id},
-                )
-
-        # Request-scoped runtime-start boundary (execution handoff begins here)
-        await event_bus.publish_nowait(
-            RequestInferenceStarted(
-                request_id=request_id,
-                model_id=model_id,
-                gateway_url=_resolve_gateway_url(request),
-                correlation_id=correlation_id,
-            )
-        )
-
-        inference_coro = worker_controller.generate_chat_completion(
-            model_id=model_id,
-            messages=messages,
-            correlation_id=correlation_id,
-            _request_id=request_id,
-            _timeout_hint=timeout_hint,
-            **generation_params,
-        )
-
-        if request is None:
-            completion_result = await inference_coro
-        else:
-            completion_result = await inference_with_disconnect_watch(
-                inference_coro, request, worker_controller, model_id, request_id
-            )
-
-        # Build and return response
-        response = _build_completion_response(completion_result, model_id)
-        response_time_ms = (time.time() - start_time) * 1000
-        api_logger.info(
-            f"POST /v1/chat/completions - 200 - {response_time_ms:.2f}ms - "
-            f"model:{model_id}"
-        )
-        return response
-
-    except (
-        ModelLoadingError,
-        WorkerInitializationError,
-        GatewayError,
-        SyntaxErrorException,
-    ) as e:
-        logger.error(f"Gateway error: {e}")
-        context = {"request_id": request_id}
-        raise create_error_response(e, 500, context)
-
-    except RuntimeError as e:
-        response_time_ms = (time.time() - start_time) * 1000
-        return _handle_runtime_error(
-            e, model_id, request_id, response_time_ms, gateway_config
-        )
-
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        await emit_inference_failed_nowait(event_bus, model_id, request_id, str(e))
-        api_logger.error(f"Unexpected error in chat completion: {e}")
-        return create_openai_error_response(
-            status_code=500,
-            message="Internal server error occurred",
-            error_type="server_error",
-            error_code="unexpected_error",
-        )
-
-
-def _handle_runtime_error(
-    e: RuntimeError,
-    model_id: str,
-    request_id: str,
-    response_time_ms: float,
-    gateway_config: GatewayConfig,
-):
-    """Handle RuntimeError with appropriate response type."""
-    error_message = str(e)
-
-    # Timeout handling
-    if "timed out" in error_message.lower() or "timeout" in error_message.lower():
-        logger.error(f"Request timeout for {model_id}: {error_message}")
-        return create_openai_error_response(
-            status_code=504,
-            message="Request timed out",
-            error_type="server_error",
-            error_code=ErrorCode.REQUEST_TIMEOUT,
-            request_id=request_id,
-            duration_ms=response_time_ms,
-        )
-
-    # Crash error handling
-    if is_crash_error(error_message):
-        logger.error(f"Model crash for {model_id}: {error_message}")
-        return create_model_crash_error_response(
-            model_id, error_message, request_id, response_time_ms
-        )
-
-    # Connection error handling
-    if is_connection_error(error_message):
-        suggestion = "Try reducing max_tokens or context length"
-        if (
-            "connection closed by peer" in error_message.lower()
-            or "transport error" in error_message.lower()
-        ):
-            message = "Model process crashed - likely VRAM OOM"
-            error_code = ErrorCode.GPU_MEMORY_ERROR
-        else:
-            message = "Model process connection lost"
-            error_code = ErrorCode.PROCESS_CONNECTION_LOST
-        return create_openai_error_response(
-            status_code=503,
-            message=message,
-            error_type="server_error",
-            error_code=error_code,
-            request_id=request_id,
-            duration_ms=response_time_ms,
-            suggestion=suggestion,
-        )
-
-    # Generic runtime error
-    logger.error(f"Model runtime error for {model_id}: {error_message}")
-    return create_openai_error_response(
-        status_code=500,
-        message=f"Model inference failed: {error_message}",
-        error_type="server_error",
-        error_code=ErrorCode.MODEL_ERROR,
-        param="model",
-        request_id=request_id,
-        duration_ms=response_time_ms,
-    )
 
 
 @router.get("/chat/completions/models", tags=["OpenAI Compatible"])

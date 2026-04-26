@@ -1,7 +1,16 @@
-"""_PropertyIndexPart07 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart07 — contextualization exceptions and extraction queue."""
+
 from __future__ import annotations
 
-from ._spec import *  # noqa: F401,F403
+from ._spec import (
+    ContextualizationException,
+    ExtractionQueueBreakdown,
+    ExtractionQueueClaim,
+    ExtractionQueueRow,
+    RecoveredExtractionClaim,
+    json,
+)
+
 
 class _PropertyIndexPart07:
     def list_contextualization_exceptions(
@@ -62,27 +71,52 @@ class _PropertyIndexPart07:
 
     async def dequeue_extraction(
         self, limit: int = 10, max_attempts: int = 5
-    ) -> list[str]:
-        """Return sources ready for extraction (backoff elapsed, under max attempts).
+    ) -> list[ExtractionQueueClaim]:
+        """Atomically claim sources ready for extraction.
 
-        Backoff: attempt 0 → immediate, 1 → 1 min, 2 → 5 min, 3 → 15 min, 4+ → 60 min.
+        ``last_attempt_at`` is the claim marker. ``last_failure_at`` is the
+        retry/backoff marker. A row is in flight iff:
+
+        last_attempt_at IS NOT NULL ∧
+        (last_failure_at IS NULL ∨ last_failure_at < last_attempt_at)
         """
-        conn = self._ensure_conn()
-        rows = conn.execute(
-            "SELECT source FROM extraction_queue"
-            " WHERE attempts < ?"
-            "   AND (last_attempt_at IS NULL"
-            "     OR datetime(last_attempt_at,"
-            "       '+' || CASE"
-            "         WHEN attempts <= 1 THEN '1'"
-            "         WHEN attempts <= 2 THEN '5'"
-            "         WHEN attempts <= 3 THEN '15'"
-            "         ELSE '60'"
-            "       END || ' minutes') < datetime('now'))"
-            " ORDER BY queued_at ASC LIMIT ?",
-            (max_attempts, limit),
-        ).fetchall()
-        return [row[0] for row in rows]
+
+        async def _write() -> list[ExtractionQueueClaim]:
+            conn = self._ensure_conn()
+            rows = conn.execute(
+                "WITH candidates AS ("
+                " SELECT source FROM extraction_queue"
+                " WHERE attempts < ?"
+                "   AND (last_attempt_at IS NULL"
+                "     OR (last_failure_at IS NOT NULL"
+                "       AND datetime(last_failure_at) >= datetime(last_attempt_at)"
+                "       AND datetime(last_failure_at,"
+                "         '+' || CASE"
+                "           WHEN attempts <= 1 THEN '1'"
+                "           WHEN attempts <= 2 THEN '5'"
+                "           WHEN attempts <= 3 THEN '15'"
+                "           ELSE '60'"
+                "         END || ' minutes') < datetime('now')))"
+                " ORDER BY queued_at ASC LIMIT ?"
+                ")"
+                " UPDATE extraction_queue"
+                " SET last_attempt_at = datetime('now')"
+                " WHERE source IN (SELECT source FROM candidates)"
+                " RETURNING source, attempts, queued_at, last_attempt_at",
+                (max_attempts, limit),
+            ).fetchall()
+            conn.commit()
+            return [
+                ExtractionQueueClaim(
+                    source=row[0],
+                    attempts=int(row[1]),
+                    queued_at=row[2],
+                    claimed_at=row[3],
+                )
+                for row in rows
+            ]
+
+        return await self._seq.run(_write())
 
     async def complete_extraction(self, source: str) -> None:
         """Remove a source from the extraction queue after successful extraction."""
@@ -99,12 +133,15 @@ class _PropertyIndexPart07:
         source: str,
         *,
         increment_attempt: bool = True,
+        failure_category: str,
+        error: str,
+        error_type: str,
     ) -> None:
-        """Record a failed extraction attempt; always refresh retry timestamp.
+        """Record a failed extraction attempt and release the source claim.
 
-        ``attempts`` is the source-level retry budget. Capacity-class failures
-        MUST pass ``increment_attempt=False`` so transient infrastructure pressure
-        does not consume the source defect budget.
+        ``attempts`` is the source-level retry budget. ``last_attempt_at`` is
+        claim-only and MUST NOT be updated here; ``last_failure_at`` is the
+        backoff anchor.
         """
         attempt_increment = 1 if increment_attempt else 0
 
@@ -112,178 +149,142 @@ class _PropertyIndexPart07:
             conn = self._ensure_conn()
             conn.execute(
                 "UPDATE extraction_queue"
-                " SET attempts = attempts + ?, last_attempt_at = datetime('now')"
+                " SET attempts = attempts + ?,"
+                " last_error = ?,"
+                " last_error_type = ?,"
+                " last_failure_category = ?,"
+                " last_failure_at = datetime('now')"
                 " WHERE source = ?",
-                (attempt_increment, source),
+                (
+                    attempt_increment,
+                    error[:1000],
+                    error_type,
+                    failure_category,
+                    source,
+                ),
             )
             conn.commit()
 
         await self._seq.run(_write())
 
+    async def recover_abandoned_extraction_claims(
+        self,
+    ) -> list[RecoveredExtractionClaim]:
+        """Clear in-flight claims from a previous RAG process.
+
+        Called before starting the extraction worker. The service has one
+        extraction worker, so any in-flight row present at process startup is
+        necessarily from a prior process.
+        """
+
+        async def _write() -> list[RecoveredExtractionClaim]:
+            conn = self._ensure_conn()
+            rows = conn.execute(
+                "SELECT source, attempts, queued_at, last_attempt_at,"
+                " (julianday('now') - julianday(last_attempt_at)) * 86400.0"
+                " FROM extraction_queue"
+                " WHERE last_attempt_at IS NOT NULL"
+                "   AND (last_failure_at IS NULL"
+                "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
+                " ORDER BY queued_at ASC"
+            ).fetchall()
+            conn.execute(
+                "UPDATE extraction_queue"
+                " SET last_attempt_at = NULL"
+                " WHERE last_attempt_at IS NOT NULL"
+                "   AND (last_failure_at IS NULL"
+                "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
+            )
+            conn.commit()
+            return [
+                RecoveredExtractionClaim(
+                    source=row[0],
+                    attempts=int(row[1]),
+                    queued_at=row[2],
+                    claimed_at=row[3],
+                    claimed_age_seconds=float(row[4] or 0.0),
+                )
+                for row in rows
+            ]
+
+        return await self._seq.run(_write())
+
+    def get_extraction_queue_breakdown(
+        self, *, max_attempts: int = 5
+    ) -> ExtractionQueueBreakdown:
+        """Return extraction queue counts by operational state."""
+        rows = self.list_extraction_queue_rows(max_attempts=max_attempts, limit=None)
+        ready = sum(1 for row in rows if row.state == "ready")
+        in_flight = sum(1 for row in rows if row.state == "in_flight")
+        cooling_off = sum(1 for row in rows if row.state == "cooling_off")
+        exhausted = sum(1 for row in rows if row.state == "exhausted")
+        capacity_blocked = sum(
+            1
+            for row in rows
+            if row.state == "cooling_off" and row.last_failure_category == "capacity"
+        )
+        return ExtractionQueueBreakdown(
+            total=len(rows),
+            ready=ready,
+            in_flight=in_flight,
+            cooling_off=cooling_off,
+            capacity_blocked=capacity_blocked,
+            exhausted=exhausted,
+        )
+
+    def list_extraction_queue_rows(
+        self, *, max_attempts: int = 5, limit: int | None = 100
+    ) -> list[ExtractionQueueRow]:
+        """Return source-level queue rows with computed state."""
+        conn = self._ensure_conn()
+        limit_sql = "" if limit is None else " LIMIT ?"
+        params: tuple[int, ...] = (
+            (max_attempts, max_attempts, limit)
+            if limit is not None
+            else (max_attempts, max_attempts)
+        )
+        rows = conn.execute(
+            "SELECT source, queued_at, attempts, last_attempt_at, last_error,"
+            " last_error_type, last_failure_category, last_failure_at,"
+            " CASE"
+            "   WHEN attempts >= ? THEN 'exhausted'"
+            "   WHEN last_attempt_at IS NOT NULL"
+            "     AND (last_failure_at IS NULL"
+            "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
+            "     THEN 'in_flight'"
+            "   WHEN last_failure_at IS NOT NULL"
+            "     AND datetime(last_failure_at,"
+            "       '+' || CASE"
+            "         WHEN attempts <= 1 THEN '1'"
+            "         WHEN attempts <= 2 THEN '5'"
+            "         WHEN attempts <= 3 THEN '15'"
+            "         ELSE '60'"
+            "       END || ' minutes') >= datetime('now')"
+            "     AND attempts < ?"
+            "     THEN 'cooling_off'"
+            "   ELSE 'ready'"
+            " END AS queue_state"
+            " FROM extraction_queue"
+            " ORDER BY queued_at ASC"
+            f"{limit_sql}",
+            params,
+        ).fetchall()
+        return [
+            ExtractionQueueRow(
+                source=row[0],
+                queued_at=row[1],
+                attempts=int(row[2]),
+                last_attempt_at=row[3],
+                last_error=row[4],
+                last_error_type=row[5],
+                last_failure_category=row[6],
+                last_failure_at=row[7],
+                state=row[8],
+            )
+            for row in rows
+        ]
+
     def get_extraction_queue_count(self) -> int:
         """Return the number of sources pending extraction."""
         conn = self._ensure_conn()
         return conn.execute("SELECT COUNT(*) FROM extraction_queue").fetchone()[0]
-
-    def get_indexed_source_count(self) -> int:
-        """Return the number of sources committed to ChromaDB (embed complete).
-
-        ∀ source ∈ indexed_sources: ChromaDB upsert completed for that source.
-        This count includes sources with extraction failures (they are embedded
-        but pending re-extraction) and excludes sources where the process was
-        interrupted before upsert_indexed_source was called.
-        """
-        conn = self._ensure_conn()
-        return conn.execute("SELECT COUNT(*) FROM indexed_sources").fetchone()[0]
-
-    def get_failure_snapshot(self) -> FailureSnapshot:
-        """Return failed extraction counts used by operational status endpoints."""
-        return FailureSnapshot(
-            failed_extractions_count=self.get_failed_count(),
-            failed_extractions_permanent_count=self.get_permanent_count(),
-        )
-
-    def get_article_row(self, source_path: str) -> dict[str, str] | None:
-        """Return one article row by exact source path."""
-        conn = self._ensure_conn()
-        row = conn.execute(
-            "SELECT source_path, filename, title, authors, venue, published_date, "
-            "doi, abstract, scope, content_hash, subdirectory, comments "
-            "FROM articles WHERE source_path = ?",
-            (source_path,),
-        ).fetchone()
-        if row is None:
-            return None
-        return {
-            "source_path": _row_str(row[0]),
-            "filename": _row_str(row[1]),
-            "title": _row_str(row[2]),
-            "authors": _row_str(row[3]),
-            "venue": _row_str(row[4]),
-            "published_date": _row_str(row[5]),
-            "doi": _row_str(row[6]),
-            "abstract": _row_str(row[7]),
-            "scope": _row_str(row[8]),
-            "content_hash": _row_str(row[9]),
-            "subdirectory": _row_str(row[10]),
-            "comments": _row_str(row[11]),
-        }
-
-    def find_latest_article_by_filename(
-        self,
-        filename: str,
-        *,
-        exclude_source_path: str | None = None,
-    ) -> dict[str, str] | None:
-        """Return the newest surviving row for a basename, optionally excluding one path."""
-        conn = self._ensure_conn()
-        sql = (
-            "SELECT source_path, filename, title, authors, venue, published_date, "
-            "doi, abstract, scope, content_hash, subdirectory, comments "
-            "FROM articles WHERE filename = ?"
-        )
-        params: list[str] = [filename]
-        if exclude_source_path is not None:
-            sql += " AND source_path != ?"
-            params.append(exclude_source_path)
-        sql += " ORDER BY updated_at DESC LIMIT 1"
-        row = conn.execute(sql, params).fetchone()
-        if row is None:
-            return None
-        return {
-            "source_path": _row_str(row[0]),
-            "filename": _row_str(row[1]),
-            "title": _row_str(row[2]),
-            "authors": _row_str(row[3]),
-            "venue": _row_str(row[4]),
-            "published_date": _row_str(row[5]),
-            "doi": _row_str(row[6]),
-            "abstract": _row_str(row[7]),
-            "scope": _row_str(row[8]),
-            "content_hash": _row_str(row[9]),
-            "subdirectory": _row_str(row[10]),
-            "comments": _row_str(row[11]),
-        }
-
-    def find_orphaned_article_by_hash(
-        self,
-        *,
-        content_hash: str,
-        new_source_path: str,
-    ) -> dict[str, str] | None:
-        """Return a missing-on-disk article row with matching content hash."""
-        conn = self._ensure_conn()
-        rows = conn.execute(
-            "SELECT source_path, filename, title, authors, venue, published_date, "
-            "doi, abstract, scope, content_hash, subdirectory, comments "
-            "FROM articles WHERE content_hash = ? AND source_path != ? "
-            "ORDER BY updated_at DESC",
-            (content_hash, new_source_path),
-        ).fetchall()
-        for row in rows:
-            if not Path(str(row[0])).exists():
-                return {
-                    "source_path": _row_str(row[0]),
-                    "filename": _row_str(row[1]),
-                    "title": _row_str(row[2]),
-                    "authors": _row_str(row[3]),
-                    "venue": _row_str(row[4]),
-                    "published_date": _row_str(row[5]),
-                    "doi": _row_str(row[6]),
-                    "abstract": _row_str(row[7]),
-                    "scope": _row_str(row[8]),
-                    "content_hash": _row_str(row[9]),
-                    "subdirectory": _row_str(row[10]),
-                    "comments": _row_str(row[11]),
-                }
-        return None
-
-    async def move_article_source_path(
-        self,
-        *,
-        old_source_path: str,
-        new_source_path: str,
-        new_filename: str,
-        new_scope: str,
-        new_subdirectory: str,
-    ) -> bool:
-        """Move one article row to a new source path without touching curated fields."""
-
-        async def _write() -> bool:
-            conn = self._ensure_conn()
-            if conn.execute(
-                "SELECT 1 FROM articles WHERE source_path = ?",
-                (new_source_path,),
-            ).fetchone():
-                return False
-            cursor = conn.execute(
-                "UPDATE articles SET "
-                "source_path = ?, filename = ?, scope = ?, subdirectory = ?, "
-                "updated_at = datetime('now') "
-                "WHERE source_path = ?",
-                (
-                    new_source_path,
-                    new_filename,
-                    new_scope,
-                    new_subdirectory,
-                    old_source_path,
-                ),
-            )
-            conn.commit()
-            return cursor.rowcount > 0
-
-        return await self._seq.run(_write())
-
-    def get_permanent_chunks_by_file(self) -> dict[str, list[str]]:
-        """Return {source: [chunk_id, ...]} for all permanently failed chunks."""
-        conn = self._ensure_conn()
-        rows = conn.execute(
-            "SELECT source, chunk_id FROM failed_extractions WHERE permanent = 1"
-            " ORDER BY source, chunk_id"
-        ).fetchall()
-        result: defaultdict[str, list[str]] = defaultdict(list)
-        for source, chunk_id in rows:
-            result[source].append(chunk_id)
-        return dict(result)
-
-

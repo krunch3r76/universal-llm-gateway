@@ -49,9 +49,27 @@ _VALID_SERVICES = frozenset(
         "email_bridge",
     }
 )  # All recognized service names for API operations
-# Services that support the 'rebuild' operation (container services with local Dockerfiles).
+# Services that support the 'rebuild' operation. For host subprocesses this is
+# restart-equivalent because source is loaded from disk on start.
 _REBUILD_SERVICES = frozenset(
-    {"gateway", "event_service", "cortex_api", "agent_bus", "email_bridge"}
+    {"mcp", "event_service", "cortex_api", "agent_bus", "email_bridge"}
+)
+# Services that support 'sync_restart' — deploy local source edits and bring
+# the service back up. Path differs per service:
+#   gateway  → restart (libs/, services/, config/ are bind-mounted)
+#   mcp      → cached --refresh-source rebuild + restart (~20s)
+#   host procs → restart (source loaded from disk on start)
+_SYNC_RESTART_SERVICES = frozenset(
+    {
+        "gateway",
+        "mcp",
+        "stargate",
+        "rag",
+        "cloud_proxy",
+        "cortex_api",
+        "agent_bus",
+        "event_service",
+    }
 )
 
 
@@ -238,10 +256,21 @@ async def _execute(
             msg = await _rebuild(ctl, service)
             return {"status": "ok", "message": msg}
 
+        case "sync_restart":
+            _require_service(service)
+            if service not in _SYNC_RESTART_SERVICES:
+                raise ValueError(
+                    f"sync_restart not supported for '{service}'; "
+                    f"supported: {', '.join(sorted(_SYNC_RESTART_SERVICES))}"
+                )
+            msg = await _sync_restart(ctl, service)
+            return {"status": "ok", "message": msg}
+
         case _:
             raise ValueError(
                 f"Unknown method: '{method}'. "
-                "Valid: status, health, wait_healthy, start, stop, restart, rebuild"
+                "Valid: status, health, wait_healthy, start, stop, restart, "
+                "sync_restart, rebuild"
             )
 
 
@@ -297,54 +326,54 @@ async def _start(ctl: ServiceController, service: str) -> str:
     """Call the appropriate ServiceController start method."""
     if service not in _VALID_SERVICES:
         raise ValueError(f"Unknown service: '{service}'")
-    try:
-        return await getattr(ctl, f"start_{service}")()
-    except AttributeError:
-        raise ValueError(f"Unknown service: '{service}'")
+    return await getattr(ctl, f"start_{service}")()
 
 
 async def _stop(ctl: ServiceController, service: str) -> str:
     """Call the appropriate ServiceController stop method."""
     if service not in _VALID_SERVICES:
         raise ValueError(f"Unknown service: '{service}'")
-    try:
-        return await getattr(ctl, f"stop_{service}")()
-    except AttributeError:
-        raise ValueError(f"Unknown service: '{service}'")
+    return await getattr(ctl, f"stop_{service}")()
 
 
 async def _rebuild(ctl: ServiceController, service: str) -> str:
-    """Rebuild and restart a container service; drain async generator for gateway.
+    """Full --no-cache rebuild + restart of a managed service.
 
-    Build failure detection is line-based (last line contains FAILED/build failed).
-    Prefer subprocess return code when ServiceController exposes it.
+    Heavy path — pulls fresh base images and rebuilds every layer. For container
+    services this can take tens of minutes (gateway: 60-90 min recompiling vLLM
+    CUDA kernels). Reserved for engine/pip/Dockerfile changes; agents should
+    prefer 'sync_restart' for routine code edits.
+
+    `gateway` is intentionally absent here: agents reach gateway only via
+    'sync_restart' (which is just 'restart' under bind-mount). Engine rebuilds
+    go through the TUI Build Image flow.
     """
-    if service == "gateway":
-        if ctl.build_running:
-            raise RuntimeError("Gateway build already in progress")
-        lines: list[str] = []
-        async for line in ctl.build_image(no_cache=True):
-            lines.append(line)
-        last = lines[-1] if lines else "Build completed."
-        if "FAILED" in last or last.lower().startswith("build failed"):
-            raise RuntimeError(last)
-        start_msg = await ctl.start_gateway()
-        return f"{last}\n{start_msg}"
     if service == "mcp":
-        raise ValueError(
-            "rebuild is not supported for 'mcp' via MCP tool. "
-            "Python source changes are bind-mounted — use "
-            "manage(action='restart', service='mcp') instead. "
-            "Rebuild is only needed when pip dependencies or the "
-            "Dockerfile itself change — that is a human/ops operation."
-        )
+        return await ctl.rebuild_mcp(no_cache=True)
     if service == "event_service":
         return await ctl.rebuild_event_service()
     if service == "cortex_api":
         return await ctl.rebuild_cortex_api()
     if service == "agent_bus":
         return await ctl.rebuild_agent_bus()
+    if service == "email_bridge":
+        return await ctl.rebuild_email_bridge(no_cache=True)
     raise ValueError(f"rebuild not supported for '{service}'")
+
+
+async def _sync_restart(ctl: ServiceController, service: str) -> str:
+    """Deploy local source edits and bring the service back up.
+
+    Per-service strategy:
+      gateway      → restart (libs/, services/, config/ are bind-mounted)
+      mcp          → cached --refresh-source rebuild + restart (~20s)
+      stargate, rag, cloud_proxy, cortex_api, agent_bus, event_service → restart
+    """
+    if service == "mcp":
+        return await ctl.rebuild_mcp(no_cache=False)
+    stop_msg = await _stop(ctl, service)
+    start_msg = await _start(ctl, service)
+    return f"{stop_msg}\n{start_msg}"
 
 
 def _write_json(writer: asyncio.StreamWriter, obj: dict[str, Any]) -> None:

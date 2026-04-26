@@ -26,7 +26,16 @@ _WAIT_HEALTHY_BUFFER = 30.0
 _PROGRESS_PROBE_TIMEOUT = 5.0
 
 _VALID_ACTIONS = frozenset(
-    {"status", "health", "start", "stop", "restart", "rebuild", "wait_healthy"}
+    {
+        "status",
+        "health",
+        "start",
+        "stop",
+        "restart",
+        "sync_restart",
+        "rebuild",
+        "wait_healthy",
+    }
 )
 
 
@@ -197,45 +206,61 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: str = "",
         timeout: float = 120.0,
     ) -> dict[str, Any]:
-        """Service lifecycle — start, stop, restart, rebuild, health, wait_healthy.
+        """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
         action: lifecycle action (see table below)
         service: service name (required for most actions)
         timeout: seconds to wait for wait_healthy (default 120)
 
         Actions:
-          status      (no service needed) — running/stopped for all services
-          health      (service)           — health detail for one service
-          start       (service)           — start a stopped service
-          stop        (service)           — stop a running service
-          restart     (service)           — stop then start
-          rebuild     (service)           — rebuild container image and restart
-                                           FORBIDDEN for 'mcp' — always use restart.
-                                           Python source is bind-mounted; rebuild
-                                           is only needed when pip dependencies or
-                                           the Dockerfile change (ops-only, not agent).
-          wait_healthy (service, timeout?) — block until RUNNING or timeout
+          status        (no service needed) — running/stopped for all services
+          health        (service)           — health detail for one service
+          start         (service)           — start a stopped service
+          stop          (service)           — stop a running service
+          restart       (service)           — stop then start (no source sync)
+          sync_restart  (service)           — DEPLOY LOCAL CODE EDITS — per service:
+                                             - 'gateway': restart (libs/, services/,
+                                               config/ are bind-mounted, so restart
+                                               alone picks up Python source edits)
+                                             - 'mcp': cached --refresh-source rebuild
+                                               + restart (~20s) since MCP source
+                                               is baked into the image
+                                             - host procs (stargate, rag, cloud_proxy,
+                                               cortex_api, agent_bus, event_service):
+                                               restart
+          rebuild       (service)           — full --no-cache rebuild + restart.
+                                             AGENT-FORBIDDEN for 'gateway' and 'mcp'
+                                             (heavy ops paths — gateway recompiles
+                                             vLLM CUDA from source, 60-90 min).
+                                             Use 'sync_restart' for code deploys.
+                                             For host services (event_service,
+                                             cortex_api, agent_bus, email_bridge):
+                                             rebuild = restart.
+          wait_healthy  (service, timeout?) — block until RUNNING or timeout
 
-        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus
+        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus, email_bridge
 
-        Post-code-change workflow (mcp):
+        Post-code-change workflow (canonical):
           1. quality_gate(files=[...])
-          2. manage(action="restart", service="mcp")
-          3. manage(action="wait_healthy", service="mcp", timeout=60)
-
-        Post-code-change workflow (gateway/stargate — container rebuild):
-          1. quality_gate(files=[...])
-          2. manage(action="rebuild", service="gateway")
-          3. manage(action="wait_healthy", service="gateway", timeout=120)
+          2. manage(action="sync_restart", service=X)
+          3. manage(action="wait_healthy", service=X, timeout=120)
         """
-        if action == "rebuild" and service == "mcp":
+        if action == "rebuild" and service in {"gateway", "mcp"}:
+            heavy = (
+                " (recompiles vLLM CUDA kernels from source, 60-90 minutes)"
+                if service == "gateway"
+                else ""
+            )
             return {
                 "error": (
-                    "rebuild is forbidden for 'mcp'. "
-                    "Python source is bind-mounted into the container — "
-                    "use manage(action='restart', service='mcp') instead. "
-                    "Rebuild is only required when pip dependencies or the "
-                    "Dockerfile itself change, which is an ops operation, not an agent one."
+                    f"rebuild is forbidden for '{service}'. "
+                    f"Use manage(action='sync_restart', service='{service}') "
+                    "to deploy code changes — that path is the cached/bind-mount "
+                    "equivalent (~20s for mcp, instant for gateway via bind mount). "
+                    f"A 'rebuild' here would do a full --no-cache build{heavy}, "
+                    "which is ops-only via TUI: ./manage → Services → Build "
+                    "Image, and only valid when the inference engine, pip "
+                    "dependencies, or the Dockerfile itself change."
                 )
             }
 
@@ -262,7 +287,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (
             timeout + _WAIT_HEALTHY_BUFFER
-            if action in {"wait_healthy", "start", "restart", "rebuild"}
+            if action
+            in {"wait_healthy", "start", "restart", "sync_restart", "rebuild"}
             else _DEFAULT_TIMEOUT
         )
 
@@ -272,7 +298,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
         )
         timed_out = bool(raw.get("_timeout"))
         result = _extract_result(raw)
-        if timed_out and action in {"start", "restart", "rebuild"} and service:
+        if (
+            timed_out
+            and action in {"start", "restart", "sync_restart", "rebuild"}
+            and service
+        ):
             result = _lifecycle_timeout_result(action, service, timeout)
 
         duration = monotonic_now() - t0

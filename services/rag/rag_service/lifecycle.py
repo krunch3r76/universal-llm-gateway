@@ -49,6 +49,7 @@ from services.rag.property_index import PropertyIndex
 from . import state
 from .background_tasks import track_background_task
 from .dependency_activation import _activate_dependencies_when_ready
+from .extraction_runtime import stop_extraction_runtime
 from .scope_freshness import (
     _post_reconcile_scope_freshness,
     _run_startup_scope_freshness_repair,
@@ -183,30 +184,20 @@ async def _startup() -> None:
 
     await state._event_bus.publish(rag_started())
 
-    if state._config.automatic_indexing_enabled and state._config.watch_directories:
-        state._dependency_activation.phase = "activating"
-        state._dependency_activation.waiting_on = "stargate"
-        state._init_task = asyncio.create_task(
-            _activate_dependencies_when_ready(state._config),
-            name="rag-dependency-activation",
-        )
-        track_background_task(state._init_task)
-    else:
-        state._dependency_activation.phase = "ready"
-        state._dependency_activation.waiting_on = None
-        state._dependency_activation.last_error = None
-        if not state._config.automatic_indexing_enabled:
-            logger.info(
-                "Automatic indexing disabled (automatic_indexing_enabled: false) — watcher not started"
-            )
+    state._dependency_activation.phase = "activating"
+    state._dependency_activation.waiting_on = "stargate"
+    state._init_task = asyncio.create_task(
+        _activate_dependencies_when_ready(state._config),
+        name="rag-dependency-activation",
+    )
+    track_background_task(state._init_task)
 
 
 async def _shutdown() -> None:
     """Shutdown RAG resources, cancel lifecycle tasks, and stop background services."""
     state._dependency_activation.phase = "shutting_down"
 
-    if state._extraction_shutdown is not None:
-        state._extraction_shutdown.set()
+    await stop_extraction_runtime()
 
     tasks = [task for task in state._background_tasks if not task.done()]
     for task in tasks:
@@ -219,9 +210,6 @@ async def _shutdown() -> None:
     if state._admission_gate is not None:
         await state._admission_gate.stop()
         state._admission_gate = None
-    if state._extraction_admission_gate is not None:
-        await state._extraction_admission_gate.stop()
-        state._extraction_admission_gate = None
     if state._event_bus is not None:
         await state._event_bus.publish(rag_shutdown())
     if state._watcher_manager is not None:

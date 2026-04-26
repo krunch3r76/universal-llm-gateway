@@ -87,6 +87,15 @@ CRASH_ERROR_PATTERNS = [
     "exit code: -11",  # SIGSEGV signal
 ]
 
+# Variant state-machine refusal raised by ResourceTracker.set_model_busy when
+# the variant SM is in UNLOADING / UNLOADED / ERROR / LOADING / UNINITIALIZED,
+# or when the LOADED→BUSY transition guard lost a race. The unique signature
+# is the substring "variant SM in" (lowercased: "variant sm in"). The caller
+# must abort with a transient/retryable response — eviction does not help.
+VARIANT_SM_ERROR_PATTERNS = [
+    "variant sm in",
+]
+
 
 def is_connection_error(error_message: str) -> bool:
     """
@@ -121,6 +130,22 @@ def is_crash_error(error_message: str) -> bool:
 
     error_lower = error_message.lower()
     return any(pattern in error_lower for pattern in CRASH_ERROR_PATTERNS)
+
+
+def is_variant_sm_error(error_message: str) -> bool:
+    """Detect ResourceTracker variant state-machine refusal.
+
+    Returns True when the variant SM is not in {LOADED, BUSY} — e.g. the
+    process is unloading, in ERROR, still loading, or the LOADED→BUSY
+    transition guard lost a race. Caller should respond 503 RESOURCE_UNAVAILABLE
+    retryable=True so Stargate's wait/retry path engages instead of OOM-recovery
+    (which keys off HTTP 500 and would wrongly evict idle co-loaded models).
+    """
+    if not error_message:
+        return False
+
+    error_lower = error_message.lower()
+    return any(pattern in error_lower for pattern in VARIANT_SM_ERROR_PATTERNS)
 
 
 # Manual crash detection functions removed - process_ipc handles this automatically
