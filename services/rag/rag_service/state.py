@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
     from services.rag.admission_gate import AdmissionGate
     from services.rag.config import RagConfig
+    from services.rag.extraction_admission import ExtractionAdmissionGate
     from services.rag.property_index import PropertyIndex
     from services.rag.watcher_manager import WatcherManager
 
@@ -63,6 +64,7 @@ _file_index_locks: dict[str, asyncio.Lock] = {}
 _post_index_stale: bool = False
 _extraction_shutdown: asyncio.Event | None = None
 _admission_gate: AdmissionGate | None = None
+_extraction_admission_gate: ExtractionAdmissionGate | None = None
 
 
 def _article_event_kwargs(

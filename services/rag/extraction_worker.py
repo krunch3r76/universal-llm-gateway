@@ -24,6 +24,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from services.rag.chunk_filters import chunk_metadata_is_noise
+from services.rag.events.extraction_admission import rag_extraction_admission_timeout
+from services.rag.extraction_admission import ExtractionAdmissionGate
 from services.rag.knowledge_extractor import (
     ExtractedKnowledge,
     configure_timeouts,
@@ -44,6 +46,37 @@ _POLL_INTERVAL_S = 15.0
 _IDLE_INTERVAL_S = 60.0
 _ERROR_BACKOFF_S = 30.0
 _MAX_QUEUE_ATTEMPTS = 5
+
+# Cap on time spent waiting for admission before optimistically proceeding.
+# Coordination only; the per-chunk client timeout is the correctness backstop.
+_ADMISSION_WAIT_TIMEOUT_S: float = 60.0
+
+# Envelope codes that indicate capacity/routability pressure rather than
+# deterministic source defects.
+_CAPACITY_CLASS_ENVELOPE_CODES: frozenset[str] = frozenset(
+    {
+        "REQUEST_TIMEOUT",
+        "INFERENCE_TIMEOUT",
+        "LOAD_TIMEOUT",
+        "NO_FEASIBLE_GATEWAY",
+        "MODEL_LOADING",
+        "RESOURCE_UNAVAILABLE",
+        "GATEWAY_DISCONNECTED",
+    }
+)
+
+
+def _is_capacity_class_envelope(exc: httpx.HTTPStatusError) -> bool:
+    """Return True iff an HTTP error body carries a capacity-class code."""
+    try:
+        body = exc.response.json()
+    except (ValueError, TypeError):
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(detail, dict):
+        return False
+    code = detail.get("code")
+    return isinstance(code, str) and code in _CAPACITY_CLASS_ENVELOPE_CODES
 
 
 def build_property_entries(
@@ -93,8 +126,12 @@ async def _extract_source(
     rag_config: RagConfig,
     property_index: PropertyIndex,
     event_bus: EventBus | None,
-) -> bool:
-    """Extract one source. Returns True if all chunks are done (or skippable)."""
+) -> tuple[bool, bool]:
+    """Extract one source.
+
+    Returns ``(all_done, increment_attempt)`` where ``increment_attempt`` is
+    only meaningful when ``all_done`` is False.
+    """
     existing = collection.get(
         where={"source": source}, include=["documents", "metadatas"]
     )
@@ -104,7 +141,7 @@ async def _extract_source(
 
     if not raw_ids:
         logger.info("Extraction: source removed from index, skipping: %s", source)
-        return True
+        return True, True
 
     if len(raw_ids) != len(raw_docs) or len(raw_ids) != len(raw_metas):
         logger.warning(
@@ -114,7 +151,7 @@ async def _extract_source(
             len(raw_docs),
             len(raw_metas),
         )
-        return False
+        return False, True
 
     need_idx = [
         i
@@ -126,7 +163,7 @@ async def _extract_source(
     ]
 
     if not need_idx:
-        return True
+        return True, True
 
     ext_ids = [raw_ids[i] for i in need_idx]
     ext_texts = [raw_docs[i] for i in need_idx]
@@ -176,7 +213,8 @@ async def _extract_source(
     )
 
     all_done = not failed_ids
-    return all_done
+    increment_attempt = succeeded > 0
+    return all_done, increment_attempt
 
 
 async def run_extraction_worker(
@@ -186,11 +224,15 @@ async def run_extraction_worker(
     property_index: PropertyIndex,
     event_bus: EventBus | None,
     shutdown_event: asyncio.Event,
+    admission_gate: ExtractionAdmissionGate | None = None,
 ) -> None:
     """Main extraction worker loop. Runs until shutdown_event is set.
 
     Waits for the extraction pipeline to register, then processes the
-    extraction queue with natural backoff on failures.
+    extraction queue. When ``admission_gate`` is supplied, blocks at most
+    ``_ADMISSION_WAIT_TIMEOUT_S`` before each dequeue; the gate is
+    advisory and the loop proceeds on timeout (Phase 1's classification
+    prevents budget bleed if the gate was closed for a real reason).
     """
     ke = config.knowledge_extraction
     configure_timeouts(ke)
@@ -207,9 +249,34 @@ async def run_extraction_worker(
             ke.pipeline,
         )
 
-    logger.info("Extraction worker started (pipeline=%s)", ke.pipeline)
+    logger.info(
+        "Extraction worker started (pipeline=%s, admission_gate=%s)",
+        ke.pipeline,
+        "enabled" if admission_gate is not None else "disabled",
+    )
 
     while not shutdown_event.is_set():
+        if admission_gate is not None and admission_gate.is_closed():
+            logger.info(
+                "Extraction worker: admission CLOSED (reasons=%s); waiting up to %.0fs",
+                admission_gate.active_reasons(),
+                _ADMISSION_WAIT_TIMEOUT_S,
+            )
+            wait_start = time.monotonic()
+            opened = await admission_gate.wait_for_admission(_ADMISSION_WAIT_TIMEOUT_S)
+            waited = time.monotonic() - wait_start
+            if not opened:
+                if event_bus is not None:
+                    await event_bus.publish_nowait(
+                        rag_extraction_admission_timeout(
+                            pipeline_id=ke.pipeline,
+                            waited_seconds=waited,
+                            active_reasons=admission_gate.active_reasons(),
+                        )
+                    )
+                if shutdown_event.is_set():
+                    break
+
         try:
             sources = await property_index.dequeue_extraction(
                 limit=1, max_attempts=_MAX_QUEUE_ATTEMPTS
@@ -226,7 +293,7 @@ async def run_extraction_worker(
         source = sources[0]
         try:
             collection = collection_fn()
-            all_done = await _extract_source(
+            all_done, increment_attempt = await _extract_source(
                 source,
                 collection=collection,
                 config=ke,
@@ -237,14 +304,19 @@ async def run_extraction_worker(
             if all_done:
                 await property_index.complete_extraction(source)
             else:
-                await property_index.fail_extraction(source)
+                await property_index.fail_extraction(
+                    source,
+                    increment_attempt=increment_attempt,
+                )
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_S)
 
         except httpx.TimeoutException:
             logger.warning(
-                "Extraction worker: timeout for %s, will retry later", source
+                "Extraction worker: timeout for %s, will retry later "
+                "(capacity-class; budget held)",
+                source,
             )
-            await property_index.fail_extraction(source)
+            await property_index.fail_extraction(source, increment_attempt=False)
             await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S)
 
         except httpx.HTTPStatusError as exc:
@@ -257,20 +329,28 @@ async def run_extraction_worker(
                 )
                 await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S)
             else:
+                capacity_class = _is_capacity_class_envelope(exc)
                 logger.warning(
-                    "Extraction worker: HTTP %d for %s",
+                    "Extraction worker: HTTP %d for %s (capacity_class=%s)",
                     status,
                     source,
+                    capacity_class,
                     exc_info=True,
                 )
-                await property_index.fail_extraction(source)
+                await property_index.fail_extraction(
+                    source,
+                    increment_attempt=not capacity_class,
+                )
                 await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_S)
 
         except Exception:
             logger.error(
-                "Extraction worker: unexpected error for %s", source, exc_info=True
+                "Extraction worker: unexpected error for %s "
+                "(treated as capacity-class; budget held)",
+                source,
+                exc_info=True,
             )
-            await property_index.fail_extraction(source)
+            await property_index.fail_extraction(source, increment_attempt=False)
             await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S)
 
     logger.info("Extraction worker shutting down")

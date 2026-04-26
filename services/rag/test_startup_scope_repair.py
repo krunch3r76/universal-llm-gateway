@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from services.rag.config import RagConfig, ScopeDefinition, WatchDirectory
-from services.rag.rag_service import lifecycle, state
+from services.rag.rag_service import lifecycle, scope_freshness, state
 
 
 class _FakePropertyIndex:
@@ -41,9 +41,9 @@ async def test_startup_scope_repair_retries_until_watermark_catches_up(
         sleeps.append(delay_s)
 
     monkeypatch.setattr(state, "_property_index", fake_index)
-    monkeypatch.setattr(lifecycle, "detect_stale_scopes", lambda **kwargs: [])
-    monkeypatch.setattr(lifecycle, "run_scope_freshness_repair", fake_repair)
-    monkeypatch.setattr(lifecycle.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(scope_freshness, "detect_stale_scopes", lambda **kwargs: [])
+    monkeypatch.setattr(scope_freshness, "run_scope_freshness_repair", fake_repair)
+    monkeypatch.setattr(scope_freshness.asyncio, "sleep", fake_sleep)
 
     await lifecycle._run_startup_scope_freshness_repair(config)
 

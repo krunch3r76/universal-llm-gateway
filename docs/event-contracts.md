@@ -574,6 +574,29 @@ due to the all-or-nothing write invariant; equals `successful` when all chunks s
 
 **Note**: When the extraction backend model is not loaded, RAG holds workers using existing `model.loaded` / `model.unloaded` events from the Event Service (no `rag.extraction.circuit.*` signals).
 
+### RAG Extraction Admission Lifecycle
+
+**Role**: `coordination`. Advisory signals emitted by RAG's
+`ExtractionAdmissionGate` (see `services/rag/extraction_admission.py`) when it
+self-regulates the extraction worker based on observed Stargate signals
+(`pipeline.map.iteration.failed`, `pipeline.map.completed`,
+`federation.gateway.{degraded,recovered}`, `model.{loading.started,loaded,load.failed}`).
+
+**INVARIANT**: `rag.extraction.admission.closed` ⟹
+(`rag.extraction.admission.opened` matching the same `pipeline_id`) eventually,
+once all close-reasons clear. ¬ correctness gate; the per-chunk client timeout
+remains the correctness backstop.
+
+| Signal | Required Payload | Description |
+|--------|------------------|-------------|
+| `rag.extraction.admission.closed` | `pipeline_id`, `reason`, `active_reasons`, `signal` | Gate transitioned OPEN → CLOSED. `reason` ∈ {`iteration-timeout-burst`, `step-failure-ratio`, `gateway:<gateway_id>`, `model:<model_id>`}. `signal` is the upstream Stargate signal that drove the transition. |
+| `rag.extraction.admission.opened` | `pipeline_id`, `cleared_reason`, `signal`, `closed_seconds` | Last active close-reason cleared; gate reopened. `closed_seconds` measures the wall-clock window between the matching `closed` and this `opened`. |
+| `rag.extraction.admission.timeout` | `pipeline_id`, `waited_seconds`, `active_reasons` | The extraction worker's pre-dequeue wait timed out and the worker proceeded optimistically. Each occurrence is a tuning datum, not a failure. |
+
+`pipeline_id` is the correlation key — `closed` and `opened` events for the
+same `pipeline_id` (typically `rag-extract-knowledge`) bracket a single
+admission window.
+
 ### RAG scope resolution
 
 The RAG `/search` request body may send `scope` as a string (single scope name) or an array of strings (multiple scopes; resolved to the union of each scope's `source_prefixes`). Scope resolution runs before search; event payload `scope` is the client-provided value (string or array of strings).

@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 
 from services.rag.chunkers import Chunk
 from services.rag.contextualize_cache import (
@@ -136,7 +137,7 @@ def test_build_stored_context_rows_length_mismatch_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def prop_index(tmp_path: Path) -> PropertyIndex:
     idx = PropertyIndex(db_path=tmp_path / "rag.db")
     await idx.start()
@@ -146,6 +147,7 @@ async def prop_index(tmp_path: Path) -> PropertyIndex:
         await idx.stop()
 
 
+@pytest.mark.asyncio
 async def test_store_and_get_round_trip(prop_index: PropertyIndex) -> None:
     entries = [
         StoredContextRow(chunk_hash="h1", context_prefix="P1"),
@@ -168,6 +170,7 @@ async def test_store_and_get_round_trip(prop_index: PropertyIndex) -> None:
     assert got == {"h1": "P1", "h2": "P2"}
 
 
+@pytest.mark.asyncio
 async def test_store_idempotent_upsert(prop_index: PropertyIndex) -> None:
     await prop_index.store_cached_contexts(
         source_hash="S",
@@ -191,6 +194,7 @@ async def test_store_idempotent_upsert(prop_index: PropertyIndex) -> None:
     assert got == {"h1": "new"}
 
 
+@pytest.mark.asyncio
 async def test_store_rejects_empty_prefix_via_check_constraint(
     prop_index: PropertyIndex,
 ) -> None:
@@ -207,6 +211,7 @@ async def test_store_rejects_empty_prefix_via_check_constraint(
         )
 
 
+@pytest.mark.asyncio
 async def test_get_batched_over_900_hashes(prop_index: PropertyIndex) -> None:
     # Store 1000 rows, ensure batched IN() queries stitch results back together.
     entries = [
@@ -228,6 +233,7 @@ async def test_get_batched_over_900_hashes(prop_index: PropertyIndex) -> None:
     assert len(got) == 1000
 
 
+@pytest.mark.asyncio
 async def test_different_model_bypasses(prop_index: PropertyIndex) -> None:
     await prop_index.store_cached_contexts(
         source_hash="S",
@@ -244,6 +250,7 @@ async def test_different_model_bypasses(prop_index: PropertyIndex) -> None:
     assert got == {}
 
 
+@pytest.mark.asyncio
 async def test_different_schema_version_bypasses(prop_index: PropertyIndex) -> None:
     await prop_index.store_cached_contexts(
         source_hash="S",
@@ -260,6 +267,7 @@ async def test_different_schema_version_bypasses(prop_index: PropertyIndex) -> N
     assert got == {}
 
 
+@pytest.mark.asyncio
 async def test_delete_by_source_hash_removes_rows(prop_index: PropertyIndex) -> None:
     await prop_index.store_cached_contexts(
         source_hash="S",
@@ -272,6 +280,7 @@ async def test_delete_by_source_hash_removes_rows(prop_index: PropertyIndex) -> 
     assert prop_index.count_contextualized_chunks() == 0
 
 
+@pytest.mark.asyncio
 async def test_garbage_collect_removes_orphans(prop_index: PropertyIndex) -> None:
     await prop_index.upsert_indexed_source(
         source="/a",
@@ -298,6 +307,7 @@ async def test_garbage_collect_removes_orphans(prop_index: PropertyIndex) -> Non
     assert prop_index.count_contextualized_chunks() == 1
 
 
+@pytest.mark.asyncio
 async def test_get_cached_contexts_bypasses_when_source_hash_empty(
     prop_index: PropertyIndex,
 ) -> None:
@@ -310,6 +320,7 @@ async def test_get_cached_contexts_bypasses_when_source_hash_empty(
     assert got == {}
 
 
+@pytest.mark.asyncio
 async def test_store_cached_contexts_bypasses_when_source_hash_empty(
     prop_index: PropertyIndex,
 ) -> None:
