@@ -121,7 +121,10 @@ class MapExecutionModes:
                     truncation_tokens = exc.completion_tokens
                     dump_dir = Path("/tmp/pipeline-truncated")
                     dump_dir.mkdir(parents=True, exist_ok=True)
-                    dump_file = dump_dir / f"{self._step.name}-iter{idx}-{int(time.monotonic() * 1000)}.txt"
+                    dump_file = dump_dir / (
+                        f"{self._step.name}-iter{idx}-"
+                        f"{int(time.monotonic() * 1000)}.txt"
+                    )
                     try:
                         dump_file.write_text(exc.response_preview, encoding="utf-8")
                         truncated_response = str(dump_file)
@@ -198,6 +201,7 @@ class MapExecutionModes:
         while True:
             await asyncio.sleep(check_interval)
             now = time.monotonic()
+            timed_out_tasks: set[asyncio.Task[Any]] = set()
             for idx, ctx in iteration_context.items():
                 inference_started = ctx.get("inference_started_at") or ctx.get(
                     "fallback_boundary_at"
@@ -219,6 +223,11 @@ class MapExecutionModes:
                         inference_timeout,
                     )
                     task.cancel()
+                    timed_out_tasks.add(task)
+            if timed_out_tasks:
+                await self._concurrency_manager.cancel_pending_iterations(
+                    timed_out_tasks, tasks, iteration_context
+                )
 
     async def execute_with_timeout(
         self,

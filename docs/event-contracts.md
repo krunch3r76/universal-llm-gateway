@@ -460,6 +460,11 @@ rag.started
                   └─> rag.extraction.batch.completed | rag.extraction.batch.timed.out
               └─> rag.extraction.batch.skipped    (* if all chunks permanently failed)
               └─> rag.contextualization.started
+                  └─> rag.chunk.contextualization.started*
+                  └─> rag.chunk.contextualization.completed*
+                  └─> rag.chunk.contextualization.failed*
+                  └─> rag.contextualization.tail.abandoned (* straggler path)
+                  └─> rag.contextualization.exception.recorded (* if degraded)
                   └─> rag.contextualization.completed
               └─> rag.embedding.chunk.fallback*   (* zero or more; chunk kept as zero vector on persistent embedding fault)
               └─> rag.file.indexed | rag.file.deleted | rag.file.indexing.failed
@@ -997,12 +1002,14 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
 | `request.routed` | `request_id`, `model_id`, `routing_reason` | `correlation_id`, `target_gateway` |
+| `request.gateway.trace` | `request_id`, `model_id`, `phase`, `invariant_status` | `selected_gateway`, `capacity_gateway`, `sticky_gateway`, `final_gateway`, `forwarded_gateway`, `remote_id`, `gateway_url`, `reason` |
 | `request.queued` | `request_id` | `correlation_id`, `queue_position` |
 | `request.processing` | `request_id` | `correlation_id` |
 | `request.inference.started` | `request_id`, `model_id`, `gateway_url` | `correlation_id` |
 | `request.completed` | `request_id` | `correlation_id`, `tokens`, `duration_ms` |
 | `request.failed` | `request_id`, `error` | `correlation_id`, `error_code`, `error_source`, `error_data` (incl. `topology_snapshot` for `MODEL_NOT_FOUND`), `caller_hint` |
 | `request.timed.out` | `request_id` | `correlation_id`, `timeout_ms` |
+| `request.deadline.exceeded` | `request_id`, `model_id`, `gateway_id`, `deadline_s`, `elapsed_ms` | Client-supplied X-Request-Timeout deadline exceeded mid-inference. Distinct from `request.timed.out` (queue TTL). role=observation. |
 | `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
 | `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id`, `gateway_url`, `duration` |
 | `scheduler.routing.failed` | `model_id`, `candidate_count`, `evaluation_time_ms`, `timestamp`, `reason` | `original_model_id`, `request_id` |
@@ -1030,6 +1037,7 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 | `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
 | `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
 | `routing.capacity.preseeded` | `request_id`, `model_id`, `gateway_id`, `placeholder_capacity`, `catalog_capacity` | Cold-load loading placeholder capacity applied before `model.loaded` |
+| `token.count.precondition` | `request_id`, `model_id`, `target_gateway`, `sticky`, `loaded_on_gateway`, `known_to_gateway`, `skip_requested`, `legal_reason`, `tools_count` | `selected_gateway`, `gateway_url`, `remote_id`, `content_type` |
 | `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | - |
 | `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways` | - |
 | `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | - |
@@ -1455,6 +1463,9 @@ signal.
 | `federation.resource.updated` | `gateway_id`, `vram_free_mb`, `ram_free_mb` | master applied RESOURCE_UPDATE from edge |
 | `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
 | `federation.circuit.breaker.rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
+| `federation.gateway.degraded` | `gateway_id`, `consecutive_timeouts`, `first_error_code` | Gateway crossed timeout threshold (REQUEST_TIMEOUT/INFERENCE_TIMEOUT/LOAD_TIMEOUT). Coordination signal only — routing is NOT excluded. Cleared by `federation.gateway.recovered` with `kind=degradation`. role=coordination. |
+| `federation.gateway.unhealthy` | `gateway_id`, `consecutive_disconnects`, `first_error_code`, `cooldown_s` | Gateway crossed disconnect threshold (GATEWAY_DISCONNECTED/EDGE_UNREACHABLE). Routing excludes for `cooldown_s`. Cleared by `federation.gateway.recovered` with `kind=reachability`. role=coordination. |
+| `federation.gateway.recovered` | `gateway_id`, `kind`, `reason` | Previously DEGRADED or UNHEALTHY gateway recovered. `kind` ∈ {`degradation`, `reachability`}; `reason` ∈ {`first_success`, `probe_succeeded`}. role=coordination. |
 | `federation.capacity.fallback.applied` | `gateway_id`, `model_id`, `fallback_max_concurrent`, `reason` | capacity seeded from fallback (no model_resources from GATEWAY_SNAPSHOT); corrected when snapshot arrives |
 
 **`federation.telemetry.received` disambiguation fields**: `model_count` is the
@@ -1524,6 +1535,9 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | indexing migrated an article row to a new source path (content-hash move detection) |
 | `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
 | `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
+| `rag.chunk.contextualization.started` | `file`, `chunk_index`, `model`, `request_id`, `timeout_s` | Per-chunk: contextualization request submitted to Stargate. `request_id` is propagated as `X-Internal-Request-ID` for request-trace correlation. Optional: `operation_id`, `operation`. |
+| `rag.chunk.contextualization.completed` | `file`, `chunk_index`, `model`, `request_id`, `duration_seconds`, `output_chars` | Per-chunk: contextualization request returned a non-empty context prefix. Optional: `operation_id`, `operation`. |
+| `rag.chunk.contextualization.failed` | `file`, `chunk_index`, `model`, `error` | Per-chunk: contextualization LLM call failed or was tail-abandoned for this chunk position. `error` is `repr(exc)[:200]` or `ContextualizationTailAbandoned(...)`. Optional: `request_id`, `duration_seconds`, `operation_id`, `operation`. |
 | `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
 | `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file), `operation_id` (per-attempt correlation handle), `operation` (`index`/`reindex` when route-originated) |
 | `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
@@ -1539,6 +1553,10 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
 | `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency` | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
 | `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency` | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.partial` | `file`, `total_chunks`, `failed_chunks`, `successful_chunks`, `model`, `first_failure` | Contextualization completed with `failed_chunks > 0`; file still indexed (failed chunks embedded prefix-free). Optional: `operation_id`, `operation`. |
+| `rag.contextualization.tail.abandoned` | `file`, `total_chunks`, `completed_chunks`, `abandoned_chunks`, `successful_chunks`, `failed_chunks`, `model`, `idle_seconds`, `tail_idle_timeout_s` | RAG stopped waiting for straggler contextualization chunks after enough chunks had already succeeded and no further progress occurred for the tail-idle budget. This is an exception path: file still indexes, abandoned chunks remain cache misses. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.exception.recorded` | `file`, `exception_id`, `total_chunks`, `cache_miss_chunks`, `successful_chunks`, `failed_chunks`, `abandoned_chunks`, `model`, `first_failure` | Durable diagnostic row was stored in `contextualization_exceptions` for a successful-but-degraded contextualization attempt. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.exception.record.failed` | `file`, `model`, `error` | RAG attempted to persist degraded contextualization diagnostics but the property index write failed. Indexing continues. Optional: `operation_id`, `operation`. |
 | `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
 | `rag.contextualize.cache.evaluated` | `file`, `total_chunks`, `cache_hits`, `cache_misses`, `contextualize_model` | per-file cache plan summary; `cache_hits + cache_misses == total_chunks`; optional: `operation_id`, `operation` |
 | `rag.contextualize.cache.lookup.failed` | `file`, `requested_chunks`, `contextualize_model`, `error` | cache lookup degraded to full recompute (indexing continues); optional: `operation_id`, `operation` |
@@ -1571,10 +1589,11 @@ Note: `rag.contextualization.started` / `.completed` `chunk_count` now reports
 | `rag.scope.resolved` | `scope`, `prefix_count` | scope(s) resolved to prefixes; `scope`: str or array of strings |
 | `rag.scope.rejected` | `scope`, `reason`, `available` | scope validation failed |
 | `rag.scopes.listed` | `count` | scope registry listing completed |
-| `rag.post.index.stale` | `stale_steps` | startup: post-index enrichment steps stale after last reindex; operator should run runbook |
+| `rag.post.index.stale` | `stale_steps` | startup: serving-critical post-index enrichment steps stale after last reindex; automatic repair runs in background, operator should run runbook if it does not clear |
 | `rag.hints.gaps.repaired` | `scopes`, `trigger` | automatic corpus-hints refresh for scopes whose indexed file-set hash drifted; `trigger` ∈ {`startup`, `reconcile`, `watcher`} |
 | `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary auto-fill skipped (e.g. `reason` = `no_model_available` — no gateway-owned Stargate model) |
 | `rag.vocabulary.gaps.repaired` | `scopes`, `model` | scope vocabulary rows written after LLM classification during automatic gap repair |
+| `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM vocabulary classification failed during automatic gap repair; `reasons` maps each scope to failure class |
 | `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | search embedding retries exhausted; request degraded/fails before vector search |
 | `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | query embedding completed successfully |
 | `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | query embedding retries exhausted before search |
@@ -1623,8 +1642,8 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent` | - | agent-bus turn posted successfully for a terminal dispatch record (node-scoped) |
 | `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | - | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
 | `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason` | - | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config}` (node-scoped) |
-| `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | terminal dispatch record persisted to sqlite journal (node-scoped) |
-| `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | tracker miss served from sqlite journal fallback (node-scoped) |
+| `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | - | terminal dispatch record persisted to sqlite journal (node-scoped) |
+| `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | - | tracker miss served from sqlite journal fallback (node-scoped) |
 | `pipeline.dispatch.journal.pruned` | `records_deleted` | `oldest_deleted_age_seconds` | hourly retention prune summary for sqlite journal (node-scoped) |
 | `frontier.endpoint.requested` | `request_id`, `boot`, `has_tools` | `agent` (nullable), `model` (nullable) | endpoint admission request observed before persona enforcement and dispatch forwarding (node-scoped) |
 | `frontier.endpoint.persona.resolved` | `request_id`, `agent`, `allowed_models_count` | `frontier_kind`, `default_model`, `tools_count`, `allowed_options_count` | persona contract resolved from hydrated `ai_agent:{slug}` metadata (node-scoped) |

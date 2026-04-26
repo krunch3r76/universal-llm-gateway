@@ -507,8 +507,8 @@ def register_project_tools(mcp: FastMCP) -> None:
     ) -> dict[str, list[dict[str, str | int]] | bool]:
         """Search for an exact regex pattern across project files.
 
-        This is literal/regex text search — use rag_search(scope="project")
-        for semantic search when you need meaning-based retrieval.
+        This is literal/regex text search — use rag(op="search", arguments={...})
+        with scope="project" when you need meaning-based retrieval.
 
         By default searches ALL files on disk (including gitignored directories
         like tmp/, prompts/, build artifacts). Set include_untracked=False

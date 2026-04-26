@@ -15,6 +15,7 @@ from universal_logging import get_logger
 from .eviction_planning import _compute_eviction_plan
 from .model_checks import _is_model_available, _is_model_loaded
 from .resource_checks import (
+    _calculate_required_resources,
     _check_resources,
     _compute_loading_reservation,
     resolve_gateway_requirements,
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from .protocols import RoutingKeyTracker
 
 logger = get_logger(__name__)
+
+_COLD_LOAD_MIN_SLACK_MB = 1024
 
 
 def _can_fit_after_eviction_including_busy(
@@ -261,6 +264,37 @@ def evaluate_feasibility(
     )
 
     if has_resources:
+        resolved = resolve_gateway_requirements(gateway, placement)
+        if (
+            not isinstance(resolved, ConstraintFailure)
+            and gateway.loaded_models
+            and placement.model_id not in gateway.loaded_models
+        ):
+            gw_vram_mb, gw_ram_mb = resolved
+            vram_needed, _, _, _, _ = _calculate_required_resources(
+                vram_mb=gw_vram_mb,
+                ram_mb=gw_ram_mb,
+                resource_margins=policy.resource_margins,
+            )
+            vram_slack_mb = gateway.vram_free_mb - vram_needed
+            if gw_vram_mb > 0 and 0 <= vram_slack_mb < _COLD_LOAD_MIN_SLACK_MB:
+                eviction_plan = _compute_eviction_plan(
+                    gateway,
+                    placement,
+                    requirements_lookup,
+                    routing_key_tracker=routing_key_tracker,
+                    eviction_cooldown_s=eviction_cooldown_s,
+                    has_demand=has_demand,
+                    resource_margins=policy.resource_margins,
+                )
+                if eviction_plan is not None:
+                    logger.info(
+                        f"✅ FEASIBILITY T2 (low cold-load slack): "
+                        f"{placement.model_id} on {gateway.name} has only "
+                        f"{vram_slack_mb}MB VRAM slack; evicting idle model(s) "
+                        f"instead of attempting knife-edge T1 load"
+                    )
+                    return FeasibilityTier.T2_FEASIBLE_EVICT, (), eviction_plan
         logger.info(
             f"✅ FEASIBILITY T1 (no eviction): {placement.model_id} on {gateway.name} "
             f"has sufficient resources without eviction"

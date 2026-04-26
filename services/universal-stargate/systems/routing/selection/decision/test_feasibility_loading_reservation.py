@@ -23,9 +23,12 @@ if _stargate_root not in sys.path:
 
 from model_id import ModelId  # noqa: E402
 
+from systems.routing.selection.decision.config import RoutingPolicy  # noqa: E402
 from systems.routing.selection.decision.feasibility import (  # noqa: E402
     _can_fit_after_eviction_including_busy,
+    evaluate_feasibility,
 )
+from systems.routing.selection.decision.types import FeasibilityTier  # noqa: E402
 from systems.routing.selection.types import Gateway, Placement  # noqa: E402
 
 
@@ -35,6 +38,7 @@ def _make_gateway(
     ram_free_mb: int = 100_000,
     loaded_models: frozenset[ModelId] = frozenset(),
     loading_models: frozenset[ModelId] = frozenset(),
+    available_models: frozenset[ModelId] = frozenset(),
     model_details: dict | None = None,
     model_measured_vram: dict | None = None,
 ) -> Gateway:
@@ -47,6 +51,7 @@ def _make_gateway(
         vram_total_mb=80_000,
         loaded_models=loaded_models,
         loading_models=loading_models,
+        available_models=available_models,
         model_details=model_details or {},
         model_measured_vram=model_measured_vram or {},
     )
@@ -219,3 +224,36 @@ def test_reclaimable_without_loading(
     assert diag["vram_reserved_loading"] == 0
     assert diag["max_freeable_vram"] == 45_000
     assert can_fit is True
+
+
+def test_low_slack_cold_load_prefers_eviction(
+    target_model: ModelId, loaded_model: ModelId
+) -> None:
+    """Cold loads that barely fit should evict idle models before forwarding.
+
+    This covers the embedding startup failure mode: routing saw enough free VRAM
+    by catalog estimate, skipped eviction, then Gateway preflight rejected the
+    actual load while an idle model was resident.
+    """
+    gw = _make_gateway(
+        vram_free_mb=16_843,
+        loaded_models=frozenset({loaded_model}),
+        available_models=frozenset({target_model, loaded_model}),
+        model_details={
+            target_model: {"vram_usage": 14_000, "ram_usage": 0},
+            loaded_model: {"vram_usage": 15_000, "ram_usage": 0},
+        },
+        model_measured_vram={loaded_model: 15_000},
+    )
+
+    tier, failures, eviction_plan = evaluate_feasibility(
+        gw,
+        _placement(target_model, 14_000),
+        RoutingPolicy(),
+        _requirements({target_model: (14_000, 0), loaded_model: (15_000, 0)}),
+    )
+
+    assert tier is FeasibilityTier.T2_FEASIBLE_EVICT
+    assert failures == ()
+    assert eviction_plan is not None
+    assert eviction_plan.models_to_evict == frozenset({loaded_model})

@@ -25,6 +25,9 @@ Signals:
     federation.vram.request.failed — VRAM probe request failed
     federation.vram.response.received — VRAM probe response received
     federation.circuit.breaker.rejected — request rejected by circuit breaker
+    federation.gateway.degraded — gateway crossed consecutive-timeout threshold
+    federation.gateway.unhealthy — gateway crossed consecutive-disconnect threshold
+    federation.gateway.recovered — previously degraded or unhealthy gateway recovered
 """
 
 # ruff: noqa: N802
@@ -75,6 +78,61 @@ FEDERATION_ACTIVATION_FILTERED_EMPTY = "federation.activation.filtered.empty"
 
 # Circuit-breaker request admission
 FEDERATION_CIRCUIT_BREAKER_REQUEST_REJECTED = "federation.circuit.breaker.rejected"
+
+# Gateway-wide health: DEGRADED (timeouts; coordination only, ¬routing exclusion)
+FEDERATION_GATEWAY_DEGRADED = "federation.gateway.degraded"
+"""
+Emitted when a federated gateway crosses the consecutive-timeout
+threshold. The gateway remains routable — this is a coordination signal
+for batch consumers (RAG indexing, bulk evaluation) so they can throttle
+or pause submission to the affected gateway. Existing
+contention/staleness scoring already biases foreground routing away from
+saturated gateways.
+
+Cleared by `federation.gateway.recovered` with `kind="degradation"` on
+the first successful response from the gateway.
+
+Payload: {
+    "gateway_id": str,
+    "consecutive_timeouts": int,  # count that triggered the transition
+    "first_error_code": str,      # REQUEST_TIMEOUT | INFERENCE_TIMEOUT | LOAD_TIMEOUT
+}
+"""
+
+# Gateway-wide health: UNHEALTHY (disconnects; routing exclusion)
+FEDERATION_GATEWAY_UNHEALTHY = "federation.gateway.unhealthy"
+"""
+Emitted when a federated gateway crosses the consecutive-disconnect
+threshold. The gateway is excluded from routing for `cooldown_s`
+seconds, after which the existing HALF_OPEN probe machinery tests
+recovery via a single test request.
+
+Distinct from DEGRADED because a disconnected gateway cannot serve any
+request — exclusion loses nothing, and HALF_OPEN probes give a real
+recovery signal independent of consumer behavior.
+
+Cleared by `federation.gateway.recovered` with `kind="reachability"`
+when a HALF_OPEN probe succeeds.
+
+Payload: {
+    "gateway_id": str,
+    "consecutive_disconnects": int,
+    "first_error_code": str,      # GATEWAY_DISCONNECTED | EDGE_UNREACHABLE
+    "cooldown_s": float,
+}
+"""
+
+# Gateway-wide health: recovery
+FEDERATION_GATEWAY_RECOVERED = "federation.gateway.recovered"
+"""
+Emitted when a previously DEGRADED or UNHEALTHY gateway recovers.
+
+Payload: {
+    "gateway_id": str,
+    "kind": str,    # "degradation" | "reachability"
+    "reason": str,  # "first_success" | "probe_succeeded"
+}
+"""
 
 
 # ========================================
@@ -405,4 +463,60 @@ def FederationCircuitBreakerRequestRejected(
     return Event(
         signal=FEDERATION_CIRCUIT_BREAKER_REQUEST_REJECTED,
         payload={"gateway_id": gateway_id, "model_id": model_id, "reason": reason},
+    )
+
+
+@event_factory
+def FederationGatewayDegraded(
+    gateway_id: str,
+    consecutive_timeouts: int,
+    first_error_code: str,
+) -> Event:
+    """Federated gateway crossed timeout threshold; coordination only, ¬excluded."""
+    return Event(
+        signal=FEDERATION_GATEWAY_DEGRADED,
+        role="coordination",
+        payload={
+            "gateway_id": gateway_id,
+            "consecutive_timeouts": consecutive_timeouts,
+            "first_error_code": first_error_code,
+        },
+    )
+
+
+@event_factory
+def FederationGatewayUnhealthy(
+    gateway_id: str,
+    consecutive_disconnects: int,
+    first_error_code: str,
+    cooldown_s: float,
+) -> Event:
+    """Federated gateway unreachable; excluded from routing for cooldown_s."""
+    return Event(
+        signal=FEDERATION_GATEWAY_UNHEALTHY,
+        role="coordination",
+        payload={
+            "gateway_id": gateway_id,
+            "consecutive_disconnects": consecutive_disconnects,
+            "first_error_code": first_error_code,
+            "cooldown_s": cooldown_s,
+        },
+    )
+
+
+@event_factory
+def FederationGatewayRecovered(
+    gateway_id: str,
+    kind: str,
+    reason: str,
+) -> Event:
+    """Previously DEGRADED or UNHEALTHY gateway recovered."""
+    return Event(
+        signal=FEDERATION_GATEWAY_RECOVERED,
+        role="coordination",
+        payload={
+            "gateway_id": gateway_id,
+            "kind": kind,
+            "reason": reason,
+        },
     )

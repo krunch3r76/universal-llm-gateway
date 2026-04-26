@@ -169,13 +169,50 @@ async def finalize_selection_and_load(
 
         context.selected_gateway = selected_gateway
         if event_bus:
-            from src.scheduling.events import RequestRouted
+            from src.scheduling.events import RequestGatewayTrace, RequestRouted
 
             gateway_url = getattr(
                 context.selected_gateway.ref, "remote_stargate_url", "unknown"
             )
             was_queued = (
                 context.capacity_token is not None and context.capacity_token.queued
+            )
+            capacity_gateway = (
+                context.capacity_token.gateway_id if context.capacity_token else None
+            )
+            sticky_gateway = stability_tracker.get_current_best(model_id)
+            gateway_values = [
+                value
+                for value in (
+                    selected_gateway.name,
+                    capacity_gateway,
+                    sticky_gateway,
+                    context.selected_gateway.name,
+                )
+                if value
+            ]
+            invariant_status = (
+                "match"
+                if gateway_values and len(set(gateway_values)) == 1
+                else "mismatch"
+                if len(gateway_values) > 1
+                else "incomplete"
+            )
+            await event_bus.publish_nowait(
+                RequestGatewayTrace(
+                    request_id=context.request_id,
+                    model_id=str(model_id),
+                    phase="routed",
+                    selected_gateway=selected_gateway.name,
+                    capacity_gateway=capacity_gateway,
+                    sticky_gateway=sticky_gateway,
+                    final_gateway=context.selected_gateway.name,
+                    forwarded_gateway=None,
+                    remote_id=selected_gateway.ref.remote_stargate_id,
+                    gateway_url=gateway_url,
+                    invariant_status=invariant_status,
+                    reason=f"selection_tier={trace.selection_tier.name}",
+                )
             )
             await event_bus.publish_nowait(
                 RequestRouted(

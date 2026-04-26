@@ -5,10 +5,12 @@ and routing decision observability.
 
 Signals:
     request.routed — request successfully routed to gateway
+    request.gateway.trace — gateway selection invariant trace for a request
     model.load.initiated — model load triggered
     model.load.completed — model load finished (success or failure)
     model.load.overflow.started — overflow gateway cold-load initiated
     model.capacity.overflow.assigned — admission moved request to overflow target
+    token.count.precondition — token-counting legality/precondition trace
     token.count.completed — token counting finished
     token.counting.failed — federated token counting failed
     scheduler.routing.decided — routing decision made by DecisionEngine
@@ -56,6 +58,26 @@ Payload: {
     "routing_time_ms": float,  # Time taken to route request
     "queue_position": Optional[int],  # Position in queue if queued
     "immediate_route": bool  # True if routed immediately, False if queued
+}
+"""
+
+REQUEST_GATEWAY_TRACE = "request.gateway.trace"
+"""
+Gateway selection invariant trace for a request.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "phase": str,
+    "selected_gateway": str | None,
+    "capacity_gateway": str | None,
+    "sticky_gateway": str | None,
+    "final_gateway": str | None,
+    "forwarded_gateway": str | None,
+    "remote_id": str | None,
+    "gateway_url": str | None,
+    "invariant_status": str,
+    "reason": str | None,
 }
 """
 
@@ -107,6 +129,27 @@ Payload: {
     "context_limit": Optional[int],
     "allocated_max_tokens": Optional[int],
     "error": Optional[str]
+}
+"""
+
+TOKEN_COUNT_PRECONDITION = "token.count.precondition"
+"""
+Token-counting legality/precondition trace.
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "target_gateway": str,
+    "selected_gateway": str | None,
+    "gateway_url": str | None,
+    "remote_id": str | None,
+    "sticky": bool,
+    "loaded_on_gateway": bool,
+    "known_to_gateway": bool,
+    "skip_requested": bool,
+    "legal_reason": str,
+    "content_type": str | None,
+    "tools_count": int,
 }
 """
 
@@ -359,6 +402,42 @@ def RequestRouted(
 
 
 @event_factory
+def RequestGatewayTrace(
+    *,
+    request_id: str,
+    model_id: str,
+    phase: str,
+    selected_gateway: str | None = None,
+    capacity_gateway: str | None = None,
+    sticky_gateway: str | None = None,
+    final_gateway: str | None = None,
+    forwarded_gateway: str | None = None,
+    remote_id: str | None = None,
+    gateway_url: str | None = None,
+    invariant_status: str = "incomplete",
+    reason: str | None = None,
+) -> Event:
+    """Create REQUEST_GATEWAY_TRACE event."""
+    return Event(
+        signal=REQUEST_GATEWAY_TRACE,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "phase": phase,
+            "selected_gateway": selected_gateway,
+            "capacity_gateway": capacity_gateway,
+            "sticky_gateway": sticky_gateway,
+            "final_gateway": final_gateway,
+            "forwarded_gateway": forwarded_gateway,
+            "remote_id": remote_id,
+            "gateway_url": gateway_url,
+            "invariant_status": invariant_status,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
 def ModelLoadInitiated(
     model_id: str,
     gateway_url: str,
@@ -486,6 +565,44 @@ def TokenCountCompleted(
             "context_limit": context_limit,
             "allocated_max_tokens": allocated_max_tokens,
             "error": error,
+        },
+    )
+
+
+@event_factory
+def TokenCountPrecondition(
+    *,
+    request_id: str,
+    model_id: str,
+    target_gateway: str,
+    selected_gateway: str | None,
+    gateway_url: str | None,
+    remote_id: str | None,
+    sticky: bool,
+    loaded_on_gateway: bool,
+    known_to_gateway: bool,
+    skip_requested: bool,
+    legal_reason: str,
+    content_type: str | None,
+    tools_count: int,
+) -> Event:
+    """Create TOKEN_COUNT_PRECONDITION event."""
+    return Event(
+        signal=TOKEN_COUNT_PRECONDITION,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "target_gateway": target_gateway,
+            "selected_gateway": selected_gateway,
+            "gateway_url": gateway_url,
+            "remote_id": remote_id,
+            "sticky": sticky,
+            "loaded_on_gateway": loaded_on_gateway,
+            "known_to_gateway": known_to_gateway,
+            "skip_requested": skip_requested,
+            "legal_reason": legal_reason,
+            "content_type": content_type,
+            "tools_count": tools_count,
         },
     )
 

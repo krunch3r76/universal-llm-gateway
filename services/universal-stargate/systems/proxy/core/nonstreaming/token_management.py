@@ -322,6 +322,7 @@ async def apply_federated_token_management(
     allocation_policy: TokenAllocationPolicy,
     federated_gateway,
     federation_forwarder,
+    event_bus=None,
 ) -> None:
     """
     Apply token counting for federated requests via Remote Stargate API.
@@ -406,6 +407,37 @@ async def apply_federated_token_management(
         token_counting_content_type,
         tools=tools,
     )
+
+    if event_bus:
+        from src.scheduling.events import TokenCountPrecondition
+
+        selected_gateway = context.target_gateway_id
+        loaded_on_gateway = context.selected_model in federated_gateway.loaded_models
+        known_to_gateway = context.selected_model in federated_gateway.available_models
+        legal_reason = (
+            "selected_gateway_loaded"
+            if loaded_on_gateway
+            else "selected_gateway_known_load_or_wait_completed"
+            if known_to_gateway
+            else "selected_gateway_unknown"
+        )
+        await event_bus.publish_nowait(
+            TokenCountPrecondition(
+                request_id=context.request_id,
+                model_id=str(context.selected_model),
+                target_gateway=federated_gateway.gateway_id,
+                selected_gateway=selected_gateway,
+                gateway_url=federated_gateway.remote_stargate_url,
+                remote_id=federated_gateway.remote_stargate_id,
+                sticky=context.model_sticky,
+                loaded_on_gateway=loaded_on_gateway,
+                known_to_gateway=known_to_gateway,
+                skip_requested=context.skip_token_counting,
+                legal_reason=legal_reason,
+                content_type=token_counting_content_type,
+                tools_count=tools_count,
+            )
+        )
 
     # Count tokens via Remote Stargate API with federation auth
     try:

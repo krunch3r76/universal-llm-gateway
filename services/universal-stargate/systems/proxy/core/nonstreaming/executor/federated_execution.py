@@ -37,6 +37,18 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _is_request_deadline_timeout(detail: object) -> bool:
+    """True when REQUEST_TIMEOUT came from a request-scoped deadline."""
+    if not isinstance(detail, dict):
+        return False
+    data = detail.get("data")
+    return (
+        detail.get("code") == "REQUEST_TIMEOUT"
+        and isinstance(data, dict)
+        and data.get("timeout_kind") == "request_deadline"
+    )
+
+
 async def execute_federated_request(
     context: RequestContext,
     federation_forwarder: Any,
@@ -203,6 +215,42 @@ async def execute_federated_request(
         f"(request={request_id[:8]}, hints={hints})"
     )
 
+    if event_bus:
+        from src.scheduling.events import RequestGatewayTrace
+
+        capacity_gateway = (
+            context.capacity_token.gateway_id if context.capacity_token else None
+        )
+        selected_gateway = context.target_gateway_id
+        gateway_values = [
+            value
+            for value in (selected_gateway, capacity_gateway, fed_gateway.gateway_id)
+            if value
+        ]
+        invariant_status = (
+            "match"
+            if gateway_values and len(set(gateway_values)) == 1
+            else "mismatch"
+            if len(gateway_values) > 1
+            else "incomplete"
+        )
+        await event_bus.publish_nowait(
+            RequestGatewayTrace(
+                request_id=request_id,
+                model_id=model_id.routing_key,
+                phase="forward.start",
+                selected_gateway=selected_gateway,
+                capacity_gateway=capacity_gateway,
+                sticky_gateway=None,
+                final_gateway=fed_gateway.gateway_id,
+                forwarded_gateway=fed_gateway.gateway_id,
+                remote_id=fed_gateway.remote_stargate_id,
+                gateway_url=fed_gateway.remote_stargate_url,
+                invariant_status=invariant_status,
+                reason="federated_execution",
+            )
+        )
+
     if context.client_wants_streaming:
         from .federated_streaming import _execute_federated_streaming
 
@@ -241,30 +289,61 @@ async def execute_federated_request(
                 fed_gateway.gateway_id,
                 str(context.selected_model),
             )
+            # Clear gateway-wide timeout/disconnect streaks on any success.
+            await federation_circuit_breaker.record_gateway_success(
+                fed_gateway.gateway_id,
+            )
 
         return response
 
     except HTTPException as e:
         if federation_circuit_breaker:
-            # Cloud 4xx errors are preserved with their original status code
-            # by raise_federated_http_error(), so they fall below this >= 500
-            # threshold and don't trip the breaker. Federated/local 503/504 are
-            # also preserved so breaker decisions can distinguish transient load
-            # pressure from true gateway instability. Remaining upstream 5xx and
-            # unexpected failures are wrapped as 502, correctly tripping.
+            # Failure routing — by error envelope code, not HTTP status.
             #
-            # 503 = Service Unavailable: model loading, gateway overloaded, or
-            # queue full — all transient. Opening the circuit blocks routing to
-            # the gateway that's actively warming up, forcing failures on all
-            # subsequent requests until HALF_OPEN recovery.
+            #   504 family (REQUEST_TIMEOUT, INFERENCE_TIMEOUT, LOAD_TIMEOUT):
+            #     coordination-only DEGRADED state; routing NOT excluded.
+            #     Excluding on timeout would starve healthy-but-saturated
+            #     gateways and oscillate under sustained batch load (see
+            #     Phase 2 background section).
             #
-            # 504 = Gateway Timeout: the gateway is slow (under load), not broken.
-            # Opening the circuit for timeouts starves healthy-but-busy gateways —
-            # all subsequent requests pile on the remaining gateway, causing cascading
-            # saturation. Retry exclusion (context.excluded_gateway_ids) already
-            # prevents re-sending the same timed-out request to the same gateway.
-            _transient = {503, 504}
-            if e.status_code >= 500 and e.status_code not in _transient:
+            #   GATEWAY_DISCONNECTED / EDGE_UNREACHABLE (any HTTP status):
+            #     UNHEALTHY state; routing IS excluded for cooldown.
+            #     Disconnects are reachability failures — exclusion costs
+            #     nothing because the gateway can't serve any request, and
+            #     HALF_OPEN probes give a real recovery signal.
+            #
+            #   Other 503 codes (capacity, loading, OOM, no-feasible):
+            #     gateway is healthy and reachable, just busy or warming
+            #     up — neither degraded nor unhealthy.
+            #
+            #   Other 5xx (genuine upstream errors, 500/502 wrapped):
+            #     existing per-(gateway, model) circuit (record_failure).
+            error_code = e.detail.get("code") if isinstance(e.detail, dict) else None
+            timeout_codes = {
+                "REQUEST_TIMEOUT",
+                "INFERENCE_TIMEOUT",
+                "LOAD_TIMEOUT",
+            }
+            disconnect_codes = {
+                "GATEWAY_DISCONNECTED",
+                "EDGE_UNREACHABLE",
+            }
+            if error_code in timeout_codes and not _is_request_deadline_timeout(
+                e.detail
+            ):
+                await federation_circuit_breaker.record_gateway_timeout(
+                    fed_gateway.gateway_id,
+                    error_code=error_code,
+                )
+            elif error_code in disconnect_codes:
+                await federation_circuit_breaker.record_gateway_disconnect(
+                    fed_gateway.gateway_id,
+                    error_code=error_code,
+                )
+            elif e.status_code >= 500 and e.status_code != 503:
+                # Other genuine 5xx — record against the per-(gateway, model)
+                # circuit. 503s without a recognized code are capacity-class
+                # transients (gateway healthy) and intentionally skipped.
                 await federation_circuit_breaker.record_failure(
                     fed_gateway.gateway_id,
                     str(context.selected_model),
@@ -274,6 +353,10 @@ async def execute_federated_request(
         raise
     except Exception as e:
         if federation_circuit_breaker:
+            # Unhandled exceptions reaching the dispatch site are not
+            # categorizable by error envelope. Record against the per-pair
+            # circuit (existing behavior). True transport failures should
+            # have surfaced as HTTPException with a disconnect code by now.
             await federation_circuit_breaker.record_failure(
                 fed_gateway.gateway_id,
                 str(context.selected_model),

@@ -222,6 +222,8 @@ async def google_videos_generations(request: Request) -> Response:
 
 
 @router.get("/xai/videos/{request_id}")
+# xAI request_ids are UUIDs — single-segment param is correct.
+# If xAI changes format to include '/', switch to {request_id:path} (matching google).
 async def xai_video_status(request_id: str) -> Response:
     """xAI video status poll — GET until status == done."""
     client = _get_cloud_forwarder()

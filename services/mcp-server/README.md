@@ -56,9 +56,9 @@ Routes queries through Stargate's RAG pipelines via `host.docker.internal:9999`.
 
 | Tool | Purpose |
 |------|---------|
-| `rag_search` | Semantic search via `rag-context` pipeline (multi-query rewriting, RRF merge, property boost) |
-| `rag_answer` | Grounded Q&A via `rag-answer` or `rag-answer-deep` pipeline |
-| `rag_list_scopes` | List available retrieval scopes |
+| `rag(op="search")` | Semantic search via `rag-context` pipeline (multi-query rewriting, RRF merge, property boost) |
+| `rag(op="answer")` | Grounded Q&A via `rag-answer` or `rag-answer-deep` pipeline |
+| `rag(op="list_scopes")` | List available retrieval scopes |
 
 ### Web (`tools/web.py`)
 

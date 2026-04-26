@@ -30,7 +30,6 @@ from services.rag.chunk_filters import (
 from services.rag.chunkers import Chunk, chunk_file
 from services.rag.contextualize import (
     CONTEXTUALIZE_PROMPT_HASH,
-    ContextualizationError,
     contextualize_chunks,
 )
 from services.rag.contextualize_cache import (
@@ -48,10 +47,17 @@ from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
     rag_chroma_upsert_completed,
     rag_chroma_upsert_started,
+    rag_chunk_contextualization_completed,
+    rag_chunk_contextualization_failed,
+    rag_chunk_contextualization_started,
     rag_chunk_noise_tagged,
     rag_contextualization_applied,
     rag_contextualization_completed,
+    rag_contextualization_exception_record_failed,
+    rag_contextualization_exception_recorded,
+    rag_contextualization_partial,
     rag_contextualization_started,
+    rag_contextualization_tail_abandoned,
     rag_contextualize_cache_evaluated,
     rag_contextualize_cache_lookup_failed,
     rag_contextualize_cache_store_completed,
@@ -90,6 +96,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CHARS_PER_TOKEN = 4
+
+
+def _contextualize_request_timeout_s(config: RagConfig) -> float:
+    """Return the server-enforced contextualization request budget."""
+    return min(
+        config.contextualize_request_timeout_s, config.contextualize_client_timeout_s
+    )
 
 
 def _should_skip_cached_source(
@@ -147,11 +160,6 @@ def _classify_indexing_failure(
 
     if isinstance(exc, asyncio.TimeoutError | TimeoutError):
         return ("transient", "timeout")
-    if isinstance(exc, ContextualizationError):
-        # Contextualization stalls are dominated by cold-load and eviction
-        # windows; reconcile sweeps and watcher retries succeed once the
-        # lifecycle stabilizes.
-        return ("transient", "contextualize_failed")
     if "PROBE_FAILED" in msg:
         return ("transient", "contextualize_probe_failed")
     if "capacity" in msg_lower or "REQUEST_TIMEOUT" in msg:
@@ -693,7 +701,7 @@ async def _index_file_impl(
             context_model = state._config.contextualize_model
             context_max_concurrency = state._config.contextualize_max_concurrency
             context_client_timeout_s = state._config.contextualize_client_timeout_s
-            context_timeout_s = min(30.0, context_client_timeout_s)
+            context_timeout_s = _contextualize_request_timeout_s(state._config)
 
             cached_contexts: dict[str, str] = {}
             if prop_index is not None and source_hash:
@@ -756,21 +764,85 @@ async def _index_file_impl(
             context_start = time.monotonic()
 
             contexts = plan.contexts
+            partial_failed_count = 0
+            partial_first_failure: str | None = None
+            ctx_result = None
             if plan.cache_misses:
-                computed = await contextualize_chunks(
+
+                async def _emit_contextualize_diagnostic(
+                    event: str,
+                    *,
+                    chunk_index: int,
+                    request_id: str,
+                    duration_seconds: float | None = None,
+                    error: str | None = None,
+                    output_chars: int | None = None,
+                ) -> None:
+                    if state._event_bus is None:
+                        return
+                    if event == "started":
+                        await state._event_bus.publish_nowait(
+                            rag_chunk_contextualization_started(
+                                file=source,
+                                chunk_index=chunk_index,
+                                model=context_model,
+                                request_id=request_id,
+                                timeout_s=context_timeout_s,
+                                operation_id=correlation_id,
+                                operation=operation,
+                            )
+                        )
+                    elif event == "completed":
+                        await state._event_bus.publish_nowait(
+                            rag_chunk_contextualization_completed(
+                                file=source,
+                                chunk_index=chunk_index,
+                                model=context_model,
+                                request_id=request_id,
+                                duration_seconds=duration_seconds or 0.0,
+                                output_chars=output_chars or 0,
+                                operation_id=correlation_id,
+                                operation=operation,
+                            )
+                        )
+                    elif event in {"failed", "abandoned"}:
+                        await state._event_bus.publish_nowait(
+                            rag_chunk_contextualization_failed(
+                                file=source,
+                                chunk_index=chunk_index,
+                                model=context_model,
+                                request_id=request_id,
+                                duration_seconds=duration_seconds,
+                                error=error or event,
+                                operation_id=correlation_id,
+                                operation=operation,
+                            )
+                        )
+
+                ctx_result = await contextualize_chunks(
                     [miss.chunk for miss in plan.cache_misses],
                     source,
                     context_model,
                     timeout_s=context_timeout_s,
                     max_concurrency=context_max_concurrency,
                     client_timeout_s=context_client_timeout_s,
-                    global_gate=state._global_contextualize_gate,
-                    coordinator=state._contextualize_coordinator,
+                    tail_idle_timeout_s=state._config.contextualize_tail_idle_timeout_s,
+                    tail_min_success_ratio=(
+                        state._config.contextualize_tail_min_success_ratio
+                    ),
+                    chunk_indices=[miss.index for miss in plan.cache_misses],
+                    diagnostics_sink=_emit_contextualize_diagnostic,
+                    admission_gate=state._admission_gate,
                 )
+                computed = ctx_result.contexts
+                partial_failed_count = ctx_result.failed_count
+                partial_first_failure = ctx_result.first_failure_repr
                 contexts = merge_computed_contexts(
                     plan=plan,
                     computed_prefixes=computed,
                 )
+                # build_stored_context_rows filters out "" entries, so failed
+                # chunks remain cache misses for the next reindex attempt.
                 cache_rows_to_store = build_stored_context_rows(
                     plan=plan,
                     computed_prefixes=computed,
@@ -779,6 +851,43 @@ async def _index_file_impl(
             successful_misses = sum(
                 1 for miss in plan.cache_misses if contexts[miss.index]
             )
+            contextualization_exception_id: int | None = None
+            contextualization_exception_record_error: str | None = None
+            if partial_failed_count > 0 and prop_index is not None:
+                try:
+                    contextualization_exception_id = (
+                        await prop_index.record_contextualization_exception(
+                            source=source,
+                            source_hash=source_hash,
+                            contextualize_model=context_model,
+                            operation_id=correlation_id,
+                            total_chunks=len(chunks),
+                            cache_miss_chunks=plan.cache_misses_count,
+                            successful_chunks=len(chunks) - partial_failed_count,
+                            failed_chunks=partial_failed_count,
+                            abandoned_indices=(
+                                ctx_result.abandoned_indices
+                                if ctx_result is not None
+                                else []
+                            ),
+                            request_ids=(
+                                ctx_result.request_ids if ctx_result is not None else {}
+                            ),
+                            first_failure=partial_first_failure or "",
+                            idle_seconds=(
+                                ctx_result.tail_idle_seconds
+                                if ctx_result is not None
+                                else None
+                            ),
+                            tail_idle_timeout_s=(
+                                state._config.contextualize_tail_idle_timeout_s
+                            ),
+                        )
+                    )
+                except Exception as exc:
+                    contextualization_exception_record_error = (
+                        f"{type(exc).__qualname__}: {exc}"
+                    )
             if state._event_bus is not None:
                 await state._event_bus.publish_nowait(
                     rag_contextualization_completed(
@@ -793,12 +902,88 @@ async def _index_file_impl(
                         operation=operation,
                     )
                 )
-                await state._event_bus.publish_nowait(
-                    rag_contextualization_applied(
-                        file=source,
-                        chunk_count=len(contexts),
-                        model=context_model,
+                if 0 < partial_failed_count < plan.cache_misses_count:
+                    await state._event_bus.publish_nowait(
+                        rag_contextualization_partial(
+                            file=source,
+                            total_chunks=len(chunks),
+                            failed_chunks=partial_failed_count,
+                            successful_chunks=len(chunks) - partial_failed_count,
+                            model=context_model,
+                            first_failure=partial_first_failure or "",
+                            operation_id=correlation_id,
+                            operation=operation,
+                        )
                     )
+                if ctx_result is not None and ctx_result.abandoned_indices:
+                    await state._event_bus.publish_nowait(
+                        rag_contextualization_tail_abandoned(
+                            file=source,
+                            total_chunks=len(chunks),
+                            completed_chunks=(
+                                plan.cache_misses_count
+                                - len(ctx_result.abandoned_indices)
+                            ),
+                            abandoned_chunks=len(ctx_result.abandoned_indices),
+                            successful_chunks=len(chunks) - partial_failed_count,
+                            failed_chunks=partial_failed_count,
+                            model=context_model,
+                            idle_seconds=ctx_result.tail_idle_seconds
+                            or state._config.contextualize_tail_idle_timeout_s,
+                            tail_idle_timeout_s=(
+                                state._config.contextualize_tail_idle_timeout_s
+                            ),
+                            operation_id=correlation_id,
+                            operation=operation,
+                        )
+                    )
+                if contextualization_exception_record_error is not None:
+                    await state._event_bus.publish_nowait(
+                        rag_contextualization_exception_record_failed(
+                            file=source,
+                            model=context_model,
+                            error=contextualization_exception_record_error,
+                            operation_id=correlation_id,
+                            operation=operation,
+                        )
+                    )
+                if contextualization_exception_id is not None:
+                    await state._event_bus.publish_nowait(
+                        rag_contextualization_exception_recorded(
+                            file=source,
+                            exception_id=contextualization_exception_id,
+                            total_chunks=len(chunks),
+                            cache_miss_chunks=plan.cache_misses_count,
+                            successful_chunks=len(chunks) - partial_failed_count,
+                            failed_chunks=partial_failed_count,
+                            abandoned_chunks=(
+                                len(ctx_result.abandoned_indices)
+                                if ctx_result is not None
+                                else 0
+                            ),
+                            model=context_model,
+                            first_failure=partial_first_failure or "",
+                            operation_id=correlation_id,
+                            operation=operation,
+                        )
+                    )
+                if not (
+                    plan.cache_misses
+                    and partial_failed_count == plan.cache_misses_count
+                ):
+                    await state._event_bus.publish_nowait(
+                        rag_contextualization_applied(
+                            file=source,
+                            chunk_count=len(contexts),
+                            model=context_model,
+                        )
+                    )
+
+            if plan.cache_misses and partial_failed_count == plan.cache_misses_count:
+                raise RuntimeError(
+                    f"All {plan.cache_misses_count} chunks failed contextualization "
+                    f"for {source} (first: {partial_first_failure}); "
+                    "indexing_failures row preserved for reconcile retry."
                 )
             embed_texts = [
                 f"{ctx}\n\n{text}" if ctx else text

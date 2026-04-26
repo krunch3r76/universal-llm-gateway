@@ -80,8 +80,8 @@ def _wire_model_callbacks(
     async def on_model_loading_started(model_id: str) -> None:
         """Forward MODEL_LOADING_STARTED to Master.
 
-        Required so master-side subscribers (RAG ContextualizeModelCoordinator,
-        etc.) see the cold-load window. Without this forward, master receives
+        Required so master-side subscribers (RAG AdmissionGate, etc.) see the
+        cold-load window. Without this forward, master receives
         only MODEL_LOADED and MODEL_UNLOADED — the loading-window signal is
         invisible to host-side coordination.
         """

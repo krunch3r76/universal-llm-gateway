@@ -337,8 +337,8 @@ frontier_generate(
 
 | Mode | Trigger | Behavior |
 |---|---|---|
-| Team-seat | `pipeline_options.agent ∈ {orion, oppie, bard, web}` | Cortex hydration + birth prompt + full team toolset (`cortex`, `agent_bus`, `rag_search` + team/read-only `cortex_*` tools) injected for the call. Emits `pipeline.frontier.dispatch.hydrated`. |
-| Persona-free | `pipeline_options.agent` omitted | Raw native call. No hydration event. Optional toolset via `pipeline_options.inject_tools` (default `true`). |
+| Team-seat | `pipeline_options.agent ∈ {orion, oppie, bard, api_claude}` | Cortex hydration + birth prompt + curated team toolset (`cortex`, `rag`, `agent_bus`) injected for the call when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
+| Persona-free | `pipeline_options.agent` omitted | Raw native call. No hydration event. Optional read toolset (`cortex`, `rag`) via `pipeline_options.mcp` (default `true`). |
 
 Provider selection is derived from the model id prefix: `openai/*` → OpenAI
 Responses, `xai/*` → xAI Responses, `anthropic/*` → Anthropic Messages,

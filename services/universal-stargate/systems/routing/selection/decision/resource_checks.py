@@ -18,6 +18,29 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _calculate_required_resources(
+    *,
+    vram_mb: int,
+    ram_mb: int,
+    resource_margins: dict[str, float] | None = None,
+) -> tuple[int, int, int, int, int]:
+    """Return margin-adjusted VRAM/RAM requirements and applied margin settings."""
+    margins = resource_margins or {}
+    ram_margin_pct = int(margins.get("ram_margin_pct", 3))
+    vram_margin_pct = int(margins.get("vram_margin_pct", 5))
+    vram_headroom_mb = int(margins.get("vram_headroom_mb", 2048))
+    ram_needed = int(ram_mb * (1.0 + ram_margin_pct / 100))
+    vram_pct = int(vram_mb * (1.0 + vram_margin_pct / 100))
+    vram_needed = (vram_pct + vram_headroom_mb) if vram_mb > 0 else 0
+    return (
+        vram_needed,
+        ram_needed,
+        vram_margin_pct,
+        vram_headroom_mb,
+        ram_margin_pct,
+    )
+
+
 def _compute_loading_reservation(
     gateway: "Gateway",
     target_model: ModelId,
@@ -156,15 +179,18 @@ def _check_resources(
     )
 
     margins = config.get("resource_margins", {}) if config else {}
-    ram_margin_pct = margins.get("ram_margin_pct", 3)
-    vram_margin_pct = margins.get("vram_margin_pct", 5)
-    vram_headroom_mb = int(margins.get("vram_headroom_mb", 2048))
-    ram_margin = 1.0 + ram_margin_pct / 100
+    (
+        vram_needed,
+        ram_needed,
+        vram_margin_pct,
+        vram_headroom_mb,
+        ram_margin_pct,
+    ) = _calculate_required_resources(
+        vram_mb=gw_vram_mb,
+        ram_mb=gw_ram_mb,
+        resource_margins=margins,
+    )
     vram_margin = 1.0 + vram_margin_pct / 100
-
-    ram_needed = int(gw_ram_mb * ram_margin)
-    vram_pct = int(gw_vram_mb * vram_margin)
-    vram_needed = (vram_pct + vram_headroom_mb) if gw_vram_mb > 0 else 0
 
     # Calculate resources reserved by loading models (exclude target)
     vram_reserved = 0

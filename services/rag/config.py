@@ -86,8 +86,10 @@ DEFAULT_INDEX_WORKERS = 8
 # Used when contextualize_model is omitted; set to "" to disable contextualization.
 DEFAULT_CONTEXTUALIZE_MODEL = "qwen3-5-9b-q8-0-262144"
 DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY = 32
-DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 300.0
-DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY = 16
+DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S = 300.0
+DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 600.0
+DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S = 45.0
+DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO = 0.5
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -128,13 +130,20 @@ class RagConfig:
     # Cap in-flight contextualization requests per file so one large source does not
     # monopolize Stargate queue depth.
     contextualize_max_concurrency: int = DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
+    # Server-enforced per-request budget sent as X-Request-Timeout. The budget
+    # must cover remote queue/load plus inference when contextualization routes
+    # through a federated edge.
+    contextualize_request_timeout_s: float = DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S
     # Outer httpx ceiling for one contextualize request, covering queue_wait + inference.
-    # Default 300s matches Stargate's chat-completion routing.timeout — the RAG client
-    # must not give up before Stargate does (premature ReadTimeouts under queue saturation
-    # masquerade as cold-load problems). Bad-tail-request protection lives in the
-    # X-Request-Timeout header set by contextualize._call_llm, which Stargate enforces
-    # from inference start, not from enqueue.
+    # Must exceed contextualize_request_timeout_s so Stargate returns structured
+    # timeout errors instead of the RAG client raising premature ReadTimeouts.
     contextualize_client_timeout_s: float = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
+    # Tail-abandonment only starts after this much of the batch has settled, so
+    # partial contextualization remains a straggler exception rather than the norm.
+    contextualize_tail_idle_timeout_s: float = DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S
+    contextualize_tail_min_success_ratio: float = (
+        DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO
+    )
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0
@@ -157,11 +166,6 @@ class RagConfig:
     # Per-file timeout for watcher workers (initial reindex + reconcile). 0 = no timeout.
     # Prevents a single hung extraction from blocking an entire watcher worker indefinitely.
     file_timeout_s: float = 600.0
-    # Global cap on total in-flight contextualization requests across all files.
-    # Prevents N concurrent files × per-file concurrency from overwhelming Stargate.
-    contextualize_global_max_concurrency: int = (
-        DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY
-    )
 
     def get_scope_for_path(self, file_path: str) -> str:
         """Longest-prefix match over scopes; leaf-preferred on ties.
@@ -473,6 +477,13 @@ def load_config() -> RagConfig:
         contextualize_max_concurrency = raw_ctx_concurrency
     else:
         contextualize_max_concurrency = DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
+    raw_ctx_request_timeout = parsed_root.get(
+        "contextualize_request_timeout_s", DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S
+    )
+    if isinstance(raw_ctx_request_timeout, int | float) and raw_ctx_request_timeout > 0:
+        contextualize_request_timeout_s = float(raw_ctx_request_timeout)
+    else:
+        contextualize_request_timeout_s = DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S
     raw_ctx_client_timeout = parsed_root.get(
         "contextualize_client_timeout_s", DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
     )
@@ -480,15 +491,26 @@ def load_config() -> RagConfig:
         contextualize_client_timeout_s = float(raw_ctx_client_timeout)
     else:
         contextualize_client_timeout_s = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
-    raw_ctx_global = parsed_root.get(
-        "contextualize_global_max_concurrency",
-        DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY,
+    raw_ctx_tail_idle_timeout = parsed_root.get(
+        "contextualize_tail_idle_timeout_s",
+        DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S,
     )
-    if isinstance(raw_ctx_global, int) and raw_ctx_global >= 1:
-        contextualize_global_max_concurrency = raw_ctx_global
+    if (
+        isinstance(raw_ctx_tail_idle_timeout, int | float)
+        and raw_ctx_tail_idle_timeout > 0
+    ):
+        contextualize_tail_idle_timeout_s = float(raw_ctx_tail_idle_timeout)
     else:
-        contextualize_global_max_concurrency = (
-            DEFAULT_CONTEXTUALIZE_GLOBAL_MAX_CONCURRENCY
+        contextualize_tail_idle_timeout_s = DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S
+    raw_ctx_tail_ratio = parsed_root.get(
+        "contextualize_tail_min_success_ratio",
+        DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO,
+    )
+    if isinstance(raw_ctx_tail_ratio, int | float) and 0 < raw_ctx_tail_ratio <= 1:
+        contextualize_tail_min_success_ratio = float(raw_ctx_tail_ratio)
+    else:
+        contextualize_tail_min_success_ratio = (
+            DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO
         )
     raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
     if isinstance(raw_reconcile, int | float) and raw_reconcile >= 0:
@@ -534,8 +556,10 @@ def load_config() -> RagConfig:
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
         contextualize_max_concurrency=contextualize_max_concurrency,
+        contextualize_request_timeout_s=contextualize_request_timeout_s,
         contextualize_client_timeout_s=contextualize_client_timeout_s,
-        contextualize_global_max_concurrency=contextualize_global_max_concurrency,
+        contextualize_tail_idle_timeout_s=contextualize_tail_idle_timeout_s,
+        contextualize_tail_min_success_ratio=contextualize_tail_min_success_ratio,
         reconcile_interval_s=reconcile_interval_s,
         reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,

@@ -329,6 +329,7 @@ async def run_scope_freshness_repair(
 
     from services.rag.events.lifecycle import (
         rag_hints_gaps_repaired,
+        rag_vocabulary_classification_failed,
         rag_vocabulary_gaps_detected,
         rag_vocabulary_gaps_repaired,
     )
@@ -338,6 +339,7 @@ async def run_scope_freshness_repair(
     hints_updated: list[str] = []
     vocab_ok: list[str] = []
     vocab_failed: list[str] = []
+    vocab_failure_reasons: dict[str, str] = {}
     no_model_scopes: list[str] = []
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
@@ -401,6 +403,7 @@ async def run_scope_freshness_repair(
                 terms = [t.strip() for t in text.split(",") if t.strip()]
                 if not terms:
                     vocab_failed.append(scope_name)
+                    vocab_failure_reasons[scope_name] = "no_terms"
                     continue
                 desc = descriptions.get(scope_name, "")
                 try:
@@ -421,6 +424,7 @@ async def run_scope_freshness_repair(
 
                 if result is None:
                     vocab_failed.append(scope_name)
+                    vocab_failure_reasons[scope_name] = "local_classification_failed"
                     continue
 
                 await property_index.replace_scope_vocabulary_for_scopes(
@@ -446,13 +450,15 @@ async def run_scope_freshness_repair(
                 )
             failed = sorted(set(frontier_scopes) - written)
             if failed:
+                for scope_name in failed:
+                    vocab_failure_reasons[scope_name] = "frontier_classification_failed"
                 logger.warning(
                     "Frontier vocab classification failed for %d scope(s): %s",
                     len(failed),
                     failed,
                 )
 
-        if vocab_ok:
+        if vocab_ok or (hints_updated and not vocab_failed and not no_model_scopes):
             await property_index.stamp_watermark("vocabulary")
 
         if vocab_failed:
@@ -485,6 +491,19 @@ async def run_scope_freshness_repair(
             rag_vocabulary_gaps_repaired(
                 scopes=sorted(vocab_ok),
                 model=model or "local",
+            )
+        )
+
+    if vocab_failed and event_bus is not None:
+        await event_bus.publish_nowait(
+            rag_vocabulary_classification_failed(
+                scopes=sorted(vocab_failed),
+                model=model or "local",
+                trigger=trigger,
+                reasons={
+                    scope: vocab_failure_reasons.get(scope, "unknown")
+                    for scope in sorted(vocab_failed)
+                },
             )
         )
 

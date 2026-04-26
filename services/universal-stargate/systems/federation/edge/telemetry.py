@@ -339,8 +339,8 @@ def create_model_lifecycle_callbacks(
         """Forward MODEL_LOADING_STARTED to connected peers.
 
         Required so the master can apply loading-state telemetry and emit a
-        coordination event for host-side subscribers (e.g. RAG
-        ContextualizeModelCoordinator). Without this forward the master has
+        coordination event for host-side subscribers (e.g. RAG AdmissionGate).
+        Without this forward the master has
         no signal that a cold-load window opened on this gateway.
         """
         payload = {"model_id": model_id}

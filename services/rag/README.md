@@ -42,7 +42,7 @@ All current retrieval observations are against `qwen3-14b` extraction + local vo
 2. **Source hashing** — plain SHA-256 of file bytes is stored as `source_hash` on every chunk (PDF, Markdown, HTML, etc.). This hash serves as the universal join key to the `articles` table for query-time metadata enrichment.
 3. **Knowledge extraction** — the `rag-extraction` LLM pipeline extracts entities, types, facets, topics, and relations from each chunk. Results are stored in both ChromaDB metadata and a SQLite-backed property inverted index. This is the most expensive index-time step, but it enables deterministic metadata boost and IDF expansion at search time.
 4. **Full-text indexing (FTS5)** — every chunk's text is indexed in a SQLite FTS5 full-text index alongside the vector store. This powers Pool B sparse retrieval with BM25 scoring — no embedding model involved. Lives in the same `rag_metadata.db` as the property index.
-5. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary. A global capacity gate (`FifoCapacityGate`) bounds total in-flight contextualization requests across all concurrent files — see [Concurrency: Global Contextualization Gate](#concurrency-global-contextualization-gate).
+5. **Contextualization** — on by default (omit `contextualize_model` or set it to a model ID). Per-chunk LLM-generated context prefixes are prepended only for embedding; stored document text stays unchanged. Set `contextualize_model: ""` to disable. Improves retrieval when chunks share overlapping vocabulary. Index-time LLM submissions coordinate with Stargate through `AdmissionGate` — see [Coordination: Event-Driven Admission Gate](#coordination-event-driven-admission-gate).
 6. **Embedding** — chunks (with context prefix when contextualization ran) are embedded via the configured local embedding model (default: `qwen3-embedding-8b`) through the Gateway and stored in ChromaDB with cosine similarity.
 7. **Pending journal** — tracks in-flight indexing operations. On restart, interrupted files are re-indexed before the watcher starts, eliminating dangling pointers.
 
@@ -161,7 +161,7 @@ Reranker model lifecycle is managed by Gateway; RAG no longer hosts a local rera
 
 | Model ID | Description |
 |----------|-------------|
-| `rag-context` | Returns assembled context chunks (no answer generation). Default for MCP `rag_search`. |
+| `rag-context` | Returns assembled context chunks (no answer generation). Default for MCP `rag(op="search")`. |
 | `rag-context-rewrite` | Legacy: 10-step LLM rewriting chain. Not routed by default — preserved for comparison. |
 | `rag-answer` | Context retrieval + grounded answer generation |
 | `rag-answer-deep` | Context retrieval + iterative refinement + answer generation |
@@ -290,6 +290,10 @@ knowledge_extraction:
 
 automatic_indexing_enabled: true
 post_index_enforcement: strict   # strict | warn — strict returns 503 until enrichment is current
+contextualize_request_timeout_s: 300  # server-side budget for each context LLM call
+contextualize_client_timeout_s: 600   # outer RAG HTTP ceiling; must exceed request timeout
+contextualize_tail_idle_timeout_s: 45 # abandon stragglers after progress stalls
+contextualize_tail_min_success_ratio: 0.5 # tail policy starts only after enough successes
 
 # Vocabulary taxonomy: ordered list of classification categories.
 # Order determines retrieval anchor priority — index 0 = highest priority.
@@ -312,7 +316,10 @@ vocabulary_taxonomy:
 | `knowledge_extraction` | LLM extraction config — pipeline, boost factor, retry limits |
 | `post_index_enforcement` | `strict` (default): return 503 on search until post-index enrichment watermarks are current. `warn`: log ERROR at startup but continue serving |
 | `contextualize_model` | Model ID for per-chunk context generation before embedding. Omit for default (on); set to `""` to disable |
-| `contextualize_global_max_concurrency` | Global cap on total in-flight contextualization requests across all concurrent files. Default 16. See [Concurrency: Global Contextualization Gate](#concurrency-global-contextualization-gate) |
+| `contextualize_request_timeout_s` | Per-context LLM request budget sent to Stargate as `X-Request-Timeout`. Default 300s |
+| `contextualize_client_timeout_s` | Outer RAG HTTP timeout covering queue/load plus request execution. Default 600s |
+| `contextualize_tail_idle_timeout_s` | No-progress tail budget after enough chunks have succeeded. Default 45s; abandoned stragglers remain cache misses |
+| `contextualize_tail_min_success_ratio` | Fraction of cache-miss chunks that must succeed before tail abandonment may fire. Default 0.5 |
 | `reconcile_interval_s` | Base seconds between watcher reconcile sweeps. Default 300 (5 min). 0 = disabled. Reconcile uses the same worker pool as initial reindex; when a sweep recovers files, the next sweep runs after 30 s (busy interval), otherwise after the full interval |
 | `vocabulary_taxonomy` | Ordered list of vocabulary categories for classification. Order = retrieval anchor priority. Extend to add domain-specific categories; re-classify affected scopes to take effect. Default: `[specification, practitioner, academic]` |
 
@@ -355,62 +362,58 @@ Operator visibility:
 - `rag.contextualize.cache.lookup.failed` — lookup degraded to full
   recompute
 
+Partial contextualization is an exception path. RAG still indexes the file so
+stragglers do not waste worker time, but every degraded attempt emits
+`rag.contextualization.partial` and stores a durable row in
+`contextualization_exceptions` with failed/abandoned chunk counts, abandoned
+chunk indices, request IDs, timing, model, operation ID, and first failure.
+
 Note: after the cache ships, `rag.contextualization.started/.completed`
 `chunk_count` reports **cache misses only** (actual LLM work). Use
 `rag.contextualize.cache.evaluated.total_chunks` for the full file total.
 
-## Concurrency: Global Contextualization Gate
+## Coordination: Event-Driven Admission Gate
 
-Contextualization sends one LLM request per chunk per file. When the watcher
-indexes N files concurrently (each with up to `contextualize_max_concurrency`
-workers), total in-flight requests can reach N × max_concurrency — enough to
-overwhelm Stargate's queue and cause cascading timeouts.
+Contextualization sends one LLM request per chunk per file. RAG no longer caps
+global in-flight contextualization locally; Stargate owns model admission and
+loads models on demand. During bulk indexing, RAG workers use `AdmissionGate`
+as an advisory pause/resume surface so large batches do not keep submitting into
+known cold-load or starvation-drain windows.
 
-The **global contextualization gate** (`FifoCapacityGate` from `universal_concurrency`)
-caps total in-flight contextualization requests across all concurrent files:
+`AdmissionGate` subscribes to Stargate coordination signals:
 
-```
-                ┌─── file A workers ───┐
-                │  acquire → LLM → release │
- global gate    │  acquire → LLM → release │    limit = 16
- (FIFO, cap=16) ├─── file B workers ───┤    (configurable)
-                │  acquire → LLM → release │
-                │  acquire → LLM → release │
-                └──────────────────────────┘
-```
+- `capacity.admission.paused` / `capacity.admission.resumed` — close or open
+  the gate when Stargate is draining capacity for a starved competing model.
+- `model.loading.started` / `model.loaded` — close or open the gate during the
+  contextualize model's cold-load window.
+- `model.load.failed` — reopen the gate so the next request retries through
+  Stargate and fails loudly if the model cannot load.
+- `federation.gateway.degraded` / `federation.gateway.recovered` — close the
+  gate while a federated gateway is timing out, then reopen only after recovery
+  and after any model/capacity close reason has cleared.
 
-- **Per-file `max_concurrency`** (default 8) remains the inner cap — controls
-  how many chunks from one file are in flight simultaneously.
-- **`contextualize_global_max_concurrency`** (default 16) is the outer cap —
-  bounds total across all files. When the gate is full, workers block in FIFO
-  order until a slot frees.
-- Gate acquire timeout = `client_timeout_s` (default 300s). On timeout the chunk
-  gets an empty context prefix and indexing continues — graceful degradation.
-
-### Configuration
-
-```yaml
-# rag.yaml
-contextualize_global_max_concurrency: 16   # total across all concurrent files
-contextualize_max_concurrency: 8           # per-file worker cap
-```
+The gate defaults OPEN. The first cold batch can still produce a bounded burst
+before `model.loading.started` reaches RAG; subsequent batches wait on the
+event-driven gate. Per-request `X-Request-Timeout` enforcement in Stargate is
+the correctness backstop.
 
 ### Implementation
 
 | File | Role |
 |------|------|
-| `services/rag/config.py` | `contextualize_global_max_concurrency` field + YAML parsing |
-| `services/rag/rag_service/state.py` | `_global_contextualize_gate: FifoCapacityGate \| None` slot |
-| `services/rag/rag_service/lifecycle.py` | Init gate at startup (when `contextualize_model` is set), clear at shutdown |
-| `services/rag/contextualize.py` | Workers acquire/release the gate around each LLM call |
-| `services/rag/rag_service/indexing.py` | Passes `state._global_contextualize_gate` to `contextualize_chunks()` |
+| `services/rag/admission_gate.py` | Subscribes to Stargate coordination events and exposes `wait_for_admission()` |
+| `services/rag/rag_service/state.py` | Stores `_admission_gate: AdmissionGate \| None` |
+| `services/rag/rag_service/lifecycle.py` | Starts the gate when `contextualize_model` is set; stops it on shutdown |
+| `services/rag/contextualize.py` | Workers wait for admission before each LLM call |
+| `services/rag/rag_service/indexing.py` | Passes `state._admission_gate` to `contextualize_chunks()` |
 
 ### When to apply this pattern
 
 Any RAG pipeline step that sends per-chunk LLM requests during bulk indexing is
-a candidate for the same gate pattern: a global `FifoCapacityGate` initialized
-at startup, threaded through indexing into the worker function, acquired before
-the LLM call, released in a `finally` block.
+a candidate for the same admission pattern: construct the shared `AdmissionGate`
+at startup, thread it through indexing into the worker function, and call
+`wait_for_admission()` before the LLM request. Do not reintroduce local global
+concurrency caps or wall-clock backoff.
 
 ## Storage
 
@@ -486,13 +489,13 @@ Use `scripts/repair-rag-article-lifecycle.py` (default dry-run) to audit
 
 ## Post-Index Enrichment
 
-Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_noise` / `noise_reason` tagging (heuristic; `normalize_noise_metadata` aligns legacy `is_bibliography` and fills missing `noise_reason` on upsert). Pipeline fixtures and snapshots may keep `is_bibliography: false` only — readers use `chunk_metadata_is_noise` which accepts both keys. After a large corpus refresh, three manual enrichment steps rebuild derived artifacts:
+Indexing handles chunk extraction, embedding, knowledge extraction, and per-chunk `is_noise` / `noise_reason` tagging (heuristic; `normalize_noise_metadata` aligns legacy `is_bibliography` and fills missing `noise_reason` on upsert). Pipeline fixtures and snapshots may keep `is_bibliography: false` only — readers use `chunk_metadata_is_noise` which accepts both keys. After a large corpus refresh, three enrichment steps rebuild derived artifacts. The serving gate tracks corpus hints and scope vocabulary; LLM noise classification is an optional backfill because index-time heuristic noise tagging keeps search usable.
 
 1. **Corpus hints** (`python -m services.rag.corpus_hints`) — aggregates terms from the property index per scope into the `corpus_hints` table in `rag_metadata.db`.
 2. **Scope vocabulary** (`scripts/rag/classify_vocabulary.py`) — LLM-classifies corpus hint terms into taxonomy categories (configured by `vocabulary_taxonomy` in rag.yaml) and writes to the `scope_vocabulary` table in `rag_metadata.db`. Fail-closed: aborts without writing if any scope fails classification.
 3. **Noise classification** (`scripts/rag/classify_noise.py`) — LLM-classifies chunks: `--target bibliography` writes `is_noise`; `non_intelligible` writes `is_non_intelligible`; `--target describe` writes `noise_description` for review. Resumable by metadata key.
 
-Each step stamps a watermark in `rag_metadata.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until all watermarks are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
+Each step stamps a watermark in `rag_metadata.db`. When `post_index_enforcement: strict` (default), the service returns 503 on search requests until serving-critical watermarks (`corpus_hints`, `vocabulary`) are current relative to the last reindex. In `warn` mode, an ERROR is logged at startup but search continues.
 
 Verify watermark freshness:
 
@@ -538,7 +541,7 @@ For subsystem-specific investigation, reference these paths directly:
 | Vocabulary classification | `scripts/rag/classify_vocabulary.py` | LLM-based taxonomy classification (configurable categories) |
 | Enrichment runbook | `tasks/runbooks/rag-post-index-refresh.md` | Operator post-index workflow |
 | RAG config | `services/rag/config.py` | `RagConfig` dataclass, YAML parsing |
-| MCP RAG tools | `services/mcp-server/tools/rag.py` | `rag_search`, `rag_list_scopes`, prefix passthrough |
+| MCP RAG tools | `services/mcp-server/tools/rag.py` | `rag(op="search")`, `rag(op="list_scopes")`, prefix passthrough |
 
 ## Known Gaps
 

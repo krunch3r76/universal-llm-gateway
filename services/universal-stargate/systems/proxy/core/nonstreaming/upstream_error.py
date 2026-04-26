@@ -6,7 +6,7 @@ so that the proxy can assign the correct ErrorCode and retryability.
 
 from typing import Any
 
-from universal_protocol import ErrorCode
+from universal_protocol import ERROR_METADATA, ErrorCode
 
 _MAX_UPSTREAM_ERROR_CHARS: int = 20_000
 
@@ -75,6 +75,24 @@ def is_upstream_model_not_loaded(upstream_payload: dict[str, Any]) -> bool:
     return isinstance(body_text, str) and "model_not_loaded" in body_text
 
 
+def extract_upstream_envelope_code(upstream_payload: dict[str, Any]) -> str | None:
+    """Extract the canonical error envelope ``code`` from an upstream response.
+
+    Federated edges raise via ``HTTPException(detail=error_envelope(...))``,
+    which FastAPI serializes as ``{"detail": {"code": ..., ...}}``. Some
+    surfaces emit the envelope at the top level instead (``{"code": ...}``).
+    Returns the code string when present; otherwise None — cloud providers
+    and unstructured/HTML responses fall through to status-based mapping.
+    """
+    body_json = upstream_payload.get("body_json")
+    if not isinstance(body_json, dict):
+        return None
+    detail = body_json.get("detail")
+    candidate = detail if isinstance(detail, dict) else body_json
+    code = candidate.get("code")
+    return code if isinstance(code, str) else None
+
+
 def map_upstream_status_to_error_code(
     upstream_status_code: int,
     upstream_payload: dict[str, Any],
@@ -104,6 +122,17 @@ def determine_upstream_error_semantics(
 ) -> tuple[ErrorCode, bool, int]:
     """Determine ErrorCode, retryability, and proxy HTTP status for an upstream failure.
 
+    Resolution order for ``error_code``:
+    1. Canonical envelope ``code`` from the upstream body, when present and
+       recognized as a known ``ErrorCode``. Status alone cannot distinguish
+       ``REQUEST_TIMEOUT`` from ``GATEWAY_DISCONNECTED`` (both 5xx) — preserving
+       the upstream code lets the federation circuit breaker apply DEGRADED vs
+       UNHEALTHY semantics. Retryability for this branch comes from the
+       canonical ``ERROR_METADATA`` mapping.
+    2. Status-based fallback (``map_upstream_status_to_error_code``) when no
+       canonical envelope is present (cloud providers, plaintext/HTML errors,
+       malformed JSON) or the envelope code is unknown to ``ErrorCode``.
+
     Cloud provider 4xx responses represent client/request errors and are preserved
     as client-visible 4xx. Federated/local 503/504 responses are also preserved so
     transient capacity and load-pressure signals do not get misclassified as hard
@@ -119,9 +148,14 @@ def determine_upstream_error_semantics(
         (error_code, retryable, response_http_status) where response_http_status
         is the HTTP status code to be used in the proxy's response.
     """
-    error_code, retryable = map_upstream_status_to_error_code(
-        upstream_status_code, upstream_payload
-    )
+    envelope_code = extract_upstream_envelope_code(upstream_payload)
+    if envelope_code is not None and envelope_code in ErrorCode:
+        error_code = ErrorCode(envelope_code)
+        retryable = ERROR_METADATA[error_code][0]
+    else:
+        error_code, retryable = map_upstream_status_to_error_code(
+            upstream_status_code, upstream_payload
+        )
     if is_cloud and 400 <= upstream_status_code < 500:
         response_http_status = upstream_status_code
     elif upstream_status_code in {503, 504}:

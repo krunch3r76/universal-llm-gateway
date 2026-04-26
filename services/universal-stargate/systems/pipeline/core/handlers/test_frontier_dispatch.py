@@ -231,7 +231,7 @@ def test_tool_event_translation_produces_frontier_signals(
     )
     cb(
         "pipeline.frontier.dispatch.tool.failed",
-        {"tool_name": "rag_search", "turn": 2, "elapsed_ms": 5.0, "provider": "openai"},
+        {"tool_name": "rag", "turn": 2, "elapsed_ms": 5.0, "provider": "openai"},
     )
 
     signals = [e.signal for e in published_events]
@@ -389,6 +389,40 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
 
 
 @pytest.mark.asyncio
+async def test_handler_persona_free_defaults_use_canonical_rag_tool(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_defs() -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": name,
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+            for name in ["rag"]
+        ]
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["tools"] = kwargs["req"].tools
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "get_mcp_tool_definitions", fake_defs)
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "openai/gpt-5.4"})
+    await handler.execute(step, context)
+
+    assert [t["function"]["name"] for t in captured["tools"]] == ["cortex", "rag"]
+
+
+@pytest.mark.asyncio
 async def test_handler_endpoint_supplied_tools_accept_live_mcp_names(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
@@ -422,6 +456,93 @@ async def test_handler_endpoint_supplied_tools_accept_live_mcp_names(
     await handler.execute(step, context)
 
     assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
+
+
+@pytest.mark.asyncio
+async def test_handler_rejects_raw_agent_plus_endpoint_tools(
+    handler: FrontierDispatchHandler,
+) -> None:
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "openai/gpt-5.4",
+            "agent": "orion",
+            "tools": ["web_search"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="only supported via frontier_generate"):
+        await handler.execute(step, context)
+
+
+@pytest.mark.asyncio
+async def test_handler_endpoint_agent_plus_tools_preserves_persona_metadata(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    published_events: list[Any],
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_resolve(names: list[str]) -> list[dict[str, Any]]:
+        assert names == ["web_search"]
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Search the web",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["tools"] = kwargs["req"].tools
+        captured["system"] = kwargs["req"].system
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "resolve_tool_definitions", fake_resolve)
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "openai/gpt-5.4",
+            "agent": "orion",
+            "system": "SYSTEM[orion]",
+            "tools": ["web_search"],
+            "_endpoint_request_id": "frontier-req-1",
+        }
+    )
+
+    out = await handler.execute(step, context)
+
+    signals = [e.signal for e in published_events]
+    assert "pipeline.frontier.dispatch.hydrated" not in signals
+    assert "pipeline.frontier.dispatch.completed" in signals
+    assert out.json["hydration"] == {
+        "agent": "orion",
+        "tool_resolution": "endpoint-supplied",
+    }
+    assert out.system_prompt.endswith("SYSTEM[orion]")
+    assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
+
+
+@pytest.mark.asyncio
+async def test_handler_rejects_unknown_reasoning_effort(
+    handler: FrontierDispatchHandler,
+) -> None:
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "openai/gpt-5.4",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": "hi"},
+        }
+    )
+
+    with pytest.raises(ValueError, match="reasoning_effort='hi'"):
+        await handler.execute(step, context)
 
 
 def test_resolve_remote_mcp_defaults_by_provider() -> None:

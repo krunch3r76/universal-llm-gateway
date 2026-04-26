@@ -233,15 +233,16 @@ class RemoteMcpUnsupportedError(PipelineError):
     value is incompatible with the resolved provider's current capability.
 
     Enforcement lives in the step handler so direct pipeline dispatches (not
-    just MCP ``frontier_generate``) are validated. Capability matrix:
+    just MCP ``frontier_generate``) are validated. Capability matrix
+    (∀ provider ∉ the handler's remote-MCP allowlist: ``remote_mcp=True`` is
+    rejected; ∀ provider: ``remote_mcp=False`` is accepted):
 
-    - ``anthropic``: ``remote_mcp`` MUST be True (native MCP is production-stable).
-    - ``openai``: ``remote_mcp`` MUST be False until vortex auth passthrough
-      is fixed on the OpenAI responses path.
-    - ``google``: ``remote_mcp`` MUST be False — Gemini has no native remote
-      MCP protocol.
-    - ``xai``: either value is allowed (False is default; True requires the
-      multi-agent model variant).
+    - ``anthropic``: either value is allowed; the default is ``True`` iff
+      ``mcp`` is enabled. ``remote_mcp=True`` follows the native
+      ``mcp_toolset`` path.
+    - ``openai`` / ``google`` / ``xai``: ``remote_mcp=True`` is rejected.
+      Only providers in the handler's remote-MCP allowlist expose a native
+      remote-MCP toolset.
     """
 
     step_name: str

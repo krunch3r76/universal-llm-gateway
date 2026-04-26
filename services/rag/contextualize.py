@@ -13,22 +13,20 @@ Architecture:
   - Workers send chunk requests directly to Stargate. Stargate is the sole
     authority over model loading; if the contextualize_model is cold, the
     request blocks until Stargate loads it on demand.
-  - Stampede protection has three layers, each strictly optimization:
+  - Stampede protection has two layers, each strictly optimization:
       1. ``max_concurrency`` bounds in-flight workers per file.
-      2. ``global_gate`` (FifoCapacityGate) bounds total in-flight requests
-         across all concurrent files.
-      3. ``coordinator`` pauses new acquisitions while the contextualize
-         model is mid-load (subscribed to Stargate's `model.loading.started`
-         coordination signal — see contextualize_coordinator.py).
-    None of these are correctness gates. Per the stargate-model-lifecycle
+      2. ``admission_gate`` (AdmissionGate) pauses workers while Stargate's
+         admission is closed, the model is mid-cold-load, or a federated
+         gateway is degraded (subscribed to Stargate's coordination signals
+         — see admission_gate.py).
+    Neither is a correctness gate. Per the stargate-model-lifecycle
     invariant, callers MUST proceed when coordination signals are
-    unavailable; the per-chunk ``client_timeout_s`` is the correctness
-    backstop.
+    unavailable; the per-chunk X-Request-Timeout enforced server-side is
+    the correctness backstop.
   - X-Request-Timeout header enforces per-chunk inference deadline from the
     moment Stargate acquires the slot, not from enqueue time.
-  - Per-chunk failures propagate so indexing fails loudly. Silently
-    embedding chunks without a context prefix is a retrieval-quality
-    regression, not a graceful degradation.
+  - Per-chunk failures are reported to the caller for partial-tolerant
+    indexing; failed chunks are embedded prefix-free and remain cache misses.
 """
 
 from __future__ import annotations
@@ -37,18 +35,35 @@ import asyncio
 import hashlib
 import inspect
 import logging
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from math import ceil
+from time import monotonic
+from typing import TYPE_CHECKING, Protocol
+from uuid import uuid4
 
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
+from universal_event_bus.events.debug import emit_debug_event
 
 from services.rag.chunkers import Chunk
 
 if TYPE_CHECKING:
-    from universal_concurrency import FifoCapacityGate
-
-    from services.rag.contextualize_coordinator import ContextualizeModelCoordinator
+    from services.rag.admission_gate import AdmissionGate
 
 logger = logging.getLogger(__name__)
+
+
+class ContextualizationDiagnosticsSink(Protocol):
+    async def __call__(
+        self,
+        event: str,
+        *,
+        chunk_index: int,
+        request_id: str,
+        duration_seconds: float | None = None,
+        error: str | None = None,
+        output_chars: int | None = None,
+    ) -> None: ...
+
 
 # TODO: Detect Persian/Arabic-script chunks and request Farsi context prefixes.
 # Mixed-language prefixes are acceptable for now because embedding quality remains
@@ -98,14 +113,39 @@ def _build_chunk_context(
     return "\n\n".join(parts)
 
 
-class ContextualizationError(RuntimeError):
-    """Raised when one or more chunks failed to contextualize.
+@dataclass(slots=True, kw_only=True, frozen=True)
+class ContextualizationResult:
+    """Outcome of contextualizing one file's chunks.
 
-    Indexing must fail loudly when contextualization is configured but cannot
-    complete — silently embedding chunks without context prefixes degrades
-    retrieval quality without any visible signal. The reconcile sweep retries
-    failed files; transient failures (cold load, eviction) eventually succeed.
+    contexts: list of length len(chunks); "" at positions that failed.
+    failed_indices: positions that failed (parallel to contexts).
+    first_failure_repr: repr() of the first failure exception, for logging.
+    failure_reprs: chunk_index → repr(exc)[:200] for every failed chunk.
+        Used by callers to emit per-chunk events without re-deriving the
+        exception from failed_indices.
+    request_ids: chunk_index → Stargate request ID, for event correlation.
+    abandoned_indices: chunk positions abandoned by the tail-idle policy.
+    tail_idle_seconds: observed no-progress interval that triggered abandonment.
+
+    Empty-prefix invariant (see contextualize_cache.py): "" entries flow
+    into embeddings prefix-free and are filtered out before cache write.
     """
+
+    contexts: list[str]
+    failed_indices: list[int]
+    first_failure_repr: str | None
+    failure_reprs: dict[int, str]
+    request_ids: dict[int, str]
+    abandoned_indices: list[int]
+    tail_idle_seconds: float | None
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.failed_indices)
+
+    @property
+    def successful_count(self) -> int:
+        return len(self.contexts) - self.failed_count
 
 
 async def contextualize_chunks(
@@ -113,12 +153,15 @@ async def contextualize_chunks(
     source: str,
     model: str,
     *,
-    timeout_s: float = 30.0,
+    timeout_s: float = 300.0,
     max_concurrency: int = 32,
-    client_timeout_s: float = 60.0,
-    global_gate: FifoCapacityGate | None = None,
-    coordinator: ContextualizeModelCoordinator | None = None,
-) -> list[str]:
+    client_timeout_s: float = 600.0,
+    tail_idle_timeout_s: float = 45.0,
+    tail_min_success_ratio: float = 0.5,
+    chunk_indices: list[int] | None = None,
+    diagnostics_sink: ContextualizationDiagnosticsSink | None = None,
+    admission_gate: AdmissionGate | None = None,
+) -> ContextualizationResult:
     """Generate context prefixes for chunks via LLM.
 
     Each context is a 50-100 token disambiguation prefix (per Anthropic's
@@ -127,13 +170,9 @@ async def contextualize_chunks(
 
     Workers send requests directly to Stargate; Stargate handles model loading
     transparently per the stargate-model-lifecycle invariant. Stampede
-    protection comes from ``max_concurrency`` (per-file), the optional
-    ``global_gate`` (cross-file), and the optional ``coordinator`` (pauses
-    new acquisitions while the model is actively cold-loading).
-
-    Per-chunk failures propagate as :class:`ContextualizationError` after
-    workers drain — silent degradation to no-context embeddings is a
-    retrieval-quality regression and not allowed.
+    protection comes from ``max_concurrency`` (per-file) and the optional
+    ``admission_gate`` (pauses workers while Stargate's admission is closed
+    or the model is mid-cold-load, or while a federated gateway is degraded).
 
     Args:
         chunks: Chunks to contextualize.
@@ -147,96 +186,204 @@ async def contextualize_chunks(
         client_timeout_s: Outer HTTP timeout covering queue wait and inference.
             Must be wide enough to cover Stargate's load-on-demand window for
             a cold model.
-        global_gate: Optional cross-file capacity gate. When provided, each
-            worker acquires a slot before calling the LLM, bounding total
-            in-flight contextualization requests across all concurrent files.
-        coordinator: Optional batch-pipeline coordinator subscribed to
-            Stargate's model lifecycle signals. When provided, each worker
-            awaits the coordinator's "model believed available" hint before
-            acquiring the global gate — pure optimization, never a
-            correctness gate.
+        tail_idle_timeout_s: After enough chunks have settled, stop waiting for
+            stragglers if no chunk makes progress for this many seconds.
+        tail_min_success_ratio: Fraction of chunks that must settle before the
+            tail-idle policy may abandon stragglers.
+        chunk_indices: Optional original source chunk indices. Used when
+            contextualizing cache misses only, so diagnostics refer to the
+            source chunk positions rather than the miss-list positions.
+        diagnostics_sink: Optional async callback for per-chunk diagnostics.
+        admission_gate: Optional event-driven admission gate. When provided,
+            each worker awaits the configured model's admission gate before
+            submitting. Coordination only — timeout returns False and the
+            worker proceeds, with the per-chunk X-Request-Timeout (Phase 1)
+            backstopping correctness.
 
     Returns:
-        List of context strings (one per chunk).
+        ContextualizationResult: list of contexts (one per chunk; "" at
+        positions that failed) plus structured failure metadata. Failed
+        chunks are embedded prefix-free; the file is still indexable.
 
-    Raises:
-        ContextualizationError: One or more chunks failed; the file should be
-            re-attempted (the reconcile sweep handles retries).
+    No exceptions are raised for per-chunk failures — they are reported
+    via the returned ContextualizationResult. Infrastructure errors that
+    prevent the worker pool from running at all (e.g. asyncio.CancelledError
+    from shutdown) propagate normally.
     """
     if not chunks:
-        return []
+        return ContextualizationResult(
+            contexts=[],
+            failed_indices=[],
+            first_failure_repr=None,
+            failure_reprs={},
+            request_ids={},
+            abandoned_indices=[],
+            tail_idle_seconds=None,
+        )
 
     results: list[str] = [""] * len(chunks)
     failures: list[tuple[int, BaseException]] = []
+    failure_reprs: dict[int, str] = {}
+    request_ids: dict[int, str] = {}
+    abandoned_indices: list[int] = []
+    tail_idle_seconds: float | None = None
+    started_indices: set[int] = set()
     worker_count = max(1, min(max_concurrency, len(chunks)))
-    queue: asyncio.Queue[int | None] = asyncio.Queue()
-    for idx in range(len(chunks)):
-        queue.put_nowait(idx)
+    external_indices = chunk_indices or list(range(len(chunks)))
+    if len(external_indices) != len(chunks):
+        raise ValueError("chunk_indices length must match chunks length")
 
-    async def _worker(worker_id: int) -> None:
-        while True:
-            idx = await queue.get()
+    semaphore = asyncio.Semaphore(worker_count)
+
+    async def _run_chunk(idx: int) -> None:
+        request_id = str(uuid4())
+        external_idx = external_indices[idx]
+        request_ids[external_idx] = request_id
+        start = monotonic()
+        async with semaphore:
+            started_indices.add(idx)
+            if diagnostics_sink is not None:
+                await diagnostics_sink(
+                    "started",
+                    chunk_index=external_idx,
+                    request_id=request_id,
+                )
             try:
-                if idx is None:
-                    return
-                try:
-                    if coordinator is not None:
-                        await coordinator.wait_for_available(
-                            model, timeout=client_timeout_s
-                        )
-                    if global_gate is not None:
-                        await global_gate.acquire(
-                            f"ctx-{source}-{idx}",
-                            timeout=client_timeout_s,
-                        )
-                    try:
-                        user_msg = _build_chunk_context(idx, chunks, source)
-                        context = await _call_llm(
-                            user_msg,
-                            model,
-                            timeout_s,
-                            client_timeout_s=client_timeout_s,
-                        )
-                        results[idx] = context
-                    finally:
-                        if global_gate is not None:
-                            await global_gate.release()
-                except Exception as exc:
-                    failures.append((idx, exc))
-                    logger.warning(
-                        "Contextualization failed for chunk %d of %s: %r",
-                        idx,
-                        source,
-                        exc,
+                if admission_gate is not None:
+                    await admission_gate.wait_for_admission(
+                        model, timeout=client_timeout_s
                     )
-            finally:
-                queue.task_done()
+                user_msg = _build_chunk_context(idx, chunks, source)
+                context = await _call_llm(
+                    user_msg,
+                    model,
+                    timeout_s,
+                    client_timeout_s=client_timeout_s,
+                    request_id=request_id,
+                )
+                if not context:
+                    raise ValueError("model returned empty context for chunk")
+                results[idx] = context
+                if diagnostics_sink is not None:
+                    await diagnostics_sink(
+                        "completed",
+                        chunk_index=external_idx,
+                        request_id=request_id,
+                        duration_seconds=monotonic() - start,
+                        output_chars=len(context),
+                    )
+            except Exception as exc:
+                failures.append((external_idx, exc))
+                failure_reprs[external_idx] = repr(exc)[:200]
+                logger.warning(
+                    "Contextualization failed for chunk %d of %s: %r",
+                    external_idx,
+                    source,
+                    exc,
+                )
+                if diagnostics_sink is not None:
+                    await diagnostics_sink(
+                        "failed",
+                        chunk_index=external_idx,
+                        request_id=request_id,
+                        duration_seconds=monotonic() - start,
+                        error=repr(exc)[:200],
+                    )
 
-    workers = [
-        asyncio.create_task(_worker(i), name=f"contextualize-worker-{i}")
-        for i in range(worker_count)
-    ]
-    await queue.join()
-    for _ in workers:
-        queue.put_nowait(None)
-    await asyncio.gather(*workers)
+    tasks: dict[asyncio.Task[None], int] = {
+        asyncio.create_task(_run_chunk(idx), name=f"contextualize-chunk-{idx}"): idx
+        for idx in range(len(chunks))
+    }
+    pending: set[asyncio.Task[None]] = set(tasks)
+    last_progress = monotonic()
+    tail_min_successes = max(
+        1,
+        min(len(chunks), ceil(len(chunks) * tail_min_success_ratio)),
+    )
+
+    while pending:
+        done, pending = await asyncio.wait(
+            pending,
+            timeout=tail_idle_timeout_s,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        if done:
+            last_progress = monotonic()
+            for task in done:
+                await task
+            continue
+        if sum(1 for context in results if context) < tail_min_successes:
+            continue
+
+        idle_s = monotonic() - last_progress
+        tail_idle_seconds = idle_s
+        active_tasks = [task for task in pending if tasks[task] in started_indices]
+        if not active_tasks:
+            continue
+        for task in active_tasks:
+            task.cancel()
+        abandoned_tasks = active_tasks
+        await asyncio.gather(*abandoned_tasks, return_exceptions=True)
+        for task in abandoned_tasks:
+            idx = tasks[task]
+            external_idx = external_indices[idx]
+            request_id = request_ids.get(external_idx, "")
+            abandoned_indices.append(external_idx)
+            cancel_requested = await _cancel_llm_request(request_id, model)
+            msg = (
+                "ContextualizationTailAbandoned("
+                f"request_id={request_id}, idle_s={idle_s:.3f}, "
+                f"tail_idle_timeout_s={tail_idle_timeout_s:.3f}, "
+                f"cancel_requested={cancel_requested})"
+            )
+            failure_reprs[external_idx] = msg
+            if diagnostics_sink is not None:
+                await diagnostics_sink(
+                    "abandoned",
+                    chunk_index=external_idx,
+                    request_id=request_id,
+                    duration_seconds=idle_s,
+                    error=msg,
+                )
+        pending.difference_update(abandoned_tasks)
+        last_progress = monotonic()
 
     successful = sum(1 for r in results if r)
-    logger.info(
-        "Contextualized %d/%d chunks for %s (model=%s, concurrency=%d)",
-        successful,
-        len(chunks),
-        source,
-        model,
-        worker_count,
+    if failures or abandoned_indices:
+        logger.warning(
+            "Partial contextualization for %s: %d/%d chunks succeeded "
+            "(model=%s, concurrency=%d, first failure: chunk %d: %r)",
+            source,
+            successful,
+            len(chunks),
+            model,
+            worker_count,
+            failures[0][0] if failures else abandoned_indices[0],
+            failures[0][1] if failures else failure_reprs[abandoned_indices[0]],
+        )
+    else:
+        logger.info(
+            "Contextualized %d/%d chunks for %s (model=%s, concurrency=%d)",
+            successful,
+            len(chunks),
+            source,
+            model,
+            worker_count,
+        )
+    failed_indices = sorted(idx for idx, _exc in failures)
+    first_repr = repr(failures[0][1]) if failures else None
+    failed_indices = sorted({*failed_indices, *abandoned_indices})
+    if first_repr is None and abandoned_indices:
+        first_repr = failure_reprs[abandoned_indices[0]]
+    return ContextualizationResult(
+        contexts=results,
+        failed_indices=failed_indices,
+        first_failure_repr=first_repr,
+        failure_reprs=failure_reprs,
+        request_ids=request_ids,
+        abandoned_indices=sorted(abandoned_indices),
+        tail_idle_seconds=tail_idle_seconds,
     )
-    if failures:
-        first_idx, first_exc = failures[0]
-        raise ContextualizationError(
-            f"contextualization failed for {len(failures)}/{len(chunks)} chunks "
-            f"of {source} (first failure: chunk {first_idx}: {first_exc!r})"
-        ) from first_exc
-    return results
 
 
 # Timeout is supplied per call so config can shrink the queue wait budget
@@ -275,6 +422,7 @@ async def _call_llm(
     timeout_s: float,
     *,
     client_timeout_s: float,
+    request_id: str,
 ) -> str:
     """Call the contextualization LLM for a single chunk.
 
@@ -286,7 +434,10 @@ async def _call_llm(
     """
     response = await _CLIENT.post(
         "/v1/chat/completions",
-        headers={"X-Request-Timeout": str(timeout_s)},
+        headers={
+            "X-Internal-Request-ID": request_id,
+            "X-Request-Timeout": str(timeout_s),
+        },
         json={
             "model": model,
             "messages": [
@@ -302,3 +453,31 @@ async def _call_llm(
     data = response.json()
     content = data["choices"][0]["message"]["content"]
     return content.strip() if isinstance(content, str) else ""
+
+
+async def _cancel_llm_request(request_id: str, model: str) -> bool:
+    """Best-effort cancellation for abandoned Stargate requests."""
+    if not request_id:
+        return False
+    try:
+        response = await _CLIENT.post(
+            "/api/v1/pipeline/cancel",
+            json={"request_id": request_id, "model_id": model},
+            timeout=5.0,
+        )
+        if response.status_code >= 400:
+            return False
+        data = response.json()
+        return bool(data.get("cancelled"))
+    except Exception as exc:
+        await emit_debug_event(
+            "rag.debug.contextualization",
+            {
+                "step": "cancel_failed",
+                "request_id": request_id,
+                "model": model,
+                "error": repr(exc)[:200],
+            },
+            source="rag.contextualize",
+        )
+        return False

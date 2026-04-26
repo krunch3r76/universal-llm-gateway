@@ -22,11 +22,10 @@ if TYPE_CHECKING:
     import asyncio
 
     import chromadb
-    from universal_concurrency import FifoCapacityGate
     from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 
+    from services.rag.admission_gate import AdmissionGate
     from services.rag.config import RagConfig
-    from services.rag.contextualize_coordinator import ContextualizeModelCoordinator
     from services.rag.property_index import PropertyIndex
     from services.rag.watcher_manager import WatcherManager
 
@@ -63,8 +62,7 @@ _dependency_activation = DependencyActivationState()
 _file_index_locks: dict[str, asyncio.Lock] = {}
 _post_index_stale: bool = False
 _extraction_shutdown: asyncio.Event | None = None
-_global_contextualize_gate: FifoCapacityGate | None = None
-_contextualize_coordinator: ContextualizeModelCoordinator | None = None
+_admission_gate: AdmissionGate | None = None
 
 
 def _article_event_kwargs(

@@ -324,6 +324,7 @@ class RequestExecutor:
                     self._token_allocation_policy,
                     context.federated_gateway,
                     self._federation_forwarder,
+                    self.event_bus,
                 )
             except Exception as e:
                 if fed_gateway and self.event_bus:

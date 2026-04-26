@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from fastapi import HTTPException
-from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status
 
@@ -44,17 +43,7 @@ async def _emit_federation_load_debug(
     request_id: str,
     **extra: Any,
 ) -> None:
-    await emit_debug_event(
-        "debug.federation.load.master",
-        {
-            "step": step,
-            "gateway_id": gateway_id,
-            "model_id": model_id,
-            "request_id": request_id,
-            **extra,
-        },
-        source="stargate",
-    )
+    return None
 
 
 def _format_elapsed_ms(elapsed_ms: float) -> str:

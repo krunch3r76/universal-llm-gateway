@@ -13,6 +13,7 @@ Signals:
     request.completed — request completed successfully
     request.failed — request failed
     request.timed.out — request timed out
+    request.deadline.exceeded — X-Request-Timeout budget exhausted mid-inference
     request.client.disconnected — downstream/client stream disconnected
     request.removed — request removed from queue (client disconnect)
     federation.snapshot.sent — Edge Stargate broadcast snapshot to Master
@@ -165,6 +166,21 @@ Payload: {
     "gateway_url": Optional[str],
     "model_id": str,
     "timeout_seconds": float
+}
+"""
+
+REQUEST_DEADLINE_EXCEEDED = "request.deadline.exceeded"
+"""
+Inference budget exceeded (X-Request-Timeout deadline reached mid-inference).
+
+Distinct from `request.timed.out` (queue TTL expired before admission).
+
+Payload: {
+    "request_id": str,
+    "model_id": str,
+    "gateway_id": str,
+    "deadline_s": float,
+    "elapsed_ms": int
 }
 """
 
@@ -518,6 +534,31 @@ def RequestTimeout(
             "gateway_url": gateway_url,
             "model_id": model_id,
             "timeout_seconds": timeout_seconds,
+        },
+    )
+
+
+@event_factory
+def RequestDeadlineExceeded(
+    request_id: str,
+    model_id: str,
+    gateway_id: str,
+    deadline_s: float,
+    elapsed_ms: int,
+) -> Event:
+    """
+    X-Request-Timeout deadline reached during inference.
+
+    Distinct from queue TTL expiry (request.timed.out).
+    """
+    return Event(
+        signal=REQUEST_DEADLINE_EXCEEDED,
+        payload={
+            "request_id": request_id,
+            "model_id": model_id,
+            "gateway_id": gateway_id,
+            "deadline_s": deadline_s,
+            "elapsed_ms": elapsed_ms,
         },
     )
 

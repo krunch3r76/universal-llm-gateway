@@ -237,7 +237,7 @@ def PipelineFrontierDispatchToolCalled(  # noqa: N802
 
     Payload:
         agent: Persona identity if set, else ``None`` for persona-free dispatches
-        tool_name: Dispatched tool (``cortex``, ``agent_bus``, ``rag_search``, ...)
+        tool_name: Dispatched tool (``cortex``, ``agent_bus``, ``rag``, ...)
         turn: 1-indexed tool-loop turn the call occurred in
         elapsed_ms: Wall-clock duration of the tool call
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)

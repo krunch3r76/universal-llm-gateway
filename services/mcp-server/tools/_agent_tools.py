@@ -9,13 +9,8 @@ relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus._AGENT_BUS_O
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
-import httpx
-from agent_seat import (
-    RAG_SEARCH_TOOL_DEFINITION as RAG_SEARCH_TOOL_DEFINITION,  # noqa: PLC0414 (re-export)
-)
 from agent_seat import (
     TEAM_TOOL_DEFINITIONS as TEAM_TOOL_DEFINITIONS,  # noqa: PLC0414 (re-export)
 )
@@ -25,11 +20,8 @@ from agent_seat import (
 
 from ._cortex_relay import _cx
 
-_STARGATE_URL = os.getenv("STARGATE_URL", "http://io:9999")
-
 SYSTEM_PROMPT = """\
-You are an advisory agent with access to a structured knowledge system (Cortex) \
-and a document retrieval corpus (RAG).
+You are an advisory agent with access to a structured knowledge system (Cortex).
 
 ## Cortex
 Entities: people, accounts, legal matters, organizations, decisions, documents. \
@@ -40,13 +32,9 @@ valid_until for time-bounded facts like balances and due dates).
 Entity IDs use type:slug format: person:jane-doe, decision:api-migration-v2, \
 service:rag, todo:section-aware-chunking.
 
-## RAG Corpus
-Contains research papers, legal documents, financial records, project docs, \
-and personal knowledge base entries. Search with natural language queries.
-
 ## Approach
 1. Use tools to gather evidence before answering — check relevant entities, \
-assertions, and documents.
+assertions, and relationships.
 2. Give direct, actionable advice. Do not hedge unnecessarily.
 3. Cite specific entities and assertions when referencing data.
 4. If information conflicts, call it out explicitly.
@@ -111,9 +99,6 @@ def _execute_agent_bus_dispatch(args: dict[str, Any]) -> str:
 
 def execute_tool(name: str, args: dict[str, Any]) -> str:
     """Execute a tool call against local REST endpoints. Returns JSON string."""
-    if name == "rag_search":
-        return _execute_rag_search(args)
-
     if name == "cortex":
         return _execute_cortex_dispatch(args)
 
@@ -121,26 +106,3 @@ def execute_tool(name: str, args: dict[str, Any]) -> str:
         return _execute_agent_bus_dispatch(args)
 
     return json.dumps({"error": f"Unknown tool: {name}"})
-
-
-def _execute_rag_search(args: dict[str, Any]) -> str:
-    """Execute RAG search via Stargate pipeline."""
-    query = args.get("query", "")
-    body: dict[str, Any] = {
-        "model": "rag-context",
-        "messages": [{"role": "user", "content": query}],
-    }
-    scope = args.get("scope")
-    if scope:
-        body["pipeline_options"] = {"scope_override": scope}
-    try:
-        with httpx.Client(timeout=60.0) as client:
-            resp = client.post(f"{_STARGATE_URL}/v1/chat/completions", json=body)
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.TimeoutException) as e:
-        return json.dumps({"error": f"RAG search failed: {e}"})
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not content:
-        return json.dumps({"error": "RAG returned empty results"})
-    return content

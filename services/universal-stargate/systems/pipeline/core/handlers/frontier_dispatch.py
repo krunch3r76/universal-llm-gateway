@@ -110,15 +110,11 @@ def _translate_reasoning_effort(
     """Map ``reasoning_effort`` to a provider-native ``thinking`` dict."""
     normalized = effort.strip().lower()
     if normalized not in _REASONING_EFFORT_BUDGET_TOKENS:
-        logger.warning(
-            "reasoning_effort=%r is not in {low, medium, high}; passing "
-            "through to adapter unchanged",
-            effort,
+        raise ValueError(
+            f"reasoning_effort={effort!r} must be one of: low, medium, high"
         )
     if provider == "anthropic":
-        budget = _REASONING_EFFORT_BUDGET_TOKENS.get(normalized)
-        if budget is None:
-            return None
+        budget = _REASONING_EFFORT_BUDGET_TOKENS[normalized]
         return {"type": "enabled", "budget_tokens": budget}
     if provider == "google":
         return {"effort": normalized.upper()}
@@ -131,6 +127,8 @@ class FrontierDispatchHandler(BaseHandler):
 
     step_type: str = "frontier_dispatch_v1"
     _REMOTE_MCP_PROVIDERS: frozenset[str] = frozenset({"anthropic"})
+    _READ_TOOL_NAMES: tuple[str, ...] = ("cortex", "rag")
+    _TEAM_TOOL_NAMES: tuple[str, ...] = ("cortex", "rag", "agent_bus")
 
     # Caller-supplied keys accepted on ``pipeline_options`` for
     # ``frontier_dispatch_v1``. Anything outside this set is rejected at
@@ -138,10 +136,9 @@ class FrontierDispatchHandler(BaseHandler):
     # cost real debugging time (e.g. top-level ``effort`` ignored when the
     # canonical key is ``generation_parameters.reasoning_effort``).
     #
-    # ``_endpoint_request_id`` is a marker set by the public
-    # ``/api/v1/frontier/generate`` endpoint to identify persona-validated
-    # arrivals; included here so the public path passes validation
-    # transparently.
+    # ``_endpoint_request_id`` marks canonical endpoint arrivals. The proxy
+    # router uses it to suppress the raw-pipeline persona-bypass hint, and the
+    # handler uses it to admit endpoint-supplied tool overrides with an agent.
     _ACCEPTED_RUNTIME_OPTION_KEYS: frozenset[str] = frozenset(
         {
             "model",
@@ -207,6 +204,13 @@ class FrontierDispatchHandler(BaseHandler):
         opt_tools = opts.get("tools")
         skip_legacy_tier_block = False
         if isinstance(opt_tools, list):
+            endpoint_request_id = opts.get("_endpoint_request_id")
+            if agent and not endpoint_request_id:
+                raise ValueError(
+                    "pipeline_options.tools with pipeline_options.agent is only "
+                    "supported via frontier_generate; raw pipeline dispatch cannot "
+                    "validate persona tool policy"
+                )
             resolved_names = [str(name) for name in opt_tools if isinstance(name, str)]
             if len(resolved_names) != len(opt_tools):
                 raise ValueError("pipeline_options.tools must be a list[str]")
@@ -215,7 +219,10 @@ class FrontierDispatchHandler(BaseHandler):
             else:
                 tools = await resolve_tool_definitions(resolved_names)
             system = self._resolve_system_prompt(step, context)
-            hydration_meta = {"agent": None, "tool_resolution": "endpoint-supplied"}
+            hydration_meta = {
+                "agent": agent,
+                "tool_resolution": "endpoint-supplied",
+            }
             skip_legacy_tier_block = True
 
         if not skip_legacy_tier_block:
@@ -240,7 +247,10 @@ class FrontierDispatchHandler(BaseHandler):
                 if not mcp_enabled or remote_mcp:
                     tools = []
                 elif provider == "anthropic":
-                    tools = [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+                    tools = await self._resolve_default_tools(
+                        self._TEAM_TOOL_NAMES,
+                        fallback=[*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS],
+                    )
                 else:
                     live_defs = await get_mcp_tool_definitions()
                     tools = live_defs or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
@@ -254,7 +264,10 @@ class FrontierDispatchHandler(BaseHandler):
                 if not mcp_enabled or remote_mcp:
                     tools = []
                 else:
-                    tools = list(TOOL_DEFINITIONS)
+                    tools = await self._resolve_default_tools(
+                        self._READ_TOOL_NAMES,
+                        fallback=list(TOOL_DEFINITIONS),
+                    )
                 hydration_meta = {"agent": None}
 
         if remote_mcp:
@@ -429,6 +442,37 @@ class FrontierDispatchHandler(BaseHandler):
             "hydration": hydration_meta,
         }
         return output
+
+    async def _resolve_default_tools(
+        self,
+        names: tuple[str, ...],
+        *,
+        fallback: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Resolve curated defaults from the live MCP catalog when available."""
+
+        static_defs = {
+            d.get("function", {}).get("name", ""): d
+            for d in [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+        }
+        live_defs = {
+            d.get("function", {}).get("name", ""): d
+            for d in await get_mcp_tool_definitions()
+        }
+        resolved = [
+            static_defs[name] if name in static_defs else live_defs[name]
+            for name in names
+            if name in static_defs or name in live_defs
+        ]
+        missing = [
+            name for name in names if name not in static_defs and name not in live_defs
+        ]
+        if missing:
+            logger.warning(
+                "frontier dispatch default tools missing from static/live catalogs: %s",
+                missing,
+            )
+        return resolved or fallback
 
     def _resolve_remote_mcp(
         self,

@@ -286,7 +286,7 @@ def _render_observe_and_search(agent: str) -> str:
         f'"category": "tool_mismatch", "note": "...", "suggestion": "...", '
         f'"agent": "{agent}"}}\')`'
     )
-    rag_search = (
+    rag_query = (
         '`rag(op="search", arguments=\'{"query": "...", "scope": "journals"}\')`'
     )
     return (
@@ -297,7 +297,7 @@ def _render_observe_and_search(agent: str) -> str:
         f"{friction}\n"
         f"Categories: tool_mismatch, schema_gap, boot_drift, lesson_gap, "
         f"lesson_conflict, stale_context, tool_absent.\n\n"
-        f"Search past sessions for episodic context: {rag_search}\n"
+        f"Search past sessions for episodic context: {rag_query}\n"
         f"Every session MUST produce a journal. The journal is your episodic memory "
         f"— without it, your next session starts with less context."
     )

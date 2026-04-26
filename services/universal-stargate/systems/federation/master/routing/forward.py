@@ -28,6 +28,8 @@ from ...common.types import (
 
 logger = get_logger(__name__)
 
+_DEFAULT_REQUEST_TIMEOUT_S: float = 300.0
+
 
 class _EventBusPublisher(Protocol):
     async def publish_nowait(self, event: object) -> object: ...
@@ -75,9 +77,16 @@ class FederatedRequestForwarder:
         self._event_bus = event_bus
         self._cloud_forwarder = cloud_forwarder
 
-        # HTTP client with connection pooling (TCP)
+        # HTTP client with connection pooling (TCP).
+        # read=_DEFAULT_REQUEST_TIMEOUT_S: clients that omit X-Request-Timeout
+        # get the 300s system floor; validated per-request hints may override it.
         self._client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0),
+            timeout=httpx.Timeout(
+                connect=10.0,
+                read=_DEFAULT_REQUEST_TIMEOUT_S,
+                write=10.0,
+                pool=10.0,
+            ),
             limits=httpx.Limits(
                 max_connections=config.http_pool.max_connections,
                 max_keepalive_connections=config.http_pool.max_keepalive_connections,
@@ -126,7 +135,7 @@ class FederatedRequestForwarder:
                     base_url="http://localhost",  # Host ignored for UDS
                     timeout=httpx.Timeout(
                         connect=10.0,
-                        read=300.0,
+                        read=_DEFAULT_REQUEST_TIMEOUT_S,  # keep aligned with TCP client
                         write=10.0,
                         pool=10.0,
                     ),
@@ -265,7 +274,7 @@ class FederatedRequestForwarder:
             {"timeout": float(hints["timeout"])}
             if hints
             and "timeout" in hints
-            and isinstance(hints["timeout"], (int, float, str))
+            and isinstance(hints["timeout"], int | float | str)
             else {}
         )
         if timeout_kwargs:
@@ -353,7 +362,7 @@ class FederatedRequestForwarder:
             {"timeout": float(hints["timeout"])}
             if hints
             and "timeout" in hints
-            and isinstance(hints["timeout"], (int, float, str))
+            and isinstance(hints["timeout"], int | float | str)
             else {}
         )
 

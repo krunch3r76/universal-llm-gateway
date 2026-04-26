@@ -1436,7 +1436,7 @@ class FederatedGatewayManager(Sequential):
         )
 
         # Emit MODEL_LOADING_STARTED to master EventBus so host-side subscribers
-        # (RAG ContextualizeModelCoordinator, etc.) see the cold-load window.
+        # (RAG AdmissionGate, etc.) see the cold-load window.
         # Edge process emits to its own bus; this bridges the federation hop
         # so the host's central Event Service receives the signal.
         if self._event_bus:
@@ -1508,7 +1508,7 @@ class FederatedGatewayManager(Sequential):
         )
 
         # Emit MODEL_LOADED to master EventBus (symmetric with _apply_model_unloaded).
-        # Required so host-side subscribers (RAG ContextualizeModelCoordinator,
+        # Required so host-side subscribers (RAG AdmissionGate,
         # ModelCacheConsumer, etc.) see the cold-load completion. Edge emits to
         # its own bus; this bridges the federation hop into the host's central
         # Event Service. parsed payload may include vram_mb/ram_mb hints.

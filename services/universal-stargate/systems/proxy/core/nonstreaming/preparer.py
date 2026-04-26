@@ -45,6 +45,20 @@ from .mode_transforms import prepare_normal_mode  # noqa: E402,I001
 
 logger = get_logger(__name__)
 
+# Hard ceiling for client-supplied X-Request-Timeout. Public clients keep the
+# historical 300s cap; internal pipeline calls can request longer budgets for
+# batch/indexing workloads that already have their own pipeline-level guards.
+_EXTERNAL_MAX_REQUEST_TIMEOUT_S: float = 300.0
+_INTERNAL_MAX_REQUEST_TIMEOUT_S: float = 900.0
+
+
+def _request_timeout_cap(*, is_pipeline_internal: bool) -> float:
+    return (
+        _INTERNAL_MAX_REQUEST_TIMEOUT_S
+        if is_pipeline_internal
+        else _EXTERNAL_MAX_REQUEST_TIMEOUT_S
+    )
+
 
 def validate_and_prepare_model_id(model_id: str) -> tuple[str, str | None]:
     """
@@ -331,8 +345,27 @@ class RequestPreparer:
             context.request_profile = request_profile
             context.middleware_actions.append(f"request_profile:{request_profile}")
 
-        # Handle internal pipeline requests (via HTTP headers)
         is_pipeline_internal = request.headers.get("X-Pipeline-Internal") == "true"
+
+        # X-Request-Timeout applies to all clients, not just pipeline-internal.
+        timeout_hint_raw = request.headers.get("X-Request-Timeout")
+        if timeout_hint_raw:
+            try:
+                parsed_timeout = float(timeout_hint_raw)
+            except ValueError:
+                logger.warning("Invalid X-Request-Timeout header: %s", timeout_hint_raw)
+            else:
+                if parsed_timeout <= 0:
+                    logger.warning(
+                        "Non-positive X-Request-Timeout header: %s", timeout_hint_raw
+                    )
+                else:
+                    context.request_timeout_hint = min(
+                        parsed_timeout,
+                        _request_timeout_cap(is_pipeline_internal=is_pipeline_internal),
+                    )
+
+        # Handle internal pipeline requests (via HTTP headers)
         if is_pipeline_internal:
             context.middleware_actions.append("pipeline_internal")
 
@@ -347,14 +380,6 @@ class RequestPreparer:
                 context.pipeline_execution_id = execution_id
             if step_id:
                 context.pipeline_step_id = step_id
-
-            # Read timeout hint from pipeline
-            timeout_hint = request.headers.get("X-Request-Timeout")
-            if timeout_hint:
-                try:
-                    context.request_timeout_hint = float(timeout_hint)
-                except ValueError:
-                    logger.warning(f"Invalid X-Request-Timeout header: {timeout_hint}")
 
             cancel_group = request.headers.get("X-Pipeline-Cancel-Group")
             if cancel_group:

@@ -3,8 +3,8 @@
 
 Usage:
   modularize scan <paths...>
-  modularize plan <file> [--dry-run]
-  modularize plan --batch --severity red|yellow <paths...>
+  modularize plan <file> [--dry-run] [--invariants-file <path>]
+  modularize plan --batch --severity red|yellow [--invariants-file <path>] <paths...>
 """
 
 from __future__ import annotations
@@ -19,6 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+
+DEFAULT_INVARIANTS_FILE = Path(".cursor/invariants/modularize.md")
 
 
 @dataclass
@@ -244,6 +247,7 @@ def _build_user_message(
     functions: int,
     classes: int,
     consumers: list[ConsumerInfo],
+    invariants: str | None = None,
 ) -> str:
     """Assemble pipeline user message with metadata + source code."""
     top_consumers = sorted(consumers, key=lambda c: c.import_count, reverse=True)[:5]
@@ -251,6 +255,12 @@ def _build_user_message(
         f"  - {c.path} ({c.import_count} imports)" for c in top_consumers
     )
     source_content = target.read_text(errors="replace")
+
+    invariants_block = (
+        f"## Invariants You Must Obey\n{invariants.strip()}\n\n"
+        if invariants and invariants.strip()
+        else ""
+    )
 
     return (
         f"# File: {target}\n\n"
@@ -260,6 +270,7 @@ def _build_user_message(
         f"- Classes: {classes}\n"
         f"- Consumers: {len(consumers)}\n\n"
         f"## Top Consumers\n{consumer_list}\n\n"
+        f"{invariants_block}"
         f"## Source Code\n```python\n{source_content}\n```"
     )
 
@@ -406,6 +417,35 @@ def _validate_plan_coverage(
             issues.append(f"DUPLICATE: `{name}` appears in multiple modules: {joined}")
 
     return issues
+
+
+def _load_invariants(path: Path | None) -> str | None:
+    """Read optional invariant guidance for model prompt injection."""
+    if path is None:
+        path = DEFAULT_INVARIANTS_FILE
+        if not path.exists():
+            print(
+                f"Warning: default invariants file not found: {path}; "
+                "planning without invariant injection",
+                file=sys.stderr,
+            )
+            return None
+
+    if not path.exists():
+        print(f"Error: invariants file not found: {path}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        content = path.read_text(errors="replace")
+    except OSError as exc:
+        print(f"Error: failed to read invariants file {path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not content.strip():
+        print(f"Warning: invariants file is empty: {path}", file=sys.stderr)
+        return None
+
+    return content
 
 
 def _write_structural_plan(
@@ -590,6 +630,7 @@ def _run_plan(
     consumers: list[ConsumerInfo],
     project_root: Path,
     dry_run: bool,
+    invariants: str | None,
 ) -> Path:
     """Generate structural modularization plan via pipeline."""
     sloc = _count_sloc(target)
@@ -598,7 +639,9 @@ def _run_plan(
         sys.exit(0)
 
     functions, classes = _count_definitions(target)
-    user_message = _build_user_message(target, sloc, functions, classes, consumers)
+    user_message = _build_user_message(
+        target, sloc, functions, classes, consumers, invariants
+    )
 
     plan_path = _plan_output_path(target, project_root)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -677,8 +720,11 @@ def _scan_cmd(args: argparse.Namespace) -> None:
 
 def _plan_cmd(args: argparse.Namespace) -> None:
     """Execute plan subcommand."""
+    invariants_path = Path(args.invariants_file) if args.invariants_file else None
+    invariants = _load_invariants(invariants_path)
+
     if args.batch:
-        _plan_batch(args)
+        _plan_batch(args, invariants)
         return
 
     target = Path(args.file).resolve()
@@ -692,12 +738,12 @@ def _plan_cmd(args: argparse.Namespace) -> None:
         target, []
     )
 
-    plan_path = _run_plan(target, consumers, project_root, args.dry_run)
+    plan_path = _run_plan(target, consumers, project_root, args.dry_run, invariants)
     if not args.dry_run:
         print(f"Plan: {plan_path}")
 
 
-def _plan_batch(args: argparse.Namespace) -> None:
+def _plan_batch(args: argparse.Namespace, invariants: str | None) -> None:
     """Execute batch planning."""
     skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/"]
     files = _scan_directory(args.paths, skip_patterns)
@@ -722,7 +768,7 @@ def _plan_batch(args: argparse.Namespace) -> None:
 
     for target in targets:
         consumers = reverse_map.get(target.path, [])
-        _run_plan(target.path, consumers, project_root, False)
+        _run_plan(target.path, consumers, project_root, False, invariants)
 
     print(f"\nGenerated {len(targets)} plans in ./tmp/modularize-plans/")
 
@@ -743,6 +789,13 @@ def main() -> None:
     plan_parser.add_argument("file", nargs="?", help="File to plan refactoring for")
     plan_parser.add_argument(
         "--dry-run", action="store_true", help="Show command without executing"
+    )
+    plan_parser.add_argument(
+        "--invariants-file",
+        help=(
+            "Markdown invariants to inject into the planning prompt "
+            f"(default: {DEFAULT_INVARIANTS_FILE})"
+        ),
     )
     plan_parser.add_argument(
         "--batch", action="store_true", help="Batch mode for multiple files"

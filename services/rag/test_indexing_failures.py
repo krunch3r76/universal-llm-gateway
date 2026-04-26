@@ -8,8 +8,12 @@ from pathlib import Path
 
 import pytest
 
+from services.rag.config import RagConfig, WatchDirectory
 from services.rag.property_index import PropertyIndex
-from services.rag.rag_service.indexing import _classify_indexing_failure
+from services.rag.rag_service.indexing import (
+    _classify_indexing_failure,
+    _contextualize_request_timeout_s,
+)
 
 
 def test_classifier_permanent_exceeds_batch_size() -> None:
@@ -54,6 +58,28 @@ def test_classifier_transient_timeout() -> None:
     exc = TimeoutError()
     cat, reason = _classify_indexing_failure(exc, chunk_count=0)
     assert (cat, reason) == ("transient", "timeout")
+
+
+def test_contextualize_request_timeout_uses_explicit_budget() -> None:
+    config = RagConfig(
+        watch_directories=[WatchDirectory(path="/tmp")],
+        scopes={},
+        contextualize_request_timeout_s=300.0,
+        contextualize_client_timeout_s=600.0,
+    )
+
+    assert _contextualize_request_timeout_s(config) == 300.0
+
+
+def test_contextualize_request_timeout_never_exceeds_client_timeout() -> None:
+    config = RagConfig(
+        watch_directories=[WatchDirectory(path="/tmp")],
+        scopes={},
+        contextualize_request_timeout_s=300.0,
+        contextualize_client_timeout_s=120.0,
+    )
+
+    assert _contextualize_request_timeout_s(config) == 120.0
 
 
 async def _make_index(tmp_path: Path) -> PropertyIndex:
@@ -145,6 +171,38 @@ async def test_list_and_counts_filter(tmp_path: Path) -> None:
     assert len(all_rows) == 3
     permanent_count, transient_count = prop_index.get_indexing_failure_counts()
     assert (permanent_count, transient_count) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_contextualization_exception_records_diagnostics(tmp_path: Path) -> None:
+    prop_index = await _make_index(tmp_path)
+
+    exception_id = await prop_index.record_contextualization_exception(
+        source="/partial.md",
+        source_hash="source-hash",
+        contextualize_model="model",
+        operation_id="op-1",
+        total_chunks=10,
+        cache_miss_chunks=6,
+        successful_chunks=8,
+        failed_chunks=2,
+        abandoned_indices=[3, 7],
+        request_ids={3: "req-3", 7: "req-7"},
+        first_failure="ContextualizationTailAbandoned(...)",
+        idle_seconds=45.0,
+        tail_idle_timeout_s=45.0,
+    )
+
+    assert exception_id > 0
+    rows = prop_index.list_contextualization_exceptions()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.source == "/partial.md"
+    assert row.failed_chunks == 2
+    assert row.abandoned_chunks == 2
+    assert row.abandoned_indices == [3, 7]
+    assert row.request_ids == {3: "req-3", 7: "req-7"}
+    assert row.first_failure == "ContextualizationTailAbandoned(...)"
 
 
 @pytest.mark.asyncio

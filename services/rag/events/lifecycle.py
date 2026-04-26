@@ -334,6 +334,26 @@ def rag_vocabulary_gaps_repaired(*, scopes: list[str], model: str) -> Event:
 
 
 @event_factory
+def rag_vocabulary_classification_failed(
+    *,
+    scopes: list[str],
+    model: str,
+    trigger: str,
+    reasons: dict[str, str],
+) -> Event:
+    """LLM classification failed for one or more stale vocabulary scopes."""
+    return Event(
+        signal="rag.vocabulary.classification.failed",
+        payload={
+            "scopes": scopes,
+            "model": model,
+            "trigger": trigger,
+            "reasons": reasons,
+        },
+    )
+
+
+@event_factory
 def rag_embeddings_unavailable(*, error: str) -> Event:
     """Emitted when the watcher is not started because the embedding endpoint is unhealthy.
 

@@ -428,7 +428,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         Call rag_list_scopes() for the current set of valid scope names.
 
-        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
+        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag")
 
         Args:
             query: Natural language search query.
@@ -547,20 +547,20 @@ def register_rag_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Ask a specific question and get a grounded, synthesized answer.
 
-        Prefer this over rag_search for direct factual or technical
+        Prefer this over rag(op="search") for direct factual or technical
         questions where a synthesized answer is the end goal. Use
-        rag_search instead when you need raw context chunks to weave
+        rag(op="search") instead when you need raw context chunks to weave
         into broader reasoning or combine with non-RAG context.
 
         Has a relevance gate: returns empty if retrieved context doesn't
-        directly address the question. Fall back to rag_search if this
+        directly address the question. Fall back to rag(op="search") if this
         returns empty — it always returns whatever matches.
 
         Set deep=True for complex multi-faceted questions that benefit
         from iterative retrieval (up to 2 gap-filling passes).
 
         IMPORTANT: question must be natural language. Boolean operators (OR, AND)
-        degrade dense retrieval — use parallel rag_search calls per concept instead.
+        degrade dense retrieval — use parallel rag(op="search") calls per concept instead.
 
         Call rag_list_scopes() for the current set of valid scope names.
 

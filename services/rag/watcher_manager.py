@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -364,8 +363,12 @@ class WatcherManager:
     async def _should_attempt(self, fp: Path) -> bool:
         """Consult indexing_failures to decide if fp may be dispatched.
 
-        Returns False iff a persistent failure row (permanent, unchanged
-        content) or a transient row inside its backoff window is on record.
+        Returns False iff a permanent failure row exists with unchanged
+        content. Transient failures are no longer rate-limited here —
+        admission throttling is event-driven (Stargate's
+        `capacity.admission.paused/resumed` consumed by the AdmissionGate),
+        so a re-attempt at reconcile time will block at the gate if the
+        backend is unhealthy and proceed otherwise.
         """
         if self._property_index is None:
             return True
@@ -391,24 +394,8 @@ class WatcherManager:
                 )
             )
             return False
-        base_s = max(int(self._reconcile_interval_s), 60)
-        multiplier = 2 ** min(max(failure.attempt_count - 1, 0), 6)
-        backoff_s = min(3600, base_s * multiplier)
-        try:
-            last = datetime.fromisoformat(failure.last_failed_at)
-        except ValueError:
-            return True
-        if last.tzinfo is None:
-            last = last.replace(tzinfo=UTC)
-        if (datetime.now(UTC) - last).total_seconds() < backoff_s:
-            await self._emit(
-                rag_file_indexing_failure_skipped(
-                    file=source,
-                    failure_reason=failure.failure_reason,
-                    attempt_count=failure.attempt_count,
-                )
-            )
-            return False
+        # Transient failures: re-attempt every reconcile sweep. AdmissionGate
+        # handles backpressure if the backend is still unhealthy.
         return True
 
     async def request_reindex(self, file_path: Path) -> bool:

@@ -286,7 +286,6 @@ async def _forward_or_recover(
     return content, headers, status
 
 
-
 async def _execute_federated_nonstreaming(
     context: RequestContext,
     fed_gateway: FederatedGateway,
@@ -393,7 +392,9 @@ async def _execute_federated_nonstreaming(
             status_code=response_status_code,
             remote_request_id=response_headers.get("x-federated-request-id"),
             remote_correlation_id=response_headers.get("x-federated-correlation-id"),
-            remote_response_time_ms=response_headers.get("x-federated-response-time-ms"),
+            remote_response_time_ms=response_headers.get(
+                "x-federated-response-time-ms"
+            ),
         )
 
         await write_response_snapshot(
@@ -455,6 +456,20 @@ async def _execute_federated_nonstreaming(
             model_id=model_name,
             elapsed_ms=int((time.monotonic() - execute_start) * 1000),
         )
+        deadline_s = hints.get("timeout") if hints else None
+        if event_bus and isinstance(deadline_s, int | float):
+            from src.scheduling.events.request import RequestDeadlineExceeded
+
+            elapsed_ms = int((time.monotonic() - execute_start) * 1000)
+            await event_bus.publish_nowait(
+                RequestDeadlineExceeded(
+                    request_id=request_id,
+                    model_id=context.selected_model.routing_key,
+                    gateway_id=fed_gateway.gateway_id,
+                    deadline_s=float(deadline_s),
+                    elapsed_ms=elapsed_ms,
+                )
+            )
         await emit_execution_failed(
             event_bus=event_bus,
             url=fed_gateway.remote_stargate_url,
@@ -470,9 +485,58 @@ async def _execute_federated_nonstreaming(
                 message="Remote gateway timeout",
                 source="master",
                 retryable=True,
-                data={"gateway_id": fed_gateway.gateway_id},
+                data={
+                    "gateway_id": fed_gateway.gateway_id,
+                    "timeout_kind": (
+                        "request_deadline"
+                        if isinstance(deadline_s, int | float)
+                        else "forward_read_timeout"
+                    ),
+                    **(
+                        {"deadline_s": float(deadline_s)}
+                        if isinstance(deadline_s, int | float)
+                        else {}
+                    ),
+                },
             ),
         )
+
+    except httpx.RequestError as e:
+        # Transport-level failures (ConnectError, NetworkError, ProtocolError,
+        # ProxyError). The remote edge is unreachable — surface this distinctly
+        # so the dispatch site transitions the gateway to UNHEALTHY rather than
+        # treating it as a generic upstream error (per Phase 2: only
+        # GATEWAY_DISCONNECTED / EDGE_UNREACHABLE drive UNHEALTHY).
+        logger.error(
+            f"Federated request transport error for {fed_gateway.gateway_id}: {e}"
+        )
+        await _emit_federated_execute_debug(
+            "execute_transport_error",
+            fed_gateway=fed_gateway,
+            request_id=request_id,
+            model_id=model_name,
+            elapsed_ms=int((time.monotonic() - execute_start) * 1000),
+            error_type=type(e).__name__,
+            error=str(e),
+        )
+        await emit_execution_failed(
+            event_bus=event_bus,
+            url=fed_gateway.remote_stargate_url,
+            model_id=context.selected_model.routing_key,
+            request_id=context.request_id,
+            gateway_id=fed_gateway.gateway_id,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=error_envelope(
+                code=ErrorCode.EDGE_UNREACHABLE,
+                message=f"Federated edge unreachable: {e}",
+                source="master",
+                retryable=True,
+                data={"gateway_id": fed_gateway.gateway_id},
+            ),
+        ) from e
 
     except Exception as e:
         logger.exception(f"Federated request error: {e}")

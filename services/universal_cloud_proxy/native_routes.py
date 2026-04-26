@@ -472,6 +472,12 @@ async def google_videos_generations(request: Request) -> Response:
 
 
 @router.get("/xai/videos/{request_id}")
+# xAI request_ids are UUIDs (no slashes) — single-segment param is correct.
+# If xAI ever changes format to include '/', both this route and the Stargate
+# passthrough will silently 404; switch to {request_id:path} at that point.
+# Lifecycle events (_publish_failed / CloudProxyRequestForwarded) are
+# intentionally omitted here: status polls are high-frequency and the
+# meaningful lifecycle events are emitted on submission (_forward_video_generation).
 async def xai_video_status(request_id: str) -> Response:
     """xAI video status — poll for completion by request_id."""
     fwd = _get_forwarder()
@@ -489,6 +495,8 @@ async def xai_video_status(request_id: str) -> Response:
 
 
 @router.get("/google/videos/{request_id:path}")
+# Google operation names are slash-separated paths (e.g. "operations/abc123/..."),
+# so :path is required. Lifecycle events omitted for the same reason as xai_video_status.
 async def google_video_status(request_id: str) -> Response:
     """Google Veo video status — poll for operation completion by request_id."""
     fwd = _get_forwarder()

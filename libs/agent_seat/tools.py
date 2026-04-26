@@ -8,11 +8,11 @@ Stargate's cloud-proxy).
 
 Two tiers:
 
-- ``TOOL_DEFINITIONS`` — cortex (dispatch) + RAG. Read-heavy workloads.
+- ``TOOL_DEFINITIONS`` — static cortex dispatch fallback for read-heavy workloads.
 - ``TEAM_TOOL_DEFINITIONS`` — cortex + agent_bus (write access + inter-agent
   messaging). Superset of the read tier.
 
-``RAG_SEARCH_TOOL_DEFINITION`` is the single RAG entry reused in both tiers.
+RAG is sourced from the live MCP ``rag`` descriptor, not a local shim.
 The cortex op registry lives in cortex-api; both tiers share the same tool
 schema here and the same op space at the /dispatch endpoint.
 """
@@ -36,25 +36,6 @@ def _fn(
         "type": "function",
         "function": {"name": name, "description": desc, "parameters": schema},
     }
-
-
-RAG_SEARCH_TOOL_DEFINITION: dict[str, Any] = _fn(
-    "rag_search",
-    "Search the document corpus (research papers, legal docs, financial records, "
-    "personal knowledge base). Returns retrieved context chunks with source labels.",
-    {
-        "query": {"type": "string", "description": "Natural language search query"},
-        "scope": {
-            "type": "string",
-            "description": (
-                "Scope filter (e.g. research, knowledge_systems, project). "
-                "Omit for all scopes."
-            ),
-        },
-    },
-    ["query"],
-)
-
 
 CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
     "cortex",
@@ -134,7 +115,6 @@ BRAVE_SEARCH_TOOL_DEFINITION: dict[str, Any] = _fn(
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     CORTEX_TOOL_DEFINITION,
-    RAG_SEARCH_TOOL_DEFINITION,
 ]
 
 
@@ -179,10 +159,6 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     "cortex": {
         "definition": CORTEX_TOOL_DEFINITION,
         "executor": "cortex_dispatch",
-    },
-    "rag_search": {
-        "definition": RAG_SEARCH_TOOL_DEFINITION,
-        "executor": "rag_search",
     },
     "agent_bus": {
         "definition": _AGENT_BUS_TOOL_DEFINITION,

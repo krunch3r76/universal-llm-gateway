@@ -3,7 +3,7 @@
 Dispatches OpenAI-function-call ``tool_calls`` to local REST endpoints:
   - cortex:    POST /dispatch on cortex-api (unified op dispatch)
   - agent_bus: UDS REST on agent-bus
-  - rag:       Stargate's rag-context pipeline via /v1/chat/completions
+  - rag:       live MCP ``rag`` tool
   - any other MCP tool: proxied through the live MCP server over JSON-RPC
     using the shared ``McpToolExecutor`` client already used by the cloud proxy
 
@@ -23,7 +23,6 @@ from urllib.parse import urlencode
 if TYPE_CHECKING:
     from services.universal_cloud_proxy.mcp_executor import McpToolExecutor
 
-import httpx
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
     DEFAULT_CORTEX_URL,
@@ -33,8 +32,6 @@ from transport_utils import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30.0
-_RAG_TIMEOUT = 60.0
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _MCP_EXECUTOR_LOCK = asyncio.Lock()
 _MCP_EXECUTOR: McpToolExecutor | None = None
 _MCP_EXECUTOR_INITIALIZED = False
@@ -78,7 +75,6 @@ async def _get_mcp_executor() -> McpToolExecutor | None:
                 "agent_seat live MCP disabled — falling back to static tools only: "
                 "MCP_PUBLIC_URL/MCP_AUTH_TOKEN not configured"
             )
-            _MCP_EXECUTOR_INITIALIZED = True
             return None
 
         try:
@@ -98,6 +94,7 @@ async def _get_mcp_executor() -> McpToolExecutor | None:
             _MCP_EXECUTOR = executor
         else:
             logger.warning("agent_seat MCP executor discovered no tools from %s", url)
+            return None
         _MCP_EXECUTOR_INITIALIZED = True
         return _MCP_EXECUTOR
 
@@ -281,38 +278,6 @@ async def _execute_agent_bus(args: dict[str, Any]) -> str:
     return json.dumps(result)
 
 
-# ── RAG search via Stargate's rag-context pipeline ──────────────────────────
-
-
-async def _execute_rag_search(args: dict[str, Any]) -> str:
-    """Execute RAG search via Stargate's rag-context pipeline."""
-    query = args.get("query", "")
-    if not query:
-        return json.dumps({"error": "rag_search requires 'query'"})
-
-    body: dict[str, Any] = {
-        "model": "rag-context",
-        "messages": [{"role": "user", "content": query}],
-    }
-    scope = args.get("scope")
-    if scope:
-        body["pipeline_options"] = {"scope_override": scope}
-
-    try:
-        async with httpx.AsyncClient(timeout=_RAG_TIMEOUT) as client:
-            resp = await client.post(f"{_STARGATE_URL}/v1/chat/completions", json=body)
-            resp.raise_for_status()
-            data = resp.json()
-    except (httpx.HTTPError, httpx.TimeoutException) as exc:
-        logger.error("RAG search relay failed: query=%r error=%s", query, exc)
-        return json.dumps({"error": f"RAG search failed: {exc}"})
-
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    if not content:
-        return json.dumps({"error": "RAG returned empty results"})
-    return content
-
-
 # ── Top-level dispatcher ────────────────────────────────────────────────────
 
 
@@ -322,7 +287,6 @@ async def execute_tool(name: str, args: dict[str, Any]) -> str:
     Supported tools (match libs/agent_seat/tools.TEAM_TOOL_DEFINITIONS):
       - ``cortex``       — unified op dispatch to cortex-api /dispatch
       - ``agent_bus``    — unified op dispatch to agent-bus
-      - ``rag_search``   — RAG context retrieval via Stargate rag-context pipeline
       - ``brave_search`` — Brave Search API via MCP (safe alias; MCP name: web_search)
 
     Unknown names fall back to the live MCP server catalog when available.
@@ -331,8 +295,6 @@ async def execute_tool(name: str, args: dict[str, Any]) -> str:
         return await _execute_cortex(args)
     if name == "agent_bus":
         return await _execute_agent_bus(args)
-    if name == "rag_search":
-        return await _execute_rag_search(args)
     # brave_search is the safe alias for the MCP-side "web_search" tool.
     # ¬call "web_search" directly — name collides with native model capability.
     mcp_name = "web_search" if name == "brave_search" else name

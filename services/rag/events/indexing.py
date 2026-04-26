@@ -205,7 +205,7 @@ def rag_file_indexing_failure_recorded(
     vs transient classifier decision and the running attempt count.
 
     error_type: ``type(exc).__qualname__`` of the underlying exception. Lets
-        operators discriminate (e.g.) ``ReadTimeout`` from ``ContextualizationError``
+        operators discriminate (e.g.) ``ReadTimeout`` from ``RuntimeError``
         without consulting RAG logs.
     error_head: first ~200 chars of ``str(exc)`` — head of the exception
         message, suitable for one-line diagnostic display.
@@ -335,6 +335,108 @@ def rag_chunk_noise_tagged(
 
 
 @event_factory
+def rag_chunk_contextualization_started(
+    *,
+    file: str,
+    chunk_index: int,
+    model: str,
+    request_id: str,
+    timeout_s: float,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when one chunk contextualization request is submitted to Stargate."""
+    payload: dict[str, str | int | float] = {
+        "file": file,
+        "chunk_index": chunk_index,
+        "model": model,
+        "request_id": request_id,
+        "timeout_s": timeout_s,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.chunk.contextualization.started",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_chunk_contextualization_completed(
+    *,
+    file: str,
+    chunk_index: int,
+    model: str,
+    request_id: str,
+    duration_seconds: float,
+    output_chars: int,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when one chunk contextualization request returns successfully."""
+    payload: dict[str, str | int | float] = {
+        "file": file,
+        "chunk_index": chunk_index,
+        "model": model,
+        "request_id": request_id,
+        "duration_seconds": duration_seconds,
+        "output_chars": output_chars,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.chunk.contextualization.completed",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_chunk_contextualization_failed(
+    *,
+    file: str,
+    chunk_index: int,
+    model: str,
+    error: str,
+    request_id: str | None = None,
+    duration_seconds: float | None = None,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted for each chunk that failed contextualization within a file.
+
+    Per-chunk companion to rag.contextualization.partial (which aggregates
+    across all failures for a file). Makes individual failed chunks queryable
+    without consulting RAG logs — useful for diagnosing repeated failures on
+    specific chunk positions or content patterns.
+    """
+    payload: dict[str, str | int] = {
+        "file": file,
+        "chunk_index": chunk_index,
+        "model": model,
+        "error": error,
+    }
+    if request_id is not None:
+        payload["request_id"] = request_id
+    if duration_seconds is not None:
+        payload["duration_seconds"] = duration_seconds
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.chunk.contextualization.failed",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
 def rag_property_index_unavailable(*, file: str) -> Event:
     """Emitted when indexing continues without a property index instance."""
     return Event(
@@ -406,6 +508,149 @@ def rag_contextualization_completed(
                 if value is not None
             },
         },
+    )
+
+
+@event_factory
+def rag_contextualization_partial(
+    *,
+    file: str,
+    total_chunks: int,
+    failed_chunks: int,
+    successful_chunks: int,
+    model: str,
+    first_failure: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when contextualization completed with partial chunk failures.
+
+    The file is still indexed — failed chunks are embedded without context
+    prefix (modest retrieval-quality regression on those chunks only). They
+    remain cache misses and will be re-contextualized on the next reindex.
+
+    Distinct from rag.contextualization.completed (always emitted) — this
+    signal fires only when failed_chunks > 0, giving operators a single-line
+    indicator of which files have degraded contextualization.
+    """
+    payload: dict[str, str | int] = {
+        "file": file,
+        "total_chunks": total_chunks,
+        "failed_chunks": failed_chunks,
+        "successful_chunks": successful_chunks,
+        "model": model,
+        "first_failure": first_failure[:200],
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualization.partial",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualization_tail_abandoned(
+    *,
+    file: str,
+    total_chunks: int,
+    completed_chunks: int,
+    abandoned_chunks: int,
+    successful_chunks: int,
+    failed_chunks: int,
+    model: str,
+    idle_seconds: float,
+    tail_idle_timeout_s: float,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when RAG stops waiting for straggler contextualization chunks."""
+    payload: dict[str, str | int | float] = {
+        "file": file,
+        "total_chunks": total_chunks,
+        "completed_chunks": completed_chunks,
+        "abandoned_chunks": abandoned_chunks,
+        "successful_chunks": successful_chunks,
+        "failed_chunks": failed_chunks,
+        "model": model,
+        "idle_seconds": idle_seconds,
+        "tail_idle_timeout_s": tail_idle_timeout_s,
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualization.tail.abandoned",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualization_exception_recorded(
+    *,
+    file: str,
+    exception_id: int,
+    total_chunks: int,
+    cache_miss_chunks: int,
+    successful_chunks: int,
+    failed_chunks: int,
+    abandoned_chunks: int,
+    model: str,
+    first_failure: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when degraded contextualization diagnostics are durably stored."""
+    payload: dict[str, str | int] = {
+        "file": file,
+        "exception_id": exception_id,
+        "total_chunks": total_chunks,
+        "cache_miss_chunks": cache_miss_chunks,
+        "successful_chunks": successful_chunks,
+        "failed_chunks": failed_chunks,
+        "abandoned_chunks": abandoned_chunks,
+        "model": model,
+        "first_failure": first_failure[:200],
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualization.exception.recorded",
+        role="observation",
+        payload=payload,
+    )
+
+
+@event_factory
+def rag_contextualization_exception_record_failed(
+    *,
+    file: str,
+    model: str,
+    error: str,
+    operation_id: str | None = None,
+    operation: str | None = None,
+) -> Event:
+    """Emitted when degraded contextualization diagnostics could not be stored."""
+    payload: dict[str, str] = {
+        "file": file,
+        "model": model,
+        "error": error[:500],
+    }
+    if operation_id is not None:
+        payload["operation_id"] = operation_id
+    if operation is not None:
+        payload["operation"] = operation
+    return Event(
+        signal="rag.contextualization.exception.record.failed",
+        role="observation",
+        payload=payload,
     )
 
 

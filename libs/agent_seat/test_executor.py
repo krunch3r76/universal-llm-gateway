@@ -264,6 +264,21 @@ async def test_get_mcp_tool_definitions_returns_live_defs(
 
 
 @pytest.mark.asyncio
+async def test_get_mcp_executor_retries_after_missing_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", False)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", None)
+    monkeypatch.delenv("MCP_PUBLIC_URL", raising=False)
+    monkeypatch.delenv("MCP_AUTH_TOKEN", raising=False)
+
+    executor = await _ex._get_mcp_executor()
+
+    assert executor is None
+    assert _ex._MCP_EXECUTOR_INITIALIZED is False
+
+
+@pytest.mark.asyncio
 async def test_resolve_tool_definitions_combines_static_and_live(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -285,3 +300,27 @@ async def test_resolve_tool_definitions_combines_static_and_live(
 
     defs = await resolve_tool_definitions(["cortex", "web_search"])
     assert [d["function"]["name"] for d in defs] == ["cortex", "web_search"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_tool_definitions_uses_live_rag_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeMcpExecutor:
+        def get_openai_tool_defs(self) -> list[dict[str, Any]]:
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "rag",
+                        "description": "RAG dispatch",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ]
+
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR_INITIALIZED", True)
+    monkeypatch.setattr(_ex, "_MCP_EXECUTOR", _FakeMcpExecutor())
+
+    defs = await resolve_tool_definitions(["rag"])
+    assert [d["function"]["name"] for d in defs] == ["rag"]

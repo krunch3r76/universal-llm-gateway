@@ -133,6 +133,72 @@ def _build_topology_snapshot(
     }
 
 
+def _sticky_bound_gateway_name(trace: "SelectionTrace") -> str | None:
+    prefix = "sticky_capacity_wait: bound="
+    reason = trace.selection_reason or ""
+    if not reason.startswith(prefix):
+        return None
+    bound = reason.removeprefix(prefix).split(",", 1)[0].strip()
+    return bound or None
+
+
+def _candidate_has_capacity_failure(
+    candidate: Any,
+    all_capacity_constraints: set[str],
+) -> bool:
+    return any(
+        failure.constraint in all_capacity_constraints
+        for failure in candidate.constraints_failed
+    )
+
+
+def _capacity_gateway_url(candidate: Any, federated_gateways: list[Any]) -> str | None:
+    gateway_ref_url = getattr(candidate.gateway.ref, "remote_stargate_url", None)
+    if gateway_ref_url:
+        return gateway_ref_url
+    for federated_gateway in federated_gateways:
+        if getattr(federated_gateway, "gateway_id", None) == candidate.gateway.name:
+            return getattr(federated_gateway, "remote_stargate_url", None)
+    return None
+
+
+def _build_capacity_details(
+    model_id: ModelId,
+    trace: "SelectionTrace",
+    all_capacity_constraints: set[str],
+    federated_gateways: list[Any],
+) -> dict[str, Any]:
+    capacity_details: dict[str, Any] = {"model_id": str(model_id)}
+    capacity_candidates = [
+        candidate
+        for candidate in trace.candidates
+        if _candidate_has_capacity_failure(candidate, all_capacity_constraints)
+    ]
+    if not capacity_candidates:
+        return capacity_details
+
+    bound_gateway = _sticky_bound_gateway_name(trace)
+    candidate = next(
+        (
+            candidate
+            for candidate in capacity_candidates
+            if candidate.gateway.name == bound_gateway
+        ),
+        capacity_candidates[0],
+    )
+
+    for failure in candidate.constraints_failed:
+        if failure.constraint in all_capacity_constraints:
+            capacity_details.update(failure.details)
+            break
+
+    capacity_details["gateway_id"] = candidate.gateway.name
+    gateway_url = _capacity_gateway_url(candidate, federated_gateways)
+    if gateway_url:
+        capacity_details["gateway_url"] = gateway_url
+    return capacity_details
+
+
 async def _emit_terminal_overflow_failure_if_needed(
     *,
     event_bus,
@@ -350,28 +416,13 @@ async def handle_selection_rejection(
             )
 
         if has_capacity_failure:
-            capacity_gateway_url = None
-            capacity_details: dict[str, Any] = {"model_id": str(context.selected_model)}
             all_capacity_constraints = transient_constraints | resource_constraints
-
-            for candidate in trace.candidates:
-                for failure in candidate.constraints_failed:
-                    if failure.constraint in all_capacity_constraints:
-                        capacity_details.update(failure.details)
-                        break
-
-            for federated_gateway in federated_gateways:
-                if context.selected_model in federated_gateway.loaded_models:
-                    capacity_gateway_url = federated_gateway.remote_stargate_url
-                    capacity_details["gateway_url"] = capacity_gateway_url
-                    break
-
-            if not capacity_gateway_url:
-                for federated_gateway in federated_gateways:
-                    if context.selected_model in federated_gateway.available_models:
-                        capacity_gateway_url = federated_gateway.remote_stargate_url
-                        capacity_details["gateway_url"] = capacity_gateway_url
-                        break
+            capacity_details = _build_capacity_details(
+                context.selected_model,
+                trace,
+                all_capacity_constraints,
+                federated_gateways,
+            )
 
             if queue_timeout_info:
                 capacity_details.update(queue_timeout_info)

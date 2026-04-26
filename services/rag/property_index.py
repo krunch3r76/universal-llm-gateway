@@ -14,6 +14,7 @@ can inspect structural failures (e.g. max_tokens exceeded) without tailing logs.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import sqlite3
@@ -171,6 +172,31 @@ CREATE INDEX IF NOT EXISTS idx_contextualized_source
     ON contextualized_chunks(source_hash);
 """
 
+_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL = """
+CREATE TABLE IF NOT EXISTS contextualization_exceptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    source_hash TEXT,
+    contextualize_model TEXT NOT NULL,
+    operation_id TEXT,
+    total_chunks INTEGER NOT NULL,
+    cache_miss_chunks INTEGER NOT NULL,
+    successful_chunks INTEGER NOT NULL,
+    failed_chunks INTEGER NOT NULL,
+    abandoned_chunks INTEGER NOT NULL,
+    abandoned_indices_json TEXT NOT NULL,
+    request_ids_json TEXT NOT NULL,
+    first_failure TEXT NOT NULL,
+    idle_seconds REAL,
+    tail_idle_timeout_s REAL,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_contextualization_exceptions_source
+    ON contextualization_exceptions(source, recorded_at);
+CREATE INDEX IF NOT EXISTS idx_contextualization_exceptions_recorded_at
+    ON contextualization_exceptions(recorded_at);
+"""
+
 _V5_SCOPE_FRESHNESS_SQL = """
 CREATE TABLE IF NOT EXISTS scope_freshness (
     scope TEXT PRIMARY KEY,
@@ -230,6 +256,28 @@ class IndexingFailure:
     source_hash: str | None
     source_size_bytes: int | None
     source_mtime_ns: int | None
+
+
+@dataclass(slots=True, kw_only=True)
+class ContextualizationException:
+    """Durable record of a successful-but-degraded contextualization attempt."""
+
+    id: int
+    source: str
+    source_hash: str | None
+    contextualize_model: str
+    operation_id: str | None
+    total_chunks: int
+    cache_miss_chunks: int
+    successful_chunks: int
+    failed_chunks: int
+    abandoned_chunks: int
+    abandoned_indices: list[int]
+    request_ids: dict[int, str]
+    first_failure: str
+    idle_seconds: float | None
+    tail_idle_timeout_s: float | None
+    recorded_at: str
 
 
 @dataclass(slots=True, kw_only=True)
@@ -463,6 +511,11 @@ class PropertyIndex:
                 11,
                 "indexed_sources.source_hash for cache cleanup resolution",
                 self._migration_v11_indexed_sources_source_hash,
+            ),
+            (
+                12,
+                "contextualization_exceptions: durable partial-context diagnostics",
+                lambda conn: conn.executescript(_V12_CONTEXTUALIZATION_EXCEPTIONS_SQL),
             ),
         ]
         for version, description, fn in migrations:
@@ -1837,6 +1890,96 @@ class PropertyIndex:
             elif category == "transient":
                 transient = int(count)
         return permanent, transient
+
+    async def record_contextualization_exception(
+        self,
+        *,
+        source: str,
+        source_hash: str | None,
+        contextualize_model: str,
+        operation_id: str | None,
+        total_chunks: int,
+        cache_miss_chunks: int,
+        successful_chunks: int,
+        failed_chunks: int,
+        abandoned_indices: list[int],
+        request_ids: dict[int, str],
+        first_failure: str,
+        idle_seconds: float | None,
+        tail_idle_timeout_s: float | None,
+    ) -> int:
+        """Persist a degraded contextualization attempt without blocking indexing."""
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            row = conn.execute(
+                "INSERT INTO contextualization_exceptions ("
+                "  source, source_hash, contextualize_model, operation_id,"
+                "  total_chunks, cache_miss_chunks, successful_chunks,"
+                "  failed_chunks, abandoned_chunks, abandoned_indices_json,"
+                "  request_ids_json, first_failure, idle_seconds, tail_idle_timeout_s"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                " RETURNING id",
+                (
+                    source,
+                    source_hash,
+                    contextualize_model,
+                    operation_id,
+                    total_chunks,
+                    cache_miss_chunks,
+                    successful_chunks,
+                    failed_chunks,
+                    len(abandoned_indices),
+                    json.dumps(abandoned_indices),
+                    json.dumps(request_ids, sort_keys=True),
+                    first_failure[:500],
+                    idle_seconds,
+                    tail_idle_timeout_s,
+                ),
+            ).fetchone()
+            conn.commit()
+            return int(row[0]) if row else 0
+
+        return await self._seq.run(_write())
+
+    def list_contextualization_exceptions(
+        self, *, limit: int = 100
+    ) -> list[ContextualizationException]:
+        """Return recent degraded contextualization attempts."""
+        conn = self._ensure_conn()
+        rows = conn.execute(
+            "SELECT id, source, source_hash, contextualize_model, operation_id,"
+            " total_chunks, cache_miss_chunks, successful_chunks, failed_chunks,"
+            " abandoned_chunks, abandoned_indices_json, request_ids_json,"
+            " first_failure, idle_seconds, tail_idle_timeout_s, recorded_at"
+            " FROM contextualization_exceptions"
+            " ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            ContextualizationException(
+                id=int(row[0]),
+                source=row[1],
+                source_hash=row[2],
+                contextualize_model=row[3],
+                operation_id=row[4],
+                total_chunks=int(row[5]),
+                cache_miss_chunks=int(row[6]),
+                successful_chunks=int(row[7]),
+                failed_chunks=int(row[8]),
+                abandoned_chunks=int(row[9]),
+                abandoned_indices=[int(idx) for idx in json.loads(row[10])],
+                request_ids={
+                    int(idx): request_id
+                    for idx, request_id in json.loads(row[11]).items()
+                },
+                first_failure=row[12],
+                idle_seconds=row[13],
+                tail_idle_timeout_s=row[14],
+                recorded_at=row[15],
+            )
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Extraction queue (async decoupled extraction)

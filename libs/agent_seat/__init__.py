@@ -9,9 +9,8 @@ Shared between:
 
 Public surface (stable):
 
-``TOOL_DEFINITIONS``        — read tier (cortex dispatch + rag_search)
+``TOOL_DEFINITIONS``        — static cortex dispatch fallback
 ``TEAM_TOOL_DEFINITIONS``   — full team toolset (cortex + agent_bus)
-``RAG_SEARCH_TOOL_DEFINITION`` — single RAG entry reused in both tiers
 
 ``hydrate_agent(agent, transcript_id=None)``    — async briefing fetch
 ``HydrationBundle``         — dataclass returned by ``hydrate_agent``
@@ -51,7 +50,6 @@ from agent_seat.prompts import (
 )
 from agent_seat.tools import (
     BRAVE_SEARCH_TOOL_DEFINITION,
-    RAG_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
     TOOL_REGISTRY,
@@ -66,7 +64,6 @@ __all__ = [
     "NATIVE_PATHS",
     "NativeLoopResult",
     "NativeToolCall",
-    "RAG_SEARCH_TOOL_DEFINITION",
     "TEAM_TOOL_DEFINITIONS",
     "TOOL_DEFINITIONS",
     "TOOL_REGISTRY",

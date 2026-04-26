@@ -190,7 +190,7 @@ class McpConfig:
     # MCP container must reach them by IP/port instead of the in-container
     # UDS fallback (which targets a socket path that does not exist on the
     # MCP host).  Mirrors the keyset exported by
-    # ``scripts/restart-and-sync-mcp.sh``.
+    # ``scripts/sync-and-restart-mcp.sh``.
     claudeburst_host: str = ""
     claudeburst_port: str = ""
     claudeburst_perps_host: str = ""

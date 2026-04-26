@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING
 
 import chromadb
 import httpx
-from universal_concurrency import FifoCapacityGate
 from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
 from universal_hot_reload import matches_watch_exclude
 
+from services.rag.admission_gate import AdmissionGate
 from services.rag.article_registry import (
     load_registry as load_article_registry_yaml,
 )
@@ -28,7 +28,6 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import DEFAULT_INDEX_WORKERS, RagConfig, load_config
-from services.rag.contextualize_coordinator import ContextualizeModelCoordinator
 from services.rag.corpus_hints import (
     detect_stale_scopes,
     scopes_touching_watch_path,
@@ -87,7 +86,8 @@ _DEPENDENCY_RETRY_MAX_S = 30.0
 
 _RECONCILE_FILE_TIMEOUT_S = 300.0
 
-_POST_INDEX_STEPS = ("corpus_hints", "vocabulary", "noise")
+_POST_INDEX_STEPS = ("corpus_hints", "vocabulary")
+_STARTUP_SCOPE_REPAIR_RETRY_DELAYS_S = (15.0, 30.0, 60.0)
 
 
 def _track_background_task(task: asyncio.Task[None]) -> None:
@@ -108,30 +108,55 @@ def _maybe_clear_post_index_stale_after_repair(config: RagConfig) -> None:
         logger.info("Post-index strict gate cleared after automatic scope repair")
 
 
+def _post_index_still_stale() -> bool:
+    pi = state._property_index
+    if pi is None:
+        return False
+    return bool(pi.check_watermarks(list(_POST_INDEX_STEPS), reference="reindex"))
+
+
 async def _run_startup_scope_freshness_repair(config: RagConfig) -> None:
     pi = state._property_index
     if pi is None:
         return
-    stale = detect_stale_scopes(
-        property_index=pi,
-        configured_scopes=configured_scopes_map(config),
-        scope_filter=None,
-    )
-    if not stale:
-        return
-    logger.warning(
-        "Automatic scope freshness repair (startup): %d stale scopes: %s",
-        len(stale),
-        stale,
-    )
-    await run_scope_freshness_repair(
-        property_index=pi,
-        config=config,
-        stale_scopes=stale,
-        event_bus=state._event_bus,
-        trigger="startup",
-    )
-    _maybe_clear_post_index_stale_after_repair(config)
+    for attempt, delay_s in enumerate(
+        (*_STARTUP_SCOPE_REPAIR_RETRY_DELAYS_S, None),
+        start=1,
+    ):
+        stale_steps = set(
+            pi.check_watermarks(list(_POST_INDEX_STEPS), reference="reindex")
+        )
+        stale = detect_stale_scopes(
+            property_index=pi,
+            configured_scopes=configured_scopes_map(config),
+            scope_filter=None,
+        )
+        if not stale and stale_steps & {"corpus_hints", "vocabulary"}:
+            stale = sorted(config.scopes)
+        if not stale:
+            _maybe_clear_post_index_stale_after_repair(config)
+            return
+        logger.warning(
+            "Automatic scope freshness repair (startup attempt %d): %d stale scopes: %s",
+            attempt,
+            len(stale),
+            stale,
+        )
+        await run_scope_freshness_repair(
+            property_index=pi,
+            config=config,
+            stale_scopes=stale,
+            event_bus=state._event_bus,
+            trigger="startup",
+        )
+        _maybe_clear_post_index_stale_after_repair(config)
+        if not _post_index_still_stale() or delay_s is None:
+            return
+        logger.warning(
+            "Startup scope freshness repair still stale; retrying in %.0fs",
+            delay_s,
+        )
+        await asyncio.sleep(delay_s)
 
 
 async def _post_reconcile_scope_freshness(prefix_paths: list[str]) -> None:
@@ -220,20 +245,10 @@ async def _startup() -> None:
     set_embeddings_event_bus(state._event_bus)
 
     if state._config.contextualize_model:
-        state._global_contextualize_gate = FifoCapacityGate(
-            state._config.contextualize_global_max_concurrency,
-            gate_id="contextualize",
-        )
+        state._admission_gate = AdmissionGate([state._config.contextualize_model])
+        state._admission_gate.start()
         logger.info(
-            "Global contextualization gate initialized (limit=%d)",
-            state._config.contextualize_global_max_concurrency,
-        )
-        state._contextualize_coordinator = ContextualizeModelCoordinator(
-            [state._config.contextualize_model]
-        )
-        state._contextualize_coordinator.start()
-        logger.info(
-            "Contextualize coordinator started (model=%s)",
+            "AdmissionGate started (model=%s)",
             state._config.contextualize_model,
         )
 
@@ -789,10 +804,9 @@ async def _shutdown() -> None:
     state._background_tasks.clear()
     state._init_task = None
 
-    state._global_contextualize_gate = None
-    if state._contextualize_coordinator is not None:
-        await state._contextualize_coordinator.stop()
-        state._contextualize_coordinator = None
+    if state._admission_gate is not None:
+        await state._admission_gate.stop()
+        state._admission_gate = None
     if state._event_bus is not None:
         await state._event_bus.publish(rag_shutdown())
     if state._watcher_manager is not None:

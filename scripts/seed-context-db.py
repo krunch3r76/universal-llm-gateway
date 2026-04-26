@@ -173,10 +173,10 @@ MCP_TOOLS = [
         "sandbox": "n/a",
     },
     {
-        "name": "rag_search",
+        "name": "rag",
         "category": "rag",
-        "description": "Semantic similarity search against ChromaDB knowledge base",
-        "parameters": '{"query": "string", "top_k": "int, default 5", "scope": "string, optional"}',
+        "description": "RAG knowledge retrieval and index management by op name",
+        "parameters": '{"op": "search", "arguments": {"query": "string", "top_k": "int, optional", "scope": "string, optional"}}',
         "when_to_use": "Finding relevant context by meaning, not exact text",
         "when_not_to_use": "Searching for exact strings (use search_project_files)",
         "gotchas": "Requires RAG service running; returns distance scores",

@@ -12,7 +12,6 @@ import pytest
 from agent_seat.tools import (
     BRAVE_SEARCH_TOOL_DEFINITION,
     CORTEX_TOOL_DEFINITION,
-    RAG_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
     TOOL_REGISTRY,
@@ -26,7 +25,7 @@ def _tool_names(defs: list[dict]) -> list[str]:
 
 def test_read_tier_has_expected_tools() -> None:
     names = _tool_names(TOOL_DEFINITIONS)
-    assert set(names) == {"cortex", "rag_search"}
+    assert set(names) == {"cortex"}
 
 
 def test_team_tier_has_expected_tools() -> None:
@@ -54,13 +53,6 @@ def test_required_fields_are_subset_of_properties() -> None:
             assert r in props, (
                 f"{defn['function']['name']}: required {r!r} not in properties"
             )
-
-
-def test_rag_search_constant_matches_read_tier_entry() -> None:
-    read_rag = next(
-        d for d in TOOL_DEFINITIONS if d["function"]["name"] == "rag_search"
-    )
-    assert read_rag is RAG_SEARCH_TOOL_DEFINITION
 
 
 def test_cortex_dispatch_requires_tool_field() -> None:
@@ -95,10 +87,14 @@ def test_tool_registry_resolve_unknown_raises() -> None:
         resolve_tools(["cortex", "nonsense"])
 
 
+def test_tool_registry_rejects_removed_rag_search_shim() -> None:
+    with pytest.raises(ValueError, match="unknown tool"):
+        resolve_tools(["rag_search"])
+
+
 def test_legacy_tier_constants_match_registry() -> None:
     assert TOOL_DEFINITIONS == [
         TOOL_REGISTRY["cortex"]["definition"],
-        TOOL_REGISTRY["rag_search"]["definition"],
     ]
     assert TEAM_TOOL_DEFINITIONS == [
         TOOL_REGISTRY["cortex"]["definition"],

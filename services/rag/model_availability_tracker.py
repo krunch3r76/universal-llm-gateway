@@ -159,8 +159,12 @@ class ModelAvailabilityTracker:
         Filters model.available and model.unavailable. On reconnect, resumes
         from the last seen seq to catch events missed during downtime.
         """
-        connector = aiohttp.UnixConnector(path=_EVENT_QUERY_SOCK)
         while True:
+            # Connector MUST be instantiated inside the loop. ClientSession
+            # defaults connector_owner=True, so the connector is closed when
+            # the session's async-with exits. Reusing a closed connector on the
+            # next iteration raises; a fresh connector per iteration avoids it.
+            connector = aiohttp.UnixConnector(path=_EVENT_QUERY_SOCK)
             try:
                 async with aiohttp.ClientSession(connector=connector) as session:
                     async with session.ws_connect(_SUBSCRIBE_PATH) as ws:
