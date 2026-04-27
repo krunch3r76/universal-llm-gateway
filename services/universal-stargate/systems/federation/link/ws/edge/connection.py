@@ -58,6 +58,8 @@ async def connection_loop(
     is_running: Callable[[], bool],
     on_connect_success: Callable[[WebSocketClientProtocol], Awaitable[None]],
     on_disconnect: Callable[[], Awaitable[None]],
+    ws_ping_interval: float = 15.0,
+    ws_ping_timeout: float | None = None,
 ) -> None:
     """
     Main connection loop with bounded backoff.
@@ -71,6 +73,7 @@ async def connection_loop(
         is_running: Callback to check if client should continue
         on_connect_success: Callback when authenticated (receives websocket)
         on_disconnect: Callback when disconnected
+        ws_ping_timeout: Pong deadline. None → min(ws_ping_interval/2, 10.0).
     """
     if max_delay > 30.0:
         logger.warning(
@@ -93,6 +96,8 @@ async def connection_loop(
                 auth_client=auth_client,
                 on_connect_success=on_connect_success,
                 on_disconnect=on_disconnect,
+                ws_ping_interval=ws_ping_interval,
+                ws_ping_timeout=ws_ping_timeout,
             )
             # Reset delay on successful session
             current_delay = initial_delay
@@ -118,13 +123,21 @@ async def connect_once(
     auth_client: LocalEdgeAuthClient,
     on_connect_success: Callable[[WebSocketClientProtocol], Awaitable[None]],
     on_disconnect: Callable[[], Awaitable[None]],
+    ws_ping_interval: float = 15.0,
+    ws_ping_timeout: float | None = None,
 ) -> None:
     """
     Single connection attempt.
 
     Establishes WebSocket, authenticates, then calls on_connect_success.
     on_disconnect is called when session ends.
+
+    Native WS-protocol ping/pong detects zombie TCP connections within
+    ws_ping_interval + ws_ping_timeout instead of waiting for OS keepalive
+    timeout. See remote/connection.py connect_once() for full rationale.
     """
+    if ws_ping_timeout is None:
+        ws_ping_timeout = min(ws_ping_interval / 2, 10.0)
     ws_url = _build_edge_ws_url(remote_config.url)
     remote_id = remote_config.stargate_id
 
@@ -133,8 +146,8 @@ async def connect_once(
     async with websockets.connect(
         ws_url,
         max_size=None,
-        ping_interval=None,  # We handle our own ping/pong
-        ping_timeout=None,
+        ping_interval=ws_ping_interval,
+        ping_timeout=ws_ping_timeout,
         close_timeout=5.0,
     ) as ws:
         try:

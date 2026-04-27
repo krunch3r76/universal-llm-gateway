@@ -35,6 +35,8 @@ async def connection_loop(
     set_running: Callable[[bool], None],
     on_connect_success: Callable[[WebSocketClientProtocol], Awaitable[None]],
     on_disconnect: Callable[[], Awaitable[None]],
+    ws_ping_interval: float = 15.0,
+    ws_ping_timeout: float | None = None,
 ) -> None:
     """
     Main connection loop with bounded backoff.
@@ -50,6 +52,7 @@ async def connection_loop(
         set_running: Callback to set running state
         on_connect_success: Callback when authenticated (receives websocket)
         on_disconnect: Callback when disconnected
+        ws_ping_timeout: Pong deadline. None → min(ws_ping_interval/2, 10.0).
     """
     # Ensure max_delay adheres to FED-11 invariant (30s max).
     max_delay = min(max_delay, 30.0)
@@ -65,6 +68,8 @@ async def connection_loop(
                 stargate_id=stargate_id,
                 on_connect_success=on_connect_success,
                 on_disconnect=on_disconnect,
+                ws_ping_interval=ws_ping_interval,
+                ws_ping_timeout=ws_ping_timeout,
             )
             # Reset delay on successful session
             current_delay = initial_delay
@@ -106,13 +111,24 @@ async def connect_once(
     stargate_id: str,
     on_connect_success: Callable[[WebSocketClientProtocol], Awaitable[None]],
     on_disconnect: Callable[[], Awaitable[None]],
+    ws_ping_interval: float = 15.0,
+    ws_ping_timeout: float | None = None,
 ) -> None:
     """
     Single connection attempt.
 
     Establishes WebSocket, authenticates, then calls on_connect_success.
     on_disconnect is called when session ends (before raising exceptions).
+
+    Native WS-protocol ping/pong (ws_ping_interval / ws_ping_timeout) runs at the
+    transport layer to detect zombie TCP connections quickly — e.g. when a VPN
+    changes the network interface and the OS keepalive timeout would otherwise
+    leave the socket dead for 60–180s. Application-level FEDERATION_PING messages
+    from ping_loop run in parallel: they exercise the sender pipeline (BoundedQueue,
+    JSON serialization, sender_loop) independently of TCP liveness.
     """
+    if ws_ping_timeout is None:
+        ws_ping_timeout = min(ws_ping_interval / 2, 10.0)
     ws_url = master_config.url.replace("https://", "wss://").replace("http://", "ws://")
     ws_url = f"{ws_url}/ws/federation/master"
 
@@ -122,8 +138,8 @@ async def connect_once(
         async with websockets.connect(
             ws_url,
             max_size=None,
-            ping_interval=None,  # We handle our own ping/pong
-            ping_timeout=None,
+            ping_interval=ws_ping_interval,
+            ping_timeout=ws_ping_timeout,
             close_timeout=5.0,
         ) as ws:
             logger.debug("🔌 WebSocket connection established")

@@ -68,6 +68,8 @@ class MasterEdgeWebSocketClient(PeerConnection):
 
         # Ping interval: reuse federation config default unless overridden
         self._ping_interval = ping_interval or (config.ping_interval_ms / 1000)
+        # Native WS keepalive timeout (see remote/client.py for rationale)
+        self._ws_ping_timeout = min(self._ping_interval / 2, 10.0)
 
         # Auth: Master identifies as its own stargate_id, key is per-remote
         self._auth_client = LocalEdgeAuthClient(
@@ -120,6 +122,8 @@ class MasterEdgeWebSocketClient(PeerConnection):
                 is_running=lambda: self._running,
                 on_connect_success=self._on_authenticated,
                 on_disconnect=self._on_session_end,
+                ws_ping_interval=self._ping_interval,
+                ws_ping_timeout=self._ws_ping_timeout,
             ),
             name=f"master-edge-{self._remote_config.stargate_id}",
         )

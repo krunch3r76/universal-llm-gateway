@@ -109,6 +109,10 @@ class RemoteWebSocketClient(PeerConnection):
         # Ping task
         self._ping_task: asyncio.Task[None] | None = None
         self._ping_interval = config.ping_interval_ms / 1000
+        # Native WS keepalive: closes zombie sockets in ping_interval + ping_timeout
+        # rather than waiting for OS TCP keepalive timeout (60–180s).
+        # timeout ≤ interval/2 so pong deadline < next send window.
+        self._ws_ping_timeout = min(self._ping_interval / 2, 10.0)
 
         # Connection task
         self._connect_task: asyncio.Task[None] | None = None
@@ -179,6 +183,8 @@ class RemoteWebSocketClient(PeerConnection):
                 set_running=lambda v: setattr(self, "_running", v),
                 on_connect_success=self._on_authenticated,
                 on_disconnect=self._on_session_end,
+                ws_ping_interval=self._ping_interval,
+                ws_ping_timeout=self._ws_ping_timeout,
             ),
             name=f"remote-ws-{self._config.stargate_id}",
         )
