@@ -157,6 +157,7 @@ class ConnectionManager:
                     on_cancel=self._on_cancel,
                     on_connected=self._handle_connected,
                     on_disconnected=self._handle_disconnected,
+                    event_bus=self._event_bus,
                 )
                 await self._ws_client.connect()
 

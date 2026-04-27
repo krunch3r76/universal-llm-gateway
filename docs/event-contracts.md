@@ -1468,6 +1468,7 @@ signal.
 | `federation.connection.established` | `remote_id`, `transport` | `latency_ms` |
 | `federation.connection.authenticated` | `remote_id`, `method` | - |
 | `federation.connection.lost` | `remote_id`, `reason` | - |
+| `federation.link.timeout` | `link_role`, `peer_id`, `close_code`, `close_reason`, `cause` | Native WS keepalive ping missed pong (`websockets` 1011 + reason contains `keepalive ping timeout`). `link_role` ∈ `remote_to_master`, `master_to_edge`. `cause` = `keepalive_ping`. role=observation, scope=node. |
 | `federation.snapshot.sent` | `gateway_id`, `all_models_count`, `available_models_count`, `gap_count`, `trigger` | `trigger`: `"initial"` (wiring) or `"periodic"` (reconciliation timer) |
 | `federation.telemetry.received` | `remote_id`, `model_count` | `resource_summary`, `telemetry_age_ms`, `msg_type`, `catalog_model_count`, `loaded_model_count`, `count_source` |
 | `federation.telemetry.applied` | `remote_id`, `changes` | - |

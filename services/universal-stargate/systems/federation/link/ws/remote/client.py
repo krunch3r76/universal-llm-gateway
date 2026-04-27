@@ -60,6 +60,7 @@ class RemoteWebSocketClient(PeerConnection):
         on_cancel: Callable[[str, str | None], Awaitable[bool]] | None = None,
         on_connected: Callable[[], Awaitable[None]] | None = None,
         on_disconnected: Callable[[], Awaitable[None]] | None = None,
+        event_bus: Any | None = None,
     ):
         if config.mode != StargateMode.REMOTE:
             raise ValueError("RemoteWebSocketClient requires REMOTE mode")
@@ -71,6 +72,7 @@ class RemoteWebSocketClient(PeerConnection):
         self._on_cancel = on_cancel
         self._on_connected = on_connected
         self._on_disconnected = on_disconnected
+        self._event_bus = event_bus
 
         self._master_config = config.master
 
@@ -185,6 +187,7 @@ class RemoteWebSocketClient(PeerConnection):
                 on_disconnect=self._on_session_end,
                 ws_ping_interval=self._ping_interval,
                 ws_ping_timeout=self._ws_ping_timeout,
+                event_bus=self._event_bus,
             ),
             name=f"remote-ws-{self._config.stargate_id}",
         )

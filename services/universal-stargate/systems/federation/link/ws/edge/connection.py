@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import random
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import websockets
 from universal_logging import get_logger
@@ -60,6 +60,7 @@ async def connection_loop(
     on_disconnect: Callable[[], Awaitable[None]],
     ws_ping_interval: float = 15.0,
     ws_ping_timeout: float | None = None,
+    event_bus: Any | None = None,
 ) -> None:
     """
     Main connection loop with bounded backoff.
@@ -74,6 +75,7 @@ async def connection_loop(
         on_connect_success: Callback when authenticated (receives websocket)
         on_disconnect: Callback when disconnected
         ws_ping_timeout: Pong deadline. None → min(ws_ping_interval/2, 10.0).
+        event_bus: Optional bus for federation.link.timeout on native keepalive loss.
     """
     if max_delay > 30.0:
         logger.warning(
@@ -98,6 +100,7 @@ async def connection_loop(
                 on_disconnect=on_disconnect,
                 ws_ping_interval=ws_ping_interval,
                 ws_ping_timeout=ws_ping_timeout,
+                event_bus=event_bus,
             )
             # Reset delay on successful session
             current_delay = initial_delay
@@ -125,6 +128,7 @@ async def connect_once(
     on_disconnect: Callable[[], Awaitable[None]],
     ws_ping_interval: float = 15.0,
     ws_ping_timeout: float | None = None,
+    event_bus: Any | None = None,
 ) -> None:
     """
     Single connection attempt.
@@ -143,19 +147,32 @@ async def connect_once(
 
     logger.info(f"🔌 Connecting to Edge {remote_id} at {ws_url}")
 
-    async with websockets.connect(
-        ws_url,
-        max_size=None,
-        ping_interval=ws_ping_interval,
-        ping_timeout=ws_ping_timeout,
-        close_timeout=5.0,
-    ) as ws:
-        try:
-            if not await auth_client.authenticate(ws):
-                logger.warning(f"Auth failed with Edge {remote_id}")
-                return
+    try:
+        async with websockets.connect(
+            ws_url,
+            max_size=None,
+            ping_interval=ws_ping_interval,
+            ping_timeout=ws_ping_timeout,
+            close_timeout=5.0,
+        ) as ws:
+            try:
+                if not await auth_client.authenticate(ws):
+                    logger.warning(f"Auth failed with Edge {remote_id}")
+                    return
 
-            logger.info(f"✅ Connected to Edge {remote_id}")
-            await on_connect_success(ws)
-        finally:
-            await on_disconnect()
+                logger.info(f"✅ Connected to Edge {remote_id}")
+                await on_connect_success(ws)
+            finally:
+                await on_disconnect()
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        from ..emit_link_timeout import emit_federation_link_timeout_if_applicable
+
+        await emit_federation_link_timeout_if_applicable(
+            event_bus=event_bus,
+            exc=e,
+            link_role="master_to_edge",
+            peer_id=remote_id,
+        )
+        raise

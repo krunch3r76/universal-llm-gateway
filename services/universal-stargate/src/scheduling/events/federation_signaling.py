@@ -28,6 +28,7 @@ Signals:
     federation.gateway.degraded — gateway crossed consecutive-timeout threshold
     federation.gateway.unhealthy — gateway crossed consecutive-disconnect threshold
     federation.gateway.recovered — previously degraded or unhealthy gateway recovered
+    federation.link.timeout — native WS ping/pong keepalive timed out (discriminated)
 """
 
 # ruff: noqa: N802
@@ -134,6 +135,8 @@ Payload: {
 }
 """
 
+# Transport keepalive (websockets ping_interval / ping_timeout)
+FEDERATION_LINK_TIMEOUT = "federation.link.timeout"
 
 # ========================================
 # Factory Functions
@@ -518,5 +521,29 @@ def FederationGatewayRecovered(
             "gateway_id": gateway_id,
             "kind": kind,
             "reason": reason,
+        },
+    )
+
+
+@event_factory
+def FederationLinkTimeout(
+    *,
+    link_role: str,
+    peer_id: str,
+    close_code: int | None,
+    close_reason: str,
+    cause: str,
+) -> Event:
+    """Native WS keepalive ping missed pong (websockets 1011 keepalive ping timeout)."""
+    return Event(
+        signal=FEDERATION_LINK_TIMEOUT,
+        role="observation",
+        scope="node",
+        payload={
+            "link_role": link_role,
+            "peer_id": peer_id,
+            "close_code": close_code,
+            "close_reason": close_reason,
+            "cause": cause,
         },
     )

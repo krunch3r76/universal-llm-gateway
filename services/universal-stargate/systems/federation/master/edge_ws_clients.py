@@ -32,10 +32,11 @@ class MasterEdgeWSClients:
         *,
         config: FederationConfig,
         on_telemetry: Callable[[str, str, dict[str, Any]], Awaitable[None]],
-        event_bus: object | None = None,
+        event_bus: Any | None = None,
     ) -> None:
         self._config = config
         self._on_telemetry = on_telemetry
+        self._event_bus = event_bus
         self._clients: dict[str, MasterEdgeWebSocketClient] = {}
         self._on_connected, self._on_disconnected = build_peer_callbacks(
             event_bus=event_bus,
@@ -61,6 +62,7 @@ class MasterEdgeWSClients:
                 on_telemetry=self._on_telemetry,
                 on_connected=self._on_connected,
                 on_disconnected=self._on_disconnected,
+                event_bus=self._event_bus,
             )
             self._clients[remote.stargate_id] = client
             await client.connect()

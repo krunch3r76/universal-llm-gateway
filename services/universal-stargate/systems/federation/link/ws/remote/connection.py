@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import websockets
 from universal_logging import get_logger
@@ -37,6 +37,7 @@ async def connection_loop(
     on_disconnect: Callable[[], Awaitable[None]],
     ws_ping_interval: float = 15.0,
     ws_ping_timeout: float | None = None,
+    event_bus: Any | None = None,
 ) -> None:
     """
     Main connection loop with bounded backoff.
@@ -53,6 +54,7 @@ async def connection_loop(
         on_connect_success: Callback when authenticated (receives websocket)
         on_disconnect: Callback when disconnected
         ws_ping_timeout: Pong deadline. None → min(ws_ping_interval/2, 10.0).
+        event_bus: Optional bus for federation.link.timeout on native keepalive loss.
     """
     # Ensure max_delay adheres to FED-11 invariant (30s max).
     max_delay = min(max_delay, 30.0)
@@ -70,6 +72,7 @@ async def connection_loop(
                 on_disconnect=on_disconnect,
                 ws_ping_interval=ws_ping_interval,
                 ws_ping_timeout=ws_ping_timeout,
+                event_bus=event_bus,
             )
             # Reset delay on successful session
             current_delay = initial_delay
@@ -113,6 +116,7 @@ async def connect_once(
     on_disconnect: Callable[[], Awaitable[None]],
     ws_ping_interval: float = 15.0,
     ws_ping_timeout: float | None = None,
+    event_bus: Any | None = None,
 ) -> None:
     """
     Single connection attempt.
@@ -165,4 +169,12 @@ async def connect_once(
         raise
     except Exception as e:
         logger.error(f"🔌 Connection attempt failed: {type(e).__name__}: {e}")
+        from ..emit_link_timeout import emit_federation_link_timeout_if_applicable
+
+        await emit_federation_link_timeout_if_applicable(
+            event_bus=event_bus,
+            exc=e,
+            link_role="remote_to_master",
+            peer_id=master_config.stargate_id,
+        )
         raise

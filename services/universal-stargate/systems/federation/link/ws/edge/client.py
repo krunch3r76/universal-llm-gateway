@@ -50,12 +50,14 @@ class MasterEdgeWebSocketClient(PeerConnection):
         on_connected: Callable[[str], Awaitable[None]] | None = None,
         on_disconnected: Callable[[str], Awaitable[None]] | None = None,
         ping_interval: float | None = None,
+        event_bus: Any | None = None,
     ):
         self._config = config
         self._remote_config = remote_config
         self._on_telemetry = on_telemetry
         self._on_connected = on_connected
         self._on_disconnected = on_disconnected
+        self._event_bus = event_bus
 
         self._websocket: WebSocketClientProtocol | None = None
         self._authenticated = False
@@ -124,6 +126,7 @@ class MasterEdgeWebSocketClient(PeerConnection):
                 on_disconnect=self._on_session_end,
                 ws_ping_interval=self._ping_interval,
                 ws_ping_timeout=self._ws_ping_timeout,
+                event_bus=self._event_bus,
             ),
             name=f"master-edge-{self._remote_config.stargate_id}",
         )
