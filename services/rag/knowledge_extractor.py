@@ -340,8 +340,7 @@ async def poll_extraction_result(
         record = response.json()
         status = record.get("status")
         if status == "running":
-            await asyncio.sleep(_POLL_INTERVAL_S)
-            continue
+            continue  # server-side wait already provided backoff
         if status == "failed":
             err = record.get("error") or {}
             raise RuntimeError(

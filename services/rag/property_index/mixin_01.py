@@ -14,6 +14,7 @@ from ._spec import (
     _V9_INDEXING_FAILURES_SQL,
     _V10_CONTEXTUALIZED_CHUNKS_SQL,
     _V12_CONTEXTUALIZATION_EXCEPTIONS_SQL,
+    _V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL,
     Callable,
     FtsIndex,
     Path,
@@ -134,9 +135,7 @@ class _PropertyIndexPart01:
         """Add active_execution_id to track the Stargate async execution in flight."""
         columns = {row[1] for row in conn.execute("PRAGMA table_info(extraction_queue)")}
         if "active_execution_id" not in columns:
-            conn.execute(
-                "ALTER TABLE extraction_queue ADD COLUMN active_execution_id TEXT"
-            )
+            conn.executescript(_V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL)
 
     def _apply_migrations(self, conn: sqlite3.Connection) -> None:
         """Apply ordered migrations and stamp schema_version rows transactionally."""

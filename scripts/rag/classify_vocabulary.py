@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Classify corpus hint terms into vocabulary registers.
 
-Two execution paths:
+Both local and frontier modes run through the vocab-classify-v1 pipeline:
 
-- **local** (default): Per-scope classification via a single loaded gateway
-  model. Each scope's terms + description fit easily in 8–32k context.
-  No pipeline overhead, no multi-model consensus.
+- **local**: pipeline mode="local", model resolved from rag.yaml
+  ``vocabulary_model`` (override via ``--model``). Uses the
+  ``domain_discovery`` model alias defined in ``pipelines/vocab_classify/models.yaml``.
 
-- **frontier**: Full pipeline (vocab-classify-v1) with per-scope RAG-grounded
-  classification via cloud/frontier models.
+- **frontier**: pipeline mode="frontier", uses the ``frontier_classify``
+  model alias (override via ``--model``).
 
 Usage:
     python scripts/rag/classify_vocabulary.py [--mode local|frontier] [--force]
@@ -30,99 +30,25 @@ from services.rag.corpus_hints import load_corpus_hints
 from services.rag.vocabulary import (
     DEFAULT_STARGATE_CHAT_URL,
     _resolve_scope_vocab_mode,
-    classify_scope_async,
 )
 
 logger = logging.getLogger(__name__)
 
 
-async def _run_local(
-    hints_map: dict[str, str],
+async def _run_pipeline(
     scope_names: list[str],
-    config: object,
-    model_override: str,
+    mode: str,
+    model: str,
     force: bool,
 ) -> int:
-    """Per-scope classification using a single local model."""
-    if not model_override:
-        print(
-            "No model specified — use --model to provide a gateway model ID.\n"
-            "Example: --model qwen3-5-14b-q8-0-131072",
-            file=sys.stderr,
-        )
-        return 1
-    model = model_override
-    print(f"Local model: {model}")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-        from services.rag.property_index import PropertyIndex
-
-        idx = PropertyIndex()
-        await idx.start()
-        try:
-            ok: list[str] = []
-            failed: list[str] = []
-            for scope in scope_names:
-                text = hints_map.get(scope, "")
-                terms = [t.strip() for t in text.split(",") if t.strip()]
-                if not terms:
-                    continue
-                desc = ""
-                if hasattr(config, "scopes"):
-                    sdef = config.scopes.get(scope)
-                    desc = getattr(sdef, "description", "") or "" if sdef else ""
-                result = await classify_scope_async(
-                    scope=scope,
-                    description=desc,
-                    terms=terms,
-                    model=model,
-                    taxonomy=config.vocabulary_taxonomy,
-                    client=client,
-                )
-                if result is None:
-                    print(f"  FAIL: {scope}")
-                    failed.append(scope)
-                    await idx.invalidate_scope_freshness(scope)
-                    continue
-                await idx.replace_scope_vocabulary_for_scopes({scope: result})
-                from services.rag.corpus_hints import compute_scope_files_hash
-
-                if hasattr(config, "scopes") and scope in config.scopes:
-                    prefixes = list(config.scopes[scope].prefixes)
-                    fh = compute_scope_files_hash(idx, prefixes)
-                    await idx.store_scope_freshness(scope, fh, classified_tier="local")
-                ok.append(scope)
-                n_terms = sum(len(v) for v in result.values())
-                print(f"  OK: {scope} ({n_terms} terms)")
-
-            if ok:
-                await idx.stamp_watermark("vocabulary")
-                await idx.stamp_watermark("corpus_hints")
-        finally:
-            await idx.stop()
-
-    if failed:
-        print(
-            f"\nCompleted {len(ok)}/{len(ok) + len(failed)} scopes "
-            f"({len(failed)} failed)."
-        )
-    else:
-        print(f"\nAll {len(ok)} scopes classified (local).")
-    return 0 if not failed else 1
-
-
-async def _run_frontier(
-    scope_names: list[str],
-    model_override: str,
-    force: bool,
-) -> int:
-    """Full pipeline classification using frontier/cloud models."""
+    """Classify scopes via vocab-classify-v1 pipeline (local or frontier mode)."""
     pipeline_options: dict = {
-        "mode": "frontier",
+        "mode": mode,
         "scopes": scope_names,
         "skip_fresh": not force,
     }
-    if model_override:
-        pipeline_options["model_ref_overrides"] = {"classify": model_override}
+    if model:
+        pipeline_options["model_ref_overrides"] = {"classify": model}
 
     payload: dict = {
         "model": "vocab-classify-v1",
@@ -200,29 +126,55 @@ async def _main_async(args: argparse.Namespace) -> int:
         desc = getattr(config.scopes.get(s, None), "description", "") or ""
         print(f"  [{effective}] {s}: {desc[:60]}")
 
+    # Resolve models: --model overrides for both modes; local falls back to
+    # vocabulary_model from rag.yaml (which maps to domain_discovery in the pipeline).
+    local_model = args.model or config.vocabulary_model or ""
+    frontier_model = args.model or ""
+
     if args.dry_run:
         if local_scopes:
-            print("\n--dry-run: would classify via local model")
-            print(f"  model: {args.model or '(auto-detect loaded model)'}")
-            print(f"  scopes: {local_scopes}")
-        if frontier_scopes:
             opts: dict = {
+                "model": "vocab-classify-v1",
+                "mode": "local",
+                "scopes": local_scopes,
+                "skip_fresh": not args.force,
+            }
+            if local_model:
+                opts["model_ref_overrides"] = {"classify": local_model}
+            print("\n--dry-run: would POST to Stargate with pipeline_options (local):")
+            print(json.dumps(opts, indent=2))
+            if not local_model:
+                print(
+                    "  WARNING: no local model — set vocabulary_model in rag.yaml"
+                    " or pass --model",
+                    file=sys.stderr,
+                )
+        if frontier_scopes:
+            opts = {
                 "model": "vocab-classify-v1",
                 "mode": "frontier",
                 "scopes": frontier_scopes,
                 "skip_fresh": not args.force,
             }
-            if args.model:
-                opts["model_ref_overrides"] = {"classify": args.model}
-            print("\n--dry-run: would POST to Stargate with pipeline_options:")
+            if frontier_model:
+                opts["model_ref_overrides"] = {"classify": frontier_model}
+            print("\n--dry-run: would POST to Stargate with pipeline_options (frontier):")
             print(json.dumps(opts, indent=2))
         return 0
 
     rc = 0
     if local_scopes:
-        rc |= await _run_local(hints_map, local_scopes, config, args.model, args.force)
+        if not local_model:
+            print(
+                "No model for local scopes — set vocabulary_model in rag.yaml"
+                " or pass --model.",
+                file=sys.stderr,
+            )
+            rc |= 1
+        else:
+            rc |= await _run_pipeline(local_scopes, "local", local_model, args.force)
     if frontier_scopes:
-        rc |= await _run_frontier(frontier_scopes, args.model, args.force)
+        rc |= await _run_pipeline(frontier_scopes, "frontier", frontier_model, args.force)
     return rc
 
 
@@ -284,7 +236,10 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default="",
-        help="Single model ID override (local: gateway model, frontier: cloud model)",
+        help=(
+            "Model ID override (local: overrides vocabulary_model from rag.yaml;"
+            " frontier: overrides frontier_classify alias)"
+        ),
     )
     parser.add_argument(
         "--force",

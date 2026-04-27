@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import time
@@ -12,6 +13,7 @@ from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.extraction.property_entries import build_property_entries
 from services.rag.knowledge_extractor import (
     ExtractedKnowledge,
+    cancel_extraction_execution,
     poll_extraction_result,
     submit_extraction_pipeline,
 )
@@ -77,7 +79,14 @@ async def extract_source(
     start = time.monotonic()
     execution_id = await submit_extraction_pipeline(ext_ids, ext_texts, config)
     if on_execution_id is not None:
-        await on_execution_id(execution_id)
+        try:
+            await on_execution_id(execution_id)
+        except Exception:
+            # Recording failed (executor stopped, disk full, etc.) — cancel the
+            # Stargate execution so no orphan runs without a DB pointer, then re-raise.
+            with contextlib.suppress(Exception):
+                await cancel_extraction_execution(execution_id)
+            raise
     parsed, timing = await poll_extraction_result(execution_id, ext_ids)
     duration = time.monotonic() - start
 

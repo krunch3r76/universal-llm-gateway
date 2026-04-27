@@ -10,11 +10,11 @@ from typing import TYPE_CHECKING, Any, Protocol, Self
 
 from universal_concurrency import FifoCapacityGate
 
-from ..map_output_collection import MapOutputCollection
 from ...request_inference_boundary import (
     RequestInferenceBoundaryState,
     RequestInferenceBoundaryTracker,
 )
+from ..map_output_collection import MapOutputCollection
 from .concurrency_manager import MapConcurrencyManager
 from .events import MapEventPublisher
 from .execution_modes import MapExecutionModes
@@ -457,6 +457,10 @@ class MapExecutor:
         iterations in a batch pipeline target the same model). Returns None
         when the proxy, federated_manager, or model_resources are unavailable
         so the caller falls back to uncapped dispatch.
+
+        Only nodes where the model is currently loaded or busy contribute —
+        nodes in loading/draining/unhealthy state are excluded, matching the
+        filter used by GET /api/v1/model-capacity/{model_id}.
         """
         model_id = next(iter(pool_assignments.values()), None)
         if not model_id:
@@ -467,7 +471,18 @@ class MapExecutor:
         fm = getattr(proxy, "federated_manager", None)
         if fm is None:
             return None
+        gm = getattr(proxy, "gateway_manager", None)
         try:
+            from systems.federation import get_federation_integration
+            from systems.routing.selection.catalog import get_model_status_map
+
+            fed = get_federation_integration()
+            local_id = fed.config.stargate_id if fed and fed.config else "local"
+            status_map = get_model_status_map(local_id, gm, fm)
+            summary = status_map.get(model_id, {})
+            active_nodes: set[str] = set(summary.get("loaded_on", [])) | set(
+                summary.get("busy_on", [])
+            )
             gateways = fm.get_all_gateways()
         except Exception:
             return None
@@ -476,6 +491,9 @@ class MapExecutor:
         for gw in gateways:
             meta = gw.model_resources.get(model_id)
             if meta is None:
+                continue
+            node_id = gw.node_id or gw.gateway_id
+            if node_id not in active_nodes:
                 continue
             found = True
             total += meta.get("parallel_slots", 1)

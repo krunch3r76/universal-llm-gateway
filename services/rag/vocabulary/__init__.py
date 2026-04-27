@@ -20,12 +20,13 @@ from ._categories import DEFAULT_TAXONOMY
 from ._classify import classify_scope_async
 from ._prompt import build_classification_prompt
 from ._repair import run_scope_freshness_repair
-from ._scope_helpers import configured_scopes_map
+from ._scope_helpers import _resolve_scope_vocab_mode, configured_scopes_map
 from ._stargate import DEFAULT_STARGATE_CHAT_URL
 
 __all__ = [
     "DEFAULT_STARGATE_CHAT_URL",
     "DEFAULT_TAXONOMY",
+    "_resolve_scope_vocab_mode",
     "build_classification_prompt",
     "classify_scope_async",
     "configured_scopes_map",

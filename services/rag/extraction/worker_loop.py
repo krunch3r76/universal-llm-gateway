@@ -167,23 +167,24 @@ async def run_extraction_worker(
                     source, execution_id
                 )
 
-            try:
-                (
-                    all_done,
-                    increment_attempt,
-                    failure_category,
-                    error,
-                    error_type,
-                ) = await extract_source(
-                    source,
-                    collection=collection,
-                    config=ke,
-                    rag_config=config,
-                    property_index=property_index,
-                    on_execution_id=_store_execution_id,
-                )
-            finally:
-                await property_index.clear_extraction_execution_id(source)
+            (
+                all_done,
+                increment_attempt,
+                failure_category,
+                error,
+                error_type,
+            ) = await extract_source(
+                source,
+                collection=collection,
+                config=ke,
+                rag_config=config,
+                property_index=property_index,
+                on_execution_id=_store_execution_id,
+            )
+            # On CancelledError the active_execution_id is left intact so that
+            # recover_abandoned_extraction_claims() can cancel the orphan on
+            # next startup.  complete_extraction (success) deletes the whole row;
+            # failure branches leave the pointer for the next attempt to overwrite.
             if all_done:
                 await property_index.complete_extraction(source)
                 if event_bus is not None:
@@ -226,7 +227,41 @@ async def run_extraction_worker(
 
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            if status in (503, 429):
+            if status == 404:
+                # Two distinct 404 sources:
+                # • pipeline_not_found (dispatch): federated gateway offline → capacity,
+                #   no attempt burn (gateway may come back).
+                # • execution_id_expired_or_unknown (poll): tracker eviction → burn an
+                #   attempt to bound the retry loop on repeated tracker churn.
+                code: str | None = None
+                try:
+                    code = (exc.response.json().get("error") or {}).get("code")
+                except Exception:
+                    pass
+                if code == "execution_id_expired_or_unknown":
+                    await record_source_failure(
+                        property_index=property_index,
+                        event_bus=event_bus,
+                        source=source,
+                        increment_attempt=True,
+                        failure_category="tracker_lost",
+                        error="execution_id evicted or unknown",
+                        error_type=type(exc).__qualname__,
+                    )
+                else:
+                    await record_source_failure(
+                        property_index=property_index,
+                        event_bus=event_bus,
+                        source=source,
+                        increment_attempt=False,
+                        failure_category="capacity",
+                        error=f"HTTP 404 ({code or 'pipeline_not_found'})",
+                        error_type=type(exc).__qualname__,
+                    )
+                await _sleep_or_shutdown(
+                    shutdown_event, _ERROR_BACKOFF_S, wake=wake_event
+                )
+            elif status in (503, 429):
                 logger.info(
                     "Extraction worker: %d for %s — model busy, backing off",
                     status,
