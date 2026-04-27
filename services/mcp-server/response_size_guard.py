@@ -197,6 +197,64 @@ def _store_result(tool_name: str, result: ToolResult, size: int) -> str:
     return ref_id
 
 
+def _walk_strings(obj: Any) -> list[str]:
+    """Recursively collect all str leaves from a JSON-serializable object."""
+    if isinstance(obj, str):
+        return [obj]
+    if isinstance(obj, dict):
+        out: list[str] = []
+        for v in obj.values():
+            out.extend(_walk_strings(v))
+        return out
+    if isinstance(obj, list):
+        out = []
+        for v in obj:
+            out.extend(_walk_strings(v))
+        return out
+    return []
+
+
+def _iter_tool_text(result: ToolResult) -> list[str]:
+    """Collect every string in a ToolResult that reaches the wire.
+
+    ToolResult.content is a list of MCP content objects (TextContent, ImageContent,
+    etc.) — not a plain str. Iterating .text on each item covers the content list.
+    Walking all strings in structured_content covers the full tool-return dict.
+    """
+    strings: list[str] = []
+    content = result.content
+    if isinstance(content, str):
+        strings.append(content)
+    elif isinstance(content, list):
+        for item in content:
+            text = getattr(item, "text", None)
+            if isinstance(text, str):
+                strings.append(text)
+    if isinstance(result.structured_content, dict):
+        strings.extend(_walk_strings(result.structured_content))
+    return strings
+
+
+def _validate_utf8_content(result: ToolResult) -> bool:
+    """Return False when any wire-bound string contains invalid UTF-8 sequences.
+
+    Lone surrogates introduced by surrogateescape error handlers survive Python
+    string internals but corrupt the MCP wire envelope when serialized. Any
+    unexpected shape or error fails closed rather than letting a corrupt
+    payload through.
+    """
+    try:
+        for s in _iter_tool_text(result):
+            s.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    except Exception:
+        logger.warning("UTF-8 validator hit unexpected ToolResult shape", exc_info=True)
+        record("mcp.response.guard.error", tool_name="<unknown>", phase="validate")
+        return False
+    return True
+
+
 def _truncate_text(text: str, limit: int = 80) -> str:
     """Return a single-line preview clipped to *limit* characters."""
     collapsed = " ".join(text.split())
@@ -749,6 +807,15 @@ class ResponseSizeGuard(Middleware):
 
         if tool_name == "retrieve":
             return result
+
+        if not _validate_utf8_content(result):
+            record("mcp.response.encoding.rejected", tool_name=tool_name)
+            return ToolResult(
+                content=(
+                    f"Tool {tool_name!r} returned content with invalid UTF-8 sequences; "
+                    "response rejected to protect MCP transport integrity."
+                )
+            )
 
         threshold = _threshold_for_profile()
         reasoning_target = _reasoning_target_bytes(threshold)

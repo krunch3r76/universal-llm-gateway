@@ -56,11 +56,13 @@ def write_file_impl(path: str, content: str) -> dict[str, str]:
 def read_file_impl(path: str, binary: bool = False) -> dict[str, Any]:
     """Read and return the contents of *path* from the sandboxed directory."""
     result = read_file_result(path, binary=binary)
+    auto_binary = bool(result.get("auto_binary"))
     record(
         "mcp.tool.file.read",
         path=path,
         resolved=result["path"],
-        binary=binary,
+        binary=binary or auto_binary,
+        auto_binary=auto_binary,
         chars=len(result["content"]) if "content" in result else 0,
         bytes=result.get("bytes", 0),
     )
@@ -68,7 +70,7 @@ def read_file_impl(path: str, binary: bool = False) -> dict[str, Any]:
         "read_file: read %s (%s)",
         result["path"],
         f"{result.get('bytes', 0)} bytes"
-        if binary
+        if (binary or auto_binary)
         else f"{len(result['content'])} chars",
     )
     return result
@@ -86,8 +88,10 @@ def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, A
                 chars=len(batch_result),
                 batched=True,
                 binary=False,
+                auto_binary=False,
             )
         elif isinstance(batch_result, dict) and "content_base64" in batch_result:
+            auto_binary = bool(batch_result.get("auto_binary"))
             record(
                 "mcp.tool.file.read",
                 path=batch_path,
@@ -95,6 +99,7 @@ def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, A
                 bytes=batch_result.get("bytes", 0),
                 batched=True,
                 binary=True,
+                auto_binary=auto_binary,
             )
     logger.debug("files: batch read %d file(s)", len(paths))
     return {"files": results}

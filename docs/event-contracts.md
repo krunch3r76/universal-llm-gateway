@@ -1988,6 +1988,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
 | `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
+| `mcp.tool.file.read` | `path`, `resolved`, `binary`, `auto_binary`, `chars`, `bytes`, `batched` (optional) | File read completed; `auto_binary=True` when a binary-extension file was silently routed to binary mode despite `binary=False`; `batched=True` when emitted from a `read_multi` batch operation |
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
 | `mcp.tool.file.trashed` | `sandbox`, `path`, `trash_path` | `delete_file` soft-deleted to trash/ (conflict resolved as `<stem>-NN.<ext>`) |
@@ -2005,6 +2006,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.response.retrieved` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Consumer retrieved a stored oversized response via `retrieve` tool |
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
 | `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
+| `mcp.response.encoding.rejected` | `tool_name` | Tool response rejected before size check: content contained invalid UTF-8 sequences (lone surrogates) that would corrupt MCP wire transport |
 | `mcp.frontier.generate.called` | `model`, `tool`, `provider`, `has_thinking`, `has_tools`, `has_conversation_id`, `boot_level`, `mcp_tool_loop` | Emitted by `_frontier_core.execute_frontier` for direct MCP `frontier_generate` callers. **Scheduled for deprecation at Task-7 Phase 2** in favour of `pipeline.frontier.dispatch.started` once `frontier_generate` collapses onto the pipeline. Until then, both signals co-emit: pipeline-origin dispatches fire `.started`, MCP-origin dispatches fire `.called`. `_provider_health` counts both into its `called` bucket |
 | `mcp.frontier.generate.completed` | `duration_s`, `tool`, `model`, `provider`, `has_thinking`, `has_tool_calls`, `input_tokens`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason` | MCP-surface completion telemetry. **Scheduled for deprecation at Task-7 Phase 2** in favour of `pipeline.frontier.dispatch.completed` / `.exhausted`. Co-emitted today for MCP-origin dispatches. `duration_s` is currently MCP-only — pipeline signals add this at Phase 2 |
 | `mcp.frontier.generate.error` | `error`, `provider`, `duration_s` (timeout only) | MCP-surface structural failures (upstream HTTP, connection, timeout, adapter misconfig). **Scheduled for deprecation at Task-7 Phase 2** in favour of pipeline dispatch/execution failure envelopes. Still live for MCP-origin callers |

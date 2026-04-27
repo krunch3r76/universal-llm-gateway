@@ -9,6 +9,19 @@ from typing import Any
 
 FILES_ROOT = Path("/data/files")
 
+# Extensions whose content is binary and must not be decoded as UTF-8 text.
+# When binary=False is requested for one of these, read_file_result auto-routes
+# to binary mode and sets auto_binary=True in the result so callers can detect it.
+BINARY_EXTENSIONS: frozenset[str] = frozenset({
+    # Images
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+    ".tiff", ".tif", ".heic", ".heif",
+    # Video / audio
+    ".mp3", ".mp4", ".mov", ".avi", ".mkv",
+    # Archives
+    ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".whl",
+})
+
 def _read_plain(path: Path) -> str:
     """Reads the content of a plain text file, replacing decoding errors."""
     return path.read_text(encoding="utf-8", errors="replace")
@@ -179,6 +192,13 @@ def read_file_result(
         return build_binary_read_result(src)
 
     suffix = src.suffix.lower()
+
+    # Auto-route binary extensions that must not be decoded as UTF-8 text.
+    # Returning garbage from binary-as-text decoding corrupts MCP wire payloads.
+    if suffix in BINARY_EXTENSIONS:
+        result = build_binary_read_result(src)
+        result["auto_binary"] = True
+        return result
     content = extract_text_content(src)
     result: dict[str, Any] = {"content": content, "path": str(src)}
     if suffix == ".pdf":
@@ -220,7 +240,10 @@ def read_files_batch(
     for path in paths:
         try:
             result = read_file_result(path, root=root, binary=binary)
-            results[path] = result if binary else result["content"]
+            if binary or result.get("auto_binary"):
+                results[path] = result
+            else:
+                results[path] = result["content"]
         except Exception as exc:
             results[path] = {"error": str(exc)}
     return results
