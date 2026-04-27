@@ -440,6 +440,7 @@ class RelationshipList(BaseModel):
 class DeadlineItem(BaseModel):
     matter_id: str
     matter_name: str
+    deadline_id: str | None = None
     deadline_name: str
     deadline_date: str | None = None
     deadline_description: str | None = None

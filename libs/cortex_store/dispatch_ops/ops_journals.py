@@ -1,11 +1,18 @@
-"""Journal and session-close ops."""
+"""Journal, session-close, and deadline ops."""
 
 from __future__ import annotations
 
+import json
 import logging
+import sqlite3
+from datetime import UTC, datetime
 from typing import Any
 
-from ..routes.deadlines import _list_deadlines_impl
+from fastapi import HTTPException
+
+from ..db import cortex_conn, execute, json_encode, query
+from ..routes.assertions import _create_assertion_impl
+from ..routes.deadlines import _RESOLVED_OUTCOMES, _list_deadlines_impl
 from ..routes.session_journals import (
     _close_session_impl,
     _create_session_journal_impl,
@@ -18,6 +25,99 @@ logger = logging.getLogger("cortex-api.dispatch_ops.journals")
 
 def _op_deadlines(**_: object) -> dict[str, Any]:
     return _list_deadlines_impl()
+
+
+def _op_deadline_resolve(
+    deadline_id: str | None = None,
+    resolution_note: str | None = None,
+    resolved_at: str | None = None,
+    evidence: str | None = None,
+    fulfilling_assertion_id: int | None = None,
+    outcome: str = "met",
+    **_: object,
+) -> dict[str, Any]:
+    """Atomically close a deadline entity: write confirmed assertion + set outcome.
+
+    ∀ deadline entity: two writes are required to stop it surfacing in
+    deadlines() — a confirmed RESOLVED assertion on the deadline entity AND
+    outcome in its attributes JSON. Agents historically forget the
+    second write; this op performs both reliably.
+    """
+    if not deadline_id:
+        return {"error": "deadline_id is required"}
+    if not resolution_note:
+        return {"error": "resolution_note is required"}
+    if not resolved_at:
+        return {"error": "resolved_at is required"}
+    if outcome not in _RESOLVED_OUTCOMES:
+        return {"error": f"outcome must be one of {sorted(_RESOLVED_OUTCOMES)}"}
+
+    # 1. Read current deadline entity and its attributes.
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT id, type, attributes FROM entities WHERE id = ? AND type = 'deadline'",
+            (deadline_id,),
+        )
+        if not rows:
+            return {"error": f"Deadline entity not found or not type='deadline': {deadline_id}"}
+
+        attrs_raw = rows[0]["attributes"]
+        current_attrs: dict[str, Any] = (
+            json.loads(attrs_raw) if isinstance(attrs_raw, str) and attrs_raw else {}
+        )
+
+    # 2. Write confirmed RESOLVED assertion on the deadline entity.
+    assertion_body: dict[str, Any] = {
+        "entity_id": deadline_id,
+        "claim": f"RESOLVED — {resolution_note}",
+        "confidence": "confirmed",
+        "evidence": evidence or f"deadline_resolve called; resolved_at={resolved_at}",
+        "derivation_type": "agent_observation",
+        "observed_at": datetime.now(UTC).isoformat(),
+        "confidence_score": 1.0,
+    }
+    if fulfilling_assertion_id is not None:
+        assertion_body["fulfillment_assertion_id"] = fulfilling_assertion_id
+
+    try:
+        assertion_result = _create_assertion_impl(assertion_body)
+    except HTTPException as exc:
+        return {"error": f"Assertion write failed: {exc.detail}", "step": "assert"}
+
+    resolution_assertion_id = (assertion_result.get("item") or {}).get("id")
+
+    # 3. Merge outcome into current attributes (non-destructive merge).
+    merged_attrs = {**current_attrs, "outcome": outcome}
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    outcome_set = False
+    try:
+        with cortex_conn() as conn:
+            execute(
+                conn,
+                "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
+                (json_encode(merged_attrs), now, deadline_id),
+            )
+        outcome_set = True
+    except sqlite3.Error as exc:
+        logger.warning("deadline_resolve outcome update failed: %s", exc)
+        record("mcp.cortex.deadline.outcome.failed", deadline_id=deadline_id, error=str(exc))
+
+    logger.info(
+        "deadline_resolve: %s — assertion=%s outcome=%s outcome_set=%s",
+        deadline_id,
+        resolution_assertion_id,
+        outcome,
+        outcome_set,
+    )
+    record("mcp.cortex.deadline.resolved", deadline_id=deadline_id)
+
+    return {
+        "deadline_id": deadline_id,
+        "resolution_assertion_id": resolution_assertion_id,
+        "outcome": outcome,
+        "outcome_set": outcome_set,
+    }
 
 
 def _op_journal_read(

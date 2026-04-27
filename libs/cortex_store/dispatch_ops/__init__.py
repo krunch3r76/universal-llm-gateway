@@ -39,6 +39,7 @@ from .ops_entities import (
     _op_entity_update,
 )
 from .ops_journals import (
+    _op_deadline_resolve,
     _op_deadlines,
     _op_journal_read,
     _op_journal_write,
@@ -92,6 +93,7 @@ _OPS: dict[str, Any] = {
     "stats": _op_stats,
     "surface_forms": _op_surface_forms,
     "deadlines": _op_deadlines,
+    "deadline_resolve": _op_deadline_resolve,
     "journal_read": _op_journal_read,
     "journal_write": _op_journal_write,
     "session_close": _op_session_close,

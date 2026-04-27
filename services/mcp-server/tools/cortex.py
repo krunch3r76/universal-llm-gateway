@@ -68,6 +68,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           rj_link           (entry_id, to_entry?, to_entity?, link_type?) — link entry to another entry or entity
           rj_consolidate    (agent, register, entry, throughline, before, now, tension_points?, contradiction_set?, falsifier?, rendered_shift?, confidence?, source_entry_ids?) — write consolidation entry
           deadlines         ()                                          — active deadlines
+          deadline_resolve  (deadline_id, resolution_note, resolved_at, evidence?, fulfilling_assertion_id?) — atomic two-write close: confirmed RESOLVED assertion + outcome:met on attributes. Eliminates ghost-deadline boot failures where agents forget the second write.
           todo_candidates   (q/query?, limit?, workflow_state?, priority?, domain?, domain_exclude?, context?) — ranked TODO retrieval for user intent; prefer over broad open TODO enumeration
           todo_audit        (stale_days?, limit?, domain?, priority?) — old/open TODO audit for deferral, closure, merge, or spec conversion
 

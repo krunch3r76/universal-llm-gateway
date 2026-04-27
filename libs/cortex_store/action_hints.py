@@ -130,6 +130,7 @@ def detect_deadline_resolution(
             (matter_id,),
         )
 
+        deadline_id = d.get("deadline_id", "")
         for a in matter_assertions:
             claim_lower = (a.get("claim") or "").lower()
             matches = [kw for kw in _RESOLUTION_KEYWORDS if kw in claim_lower]
@@ -144,14 +145,12 @@ def detect_deadline_resolution(
                             f"Deadline '{d.get('deadline_name', '?')}' is "
                             f"{days_overdue}d overdue, but assertion {a['id']} "
                             f"on {matter_id} mentions: {', '.join(matches)}. "
-                            f"If resolved, supersede the assertion."
+                            f"Use deadline_resolve to close it."
                         ),
                         action=(
-                            f'cortex(tool="supersede", arguments=\'{{"old_assertion_id": '
-                            f"{a['id']}, "
-                            f'"entity_id": "{matter_id}", "claim": "...", '
-                            f'"confidence": "confirmed", "evidence": "...", '
-                            f'"session_id": "...", "agent": "..."}}\')'
+                            f'cortex(tool="deadline_resolve", arguments=\'{{"deadline_id": '
+                            f'"{deadline_id}", "resolution_note": "...", '
+                            f'"resolved_at": "YYYY-MM-DDTHH:MM:SSZ"}}\')'
                         ),
                     )
                 )
