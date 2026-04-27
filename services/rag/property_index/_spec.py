@@ -126,6 +126,7 @@ class RecoveredExtractionClaim:
     queued_at: str
     claimed_at: str
     claimed_age_seconds: float
+    active_execution_id: str | None = None
 
 
 @dataclass(slots=True, kw_only=True)

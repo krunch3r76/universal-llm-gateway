@@ -1,0 +1,7 @@
+models:
+  contextualize:
+    model: qwen3-5-9b-q8-0-131072
+    # Context-prefix generation: instruct (non-thinking) mode is appropriate.
+    # Short deterministic output (50-150 tokens) does not benefit from thinking mode.
+    # Available profiles: qwen3-instruct, qwen3-thinking
+    profile: qwen3-instruct

@@ -77,3 +77,25 @@ def rag_extraction_claim_recovered(
             "claimed_age_seconds": claimed_age_seconds,
         },
     )
+
+
+@event_factory
+def rag_extraction_queue_woken(
+    *,
+    pipeline_id: str,
+    reset_count: int,
+) -> Event:
+    """Emit when extraction model availability wakes cooling-off queue items.
+
+    Fired when ``model.available`` arrives for the extraction pipeline and
+    cooling-off items whose last failure was not capacity-related are reset
+    to immediately eligible so the worker picks them up without waiting for
+    the backoff window.
+    """
+    return Event(
+        signal="rag.extraction.queue.woken",
+        payload={
+            "pipeline_id": pipeline_id,
+            "reset_count": reset_count,
+        },
+    )

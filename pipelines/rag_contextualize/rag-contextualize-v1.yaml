@@ -1,0 +1,61 @@
+# Virtual model id: rag-contextualize
+# pipeline_options: chunks (list of {user_msg: str}), source (str, for logging)
+#
+# Generates context prefixes for RAG chunks. Each prefix is a 50-150 token
+# disambiguation sentence that situates the chunk within its parent document —
+# prepended to the chunk text for embedding only, not stored in the document.
+#
+# Called by the RAG service at index time via virtual model ID.
+# Fans out over all file chunks concurrently using map step.
+schema_version: 6
+id: rag-contextualize
+version: "1.0"
+type: rag_contextualize
+description: >
+  Per-chunk context prefix generation for RAG contextual retrieval.
+  Maps a generate step over all chunks in one pipeline call;
+  partial success allowed (min 50% of chunks must succeed).
+output: contextualize
+output_format: json_array
+
+options:
+  timeout_seconds: 3600
+
+steps:
+  - name: contextualize
+    type: generate
+    model_ref: contextualize
+    prompt_ref: rag_contextualize.contextualize_chunk
+    # Stall timeout: resets whenever any map iteration completes.
+    # Sized for cold-model load (~5 min) + 32-chunk queue drain.
+    timeout_seconds: 900
+    # Safety-net handler ceiling: queue wait (32 chunks × 5s inference) + cold load + buffer.
+    handler_timeout_seconds: 600
+    # Per-iteration inference ceiling; queue wait does not consume this budget.
+    # 360s = cold load ceiling (~300s) + max observed warm inference (~20s) + 40s margin.
+    inference_timeout_seconds: 360
+    skip_token_counting: true
+    max_concurrency: 32
+    min_success_threshold: 0.5
+    map_over:
+      chunk: optionsNs.chunks
+    map_inputs:
+      user_msg: mapNs.iteration.value.user_msg
+    generation_parameters:
+      # Anthropic research: 50-100 token prefixes are the sweet spot for 1024-token chunks.
+      # 150 gives headroom for longer chunks.
+      max_tokens: 150
+      temperature: 0.1
+      # Suppress qwen3 thinking mode. Profile (qwen3-instruct) also sets this,
+      # but user-specified params cannot be overridden — this is the hard guard.
+      chat_template_kwargs:
+        enable_thinking: false
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            context:
+              type: string
+          required:
+            - context

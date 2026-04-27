@@ -58,9 +58,9 @@ class KnowledgeExtractionConfig:
     property_boost_factor: float = 0.5
     max_extraction_attempts: int = 3
     # ∀ chunk: attempt_count >= max_extraction_attempts ⟹ permanently skipped
-    extraction_model: str = (
-        ""  # Stored in chunk metadata; mismatch triggers re-extraction
-    )
+    # Derived at config-load time from the pipeline's models.yaml (not user-configured).
+    # Stored in chunk metadata; mismatch triggers re-extraction.
+    extraction_model: str = ""
     per_chunk_timeout_s: float = 60.0
     batch_timeout_overhead_s: float = 30.0
     # How long extraction workers wait for model.loaded before giving up.
@@ -75,13 +75,8 @@ class KnowledgeExtractionConfig:
 
 DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-4096"
 DEFAULT_INDEX_WORKERS = 8
-# Used when contextualize_model is omitted; set to "" to disable contextualization.
-DEFAULT_CONTEXTUALIZE_MODEL = "qwen3-5-9b-q8-0-262144"
-DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY = 32
-DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S = 300.0
-DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 600.0
-DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S = 45.0
-DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO = 0.5
+# Outer HTTP ceiling for one contextualize pipeline call (queue wait + inference).
+DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S = 3600.0
 _BASELINE_EXTENSIONS: tuple[str, ...] = (
     ".md",
     ".txt",
@@ -116,26 +111,14 @@ class RagConfig:
     article_registry_path: Path | None = None
     baseline_extensions: tuple[str, ...] = BASELINE_EXTENSIONS
     post_index_enforcement: str = "strict"
-    # Model ID for per-chunk context generation before embedding. Omitted → use default (on).
-    # Set to "" to explicitly disable contextualization.
-    contextualize_model: str = DEFAULT_CONTEXTUALIZE_MODEL
-    # Cap in-flight contextualization requests per file so one large source does not
-    # monopolize Stargate queue depth.
-    contextualize_max_concurrency: int = DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
-    # Server-enforced per-request budget sent as X-Request-Timeout. The budget
-    # must cover remote queue/load plus inference when contextualization routes
-    # through a federated edge.
-    contextualize_request_timeout_s: float = DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S
-    # Outer httpx ceiling for one contextualize request, covering queue_wait + inference.
-    # Must exceed contextualize_request_timeout_s so Stargate returns structured
-    # timeout errors instead of the RAG client raising premature ReadTimeouts.
+    # Model ID for per-chunk context generation before embedding.
+    # Derived at config-load time from pipelines/rag_contextualize/models.yaml (not user-configured).
+    # Set to "" to disable contextualization.
+    contextualize_model: str = ""
+    # Pipeline ID for contextualization dispatch.
+    contextualize_pipeline: str = "rag-contextualize"
+    # Outer HTTP ceiling for one contextualize pipeline call (queue wait + all-chunk inference).
     contextualize_client_timeout_s: float = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
-    # Tail-abandonment only starts after this much of the batch has settled, so
-    # partial contextualization remains a straggler exception rather than the norm.
-    contextualize_tail_idle_timeout_s: float = DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S
-    contextualize_tail_min_success_ratio: float = (
-        DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO
-    )
     # Seconds between watcher reconcile sweeps (recover files missed by inotify). 0 = disabled.
     # Higher values reduce idle CPU; default 300 (5 min).
     reconcile_interval_s: float = 300.0
@@ -143,6 +126,12 @@ class RagConfig:
     # from saturating the model queue and crowding out fresh indexing work.
     # Defaults to 3 (independent of index_workers).
     reconcile_workers: int = 3
+    # Local model for vocabulary classification (vocabulary_mode=local paths).
+    # Derived at config-load time from pipelines/vocab_classify/models.yaml domain_discovery.model
+    # (not user-configured). Empty string means vocab_classify/models.yaml is missing or
+    # unreadable; local-mode scopes are skipped with rag.vocabulary.gaps.detected
+    # reason="no_model_configured".
+    vocabulary_model: str = ""
     # Default for scripts/rag/classify_vocabulary.py when calling vocab-classify-v1 pipeline.
     vocabulary_mode: str = "local"
     # Ordered list of vocabulary categories for classification. Order defines retrieval

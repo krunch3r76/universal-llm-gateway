@@ -47,9 +47,6 @@ from services.rag.events.indexing import (
     rag_article_content_hash_mismatch,
     rag_chroma_upsert_completed,
     rag_chroma_upsert_started,
-    rag_chunk_contextualization_completed,
-    rag_chunk_contextualization_failed,
-    rag_chunk_contextualization_started,
     rag_chunk_noise_tagged,
     rag_contextualization_applied,
     rag_contextualization_completed,
@@ -57,7 +54,6 @@ from services.rag.events.indexing import (
     rag_contextualization_exception_recorded,
     rag_contextualization_partial,
     rag_contextualization_started,
-    rag_contextualization_tail_abandoned,
     rag_contextualize_cache_evaluated,
     rag_contextualize_cache_lookup_failed,
     rag_contextualize_cache_store_completed,
@@ -96,13 +92,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _CHARS_PER_TOKEN = 4
-
-
-def _contextualize_request_timeout_s(config: RagConfig) -> float:
-    """Return the server-enforced contextualization request budget."""
-    return min(
-        config.contextualize_request_timeout_s, config.contextualize_client_timeout_s
-    )
 
 
 def _should_skip_cached_source(
@@ -699,9 +688,7 @@ async def _index_file_impl(
         cache_rows_to_store: list[StoredContextRow] = []
         if state._config is not None and state._config.contextualize_model:
             context_model = state._config.contextualize_model
-            context_max_concurrency = state._config.contextualize_max_concurrency
             context_client_timeout_s = state._config.contextualize_client_timeout_s
-            context_timeout_s = _contextualize_request_timeout_s(state._config)
 
             cached_contexts: dict[str, str] = {}
             if prop_index is not None and source_hash:
@@ -756,7 +743,7 @@ async def _index_file_impl(
                         file=source,
                         chunk_count=plan.cache_misses_count,
                         model=context_model,
-                        max_concurrency=context_max_concurrency,
+                        max_concurrency=32,  # pipeline-controlled; see rag-contextualize-v1.yaml
                         operation_id=correlation_id,
                         operation=operation,
                     )
@@ -768,70 +755,13 @@ async def _index_file_impl(
             partial_first_failure: str | None = None
             ctx_result = None
             if plan.cache_misses:
-
-                async def _emit_contextualize_diagnostic(
-                    event: str,
-                    *,
-                    chunk_index: int,
-                    request_id: str,
-                    duration_seconds: float | None = None,
-                    error: str | None = None,
-                    output_chars: int | None = None,
-                ) -> None:
-                    if state._event_bus is None:
-                        return
-                    if event == "started":
-                        await state._event_bus.publish_nowait(
-                            rag_chunk_contextualization_started(
-                                file=source,
-                                chunk_index=chunk_index,
-                                model=context_model,
-                                request_id=request_id,
-                                timeout_s=context_timeout_s,
-                                operation_id=correlation_id,
-                                operation=operation,
-                            )
-                        )
-                    elif event == "completed":
-                        await state._event_bus.publish_nowait(
-                            rag_chunk_contextualization_completed(
-                                file=source,
-                                chunk_index=chunk_index,
-                                model=context_model,
-                                request_id=request_id,
-                                duration_seconds=duration_seconds or 0.0,
-                                output_chars=output_chars or 0,
-                                operation_id=correlation_id,
-                                operation=operation,
-                            )
-                        )
-                    elif event in {"failed", "abandoned"}:
-                        await state._event_bus.publish_nowait(
-                            rag_chunk_contextualization_failed(
-                                file=source,
-                                chunk_index=chunk_index,
-                                model=context_model,
-                                request_id=request_id,
-                                duration_seconds=duration_seconds,
-                                error=error or event,
-                                operation_id=correlation_id,
-                                operation=operation,
-                            )
-                        )
-
                 ctx_result = await contextualize_chunks(
                     [miss.chunk for miss in plan.cache_misses],
                     source,
                     context_model,
-                    timeout_s=context_timeout_s,
-                    max_concurrency=context_max_concurrency,
+                    pipeline=state._config.contextualize_pipeline,
                     client_timeout_s=context_client_timeout_s,
-                    tail_idle_timeout_s=state._config.contextualize_tail_idle_timeout_s,
-                    tail_min_success_ratio=(
-                        state._config.contextualize_tail_min_success_ratio
-                    ),
                     chunk_indices=[miss.index for miss in plan.cache_misses],
-                    diagnostics_sink=_emit_contextualize_diagnostic,
                     admission_gate=state._admission_gate,
                 )
                 computed = ctx_result.contexts
@@ -874,14 +804,8 @@ async def _index_file_impl(
                                 ctx_result.request_ids if ctx_result is not None else {}
                             ),
                             first_failure=partial_first_failure or "",
-                            idle_seconds=(
-                                ctx_result.tail_idle_seconds
-                                if ctx_result is not None
-                                else None
-                            ),
-                            tail_idle_timeout_s=(
-                                state._config.contextualize_tail_idle_timeout_s
-                            ),
+                            idle_seconds=None,
+                            tail_idle_timeout_s=None,
                         )
                     )
                 except Exception as exc:
@@ -897,7 +821,7 @@ async def _index_file_impl(
                         failed=plan.cache_misses_count - successful_misses,
                         duration_seconds=time.monotonic() - context_start,
                         model=context_model,
-                        max_concurrency=context_max_concurrency,
+                        max_concurrency=32,  # pipeline-controlled; see rag-contextualize-v1.yaml
                         operation_id=correlation_id,
                         operation=operation,
                     )
@@ -915,28 +839,7 @@ async def _index_file_impl(
                             operation=operation,
                         )
                     )
-                if ctx_result is not None and ctx_result.abandoned_indices:
-                    await state._event_bus.publish_nowait(
-                        rag_contextualization_tail_abandoned(
-                            file=source,
-                            total_chunks=len(chunks),
-                            completed_chunks=(
-                                plan.cache_misses_count
-                                - len(ctx_result.abandoned_indices)
-                            ),
-                            abandoned_chunks=len(ctx_result.abandoned_indices),
-                            successful_chunks=len(chunks) - partial_failed_count,
-                            failed_chunks=partial_failed_count,
-                            model=context_model,
-                            idle_seconds=ctx_result.tail_idle_seconds
-                            or state._config.contextualize_tail_idle_timeout_s,
-                            tail_idle_timeout_s=(
-                                state._config.contextualize_tail_idle_timeout_s
-                            ),
-                            operation_id=correlation_id,
-                            operation=operation,
-                        )
-                    )
+
                 if contextualization_exception_record_error is not None:
                     await state._event_bus.publish_nowait(
                         rag_contextualization_exception_record_failed(

@@ -56,6 +56,32 @@ class _PropertyIndexPart07:
     # Extraction queue (async decoupled extraction)
     # ------------------------------------------------------------------
 
+    async def wake_extraction_queue(self) -> int:
+        """Reset cooling-off items that failed due to model unavailability.
+
+        Clears ``last_failure_at`` for non-capacity cooling-off items so they
+        become immediately eligible on the next ``dequeue_extraction`` call.
+        Called when the extraction pipeline transitions to available — items
+        that were cooling off because the model was unreachable should retry
+        promptly rather than waiting for the backoff window.
+
+        Returns the number of rows reset.
+        """
+
+        async def _write() -> int:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "UPDATE extraction_queue"
+                " SET last_failure_at = NULL"
+                " WHERE last_failure_at IS NOT NULL"
+                "   AND (last_failure_category IS NULL"
+                "     OR last_failure_category != 'capacity')",
+            )
+            conn.commit()
+            return cursor.rowcount
+
+        return await self._seq.run(_write())
+
     async def enqueue_extraction(self, source: str) -> None:
         """Add a source to the extraction queue (idempotent)."""
 
@@ -90,13 +116,7 @@ class _PropertyIndexPart07:
                 "   AND (last_attempt_at IS NULL"
                 "     OR (last_failure_at IS NOT NULL"
                 "       AND datetime(last_failure_at) >= datetime(last_attempt_at)"
-                "       AND datetime(last_failure_at,"
-                "         '+' || CASE"
-                "           WHEN attempts <= 1 THEN '1'"
-                "           WHEN attempts <= 2 THEN '5'"
-                "           WHEN attempts <= 3 THEN '15'"
-                "           ELSE '60'"
-                "         END || ' minutes') < datetime('now')))"
+                "       AND datetime(last_failure_at, '+1 minutes') < datetime('now')))"
                 " ORDER BY queued_at ASC LIMIT ?"
                 ")"
                 " UPDATE extraction_queue"
@@ -124,6 +144,19 @@ class _PropertyIndexPart07:
         async def _write() -> None:
             conn = self._ensure_conn()
             conn.execute("DELETE FROM extraction_queue WHERE source = ?", (source,))
+            conn.commit()
+
+        await self._seq.run(_write())
+
+    async def clear_extraction_execution_id(self, source: str) -> None:
+        """Clear the active_execution_id once a pipeline terminates."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET active_execution_id = NULL WHERE source = ?",
+                (source,),
+            )
             conn.commit()
 
         await self._seq.run(_write())
@@ -167,6 +200,21 @@ class _PropertyIndexPart07:
 
         await self._seq.run(_write())
 
+    async def record_extraction_execution_id(
+        self, source: str, execution_id: str
+    ) -> None:
+        """Store the Stargate async execution_id for an in-flight extraction claim."""
+
+        async def _write() -> None:
+            conn = self._ensure_conn()
+            conn.execute(
+                "UPDATE extraction_queue SET active_execution_id = ? WHERE source = ?",
+                (execution_id, source),
+            )
+            conn.commit()
+
+        await self._seq.run(_write())
+
     async def recover_abandoned_extraction_claims(
         self,
     ) -> list[RecoveredExtractionClaim]:
@@ -174,14 +222,16 @@ class _PropertyIndexPart07:
 
         Called before starting the extraction worker. The service has one
         extraction worker, so any in-flight row present at process startup is
-        necessarily from a prior process.
+        necessarily from a prior process. Returns active_execution_id so the
+        caller can cancel the orphaned Stargate execution before re-queuing.
         """
 
         async def _write() -> list[RecoveredExtractionClaim]:
             conn = self._ensure_conn()
             rows = conn.execute(
                 "SELECT source, attempts, queued_at, last_attempt_at,"
-                " (julianday('now') - julianday(last_attempt_at)) * 86400.0"
+                " (julianday('now') - julianday(last_attempt_at)) * 86400.0,"
+                " active_execution_id"
                 " FROM extraction_queue"
                 " WHERE last_attempt_at IS NOT NULL"
                 "   AND (last_failure_at IS NULL"
@@ -190,7 +240,7 @@ class _PropertyIndexPart07:
             ).fetchall()
             conn.execute(
                 "UPDATE extraction_queue"
-                " SET last_attempt_at = NULL"
+                " SET last_attempt_at = NULL, active_execution_id = NULL"
                 " WHERE last_attempt_at IS NOT NULL"
                 "   AND (last_failure_at IS NULL"
                 "     OR datetime(last_failure_at) < datetime(last_attempt_at))"
@@ -203,6 +253,7 @@ class _PropertyIndexPart07:
                     queued_at=row[2],
                     claimed_at=row[3],
                     claimed_age_seconds=float(row[4] or 0.0),
+                    active_execution_id=row[5],
                 )
                 for row in rows
             ]
@@ -253,13 +304,7 @@ class _PropertyIndexPart07:
             "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
             "     THEN 'in_flight'"
             "   WHEN last_failure_at IS NOT NULL"
-            "     AND datetime(last_failure_at,"
-            "       '+' || CASE"
-            "         WHEN attempts <= 1 THEN '1'"
-            "         WHEN attempts <= 2 THEN '5'"
-            "         WHEN attempts <= 3 THEN '15'"
-            "         ELSE '60'"
-            "       END || ' minutes') >= datetime('now')"
+            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
             "     AND attempts < ?"
             "     THEN 'cooling_off'"
             "   ELSE 'ready'"

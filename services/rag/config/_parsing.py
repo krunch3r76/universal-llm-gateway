@@ -5,9 +5,58 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import yaml
+
 from ._models import KnowledgeExtractionConfig, ScopeDefinition, WatchDirectory
 
 logger = logging.getLogger(__name__)
+
+# Repo root — three parents up from services/rag/config/.
+_REPO_ROOT = Path(__file__).parents[3]
+
+
+def _pipeline_model(pipeline_dir_name: str, model_ref: str, label: str) -> str:
+    """Return the model ID for a named model ref in a pipeline's models.yaml.
+
+    The pipeline's models.yaml is the single source of truth for which model
+    (and profile) a step runs. rag.yaml must not duplicate this — that creates
+    split-brain when the pipeline model changes without a matching rag.yaml edit.
+
+    Returns "" if the pipeline directory or models.yaml is missing.
+    """
+    models_path = _REPO_ROOT / "pipelines" / pipeline_dir_name / "models.yaml"
+    if not models_path.exists():
+        logger.warning(
+            "Pipeline models.yaml not found at %s; %s will be empty",
+            models_path,
+            label,
+        )
+        return ""
+    try:
+        with models_path.open() as fh:
+            data = yaml.safe_load(fh)
+        model = (data or {}).get("models", {}).get(model_ref, {}).get("model", "")
+        return str(model) if model else ""
+    except Exception as exc:
+        logger.warning("Failed to read pipeline models.yaml %s: %s", models_path, exc)
+        return ""
+
+
+def _pipeline_extraction_model(pipeline_id: str) -> str:
+    """Return the model ID for the 'extraction' ref in a pipeline's models.yaml."""
+    return _pipeline_model(
+        pipeline_id.replace("-", "_"), "extraction", "extraction_model"
+    )
+
+
+def _pipeline_contextualize_model() -> str:
+    """Return the model ID for the 'contextualize' ref in rag_contextualize/models.yaml."""
+    return _pipeline_model("rag_contextualize", "contextualize", "contextualize_model")
+
+
+def _pipeline_vocab_model() -> str:
+    """Return the model ID for the 'domain_discovery' ref in vocab_classify/models.yaml."""
+    return _pipeline_model("vocab_classify", "domain_discovery", "vocabulary_model")
 
 
 def _resolve_path(path_str: str) -> str:
@@ -152,7 +201,7 @@ def _parse_knowledge_extraction(raw: object) -> KnowledgeExtractionConfig:
     schema_version = raw.get("schema_version", 1)
     boost = raw.get("property_boost_factor", 0.5)
     max_attempts = raw.get("max_extraction_attempts", 3)
-    extraction_model = str(raw.get("extraction_model", ""))
+    extraction_model = _pipeline_extraction_model(str(pipeline))
     per_chunk_timeout_s = max(1.0, float(raw.get("per_chunk_timeout_s", 60.0)))
     batch_timeout_overhead_s = max(
         0.0, float(raw.get("batch_timeout_overhead_s", 30.0))

@@ -18,7 +18,10 @@ from services.rag.extraction.capacity_envelope import is_capacity_class_envelope
 from services.rag.extraction.chroma_source import extract_source
 from services.rag.extraction.record_failure import record_source_failure
 from services.rag.extraction_admission import ExtractionAdmissionGate
-from services.rag.knowledge_extractor import configure_timeouts, wait_until_extraction_ready
+from services.rag.knowledge_extractor import (
+    configure_timeouts,
+    wait_until_extraction_ready,
+)
 
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
@@ -35,12 +38,39 @@ _MAX_QUEUE_ATTEMPTS = 5
 _ADMISSION_WAIT_TIMEOUT_S: float = 60.0
 
 
-async def _sleep_or_shutdown(event: asyncio.Event, seconds: float) -> None:
-    """Sleep for up to *seconds*, returning early if shutdown is signaled."""
+async def _sleep_or_shutdown(
+    event: asyncio.Event,
+    seconds: float,
+    *,
+    wake: asyncio.Event | None = None,
+) -> None:
+    """Sleep for up to seconds, returning early on shutdown or wake signal."""
+    if wake is None:
+        try:
+            await asyncio.wait_for(event.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
+        return
+    shutdown_task = asyncio.create_task(event.wait())
+    wake_task = asyncio.create_task(wake.wait())
     try:
-        await asyncio.wait_for(event.wait(), timeout=seconds)
-    except TimeoutError:
-        pass
+        _, pending = await asyncio.wait(
+            [shutdown_task, wake_task],
+            timeout=seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
+    except asyncio.CancelledError:
+        shutdown_task.cancel()
+        wake_task.cancel()
+        raise
+    if wake.is_set():
+        wake.clear()
 
 
 async def run_extraction_worker(
@@ -51,6 +81,7 @@ async def run_extraction_worker(
     event_bus: EventBus | None,
     shutdown_event: asyncio.Event,
     admission_gate: ExtractionAdmissionGate | None = None,
+    wake_event: asyncio.Event | None = None,
 ) -> None:
     """Main extraction worker loop. Runs until shutdown_event is set.
 
@@ -113,7 +144,7 @@ async def run_extraction_worker(
             continue
 
         if not claims:
-            await _sleep_or_shutdown(shutdown_event, _IDLE_INTERVAL_S)
+            await _sleep_or_shutdown(shutdown_event, _IDLE_INTERVAL_S, wake=wake_event)
             continue
 
         claim = claims[0]
@@ -130,19 +161,29 @@ async def run_extraction_worker(
         source_started = time.monotonic()
         try:
             collection = collection_fn()
-            (
-                all_done,
-                increment_attempt,
-                failure_category,
-                error,
-                error_type,
-            ) = await extract_source(
-                source,
-                collection=collection,
-                config=ke,
-                rag_config=config,
-                property_index=property_index,
-            )
+
+            async def _store_execution_id(execution_id: str) -> None:
+                await property_index.record_extraction_execution_id(
+                    source, execution_id
+                )
+
+            try:
+                (
+                    all_done,
+                    increment_attempt,
+                    failure_category,
+                    error,
+                    error_type,
+                ) = await extract_source(
+                    source,
+                    collection=collection,
+                    config=ke,
+                    rag_config=config,
+                    property_index=property_index,
+                    on_execution_id=_store_execution_id,
+                )
+            finally:
+                await property_index.clear_extraction_execution_id(source)
             if all_done:
                 await property_index.complete_extraction(source)
                 if event_bus is not None:
@@ -162,7 +203,9 @@ async def run_extraction_worker(
                     error=error,
                     error_type=error_type,
                 )
-                await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_S)
+                await _sleep_or_shutdown(
+                    shutdown_event, _POLL_INTERVAL_S, wake=wake_event
+                )
 
         except httpx.TimeoutException as exc:
             logger.warning(
@@ -179,7 +222,7 @@ async def run_extraction_worker(
                 error=str(exc) or "timeout",
                 error_type=type(exc).__qualname__,
             )
-            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S)
+            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S, wake=wake_event)
 
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
@@ -198,7 +241,9 @@ async def run_extraction_worker(
                     error=f"HTTP {status}",
                     error_type=type(exc).__qualname__,
                 )
-                await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S)
+                await _sleep_or_shutdown(
+                    shutdown_event, _ERROR_BACKOFF_S, wake=wake_event
+                )
             else:
                 capacity_class = is_capacity_class_envelope(exc)
                 logger.warning(
@@ -217,7 +262,9 @@ async def run_extraction_worker(
                     error=str(exc),
                     error_type=type(exc).__qualname__,
                 )
-                await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_S)
+                await _sleep_or_shutdown(
+                    shutdown_event, _POLL_INTERVAL_S, wake=wake_event
+                )
 
         except Exception as exc:
             logger.error(
@@ -235,6 +282,6 @@ async def run_extraction_worker(
                 error=str(exc) or type(exc).__qualname__,
                 error_type=type(exc).__qualname__,
             )
-            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S)
+            await _sleep_or_shutdown(shutdown_event, _ERROR_BACKOFF_S, wake=wake_event)
 
     logger.info("Extraction worker shutting down")

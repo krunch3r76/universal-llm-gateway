@@ -155,6 +155,18 @@ class MapExecutor:
             iteration_items
         )
 
+        # Auto-derive concurrency cap from live model capacity when not set in config.
+        # Prevents flooding the CapacityPool queue beyond what the cluster can absorb.
+        derived_max_concurrency = self._map_config.max_concurrency
+        if derived_max_concurrency is None and pool_assignments:
+            derived_max_concurrency = self._derive_model_capacity(pool_assignments)
+            if derived_max_concurrency is not None:
+                logger.info(
+                    "[%s] Auto-derived max_concurrency=%d from model capacity",
+                    self._step.name,
+                    derived_max_concurrency,
+                )
+
         iteration_context = self._build_iteration_context(
             iteration_items=iteration_items,
             pool_assignments=pool_assignments,
@@ -194,10 +206,10 @@ class MapExecutor:
 
         gate = (
             FifoCapacityGate(
-                self._map_config.max_concurrency,
+                derived_max_concurrency,
                 gate_id=f"map:{self._step.name}",
             )
-            if self._map_config.max_concurrency is not None
+            if derived_max_concurrency is not None
             else None
         )
 
@@ -437,6 +449,37 @@ class MapExecutor:
                 index=idx,
                 request_id=request_id,
             )
+
+    def _derive_model_capacity(self, pool_assignments: dict[int, str]) -> int | None:
+        """Sum parallel_slots across loaded/busy gateways for the assigned model.
+
+        Uses the first pool assignment as the representative model_id (all
+        iterations in a batch pipeline target the same model). Returns None
+        when the proxy, federated_manager, or model_resources are unavailable
+        so the caller falls back to uncapped dispatch.
+        """
+        model_id = next(iter(pool_assignments.values()), None)
+        if not model_id:
+            return None
+        proxy = getattr(self._runtime, "_proxy", None)
+        if proxy is None:
+            return None
+        fm = getattr(proxy, "federated_manager", None)
+        if fm is None:
+            return None
+        try:
+            gateways = fm.get_all_gateways()
+        except Exception:
+            return None
+        total = 0
+        found = False
+        for gw in gateways:
+            meta = gw.model_resources.get(model_id)
+            if meta is None:
+                continue
+            found = True
+            total += meta.get("parallel_slots", 1)
+        return total if found else None
 
     @staticmethod
     def _extract_input_fingerprint(typed_inputs: Any) -> str | None:

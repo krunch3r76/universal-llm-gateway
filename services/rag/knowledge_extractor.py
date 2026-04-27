@@ -20,7 +20,6 @@ import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 import httpx
 
@@ -32,6 +31,8 @@ logger = logging.getLogger(__name__)
 STARGATE_URL = "http://localhost:9999"
 
 _PIPELINE_CEILING_S = 3600.0
+_POLL_WAIT_S = 60.0
+_POLL_INTERVAL_S = 5.0
 _client = httpx.AsyncClient(timeout=_PIPELINE_CEILING_S + 30.0)
 
 _batch_overhead_s: float = 30.0
@@ -282,59 +283,89 @@ def _parse_map_response(
 
 
 # ---------------------------------------------------------------------------
-# HTTP call — single attempt, no retries
+# HTTP calls — async dispatch + poll (no retries; caller owns retry policy)
 # ---------------------------------------------------------------------------
 
 
-async def extract_file_chunks(
+async def submit_extraction_pipeline(
     chunk_ids: list[str],
     chunk_texts: list[str],
     config: KnowledgeExtractionConfig,
-) -> tuple[list[ExtractedKnowledge | None], dict[str, Any]]:
-    """Execute one extraction pipeline call. Single attempt, no retries.
+) -> str:
+    """Submit extraction to the async dispatch endpoint and return execution_id.
 
-    Returns (parsed_results, timing_metadata).
-    Raises httpx.TimeoutException or httpx.HTTPStatusError on failure —
-    the caller (extraction_worker) owns retry policy.
+    Raises httpx.TimeoutException or httpx.HTTPStatusError on failure.
     """
-    if not chunk_ids:
-        return [], {}
-
-    request_id = f"rag-extract-{uuid4().hex}"
     chunks = [
         {"id": cid, "text": text}
         for cid, text in zip(chunk_ids, chunk_texts, strict=True)
     ]
-    batch_timeout = _PIPELINE_CEILING_S + _batch_overhead_s
-
     response = await _client.post(
-        f"{STARGATE_URL}/v1/chat/completions",
+        f"{STARGATE_URL}/api/v1/pipelines/dispatch",
         json={
             "model": config.pipeline,
             "messages": [{"role": "user", "content": "extract"}],
             "pipeline_options": {"chunks": chunks},
+            "caller_agent": "rag",
         },
-        headers={"X-Internal-Request-ID": request_id},
-        timeout=batch_timeout,
+        timeout=30.0,
     )
     response.raise_for_status()
-    body = response.json()
-    choice = body["choices"][0]
-    content = choice["message"]["content"]
-    finish_reason = choice.get("finish_reason")
-    if finish_reason == "length":
-        logger.warning(
-            "Extraction hit max_tokens (finish_reason=length) for %d chunks",
-            len(chunk_ids),
+    return response.json()["execution_id"]
+
+
+async def poll_extraction_result(
+    execution_id: str,
+    chunk_ids: list[str],
+) -> tuple[list[ExtractedKnowledge | None], dict[str, Any]]:
+    """Poll until the execution reaches a terminal state and parse the output.
+
+    Raises httpx.TimeoutException or httpx.HTTPStatusError on transport failure.
+    Raises RuntimeError if the execution fails on Stargate's side.
+    """
+    deadline = asyncio.get_running_loop().time() + _PIPELINE_CEILING_S + _batch_overhead_s
+    while True:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise httpx.TimeoutException(
+                f"Extraction execution {execution_id} exceeded ceiling"
+            )
+        wait = min(_POLL_WAIT_S, remaining)
+        response = await _client.get(
+            f"{STARGATE_URL}/api/v1/pipelines/executions/{execution_id}",
+            params={"wait": wait},
+            timeout=wait + 10.0,
         )
-    parsed, parse_failure_reasons = _parse_map_response(content, chunk_ids)
-    timing: dict[str, Any] = dict(body.get("pipeline_timing") or {})
-    timing["request_id"] = request_id
-    execution_id = response.headers.get("x-pipeline-execution-id")
-    if execution_id:
-        timing["execution_id"] = execution_id
-    if finish_reason and finish_reason != "stop":
-        timing["finish_reason"] = finish_reason
-    if parse_failure_reasons:
-        timing["parse_failure_reasons"] = parse_failure_reasons
-    return parsed, timing
+        response.raise_for_status()
+        record = response.json()
+        status = record.get("status")
+        if status == "running":
+            await asyncio.sleep(_POLL_INTERVAL_S)
+            continue
+        if status == "failed":
+            err = record.get("error") or {}
+            raise RuntimeError(
+                f"Extraction pipeline failed: {err.get('code')} — {err.get('message')}"
+            )
+        # completed
+        content = (record.get("result") or {}).get("content", "")
+        parsed, parse_failure_reasons = _parse_map_response(content, chunk_ids)
+        timing: dict[str, Any] = {"execution_id": execution_id}
+        if parse_failure_reasons:
+            timing["parse_failure_reasons"] = parse_failure_reasons
+        return parsed, timing
+
+
+async def cancel_extraction_execution(execution_id: str) -> None:
+    """Cancel an in-flight Stargate extraction execution. Best-effort."""
+    try:
+        response = await _client.delete(
+            f"{STARGATE_URL}/api/v1/pipelines/executions/{execution_id}",
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        logger.info("Cancelled orphaned extraction execution %s", execution_id)
+    except Exception as exc:
+        logger.warning(
+            "Could not cancel extraction execution %s: %s", execution_id, exc
+        )

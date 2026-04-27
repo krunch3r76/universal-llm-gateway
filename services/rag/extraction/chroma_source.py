@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from services.rag.chunk_filters import chunk_metadata_is_noise
 from services.rag.extraction.property_entries import build_property_entries
 from services.rag.knowledge_extractor import (
     ExtractedKnowledge,
-    extract_file_chunks,
+    poll_extraction_result,
+    submit_extraction_pipeline,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +32,7 @@ async def extract_source(
     config: KnowledgeExtractionConfig,
     rag_config: RagConfig,
     property_index: PropertyIndex,
+    on_execution_id: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[bool, bool, str, str, str]:
     """Extract one source.
 
@@ -72,7 +75,10 @@ async def extract_source(
     ext_metas = [raw_metas[i] for i in need_idx]
 
     start = time.monotonic()
-    parsed, timing = await extract_file_chunks(ext_ids, ext_texts, config)
+    execution_id = await submit_extraction_pipeline(ext_ids, ext_texts, config)
+    if on_execution_id is not None:
+        await on_execution_id(execution_id)
+    parsed, timing = await poll_extraction_result(execution_id, ext_ids)
     duration = time.monotonic() - start
 
     staged: dict[str, ExtractedKnowledge] = {}

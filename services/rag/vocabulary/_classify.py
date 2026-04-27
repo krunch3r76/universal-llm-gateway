@@ -86,23 +86,39 @@ async def classify_scope_async(
             await hc.aclose()
 
 
-async def _classify_frontier_scopes(
+async def _classify_scopes_via_pipeline(
     scope_names: list[str],
+    *,
+    mode: str,
     chat_url: str,
+    model_id: str | None = None,
 ) -> set[str]:
-    """Classify scopes via vocab-classify-v1 pipeline (frontier/cloud models).
+    """Classify scopes via vocab-classify-v1 pipeline.
 
+    Handles both frontier (cloud model) and local (domain_discovery model) modes.
     The pipeline writes vocabulary to the property index itself; the caller is
     responsible for stamping watermarks. Returns the set of scopes written.
+
+    Args:
+        scope_names: Scopes to classify.
+        mode: Pipeline mode — "frontier" or "local". Controls classified_tier in
+            the data_sink handler.
+        chat_url: Stargate chat completions endpoint.
+        model_id: When provided, sets model_ref_overrides for the "classify" step.
+            Required for local mode to override frontier_classify with the local model.
     """
+    pipeline_options: dict = {
+        "mode": mode,
+        "scopes": scope_names,
+        "skip_fresh": False,
+    }
+    if model_id:
+        pipeline_options["model_ref_overrides"] = {"classify": model_id}
+
     payload: dict = {
         "model": "vocab-classify-v1",
         "messages": [{"role": "user", "content": "vocabulary classification"}],
-        "pipeline_options": {
-            "mode": "frontier",
-            "scopes": scope_names,
-            "skip_fresh": False,
-        },
+        "pipeline_options": pipeline_options,
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0)) as client:
@@ -114,8 +130,23 @@ async def _classify_frontier_scopes(
             return set(vocab.keys())
     except Exception as exc:
         logger.error(
-            "Frontier vocab classification failed for %d scope(s): %s",
+            "%s vocab classification via pipeline failed for %d scope(s): %s",
+            mode,
             len(scope_names),
             exc,
         )
         return set()
+
+
+async def _classify_frontier_scopes(
+    scope_names: list[str],
+    chat_url: str,
+) -> set[str]:
+    """Classify scopes via vocab-classify-v1 pipeline (frontier/cloud models).
+
+    The pipeline writes vocabulary to the property index itself; the caller is
+    responsible for stamping watermarks. Returns the set of scopes written.
+    """
+    return await _classify_scopes_via_pipeline(
+        scope_names, mode="frontier", chat_url=chat_url
+    )

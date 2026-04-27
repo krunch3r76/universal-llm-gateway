@@ -31,7 +31,6 @@ from services.rag.vocabulary import (
     DEFAULT_STARGATE_CHAT_URL,
     _resolve_scope_vocab_mode,
     classify_scope_async,
-    pick_loaded_stargate_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,17 +44,16 @@ async def _run_local(
     force: bool,
 ) -> int:
     """Per-scope classification using a single local model."""
+    if not model_override:
+        print(
+            "No model specified — use --model to provide a gateway model ID.\n"
+            "Example: --model qwen3-5-14b-q8-0-131072",
+            file=sys.stderr,
+        )
+        return 1
+    model = model_override
+    print(f"Local model: {model}")
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-        model = model_override or await pick_loaded_stargate_model(client)
-        if not model:
-            print(
-                "No gateway model loaded — cannot classify in local mode.\n"
-                "Load a model or use --mode frontier.",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"Local model: {model}")
-
         from services.rag.property_index import PropertyIndex
 
         idx = PropertyIndex()

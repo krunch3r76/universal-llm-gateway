@@ -61,6 +61,7 @@ from tools.rag_articles import register_rag_article_tools
 from tools.security import register_security_tools
 from tools.security_js import register_security_js_tools
 from tools.sqlite import register_sqlite_tools
+from tools.topology import register_topology_tools
 from tools.web import register_web_tools
 
 if TYPE_CHECKING:
@@ -237,6 +238,7 @@ def _build_server() -> FastMCP:
     register_markdown_tools(mcp)
     register_manage_tools(mcp)
     register_model_status_tools(mcp)
+    register_topology_tools(mcp)
     register_project_tools(mcp)
     register_web_tools(mcp)
     register_browse_tool(mcp)

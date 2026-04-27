@@ -10,11 +10,6 @@ import yaml
 from ._models import (
     BASELINE_EXTENSIONS,
     DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S,
-    DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY,
-    DEFAULT_CONTEXTUALIZE_MODEL,
-    DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S,
-    DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S,
-    DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO,
     DEFAULT_EMBEDDING_MODEL,
     DEFAULT_INDEX_WORKERS,
     RagConfig,
@@ -23,6 +18,8 @@ from ._parsing import (
     _parse_knowledge_extraction,
     _parse_scopes,
     _parse_watch_directories,
+    _pipeline_contextualize_model,
+    _pipeline_vocab_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,29 +138,8 @@ def load_config() -> RagConfig:
         if isinstance(raw_enforcement, str) and raw_enforcement in ("warn", "strict")
         else "strict"
     )
-    raw_ctx_model = parsed_root.get("contextualize_model")
-    if raw_ctx_model is None:
-        contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
-    elif isinstance(raw_ctx_model, str) and not raw_ctx_model.strip():
-        contextualize_model = ""  # Explicitly disabled
-    elif isinstance(raw_ctx_model, str):
-        contextualize_model = raw_ctx_model.strip()
-    else:
-        contextualize_model = DEFAULT_CONTEXTUALIZE_MODEL
-    raw_ctx_concurrency = parsed_root.get(
-        "contextualize_max_concurrency", DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
-    )
-    if isinstance(raw_ctx_concurrency, int) and raw_ctx_concurrency >= 1:
-        contextualize_max_concurrency = raw_ctx_concurrency
-    else:
-        contextualize_max_concurrency = DEFAULT_CONTEXTUALIZE_MAX_CONCURRENCY
-    raw_ctx_request_timeout = parsed_root.get(
-        "contextualize_request_timeout_s", DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S
-    )
-    if isinstance(raw_ctx_request_timeout, int | float) and raw_ctx_request_timeout > 0:
-        contextualize_request_timeout_s = float(raw_ctx_request_timeout)
-    else:
-        contextualize_request_timeout_s = DEFAULT_CONTEXTUALIZE_REQUEST_TIMEOUT_S
+    # Derived from pipelines/rag_contextualize/models.yaml — not read from rag.yaml.
+    contextualize_model = _pipeline_contextualize_model()
     raw_ctx_client_timeout = parsed_root.get(
         "contextualize_client_timeout_s", DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
     )
@@ -171,27 +147,6 @@ def load_config() -> RagConfig:
         contextualize_client_timeout_s = float(raw_ctx_client_timeout)
     else:
         contextualize_client_timeout_s = DEFAULT_CONTEXTUALIZE_CLIENT_TIMEOUT_S
-    raw_ctx_tail_idle_timeout = parsed_root.get(
-        "contextualize_tail_idle_timeout_s",
-        DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S,
-    )
-    if (
-        isinstance(raw_ctx_tail_idle_timeout, int | float)
-        and raw_ctx_tail_idle_timeout > 0
-    ):
-        contextualize_tail_idle_timeout_s = float(raw_ctx_tail_idle_timeout)
-    else:
-        contextualize_tail_idle_timeout_s = DEFAULT_CONTEXTUALIZE_TAIL_IDLE_TIMEOUT_S
-    raw_ctx_tail_ratio = parsed_root.get(
-        "contextualize_tail_min_success_ratio",
-        DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO,
-    )
-    if isinstance(raw_ctx_tail_ratio, int | float) and 0 < raw_ctx_tail_ratio <= 1:
-        contextualize_tail_min_success_ratio = float(raw_ctx_tail_ratio)
-    else:
-        contextualize_tail_min_success_ratio = (
-            DEFAULT_CONTEXTUALIZE_TAIL_MIN_SUCCESS_RATIO
-        )
     raw_reconcile = parsed_root.get("reconcile_interval_s", 300.0)
     if isinstance(raw_reconcile, int | float) and raw_reconcile >= 0:
         reconcile_interval_s = float(raw_reconcile)
@@ -216,6 +171,8 @@ def load_config() -> RagConfig:
         vocabulary_mode = raw_vocab_mode.strip().lower()
     else:
         vocabulary_mode = "local"
+    # Derived from pipelines/vocab_classify/models.yaml — not read from rag.yaml.
+    vocabulary_model = _pipeline_vocab_model()
     raw_taxonomy = parsed_root.get("vocabulary_taxonomy")
     _default_taxonomy = ["specification", "practitioner", "academic"]
     if isinstance(raw_taxonomy, list) and all(
@@ -235,14 +192,11 @@ def load_config() -> RagConfig:
         baseline_extensions=BASELINE_EXTENSIONS,
         post_index_enforcement=post_index_enforcement,
         contextualize_model=contextualize_model,
-        contextualize_max_concurrency=contextualize_max_concurrency,
-        contextualize_request_timeout_s=contextualize_request_timeout_s,
         contextualize_client_timeout_s=contextualize_client_timeout_s,
-        contextualize_tail_idle_timeout_s=contextualize_tail_idle_timeout_s,
-        contextualize_tail_min_success_ratio=contextualize_tail_min_success_ratio,
         reconcile_interval_s=reconcile_interval_s,
         reconcile_workers=reconcile_workers,
         file_timeout_s=file_timeout_s,
+        vocabulary_model=vocabulary_model,
         vocabulary_mode=vocabulary_mode,
         vocabulary_taxonomy=vocabulary_taxonomy,
     )

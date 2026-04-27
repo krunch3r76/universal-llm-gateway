@@ -1,16 +1,19 @@
 """Model status API — per-model load/busy/loading placement across all nodes.
 
 GET /api/v1/model-status       → all models with placement summary
-GET /api/v1/model-status/{id}  → single model detail (404 if not in catalog)
+GET /api/v1/model-status/{id}  → single model detail with per-node hardware
+                                  resources (vram_mb, parallel_slots,
+                                  effective_context_per_slot, vram_free_mb)
 """
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from systems.federation import get_federation_integration
+from systems.federation.common.types import FederatedGateway
 from systems.routing.selection.catalog import (
     get_activated_models_for_display,
     get_all_available_models,
@@ -133,13 +136,68 @@ async def list_model_status(
     }
 
 
+def _collect_hardware_by_node(
+    model_id: str,
+    gateways: list[FederatedGateway],
+) -> dict[str, dict[str, Any]]:
+    """Collect per-node hardware profile for a model from gateway telemetry.
+
+    ∀ gw ∈ gateways: if model_id ∈ gw.model_resources → include catalog entry
+    (context_length, parallel_slots, effective_context_per_slot, vram_mb,
+    ram_mb) alongside current VRAM state (vram_free_mb, vram_total_mb).
+
+    Keys are node_id strings; entries are absent for gateways that have no
+    catalog entry for this model (e.g. cloud gateways, offline nodes).
+    """
+    result: dict[str, dict[str, Any]] = {}
+    for gw in gateways:
+        # model_resources is populated from GATEWAY_SNAPSHOT telemetry;
+        # keys are model_id strings as sent by the edge.
+        meta = gw.model_resources.get(model_id)
+        if meta is None:
+            continue
+        node_key = gw.node_id or gw.gateway_id
+        entry: dict[str, Any] = {}
+        for field in (
+            "context_length",
+            "parallel_slots",
+            "effective_context_per_slot",
+        ):
+            if field in meta:
+                entry[field] = meta[field]
+        if "vram_usage" in meta:
+            entry["vram_mb"] = meta["vram_usage"]
+        if "ram_usage" in meta:
+            entry["ram_mb"] = meta["ram_usage"]
+        entry["vram_free_mb"] = gw.vram_free_mb
+        entry["vram_total_mb"] = gw.vram_total_mb
+        result[node_key] = entry
+    return result
+
+
 @router.get("/{model_id:path}")
 async def get_model_status(
     model_id: str,
     proxy: StargateProxy = Depends(get_proxy),
     _current_user: dict = Depends(get_auth_dependency),
 ) -> dict[str, Any]:
-    """Status detail for a single model: placement, load state, per-node breakdown."""
+    """Status detail for a single model: placement, load state, per-node breakdown.
+
+    The ``hardware`` field exposes catalog-derived resource requirements pulled
+    from GATEWAY_SNAPSHOT telemetry — keyed by node_id.  Each entry contains:
+
+    - ``context_length``            — configured context window (tokens)
+    - ``parallel_slots``            — number of simultaneous inference slots
+                                      (absent when 1 / default)
+    - ``effective_context_per_slot``— per-slot token budget
+                                      (context_length // parallel_slots)
+    - ``vram_mb``                   — VRAM this variant consumes when loaded
+    - ``ram_mb``                    — host RAM consumed
+    - ``vram_free_mb``              — currently free VRAM on this gateway
+    - ``vram_total_mb``             — total VRAM on this gateway
+
+    These are absent for cloud or offline nodes that carry no catalog entry.
+    """
     local_id = _resolve_local_id()
     gm, fm = proxy.gateway_manager, proxy.federated_manager
     all_models = get_all_available_models(gm, fm)
@@ -151,10 +209,17 @@ async def get_model_status(
     status_map = get_model_status_map(local_id, gm, fm)
     activated_models = get_activated_models_for_display(gm, fm)
 
-    return _build_model_status_entry(
+    entry = _build_model_status_entry(
         model_id,
         source_map,
         status_map,
         activated_models,
         all_models,
     )
+
+    gateways = fm.get_all_gateways() if fm else []
+    hardware = _collect_hardware_by_node(model_id, gateways)
+    if hardware:
+        entry["hardware"] = hardware
+
+    return entry

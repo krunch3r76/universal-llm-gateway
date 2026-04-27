@@ -8,11 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from services.rag.config import RagConfig, WatchDirectory
 from services.rag.property_index import PropertyIndex
 from services.rag.rag_service.indexing import (
     _classify_indexing_failure,
-    _contextualize_request_timeout_s,
 )
 
 
@@ -58,28 +56,6 @@ def test_classifier_transient_timeout() -> None:
     exc = TimeoutError()
     cat, reason = _classify_indexing_failure(exc, chunk_count=0)
     assert (cat, reason) == ("transient", "timeout")
-
-
-def test_contextualize_request_timeout_uses_explicit_budget() -> None:
-    config = RagConfig(
-        watch_directories=[WatchDirectory(path="/tmp")],
-        scopes={},
-        contextualize_request_timeout_s=300.0,
-        contextualize_client_timeout_s=600.0,
-    )
-
-    assert _contextualize_request_timeout_s(config) == 300.0
-
-
-def test_contextualize_request_timeout_never_exceeds_client_timeout() -> None:
-    config = RagConfig(
-        watch_directories=[WatchDirectory(path="/tmp")],
-        scopes={},
-        contextualize_request_timeout_s=300.0,
-        contextualize_client_timeout_s=120.0,
-    )
-
-    assert _contextualize_request_timeout_s(config) == 120.0
 
 
 async def _make_index(tmp_path: Path) -> PropertyIndex:

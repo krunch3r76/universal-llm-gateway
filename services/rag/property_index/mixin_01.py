@@ -128,6 +128,16 @@ class _PropertyIndexPart01:
             if name not in columns:
                 conn.execute(f"ALTER TABLE extraction_queue ADD COLUMN {name} TEXT")
 
+    def _migration_v14_extraction_queue_execution_id(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Add active_execution_id to track the Stargate async execution in flight."""
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(extraction_queue)")}
+        if "active_execution_id" not in columns:
+            conn.execute(
+                "ALTER TABLE extraction_queue ADD COLUMN active_execution_id TEXT"
+            )
+
     def _apply_migrations(self, conn: sqlite3.Connection) -> None:
         """Apply ordered migrations and stamp schema_version rows transactionally."""
         conn.execute(_CREATE_SCHEMA_VERSION_SQL)
@@ -261,6 +271,11 @@ class _PropertyIndexPart01:
                 13,
                 "extraction_queue: durable source-level extraction failure diagnostics",
                 self._migration_v13_extraction_queue_failure_details,
+            ),
+            (
+                14,
+                "extraction_queue.active_execution_id: track in-flight Stargate execution",
+                self._migration_v14_extraction_queue_execution_id,
             ),
         ]
         for version, description, fn in migrations:
