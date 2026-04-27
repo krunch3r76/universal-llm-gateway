@@ -170,3 +170,27 @@ async def test_request_id_is_propagated_and_permissive_tools_fallback() -> None:
     assert options["_endpoint_request_id"]
     assert "tools" not in options
     assert options["mcp"] is True
+
+
+@pytest.mark.asyncio
+async def test_max_tool_turns_propagates_to_top_level_pipeline_options() -> None:
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5.4-mini",
+        max_tool_turns=42,
+    )
+    body = await build_dispatch_body(req)
+    options: dict[str, Any] = body["pipeline_options"]
+    assert options["max_tool_turns"] == 42
+    assert "max_tool_turns" not in options["generation_parameters"]
+
+
+@pytest.mark.asyncio
+async def test_max_tool_turns_omitted_does_not_set_key() -> None:
+    """Handler default of 10 fires when caller omits max_tool_turns."""
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5.4-mini",
+    )
+    body = await build_dispatch_body(req)
+    assert "max_tool_turns" not in body["pipeline_options"]

@@ -1,0 +1,88 @@
+"""Path operation implementations: move, copy, remove directory, delete (trash)."""
+
+from __future__ import annotations
+
+import logging
+import shutil
+
+from mcp_events import record
+
+from ._paths import _SANDBOX_ROOT, _TRASH_ROOT, _safe_path, _trash_destination
+
+logger = logging.getLogger(__name__)
+
+
+def move_file_impl(source: str, destination: str) -> dict[str, str]:
+    """Move or rename a file within the sandbox."""
+    src = _safe_path(source)
+    dst = _safe_path(destination)
+    if not src.exists():
+        raise FileNotFoundError(f"Source not found: {source!r}")
+    if not src.is_file():
+        raise ValueError(f"Source is not a file: {source!r}")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    record("mcp.tool.file.moved", source=source, destination=destination)
+    logger.info("move_file: %s → %s", src, dst)
+    return {"status": "moved", "from": str(src), "to": str(dst)}
+
+
+def copy_file_impl(source: str, destination: str) -> dict[str, str]:
+    """Copy a file within the sandbox."""
+    src = _safe_path(source)
+    dst = _safe_path(destination)
+    if not src.exists():
+        raise FileNotFoundError(f"Source not found: {source!r}")
+    if not src.is_file():
+        raise ValueError(f"Source is not a file: {source!r}")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src), str(dst))
+    record("mcp.tool.file.copied", source=source, destination=destination)
+    logger.info("copy_file: %s → %s", src, dst)
+    return {"status": "copied", "from": str(src), "to": str(dst)}
+
+
+def remove_directory_impl(directory: str) -> dict[str, str]:
+    """Remove a directory and all its contents from the sandbox."""
+    target = _safe_path(directory)
+    if not target.exists():
+        raise FileNotFoundError(f"Directory not found: {directory!r}")
+    if not target.is_dir():
+        raise ValueError(f"Path is not a directory: {directory!r}")
+    if target == _SANDBOX_ROOT:
+        raise ValueError("Cannot remove the sandbox root directory")
+
+    shutil.rmtree(str(target))
+    record("mcp.tool.dir.removed", directory=directory)
+    logger.info("remove_directory: %s", target)
+    return {"status": "removed", "path": str(target)}
+
+
+def delete_file_impl(path: str) -> dict[str, str]:
+    """Soft-delete a file by moving it to the sandbox trash/ directory."""
+    target = _safe_path(path)
+    if not target.exists():
+        raise FileNotFoundError(f"File not found: {path!r}")
+    if not target.is_file():
+        raise ValueError(
+            f"Path is not a file (directories cannot be deleted): {path!r}"
+        )
+    if target.is_relative_to(_TRASH_ROOT):
+        raise ValueError(
+            f"File is already in trash/; use remove_directory('trash') to purge: {path!r}"
+        )
+
+    dest = _trash_destination(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(target), str(dest))
+    trash_rel = str(dest.relative_to(_SANDBOX_ROOT))
+    record(
+        "mcp.tool.file.trashed",
+        sandbox="cortex",
+        path=path,
+        trash_path=trash_rel,
+    )
+    logger.info("delete_file: trashed %s → %s", target, dest)
+    return {"status": "trashed", "path": str(target), "trash_path": trash_rel}

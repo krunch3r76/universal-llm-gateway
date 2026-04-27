@@ -45,6 +45,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         tools: list[str] | None = None,
         reasoning_effort: str | None = None,
         generation_options: dict[str, Any] | None = None,
+        max_tool_turns: int | None = None,
         transcript_id: str | None = None,
         result_delivery: dict[str, Any] | None = None,
         caller_agent: str | None = None,
@@ -93,6 +94,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             the vendor's native shape; for params not surfaced here,
             dispatch via ``pipeline(pipeline_id="frontier-dispatch",
             pipeline_options={"generation_parameters": {...}})``.
+          - ``max_tool_turns``: maximum number of tool-call/response
+            cycles the dispatch loop will execute before terminating.
+            Defaults to 10 when omitted. Raise to 50–100 for
+            investigation-grade tasks (diff review, architecture
+            analysis) where the model reads many files before producing
+            output.
           - ``result_delivery``: ``{bus_thread, bus_from_agent,
             bus_to_agent, bus_subject, bus_brief_summary, bus_attachments}``
             — Stargate posts a compact pointer envelope to the configured
@@ -131,6 +138,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("tools", tools),
             ("reasoning_effort", reasoning_effort),
             ("generation_options", generation_options),
+            ("max_tool_turns", max_tool_turns),
             ("transcript_id", transcript_id),
             ("result_delivery", result_delivery),
             ("caller_agent", caller_agent),

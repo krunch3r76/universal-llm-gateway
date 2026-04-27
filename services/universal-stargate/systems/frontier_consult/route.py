@@ -34,6 +34,7 @@ class FrontierGenerateBody(BaseModel):
     tools: list[str] | None = None
     reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
+    max_tool_turns: int | None = None
     transcript_id: str | None = None
     remote_mcp: bool | None = None
     result_delivery: dict[str, Any] | None = None
@@ -54,6 +55,7 @@ async def frontier_generate(
         tools=body.tools,
         reasoning_effort=body.reasoning_effort,
         generation_options=body.generation_options,
+        max_tool_turns=body.max_tool_turns,
         transcript_id=body.transcript_id,
         remote_mcp=body.remote_mcp,
         result_delivery=body.result_delivery,

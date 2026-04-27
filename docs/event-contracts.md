@@ -1593,11 +1593,38 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.contextualize.cache.store.failed` | `file`, `requested`, `contextualize_model`, `error` | index succeeded but cache persistence failed (best-effort); optional: `operation_id`, `operation` |
 | `rag.contextualize.cache.gc.completed` | `deleted_rows` | startup orphan sweep succeeded |
 | `rag.contextualize.cache.gc.failed` | `error` | startup orphan sweep failed non-fatally — readiness not blocked |
+| `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary could not be filled for one or more scopes; `reason` ∈ {`no_model_available`, `no_terms`, `non_latin_terms`} |
+| `rag.vocabulary.gaps.repaired` | `scopes`, `model` | vocabulary rows successfully written after LLM classification; `model` is the local Stargate model ID used |
+| `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM classification failed for one or more scopes; `reasons` is a `{scope: reason_string}` map; `trigger` is the repair trigger source |
 
 Note: `rag.contextualization.started` / `.completed` `chunk_count` now reports
 **cache misses only** (actual LLM work), not total chunks. Use
 `rag.contextualize.cache.evaluated.total_chunks` for the full file total and
 `.cache_hits` for the reuse count.
+
+### RAG Admission Gate Burst Measurement
+
+**Role**: `observation`. Emitted by `services/rag/admission_gate/_state_changes.py`
+(schedules the burst task) and `services/rag/admission_gate/_io.py`
+(`_emit_first_burst_observed`) exactly once per model per process lifetime, the
+first time the gate closes due to a cold-load window (`model.loading.started`).
+Used to quantify the first-batch burst: how many contextualize workers submitted
+requests to Stargate before `model.loading.started` arrived and closed the gate.
+See `todo:rag-admission-gate-first-burst-measurement` and Worst-Case Cold-Load
+Timing in `tmp/prompts/coordination-overhaul/phase4.md`.
+
+| Signal | Required Payload | Description |
+|--------|-----------------|-------------|
+| `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
+| `rag.admission.io.failed` | `operation`, `model_id`, `error` | Emitted by `services/rag/admission_gate/_io.py` when an HTTP call to Stargate fails during snapshot startup or burst queue-depth fetch. `operation`: `"snapshot"` or `"burst_fetch"`. `model_id`: routing key of the queried model. `error`: exception string. |
+
+**Closure criteria** (from todo): if P95 `stargate_queue_depth` across ≥ 2 weeks
+of production indexing is below `max_queue_depth`, close
+`todo:rag-admission-gate-first-burst-measurement` as `done` with the data
+attached. If P95 ≥ `max_queue_depth`, escalate
+`todo:rag-admission-gate-startup-snapshot` to `high` priority and consider a
+singleflight hold proposal.
+
 | `rag.embed.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before chunk embeddings are requested; optional: `operation` |
 | `rag.embed.completed` | `file`, `operation_id`, `chunk_count` | emitted after chunk embeddings return; optional: `operation` |
 | `rag.chroma.upsert.started` | `file`, `operation_id`, `chunk_count` | emitted immediately before each ChromaDB upsert sub-batch begins; optional: `operation`, `batch_index`, `batch_total` (present when a file is split across multiple backend batches) |
@@ -1620,7 +1647,7 @@ Note: `rag.contextualization.started` / `.completed` `chunk_count` now reports
 | `rag.scopes.listed` | `count` | scope registry listing completed |
 | `rag.post.index.stale` | `stale_steps` | startup: serving-critical post-index enrichment steps stale after last reindex; automatic repair runs in background, operator should run runbook if it does not clear |
 | `rag.hints.gaps.repaired` | `scopes`, `trigger` | automatic corpus-hints refresh for scopes whose indexed file-set hash drifted; `trigger` ∈ {`startup`, `reconcile`, `watcher`} |
-| `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary auto-fill skipped (e.g. `reason` = `no_model_available` — no gateway-owned Stargate model) |
+| `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary auto-fill skipped; `reason` ∈ `no_model_available` (no gateway-owned Stargate model loaded), `no_terms` (scope has zero IDF-scored corpus hint rows — content not yet indexed) |
 | `rag.vocabulary.gaps.repaired` | `scopes`, `model` | scope vocabulary rows written after LLM classification during automatic gap repair |
 | `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM vocabulary classification failed during automatic gap repair; `reasons` maps each scope to failure class |
 | `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | search embedding retries exhausted; request degraded/fails before vector search |
@@ -1961,7 +1988,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
-| `mcp.tool.file.deleted` | `sandbox`, `path` | `delete_file` completed |
+| `mcp.tool.file.trashed` | `sandbox`, `path`, `trash_path` | `delete_file` soft-deleted to trash/ (conflict resolved as `<stem>-NN.<ext>`) |
 | `mcp.tool.markdown.sections.listed` | `path`, `sandbox`, `count` | `markdown` list_sections completed |
 | `mcp.tool.markdown.section.read` | `path`, `sandbox`, `section`, `chars` | `markdown` read_section completed |
 | `mcp.tool.markdown.section.replaced` | `path`, `sandbox`, `section` | `markdown` replace_section completed |

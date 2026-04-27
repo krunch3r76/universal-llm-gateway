@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_seat import TOOL_REGISTRY, AgentMeta, assemble_system_prompt, hydrate_agent
+from universal_logging import get_logger
 
 from .events import (
     FrontierEndpointPersonaResolved,
@@ -17,6 +18,7 @@ from .events import (
 
 _PIPELINE_ID = "frontier-dispatch"
 EventPublisher = Callable[[Any], None]
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -29,6 +31,7 @@ class FrontierGenerateRequest:
     tools: list[str] | None = None
     reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
+    max_tool_turns: int | None = None
     transcript_id: str | None = None
     remote_mcp: bool | None = None
     result_delivery: dict[str, Any] | None = None
@@ -221,6 +224,15 @@ async def build_dispatch_body(
         # allowed_options enforcement applies uniformly. setdefault so an
         # explicit dict entry wins over the typed convenience arg.
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
+    if "max_tool_turns" in generation_options:
+        # max_tool_turns is a dispatch-control param routed at the top level of
+        # pipeline_options — placing it inside generation_options is a misuse
+        # that silently has no effect. Callers must use the typed top-level param.
+        logger.warning(
+            "frontier_generate: 'max_tool_turns' inside generation_options is "
+            "ignored — use the typed top-level parameter instead. request_id=%s",
+            request_id,
+        )
     _enforce_options(
         request_id=request_id,
         agent=req.agent,
@@ -250,6 +262,8 @@ async def build_dispatch_body(
         pipeline_options["agent"] = req.agent
     if effective_tools is not None:
         pipeline_options["tools"] = effective_tools
+    if req.max_tool_turns is not None:
+        pipeline_options["max_tool_turns"] = req.max_tool_turns
     if req.transcript_id:
         pipeline_options["transcript_id"] = req.transcript_id
     if req.remote_mcp is not None:

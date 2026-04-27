@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from .admission_state import router as admission_state_router
 from .gateways import router as gateways_router
 from .model_availability_watch import router as model_availability_watch_router
 from .model_status import router as model_status_router
@@ -33,3 +34,4 @@ router.include_router(rag_scopes_router)
 router.include_router(rag_coverage_router)
 router.include_router(rag_articles_router)
 router.include_router(rerank_router)
+router.include_router(admission_state_router)

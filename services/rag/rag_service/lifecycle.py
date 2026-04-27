@@ -95,8 +95,11 @@ async def _startup() -> None:
     set_embeddings_event_bus(state._event_bus)
 
     if state._config.contextualize_model:
-        state._admission_gate = AdmissionGate([state._config.contextualize_model])
-        state._admission_gate.start()
+        state._admission_gate = AdmissionGate(
+            [state._config.contextualize_model],
+            event_bus=state._event_bus,
+        )
+        await state._admission_gate.start()
         logger.info(
             "AdmissionGate started (model=%s)",
             state._config.contextualize_model,
