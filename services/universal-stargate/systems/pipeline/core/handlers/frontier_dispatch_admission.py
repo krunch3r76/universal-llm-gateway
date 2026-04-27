@@ -18,7 +18,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from agent_seat.registry import resolve_agent_provider, resolve_agent_valid_family
+from agent_seat.registry import (
+    check_agent_model_requirement,
+    resolve_agent_model_requirement,
+    resolve_agent_provider,
+    resolve_agent_valid_family,
+)
 
 from ..events.dispatch import PipelineFrontierDispatchAgentModelMismatch
 from ..execution.errors import AgentModelMismatchError
@@ -48,30 +53,52 @@ def check_agent_model_consistency(
     execution_id: str,
     publish: Callable[[object], None],
 ) -> None:
-    """Reject dispatches where model.provider conflicts with agent family.
+    """Reject dispatches where model.provider conflicts with agent family,
+    or where the model fails the agent's variant requirement.
 
     ∀ agent ∈ registry: model.provider MUST equal agent.expected_provider.
-    Unknown agents (not in registry) are not checked — they may be custom
-    non-team-seat slugs. Emits ``pipeline.frontier.dispatch.mismatch``
-    and raises ``AgentModelMismatchError`` on violation.
+    ∀ agent ∈ _AGENT_MODEL_REQUIREMENTS: model MUST satisfy the variant
+    constraint (e.g. oppie MUST use an xAI multi-agent model).
+    Unknown agents (not in registry) are not checked. Emits
+    ``pipeline.frontier.dispatch.mismatch`` and raises
+    ``AgentModelMismatchError`` on either violation.
     """
     expected = resolve_agent_provider(agent)
     if expected is None:
         return
-    if provider == expected:
-        return
-    valid_family = resolve_agent_valid_family(agent)
-    publish(
-        PipelineFrontierDispatchAgentModelMismatch(
-            execution_id=execution_id,
-            agent=agent,
-            requested_model=model,
-            valid_family=valid_family,
+    if provider != expected:
+        valid_family = resolve_agent_valid_family(agent)
+        publish(
+            PipelineFrontierDispatchAgentModelMismatch(
+                execution_id=execution_id,
+                agent=agent,
+                requested_model=model,
+                valid_family=valid_family,
+                mismatch_kind="provider",
+            )
         )
-    )
-    raise AgentModelMismatchError(
-        agent=agent,
-        model=model,
-        provider=provider,
-        expected_provider=expected,
-    )
+        raise AgentModelMismatchError(
+            agent=agent,
+            model=model,
+            provider=provider,
+            expected_provider=expected,
+        )
+    violation = check_agent_model_requirement(agent, model)
+    if violation:
+        valid_family = resolve_agent_valid_family(agent)
+        publish(
+            PipelineFrontierDispatchAgentModelMismatch(
+                execution_id=execution_id,
+                agent=agent,
+                requested_model=model,
+                valid_family=valid_family,
+                mismatch_kind="variant",
+            )
+        )
+        raise AgentModelMismatchError(
+            agent=agent,
+            model=model,
+            provider=provider,
+            expected_provider=expected,
+            required_variant=resolve_agent_model_requirement(agent),
+        )

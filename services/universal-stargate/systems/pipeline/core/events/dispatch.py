@@ -577,19 +577,29 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
     agent: str,
     requested_model: str,
     valid_family: list[str],
+    mismatch_kind: str,
 ) -> Event:
-    """Emitted when the dispatch handler rejects an agent + model combination
-    whose provider does not match the agent's identity-bound provider family.
+    """Emitted when the dispatch handler rejects an agent + model combination.
 
-    Precedes the terminal ``pipeline_execution_failed``. Distinguishes a
-    caller misconfiguration (wrong provider for the agent) from MCP
-    misconfiguration or upstream provider errors.
+    Two structurally distinct failure modes share this signal, distinguished
+    by ``mismatch_kind``:
+
+    - ``"provider"``: model's provider does not match the agent's
+      identity-bound provider family (e.g. oppie + anthropic model).
+      Suggests a typo or wrong model family.
+    - ``"variant"``: provider matches but the model fails the agent's
+      variant requirement (e.g. oppie + non-multi-agent xAI model).
+      Suggests a stale model pin or missing beta-gate access.
+
+    Precedes the terminal ``pipeline_execution_failed``. Distinguishes agent
+    misconfiguration from MCP misconfiguration or upstream provider errors.
 
     Payload:
-        execution_id: Pipeline execution UUID
-        agent: Agent slug that was specified (``orion``, ``oppie``, etc.)
+        execution_id:  Pipeline execution UUID
+        agent:         Agent slug that was specified (``orion``, ``oppie``, etc.)
         requested_model: Model string the caller supplied
-        valid_family: Allowed model identifiers for this agent
+        valid_family:  Allowed model identifiers for this agent
+        mismatch_kind: ``"provider"`` | ``"variant"``
     """
     return Event(
         signal="pipeline.frontier.dispatch.mismatch",
@@ -598,6 +608,7 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
             "agent": agent,
             "requested_model": requested_model,
             "valid_family": valid_family,
+            "mismatch_kind": mismatch_kind,
         },
         scope="node",
     )

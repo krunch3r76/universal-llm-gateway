@@ -17,12 +17,22 @@ Persona is a runtime option:
 
 MCP + remote_mcp semantics:
 
-- ``pipeline_options.mcp`` (default ``True``) — gate on whether any MCP
-  client-side tooling is available to the model for this call.
+- ``pipeline_options.mcp`` (default ``True``) — unified tool gate. ``False``
+  suppresses all tooling for all providers, including xAI server-side built-ins.
 - ``pipeline_options.remote_mcp`` — meaningful only when ``mcp=True`` AND the
   resolved provider is ``anthropic`` (native ``mcp_toolset`` path). All other
   providers must have ``remote_mcp=False``; ``remote_mcp=True`` on a
   non-anthropic provider — or with ``mcp=False`` — is rejected structurally.
+
+xAI persona tool model (oppie):
+
+xAI multi-agent models reject OpenAI-style function tool definitions; ``tools``
+is always ``[]`` for xAI persona dispatches. Server-side built-in tools
+(``web_search``, ``x_search``, ``code_interpreter``) are injected automatically
+via ``provider_options.xai.tools`` when ``mcp=True`` and no explicit
+``pipeline_options.tools`` override is in effect. To suppress or narrow:
+pass ``generation_parameters.provider_options.xai.tools`` explicitly (``[]``
+suppresses all), or pass ``mcp=False``.
 
 YAML shape::
 
@@ -87,6 +97,27 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+# xAI server-side built-in tools — injected automatically for Oppie dispatches.
+# Distinct from client-side MCP tools: these run on xAI's servers and do not
+# require a client tool-call round-trip.  xAI multi-agent models reject
+# OpenAI-style function tool definitions, so ``tools`` is always [] for xAI;
+# server-side capability comes through ``provider_options.xai.tools`` instead.
+#
+# ``file_search`` (collections search) is excluded from the default set because
+# it requires ``vector_store_ids`` to be functional; injecting it without
+# configured collections produces a useless model affordance.  Reintroduce when
+# a vector-store config layer exists.
+#
+# Suppression / override: pass ``generation_parameters.provider_options.xai.tools``
+# explicitly (including ``[]`` to suppress all server-side tools).  ``mcp=False``
+# also suppresses injection — it is the unified "no tools" signal for xAI personas.
+# Explicit ``pipeline_options.tools`` via frontier_generate also prevents injection.
+_XAI_BUILTIN_TOOLS: list[dict[str, Any]] = [
+    {"type": "web_search"},
+    {"type": "x_search"},
+    {"type": "code_interpreter"},
+]
+
 # Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
 # knob on ``frontier_generate`` / ``/api/v1/frontier/generate``.
 #
@@ -104,9 +135,7 @@ _REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
 }
 
 
-def _translate_reasoning_effort(
-    effort: str, provider: str
-) -> dict[str, Any] | None:
+def _translate_reasoning_effort(effort: str, provider: str) -> dict[str, Any] | None:
     """Map ``reasoning_effort`` to a provider-native ``thinking`` dict."""
     normalized = effort.strip().lower()
     if normalized not in _REASONING_EFFORT_BUDGET_TOKENS:
@@ -196,11 +225,13 @@ class FrontierDispatchHandler(BaseHandler):
         user_prompt = self._resolve_user_prompt(step, context)
 
         # Tool injection matrix — see module docstring for the full semantics.
-        # mcp=False                    → no tools
+        # mcp=False                    → no tools (all providers, including xAI)
         # mcp=True, remote_mcp=True    → no local tools (provider-native MCP path)
-        # mcp=True, remote_mcp=False   → inject client-side tools
-        #   - anthropic persona defaults keep the historical curated tier
-        #   - non-anthropic personas default to the full live MCP catalog
+        # mcp=True, remote_mcp=False, provider=anthropic → curated client-side tier
+        # mcp=True, remote_mcp=False, provider=xai       → tools=[] (client-side
+        #   rejected by multi-agent models); server-side built-ins injected via
+        #   provider_options.xai.tools after gen_params assembly (see below)
+        # mcp=True, remote_mcp=False, other providers    → full live MCP catalog
         opt_tools = opts.get("tools")
         skip_legacy_tier_block = False
         if isinstance(opt_tools, list):
@@ -244,16 +275,26 @@ class FrontierDispatchHandler(BaseHandler):
                     continuation_md=bundle.continuation_md,
                     extra_system=step.system_prompt,
                 )
-                if not mcp_enabled or remote_mcp:
+                if remote_mcp:
                     tools = []
                 elif provider == "anthropic":
-                    tools = await self._resolve_default_tools(
-                        self._TEAM_TOOL_NAMES,
-                        fallback=[*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS],
-                    )
+                    if not mcp_enabled:
+                        tools = []
+                    else:
+                        tools = await self._resolve_default_tools(
+                            self._TEAM_TOOL_NAMES,
+                            fallback=[*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS],
+                        )
+                elif provider == "xai":
+                    # xAI multi-agent models reject client-side function tools.
+                    # Server-side built-ins are injected via provider_options below.
+                    tools = []
                 else:
-                    live_defs = await get_mcp_tool_definitions()
-                    tools = live_defs or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+                    if not mcp_enabled:
+                        tools = []
+                    else:
+                        live_defs = await get_mcp_tool_definitions()
+                        tools = live_defs or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
                 hydration_meta = {
                     "agent": agent,
                     "section_counts": bundle.section_counts,
@@ -305,6 +346,22 @@ class FrontierDispatchHandler(BaseHandler):
             if translated is not None:
                 gen_params["thinking"] = translated
 
+        # For xAI agent dispatches, inject the server-side built-in tool set as
+        # the default.  Two conditions suppress injection:
+        #   (a) mcp=False — unified "no tools" signal; respected for xAI personas.
+        #   (b) skip_legacy_tier_block — caller supplied an explicit ``tools`` list
+        #       via frontier_generate; their intent overrides the default.
+        # Caller-supplied ``generation_parameters.provider_options.xai.tools``
+        # (including ``[]`` to suppress) always wins via the ``if "tools" not in``
+        # guard below.
+        if agent and provider == "xai" and mcp_enabled and not skip_legacy_tier_block:
+            po: dict[str, Any] = dict(gen_params.get("provider_options") or {})
+            xai_opts: dict[str, Any] = dict(po.get("xai") or {})
+            if "tools" not in xai_opts:
+                xai_opts["tools"] = _XAI_BUILTIN_TOOLS
+            po["xai"] = xai_opts
+            gen_params["provider_options"] = po
+
         thinking = gen_params.get("thinking")
         req = FrontierRequest(
             messages=[{"role": "user", "content": user_prompt}],
@@ -320,6 +377,7 @@ class FrontierDispatchHandler(BaseHandler):
             tools=tools or None,
             tool_choice=gen_params.get("tool_choice"),
             response_format=gen_params.get("response_format"),
+            provider_options=gen_params.get("provider_options"),
             mcp_tool_loop=bool(tools) and not remote_mcp,
             remote_mcp=remote_mcp,
         )

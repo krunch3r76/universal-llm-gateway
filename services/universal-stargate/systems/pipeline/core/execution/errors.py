@@ -318,19 +318,31 @@ class UnknownPipelineOptionsError(PipelineError):
 @dataclass
 class AgentModelMismatchError(PipelineError):
     """Raised when the caller-supplied model's provider conflicts with the
-    agent's identity-bound provider family.
+    agent's identity-bound provider family, or when the model fails the
+    agent's variant requirement (e.g. oppie requires a multi-agent xAI model).
 
     Replaces the bare ``ValueError`` that ``check_agent_model_consistency``
     used to raise so ``_normalize_pipeline_exception`` can extract a
     structured ``code`` rather than collapsing to ``pipeline_execution_failed``.
+
+    ``required_variant`` is ``None`` for provider-family mismatches and
+    carries the required substring (e.g. ``"multi-agent"``) for variant
+    mismatches. ``expected_provider`` always carries the bare provider name.
     """
 
     agent: str
     model: str
     provider: str
     expected_provider: str
+    required_variant: str | None = None
 
     def __str__(self) -> str:
+        if self.required_variant:
+            return (
+                f"Agent {self.agent!r} expects a {self.expected_provider!r} model "
+                f"containing {self.required_variant!r}; got {self.model!r}. "
+                f"Non-conforming models may reject client-side tools at the API level."
+            )
         return (
             f"Agent {self.agent!r} expects provider {self.expected_provider!r}; "
             f"model {self.model!r} resolves to {self.provider!r}. "
@@ -346,6 +358,7 @@ class AgentModelMismatchError(PipelineError):
             "model": self.model,
             "provider": self.provider,
             "expected_provider": self.expected_provider,
+            "required_variant": self.required_variant,
         }
 
 

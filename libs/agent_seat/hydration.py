@@ -72,7 +72,6 @@ class AgentMeta:
     allowed_models: list[str] = field(default_factory=list)
     tools: list[str] | None = None
     allowed_options: list[str] | None = None
-    persona_seed_ref: str | None = None
 
 
 @dataclass(slots=True)
@@ -163,7 +162,6 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
         return AgentMeta()
     frontier_kind_raw = attributes.get("frontier_kind")
     default_model_raw = attributes.get("default_model")
-    persona_seed_ref_raw = attributes.get("persona_seed_ref")
     return AgentMeta(
         frontier_kind=(
             str(frontier_kind_raw) if isinstance(frontier_kind_raw, str) else None
@@ -174,9 +172,6 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
         allowed_models=_as_str_list(attributes.get("allowed_models")),
         tools=_as_optional_str_list(attributes.get("tools")),
         allowed_options=_as_optional_str_list(attributes.get("allowed_options")),
-        persona_seed_ref=(
-            str(persona_seed_ref_raw) if isinstance(persona_seed_ref_raw, str) else None
-        ),
     )
 
 
