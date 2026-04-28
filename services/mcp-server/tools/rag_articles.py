@@ -17,6 +17,14 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from mcp_events import monotonic_now, record
 
+from ._rag_articles_admin import register_article_inventory_tools
+from ._rag_http import (
+    _handle_rag_call_error,
+    _rag_delete,
+    _rag_get,
+    _rag_post,
+)
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -108,32 +116,21 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         if subdirectory:
             body["subdirectory"] = subdirectory
 
-        url = f"{_STARGATE_URL}/api/v1/rag/article"
         try:
-            with httpx.Client(timeout=_ARTICLE_TIMEOUT) as client:
-                resp = client.post(url, json=body)
-                resp.raise_for_status()
-                result = resp.json()
-        except httpx.ConnectError as exc:
-            logger.warning("RAG article upsert connection failed: %s", exc)
-            record("mcp.rag.article.upsert.failed", error="connect_error")
-            return {
-                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
-            }
-        except httpx.HTTPStatusError as exc:
-            logger.warning("RAG article upsert HTTP error: %s", exc)
-            record(
-                "mcp.rag.article.upsert.failed",
-                error=f"{exc.response.status_code}",
+            result = _rag_post(
+                _STARGATE_URL,
+                "api/v1/rag/article",
+                body,
+                timeout=_ARTICLE_TIMEOUT,
             )
-            return {
-                "error": f"Article upsert failed: {exc.response.status_code} "
-                f"{exc.response.text}"
-            }
-        except httpx.RequestError as exc:
-            logger.warning("RAG article upsert request error: %s", exc)
-            record("mcp.rag.article.upsert.failed", error=str(exc))
-            return {"error": f"Article upsert request failed: {exc}"}
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as exc:
+            return _handle_rag_call_error(exc, endpoint_name="article")
 
         duration = monotonic_now() - t0
         created = result.get("created", False) if isinstance(result, dict) else False
@@ -185,32 +182,21 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.rag.source.status.called", count=len(source_paths))
 
-        url = f"{_STARGATE_URL}/api/v1/rag/source-status"
         try:
-            with httpx.Client(timeout=_ARTICLE_TIMEOUT) as client:
-                resp = client.get(url, params=[("sources", s) for s in source_paths])
-                resp.raise_for_status()
-                result = resp.json()
-        except httpx.ConnectError as exc:
-            logger.warning("RAG source status connection failed: %s", exc)
-            record("mcp.rag.source.status.failed", error="connect_error")
-            return {
-                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
-            }
-        except httpx.HTTPStatusError as exc:
-            logger.warning("RAG source status HTTP error: %s", exc)
-            record(
-                "mcp.rag.source.status.failed",
-                error=f"{exc.response.status_code}",
+            result = _rag_get(
+                _STARGATE_URL,
+                "api/v1/rag/source-status",
+                timeout=_ARTICLE_TIMEOUT,
+                params=[("sources", s) for s in source_paths],
             )
-            return {
-                "error": f"Source status query failed: {exc.response.status_code} "
-                f"{exc.response.text}"
-            }
-        except httpx.RequestError as exc:
-            logger.warning("RAG source status request error: %s", exc)
-            record("mcp.rag.source.status.failed", error=str(exc))
-            return {"error": f"Source status request failed: {exc}"}
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as exc:
+            return _handle_rag_call_error(exc, endpoint_name="source_status")
 
         duration = monotonic_now() - t0
         count = len(result.get("sources", [])) if isinstance(result, dict) else 0
@@ -243,32 +229,21 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.rag.directory.delete.called", directory_path=directory_path)
 
-        url = f"{_STARGATE_URL}/api/v1/rag/directory"
         try:
-            with httpx.Client(timeout=60.0) as client:
-                resp = client.delete(url, params={"path": directory_path})
-                resp.raise_for_status()
-                result = resp.json()
-        except httpx.ConnectError as exc:
-            logger.warning("RAG directory delete connection failed: %s", exc)
-            record("mcp.rag.directory.delete.failed", error="connect_error")
-            return {
-                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
-            }
-        except httpx.HTTPStatusError as exc:
-            logger.warning("RAG directory delete HTTP error: %s", exc)
-            record(
-                "mcp.rag.directory.delete.failed",
-                error=f"{exc.response.status_code}",
+            result = _rag_delete(
+                _STARGATE_URL,
+                "api/v1/rag/directory",
+                timeout=60.0,
+                params={"path": directory_path},
             )
-            return {
-                "error": f"Directory delete failed: {exc.response.status_code} "
-                f"{exc.response.text}"
-            }
-        except httpx.RequestError as exc:
-            logger.warning("RAG directory delete request error: %s", exc)
-            record("mcp.rag.directory.delete.failed", error=str(exc))
-            return {"error": f"Directory delete request failed: {exc}"}
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as exc:
+            return _handle_rag_call_error(exc, endpoint_name="directory")
 
         duration = monotonic_now() - t0
         sources = result.get("sources_deleted", 0) if isinstance(result, dict) else 0
@@ -312,32 +287,21 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.rag.source.delete.called", source_path=source_path)
 
-        url = f"{_STARGATE_URL}/api/v1/rag/source"
         try:
-            with httpx.Client(timeout=_ARTICLE_TIMEOUT) as client:
-                resp = client.delete(url, params={"path": source_path})
-                resp.raise_for_status()
-                result = resp.json()
-        except httpx.ConnectError as exc:
-            logger.warning("RAG source delete connection failed: %s", exc)
-            record("mcp.rag.source.delete.failed", error="connect_error")
-            return {
-                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
-            }
-        except httpx.HTTPStatusError as exc:
-            logger.warning("RAG source delete HTTP error: %s", exc)
-            record(
-                "mcp.rag.source.delete.failed",
-                error=f"{exc.response.status_code}",
+            result = _rag_delete(
+                _STARGATE_URL,
+                "api/v1/rag/source",
+                timeout=_ARTICLE_TIMEOUT,
+                params={"path": source_path},
             )
-            return {
-                "error": f"Source delete failed: {exc.response.status_code} "
-                f"{exc.response.text}"
-            }
-        except httpx.RequestError as exc:
-            logger.warning("RAG source delete request error: %s", exc)
-            record("mcp.rag.source.delete.failed", error=str(exc))
-            return {"error": f"Source delete request failed: {exc}"}
+        except (
+            httpx.ConnectError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            ValueError,
+        ) as exc:
+            return _handle_rag_call_error(exc, endpoint_name="source")
 
         duration = monotonic_now() - t0
         chunks = result.get("chunks_deleted", 0) if isinstance(result, dict) else 0
@@ -360,123 +324,4 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         )
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
-    @mcp.tool(title="RAG: List Articles")
-    def rag_list_articles(
-        scope: str | None = None,
-        include_abstract: bool = False,
-    ) -> dict[str, Any]:
-        """List article metadata rows from the RAG corpus.
-
-        Use this when you need corpus inventory or citation-level coverage,
-        such as checking what papers already exist before deciding whether to
-        ingest more. For semantic retrieval over chunk text, use `rag(op="search")`
-        or `rag(op="answer")` instead of article listing.
-
-        Args:
-            scope: Comma-separated scope names to filter by. Omit to list all
-                scopes. Example: "rag_systems,small_llm_prompting"
-            include_abstract: Include the abstract field for each row. Leave
-                false for faster, more compact planning-oriented responses.
-
-        Returns:
-            {"articles": [...], "count": N, "scopes_queried": [...]}
-            On error: {"error": "<message>"}
-        """
-        t0 = monotonic_now()
-        record(
-            "mcp.rag.articles.list.called",
-            include_abstract=include_abstract,
-            has_scope=bool(scope),
-        )
-
-        params: dict[str, str] = {
-            "include_abstract": "true" if include_abstract else "false",
-            **({"scope": scope} if scope else {}),
-        }
-
-        url = f"{_STARGATE_URL}/api/v1/rag/articles"
-        try:
-            with httpx.Client(timeout=20.0) as client:
-                resp = client.get(url, params=params)
-                resp.raise_for_status()
-                result = resp.json()
-        except httpx.ConnectError as exc:
-            logger.warning("RAG article listing connection failed: %s", exc)
-            record("mcp.rag.articles.list.failed", error="connect_error")
-            return {
-                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
-            }
-        except httpx.HTTPStatusError as exc:
-            logger.warning("RAG article listing HTTP error: %s", exc)
-            record("mcp.rag.articles.list.failed", error=f"{exc.response.status_code}")
-            return {
-                "error": f"Article listing failed: {exc.response.status_code} "
-                f"{exc.response.text}"
-            }
-        except httpx.RequestError as exc:
-            logger.warning("RAG article listing request error: %s", exc)
-            record("mcp.rag.articles.list.failed", error=str(exc))
-            return {"error": f"Article listing request failed: {exc}"}
-
-        duration = monotonic_now() - t0
-        count = result.get("count", 0) if isinstance(result, dict) else 0
-        record(
-            "mcp.rag.articles.list.completed",
-            duration_s=round(duration, 3),
-            count=count,
-        )
-        logger.info("rag_list_articles: count=%d in %.1fs", count, duration)
-        return result if isinstance(result, dict) else {"error": "Invalid response"}
-
-    @mcp.tool(title="RAG: Orphaned Articles")
-    def rag_orphaned_articles() -> dict[str, Any]:
-        """List articles with no corresponding indexed chunks.
-
-        An article is "orphaned" when rag_upsert_article was called but
-        the source file was never indexed (or its chunks were later deleted).
-        Use this to detect metadata-only rows that should be cleaned up.
-
-        Returns:
-            {"orphans": [{"source_path", "title", "scope", "updated_at"}, ...],
-             "count": N}
-            On error: {"error": "<message>"}
-        """
-        t0 = monotonic_now()
-        record("mcp.rag.orphaned.articles.called")
-
-        url = f"{_STARGATE_URL}/api/v1/rag/orphaned_articles"
-        try:
-            with httpx.Client(timeout=15.0) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                result = resp.json()
-        except httpx.ConnectError as exc:
-            logger.warning("RAG orphaned articles connection failed: %s", exc)
-            record("mcp.rag.orphaned.articles.failed", error="connect_error")
-            return {
-                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
-            }
-        except httpx.HTTPStatusError as exc:
-            logger.warning("RAG orphaned articles HTTP error: %s", exc)
-            record(
-                "mcp.rag.orphaned.articles.failed",
-                error=f"{exc.response.status_code}",
-            )
-            return {
-                "error": f"Orphaned articles query failed: {exc.response.status_code} "
-                f"{exc.response.text}"
-            }
-        except httpx.RequestError as exc:
-            logger.warning("RAG orphaned articles request error: %s", exc)
-            record("mcp.rag.orphaned.articles.failed", error=str(exc))
-            return {"error": f"Orphaned articles request failed: {exc}"}
-
-        duration = monotonic_now() - t0
-        count = result.get("count", 0) if isinstance(result, dict) else 0
-        record(
-            "mcp.rag.orphaned.articles.completed",
-            duration_s=round(duration, 3),
-            orphan_count=count,
-        )
-        logger.info("rag_orphaned_articles: count=%d in %.1fs", count, duration)
-        return result if isinstance(result, dict) else {"error": "Invalid response"}
+    register_article_inventory_tools(mcp)

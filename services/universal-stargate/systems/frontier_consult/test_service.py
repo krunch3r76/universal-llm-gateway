@@ -194,3 +194,30 @@ async def test_max_tool_turns_omitted_does_not_set_key() -> None:
     )
     body = await build_dispatch_body(req)
     assert "max_tool_turns" not in body["pipeline_options"]
+
+
+@pytest.mark.asyncio
+async def test_rejects_chat_completions_only_model_exact() -> None:
+    """Exact frozenset entry rejected before dispatch."""
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5-search-api",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await build_dispatch_body(req)
+    assert exc.value.field == "model"
+    assert "Chat Completions-only" in exc.value.reason
+    assert "llm_generate" in exc.value.reason
+
+
+@pytest.mark.asyncio
+async def test_rejects_chat_completions_only_model_suffix_variant() -> None:
+    """Suffix-matched future *-search-api variants are rejected."""
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-6-search-api",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await build_dispatch_body(req)
+    assert exc.value.field == "model"
+    assert "Chat Completions-only" in exc.value.reason

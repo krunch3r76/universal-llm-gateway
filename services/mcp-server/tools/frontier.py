@@ -70,6 +70,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             rejected when ``agent`` is set. Omit for a raw native call.
           - ``boot ∈ {none, mcp, team, full}``: persona hydration tier.
             ``"none"`` is only valid when ``agent`` is omitted.
+          - ``model``: provider-qualified model ID. **Surface restriction**:
+            Chat-Completions-only OpenAI models (``openai/gpt-5-search-api``
+            and any ``openai/*-search-api`` variant) are rejected at admission
+            with ``field=model`` — they are unavailable on the Responses API
+            path this tool uses. Use ``llm_generate`` for those models instead
+            (note: ``llm_generate`` has a narrower surface — no ``agent``,
+            ``tools``, ``boot``, ``result_delivery``, or ``transcript_id``).
           - ``tools``: explicit tool name list. Subset of persona's tools
             if ``agent`` set; subset of full tool registry otherwise.
             Omit for the persona's default toolset.

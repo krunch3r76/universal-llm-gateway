@@ -1,7 +1,9 @@
 """_PropertyIndexPart05 — PropertyIndex method chunk (SLOC split)."""
+# ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
+
 
 class _PropertyIndexPart05:
     async def garbage_collect_contextualized_chunks(self) -> int:
@@ -226,6 +228,27 @@ class _PropertyIndexPart05:
                 "SELECT source FROM indexed_sources ORDER BY source"
             ).fetchall()
         return [r[0] for r in rows]
+
+    def get_indexed_sources_with_timestamps(
+        self, prefix: str | None = None
+    ) -> dict[str, str]:
+        """Return cached indexed source paths → updated_at timestamps from SQLite.
+
+        More efficient than scanning ChromaDB chunk metadata for recency.
+        Returns {source_path: updated_at_iso_str}.
+        """
+        conn = self._ensure_conn()
+        if prefix:
+            rows = conn.execute(
+                "SELECT source, updated_at FROM indexed_sources"
+                " WHERE source LIKE ? ORDER BY source",
+                (f"{prefix}%",),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT source, updated_at FROM indexed_sources ORDER BY source"
+            ).fetchall()
+        return {r[0]: r[1] for r in rows if r[1]}
 
     def list_known_sources(self, prefixes: list[str]) -> set[str]:
         """Return source paths present in metadata-only tables under watched prefixes."""

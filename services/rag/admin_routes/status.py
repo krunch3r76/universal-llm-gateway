@@ -20,11 +20,10 @@ if TYPE_CHECKING:
 from services.rag.admin_routes._extraction_export import (
     register_extraction_export_route,
 )
-from services.rag.admin_routes._helpers import _coverage_sources
+from services.rag.admin_routes._helpers import _coverage_sources, _get_pipeline_stage
 from services.rag.models import (
     CoverageResponse,
     IndexingStatusResponse,
-    PipelineStage,
     PrefixCoverage,
     ScopeCoverage,
     SourceStatusItem,
@@ -176,8 +175,7 @@ def register_status_routes(
         """Per-scope, per-prefix view of indexed file counts and recency.
 
         Aggregates indexed sources against configured scope prefixes.
-        Optionally enriches with last_indexed timestamps from ChromaDB chunk
-        metadata (skipped when collection exceeds 100k chunks).
+        Enriches with last_indexed from SQLite ``indexed_sources.updated_at``.
         """
         config = get_config_fn() if get_config_fn else None
         if config is None:
@@ -186,25 +184,14 @@ def register_status_routes(
         prop_idx = get_property_index_fn()
 
         source_last_indexed: dict[str, str] = {}
-        collection = get_collection_fn()
-        chunk_count = collection.count()
-        max_chunks_for_ts_scan = 100_000
-        timestamp_scan_degraded = chunk_count > max_chunks_for_ts_scan
-        if chunk_count <= max_chunks_for_ts_scan:
+        timestamp_scan_degraded = False
+
+        if prop_idx is not None:
             try:
-                raw = collection.get(include=["metadatas"])
-                for meta in raw.get("metadatas") or []:
-                    if not isinstance(meta, dict):
-                        continue
-                    src = meta.get("source", "")
-                    ts = meta.get("indexed_at", "")
-                    if isinstance(src, str) and isinstance(ts, str) and src and ts:
-                        existing = source_last_indexed.get(src, "")
-                        if ts > existing:
-                            source_last_indexed[src] = ts
+                source_last_indexed = prop_idx.get_indexed_sources_with_timestamps()
             except Exception as e:
                 logger.warning(
-                    "Coverage: ChromaDB timestamp scan failed, omitting last_indexed: %s",
+                    "Coverage: SQLite timestamp fetch failed, omitting last_indexed: %s",
                     e,
                     exc_info=True,
                 )
@@ -262,17 +249,9 @@ def register_status_routes(
         items: list[SourceStatusItem] = []
         for source_path in sources:
             data = prop_idx.get_source_item_data(source_path)
+            stage, _, _ = _get_pipeline_stage(source_path, prop_idx)
             queue_row = data.get("queue_row")
             ctx_count: int = data["contextualized_chunks"]
-            is_indexed: bool = data["is_indexed"]
-            if queue_row is not None:
-                stage: PipelineStage = "queued"
-            elif ctx_count > 0:
-                stage = "contextualized"
-            elif is_indexed:
-                stage = "chunked"
-            else:
-                stage = "registered"
             items.append(
                 SourceStatusItem(
                     source_path=source_path,

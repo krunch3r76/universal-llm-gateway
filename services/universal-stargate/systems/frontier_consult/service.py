@@ -23,9 +23,20 @@ logger = get_logger(__name__)
 # Models that only support the Chat Completions API and are unavailable on the
 # OpenAI Responses API path used by frontier_generate. Callers must use
 # llm_generate (which routes through /v1/chat/completions) for these models.
+# ∀ new Chat-Completions-only OpenAI models: add to this set AND update
+# llm_generate docstring in services/mcp-server/tools/llm.py.
 _CHAT_COMPLETIONS_ONLY_MODELS: frozenset[str] = frozenset({
     "openai/gpt-5-search-api",
 })
+
+
+def _is_chat_completions_only(model: str) -> bool:
+    """True iff model is known to be unavailable on the OpenAI Responses API."""
+    if model in _CHAT_COMPLETIONS_ONLY_MODELS:
+        return True
+    # Defense-in-depth: catch versioned/future *-search-api variants before
+    # they reach the Responses API endpoint and fail with an opaque 400/500.
+    return model.startswith("openai/") and model.endswith("-search-api")
 
 
 @dataclass(slots=True)
@@ -225,7 +236,7 @@ async def build_dispatch_body(
         meta=meta,
         event_publisher=event_publisher,
     )
-    if effective_model in _CHAT_COMPLETIONS_ONLY_MODELS:
+    if _is_chat_completions_only(effective_model):
         raise _emit_rejection(
             request_id=request_id,
             agent=req.agent,
@@ -233,7 +244,9 @@ async def build_dispatch_body(
             reason=(
                 f"{effective_model!r} is a Chat Completions-only model — it is unavailable "
                 "on the OpenAI Responses API that frontier_generate uses. "
-                f"Use llm_generate(model={effective_model!r}, messages=...) instead."
+                f"Use llm_generate(model={effective_model!r}, messages=...) instead "
+                "(note: llm_generate has a narrower surface — no agent, tools, boot, "
+                "result_delivery, or transcript_id)."
             ),
             event_publisher=event_publisher,
         )

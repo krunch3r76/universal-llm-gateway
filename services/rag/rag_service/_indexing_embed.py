@@ -23,7 +23,7 @@ from services.rag.events.indexing import (
     rag_property_write_completed,
     rag_property_write_started,
 )
-from services.rag.rag_service._indexing_commit import _upsert_chroma_chunk_batches
+from services.rag.rag_service._indexing_chroma import _upsert_chroma_chunk_batches
 from services.rag.rag_service._indexing_contextualize import (
     _run_contextualization_phase,
 )

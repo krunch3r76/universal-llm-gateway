@@ -33,8 +33,6 @@ def _classify_indexing_failure(
     msg = str(exc)
     msg_lower = msg.lower()
 
-    if "max batch size" in msg_lower:
-        return ("permanent", "exceeds_chroma_max_batch_size")
     if isinstance(exc, PermissionError):
         return ("permanent", "permission_denied")
     if isinstance(exc, FileNotFoundError):

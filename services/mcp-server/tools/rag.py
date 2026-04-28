@@ -18,6 +18,14 @@ import httpx
 from mcp_events import monotonic_now, record
 from provider_model_limits import local_model_inference_timeout, rag_pipeline_timeout
 
+from ._rag_http import (
+    _handle_rag_call_error,
+    _rag_get,
+)
+from ._rag_http import (
+    _rag_post as _rag_post_http,
+)
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -67,64 +75,12 @@ def _pipeline_call(
 
 def _rag_call(path: str, *, timeout: float) -> dict[str, Any]:
     """GET from Stargate passthrough and return parsed JSON."""
-    url = f"{_STARGATE_URL.rstrip('/')}/{path.lstrip('/')}"
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-        payload_obj = cast(object, resp.json())
-        if not isinstance(payload_obj, dict):
-            raise ValueError("RAG response payload must be a JSON object")
-        return cast(dict[str, Any], payload_obj)
+    return _rag_get(_STARGATE_URL, path, timeout=timeout)
 
 
 def _rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
     """POST JSON to Stargate passthrough and return parsed object payload."""
-    url = f"{_STARGATE_URL.rstrip('/')}/{path.lstrip('/')}"
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body)
-        resp.raise_for_status()
-        payload_obj = cast(object, resp.json())
-        if not isinstance(payload_obj, dict):
-            raise ValueError("RAG response payload must be a JSON object")
-        return cast(dict[str, Any], payload_obj)
-
-
-def _handle_rag_call_error(
-    exc: BaseException,
-    *,
-    endpoint_name: str,
-) -> dict[str, str]:
-    """Record/log RAG passthrough errors and return a user-facing error payload."""
-    signal = f"mcp.rag.{endpoint_name}.failed"
-    if isinstance(exc, httpx.ConnectError):
-        logger.warning("RAG %s connection failed: %s", endpoint_name, exc)
-        record(signal, error=str(exc))
-        return {
-            "error": (
-                f"RAG {endpoint_name} endpoint not reachable. "
-                "Ensure RAG is running and reachable through Stargate."
-            )
-        }
-    if isinstance(exc, httpx.TimeoutException):
-        logger.warning("RAG %s request timed out: %s", endpoint_name, exc)
-        record(signal, error="timeout")
-        return {"error": f"RAG {endpoint_name} request timed out."}
-    if isinstance(exc, httpx.HTTPStatusError):
-        logger.warning("RAG %s HTTP error: %s", endpoint_name, exc)
-        record(signal, error=f"{exc.response.status_code}")
-        return {
-            "error": (
-                f"RAG {endpoint_name} endpoint error: "
-                f"{exc.response.status_code} {exc.response.reason_phrase}"
-            )
-        }
-    if isinstance(exc, httpx.RequestError):
-        logger.warning("RAG %s request error: %s", endpoint_name, exc)
-        record(signal, error=str(exc))
-        return {"error": f"RAG {endpoint_name} request failed: {exc}"}
-    logger.warning("RAG %s invalid payload: %s", endpoint_name, exc)
-    record(signal, error="invalid_payload")
-    return {"error": f"RAG {endpoint_name} endpoint returned invalid payload."}
+    return _rag_post_http(_STARGATE_URL, path, body, timeout=timeout)
 
 
 def _handle_pipeline_error(
@@ -610,9 +566,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         rerank_model = pipeline_options.get("rerank_model", _RERANK_MODEL_DEFAULT)
         answer_model = pipeline_options.get("model", _ANSWER_MODEL_DEFAULT)
-        pipeline_timeout = rag_pipeline_timeout(rerank_model) + local_model_inference_timeout(
-            answer_model
-        )
+        pipeline_timeout = rag_pipeline_timeout(
+            rerank_model
+        ) + local_model_inference_timeout(answer_model)
         pipeline_options["timeout_seconds"] = pipeline_timeout
 
         try:

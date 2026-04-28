@@ -18,8 +18,11 @@ if TYPE_CHECKING:
     from services.rag.property_index import PropertyIndex
 
 from services.rag.admin_routes._directory_routes import register_directory_routes
-from services.rag.admin_routes._helpers import ArticleRow, OrphanedArticlesResponse
-from services.rag.admin_routes._pipeline_stage import get_pipeline_stage
+from services.rag.admin_routes._helpers import (
+    ArticleRow,
+    OrphanedArticlesResponse,
+    _get_pipeline_stage,
+)
 from services.rag.events.articles import rag_article_upserted, rag_source_deleted
 from services.rag.models import (
     ArticleListingItem,
@@ -216,7 +219,7 @@ def register_article_routes(
         row = prop_idx.get_article_row(request.source_path)
         if refresh_article_registry_from_row_fn is not None:
             refresh_article_registry_from_row_fn(row)
-        stage, queue_state, queue_depth = get_pipeline_stage(
+        stage, queue_state, queue_depth = _get_pipeline_stage(
             request.source_path, prop_idx
         )
         logger.info(

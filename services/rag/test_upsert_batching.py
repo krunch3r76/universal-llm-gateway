@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.rag.rag_service._indexing_commit import _upsert_chroma_chunk_batches
+from services.rag.rag_service._indexing_chroma import _upsert_chroma_chunk_batches
 
 
 class _FakeChroma:

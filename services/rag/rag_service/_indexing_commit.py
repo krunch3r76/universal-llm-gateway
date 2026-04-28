@@ -1,11 +1,11 @@
-"""Commit phase and ChromaDB upsert helpers for the indexing pipeline."""
+"""Commit phase for the indexing pipeline."""
 
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from services.rag.chunkers import Chunk
@@ -13,12 +13,9 @@ if TYPE_CHECKING:
     from services.rag.property_index import PropertyIndex
 
 import chromadb
-from chromadb.utils.batch_utils import create_batches
 
 from services.rag.events.articles import rag_article_auto_created
 from services.rag.events.indexing import (
-    rag_chroma_upsert_completed,
-    rag_chroma_upsert_started,
     rag_file_indexing_failed,
     rag_hints_update_completed,
     rag_hints_update_started,
@@ -35,63 +32,6 @@ from services.rag.rag_service._indexing_failure_ops import (
 from . import state
 
 logger = logging.getLogger(__name__)
-
-
-async def _upsert_chroma_chunk_batches(
-    *,
-    chroma_client: Any,
-    collection: Any,
-    event_bus: Any,
-    source: str,
-    correlation_id: str,
-    operation: str | None,
-    ids: list[str],
-    embeddings: Any,
-    texts: list[str],
-    metadatas: list[dict[str, Any]],
-) -> None:
-    """Upsert chunk rows in ChromaDB-sized batches (backend max_batch_size)."""
-    if chroma_client is None:
-        raise RuntimeError("ChromaDB client not initialized")
-    batches = create_batches(
-        chroma_client,
-        ids=ids,
-        embeddings=embeddings,
-        metadatas=metadatas,
-        documents=texts,
-    )
-    batch_total = len(batches)
-    for batch_index, (b_ids, b_embeddings, b_metadatas, b_documents) in enumerate(
-        batches
-    ):
-        if event_bus is not None:
-            await event_bus.publish_nowait(
-                rag_chroma_upsert_started(
-                    file=source,
-                    operation_id=correlation_id,
-                    chunk_count=len(b_ids),
-                    operation=operation,
-                    batch_index=batch_index,
-                    batch_total=batch_total,
-                )
-            )
-        collection.upsert(
-            ids=b_ids,
-            embeddings=b_embeddings,
-            documents=b_documents,
-            metadatas=b_metadatas,
-        )
-        if event_bus is not None:
-            await event_bus.publish_nowait(
-                rag_chroma_upsert_completed(
-                    file=source,
-                    operation_id=correlation_id,
-                    chunk_count=len(b_ids),
-                    operation=operation,
-                    batch_index=batch_index,
-                    batch_total=batch_total,
-                )
-            )
 
 
 async def _run_commit_phase(
