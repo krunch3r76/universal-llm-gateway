@@ -2,13 +2,82 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 from urllib.parse import urlencode
+
+import httpx
 
 from .._boot_helpers import safe_list
 from .._cortex_relay import _cx
 from .._local_relay import relay as _relay
-from ._boot_profiles import _BOOT_PROFILES
+
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+
+
+def _fetch_rag_pipeline_state(stargate_url: str) -> dict[str, Any]:
+    """Fetch RAG pipeline stall indicators for the boot briefing.
+
+    Synchronous — submitted to the boot ThreadPoolExecutor alongside other relay
+    callables. Uses httpx.Client (sync) so the coroutine is not submitted to a
+    thread pool unawaited. Timeout is 2s to bound boot-path latency.
+
+    Returns {"unreachable": True} on total failure; partial failures return
+    whatever data was successfully fetched (pending/stale may both be 0 on
+    partial failure, which is acceptable — boot should not fail because RAG is down).
+    """
+    from mcp_events import record as _record
+
+    pending = 0
+    failures = 0
+    stale_vocab = 0
+    auth_token = os.environ.get("MCP_AUTH_TOKEN", "")
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    try:
+        with httpx.Client(timeout=2.0, headers=headers) as client:
+            try:
+                queue_resp = client.get(f"{stargate_url}/api/v1/rag/extraction/queue")
+                if queue_resp.status_code == 200:
+                    data = queue_resp.json()
+                    pending = data.get("breakdown", {}).get("total", 0)
+                else:
+                    _record(
+                        "mcp.rag.boot.fetch.failed",
+                        endpoint="extraction/queue",
+                        error=f"HTTP {queue_resp.status_code}",
+                    )
+            except Exception as exc:
+                _record(
+                    "mcp.rag.boot.fetch.failed", endpoint="extraction/queue", error=str(exc)
+                )
+
+            try:
+                status_resp = client.get(f"{stargate_url}/api/v1/rag/indexing/status")
+                if status_resp.status_code == 200:
+                    data = status_resp.json()
+                    failures = data.get(
+                        "indexing_failures_permanent_count", 0
+                    ) + data.get("indexing_failures_transient_count", 0)
+                    stale_vocab = data.get("stale_corpus_hints_count", 0)
+                else:
+                    _record(
+                        "mcp.rag.boot.fetch.failed",
+                        endpoint="indexing/status",
+                        error=f"HTTP {status_resp.status_code}",
+                    )
+            except Exception as exc:
+                _record(
+                    "mcp.rag.boot.fetch.failed", endpoint="indexing/status", error=str(exc)
+                )
+
+        return {
+            "pending_contextualization": pending,
+            "indexing_failures": failures,
+            "stale_corpus_hints": stale_vocab,
+        }
+    except Exception as exc:
+        _record("mcp.rag.boot.fetch.failed", endpoint="all", error=str(exc))
+        return {"unreachable": True}
 
 
 def _build_futures_spec(
@@ -43,16 +112,23 @@ def _build_futures_spec(
 
     rj_agent = {"cursor": "cursor-claude", "web": "web-claude"}.get(agent, agent)
     futures_spec["reflective_journal"] = (
-        _cx, "GET", f"/boot-reflective?{urlencode({'agent': rj_agent, 'limit': 5})}"
+        _cx,
+        "GET",
+        f"/boot-reflective?{urlencode({'agent': rj_agent, 'limit': 5})}",
     )
 
     futures_spec["recent_mentions"] = (
-        _cx, "GET", f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}"
+        _cx,
+        "GET",
+        f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
     futures_spec["skills"] = (
-        _cx, "GET", f"/entities?{urlencode({'type': 'agent_skill', 'limit': 50})}"
+        _cx,
+        "GET",
+        f"/entities?{urlencode({'type': 'agent_skill', 'limit': 50})}",
     )
     futures_spec["recent_work"] = (_cx, "GET", "/boot-recent-work")
+    futures_spec["rag_pipeline"] = (_fetch_rag_pipeline_state, _STARGATE_URL)
 
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
@@ -93,10 +169,19 @@ def _extract_boot_results(
 
     recent_work_raw = raw.get("recent_work", {})
     plan_phases: list[dict[str, Any]] = (
-        recent_work_raw.get("plan_phases", []) if isinstance(recent_work_raw, dict) else []
+        recent_work_raw.get("plan_phases", [])
+        if isinstance(recent_work_raw, dict)
+        else []
     )
     in_flight_todos: list[dict[str, Any]] = (
-        recent_work_raw.get("in_flight_todos", []) if isinstance(recent_work_raw, dict) else []
+        recent_work_raw.get("in_flight_todos", [])
+        if isinstance(recent_work_raw, dict)
+        else []
+    )
+
+    rag_pipeline_raw = raw.get("rag_pipeline")
+    rag_pipeline: dict[str, Any] = (
+        rag_pipeline_raw if isinstance(rag_pipeline_raw, dict) else {}
     )
 
     if agent == "web":
@@ -108,10 +193,14 @@ def _extract_boot_results(
         temporal_raw.get("active", []) if isinstance(temporal_raw, dict) else []
     )
     temporal_recently_resolved: list[dict[str, Any]] = safe_list(
-        temporal_raw.get("recently_resolved", []) if isinstance(temporal_raw, dict) else []
+        temporal_raw.get("recently_resolved", [])
+        if isinstance(temporal_raw, dict)
+        else []
     )
     expired_unresolved: list[dict[str, Any]] = safe_list(
-        temporal_raw.get("expired_unresolved", []) if isinstance(temporal_raw, dict) else []
+        temporal_raw.get("expired_unresolved", [])
+        if isinstance(temporal_raw, dict)
+        else []
     )
     sessions = filter_stale_open_items(sessions, temporal_recently_resolved)
 
@@ -136,4 +225,5 @@ def _extract_boot_results(
         "temporal_active": temporal_active,
         "expired_unresolved": expired_unresolved,
         "review_total": review_total,
+        "rag_pipeline": rag_pipeline,
     }

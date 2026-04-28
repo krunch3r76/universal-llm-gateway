@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from services.rag.property_index import PropertyIndex
-from services.rag.rag_service.indexing import (
+from services.rag.rag_service._indexing_failure_ops import (
     _classify_indexing_failure,
 )
 

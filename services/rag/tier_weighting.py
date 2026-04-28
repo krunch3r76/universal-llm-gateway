@@ -12,6 +12,13 @@ Canonical tier values and metadata key:
 
 Apply at ingest time; the ``tier_weight`` parameter on /search selects which
 tiers to boost and by how much.
+
+Empirically calibrated defaults (2026-04-28, scripts/rag/calibrate_tier_weights.py):
+    {"court_record": 0.75, "regulator_pub": 0.75,
+     "practitioner_analysis": 0.88, "expert_commentary": 0.92}
+MRR@20: baseline 0.7812 → calibrated 0.8750 (+12.0%) over 8 citation-verification
+queries against a 14-file legal fixture (appellate-opinions, foreclosure-hbor,
+mortgage-servicing, legal-theory corpora).
 """
 
 from __future__ import annotations

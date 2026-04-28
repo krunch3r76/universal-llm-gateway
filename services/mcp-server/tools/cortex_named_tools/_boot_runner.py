@@ -56,10 +56,12 @@ def run_cortex_boot(
         unread_count=len(extracted["unread_turns"]),
         review_total=extracted["review_total"],
     )
+    op_ctx_written = False
     try:
         _op_dir = Path("/data/files/notes/system/shared")
         _op_dir.mkdir(parents=True, exist_ok=True)
         (_op_dir / f"operational-context-{agent}.md").write_text(ops_context)
+        op_ctx_written = True
     except OSError:
         logger.warning("Could not write operational context to %s", op_ctx_path)
 
@@ -80,7 +82,9 @@ def run_cortex_boot(
     review_top = _build_review_top(extracted["staging_items"])
 
     card, manifest = render_briefing_card(
-        deadlines=extracted["deadlines"] if profile.get("include_deadlines", True) else None,
+        deadlines=extracted["deadlines"]
+        if profile.get("include_deadlines", True)
+        else None,
         unread_count=len(extracted["unread_turns"]),
         unread_threads=unread_threads,
         review_total=extracted["review_total"],
@@ -99,6 +103,7 @@ def run_cortex_boot(
         skills=extracted["skills"] or None,
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
+        rag_state=extracted.get("rag_pipeline") or None,
     )
 
     logger.info(
@@ -115,7 +120,7 @@ def run_cortex_boot(
         "local_time": t_boot.astimezone(_LA).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "briefing_card": card,
         "sections_available": manifest,
-        "operational_context_ref": op_ctx_path,
+        "operational_context_ref": op_ctx_path if op_ctx_written else None,
     }
 
     if tc_summary:

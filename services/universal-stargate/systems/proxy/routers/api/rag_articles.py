@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from httpx import HTTPError
 from transport_utils import make_async_client, resolve_rag_base_url
 from universal_logging import get_logger
@@ -29,7 +29,7 @@ async def _proxy_rag_request(
     action_name: str,
     unavailable_detail: str,
     invalid_payload_detail: str,
-    params: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
     json_body: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Proxy a request to RAG and enforce a dict JSON response."""
@@ -46,16 +46,22 @@ async def _proxy_rag_request(
         response.raise_for_status()
         payload = cast(object, response.json())
     except HTTPError as exc:
-        status_code = getattr(exc.response, "status_code", "n/a")
+        upstream_status = getattr(exc.response, "status_code", None)
         response_text = getattr(exc.response, "text", "")
         logger.warning(
             "RAG %s passthrough failed (rag_url=%s, status_code=%s, response=%s): %s",
             action_name,
             rag_url,
-            status_code,
+            upstream_status if upstream_status is not None else "n/a",
             response_text,
             exc,
         )
+        # Preserve client-facing 4xx so callers can distinguish bad-request from
+        # service-unavailable (e.g. 404 Not Found, 422 Unprocessable Entity).
+        if upstream_status is not None and 400 <= upstream_status < 500:
+            raise HTTPException(
+                status_code=upstream_status, detail=response_text
+            ) from exc
         raise HTTPException(status_code=503, detail=unavailable_detail) from exc
 
     if not isinstance(payload, dict):
@@ -183,4 +189,57 @@ async def delete_rag_directory(
         unavailable_detail="RAG directory delete endpoint unavailable via passthrough.",
         invalid_payload_detail="Invalid RAG directory delete response payload.",
         params={"path": path},
+    )
+
+
+@router.get("/rag/extraction/queue")
+async def get_rag_extraction_queue(
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy extraction queue summary to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="GET",
+        endpoint="/extraction/queue",
+        timeout=10.0,
+        action_name="extraction queue",
+        unavailable_detail="RAG extraction queue unavailable via Stargate passthrough.",
+        invalid_payload_detail="Invalid RAG extraction queue response payload.",
+    )
+
+
+@router.get("/rag/indexing/status")
+async def get_rag_indexing_status(
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy indexing status summary to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="GET",
+        endpoint="/indexing/status",
+        timeout=10.0,
+        action_name="indexing status",
+        unavailable_detail="RAG indexing status unavailable via Stargate passthrough.",
+        invalid_payload_detail="Invalid RAG indexing status response payload.",
+    )
+
+
+@router.get("/rag/source-status")
+async def get_source_status(
+    sources: list[str] = Query(...),
+    _current_user: dict[str, object] = Depends(get_auth_dependency),
+) -> dict[str, Any]:
+    """Proxy source pipeline status query to the RAG service."""
+    rag_url = resolve_rag_base_url()
+    return await _proxy_rag_request(
+        rag_url=rag_url,
+        method="GET",
+        endpoint="/source-status",
+        timeout=15.0,
+        action_name="source status",
+        unavailable_detail="RAG source-status unavailable via Stargate passthrough.",
+        invalid_payload_detail="Invalid RAG source-status response payload.",
+        params={"sources": sources},
     )

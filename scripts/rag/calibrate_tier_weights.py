@@ -23,9 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
-
-RAG_SOCKET = "/tmp/universal-protocol/rag.sock"
-RAG_BASE = "http://localhost"
+from transport_utils import DEFAULT_RAG_URL, make_async_client
 
 # ---------------------------------------------------------------------------
 # Calibration fixture — (path, provenance_tier)
@@ -38,66 +36,66 @@ RAG_BASE = "http://localhost"
 TIER_FIXTURE: list[tuple[str, str]] = [
     # Tier 1 — court opinions
     (
-        "/home/io/mcp-data/files/legal/appellate-opinions/asaro-v-maniscalco-2024-859-trustee.md",
+        "/mnt/torus/mcp-data/files/legal/appellate-opinions/asaro-v-maniscalco-2024-859-trustee.md",
         "court_record",
     ),
     (
-        "/home/io/mcp-data/files/legal/foreclosure-hbor/sheen-v-wells-fargo-12-cal-5th-905-2022.pdf",
+        "/mnt/torus/mcp-data/files/legal/foreclosure-hbor/sheen-v-wells-fargo-12-cal-5th-905-2022.pdf",
         "court_record",
     ),
     (
-        "/home/io/mcp-data/files/legal/foreclosure-hbor/yvanova-v-new-century-mortgage-62-cal-4th-919-2016.md",
+        "/mnt/torus/mcp-data/files/legal/foreclosure-hbor/yvanova-v-new-century-mortgage-62-cal-4th-919-2016.md",
         "court_record",
     ),
     (
-        "/home/io/mcp-data/files/legal/appellate-opinions/keading-v-keading-2021-859-elder-abuse.md",
+        "/mnt/torus/mcp-data/files/legal/appellate-opinions/keading-v-keading-2021-859-elder-abuse.md",
         "court_record",
     ),
     (
-        "/home/io/mcp-data/files/legal/appellate-opinions/conservatorship-of-ribal-2019-859-double-damages.md",
+        "/mnt/torus/mcp-data/files/legal/appellate-opinions/conservatorship-of-ribal-2019-859-double-damages.md",
         "court_record",
     ),
     # Tier 1 — regulatory publications / statutes
     (
-        "/home/io/mcp-data/files/legal/property-tax/boe-lta-2021-008-intergenerational-qa.pdf",
+        "/mnt/torus/mcp-data/files/legal/property-tax/boe-lta-2021-008-intergenerational-qa.pdf",
         "regulator_pub",
     ),
     (
-        "/home/io/mcp-data/files/legal/property-tax/boe-lta-2022-009-rules-462520-462540.pdf",
+        "/mnt/torus/mcp-data/files/legal/property-tax/boe-lta-2022-009-rules-462520-462540.pdf",
         "regulator_pub",
     ),
     (
-        "/home/io/mcp-data/files/legal/foreclosure-hbor/civ-2924-15-hbor-scope-applicability.md",
+        "/mnt/torus/mcp-data/files/legal/foreclosure-hbor/civ-2924-15-hbor-scope-applicability.md",
         "regulator_pub",
     ),
     (
-        "/home/io/mcp-data/files/legal/foreclosure-hbor/civ-2954-8-escrow-interest-2pct.md",
+        "/mnt/torus/mcp-data/files/legal/foreclosure-hbor/civ-2954-8-escrow-interest-2pct.md",
         "regulator_pub",
     ),
     (
-        "/home/io/mcp-data/files/legal/mortgage-servicing/cfpb-mortgage-servicing-exam-procedures-2016.pdf",
+        "/mnt/torus/mcp-data/files/legal/mortgage-servicing/cfpb-mortgage-servicing-exam-procedures-2016.pdf",
         "regulator_pub",
     ),
     (
-        "/home/io/mcp-data/files/legal/mortgage-servicing/cfpb-mortgage-servicing-faqs-compliance-aid.md",
+        "/mnt/torus/mcp-data/files/legal/mortgage-servicing/cfpb-mortgage-servicing-faqs-compliance-aid.md",
         "regulator_pub",
     ),
     # Tier 2 — practitioner analysis
     (
-        "/home/io/mcp-data/files/legal/legal-theory/broker-dealer-liability-elder-exploitation-natlawreview.md",
+        "/mnt/torus/mcp-data/files/legal/legal-theory/broker-dealer-liability-elder-exploitation-natlawreview.md",
         "practitioner_analysis",
     ),
     (
-        "/home/io/mcp-data/files/legal/legal-theory/carlin-umar-yi-2023-deputization-elder-abuse.pdf",
+        "/mnt/torus/mcp-data/files/legal/legal-theory/carlin-umar-yi-2023-deputization-elder-abuse.pdf",
         "practitioner_analysis",
     ),
     # Tier 3 — expert commentary (academic)
     (
-        "/home/io/mcp-data/files/legal/legal-theory/egan-matvos-seru-2019-financial-adviser-misconduct.pdf",
+        "/mnt/torus/mcp-data/files/legal/legal-theory/egan-matvos-seru-2019-financial-adviser-misconduct.pdf",
         "expert_commentary",
     ),
     (
-        "/home/io/mcp-data/files/legal/legal-theory/elder-financial-exploitation-digital-age-jaapl-2023.md",
+        "/mnt/torus/mcp-data/files/legal/legal-theory/elder-financial-exploitation-digital-age-jaapl-2023.md",
         "expert_commentary",
     ),
 ]
@@ -219,10 +217,6 @@ CANDIDATE_CONFIGS: list[tuple[str, dict[str, float]]] = [
 ]
 
 
-def _make_transport() -> httpx.AsyncHTTPTransport:
-    return httpx.AsyncHTTPTransport(uds=RAG_SOCKET)
-
-
 async def _reindex_fixture(
     client: httpx.AsyncClient,
     fixture: list[tuple[str, str]],
@@ -247,7 +241,7 @@ async def _reindex_fixture(
             "force": True,
         }
         try:
-            r = await client.post(f"{RAG_BASE}/reindex", json=payload, timeout=120.0)
+            r = await client.post("/reindex", json=payload, timeout=120.0)
             r.raise_for_status()
             result = r.json()
             outcome = "indexed" if not result.get("unchanged") else "unchanged"
@@ -280,7 +274,7 @@ async def _search(
     }
     if tier_weight:
         payload["tier_weight"] = tier_weight
-    r = await client.post(f"{RAG_BASE}/search", json=payload, timeout=60.0)
+    r = await client.post("/search", json=payload, timeout=60.0)
     r.raise_for_status()
     data = r.json()
     return data.get("metadata", [])
@@ -423,9 +417,7 @@ def _print_report(results: list[SweepResult], queries: list[CalibrationQuery]) -
 
 
 async def main(args: argparse.Namespace) -> None:
-    async with httpx.AsyncClient(
-        transport=_make_transport(), base_url=RAG_BASE, timeout=120.0
-    ) as client:
+    async with make_async_client(DEFAULT_RAG_URL, timeout=120.0) as client:
         # 1. Reindex fixture files with their provenance_tier tags
         if not args.skip_reindex:
             print(

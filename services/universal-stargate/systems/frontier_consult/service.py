@@ -20,6 +20,13 @@ _PIPELINE_ID = "frontier-dispatch"
 EventPublisher = Callable[[Any], None]
 logger = get_logger(__name__)
 
+# Models that only support the Chat Completions API and are unavailable on the
+# OpenAI Responses API path used by frontier_generate. Callers must use
+# llm_generate (which routes through /v1/chat/completions) for these models.
+_CHAT_COMPLETIONS_ONLY_MODELS: frozenset[str] = frozenset({
+    "openai/gpt-5-search-api",
+})
+
 
 @dataclass(slots=True)
 class FrontierGenerateRequest:
@@ -218,6 +225,18 @@ async def build_dispatch_body(
         meta=meta,
         event_publisher=event_publisher,
     )
+    if effective_model in _CHAT_COMPLETIONS_ONLY_MODELS:
+        raise _emit_rejection(
+            request_id=request_id,
+            agent=req.agent,
+            field="model",
+            reason=(
+                f"{effective_model!r} is a Chat Completions-only model — it is unavailable "
+                "on the OpenAI Responses API that frontier_generate uses. "
+                f"Use llm_generate(model={effective_model!r}, messages=...) instead."
+            ),
+            event_publisher=event_publisher,
+        )
     generation_options = dict(req.generation_options or {})
     if req.reasoning_effort is not None:
         # Typed param surfaces in generation_options so persona

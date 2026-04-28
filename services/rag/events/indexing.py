@@ -1129,3 +1129,23 @@ def rag_directory_index_completed(
             "errors": errors,
         },
     )
+
+
+@event_factory
+def rag_indexing_failure_persist_failed(
+    *,
+    file: str,
+    error: str,
+) -> Event:
+    """Emitted when the attempt to persist an indexing failure record itself
+    raises an exception. The original indexing failure is not lost — this
+    signal indicates a secondary persistence failure on the failure-of-failure
+    path in _record_indexing_failure_best_effort.
+
+    error: ``type(exc).__qualname__: str(exc)`` of the persistence exception.
+    """
+    return Event(
+        signal="rag.indexing.failure.persist.failed",
+        role="observation",
+        payload={"file": file, "error": error},
+    )

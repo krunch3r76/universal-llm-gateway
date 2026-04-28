@@ -72,7 +72,19 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             scope: Retrieval scope (default "all").
 
         Returns:
-            On success: {"source_path": "...", "created": true/false}
+            On success: {
+              "source_path": "...",
+              "created": true/false,
+              "pipeline_stage": "registered"|"queued"|"chunked"|"contextualized",
+              "queue_state": null|"ready"|"in_flight"|"cooling_off"|"capacity_blocked"|"exhausted",
+              "queue_depth": <int — total items in extraction_queue across all sources>,
+              "frontier_status": "reachable"|"unreachable"|"unknown"
+            }
+            pipeline_stage describes where this source sits in the indexing pipeline.
+            "registered" means only the metadata row exists; content is not yet indexed.
+            "queued" means extraction/contextualization is pending — check queue_state for detail.
+            "chunked" means indexed into ChromaDB but not yet contextualized.
+            "contextualized" means fully indexed and contextualized; ready to query.
             On error:   {"error": "<message>"}
         """
         t0 = monotonic_now()
@@ -137,6 +149,77 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             source_path,
             duration,
         )
+        return result if isinstance(result, dict) else {"error": "Invalid response"}
+
+    @mcp.tool(title="RAG: Source Status")
+    def rag_source_status(source_paths: list[str]) -> dict[str, Any]:
+        """Query the current RAG pipeline stage for one or more source files.
+
+        Use after rag_upsert_article to verify actual pipeline progress, or
+        at any point to audit ingest state. Returns stage per source plus
+        aggregate queue depth and stale corpus hints count.
+
+        When to use over rag_upsert_article:
+        - Checking status of previously ingested sources (not just after upsert)
+        - Auditing a batch ingest across multiple sources at once
+        - Monitoring whether vocab hints are stale
+          (stale_corpus_hints_count > 0 means scopes have been re-indexed
+          since last classify run; use scripts/rag/classify_vocabulary.py for
+          authoritative staleness check)
+
+        Args:
+            source_paths: Absolute paths of source files to query.
+
+        Returns:
+            On success: {
+              "sources": [{"source_path": ..., "pipeline_stage": ...,
+                           "queue_position": ..., "queue_attempts": ...,
+                           "last_error": ..., "indexed_at": ...,
+                           "contextualized_chunks": ...}],
+              "queue_depth": N,
+              "frontier_status": "reachable"|"unreachable"|"unknown",
+              "stale_corpus_hints_count": N,
+            }
+            On error: {"error": "<message>"}
+        """
+        t0 = monotonic_now()
+        record("mcp.rag.source.status.called", count=len(source_paths))
+
+        url = f"{_STARGATE_URL}/api/v1/rag/source-status"
+        try:
+            with httpx.Client(timeout=_ARTICLE_TIMEOUT) as client:
+                resp = client.get(url, params=[("sources", s) for s in source_paths])
+                resp.raise_for_status()
+                result = resp.json()
+        except httpx.ConnectError as exc:
+            logger.warning("RAG source status connection failed: %s", exc)
+            record("mcp.rag.source.status.failed", error="connect_error")
+            return {
+                "error": "RAG service not reachable. Ensure Stargate and RAG are running."
+            }
+        except httpx.HTTPStatusError as exc:
+            logger.warning("RAG source status HTTP error: %s", exc)
+            record(
+                "mcp.rag.source.status.failed",
+                error=f"{exc.response.status_code}",
+            )
+            return {
+                "error": f"Source status query failed: {exc.response.status_code} "
+                f"{exc.response.text}"
+            }
+        except httpx.RequestError as exc:
+            logger.warning("RAG source status request error: %s", exc)
+            record("mcp.rag.source.status.failed", error=str(exc))
+            return {"error": f"Source status request failed: {exc}"}
+
+        duration = monotonic_now() - t0
+        count = len(result.get("sources", [])) if isinstance(result, dict) else 0
+        record(
+            "mcp.rag.source.status.completed",
+            duration_s=round(duration, 3),
+            sources_queried=count,
+        )
+        logger.info("rag_source_status: sources=%d in %.1fs", count, duration)
         return result if isinstance(result, dict) else {"error": "Invalid response"}
 
     @mcp.tool(title="RAG: Delete Directory")

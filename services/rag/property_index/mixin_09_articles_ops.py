@@ -160,6 +160,137 @@ class _PropertyIndexPart09:
 
         return await self._seq.run(_write())
 
+    def get_source_pipeline_state(self, source_path: str) -> dict:
+        """Batch-read pipeline state for one source from SQLite.
+
+        Returns {is_indexed, queue_row, contextualized_chunks} where:
+        - is_indexed: source is committed to ChromaDB (in indexed_sources)
+        - queue_row: dict with 'state' if in extraction_queue, else None
+        - contextualized_chunks: count of cached context rows via articles.content_hash join
+
+        queue_state CASE mirrors list_extraction_queue_rows (max_attempts=5).
+        capacity_blocked is a sub-state of cooling_off where last_failure_category='capacity'.
+        """
+        _max_attempts = 5
+        conn = self._ensure_conn()
+        is_row = conn.execute(
+            "SELECT 1 FROM indexed_sources WHERE source = ?", (source_path,)
+        ).fetchone()
+        eq_row = conn.execute(
+            "SELECT"
+            " CASE"
+            "   WHEN attempts >= ? THEN 'exhausted'"
+            "   WHEN last_attempt_at IS NOT NULL"
+            "     AND (last_failure_at IS NULL"
+            "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
+            "     THEN 'in_flight'"
+            "   WHEN last_failure_at IS NOT NULL"
+            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
+            "     AND attempts < ?"
+            "     AND last_failure_category = 'capacity'"
+            "     THEN 'capacity_blocked'"
+            "   WHEN last_failure_at IS NOT NULL"
+            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
+            "     AND attempts < ?"
+            "     THEN 'cooling_off'"
+            "   ELSE 'ready'"
+            " END"
+            " FROM extraction_queue WHERE source = ?",
+            (_max_attempts, _max_attempts, _max_attempts, source_path),
+        ).fetchone()
+        ctx_count: int = conn.execute(
+            "SELECT COUNT(*) FROM contextualized_chunks cc"
+            " JOIN articles a ON cc.source_hash = a.content_hash"
+            " WHERE a.source_path = ? AND a.content_hash != ''",
+            (source_path,),
+        ).fetchone()[0]
+        return {
+            "is_indexed": is_row is not None,
+            "queue_row": {"state": eq_row[0]} if eq_row else None,
+            "contextualized_chunks": ctx_count,
+        }
+
+    def get_source_item_data(self, source_path: str) -> dict:
+        """Return per-source data for SourceStatusItem in one DB pass.
+
+        Returns {is_indexed, indexed_at, queue_row, contextualized_chunks}.
+        queue_row includes state, attempts, last_error, and position (1-based)
+        when present, else None. indexed_at is updated_at from indexed_sources.
+        """
+        _max_attempts = 5
+        conn = self._ensure_conn()
+        is_row = conn.execute(
+            "SELECT updated_at FROM indexed_sources WHERE source = ?",
+            (source_path,),
+        ).fetchone()
+        eq_row = conn.execute(
+            "SELECT attempts, last_error,"
+            " CASE"
+            "   WHEN attempts >= ? THEN 'exhausted'"
+            "   WHEN last_attempt_at IS NOT NULL"
+            "     AND (last_failure_at IS NULL"
+            "       OR datetime(last_failure_at) < datetime(last_attempt_at))"
+            "     THEN 'in_flight'"
+            "   WHEN last_failure_at IS NOT NULL"
+            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
+            "     AND attempts < ?"
+            "     AND last_failure_category = 'capacity'"
+            "     THEN 'capacity_blocked'"
+            "   WHEN last_failure_at IS NOT NULL"
+            "     AND datetime(last_failure_at, '+1 minutes') >= datetime('now')"
+            "     AND attempts < ?"
+            "     THEN 'cooling_off'"
+            "   ELSE 'ready'"
+            " END"
+            " FROM extraction_queue WHERE source = ?",
+            (_max_attempts, _max_attempts, _max_attempts, source_path),
+        ).fetchone()
+        ctx_count: int = conn.execute(
+            "SELECT COUNT(*) FROM contextualized_chunks cc"
+            " JOIN articles a ON cc.source_hash = a.content_hash"
+            " WHERE a.source_path = ? AND a.content_hash != ''",
+            (source_path,),
+        ).fetchone()[0]
+        queue_position: int | None = None
+        if eq_row is not None:
+            pos_row = conn.execute(
+                "SELECT COUNT(*) FROM extraction_queue"
+                " WHERE queued_at <= (SELECT queued_at FROM extraction_queue WHERE source = ?)",
+                (source_path,),
+            ).fetchone()
+            queue_position = pos_row[0] if pos_row else None
+        return {
+            "is_indexed": is_row is not None,
+            "indexed_at": is_row[0] if is_row else None,
+            "queue_row": {
+                "attempts": eq_row[0],
+                "last_error": eq_row[1],
+                "state": eq_row[2],
+                "position": queue_position,
+            }
+            if eq_row is not None
+            else None,
+            "contextualized_chunks": ctx_count,
+        }
+
+    def count_scopes_with_stale_corpus_hints(self) -> int:
+        """Count scopes whose corpus_hints were updated after the last vocabulary classification.
+
+        ∀ scope ∈ scope_freshness: counts those where ∃ corpus_hints row with created_at >
+        classified_at. This is a superset of what classify_vocabulary.py considers stale
+        (the script also gates on files_hash equality). Use for monitoring; not a reliable
+        classify-readiness gate.
+        """
+        conn = self._ensure_conn()
+        return conn.execute(
+            "SELECT COUNT(*) FROM scope_freshness sf"
+            " WHERE EXISTS ("
+            "   SELECT 1 FROM corpus_hints ch"
+            "   WHERE ch.scope = sf.scope"
+            "     AND ch.created_at > sf.classified_at"
+            ")"
+        ).fetchone()[0]
+
     def get_permanent_chunks_by_file(self) -> dict[str, list[str]]:
         """Return {source: [chunk_id, ...]} for all permanently failed chunks."""
         conn = self._ensure_conn()

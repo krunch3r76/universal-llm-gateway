@@ -37,10 +37,12 @@ class VocabClassifyReconcileV1Handler:
         mode = str(context.options.get("mode") or "frontier")
 
         if not bundle_scopes:
+            skipped_fresh = sorted(str(s) for s in (context.options.get("scopes") or []) if s)
             payload: dict[str, Any] = {
                 "vocabulary": {},
                 "scope_hashes": {},
                 "provenance": [],
+                **({"skipped_fresh": skipped_fresh} if skipped_fresh else {}),
             }
             return StepOutput(raw=json.dumps(payload), json=payload)
 

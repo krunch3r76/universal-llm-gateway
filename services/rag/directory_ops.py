@@ -149,26 +149,40 @@ async def index_directory_contents(
     return totals
 
 
+_CHROMA_PAGE_SIZE = 500
+
+
 def find_sources_under_prefixes(
     *,
     collection: chromadb.Collection,
     prefixes: list[str],
     list_known_sources_fn: ListKnownSourcesFn | None = None,
 ) -> set[str]:
-    """Return source paths under the given prefixes from Chroma and metadata-only tables."""
+    """Return source paths under the given prefixes from Chroma and metadata-only tables.
+
+    Paginates collection.get() in pages of _CHROMA_PAGE_SIZE to avoid the SQLite
+    SQLITE_MAX_VARIABLE_NUMBER limit that causes a 500 on large collections (>~999 chunks).
+    """
     if not prefixes:
         return set()
 
-    all_data = collection.get(include=["metadatas"])
-    rows: list[dict[str, object]] = all_data.get("metadatas") or []
-    sources = {
-        source
-        for row in rows
-        if isinstance(row, dict)
-        for source in [row.get("source")]
-        if isinstance(source, str)
-        and any(source.startswith(prefix) for prefix in prefixes)
-    }
+    sources: set[str] = set()
+    offset = 0
+    while True:
+        page = collection.get(
+            include=["metadatas"], limit=_CHROMA_PAGE_SIZE, offset=offset
+        )
+        rows: list[dict[str, object]] = page.get("metadatas") or []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            source = row.get("source")
+            if isinstance(source, str) and any(source.startswith(p) for p in prefixes):
+                sources.add(source)
+        if len(rows) < _CHROMA_PAGE_SIZE:
+            break
+        offset += _CHROMA_PAGE_SIZE
+
     if list_known_sources_fn is not None:
         sources.update(list_known_sources_fn(prefixes))
     return sources
@@ -215,14 +229,14 @@ async def delete_sources(
             if remove_source_metadata_fn is not None:
                 await remove_source_metadata_fn(source, chunk_ids or None)
             deleted_sources += 1
-        except Exception as e:
+        except Exception:
             logger.error(
                 "Source deletion failed: source=%s chunk_ids=%d",
                 source,
                 len(chunk_ids),
                 exc_info=True,
             )
-            raise e
+            raise
 
     return deleted_sources, deleted_chunks
 

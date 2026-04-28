@@ -33,6 +33,35 @@ def _deadline_line(d: dict[str, Any], today: datetime) -> str:
     )
 
 
+def render_rag_stanza(rag: dict[str, Any]) -> str:
+    """Render a compact RAG pipeline health line for the boot card.
+
+    Returns an empty string when the pipeline is healthy (no actionable signals).
+    Only renders when pending > 0, failures > 0, stale corpus hints > 0, or unreachable.
+    """
+    if not rag:
+        return ""
+    if rag.get("unreachable"):
+        return "RAG pipeline : unreachable — skip ingest work this session\n"
+    pending = rag.get("pending_contextualization", 0)
+    failures = rag.get("indexing_failures", 0)
+    stale = rag.get("stale_corpus_hints", 0)
+    if pending == 0 and failures == 0 and stale == 0:
+        return ""
+    lines = ["RAG pipeline"]
+    if pending:
+        lines.append(
+            f"  Pending contextualization : {pending} sources   (Jupiter required)"
+        )
+    if stale:
+        lines.append(
+            f"  Stale corpus hints         : {stale}          (scopes with hints newer than last classify)"
+        )
+    if failures:
+        lines.append(f"  Indexing failures          : {failures}")
+    return "\n".join(lines) + "\n"
+
+
 def render_briefing_card(
     *,
     deadlines: list[dict[str, Any]] | None = None,
@@ -55,6 +84,7 @@ def render_briefing_card(
     skills: list[dict[str, Any]] | None = None,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
+    rag_state: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -173,9 +203,7 @@ def render_briefing_card(
         if plan_phases:
             parts.append("**Plan phases** (most recently active):")
             for p in plan_phases:
-                state_tag = (
-                    "🔄" if p.get("workflow_state") == "in_progress" else "✓"
-                )
+                state_tag = "🔄" if p.get("workflow_state") == "in_progress" else "✓"
                 name = p.get("name", p.get("id", "?"))
                 plan_tag = f" [{p['plan_id']}]" if p.get("plan_id") else ""
                 parts.append(f"- {state_tag} `{p.get('id', '?')}`{plan_tag} {name}")
@@ -183,9 +211,12 @@ def render_briefing_card(
             parts.append("**In-flight todos**:")
             for t in in_flight_todos:
                 domain_tag = f" [{t['domain']}]" if t.get("domain") else ""
-                parts.append(
-                    f"- `{t.get('id', '?')}`{domain_tag} {t.get('name', '')}"
-                )
+                parts.append(f"- `{t.get('id', '?')}`{domain_tag} {t.get('name', '')}")
+
+    if rag_state is not None:
+        rag_stanza = render_rag_stanza(rag_state)
+        if rag_stanza:
+            parts.append(f"\n## System Health\n{rag_stanza}")
 
     if todos:
         parts.append(f"\n## Todos — {todo_total} open")

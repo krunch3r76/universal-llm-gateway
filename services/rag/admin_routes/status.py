@@ -1,0 +1,296 @@
+"""Status and monitoring routes: /indexing/status, /coverage, /source-status, /watch/status."""
+
+from __future__ import annotations
+
+import logging
+import sqlite3
+from typing import TYPE_CHECKING
+
+from fastapi import APIRouter, HTTPException, Query
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import chromadb
+
+    from services.rag.config import RagConfig
+    from services.rag.property_index import PropertyIndex
+    from services.rag.watcher_manager import WatcherManager
+
+from services.rag.admin_routes._extraction_export import (
+    register_extraction_export_route,
+)
+from services.rag.admin_routes._helpers import _coverage_sources
+from services.rag.models import (
+    CoverageResponse,
+    IndexingStatusResponse,
+    PipelineStage,
+    PrefixCoverage,
+    ScopeCoverage,
+    SourceStatusItem,
+    SourceStatusResponse,
+    WatcherStatusItem,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def register_status_routes(
+    router: APIRouter,
+    *,
+    get_collection_fn: Callable[[], chromadb.Collection],
+    get_watcher_manager_fn: Callable[[], WatcherManager | None],
+    get_property_index_fn: Callable[[], PropertyIndex | None],
+    collection_name: str,
+    get_config_fn: Callable[[], RagConfig | None] | None = None,
+    **_kwargs: object,
+) -> None:
+    """Register status and monitoring routes onto router."""
+
+    @router.get("/watch/status")
+    def watch_status() -> list[dict[str, str | int | bool]]:
+        wm = get_watcher_manager_fn()
+        if wm is None:
+            return []
+        return wm.get_status()
+
+    @router.get("/indexing/status", response_model=IndexingStatusResponse)
+    def indexing_status(
+        sample_limit: int = Query(default=20, ge=0, le=100),
+    ) -> IndexingStatusResponse:
+        """Return bounded indexing backlog and health from live RAG-owned state."""
+        normalized_limit = max(0, min(sample_limit, 100))
+        pending_count = 0
+        pending_sample: list[str] = []
+        pending_sample_truncated = False
+        failed_extractions_count = 0
+        failed_extractions_permanent_count = 0
+        indexed_sources_count = 0
+        indexing_failures_permanent_count = 0
+        indexing_failures_transient_count = 0
+        contextualize_cache_rows = 0
+        contextualize_cache_rows_degraded = False
+        stale_corpus_hints_count = 0
+        stale_corpus_hints_count_degraded = False
+        property_index_available = True
+        watchers: list[WatcherStatusItem] = []
+        chunks: int | None = None
+        collection: str | None = None
+        chroma_available = True
+        chroma_error: str | None = None
+
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            property_index_available = False
+        else:
+            try:
+                pending_snapshot = prop_idx.get_pending_snapshot(normalized_limit)
+                pending_count = pending_snapshot.count
+                pending_sample = pending_snapshot.sample
+                pending_sample_truncated = normalized_limit > 0 and pending_count > len(
+                    pending_sample
+                )
+                failure_snapshot = prop_idx.get_failure_snapshot()
+                failed_extractions_count = failure_snapshot.failed_extractions_count
+                failed_extractions_permanent_count = (
+                    failure_snapshot.failed_extractions_permanent_count
+                )
+                indexed_sources_count = prop_idx.get_indexed_source_count()
+                (
+                    indexing_failures_permanent_count,
+                    indexing_failures_transient_count,
+                ) = prop_idx.get_indexing_failure_counts()
+                try:
+                    contextualize_cache_rows = prop_idx.count_contextualized_chunks()
+                except Exception:
+                    contextualize_cache_rows_degraded = True
+                try:
+                    stale_corpus_hints_count = prop_idx.count_scopes_with_stale_corpus_hints()
+                except Exception:
+                    stale_corpus_hints_count_degraded = True
+            except sqlite3.Error as exc:
+                logger.warning(
+                    "Indexing status degraded while reading property index: %s",
+                    exc,
+                    exc_info=True,
+                )
+                property_index_available = False
+            except Exception as exc:
+                logger.error(
+                    "Unexpected error reading property index for status: %s",
+                    exc,
+                    exc_info=True,
+                )
+                property_index_available = False
+
+        wm = get_watcher_manager_fn()
+        if wm is not None:
+            for row in wm.get_status():
+                if not isinstance(row, dict):
+                    continue
+                watchers.append(
+                    WatcherStatusItem(
+                        path=str(row.get("path", "")),
+                        enabled=bool(row.get("enabled", False)),
+                        reload_count=int(row.get("reload_count", 0)),
+                        error_count=int(row.get("error_count", 0)),
+                    )
+                )
+
+        try:
+            current_collection = get_collection_fn()
+            chunks = int(current_collection.count())
+            collection = collection_name
+        except Exception as exc:
+            chroma_available = False
+            chroma_error = str(exc)
+            logger.warning(
+                "Indexing status degraded while reading ChromaDB count: %s",
+                exc,
+                exc_info=True,
+            )
+
+        return IndexingStatusResponse(
+            pending_count=pending_count,
+            pending_sample=pending_sample,
+            pending_sample_truncated=pending_sample_truncated,
+            chunks=chunks,
+            collection=collection,
+            chroma_available=chroma_available,
+            chroma_error=chroma_error,
+            watchers=watchers,
+            failed_extractions_count=failed_extractions_count,
+            failed_extractions_permanent_count=failed_extractions_permanent_count,
+            indexed_sources_count=indexed_sources_count,
+            property_index_available=property_index_available,
+            indexing_failures_permanent_count=indexing_failures_permanent_count,
+            indexing_failures_transient_count=indexing_failures_transient_count,
+            contextualize_cache_rows=contextualize_cache_rows,
+            contextualize_cache_rows_degraded=contextualize_cache_rows_degraded,
+            stale_corpus_hints_count=stale_corpus_hints_count,
+            stale_corpus_hints_count_degraded=stale_corpus_hints_count_degraded,
+        )
+
+    @router.get("/coverage", response_model=CoverageResponse)
+    def get_coverage() -> CoverageResponse:
+        """Per-scope, per-prefix view of indexed file counts and recency.
+
+        Aggregates indexed sources against configured scope prefixes.
+        Optionally enriches with last_indexed timestamps from ChromaDB chunk
+        metadata (skipped when collection exceeds 100k chunks).
+        """
+        config = get_config_fn() if get_config_fn else None
+        if config is None:
+            return CoverageResponse(scopes={})
+
+        prop_idx = get_property_index_fn()
+
+        source_last_indexed: dict[str, str] = {}
+        collection = get_collection_fn()
+        chunk_count = collection.count()
+        max_chunks_for_ts_scan = 100_000
+        timestamp_scan_degraded = chunk_count > max_chunks_for_ts_scan
+        if chunk_count <= max_chunks_for_ts_scan:
+            try:
+                raw = collection.get(include=["metadatas"])
+                for meta in raw.get("metadatas") or []:
+                    if not isinstance(meta, dict):
+                        continue
+                    src = meta.get("source", "")
+                    ts = meta.get("indexed_at", "")
+                    if isinstance(src, str) and isinstance(ts, str) and src and ts:
+                        existing = source_last_indexed.get(src, "")
+                        if ts > existing:
+                            source_last_indexed[src] = ts
+            except Exception as e:
+                logger.warning(
+                    "Coverage: ChromaDB timestamp scan failed, omitting last_indexed: %s",
+                    e,
+                    exc_info=True,
+                )
+                timestamp_scan_degraded = True
+
+        all_sources = _coverage_sources(
+            prop_idx=prop_idx,
+            chroma_sources=set(source_last_indexed),
+        )
+
+        scopes: dict[str, ScopeCoverage] = {}
+        for scope_name, scope_def in config.scopes.items():
+            prefix_coverages: list[PrefixCoverage] = []
+            scope_total = 0
+            for pfx in scope_def.prefixes:
+                normalized = pfx.rstrip("/") + "/"
+                matched = [s for s in all_sources if s.startswith(normalized)]
+                count = len(matched)
+                scope_total += count
+                last_ts: str | None = None
+                for s in matched:
+                    ts = source_last_indexed.get(s)
+                    if ts and (last_ts is None or ts > last_ts):
+                        last_ts = ts
+                prefix_coverages.append(
+                    PrefixCoverage(path=pfx, indexed_files=count, last_indexed=last_ts)
+                )
+            scopes[scope_name] = ScopeCoverage(
+                prefixes=prefix_coverages, total_indexed=scope_total
+            )
+
+        return CoverageResponse(
+            scopes=scopes,
+            timestamp_scan_degraded=timestamp_scan_degraded,
+        )
+
+    @router.get("/source-status", response_model=SourceStatusResponse)
+    def get_source_status(
+        sources: list[str] = Query(..., description="source_path values to query"),
+    ) -> SourceStatusResponse:
+        """Return point-in-time pipeline status for one or more source files.
+
+        For each requested source, derives the pipeline stage from live SQLite
+        state and returns queue details, indexing timestamp, and contextualized
+        chunk count. Also returns aggregate queue depth and stale vocabulary
+        scope count for classify_vocabulary readiness signalling.
+
+        Sources not found in any table are returned with pipeline_stage='registered'.
+        """
+        prop_idx = get_property_index_fn()
+        if prop_idx is None:
+            raise HTTPException(status_code=503, detail="Property index not available")
+
+        queue_depth: int = prop_idx.get_extraction_queue_count()
+        items: list[SourceStatusItem] = []
+        for source_path in sources:
+            data = prop_idx.get_source_item_data(source_path)
+            queue_row = data.get("queue_row")
+            ctx_count: int = data["contextualized_chunks"]
+            is_indexed: bool = data["is_indexed"]
+            if queue_row is not None:
+                stage: PipelineStage = "queued"
+            elif ctx_count > 0:
+                stage = "contextualized"
+            elif is_indexed:
+                stage = "chunked"
+            else:
+                stage = "registered"
+            items.append(
+                SourceStatusItem(
+                    source_path=source_path,
+                    pipeline_stage=stage,
+                    queue_position=queue_row["position"] if queue_row else None,
+                    queue_attempts=queue_row["attempts"] if queue_row else 0,
+                    last_error=queue_row["last_error"] if queue_row else None,
+                    indexed_at=data.get("indexed_at"),
+                    contextualized_chunks=ctx_count,
+                )
+            )
+
+        stale_corpus_hints_count: int = prop_idx.count_scopes_with_stale_corpus_hints()
+        return SourceStatusResponse(
+            sources=items,
+            queue_depth=queue_depth,
+            frontier_status="unknown",
+            stale_corpus_hints_count=stale_corpus_hints_count,
+        )
+
+    register_extraction_export_route(router, get_collection_fn=get_collection_fn)

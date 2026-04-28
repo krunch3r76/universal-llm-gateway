@@ -1560,9 +1560,9 @@ this means all models are hidden from `/v1/models` for that gateway.
 | `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
 | `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
 | `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
-| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash` | article metadata upsert completed; `created=true` for insert and `created=false` for update |
+| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash`, `pipeline_stage`, `queue_state`, `queue_depth`, `frontier_status` | article metadata upsert completed; `created=true` for insert, `created=false` for update; `pipeline_stage` ∈ {`registered`, `queued`, `chunked`, `contextualized`}; `queue_state` is precise extraction_queue state when `pipeline_stage == "queued"` (values: `ready`, `in_flight`, `cooling_off`, `capacity_blocked`, `exhausted`), else `null`; `queue_depth` is global extraction_queue count; `frontier_status` ∈ {`reachable`, `unreachable`, `unknown`} |
 | `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | emitted when indexing creates a minimal article row for a source that had no row before |
-| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | indexing migrated an article row to a new source path (content-hash move detection) |
+| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | indexing detected a file move by content hash and migrated the SQLite article row and/or Chroma chunk metadata to the new source path; emitted once per move detection even when only Chroma chunks required updating |
 | `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
 | `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
 | `rag.chunk.contextualization.started` | `file`, `chunk_index`, `model`, `request_id`, `timeout_s` | Per-chunk: contextualization request submitted to Stargate. `request_id` is propagated as `X-Internal-Request-ID` for request-trace correlation. Optional: `operation_id`, `operation`. |
@@ -1669,7 +1669,15 @@ singleflight hold proposal.
 | Signal | Required Payload | Description |
 |---|---|---|
 | `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | Indexing created a skeletal article row for a source that had no article record |
-| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | Indexing detected a file move by content hash and migrated the article row |
+| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | Indexing detected a file move by content hash and migrated the SQLite article row and/or Chroma chunk metadata to the new source path |
+
+### RAG Boot Fetch
+
+Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state`) when a per-endpoint or total fetch of RAG pipeline state fails during `cortex_boot`. Boot continues; the stanza is omitted or shows `unreachable` depending on which endpoint failed.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.rag.boot.fetch.failed` | `endpoint`, `error` | RAG pipeline state fetch failed during cortex_boot; `endpoint` ∈ {`extraction/queue`, `indexing/status`, `all`}; `all` means the outer httpx.Client context failed |
 
 ### Doc Generate Events
 

@@ -30,7 +30,18 @@ def rag_article_upserted(
     created: bool,
     title: str = "",
     content_hash: str = "",
+    pipeline_stage: str = "registered",
+    queue_state: str | None = None,
+    queue_depth: int = 0,
+    frontier_status: str = "unknown",
 ) -> Event:
+    """Emitted after an article metadata row is inserted or updated.
+
+    pipeline_stage: coarse stage label (registered|queued|chunked|contextualized).
+    queue_state: precise extraction_queue state when pipeline_stage == "queued", else None.
+    Subscribers filter stalled items via:
+      pipeline_stage == "queued" and queue_state in ("cooling_off", "capacity_blocked", "exhausted")
+    """
     return Event(
         signal="rag.article.upserted",
         payload={
@@ -38,6 +49,10 @@ def rag_article_upserted(
             "created": created,
             "title": title,
             "content_hash": content_hash,
+            "pipeline_stage": pipeline_stage,
+            "queue_state": queue_state,
+            "queue_depth": queue_depth,
+            "frontier_status": frontier_status,
         },
     )
 
@@ -61,13 +76,36 @@ def rag_source_deleted(
 
 
 @event_factory
+def rag_article_content_hash_mismatch(
+    *,
+    file: str,
+    expected_hash: str,
+    actual_hash: str,
+) -> Event:
+    """Emitted when a file's content hash differs from the article registry record."""
+    return Event(
+        signal="rag.article.content.hash.mismatch",
+        payload={
+            "file": file,
+            "expected_hash": expected_hash,
+            "actual_hash": actual_hash,
+        },
+    )
+
+
+@event_factory
 def rag_article_path_moved(
     *,
     old_path: str,
     new_path: str,
     content_hash: str,
 ) -> Event:
-    """Emitted when indexing migrates an article row to a new source path."""
+    """Emitted when indexing detects a file move by content hash.
+
+    Covers both SQLite article row migration (when a matching orphan row exists)
+    and Chroma-only migration (when the old path has chunks in Chroma but no
+    article row). Emitted once per move detection.
+    """
     return Event(
         signal="rag.article.path.moved",
         payload={

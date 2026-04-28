@@ -108,6 +108,9 @@ routing:
     stability_weight: 40
     eviction_margin: 50
     capacity: {}
+    resource_margins:
+      vram_margin_pct: 0
+      vram_headroom_mb: 0
   affinity:
     - match: "hermes3-llama-3.1-70b-uncensored-16384-hybrid"
       stargate: "edge-jupiter-gateway"
