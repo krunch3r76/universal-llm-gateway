@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from mcp_events import record
 
-from ._file_helpers import build_binary_read_result, extract_text_content
+from ._file_helpers import (
+    BINARY_EXTENSIONS,
+    _is_binary_by_magic,
+    build_binary_read_result,
+    extract_text_content,
+)
 from .file_editor import perform_edit
 
 if TYPE_CHECKING:
@@ -316,6 +321,28 @@ def register_context_tools(mcp: FastMCP) -> None:
                 path=path,
                 bytes=result["bytes"],
                 binary=True,
+            )
+            return result
+
+        suffix = target.suffix.lower()
+        if suffix in BINARY_EXTENSIONS or _is_binary_by_magic(target):
+            result = build_binary_read_result(target, path_value=path)
+            result["auto_binary"] = True
+            if result.get("mime_type", "").startswith("image/"):
+                result["_next"] = (
+                    f'For text extraction: dispatch(tool="document_ocr", '
+                    f'arguments=\'{{"path": "{path}"}}\').'
+                    f" For visual inspection: view_image(path=\"{path}\")."
+                )
+            logger.info(
+                "read_context_file: %s (%d bytes, auto_binary)", path, result["bytes"]
+            )
+            record(
+                "mcp.tool.context.file.read",
+                path=path,
+                bytes=result["bytes"],
+                binary=True,
+                auto_binary=True,
             )
             return result
 

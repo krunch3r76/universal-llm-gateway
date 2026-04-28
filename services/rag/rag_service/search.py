@@ -17,6 +17,7 @@ from services.rag.events.query import (
     rag_search_embedding_failed,
     rag_search_executed,
     rag_search_no_results,
+    rag_search_tier_applied,
 )
 from services.rag.models import SearchRequest, SearchResponse
 from services.rag.search_scope import (
@@ -27,6 +28,7 @@ from services.rag.search_scope import (
     apply_source_prefix_filter_with_ids,
     resolve_scope_request,
 )
+from services.rag.tier_weighting import apply_tier_weight
 
 from . import state
 
@@ -157,12 +159,31 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
             boost_factor=state._config.knowledge_extraction.property_boost_factor,
         )
 
+    # max_distance gates on raw cosine before any tier adjustment so that
+    # the threshold remains a semantic-relevance gate, not a post-boost cutoff.
+    # Filter result_ids in parallel to keep lists consistent for apply_tier_weight.
+    if request.max_distance is not None:
+        keep = [d <= request.max_distance for d in distances]
+        result_ids = [rid for rid, k in zip(result_ids, keep) if k]
     chunks, metadatas, distances = apply_max_distance_filter(
         chunks=chunks,
         metadatas=metadatas,
         distances=distances,
         max_distance=request.max_distance,
     )
+
+    tier_hits = 0
+    if request.tier_weight:
+        result_ids, chunks, metadatas, distances, tier_hits = apply_tier_weight(
+            ids=result_ids,
+            chunks=chunks,
+            metadatas=metadatas,
+            distances=distances,
+            tier_weight=request.tier_weight,
+        )
+
+    # apply_recency_sort operates on tier-adjusted distances when both tier_weight
+    # and recency_weight are active; recency may further re-order tier-boosted chunks.
     chunks, metadatas, distances = apply_recency_sort(
         chunks=chunks,
         metadatas=metadatas,
@@ -206,6 +227,10 @@ async def execute_search(request: SearchRequest) -> SearchResponse:
             )
         )
         await state._event_bus.publish_nowait(event)
+        if tier_hits > 0:
+            await state._event_bus.publish_nowait(
+                rag_search_tier_applied(tier_hits=tier_hits, scope=request.scope)
+            )
 
     return SearchResponse(
         chunks=chunks,

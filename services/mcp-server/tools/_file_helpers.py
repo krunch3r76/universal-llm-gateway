@@ -7,6 +7,8 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from mcp_events import record
+
 FILES_ROOT = Path("/data/files")
 
 # Extensions whose content is binary and must not be decoded as UTF-8 text.
@@ -21,6 +23,24 @@ BINARY_EXTENSIONS: frozenset[str] = frozenset({
     # Archives
     ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".whl",
 })
+
+def _is_binary_by_magic(path: Path) -> bool:
+    """Return True when magic bytes identify *path* as a binary format.
+
+    Uses the `filetype` library (reads first 261 bytes) as a content-based
+    fallback for files whose extension is absent or mismatched. Returns False
+    when filetype is unavailable or the file is unrecognised (safe fallback).
+    """
+    try:
+        import filetype  # type: ignore[import-untyped]
+    except ImportError:
+        return False  # pre-rebuild fallback: filetype not yet installed
+    try:
+        return filetype.guess(path) is not None
+    except (OSError, ValueError) as exc:
+        record("mcp.fs.binary.detect.failed", path=str(path), error=str(exc))
+        return False
+
 
 def _read_plain(path: Path) -> str:
     """Reads the content of a plain text file, replacing decoding errors."""
@@ -193,12 +213,26 @@ def read_file_result(
 
     suffix = src.suffix.lower()
 
-    # Auto-route binary extensions that must not be decoded as UTF-8 text.
-    # Returning garbage from binary-as-text decoding corrupts MCP wire payloads.
+    # Auto-route binary files — returning binary-as-text corrupts MCP wire payloads.
+    # Fast path: known extension (zero I/O). Fallback: magic-byte probe (261 bytes).
     if suffix in BINARY_EXTENSIONS:
-        result = build_binary_read_result(src)
-        result["auto_binary"] = True
-        return result
+        auto_result = build_binary_read_result(src)
+        auto_result["auto_binary"] = True
+    elif _is_binary_by_magic(src):
+        record("mcp.fs.binary.detect.magic.match", path=str(src))
+        auto_result = build_binary_read_result(src)
+        auto_result["auto_binary"] = True
+    else:
+        auto_result = None
+
+    if auto_result is not None:
+        if auto_result.get("mime_type", "").startswith("image/"):
+            auto_result["_next"] = (
+                f'For text extraction: dispatch(tool="document_ocr", '
+                f'arguments=\'{{"path": "{path}"}}\').'
+                f" For visual inspection: view_image(path=\"{path}\")."
+            )
+        return auto_result
     content = extract_text_content(src)
     result: dict[str, Any] = {"content": content, "path": str(src)}
     if suffix == ".pdf":

@@ -1656,6 +1656,7 @@ singleflight hold proposal.
 | `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | query embedding retries exhausted before search |
 | `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | search completed with ≥1 result; `scope`: str \| list[str] \| None |
 | `rag.search.no.results` | `query_len`, `scope` | search completed with 0 results; `scope`: str \| list[str] \| None |
+| `rag.search.tier.applied` | `tier_hits`, `scope` | emitted when `tier_weight` is present in the search request and ≥1 chunk had a matching `provenance_tier` tag; `tier_hits` = count of distance-adjusted chunks |
 | `rag.corpus.hints.updated` | `path`, `scopes_updated`, `timestamp` | corpus_hints.yaml written after aggregation from property index |
 | `rag.corpus.hints.update.failed` | `path`, `error` | corpus_hints.yaml update failed after indexing |
 | `rag.corpus.hints.load.failed` | `path`, `error` | corpus_hints.yaml could not be loaded |
@@ -1989,6 +1990,8 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
 | `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
 | `mcp.tool.file.read` | `path`, `resolved`, `binary`, `auto_binary`, `chars`, `bytes`, `batched` (optional) | File read completed; `auto_binary=True` when a binary-extension file was silently routed to binary mode despite `binary=False`; `batched=True` when emitted from a `read_multi` batch operation |
+| `mcp.fs.binary.detect.magic.match` | `path` | Magic-byte probe (`filetype.guess`, 261-byte read) identified a file as binary when its extension was absent or unrecognised by `BINARY_EXTENSIONS`; file was auto-routed to base64 |
+| `mcp.fs.binary.detect.failed` | `path`, `error` | `filetype.guess()` raised `OSError`/`ValueError` during the magic-byte probe; file falls through to text-mode read (silent binary may still corrupt if extension is also unrecognised) |
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
 | `mcp.tool.file.trashed` | `sandbox`, `path`, `trash_path` | `delete_file` soft-deleted to trash/ (conflict resolved as `<stem>-NN.<ext>`) |

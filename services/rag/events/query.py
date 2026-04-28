@@ -130,6 +130,22 @@ def rag_search_no_results(
 
 
 @event_factory
+def rag_search_tier_applied(
+    *,
+    tier_hits: int,
+    scope: str | list[str] | None,
+) -> Event:
+    """Emitted when tier_weight is applied to a search request and at least one chunk matched.
+
+    tier_hits: number of chunks whose distance was adjusted by a provenance_tier weight.
+    """
+    return Event(
+        signal="rag.search.tier.applied",
+        payload={"tier_hits": tier_hits, "scope": scope},
+    )
+
+
+@event_factory
 def rag_corpus_hints_updated(
     *,
     path: str,

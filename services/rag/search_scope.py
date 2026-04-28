@@ -389,17 +389,23 @@ def apply_bm25_sidecar(
     fetched_docs_raw = fetched.get("documents")
     fetched_metas_raw = fetched.get("metadatas")
     fetched_docs = (
-        fetched_docs_raw if isinstance(fetched_docs_raw, list) else [""] * len(fetched_ids)
+        fetched_docs_raw
+        if isinstance(fetched_docs_raw, list)
+        else [""] * len(fetched_ids)
     )
     if len(fetched_docs) < len(fetched_ids):
         fetched_docs = fetched_docs + ([""] * (len(fetched_ids) - len(fetched_docs)))
     else:
         fetched_docs = fetched_docs[: len(fetched_ids)]
     fetched_metas_list = (
-        fetched_metas_raw if isinstance(fetched_metas_raw, list) else [{}] * len(fetched_ids)
+        fetched_metas_raw
+        if isinstance(fetched_metas_raw, list)
+        else [{}] * len(fetched_ids)
     )
     if len(fetched_metas_list) < len(fetched_ids):
-        fetched_metas_list = fetched_metas_list + ([{}] * (len(fetched_ids) - len(fetched_metas_list)))
+        fetched_metas_list = fetched_metas_list + (
+            [{}] * (len(fetched_ids) - len(fetched_metas_list))
+        )
     else:
         fetched_metas_list = fetched_metas_list[: len(fetched_ids)]
 

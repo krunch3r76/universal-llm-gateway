@@ -330,8 +330,11 @@ def _build_server() -> FastMCP:
 
         `read` is unified across sandboxes: source files plus text-oriented
         document formats such as PDF, DOCX, ODT, EML, and HTML can be read in
-        text mode from `cortex` or `workspaces`. Use `binary=True` only when another
-        tool needs base64 file bytes instead of decoded text. Use `write_binary`
+        text mode from `cortex` or `workspaces`. Image files, archives, and other
+        binary formats auto-route to base64 even without `binary=True` — reading a
+        `.png`, `.jpg`, or archive returns `{content_base64, auto_binary: true}`
+        rather than corrupted text. Pass `binary=True` explicitly when you need base64
+        for an arbitrary file type or to make the intent clear. Use `write_binary`
         (cortex sandbox only) to stage base64-encoded binary files (PDFs, images)
         — pass the base64 string as `content`. Use `move` to rename or relocate
         a file within the selected sandbox. Prefer the markdown ops for large

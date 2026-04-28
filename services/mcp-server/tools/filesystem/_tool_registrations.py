@@ -43,18 +43,23 @@ def register_individual_tools(mcp: FastMCP) -> None:
         """Read and return the contents of *path* from the sandboxed directory.
 
         Use the default text mode for markdown, notes, PDFs, and other supported
-        document formats. Use ``binary=True`` when another tool needs raw bytes
-        (for example OCR, binary ingest, or vision workflows). Prefer
-        ``view_image()`` when the goal is visual inspection rather than moving
-        bytes between tools.
+        document formats. Image files, archives, and other binary formats
+        auto-route to base64 even without ``binary=True`` — reading a ``.png``,
+        ``.jpg``, or archive returns ``content_base64`` with ``auto_binary: true``
+        rather than corrupted text. Pass ``binary=True`` explicitly to force base64
+        for any file type. Prefer ``view_image()`` for visual inspection.
 
         Args:
             path: Relative file path, e.g. "documents/notes.md".
             binary: If True, return base64-encoded bytes instead of decoded text.
+                Image, audio, video, and archive files auto-route to binary even
+                when False; magic-byte detection also covers files with absent or
+                mismatched extensions.
 
         Returns:
             Text mode: {"content": "<file contents>", "path": "<resolved path>"}
-            Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path"}
+            Binary mode: {"content_base64", "mime_type", "encoding", "bytes",
+                "path", "auto_binary": true (when auto-routed)}
 
         Raises:
             FileNotFoundError: If the file does not exist.

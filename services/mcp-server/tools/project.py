@@ -328,16 +328,20 @@ def register_project_tools(mcp: FastMCP) -> None:
         Use the default text mode for source files, Markdown, and supported
         document formats. Project reads share the same extraction helpers as the
         cortex sandbox, so PDFs, DOCX, ODT, EML, and HTML can be read as text.
-        Use ``binary=True`` when another tool needs base64 bytes instead of text
-        decoding.
+        Image, audio, video, and archive files auto-route to base64 even without
+        ``binary=True`` — reading a ``.png``, ``.jpg``, or archive returns
+        ``content_base64`` with ``auto_binary: true`` rather than corrupted text.
+        Pass ``binary=True`` explicitly to force base64 for any file type.
 
         Args:
             path: Relative file path within the project, e.g. "services/mcp-server/server.py".
             binary: If True, return base64 bytes instead of decoded text.
+                Image, audio, video, and archive files auto-route to binary even when False.
 
         Returns:
             Text mode: {"content": "<file contents>", "path": "<relative path>"}
-            Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path"}
+            Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path",
+                "auto_binary": true (when auto-routed)}
         """
         src = _safe_project_path(path)
         if not src.exists():

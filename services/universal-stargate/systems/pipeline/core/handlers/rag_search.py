@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from transport_utils import make_async_client, resolve_rag_base_url
@@ -61,6 +61,7 @@ class RagSearchV1Handler:
         top_k = int(step.get_domain_field("top_k", 5) or 5)
         top_k = min(max(top_k, 1), 50)
         recency_weight = float(step.get_domain_field("recency_weight", 0.0) or 0.0)
+        tier_weight: dict[str, float] | None = step.get_domain_field("tier_weight")
 
         body: dict[str, Any] = {
             "query": query.strip(),
@@ -69,6 +70,8 @@ class RagSearchV1Handler:
         }
         if scope is not None:
             body["scope"] = scope
+        if tier_weight:
+            body["tier_weight"] = tier_weight
 
         url = resolve_rag_base_url()
         try:

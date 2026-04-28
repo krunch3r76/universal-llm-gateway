@@ -46,10 +46,11 @@ def register_files_tool(mcp: FastMCP) -> None:
         (with sandbox="cortex") which provides section-level read/write/delete
         without ingesting the entire file.
 
-        Use `binary=True` with `read` or `read_multi` when you need base64
-        bytes for downstream tools such as OCR or binary ingest. Prefer
-        `view_image` when the task is to inspect an image rather than pass
-        its bytes onward.
+        Image files, archives, and other binary formats auto-route to base64
+        even without `binary=True` — reading a `.png`, `.jpg`, or archive returns
+        `{content_base64, auto_binary: true}` rather than corrupted text. Pass
+        `binary=True` explicitly to force base64 for any file type. Prefer
+        `view_image` when the task is visual inspection rather than moving bytes onward.
 
         Ops:
           read   — read file contents (path required)
