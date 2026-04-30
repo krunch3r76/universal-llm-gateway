@@ -31,6 +31,8 @@ class _FakeStep:
         name: str = "respond",
         type: str = "frontier_dispatch_v1",
         model_ref: str | None = None,
+        model_requirements: dict[str, Any] | None = None,
+        resolved_async_model: str | None = None,
         system_prompt: str | None = None,
         generation_parameters: dict[str, Any] | None = None,
         domain_fields: dict[str, Any] | None = None,
@@ -38,6 +40,8 @@ class _FakeStep:
         self.name = name
         self.type = type
         self.model_ref = model_ref
+        self.model_requirements = model_requirements
+        self._resolved_async_model = resolved_async_model
         self.system_prompt = system_prompt
         self.generation_parameters = generation_parameters or {}
         self.handler_inputs: dict[str, Any] = {}
@@ -49,6 +53,30 @@ class _FakeStep:
 
     def get_domain_field(self, key: str, default: Any = None) -> Any:
         return self._domain.get(key, default)
+
+    async def get_target_model_id_async(
+        self,
+        registry: Any,
+        *,
+        domain: str | None = None,
+        search_path: str | None = None,
+        model_ref_overrides: dict[str, str] | None = None,
+        context: Any | None = None,
+    ) -> str | None:
+        """Mirror ``StepConfig.get_target_model_id_async`` for handler tests.
+
+        - ``model_ref`` set → returns it (registry lookup is irrelevant for
+          provider-prefixed ids; production passes through on KeyError).
+        - ``model_requirements`` set without ``model_ref`` → returns the
+          ``resolved_async_model`` the test pre-stubs (simulates
+          ``get_ranked_candidates`` selecting a candidate).
+        - Otherwise → ``None`` (resolution failure).
+        """
+        if self.model_ref:
+            return self.model_ref
+        if self.model_requirements:
+            return self._resolved_async_model
+        return self._resolved_async_model
 
 
 def _make_context(
@@ -65,6 +93,8 @@ def _make_context(
         messages=messages,
         options=options or {},
         runtime_options=runtime_options or {},
+        _registry=None,
+        pipeline=SimpleNamespace(domain=None, source_search_path=None),
         _proxy=SimpleNamespace(pipeline_dispatch_tracker=None, event_bus=None),
     )
 
@@ -191,10 +221,97 @@ async def test_handler_persona_free_mode_skips_hydration(
 async def test_handler_missing_model_raises(
     handler: FrontierDispatchHandler,
 ) -> None:
+    """No pipeline_options.model + no model_ref + no model_requirements →
+    useful resolution-failure error that names all three valid sources."""
     step = _FakeStep(model_ref=None)
     context = _make_context(options={})
-    with pytest.raises(ValueError, match="requires pipeline_options.model"):
+    with pytest.raises(ValueError, match="could not resolve a model") as exc_info:
         await handler.execute(step, context)
+    msg = str(exc_info.value)
+    assert "pipeline_options.model" in msg
+    assert "model_ref" in msg
+    assert "model_requirements" in msg
+
+
+@pytest.mark.asyncio
+async def test_handler_resolves_via_model_ref_through_async_delegation(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pipeline_options.model, but step.model_ref → resolved via
+    StepConfig.get_target_model_id_async, not a hardwired error."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["model"] = kwargs["model"]
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep(model_ref="anthropic/claude-sonnet-4-6")
+    context = _make_context(options={})
+    out = await handler.execute(step, context)
+
+    assert captured["model"] == "anthropic/claude-sonnet-4-6"
+    assert out.json["provider"] == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_handler_resolves_via_model_requirements_when_model_ref_absent(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pipeline_options.model, no model_ref, but model_requirements set →
+    delegates to StepConfig.get_target_model_id_async (which calls
+    get_ranked_candidates via /v1/models/select). Stubbed to return a
+    candidate; handler must use it."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["model"] = kwargs["model"]
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep(
+        model_ref=None,
+        model_requirements={"task": "synthesis", "min_score": 0.7},
+        resolved_async_model="openai/gpt-5.4",
+    )
+    context = _make_context(options={})
+    out = await handler.execute(step, context)
+
+    assert captured["model"] == "openai/gpt-5.4"
+    assert out.json["provider"] == "openai"
+
+
+@pytest.mark.asyncio
+async def test_handler_pipeline_options_model_short_circuits_async_resolution(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """pipeline_options.model takes precedence over StepConfig delegation —
+    the async resolver must not be called when the caller supplies an
+    explicit model. Verifies the short-circuit branch and avoids spurious
+    /v1/models/select traffic for explicit dispatches."""
+    delegation_calls: list[Any] = []
+
+    async def loud_async(*args: Any, **kwargs: Any) -> str | None:
+        delegation_calls.append((args, kwargs))
+        return "openai/should-not-be-used"
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep(model_ref="some/model-ref")
+    monkeypatch.setattr(step, "get_target_model_id_async", loud_async)
+
+    context = _make_context(options={"model": "anthropic/claude-sonnet-4-6"})
+    await handler.execute(step, context)
+
+    assert delegation_calls == []
 
 
 @pytest.mark.asyncio

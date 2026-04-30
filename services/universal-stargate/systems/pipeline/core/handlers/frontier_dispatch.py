@@ -190,7 +190,7 @@ class FrontierDispatchHandler(BaseHandler):
     ) -> StepOutput:
         self._reject_unknown_runtime_options(step, context)
         opts = context.options
-        model = self._resolve_model(opts, step)
+        model = await self._resolve_model(opts, step, context)
         agent = self._resolve_agent(opts, step)
         provider = effective_provider_for_model(ModelId.parse(model).provider)
         if agent is not None:
@@ -620,17 +620,46 @@ class FrontierDispatchHandler(BaseHandler):
             agent=agent or None,
         )
 
-    def _resolve_model(self, opts: dict[str, Any], step: StepConfig) -> str:
-        """Resolve model from ``pipeline_options.model`` or ``step.model_ref``."""
-        model = opts.get("model") or step.model_ref
-        if not model or model == "default":
+    async def _resolve_model(
+        self,
+        opts: dict[str, Any],
+        step: StepConfig,
+        context: PipelineContext,
+    ) -> str:
+        """Resolve target model id for this dispatch.
+
+        Precedence:
+          1. ``pipeline_options.model`` — caller-supplied runtime override.
+          2. ``step.get_target_model_id_async`` — delegates to the StepConfig
+             resolution substrate, which honors ``step.model_ref`` (registry
+             lookup or raw model id) AND ``step.model_requirements`` (matched
+             via ``/v1/models/select`` through ``get_ranked_candidates``).
+
+        Delegation keeps frontier_dispatch_v1 in lockstep with the resolver
+        every other step type uses; cost-aware routing through
+        ``model_requirements`` works without re-implementing requirements
+        plumbing in the handler.
+        """
+        runtime_model = opts.get("model")
+        if isinstance(runtime_model, str):
+            runtime_model = runtime_model.strip()
+            if runtime_model and runtime_model != "default":
+                return runtime_model
+
+        resolved = await step.get_target_model_id_async(
+            context._registry,
+            domain=context.pipeline.domain,
+            search_path=context.pipeline.source_search_path,
+            context=context,
+        )
+        if not resolved or resolved == "default":
             raise ValueError(
-                f"Step '{step.id}': frontier_dispatch_v1 requires "
-                "pipeline_options.model (e.g. 'openai/gpt-5.4', "
-                "'anthropic/claude-opus-4-7', 'xai/grok-4-fast-reasoning', "
-                "'google/gemini-2.5-pro')."
+                f"Step '{step.id}': frontier_dispatch_v1 could not resolve a "
+                "model. Provide one of: pipeline_options.model "
+                "(e.g. 'openai/gpt-5.4'), step.model_ref, or "
+                "step.model_requirements (matched via /v1/models/select)."
             )
-        return str(model)
+        return resolved
 
     def _resolve_agent(self, opts: dict[str, Any], step: StepConfig) -> str | None:
         """Resolve agent identity.
