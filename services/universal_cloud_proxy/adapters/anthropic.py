@@ -701,10 +701,28 @@ class AnthropicAdapter:
                             response=response,
                         )
                     stage = "await_upstream_chunk"
+                    # W3C SSE event boundary is a blank line. Buffer line-by-line
+                    # output from aiter_lines() into per-event frames terminated
+                    # with `\n\n` so libs/sse/framing.iter_sse_events (used by
+                    # the native path in frontier_dispatch) sees one full event
+                    # per yield. Without this, single-`\n` lines would force
+                    # iter_sse_events to buffer the whole stream into one chunk.
+                    pending_lines: list[str] = []
                     async for line in response.aiter_lines():
-                        stripped = line.strip()
-                        if stripped:
-                            yield (stripped + "\n").encode()
+                        if line == "":
+                            # Blank line = end of one W3C event.
+                            if pending_lines:
+                                frame = "\n".join(pending_lines) + "\n\n"
+                                yield frame.encode()
+                                pending_lines = []
+                            continue
+                        pending_lines.append(line)
+                    # Flush any trailing event without a final blank line
+                    # (Anthropic terminates streams with a blank line, but be
+                    # defensive against early connection close mid-event).
+                    if pending_lines:
+                        frame = "\n".join(pending_lines) + "\n\n"
+                        yield frame.encode()
                 outcome = "success"
             except asyncio.CancelledError:
                 outcome = "cancelled"

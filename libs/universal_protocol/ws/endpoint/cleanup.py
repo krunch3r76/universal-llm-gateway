@@ -4,11 +4,11 @@ Single responsibility: Orchestrate all cleanup steps for a WebSocket stream.
 Split into focused helpers for each cleanup concern.
 """
 
-from universal_logging import get_logger
+from sse.core import format_sse
 from starlette.websockets import WebSocket
+from universal_logging import get_logger
 
 from universal_protocol.observability import set_streams_active
-from universal_protocol.sse.core import format_sse
 from universal_protocol.ws.lifecycle import StreamContext
 from universal_protocol.ws.registry import stream_registry
 

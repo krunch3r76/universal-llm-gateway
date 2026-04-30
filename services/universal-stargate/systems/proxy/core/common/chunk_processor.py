@@ -10,8 +10,8 @@ Note: Gateway always converts to OpenAI format (delta.content) before sending.
 import json
 from typing import Any
 
+from sse.core import format_sse
 from universal_logging import get_logger
-from universal_protocol.sse.core import format_sse
 
 logger = get_logger(__name__)
 

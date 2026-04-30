@@ -4,15 +4,15 @@ Single responsibility: Read events from queue, dispatch by type, send to WebSock
 No timeout logic - idle monitor handles expiration via queue events.
 """
 
-from universal_logging import get_logger
+from sse.core import format_sse
 from starlette.websockets import WebSocket
+from universal_logging import get_logger
 
-from universal_protocol.sse.core import format_sse
 from universal_protocol.ws.frame_types import (
-    FRAME_DONE,
-    FRAME_ERR,
     CODE_QUEUE_CLOSED,
     CODE_STREAM_ERROR,
+    FRAME_DONE,
+    FRAME_ERR,
     get_close_code,
     is_terminal_frame,
 )
@@ -39,7 +39,7 @@ async def send_frame(websocket: WebSocket, frame: dict) -> None:
 def log_terminal_frame(stream_id: str, frame: dict) -> None:
     """Log terminal frame details."""
     frame_type = frame.get("t")
-    
+
     if frame_type == FRAME_DONE:
         logger.info(f"Stream {stream_id} completed: {frame.get('usage', {})}")
     else:
@@ -75,28 +75,28 @@ async def read_and_send_frames(
     """
     close_code = 1000
     error_frame = None
-    
+
     while True:
         try:
             # Pure await - no timeout (idle monitor handles expiration)
             frame = await queue.get()
-            
+
             # Send frame to client
             await send_frame(websocket, frame)
-            
+
             # Update activity after successful send
             update_consumer_activity(stream_id)
-            
+
             # Check for terminal frame
             if is_terminal_frame(frame):
                 close_code = get_close_code(frame)
                 log_terminal_frame(stream_id, frame)
-                
+
                 # Return error frame if it's an error type (for cleanup to send)
                 if frame.get("t") != FRAME_DONE:
                     error_frame = frame
                 break
-        
+
         except RuntimeError as e:
             if "Queue is closed" in str(e):
                 logger.warning(f"Queue closed for stream {stream_id}")
@@ -109,7 +109,7 @@ async def read_and_send_frames(
                 close_code = 1001
                 break
             raise
-        
+
         except Exception as e:
             logger.exception(f"Error in stream loop: {e}")
             error_frame = {
@@ -120,6 +120,6 @@ async def read_and_send_frames(
             }
             close_code = 1001
             break
-    
+
     logger.info(f"📍 EXITED MAIN LOOP for {stream_id}")
     return close_code, error_frame

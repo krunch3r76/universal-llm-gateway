@@ -17,14 +17,13 @@ Ping Configuration:
     (20s interval, 20s timeout) would close the connection prematurely.
 """
 
-from universal_logging import get_logger
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import websockets
+from sse.core import parse_sse
+from universal_logging import get_logger
 from websockets.exceptions import ConnectionClosed
-
-from universal_protocol.sse.core import parse_sse
 
 logger = get_logger(__name__)
 

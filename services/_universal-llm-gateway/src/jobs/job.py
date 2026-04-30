@@ -14,8 +14,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from sse import SSEMessage, format_sse_message
 from universal_logging import get_logger
-from universal_protocol.sse import SSEMessage, format_sse_message
 
 logger = get_logger(__name__)
 

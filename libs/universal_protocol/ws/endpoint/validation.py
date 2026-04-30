@@ -3,10 +3,10 @@
 Single responsibility: Validate stream existence and extract state.
 """
 
-from universal_logging import get_logger
+from sse.core import format_sse
 from starlette.websockets import WebSocket
+from universal_logging import get_logger
 
-from universal_protocol.sse.core import format_sse
 from universal_protocol.ws.registry import stream_registry
 
 from .state import StreamStateErr, StreamStateOk

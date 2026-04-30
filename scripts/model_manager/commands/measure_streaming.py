@@ -3,7 +3,7 @@
 import sys
 
 import requests
-from universal_protocol.sse import parse_sse_message
+from sse import parse_sse_message
 
 
 def stream_job_logs(  # noqa: PLR0912
