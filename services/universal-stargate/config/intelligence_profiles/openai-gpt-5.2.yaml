@@ -28,3 +28,13 @@ tasks:
     evidence:
       - source: curated
         detail: "General reasoning model; research suitability inferred, not benchmarked"
+  brief_drafting:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Mid-tier reasoning + structured output; cheaper alternative to gpt-5.4 when budget tight"
+  synthesis_review:
+    score: good
+    evidence:
+      - source: curated
+        detail: "CursorBench #4 + reasoning_depth strong; review-style cross-claim work suited at mid cost"

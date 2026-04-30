@@ -28,3 +28,18 @@ tasks:
     evidence:
       - source: curated
         detail: "Inferred from reasoning depth and 1M+ context; no direct research benchmark"
+  brief_drafting:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "CursorBench #1 + structured-output reliability; Pareto frontier at $0.20/task makes it the default for cheap-to-mid composition"
+  synthesis_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Deep reasoning + 1M+ context lets it review claims against probe results without truncation"
+  probe_design:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "CursorBench #1 + cursor_sdk surface support; well-suited for Cursor-SDK-driven probe Python authoring"

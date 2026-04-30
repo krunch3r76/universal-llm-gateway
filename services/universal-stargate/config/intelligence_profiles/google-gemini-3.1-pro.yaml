@@ -28,3 +28,18 @@ tasks:
     evidence:
       - source: curated
         detail: "Long context (1M) suggests research suitability; not benchmarked directly"
+  brief_drafting:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "1M context + good reasoning + cheaper than 2.5-pro; fits structured-brief composition with full thread context"
+  synthesis_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Long context lets review hold drafted claims + probe results together; SWE-bench 80.6% suggests reliable cross-claim reasoning"
+  probe_design:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Cross-file reasoning + cheaper alternative for probe authoring when gpt-5.4 / claude-opus-4.6 over budget"

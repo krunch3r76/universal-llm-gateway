@@ -25,3 +25,18 @@ tasks:
     evidence:
       - source: curated
         detail: Grounded synthesis with strong recall
+  brief_drafting:
+    score: strong
+    evidence:
+      - source: curated
+        detail: Long-context plus structured planning; fits ratification-brief composition with full thread context
+  synthesis_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: 1M-context lets synthesis review hold drafted-claim set + probe-result set together without truncation
+  probe_design:
+    score: good
+    evidence:
+      - source: curated
+        detail: Strong cross-file reasoning; Cursor SDK surface support assumed pending tag verification

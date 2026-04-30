@@ -25,3 +25,8 @@ tasks:
     evidence:
       - source: curated
         detail: Good synthesis, faster than Pro
+  brief_drafting:
+    score: good
+    evidence:
+      - source: curated
+        detail: Cheap and fast composition; suits brief drafting when budget cap is tight

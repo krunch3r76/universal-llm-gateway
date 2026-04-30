@@ -28,3 +28,18 @@ tasks:
     evidence:
       - source: curated
         detail: "Code-focused model; research suitability inferred, not benchmarked"
+  brief_drafting:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Code-specialized but structured-output capable; brief composition stays within scope at lower cost than gpt-5.4"
+  synthesis_review:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Reasoning depth strong; review-style cross-claim work suited at mid cost"
+  probe_design:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Code specialization + Pareto frontier on CursorBench; ideal for Cursor-SDK probe Python authoring at low cost"

@@ -28,3 +28,18 @@ tasks:
     evidence:
       - source: curated
         detail: "Deep reasoning capability; research quality inferred, not benchmarked"
+  brief_drafting:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "SWE-bench #1 + deep-reasoning baseline; structured-brief composition is reasoning-bound, not agentic"
+  synthesis_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Cross-claim verification benefits from SWE-bench-grade reasoning depth"
+  probe_design:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Cursor SDK surface support + reasoning depth strong; CursorBench drop suggests slightly weaker than Opus 4.6 for agentic probe authoring"

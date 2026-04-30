@@ -28,3 +28,13 @@ tasks:
     evidence:
       - source: curated
         detail: "Outperformed by GPT and Gemini alternatives at similar cost; quality uncertain"
+  brief_drafting:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Mid-cost frontier writing; brief composition is less agentic than CursorBench-style coding so the SWE-vs-CursorBench gap is less penalizing"
+  probe_design:
+    score: good
+    evidence:
+      - source: curated
+        detail: "Cursor SDK surface support; probe scripts of moderate complexity within reach"

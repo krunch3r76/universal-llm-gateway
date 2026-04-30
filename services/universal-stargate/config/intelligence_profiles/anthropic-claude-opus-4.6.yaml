@@ -28,3 +28,18 @@ tasks:
     evidence:
       - source: curated
         detail: "Deep reasoning model; thorough grounded analysis observed in consult use"
+  brief_drafting:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Deep reasoning + structured output quality observed in consult use; suits ratification-brief composition from thread context"
+  synthesis_review:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "Drift detection across drafted claims vs measured probe results benefits from deep frontier reasoning"
+  probe_design:
+    score: strong
+    evidence:
+      - source: curated
+        detail: "SWE-bench 80.8% (#2) + cursor_sdk surface support; suits Cursor-SDK-driven probe Python authoring"
