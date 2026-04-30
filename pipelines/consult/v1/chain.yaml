@@ -1,0 +1,212 @@
+# consult-pipeline-v1 — slim materialization of §3.2
+#
+# Decision context: agent-bus thread 759 (P3 option γ, locked turn 11).
+#
+# This is a forward-compatible subset of the full §3.2 design:
+#
+#   brief_compose
+#     │
+#     ▼
+#   brief_compose_parsed   ← parse_json_v1 (γ) bridge
+#     │
+#     ▼
+#   synthesis_review       (reads brief_compose_parsed.json.<field>, NOT brief_compose.json.<field>)
+#     │
+#     ▼
+#   synthesis_review_parsed ← parse_json_v1 (γ) bridge
+#
+# Dropped from the full §3.2 (they require unimplemented step types):
+#   - probe_design (cursor_sdk_v1)
+#   - probe_execute (consult_pipeline_probe_execute_v1)
+#   - synthesis_review's reads_from probe_execute + handler_inputs
+#     {probe_results, probe_summary}
+# Both expand cleanly when cursor_sdk_v1 lands as a real implementation
+# in its own dispatch (todo:wire-cursor-sdk-v1).
+#
+# What this validates today:
+#   - parse_json_v1 deterministic builtin step (just landed in same
+#     working tree)
+#   - frontier_dispatch_v1 → parse_json_v1 → frontier_dispatch_v1 →
+#     parse_json_v1 chain (the (γ) bridge pattern at every JSON-binding
+#     site, exactly as it will appear in the overhaul YAMLs)
+#   - cost-aware model resolution via model_requirements (brief_drafting
+#     + synthesis_review profile keys, registered in commit a4221a16)
+#
+# Invocation (post-cursor_sdk_v1 landing the full §3.2 swaps in;
+# the slim form below works today for smoke-testing the (γ) pattern):
+#
+#   pipeline(
+#     op="async",
+#     pipeline_id="consult-pipeline-v1",
+#     messages=[{"role": "user", "content": "<thread digest pre-composed>"}],
+#     pipeline_options={
+#       "thread_id": "<bus-thread>",
+#       "subject_anchor": "<short subject>",
+#     },
+#     result_delivery={
+#       "bus_thread": "<bus-thread>",
+#       "bus_from_agent": "cursor",
+#       "bus_to_agent": "<recipient>",
+#       "bus_subject": "<subject>",
+#       "bus_brief_summary": "Pipeline complete; see ratification_reply_markdown.",
+#     },
+#     caller_agent="cursor",
+#   )
+
+schema_version: 6
+id: consult-pipeline-v1
+version: "1"
+type: consult
+description: >
+  Multi-agent consult: brief composition → (γ) parse bridge →
+  synthesis review → (γ) parse bridge. Slim §3.2 materialization;
+  full §3.2 (probe_design + probe_execute) lands once cursor_sdk_v1
+  is implemented. Validates frontier_dispatch_v1 + parse_json_v1
+  composition and cost-aware model resolution.
+output: synthesis_review_parsed
+
+options:
+  timeout_seconds: 1800
+
+steps:
+
+  # 1) Compose the ratification brief with cheap frontier dispatch.
+  #    Picks gpt-5.4 / gemini-2.5-pro / claude-sonnet-4 / etc. by default —
+  #    all meet `task: brief_drafting` strong with the cost ceiling.
+  - name: brief_compose
+    type: frontier_dispatch_v1
+    system_prompt: |
+      You are composing a ratification brief for a multi-agent consult.
+      Read the thread digest in the user message and produce a
+      decision-ready brief that names what is being decided, the empirical
+      questions whose answers would change the decision, and the success
+      criteria a future probe must meet.
+
+      Output STRICT JSON matching the response schema. No prose outside JSON.
+    model_requirements:
+      task: brief_drafting
+      min_score: good
+      source: cloud
+      cost_budget:
+        max_per_model: 20.0
+      max_latency_bucket: medium
+    handler_inputs:
+      text: sourceNs.text
+    generation_parameters:
+      temperature: 0.3
+      reasoning_effort: medium
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            brief_markdown:
+              type: string
+              description: "Composed ratification brief, markdown-formatted."
+            empirical_questions:
+              type: array
+              items: { type: string }
+              description: "Questions whose answers would change the decision."
+            success_criteria:
+              type: array
+              items: { type: string }
+              description: "Criteria a probe must satisfy to validate the brief."
+          required: [brief_markdown, empirical_questions, success_criteria]
+    timeout_seconds: 240
+    retry_policy:
+      max_attempts: 2
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 12.0
+      retry_on: ["ProxyClientError"]
+
+  # 2) (γ) bridge: JSON-string at brief_compose.json.content →
+  #    structured StepOutput.json on this step. Downstream consumers bind
+  #    to brief_compose_parsed.json.<field>, NOT brief_compose.json.<field>
+  #    (the latter only carries the 9-field metadata shape from
+  #    frontier_dispatch_v1; the model's structured output lives in
+  #    .json.content as a JSON-encoded string).
+  - name: brief_compose_parsed
+    type: parse_json_v1
+    handler_inputs:
+      source: brief_compose.json.content
+    output_declarations:
+      brief_markdown:      { binding: json.brief_markdown,      type: str }
+      empirical_questions: { binding: json.empirical_questions, type: list }
+      success_criteria:    { binding: json.success_criteria,    type: list }
+    timeout_seconds: 30
+
+  # 3) Synthesis review — consumes the parsed brief.
+  #    Reads brief_compose_parsed.json.brief_markdown as the user prompt,
+  #    cross-checks it for internal consistency + drift between claims
+  #    and stated success criteria, returns a verdict + amendments.
+  #
+  #    NOTE: full §3.2 also reads probe_results + probe_summary from
+  #    probe_execute. Slim form drops those; verdict is a brief-only
+  #    consistency check until probe_execute lands.
+  - name: synthesis_review
+    type: frontier_dispatch_v1
+    system_prompt: |
+      You are reviewing a ratification brief for internal consistency.
+      The user message is the composed brief (markdown).
+
+      Cross-check the brief's claims against the empirical questions and
+      success criteria embedded in the same brief. Surface any drift
+      between what the brief asserts and what its own success criteria
+      would actually verify.
+
+      Output STRICT JSON matching the response schema. No prose outside JSON.
+    model_requirements:
+      task: synthesis_review
+      min_score: good
+      source: cloud
+      cost_budget:
+        max_per_model: 20.0
+      max_latency_bucket: medium
+    reads_from:
+      - step: brief_compose_parsed
+        fields: [json]
+    handler_inputs:
+      text: brief_compose_parsed.json.brief_markdown
+    generation_parameters:
+      temperature: 0.2
+      reasoning_effort: high
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          properties:
+            ratification_reply_markdown:
+              type: string
+              description: "Markdown ratification reply, ready for bus delivery."
+            verdict:
+              type: string
+              enum: [ratify_as_is, ratify_with_amendments, request_revision]
+            amendments:
+              type: array
+              items: { type: string }
+              description: "Concrete amendments if verdict != ratify_as_is."
+          required: [ratification_reply_markdown, verdict, amendments]
+    timeout_seconds: 420
+    retry_policy:
+      max_attempts: 2
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 12.0
+      retry_on: ["ProxyClientError"]
+
+  # 4) (γ) bridge: synthesis_review.json.content (JSON-string) →
+  #    structured StepOutput.json. Pipeline output binds to this step,
+  #    so result_delivery / consumer reads
+  #    synthesis_review_parsed.json.ratification_reply_markdown.
+  - name: synthesis_review_parsed
+    type: parse_json_v1
+    handler_inputs:
+      source: synthesis_review.json.content
+    output_declarations:
+      ratification_reply_markdown:
+        binding: json.ratification_reply_markdown
+        type: str
+      verdict:    { binding: json.verdict,    type: str }
+      amendments: { binding: json.amendments, type: list }
+    timeout_seconds: 30
