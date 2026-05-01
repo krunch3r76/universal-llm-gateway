@@ -98,14 +98,18 @@ def load_birth_prompt(agent: str) -> str:
     return _read_identity_file(str(candidate)).strip()
 
 
-def build_subagent_preamble(agent: str) -> str:
+def build_subagent_preamble(agent: str, *, include_cortex_quickref: bool = True) -> str:
     """Build subagent preamble with agent-specific Cortex contribution guidance.
 
     Mirrors ``_frontier_boot.build_subagent_preamble`` so MCP frontier calls
     and pipeline dispatch produce equivalent system prompts for the model.
+
+    ``include_cortex_quickref`` should be ``False`` when the dispatch will have
+    no client-side MCP tool loop (``mcp_tool_loop=False``).  In those cases the
+    Cortex tool API reference is noise — the model has no ``cortex`` tool
+    available and the syntax examples create false affordances.
     """
-    return (
-        f"""\
+    body = f"""\
 You are a team member consulted by the system owner.
 Apply your own epistemic standards fully — if you identify errors or gaps in the supplied framing, flag them. Do not defer.
 
@@ -138,8 +142,9 @@ Use `observe` for patterns noticed, `assert` for claims with evidence. \
 Target the relevant entity — do not pile everything on a single node.
 
 """
-        + CORTEX_TOOL_QUICKREF
-    )
+    if include_cortex_quickref:
+        body += CORTEX_TOOL_QUICKREF
+    return body
 
 
 def assemble_system_prompt(
@@ -147,6 +152,8 @@ def assemble_system_prompt(
     briefing_card_md: str | None = None,
     continuation_md: str | None = None,
     extra_system: str | None = None,
+    *,
+    include_cortex_quickref: bool = True,
 ) -> str:
     """Assemble the stacked system prompt: birth + preamble + briefing [+ continuation] [+ extra].
 
@@ -154,11 +161,16 @@ def assemble_system_prompt(
       provided, the dispatched agent sees their own session briefing.
     - ``continuation_md``: optional transcript-continuation markdown.
     - ``extra_system``: caller-supplied system prompt suffix (appended last).
+    - ``include_cortex_quickref``: passed through to ``build_subagent_preamble``.
+      Set ``False`` when ``mcp_tool_loop`` will be ``False`` for this dispatch.
 
     Order: birth → preamble → briefing → continuation → extra. Caller-provided
     content sits last so it doesn't interrupt identity priming.
     """
-    parts: list[str] = [load_birth_prompt(agent), build_subagent_preamble(agent)]
+    parts: list[str] = [
+        load_birth_prompt(agent),
+        build_subagent_preamble(agent, include_cortex_quickref=include_cortex_quickref),
+    ]
     if briefing_card_md and briefing_card_md.strip():
         parts.append(briefing_card_md.strip())
     if continuation_md and continuation_md.strip():

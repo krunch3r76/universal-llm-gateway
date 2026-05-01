@@ -142,6 +142,25 @@ async def emit_fleet_service_phase(
     )
 
 
+async def emit_fleet_service_step(
+    *, phase: str, service: str, success: bool, duration_s: float
+) -> None:
+    """Per-service timing for each stop/start step within a fleet operation.
+
+    Emitted after every individual service operation so bottlenecks can be
+    identified by querying ``fleet.service.step`` events grouped by service.
+    """
+    await _emit(
+        "fleet.service.step",
+        {
+            "phase": phase,
+            "service": service,
+            "success": success,
+            "duration_s": round(duration_s, 3),
+        },
+    )
+
+
 async def emit_fleet_relay_status(
     *, hostname: str, connected: bool, duration_s: float
 ) -> None:

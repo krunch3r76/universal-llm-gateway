@@ -90,6 +90,7 @@ async def resolve_dispatch_tool_set(
     remote_mcp: bool,
     opt_tools: Any,
     agent: str | None,
+    model: str,
     provider: str,
     transcript_id: str | None,
     read_tool_names: tuple[str, ...],
@@ -104,6 +105,8 @@ async def resolve_dispatch_tool_set(
     Three cases:
     - Endpoint-supplied: ``opt_tools`` is a ``list`` (from ``frontier_generate``).
     - Persona-bound: ``agent`` is set — hydrates agent and selects tool tier.
+      xAI: multi-agent models get ``tools=[]`` (server-side built-ins injected
+      via ``provider_options``); non-multi-agent models get client-side tools.
     - Persona-free: no agent, curated read-only tools or none.
     """
     from agent_seat import (
@@ -140,6 +143,10 @@ async def resolve_dispatch_tool_set(
 
     if agent:
         # Case 2: persona-bound dispatch — hydrate agent and select tools by provider.
+        # Tools are resolved first so the mcp_tool_loop predicate
+        # (bool(tools) and not remote_mcp) is known before system-prompt assembly,
+        # allowing CORTEX_TOOL_QUICKREF to be suppressed when the model will have
+        # no client-side Cortex tool available.
         bundle = await hydrate_agent(agent, transcript_id)
         publish(
             PipelineFrontierDispatchHydrated(
@@ -150,33 +157,28 @@ async def resolve_dispatch_tool_set(
                 continuation_id=bundle.continuation_id,
             )
         )
+        if remote_mcp or not mcp_enabled:
+            tools = []
+        elif provider == "xai" and "multi-agent" in model:
+            # Multi-agent xAI models reject client-side function tools;
+            # server-side built-ins are injected via provider_options.
+            # Non-multi-agent xAI models fall through to the generic path.
+            tools = []
+        elif provider == "anthropic":
+            tools = await resolve_default_tools(
+                team_tool_names,
+                fallback=[*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS],
+            )
+        else:
+            live = await get_mcp_tool_definitions()
+            tools = live or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
         assembled_system = assemble_system_prompt(
             agent,
             briefing_card_md=bundle.briefing_card_md,
             continuation_md=bundle.continuation_md,
             extra_system=system_prompt,
+            include_cortex_quickref=bool(tools) and not remote_mcp,
         )
-        if remote_mcp:
-            tools = []
-        elif provider == "anthropic":
-            tools = (
-                []
-                if not mcp_enabled
-                else await resolve_default_tools(
-                    team_tool_names,
-                    fallback=[*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS],
-                )
-            )
-        elif provider == "xai":
-            # xAI multi-agent models reject client-side function tools.
-            # Server-side built-ins are injected via provider_options below.
-            tools = []
-        else:
-            if not mcp_enabled:
-                tools = []
-            else:
-                live = await get_mcp_tool_definitions()
-                tools = live or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
         hydration_meta = {
             "agent": agent,
             "section_counts": bundle.section_counts,

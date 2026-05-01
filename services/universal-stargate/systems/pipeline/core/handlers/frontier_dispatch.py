@@ -49,6 +49,7 @@ from ..events.dispatch import (
 from .builtin import BaseHandler
 from .frontier_dispatch_admission import (
     check_agent_model_consistency,
+    check_boot_provider_compatibility,
     prepend_dispatch_context,
     reject_unknown_runtime_options,
     resolve_remote_mcp,
@@ -154,11 +155,21 @@ class FrontierDispatchHandler(BaseHandler):
 
         user_prompt = resolve_user_prompt(step, context)
         opt_tools = opts.get("tools")
+        check_boot_provider_compatibility(
+            agent=agent,
+            model=model,
+            provider=provider,
+            mcp_enabled=mcp_enabled,
+            opt_tools=opt_tools,
+            execution_id=context.execution_id,
+            publish=publish,
+        )
         tools, system, hydration_meta = await resolve_dispatch_tool_set(
             mcp_enabled=mcp_enabled,
             remote_mcp=remote_mcp,
             opt_tools=opt_tools,
             agent=agent,
+            model=model,
             provider=provider,
             transcript_id=transcript_id,
             read_tool_names=self._READ_TOOL_NAMES,

@@ -26,6 +26,7 @@ from scripts.model_manager.observation_event import (
     emit_fleet_operation_started,
     emit_fleet_relay_status,
     emit_fleet_service_phase,
+    emit_fleet_service_step,
 )
 from scripts.model_manager.topology import TopologySnapshot, build_snapshot
 
@@ -332,7 +333,9 @@ class TopologyPanel(Widget):
                         )
                         if local_restart_ok:
                             for hostname, ok in remote_results.items():
-                                if ok and not await self._verify_relay_connection(hostname):
+                                if ok and not await self._verify_relay_connection(
+                                    hostname
+                                ):
                                     failures.append(f"remote_verify:{hostname}")
                         else:
                             failures.append("local_restart")
@@ -471,7 +474,9 @@ class TopologyPanel(Widget):
                 if "[red]" in line:
                     failed = True
         except Exception as e:
-            self._append_line(hostname, f"Error stopping remote before {operation}: {e}")
+            self._append_line(
+                hostname, f"Error stopping remote before {operation}: {e}"
+            )
             logger.exception("Error stopping remote %s before %s", hostname, operation)
             failed = True
 
@@ -580,20 +585,26 @@ class TopologyPanel(Widget):
             if rebuild_supporting_services
             else svc.restart_event_service
         )
-        ev_ok = await self._run_single(mk, "event_service", event_service_op, failures)
+        ev_ok = await self._run_single(
+            mk, "event_service", event_service_op, failures, phase="start"
+        )
         if ev_ok:
             if not await self._wait_event_service_healthy(timeout=30):
                 self._append_line(mk, "  ⚠ event_service unhealthy (continuing)")
 
         # Phase 3: Critical local services
-        await self._run_single(mk, "gateway", svc.start_gateway, failures)
+        await self._run_single(
+            mk, "gateway", svc.start_gateway, failures, phase="start"
+        )
         if is_agent_bus_configured():
             agent_bus_op = (
                 svc.rebuild_agent_bus
                 if rebuild_supporting_services
                 else svc.start_agent_bus
             )
-            await self._run_single(mk, "agent_bus", agent_bus_op, failures)
+            await self._run_single(
+                mk, "agent_bus", agent_bus_op, failures, phase="start"
+            )
 
         # Phase 4: Stargate + optional services (parallel, best-effort)
         start_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
@@ -625,16 +636,20 @@ class TopologyPanel(Widget):
 
         start_results = await self._run_ops_parallel(start_ops)
         start_dict: dict[str, bool] = {}
-        for name, ok, msg in start_results:
+        for name, ok, msg, elapsed in start_results:
             start_dict[name] = ok
-            self._append_line(mk, f"  {'✓' if ok else '✗'} {name}")
+            self._append_line(mk, f"  {'✓' if ok else '✗'} {name} ({elapsed:.1f}s)")
             if not ok:
                 failures.append(name)
         await emit_fleet_service_phase(
             phase="start",
-            services=[n for n, _, _ in start_results],
+            services=[n for n, _, _, _ in start_results],
             results=start_dict,
         )
+        for name, ok, _, elapsed in start_results:
+            await emit_fleet_service_step(
+                phase="start", service=name, success=ok, duration_s=elapsed
+            )
 
         self._append_line(mk, "  ○ sidecar left stopped")
 
@@ -680,34 +695,50 @@ class TopologyPanel(Widget):
         stop_results = await self._run_ops_parallel(stop_ops)
         stop_dict: dict[str, bool] = {}
         failures: list[str] = []
-        for name, ok, msg in stop_results:
+        for name, ok, msg, elapsed in stop_results:
             stop_dict[name] = ok
-            self._append_line(mk, f"  {'✓' if ok else '⚠'} stop {name}")
+            self._append_line(
+                mk, f"  {'✓' if ok else '⚠'} stop {name} ({elapsed:.1f}s)"
+            )
             if not ok:
                 failures.append(name)
                 logger.warning("stop %s: %s", name, msg)
         await emit_fleet_service_phase(
             phase="stop",
-            services=[n for n, _, _ in stop_results],
+            services=[n for n, _, _, _ in stop_results],
             results=stop_dict,
         )
+        for name, ok, _, elapsed in stop_results:
+            await emit_fleet_service_step(
+                phase="stop", service=name, success=ok, duration_s=elapsed
+            )
         return failures
 
     async def _run_ops_parallel(
         self,
         ops: list[tuple[str, Callable[[], Awaitable[str]]]],
-    ) -> list[tuple[str, bool, str]]:
-        """Run service operations in parallel. Each op is try/except wrapped — never raises."""
+    ) -> list[tuple[str, bool, str, float]]:
+        """Run service operations in parallel. Each op is try/except wrapped — never raises.
+
+        Returns (name, success, message, duration_s) per operation so callers can
+        surface per-service timing in the TUI log and emit fleet.service.step events.
+        """
 
         async def _safe_run(
             name: str, op: Callable[[], Awaitable[str]]
-        ) -> tuple[str, bool, str]:
+        ) -> tuple[str, bool, str, float]:
+            t0 = asyncio.get_running_loop().time()
             try:
                 msg = await op()
-                return name, _classify_result(msg), msg
+                return (
+                    name,
+                    _classify_result(msg),
+                    msg,
+                    asyncio.get_running_loop().time() - t0,
+                )
             except Exception as exc:
                 logger.exception("Service op %s raised", name)
-                return name, False, str(exc)
+                return name, False, str(exc), asyncio.get_running_loop().time() - t0
 
         async with asyncio.TaskGroup() as tg:
             tasks = [tg.create_task(_safe_run(n, op)) for n, op in ops]
@@ -719,18 +750,30 @@ class TopologyPanel(Widget):
         name: str,
         op: Callable[[], Awaitable[str]],
         failures: list[str],
+        *,
+        phase: str | None = None,
     ) -> bool:
-        """Run one operation, log result, append to failures if not ok."""
+        """Run one operation, log result, append to failures if not ok.
+
+        When *phase* is provided, emits a ``fleet.service.step`` event with the
+        per-service duration so bottlenecks are visible in the event service.
+        """
+        t0 = asyncio.get_running_loop().time()
         try:
             msg = await op()
             ok = _classify_result(msg)
         except Exception as exc:
             logger.exception("Service op %s raised", name)
             ok, msg = False, str(exc)
-        self._append_line(node_key, f"  {'✓' if ok else '✗'} {name}")
+        elapsed = asyncio.get_running_loop().time() - t0
+        self._append_line(node_key, f"  {'✓' if ok else '✗'} {name} ({elapsed:.1f}s)")
         if not ok:
             failures.append(name)
             logger.warning("%s: %s", name, msg)
+        if phase is not None:
+            await emit_fleet_service_step(
+                phase=phase, service=name, success=ok, duration_s=elapsed
+            )
         return ok
 
     async def _deploy_and_build_remote(
@@ -807,7 +850,9 @@ class TopologyPanel(Widget):
         self._append_line(hostname, f"--- {hostname}: {status} ---")
         return result.connected
 
-    async def _deploy_remotes_parallel(self, *, build: bool, scope: str) -> dict[str, bool]:
+    async def _deploy_remotes_parallel(
+        self, *, build: bool, scope: str
+    ) -> dict[str, bool]:
         """Deploy all remotes in parallel via TaskGroup.
 
         Args:
@@ -831,12 +876,12 @@ class TopologyPanel(Widget):
                     first = False
                 tasks.append(
                     tg.create_task(
-                    self._deploy_single_remote(
-                        hostname=hostname,
-                        address=address,
-                        build=build,
-                        scope=scope,
-                    )
+                        self._deploy_single_remote(
+                            hostname=hostname,
+                            address=address,
+                            build=build,
+                            scope=scope,
+                        )
                     )
                 )
         for task in tasks:

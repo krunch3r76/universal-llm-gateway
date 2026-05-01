@@ -56,6 +56,26 @@ def test_subagent_preamble_contains_agent_name() -> None:
     assert "Cortex" in text
 
 
+def test_subagent_preamble_includes_quickref_by_default() -> None:
+    text = build_subagent_preamble("oppie")
+    assert "CORTEX_TOOL_QUICKREF" not in text  # heading text, not the constant name
+    assert 'cortex(tool="search"' in text  # quickref is present
+
+
+def test_subagent_preamble_suppresses_quickref() -> None:
+    text = build_subagent_preamble("oppie", include_cortex_quickref=False)
+    assert 'cortex(tool="search"' not in text
+    # Contribution guidance (non-quickref body) is still present.
+    assert "Cortex Contribution" in text
+    assert '"agent": "oppie"' in text
+
+
+def test_assemble_system_prompt_suppresses_quickref(identity_dir: Path) -> None:
+    system = assemble_system_prompt("orion", include_cortex_quickref=False)
+    assert 'cortex(tool="search"' not in system
+    assert "Cortex Contribution" in system
+
+
 def test_assemble_system_prompt_stacks_sections(identity_dir: Path) -> None:
     system = assemble_system_prompt(
         "orion",

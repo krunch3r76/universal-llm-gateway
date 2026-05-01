@@ -17,34 +17,14 @@ from time import monotonic
 from typing import Any
 
 import httpx
+from sse.core import format_sse_message
+from sse.framing import iter_sse_events
 from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
 type HealthObserver = Callable[..., None]
-
-
-async def _iter_sse_events_bytes(response: httpx.Response) -> AsyncIterator[bytes]:
-    """Yield complete SSE events from a streaming HTTP response.
-
-    Cloud proxy streaming responses are already in SSE format, but transport
-    chunks from ``aiter_raw()`` do not align with event boundaries. Re-frame on
-    the SSE separator so downstream chunk processing sees one full ``data:``
-    event at a time.
-    """
-    buffer = b""
-    async for chunk in response.aiter_raw():
-        if not chunk:
-            continue
-        buffer += chunk
-        while b"\n\n" in buffer:
-            event, buffer = buffer.split(b"\n\n", 1)
-            if event.strip():
-                yield event + b"\n\n"
-    if buffer.strip():
-        suffix = b"" if buffer.endswith(b"\n\n") else b"\n\n"
-        yield buffer + suffix
 
 
 def parse_cloud_proxy_url(url: str) -> tuple[str | None, str]:
@@ -321,19 +301,19 @@ class CloudProxyClient:
                         response=response,
                     )
 
-                async for chunk in _iter_sse_events_bytes(response):
-                    if chunk:
-                        if not first_chunk_seen:
-                            first_chunk_seen = True
-                            self._emit_stream_debug(
-                                step="firstchunk",
-                                request_id=request_id,
-                                model_id=model_id,
-                                stream_start=start,
-                                chunk_bytes=len(chunk),
-                            )
-                        total_content_chars += len(chunk)
-                        yield chunk
+                async for event in iter_sse_events(response.aiter_raw()):
+                    chunk = format_sse_message(event).encode("utf-8")
+                    if not first_chunk_seen:
+                        first_chunk_seen = True
+                        self._emit_stream_debug(
+                            step="firstchunk",
+                            request_id=request_id,
+                            model_id=model_id,
+                            stream_start=start,
+                            chunk_bytes=len(chunk),
+                        )
+                    total_content_chars += len(chunk)
+                    yield chunk
         except httpx.TimeoutException:
             self._observe_health(
                 task=task,

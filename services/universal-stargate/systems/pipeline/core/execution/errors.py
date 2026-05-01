@@ -363,6 +363,49 @@ class AgentModelMismatchError(PipelineError):
 
 
 @dataclass
+class BootProviderMismatchError(PipelineError):
+    """Raised when (boot_mode, provider) creates a runtime tool-surface contract
+    violation: the provider would silently receive ``tools=[]`` at the API layer
+    while the caller expected a tool-capable dispatch.
+
+    Structural case: ``provider='xai'`` with ``boot_mode='team'`` (``agent``
+    set + ``mcp_enabled=True``) — xAI multi-agent models reject client-side
+    function tools, so ``resolve_dispatch_tool_set`` coerces ``tools=[]``.
+    Without this guard, the caller receives a silently degraded dispatch
+    (no tool calls, no error, no admission signal).
+
+    Note: ``build_subagent_preamble`` appends ``CORTEX_TOOL_QUICKREF``
+    unconditionally for all persona dispatches. This error fires before
+    hydration to prevent the API-level contract violation. Prompt-layer
+    suppression (removing ``CORTEX_TOOL_QUICKREF`` when tool loop will be
+    disabled) is a separate follow-up.
+    """
+
+    agent: str
+    provider: str
+    boot_mode: str
+    reason: str
+
+    def __str__(self) -> str:
+        return (
+            f"Agent {self.agent!r} (provider={self.provider!r}, "
+            f"boot={self.boot_mode!r}) advertises a client-side MCP tool "
+            f"surface the provider cannot execute: {self.reason}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "BootProviderMismatchError",
+            "code": "boot_provider_mismatch",
+            "retryable": self.retryable,
+            "agent": self.agent,
+            "provider": self.provider,
+            "boot_mode": self.boot_mode,
+            "reason": self.reason,
+        }
+
+
+@dataclass
 class MapPartialFailureError(PipelineError):
     """
     Raised when map step completes with partial success below threshold.

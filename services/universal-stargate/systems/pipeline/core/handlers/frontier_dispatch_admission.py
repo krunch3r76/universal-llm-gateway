@@ -1,22 +1,27 @@
 """Admission checks and context injection for frontier_dispatch_v1.
 
 Kept in a sibling module to hold frontier_dispatch.py under the file-size
-ceiling. Four responsibilities:
+ceiling.  Five responsibilities:
 
 1. ``check_agent_model_consistency`` — pre-hydration guard that rejects
    dispatches where the caller-supplied model's provider conflicts with the
    agent's identity-bound provider family (e.g. ``agent='orion'`` +
    ``model='anthropic/claude-sonnet-4-6'``).
 
-2. ``prepend_dispatch_context`` — injects a minimal ``<dispatch_context>``
+2. ``check_boot_provider_compatibility`` — pre-hydration guard that rejects
+   xAI multi-agent model dispatches with ``boot_mode='team'`` and
+   ``mcp_enabled=True``: those models reject client-side MCP function tools.
+   Non-multi-agent xAI models (grok-4.3, grok-4.20-reasoning) are not gated.
+
+3. ``prepend_dispatch_context`` — injects a minimal ``<dispatch_context>``
    preamble into every system prompt, anchoring temporal reasoning with
    today's UTC date.
 
-3. ``reject_unknown_runtime_options`` — validates ``context.runtime_options``
+4. ``reject_unknown_runtime_options`` — validates ``context.runtime_options``
    against the handler's accepted key set; raises ``UnknownPipelineOptionsError``
    for any unknown key.
 
-4. ``resolve_remote_mcp`` — validates and resolves the ``remote_mcp`` option
+5. ``resolve_remote_mcp`` — validates and resolves the ``remote_mcp`` option
    against provider support and the ``mcp`` gate; raises
    ``RemoteMcpUnsupportedError`` on violation.
 """
@@ -36,10 +41,12 @@ from agent_seat.registry import (
 
 from ..events.dispatch import (
     PipelineFrontierDispatchAgentModelMismatch,
+    PipelineFrontierDispatchBootMismatch,
     PipelineFrontierDispatchRemoteMcpUnsupported,
 )
 from ..execution.errors import (
     AgentModelMismatchError,
+    BootProviderMismatchError,
     RemoteMcpUnsupportedError,
     UnknownPipelineOptionsError,
 )
@@ -122,6 +129,75 @@ def check_agent_model_consistency(
             expected_provider=expected,
             required_variant=resolve_agent_model_requirement(agent),
         )
+
+
+# xAI multi-agent models (identified by "multi-agent" in the model ID) reject
+# client-side MCP function tools at the API level. Non-multi-agent xAI models
+# (e.g. grok-4.3, grok-4.20-reasoning variants) support standard function
+# calling and must NOT be gated. The "multi-agent" substring is the canonical
+# signal — it matches _AGENT_MODEL_REQUIREMENTS["oppie"] in registry.py.
+_XAI_MULTI_AGENT_SUBSTRING: str = "multi-agent"
+
+_XAI_MULTI_AGENT_BOOT_MISMATCH_REASON: str = (
+    "xAI multi-agent models reject client-side MCP function tools; the "
+    "API tools= field would be [] regardless of mcp setting. "
+    "Fix options: (a) pass tools=[] explicitly via frontier_generate — "
+    "suppresses the API tool surface while persona identity is still injected "
+    "by frontier_generate upstream; (b) pass mcp=False — same API effect."
+)
+
+
+def check_boot_provider_compatibility(
+    *,
+    agent: str | None,
+    model: str,
+    provider: str,
+    mcp_enabled: bool,
+    opt_tools: Any,
+    execution_id: str,
+    publish: Callable[[object], None],
+) -> None:
+    """Reject xAI multi-agent team-boot dispatches that would silently coerce tools=[].
+
+    xAI multi-agent models (model ID contains "multi-agent") reject client-side
+    MCP function tools. When ``agent`` is set and ``mcp_enabled=True``,
+    ``resolve_dispatch_tool_set`` would return ``tools=[]`` silently (Case 2,
+    xAI branch) while the caller expects a tool-capable dispatch. This raises a
+    structured ``BootProviderMismatchError`` instead.
+
+    Non-multi-agent xAI models (e.g. grok-4.3, grok-4.20-reasoning) support
+    standard function calling and are not gated.
+
+    Skipped when:
+    - ``isinstance(opt_tools, list)`` — caller-supplied explicit tool list
+      routes to Case 1 in ``resolve_dispatch_tool_set``; API surface is deliberate
+    - ``agent is None`` — no persona dispatch, no multi-agent constraint
+    - ``not mcp_enabled`` — caller already suppressed the API tool surface
+    - model ID does not contain "multi-agent" — non-multi-agent xAI model
+
+    Emits ``pipeline.frontier.dispatch.boot.mismatch`` and raises
+    ``BootProviderMismatchError`` on violation.
+    """
+    if isinstance(opt_tools, list) or agent is None or not mcp_enabled:
+        return
+    if provider != "xai" or _XAI_MULTI_AGENT_SUBSTRING not in model:
+        return
+    reason = _XAI_MULTI_AGENT_BOOT_MISMATCH_REASON
+    publish(
+        PipelineFrontierDispatchBootMismatch(
+            execution_id=execution_id,
+            agent=agent,
+            provider=provider,
+            boot_mode="team",
+            reason=reason,
+        )
+    )
+    raise BootProviderMismatchError(
+        agent=agent,
+        provider=provider,
+        boot_mode="team",
+        reason=reason,
+    )
 
 
 def reject_unknown_runtime_options(

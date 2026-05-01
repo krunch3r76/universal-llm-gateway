@@ -1763,6 +1763,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.frontier.dispatch.completed` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `reasoning_present`, `prompt_tokens`, `completion_tokens`, `provider` | native-endpoint loop returned terminal content (node-scoped) |
 | `pipeline.frontier.dispatch.exhausted` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `provider` | native-endpoint loop hit `max_tool_turns` without terminal content (node-scoped) |
 | `pipeline.frontier.dispatch.mismatch` | `execution_id`, `agent`, `requested_model`, `valid_family`, `mismatch_kind` | Emitted when `frontier_dispatch_v1` rejects an agent + model combination. `mismatch_kind="provider"` — model's provider doesn't match the agent's identity-bound provider family (e.g. oppie + anthropic model); suggests typo or wrong family. `mismatch_kind="variant"` — provider matches but model fails the agent's variant requirement (e.g. oppie + non-multi-agent xAI model); suggests stale model pin or missing beta-gate access. Precedes `pipeline_execution_failed` with `code=agent_model_mismatch`. (node-scoped) |
+| `pipeline.frontier.dispatch.boot.mismatch` | `execution_id`, `agent`, `provider`, `boot_mode`, `reason` | Emitted when `frontier_dispatch_v1` rejects a (provider, boot_mode) pair that would advertise a client-side MCP tool surface the provider cannot execute — the "hydration paradox". Structural case: `provider='xai'` + `boot_mode='team'` (agent set, `mcp_enabled=True`) — xAI multi-agent models reject client-side function tools, but the assembled system prompt includes `CORTEX_TOOL_QUICKREF`. Fix: pass `tools=[]` explicitly via `frontier_generate`, or `mcp=False`. Precedes `pipeline_execution_failed` with `code=boot_provider_mismatch`. (node-scoped) |
 | `pipeline.frontier.dispatch.remotemcp.enabled` | `execution_id`, `agent` (nullable), `model`, `provider` | remote-MCP path selected for this execution; adapter attached provider-native MCP descriptor before the native call; implies client-side tool loop disabled (node-scoped) |
 | `pipeline.frontier.dispatch.remotemcp.misconfigured` | `execution_id`, `agent` (nullable), `model`, `reason` | `resolve_mcp_env()` raised because `MCP_PUBLIC_URL`/`MCP_AUTH_TOKEN` is unset in the Stargate container env; precedes `pipeline_execution_failed` (node-scoped) |
 | `pipeline.frontier.dispatch.remotemcp.unsupported` | `execution_id`, `agent` (nullable), `model`, `provider`, `requested`, `reason` | Step handler rejected `remote_mcp=True` as structurally unsupported. Fires when (a) `mcp=False` (remote_mcp requires client-side mcp tooling to be enabled) or (b) provider is not anthropic (remote MCP via server-side `mcp_toolset` is anthropic-only). Precedes `pipeline_execution_failed` carrying `code=remote_mcp_unsupported` (node-scoped) |
@@ -2244,7 +2245,27 @@ lands. Any non-zero activation indicates the ordering bug is still reachable
 scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal = 'relay.socket.recovery' ORDER BY seq DESC LIMIT 20"
 ```
 
-## Event Service Self-Health Signals
+## Fleet Operation Signals
+
+Emitted by `scripts/model_manager/observation_event.py` during fleet-wide
+service lifecycle operations (stop/start sequences initiated via the manage
+API or TUI). Source: `manage`. Role: `observation`. Scope: `node`.
+
+| Signal | Payload | Description |
+|---|---|---|
+| `fleet.service.step` | `phase`, `service`, `success`, `duration_s` | Per-service timing for each stop/start step within a fleet operation. Emitted after every individual service operation so bottlenecks can be identified by querying grouped by `service`. (NDJSON-direct via events ingest socket — bypasses event_factory) |
+
+### Payload keys
+
+- `fleet.service.step`: `phase` (str, e.g. `stop` / `start`), `service` (str, service name), `success` (bool), `duration_s` (float, rounded to 3 decimal places)
+
+### Query example
+
+```bash
+scripts/query-events --sql "SELECT json_extract(payload,'$.service') svc, AVG(json_extract(payload,'$.duration_s')) avg_s FROM events WHERE signal='fleet.service.step' GROUP BY svc ORDER BY avg_s DESC"
+```
+
+
 
 The event service emits its own lifecycle and error signals via the same
 event bus. These are routed to the `events` table like all other events.

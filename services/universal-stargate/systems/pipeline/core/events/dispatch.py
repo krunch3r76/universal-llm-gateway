@@ -605,6 +605,49 @@ def PipelineFrontierDispatchTerminationShadow(  # noqa: N802
 
 
 @event_factory
+def PipelineFrontierDispatchBootMismatch(  # noqa: N802
+    execution_id: str,
+    agent: str,
+    provider: str,
+    boot_mode: str,
+    reason: str,
+) -> Event:
+    """Emitted when the step handler rejects a (provider, boot_mode) pair that
+    would cause a silent runtime tool-surface contract violation.
+
+    Structural case: ``provider='xai'`` + ``boot_mode='team'`` (agent set,
+    ``mcp_enabled=True``) — xAI multi-agent models reject client-side function
+    tools; ``resolve_dispatch_tool_set`` would silently return ``tools=[]``
+    while the caller expected a tool-capable dispatch.
+
+    This is a contract-enforcement gate fired before hydration. The prompt
+    layer (``build_subagent_preamble`` + ``CORTEX_TOOL_QUICKREF``) is not
+    affected by this check — prompt-layer suppression is a separate follow-up.
+
+    Precedes the terminal ``pipeline_execution_failed`` carrying
+    ``code=boot_provider_mismatch``.
+
+    Payload:
+        execution_id: Pipeline execution UUID
+        agent: Agent slug (e.g. ``oppie``, ``orion``)
+        provider: Effective provider (``xai``, ``openai``, etc.)
+        boot_mode: Boot level that caused the violation (``team``)
+        reason: Human-readable explanation including fix guidance
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.boot.mismatch",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "provider": provider,
+            "boot_mode": boot_mode,
+            "reason": reason,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
     execution_id: str,
     agent: str,

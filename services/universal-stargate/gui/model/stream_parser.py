@@ -5,9 +5,9 @@ Specialized parser for Server-Sent Events (SSE) and streaming responses
 from the universal_stargate monitoring system.
 """
 
-import json
 from typing import Any
 
+from sse.core import parse_sse_message
 from universal_logging import get_logger
 
 from .data_structures import ParsedResponse
@@ -116,40 +116,29 @@ class StreamParser:
 
         for chunk in sse_chunks:
             try:
-                # SSE chunks typically start with "data: "
                 if chunk.startswith("data: "):
-                    data_part = chunk[6:]  # Remove "data: " prefix
+                    try:
+                        msg = parse_sse_message(chunk)
+                    except ValueError:
+                        parsed_chunks.append(chunk)
+                        continue
 
-                    if data_part.strip() == "[DONE]":
+                    if msg.data == "[DONE]":
                         parsed_chunks.append("[DONE]")
+                    elif isinstance(msg.data, dict):
+                        chunk_data = msg.data
+                        if "choices" in chunk_data and chunk_data["choices"]:
+                            choice = chunk_data["choices"][0]
+                            if "delta" in choice and "content" in choice["delta"]:
+                                content = choice["delta"]["content"]
+                                if content:
+                                    parsed_chunks.append(content)
+                            # finish chunk or delta without content — skip silently
+                        else:
+                            parsed_chunks.append(str(msg.data))
                     else:
-                        # Try to parse as JSON
-                        try:
-                            chunk_data = json.loads(data_part)
-                            # Extract content if it's a chat completion chunk
-                            if "choices" in chunk_data and chunk_data["choices"]:
-                                choice = chunk_data["choices"][0]
-                                if "delta" in choice and "content" in choice["delta"]:
-                                    content = choice["delta"]["content"]
-                                    # Only add content if it's not empty
-                                    if content:
-                                        parsed_chunks.append(content)
-                                else:
-                                    # Delta without content - check if it's a finish chunk
-                                    if choice.get("finish_reason"):
-                                        # This is a finish chunk, don't add anything
-                                        pass
-                                    else:
-                                        # Other delta without content - skip silently
-                                        pass
-                            else:
-                                # Add the whole chunk if we can't extract content
-                                parsed_chunks.append(json.dumps(chunk_data, indent=2))
-                        except json.JSONDecodeError:
-                            # Not JSON, add as-is
-                            parsed_chunks.append(data_part)
+                        parsed_chunks.append(str(msg.data))
                 else:
-                    # Not an SSE chunk, add as-is
                     parsed_chunks.append(chunk)
 
             except Exception as e:
@@ -169,39 +158,28 @@ class StreamParser:
             Parsed chunk content
         """
         try:
-            # SSE chunks typically start with "data: "
             if chunk.startswith("data: "):
-                data_part = chunk[6:]  # Remove "data: " prefix
+                try:
+                    msg = parse_sse_message(chunk)
+                except ValueError:
+                    return chunk
 
-                if data_part.strip() == "[DONE]":
+                if msg.data == "[DONE]":
                     return "[DONE]"
+                elif isinstance(msg.data, dict):
+                    chunk_data = msg.data
+                    if "choices" in chunk_data and chunk_data["choices"]:
+                        choice = chunk_data["choices"][0]
+                        if "delta" in choice and "content" in choice["delta"]:
+                            content = choice["delta"]["content"]
+                            return content if content else ""
+                        # finish chunk or delta without content
+                        return ""
+                    else:
+                        return str(msg.data)
                 else:
-                    # Try to parse as JSON
-                    try:
-                        chunk_data = json.loads(data_part)
-                        # Extract content if it's a chat completion chunk
-                        if "choices" in chunk_data and chunk_data["choices"]:
-                            choice = chunk_data["choices"][0]
-                            if "delta" in choice and "content" in choice["delta"]:
-                                content = choice["delta"]["content"]
-                                # Only return content if it's not empty
-                                return content if content else ""
-                            else:
-                                # Delta without content - check if it's a finish chunk
-                                if choice.get("finish_reason"):
-                                    # This is a finish chunk, return empty string
-                                    return ""
-                                else:
-                                    # Other delta without content - return empty string
-                                    return ""
-                        else:
-                            # Add the whole chunk if we can't extract content
-                            return json.dumps(chunk_data, indent=2)
-                    except json.JSONDecodeError:
-                        # Not JSON, add as-is
-                        return data_part
+                    return str(msg.data)
             else:
-                # Not an SSE chunk, add as-is
                 return chunk
 
         except Exception as e:
