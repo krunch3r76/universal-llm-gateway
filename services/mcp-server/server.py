@@ -171,7 +171,8 @@ _PRIMARY_TOOLS: set[str] = {
     "email",
     "claudeburst",
     "bot_supervisor",
-    # Frontier consult (cortex-driven personas)
+    # Frontier consult — persona-aware and persona-free surfaces
+    "team_generate",
     "frontier_generate",
 }
 
@@ -678,6 +679,11 @@ def _build_server() -> FastMCP:
         overflow_count,
         private_count,
     )
+    if overflow_registry:
+        logger.info(
+            "Overflow tools (not in _PRIMARY_TOOLS — add to promote): %s",
+            sorted(overflow_registry),
+        )
     return mcp
 
 

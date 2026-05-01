@@ -76,4 +76,18 @@ AGENT_REGISTRY: dict[str, dict[str, object]] = {
         "allowed_options": None,
         "persona_seed_ref": "agent-identity/cursor-claude-birth.md",
     },
+    # cursor_grok is the Cursor-resident worker (xAI Grok family). Not a persona.
+    # default_model is notional — Cursor selects the active model from its own UI.
+    "cursor-grok": {
+        "name": "cursor_grok",
+        "provider": "xAI",
+        "frontier_kind": "xai",
+        "default_model": "xai/grok-4.20-multi-agent-0309",
+        "allowed_models": [
+            "xai/grok-4.20-multi-agent-0309",
+        ],
+        "tools": None,
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/cursor-grok-birth.md",
+    },
 }
