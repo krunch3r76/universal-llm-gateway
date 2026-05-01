@@ -44,6 +44,7 @@ _AGENT_VALID_FAMILIES: dict[str, list[str]] = {
     "api_claude": [
         "anthropic/claude-sonnet-4-6",
         "anthropic/claude-opus-4",
+        "anthropic/claude-opus-4-7",
         "anthropic/claude-3-5-sonnet",
     ],
 }

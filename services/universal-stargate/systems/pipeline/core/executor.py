@@ -133,6 +133,12 @@ class PipelineExecutionOutcome:
     # upstream — structured blocks or a flat string. Consumers can stringify;
     # they cannot un-flatten.
     reasoning: Any = None
+    # Structured anomaly/advisory hints extracted from the terminal output
+    # step's ``StepOutput.json["hints"]`` (e.g. ``output_short`` from
+    # frontier dispatch). Threaded into ``PipelineExecutionResult.hints`` so
+    # async pollers and bus subscribers can triage silent failures without
+    # consulting the event service. ``None`` when no hints were produced.
+    hints: list[dict[str, Any]] | None = None
 
 
 def _normalize_pipeline_exception(
@@ -690,6 +696,10 @@ class PipelineExecutor:
             f"duration={duration:.2f}s, steps={len(pipeline_context.outputs)}"
         )
 
+        hints = self._extract_output_hints(
+            pipeline, pipeline_context, prepared.output_aliases
+        )
+
         return PipelineExecutionOutcome(
             execution_id=pipeline_context.execution_id,
             content=final_result,
@@ -707,6 +717,7 @@ class PipelineExecutor:
             backtranslation=backtranslation_data,
             execution_order=list(dag_executor.execution_order),
             reasoning=reasoning,
+            hints=hints,
         )
 
     def _build_chat_completion_response(
@@ -774,6 +785,7 @@ class PipelineExecutor:
                 usage=outcome.usage,
                 duration_s=outcome.duration_s,
                 reasoning=outcome.reasoning,
+                hints=outcome.hints,
             )
         except asyncio.CancelledError:
             tracker.fail_execution(
@@ -816,6 +828,33 @@ class PipelineExecutor:
                 expanded.append(item)
 
         return expanded
+
+    def _extract_output_hints(
+        self,
+        pipeline: PipelineSpec,
+        context: PipelineContext,
+        output_aliases: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]] | None:
+        """Extract structured anomaly hints from the terminal output step's JSON.
+
+        Mirrors ``_get_final_result``'s alias-resolution logic so sub-pipeline
+        output references (e.g. ``synthesize`` → ``synthesize__review_synthesis``)
+        surface hints from the resolved terminal step rather than missing the
+        parent-name lookup. Hints only apply to single ``StepOutput`` terminals;
+        map-collection terminals and unresolved references return ``None``.
+        """
+        output_ref = pipeline.output
+        if output_aliases and output_ref in output_aliases:
+            output_ref = output_aliases[output_ref]
+        output = context.get_output(output_ref)
+        if not isinstance(output, StepOutput):
+            return None
+        if not isinstance(output.json, dict):
+            return None
+        hints = output.json.get("hints")
+        if isinstance(hints, list):
+            return hints
+        return None
 
     def _get_final_result(
         self,

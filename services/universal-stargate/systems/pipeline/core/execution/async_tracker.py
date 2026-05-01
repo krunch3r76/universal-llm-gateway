@@ -86,6 +86,11 @@ class PipelineExecutionResult:
     # etc.). Shape preserved from upstream — structured blocks or a flat
     # string. ``None`` when the pipeline produced no reasoning trace.
     reasoning: Any = None
+    # Structured anomaly/advisory hints from the dispatch step. Populated when
+    # detectors fire (e.g. output_short on provider degradation) so polling
+    # callers can triage silent failures without consulting the event service.
+    # Each entry has at minimum ``type`` and ``reason`` keys.
+    hints: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True, kw_only=True)
@@ -139,6 +144,7 @@ class PipelineExecutionRecord:
                 "usage": self.result.usage,
                 "duration_s": self.result.duration_s,
                 "reasoning": self.result.reasoning,
+                "hints": self.result.hints or [],
             }
         error_payload: dict[str, Any] | None = None
         if self.error is not None:
@@ -383,6 +389,7 @@ class PipelineExecutionTracker:
         usage: dict[str, Any] | None,
         duration_s: float,
         reasoning: Any = None,
+        hints: list[dict[str, Any]] | None = None,
     ) -> None:
         """Record success terminal state (idempotent)."""
         record = self.records.get(execution_id)
@@ -401,6 +408,7 @@ class PipelineExecutionTracker:
             usage=usage,
             duration_s=duration_s,
             reasoning=reasoning,
+            hints=hints,
         )
         record.terminal_event.set()
         self._emit(

@@ -225,6 +225,39 @@ def PipelineFrontierDispatchHydrated(  # noqa: N802
 
 
 @event_factory
+def PipelineFrontierDispatchToolRequested(  # noqa: N802
+    agent: str | None,
+    execution_id: str,
+    tool_name: str,
+    provider: str,
+    tool_call_id: str | None = None,
+) -> Event:
+    """Emitted when the model begins generating a tool_use block.
+
+    Fires at the streaming event that announces a tool call — BEFORE the tool
+    executes. Distinct from ``pipeline.frontier.dispatch.tool.called`` which
+    emits after execution.
+
+    ``tool_call_id`` correlates this event with the subsequent
+    ``pipeline.frontier.dispatch.tool.called`` / ``...tool.failed`` events that
+    carry the same id from the native-loop result.  Anthropic exposes it as
+    ``content_block.id``; OpenAI/xAI expose it as ``item.id``;
+    Google has no native id and emits ``None``.
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.tool.requested",
+        payload={
+            "agent": agent,
+            "execution_id": execution_id,
+            "tool_name": tool_name,
+            "provider": provider,
+            "tool_call_id": tool_call_id,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def PipelineFrontierDispatchToolCalled(  # noqa: N802
     agent: str | None,
     execution_id: str,

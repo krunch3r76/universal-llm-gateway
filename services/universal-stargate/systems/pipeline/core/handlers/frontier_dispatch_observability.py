@@ -13,6 +13,11 @@ The handler calls this unconditionally after the native loop returns on both
 exhausted and completed paths; persona-free dispatches pass
 ``boot_level="none"`` and short-circuit inside the detectors, which own
 boot-level gating.
+
+Return value: list of anomaly hint dicts to be merged into the handler's
+``hints`` list and surfaced in the poll-result JSON. Each dict has at minimum
+``type`` (e.g. ``"output_short"``) and ``reason`` fields so callers can
+triage silent failures without consulting the event service.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from frontier_observability import (
     TerminationShadowDetector,
     detect_output_short,
 )
+from frontier_observability.output_short import SHORT_OUTPUT_TOKEN_THRESHOLD
 
 from ..events.dispatch import (
     PipelineFrontierDispatchOutputShort,
@@ -46,17 +52,22 @@ def emit_post_loop_observability(
     boot_level: str,
     model: str,
     result: NativeLoopResult,
-) -> None:
-    """Fire the Phase-1 hoisted observability signals.
+) -> list[dict[str, Any]]:
+    """Fire the Phase-1 hoisted observability signals; return anomaly hints.
 
     Called on both exhausted and completed branches; both detectors gate
     internally on ``boot_level ∈ {team, full}`` and (for termination
     shadow) ``provider = google``. Persona-free dispatches land here with
     ``boot_level='none'`` and short-circuit inside the detectors — no
     handler-side agent check needed.
+
+    Returns a (possibly empty) list of anomaly hint dicts suitable for
+    inclusion in ``output.json["hints"]`` so polling callers can detect
+    silent failures without consulting the event service.
     """
     output_tokens = int(result.usage.get("output_tokens", 0))
-    _emit_output_short(
+    anomaly_hints: list[dict[str, Any]] = []
+    short_hint = _emit_output_short(
         publish=publish,
         execution_id=context.execution_id,
         agent=agent,
@@ -69,6 +80,8 @@ def emit_post_loop_observability(
         block_reason=result.block_reason,
         content=result.content,
     )
+    if short_hint is not None:
+        anomaly_hints.append(short_hint)
     _emit_termination_shadow(
         publish=publish,
         execution_id=context.execution_id,
@@ -82,6 +95,7 @@ def emit_post_loop_observability(
         reasoning=result.reasoning,
         content=result.content,
     )
+    return anomaly_hints
 
 
 def _emit_output_short(
@@ -97,7 +111,8 @@ def _emit_output_short(
     finish_reason: str | None,
     block_reason: str | None,
     content: str | None,
-) -> None:
+) -> dict[str, Any] | None:
+    """Emit the output.short event and return a hint dict, or None if no anomaly."""
     payload = detect_output_short(
         boot_level=boot_level,
         output_tokens=output_tokens,
@@ -107,7 +122,7 @@ def _emit_output_short(
         content=content,
     )
     if payload is None:
-        return
+        return None
     publish(
         PipelineFrontierDispatchOutputShort(
             agent=agent,
@@ -122,6 +137,23 @@ def _emit_output_short(
             content_preview=payload.content_preview,
         )
     )
+    return {
+        "type": "output_short",
+        "output_tokens": payload.output_tokens,
+        "tool_calls_made": payload.tool_calls_made,
+        "finish_reason": payload.finish_reason,
+        "block_reason": payload.block_reason,
+        "provider": provider,
+        "reason": (
+            f"dispatch completed with {payload.output_tokens} output tokens "
+            f"(threshold: {SHORT_OUTPUT_TOKEN_THRESHOLD}); provider={provider!r} "
+            "may be degraded — retry with a different provider or inspect "
+            "pipeline-trace for details"
+        ),
+        "suggestion": (
+            "retry with an Anthropic model or another available provider"
+        ),
+    }
 
 
 def _emit_termination_shadow(
@@ -138,6 +170,11 @@ def _emit_termination_shadow(
     reasoning: Any,
     content: str | None,
 ) -> None:
+    # Intentionally returns None — termination.shadow signals are under calibration
+    # (see docs/event-contracts.md §Pipeline Events). They are emitted as events for
+    # monitoring but not surfaced as hints because the detector thresholds and scoring
+    # weights are not production-stable. Promote to a hint (like _emit_output_short)
+    # once the shadow calibration window closes.
     payload = _TERMINATION_DETECTOR.detect(
         provider=provider,
         boot_level=boot_level,

@@ -197,6 +197,28 @@ async def test_max_tool_turns_omitted_does_not_set_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_timeout_seconds_propagates_as_top_level_dispatch_key() -> None:
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5.4-mini",
+        timeout_seconds=14_400,
+    )
+    body = await build_dispatch_body(req)
+    assert body["timeout_seconds"] == 14_400
+    assert "timeout_seconds" not in body["pipeline_options"]
+
+
+@pytest.mark.asyncio
+async def test_timeout_seconds_omitted_does_not_set_key() -> None:
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5.4-mini",
+    )
+    body = await build_dispatch_body(req)
+    assert "timeout_seconds" not in body
+
+
+@pytest.mark.asyncio
 async def test_rejects_chat_completions_only_model_exact() -> None:
     """Exact frozenset entry rejected before dispatch."""
     req = FrontierGenerateRequest(

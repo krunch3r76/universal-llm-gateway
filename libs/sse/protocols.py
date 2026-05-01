@@ -107,9 +107,9 @@ class SSEReducer[State](Protocol):
     discipline that the protocol cannot enforce.
 
     Implementations:
-        - libs/llm_adapters/streaming/anthropic.py (Phase: out-of-scope step 5)
-        - libs/llm_adapters/streaming/openai.py    (out-of-scope step 8)
-        - libs/llm_adapters/streaming/google.py    (out-of-scope step 8)
+        - libs/llm_adapters/streaming/anthropic.py
+        - libs/llm_adapters/streaming/openai.py
+        - libs/llm_adapters/streaming/google.py
 
     Methods:
         initial_state: Return the starting state. Called once per stream.

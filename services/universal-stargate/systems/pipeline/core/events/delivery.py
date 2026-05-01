@@ -84,3 +84,47 @@ def PipelineDispatchDeliverySkipped(  # noqa: N802
             "reason": reason,
         },
     )
+
+
+@event_factory
+def PipelineDispatchDeliveryCloseFailed(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    thread: str,
+    status_code: int,
+    error_preview: str,
+) -> Event:
+    """Emitted when ephemeral thread close failed after a successful delivery.
+
+    Delivery itself succeeded (``pipeline.dispatch.delivery.sent`` was already
+    emitted).  This event signals only cleanup failure — the tracker record
+    and the delivery POST are both unaffected.  Alerts on this signal surface
+    orphaned threads without false-positiving on delivery failures.
+    """
+    return Event(
+        signal="pipeline.dispatch.delivery.close.failed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "thread": thread,
+            "status_code": status_code,
+            "error_preview": error_preview,
+        },
+    )
+
+
+@event_factory
+def AgentBusThreadClosedEphemeral(  # noqa: N802
+    thread: str,
+) -> Event:
+    """Emitted from Stargate when ephemeral delivery cleanup closes a thread.
+
+    Uses the shared ``mcp.agentbus.thread.closed`` signal so event queries
+    pick it up alongside manual closes.  ``via=ephemeral_delivery``
+    distinguishes automated cleanup from ``via=reply`` (reply-with-close)
+    and ``via=manual`` (explicit close calls).
+    """
+    return Event(
+        signal="mcp.agentbus.thread.closed",
+        payload={"thread": thread, "via": "ephemeral_delivery"},
+    )

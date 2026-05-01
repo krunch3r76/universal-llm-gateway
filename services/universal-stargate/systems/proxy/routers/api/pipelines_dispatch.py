@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
@@ -101,6 +101,12 @@ class ResultDeliveryConfig(BaseModel):
     # Attachment metadata forwarded verbatim to the agent-bus turn POST body.
     # Each dict must satisfy the AttachmentCreate schema (filename, path, …).
     bus_attachments: list[dict[str, Any]] | None = None
+    # Thread post-delivery disposition.  ``ephemeral`` closes the bus thread
+    # automatically after a successful delivery POST, using an auto-generated
+    # summary derived from the record's terminal state.  ``persistent`` (default)
+    # leaves the thread open — correct for cross-agent handoff and async-by-design
+    # workflows where another agent will read the thread independently.
+    bus_lifecycle: Literal["persistent", "ephemeral"] = "persistent"
 
 
 class DispatchRequest(BaseModel):

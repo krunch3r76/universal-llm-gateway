@@ -7,9 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from agent_seat import TOOL_REGISTRY, AgentMeta, assemble_system_prompt, hydrate_agent
-from universal_logging import get_logger
-
+from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
 from .events import (
     FrontierEndpointPersonaResolved,
     FrontierEndpointRejected,
@@ -18,7 +16,6 @@ from .events import (
 
 _PIPELINE_ID = "frontier-dispatch"
 EventPublisher = Callable[[Any], None]
-logger = get_logger(__name__)
 
 # Models that only support the Chat Completions API and are unavailable on the
 # OpenAI Responses API path used by frontier_generate. Callers must use
@@ -54,6 +51,7 @@ class FrontierGenerateRequest:
     remote_mcp: bool | None = None
     result_delivery: dict[str, Any] | None = None
     caller_agent: str | None = None
+    timeout_seconds: int | None = None
 
 
 @dataclass(slots=True)
@@ -258,12 +256,15 @@ async def build_dispatch_body(
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
     if "max_tool_turns" in generation_options:
         # max_tool_turns is a dispatch-control param routed at the top level of
-        # pipeline_options — placing it inside generation_options is a misuse
-        # that silently has no effect. Callers must use the typed top-level param.
-        logger.warning(
-            "frontier_generate: 'max_tool_turns' inside generation_options is "
-            "ignored — use the typed top-level parameter instead. request_id=%s",
-            request_id,
+        # pipeline_options — placing it inside generation_options has no effect.
+        # Hard-reject so the misuse surfaces as a 4xx rather than a silent no-op.
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="generation_options.max_tool_turns",
+            reason=(
+                "'max_tool_turns' inside generation_options is not supported — "
+                "use the typed top-level parameter instead"
+            ),
         )
     _enforce_options(
         request_id=request_id,
@@ -306,6 +307,8 @@ async def build_dispatch_body(
         "messages": req.messages,
         "pipeline_options": pipeline_options,
     }
+    if req.timeout_seconds is not None:
+        body["timeout_seconds"] = req.timeout_seconds
     if req.result_delivery is not None:
         body["result_delivery"] = req.result_delivery
     if req.caller_agent:

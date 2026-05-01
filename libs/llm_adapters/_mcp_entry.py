@@ -20,8 +20,23 @@ from __future__ import annotations
 import os
 
 
+class RemoteMcpEnvMissingError(RuntimeError):
+    """Raised by ``resolve_mcp_env`` when MCP_PUBLIC_URL or MCP_AUTH_TOKEN is unset.
+
+    Using a typed exception instead of a bare RuntimeError lets callers catch
+    this specific misconfiguration without string-matching the message.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        super().__init__(
+            "remote_mcp requested but MCP_PUBLIC_URL/MCP_AUTH_TOKEN not "
+            f"configured (missing: {', '.join(missing)})"
+        )
+        self.missing = missing
+
+
 def resolve_mcp_env() -> tuple[str, str]:
-    """Return (MCP_PUBLIC_URL, MCP_AUTH_TOKEN) or raise RuntimeError.
+    """Return (MCP_PUBLIC_URL, MCP_AUTH_TOKEN) or raise RemoteMcpEnvMissingError.
 
     Both env vars MUST be set for remote MCP to work. The cloud-proxy
     container gets them via its yaml config; the Stargate container gets
@@ -35,10 +50,7 @@ def resolve_mcp_env() -> tuple[str, str]:
             missing.append("MCP_PUBLIC_URL")
         if not token:
             missing.append("MCP_AUTH_TOKEN")
-        raise RuntimeError(
-            "remote_mcp requested but MCP_PUBLIC_URL/MCP_AUTH_TOKEN not "
-            f"configured (missing: {', '.join(missing)})"
-        )
+        raise RemoteMcpEnvMissingError(missing)
     return url, token
 
 

@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -39,6 +39,7 @@ class FrontierGenerateBody(BaseModel):
     remote_mcp: bool | None = None
     result_delivery: dict[str, Any] | None = None
     caller_agent: str | None = None
+    timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
 
 
 @router.post("/generate", status_code=202)
@@ -60,6 +61,7 @@ async def frontier_generate(
         remote_mcp=body.remote_mcp,
         result_delivery=body.result_delivery,
         caller_agent=body.caller_agent,
+        timeout_seconds=body.timeout_seconds,
     )
     try:
         from systems.proxy.dependencies import get_proxy

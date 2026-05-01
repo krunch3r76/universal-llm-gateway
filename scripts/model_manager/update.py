@@ -170,21 +170,40 @@ def restart_local_edge(node_id: str = "localhost") -> int:
         print(f"ERROR: Compose file not found: {_COMPOSE_PATH}", file=sys.stderr)
         return 1
 
+    node_env_path = ensure_node_env(_ROOT, node_id)
+    node_env = load_env_file(node_env_path)
+    model_path = Path(node_env.get("MODEL_PATH", str(Path.home() / ".models")))
+    env = build_service_env(_ROOT, node_env_path)
+    env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+
+    # Stop before claiming bind-mount sources (same race as relay.py Fix 1).
+    subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(_COMPOSE_PATH),
+            "-p",
+            f"edge-{node_id}",
+            "down",
+            "--timeout",
+            "10",
+        ],
+        cwd=str(_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
     socket_error = ensure_socket_dir()
     if socket_error:
         print(f"ERROR: {socket_error}", file=sys.stderr)
         return 1
 
-    node_env_path = ensure_node_env(_ROOT, node_id)
-    node_env = load_env_file(node_env_path)
-    model_path = Path(node_env.get("MODEL_PATH", str(Path.home() / ".models")))
     ownership_error = ensure_bind_mount_dirs(_ROOT, node_id, model_path)
     if ownership_error:
         print(f"ERROR: {ownership_error}", file=sys.stderr)
         return 1
-
-    env = build_service_env(_ROOT, node_env_path)
-    env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
 
     print("\nRestarting edge container...")
     code = _run_with_registry(

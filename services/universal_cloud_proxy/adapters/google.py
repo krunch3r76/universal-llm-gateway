@@ -198,9 +198,11 @@ class GoogleAdapter:
         Gemini's native API expects the model in the URL path, not the
         request body.  Our passthrough convention keeps ``model`` in the
         body for routing; the adapter strips it before forwarding.
+        ``stream`` is also stripped — Gemini has no such field; streaming
+        is controlled by the URL (?alt=sse on streamGenerateContent).
         """
         model = str(request_body.get("model", ""))
-        body = {k: v for k, v in request_body.items() if k != "model"}
+        body = {k: v for k, v in request_body.items() if k not in ("model", "stream")}
         return model, body
 
     async def forward_native(self, request_body: dict[str, Any]) -> dict[str, Any]:
@@ -219,7 +221,16 @@ class GoogleAdapter:
         self,
         request_body: dict[str, Any],
     ) -> AsyncIterator[bytes]:
-        """Stream Gemini streamGenerateContent — SSE via ?alt=sse."""
+        """Stream Gemini streamGenerateContent — SSE via ?alt=sse.
+
+        Gemini's ?alt=sse endpoint emits W3C SSE frames with CRLF line
+        terminators. libs/sse/framing.iter_sse_events (the consumer in
+        frontier_dispatch) splits strictly on `\\n\\n`, so raw CRLF bytes
+        would cause the framer to buffer the whole response into a single
+        event. Normalize by reading line-by-line (aiter_lines strips
+        terminators) and rebuilding each event frame with `\\n\\n`, mirroring
+        the Phase 3.5 pattern in anthropic.py:forward_native_stream.
+        """
         model, body = self._extract_model(request_body)
         async with self._client.stream(
             "POST",
@@ -229,9 +240,18 @@ class GoogleAdapter:
         ) as response:
             if response.status_code >= 400:
                 await self._raise_provider_http_error(response)
-            async for chunk in response.aiter_raw():
-                if chunk:
-                    yield chunk
+            pending_lines: list[str] = []
+            async for line in response.aiter_lines():
+                if line == "":
+                    if pending_lines:
+                        frame = "\n".join(pending_lines) + "\n\n"
+                        yield frame.encode()
+                        pending_lines = []
+                    continue
+                pending_lines.append(line)
+            if pending_lines:
+                frame = "\n".join(pending_lines) + "\n\n"
+                yield frame.encode()
 
     # ── Unsupported surfaces ───────────────────────────────────────────────
 

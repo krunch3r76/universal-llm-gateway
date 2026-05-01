@@ -57,88 +57,8 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 #   list → strict whitelist enforced at the endpoint.
 # ────────────────────────────────────────────────────────────────────────────
 
-AGENT_REGISTRY: dict[str, dict[str, object]] = {
-    "orion": {
-        "name": "Orion",
-        "provider": "OpenAI",
-        "frontier_kind": "openai",
-        "default_model": "openai/gpt-5.4",
-        "allowed_models": [
-            "openai/gpt-5.4",
-            "openai/gpt-5.4-mini",
-            "openai/o4-mini",
-            "openai/o3",
-        ],
-        "tools": None,
-        "allowed_options": None,
-        "persona_seed_ref": "agent-identity/orion-birth.md",
-    },
-    "oppie": {
-        "name": "Oppie",
-        "provider": "xAI",
-        "frontier_kind": "xai",
-        "default_model": "xai/grok-4.20-multi-agent-0309",
-        "allowed_models": ["xai/grok-4.20-multi-agent-0309"],
-        "tools": None,
-        "allowed_options": None,
-        "persona_seed_ref": "notes/system/prompts/oppie-seed-mcp-v1.5.md",
-    },
-    "bard": {
-        "name": "Bard",
-        "provider": "Google",
-        "frontier_kind": "google",
-        "default_model": "google/gemini-2.5-pro",
-        "allowed_models": [
-            "google/gemini-2.5-pro",
-            "google/gemini-2.5-flash",
-            "google/gemini-3-flash-preview",
-            "google/gemini-3.1-pro-preview",
-        ],
-        "tools": None,
-        "allowed_options": None,
-        "persona_seed_ref": "agent-identity/bard-birth.md",
-    },
-    "web-claude": {
-        "name": "Web Claude",
-        "provider": "Anthropic",
-        "frontier_kind": "anthropic",
-        # Web Claude is not API-reachable — no default_model / allowed_models.
-        "default_model": None,
-        "allowed_models": [],
-        "tools": None,
-        "allowed_options": None,
-        "persona_seed_ref": "agent-identity/web-claude-birth.md",
-    },
-    "api-claude": {
-        "name": "API Claude",
-        "provider": "Anthropic",
-        "frontier_kind": "anthropic",
-        "default_model": "anthropic/claude-sonnet-4-6",
-        "allowed_models": [
-            "anthropic/claude-sonnet-4-6",
-            "anthropic/claude-opus-4",
-            "anthropic/claude-3-5-sonnet",
-        ],
-        "tools": None,
-        "allowed_options": None,
-        "persona_seed_ref": "agent-identity/api-claude-birth.md",
-    },
-    "cursor-claude": {
-        "name": "Cursor Claude",
-        "provider": "Anthropic",
-        "frontier_kind": "anthropic",
-        "default_model": "anthropic/claude-sonnet-4-6",
-        "allowed_models": [
-            "anthropic/claude-sonnet-4-6",
-            "anthropic/claude-opus-4",
-        ],
-        "tools": None,
-        "allowed_options": None,
-        "persona_seed_ref": "agent-identity/cursor-claude-birth.md",
-    },
-}
+from sync_agent_identity_registry import AGENT_REGISTRY
 
-EDGE_TYPE = "derived_from"  # ai_agent:{slug} → prompt:{slug}-birth
 DEFAULT_SESSION_ID = "agent-identity-sync"
 DEFAULT_AGENT = "cursor-claude"
 

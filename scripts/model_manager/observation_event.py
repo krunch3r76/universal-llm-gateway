@@ -153,3 +153,53 @@ async def emit_fleet_relay_status(
             "duration_s": round(duration_s, 3),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Sync emitter (for non-async callers, e.g. service_config recovery path)
+# ---------------------------------------------------------------------------
+
+
+def _emit_sync(
+    signal: str,
+    payload: dict[str, Any],
+    *,
+    source: str = "manage",
+    role: str = "observation",
+    scope: str = "node",
+) -> None:
+    """Blocking UDS emit — mirrors _emit for sync callers. Silent on failure."""
+    import socket
+
+    now = datetime.now(UTC)
+    event: dict[str, Any] = {
+        "signal": signal,
+        "source": source,
+        "role": role,
+        "scope": scope,
+        "timestamp": now.isoformat(),
+        "ts_unix_ms": int(now.timestamp() * 1000),
+        "payload": payload,
+    }
+    line = (json.dumps(event, default=str) + "\n").encode()
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(2.0)
+            sock.connect(_EVENTS_SOCK)
+            sock.sendall(line)
+    except Exception:
+        logger.debug("observation_event sync emit failed for %s", signal, exc_info=True)
+
+
+def emit_relay_socket_recovery(
+    *, socket_dir: str, owner_uid: int, recovered: bool
+) -> None:
+    """Emitted each time _recover_root_owned_socket_dir activates.
+
+    Lets operators confirm this path trends to zero after Fix 1 lands.
+    Signal: relay.socket.recovery
+    """
+    _emit_sync(
+        "relay.socket.recovery",
+        {"socket_dir": socket_dir, "owner_uid": owner_uid, "recovered": recovered},
+    )

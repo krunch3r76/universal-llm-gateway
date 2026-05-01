@@ -12,6 +12,9 @@ Invariants:
   one of ``pipeline.dispatch.delivery.sent`` or ``.failed``.
 - ∀ delivery failure: tracker record is unchanged (no status flip, no
   error field mutation).
+- ∀ ephemeral delivery success: attempt thread close; close failure emits
+  ``pipeline.dispatch.delivery.close.failed`` but does NOT affect delivery
+  status or tracker record.
 - ¬retry: one-shot. Delivery is best-effort for "fire and forget"
   dispatchers; retry belongs on the dispatcher side.
 """
@@ -65,6 +68,8 @@ def _build_envelope(
     if result is not None:
         envelope["usage"] = result.usage
         envelope["duration_s"] = result.duration_s
+        if result.hints:
+            envelope["hints"] = result.hints
     if error is not None:
         envelope["error"] = {
             "code": error.code,
@@ -80,6 +85,48 @@ def _build_subject(record: PipelineExecutionRecord, override: str | None) -> str
     if override:
         return override
     return f"async-dispatch {record.pipeline} {record.status}"
+
+
+def _build_close_summary(record: PipelineExecutionRecord) -> str:
+    """Auto-generate a close summary from terminal record state.
+
+    Branches on status so cancelled/failed threads are not misread as
+    clean completions in the thread audit trail.
+    """
+    result = record.result
+    error = record.error
+    duration = result.duration_s if result is not None else None
+    if error is not None:
+        duration_str = f" after {duration:.1f}s" if duration is not None else ""
+        return f"{record.status} ({error.code}){duration_str}"
+    duration_str = f" in {duration:.1f}s" if duration is not None else ""
+    return f"{record.status}{duration_str}"
+
+
+async def _close_thread(
+    *,
+    url: str,
+    auth_token: str,
+    thread: str,
+    summary: str,
+) -> tuple[int, str]:
+    """PATCH /threads/{id}/close; return ``(status_code, response_text)``.
+
+    Never raises — wraps network errors into 599 so caller's emit stays
+    straight-line.
+    """
+    payload: dict[str, Any] = {"summary": summary, "mark_all_read": True}
+    try:
+        async with make_async_client(url, timeout=_HTTP_TIMEOUT_S) as client:
+            response = await client.patch(
+                f"/threads/{thread}/close",
+                headers={"Authorization": f"Bearer {auth_token}"},
+                json=payload,
+            )
+            return response.status_code, response.text
+    except httpx.HTTPError as exc:
+        logger.error("Agent-bus ephemeral close transport error: %s", exc)
+        return 599, f"transport_error: {exc}"
 
 
 async def _post_turn(
@@ -169,6 +216,38 @@ async def deliver_result(
                 from_agent=from_agent,
             ),
         )
+        if cfg.get("bus_lifecycle") == "ephemeral":
+            summary = _build_close_summary(record)
+            close_code, close_text = await _close_thread(
+                url=url,
+                auth_token=auth_token,
+                thread=thread,
+                summary=summary,
+            )
+            if 200 <= close_code < 300:
+                _emit(
+                    event_bus,
+                    _build_thread_closed_event(thread=thread),
+                )
+            else:
+                logger.error(
+                    "Ephemeral thread close failed: execution_id=%s thread=%s "
+                    "status=%d body=%s",
+                    record.execution_id,
+                    thread,
+                    close_code,
+                    close_text[:300],
+                )
+                _emit(
+                    event_bus,
+                    _build_close_failed_event(
+                        pipeline_id=record.pipeline,
+                        execution_id=record.execution_id,
+                        thread=thread,
+                        status_code=close_code,
+                        error_preview=close_text[:300],
+                    ),
+                )
         return
 
     logger.error(
@@ -244,4 +323,29 @@ def _build_skipped_event(*, pipeline_id: str, execution_id: str, reason: str) ->
         pipeline_id=pipeline_id,
         execution_id=execution_id,
         reason=reason,
+    )
+
+
+def _build_thread_closed_event(*, thread: str) -> Event:
+    from ..events.delivery import AgentBusThreadClosedEphemeral
+
+    return AgentBusThreadClosedEphemeral(thread=thread)
+
+
+def _build_close_failed_event(
+    *,
+    pipeline_id: str,
+    execution_id: str,
+    thread: str,
+    status_code: int,
+    error_preview: str,
+) -> Event:
+    from ..events.delivery import PipelineDispatchDeliveryCloseFailed
+
+    return PipelineDispatchDeliveryCloseFailed(
+        pipeline_id=pipeline_id,
+        execution_id=execution_id,
+        thread=thread,
+        status_code=status_code,
+        error_preview=error_preview,
     )

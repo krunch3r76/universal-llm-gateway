@@ -673,6 +673,47 @@ pipeline.started
   └─> pipeline.completed | pipeline.failed | pipeline.cancelled
 ```
 
+#### Execution Result Payload (`GET /api/v1/pipelines/executions/{id}`)
+
+```json
+{
+  "execution_id": "string",
+  "pipeline": "string",
+  "status": "completed | failed | cancelled | running",
+  "started_at": "ISO-8601",
+  "completed_at": "ISO-8601 | null",
+  "result": {
+    "content": "string",
+    "model": "string",
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 0,
+      "total_tokens": 0,
+      "reasoning_tokens": 0
+    },
+    "duration_s": 0.0,
+    "reasoning": "string | null",
+    "hints": []
+  },
+  "error": null
+}
+```
+
+**`result.hints`** is always present (possibly empty `[]`) so callers can safely
+test `len(result["hints"]) > 0` without checking key presence. `None` is never
+returned for `hints`; absence of hints is represented as `[]`.
+
+Each hint object has a `type` discriminator. Currently defined types:
+
+| `type` | Emitted when | Key fields |
+|---|---|---|
+| `output_short` | Dispatch completed with fewer output tokens than `SHORT_OUTPUT_TOKEN_THRESHOLD` (likely provider degradation) | `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `provider`, `reason`, `suggestion` |
+| `param_dropped` | A generation parameter was silently ignored by the adapter (unsupported model+param combination) | `param`, `value`, `reason` |
+
+The bus-delivery envelope (`result_delivery` turns on agent-bus) also includes
+`hints` when non-empty, as a peer to `usage` — degradation-aware subscribers
+do not need a second poll round-trip to `/api/v1/pipelines/executions/{id}`.
+
 ### Pipeline Lifecycle Contract
 
 **INVARIANT**: `pipeline.started` ⟹ (`pipeline.completed` ∨ `pipeline.failed` ∨ `pipeline.cancelled`)
@@ -1708,6 +1749,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent` | - | agent-bus turn posted successfully for a terminal dispatch record (node-scoped) |
 | `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | - | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
 | `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason` | - | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config}` (node-scoped) |
+| `pipeline.dispatch.delivery.close.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | - | ephemeral thread close failed after successful delivery; delivery itself is unaffected — alert on this without false-positiving on the delivery channel (node-scoped) |
 | `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | - | terminal dispatch record persisted to sqlite journal (node-scoped) |
 | `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | - | tracker miss served from sqlite journal fallback (node-scoped) |
 | `pipeline.dispatch.journal.pruned` | `records_deleted` | `oldest_deleted_age_seconds` | hourly retention prune summary for sqlite journal (node-scoped) |
@@ -1715,6 +1757,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `frontier.endpoint.persona.resolved` | `request_id`, `agent`, `allowed_models_count` | `frontier_kind`, `default_model`, `tools_count`, `allowed_options_count` | persona contract resolved from hydrated `ai_agent:{slug}` metadata (node-scoped) |
 | `frontier.endpoint.option.rejected` | `request_id`, `field`, `reason` | `agent` (nullable) | endpoint rejected request before dispatch admission; `field` ∈ {`model`, `tools`, `generation_options`} — covers persona violations (disallowed model/tools/options) and structural surface mismatches (Chat-Completions-only model on Responses API path) (node-scoped) |
 | `pipeline.frontier.dispatch.hydrated` | `agent`, `execution_id`, `briefing_bytes`, `section_counts`, `continuation_id` | `frontier_dispatch_v1` team-seat step loaded dispatched-agent Cortex boot; omitted in persona-free mode (node-scoped) |
+| `pipeline.frontier.dispatch.tool.requested` | `agent` (nullable), `execution_id`, `tool_name`, `provider`, `tool_call_id` (nullable) | fired when the model begins generating a `tool_use` block in the streaming response (`content_block_start`), before tool execution; `tool_call_id` correlates with subsequent `.tool.called`/`.tool.failed` events — Anthropic: `content_block.id`; OpenAI/xAI: `item.id` or `item.call_id`; Google: `null` (no native id); emitted by `frontier_dispatch` handler `on_event` callback (node-scoped) |
 | `pipeline.frontier.dispatch.tool.called` | `agent` (nullable), `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `provider` | tool executed successfully inside native-endpoint tool-use loop (node-scoped) |
 | `pipeline.frontier.dispatch.tool.failed` | `agent` (nullable), `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `error`, `provider` | tool call returned error envelope or raised inside loop (node-scoped) |
 | `pipeline.frontier.dispatch.completed` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `reasoning_present`, `prompt_tokens`, `completion_tokens`, `provider` | native-endpoint loop returned terminal content (node-scoped) |
@@ -1731,7 +1774,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
 | `pipeline.step.started` | `pipeline_id`, `execution_id`, `step_name`, `step_type`, `model_id`, `is_map_step` | - |
 | `pipeline.step.completed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `output_length`, `prompt_tokens`, `completion_tokens`, `model_call_count` | `exit_code` (shell steps only) |
-| `pipeline.step.failed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `error`, `prompt_tokens`, `completion_tokens`, `model_call_count` | - |
+| `pipeline.step.failed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `error`, `exc_type`, `prompt_tokens`, `completion_tokens`, `model_call_count` | `exc_type`: exception class name (e.g. `RemoteProtocolError`); always non-empty, primary diagnostic key when `error` is empty |
 | `pipeline.step.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | - |
 | `pipeline.step.condition.evaluated` | `pipeline_id`, `execution_id`, `step_name`, `condition`, `result`, `available_outputs` | - |
 | `pipeline.step.model.deferred` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `reason` | deferral due to model admission gate |
@@ -2018,7 +2061,7 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
 | `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
 | `mcp.response.encoding.rejected` | `tool_name` | Tool response rejected before size check: content contained invalid UTF-8 sequences (lone surrogates) that would corrupt MCP wire transport |
-| `mcp.frontier.generate.called` | `model`, `tool`, `provider`, `has_thinking`, `has_tools`, `has_conversation_id`, `boot_level`, `mcp_tool_loop` | Emitted by `_frontier_core.execute_frontier` for direct MCP `frontier_generate` callers. **Scheduled for deprecation at Task-7 Phase 2** in favour of `pipeline.frontier.dispatch.started` once `frontier_generate` collapses onto the pipeline. Until then, both signals co-emit: pipeline-origin dispatches fire `.started`, MCP-origin dispatches fire `.called`. `_provider_health` counts both into its `called` bucket |
+| `mcp.frontier.generate.called` | `agent`, `model`, `boot`, `reasoning_effort` (MCP-server `record()` fields; infrastructure adds `request_profile`, `client_ip`, `auth_mode`, `mcp_method`, `tool_name`, `jsonrpc_id`) | Emitted by `services/mcp-server/tools/frontier.py` `record()` at the start of each `frontier_generate` MCP call. `reasoning_effort` is `""` when not passed. Co-emits with `pipeline.frontier.dispatch.started` (pipeline surface); `_provider_health` counts both into its `called` bucket |
 | `mcp.frontier.generate.completed` | `duration_s`, `tool`, `model`, `provider`, `has_thinking`, `has_tool_calls`, `input_tokens`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason` | MCP-surface completion telemetry. **Scheduled for deprecation at Task-7 Phase 2** in favour of `pipeline.frontier.dispatch.completed` / `.exhausted`. Co-emitted today for MCP-origin dispatches. `duration_s` is currently MCP-only — pipeline signals add this at Phase 2 |
 | `mcp.frontier.generate.error` | `error`, `provider`, `duration_s` (timeout only) | MCP-surface structural failures (upstream HTTP, connection, timeout, adapter misconfig). **Scheduled for deprecation at Task-7 Phase 2** in favour of pipeline dispatch/execution failure envelopes. Still live for MCP-origin callers |
 | `mcp.frontier.tool.executed` | `tool`, `turn`, `provider`, `ok`, `elapsed_ms` | Per-tool-call observability from the MCP-side native loop. **Scheduled for deprecation at Task-7 Phase 2** in favour of `pipeline.frontier.dispatch.tool.called` / `.tool.failed`. Co-emitted today for MCP-origin dispatches |
@@ -2066,7 +2109,7 @@ unnecessary — each operation succeeds or fails atomically.
 | `mcp.agentbus.thread.created` | `thread`, `slug`, `to`, `turn_number` | Atomic thread+turn creation succeeded |
 | `mcp.agentbus.post.failed` | `slug`, `to`, `error` | Atomic thread+turn creation failed |
 | `mcp.agentbus.turn.posted` | `thread`, `to`, `turn_number` | Reply turn posted to existing thread |
-| `mcp.agentbus.thread.closed` | `thread` | Atomic close completed (marks all turns read + status=closed) |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`); field may be absent for plain manual closes |
 | `mcp.agentbus.turns.fetched` | `to`, `thread`, `count`, `mark_read` | Turns fetched (inbox or thread) |
 | `mcp.agentbus.turn.detail.fetched` | `thread`, `turn_number` | Single turn fetched by number |
 | `mcp.agentbus.threads.listed` | `status`, `count` | Thread listing retrieved |
@@ -2174,6 +2217,31 @@ remote `deploy_remote` when `--build` is used. Source: `manage`. Role:
 
 ```bash
 scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal LIKE 'build.image.%' ORDER BY seq DESC LIMIT 30"
+```
+
+## Relay socket-dir recovery signal
+
+Emitted by `_recover_root_owned_socket_dir` in
+`scripts/model_manager/ui/controller/service_config.py` via the sync path in
+`observation_event.emit_relay_socket_recovery`. Source: `manage`. Role:
+`observation`. Scope: `node`.
+
+| Signal | When |
+|--------|------|
+| `relay.socket.recovery` | Socket dir recovery path activated (root-owned dir detected; attempt made regardless of outcome) |
+
+### Payload keys
+
+- `relay.socket.recovery`: `socket_dir` (str), `owner_uid` (int, uid before recovery), `recovered` (bool)
+
+Post-deploy, this signal should trend to zero after the relay startup order fix
+lands. Any non-zero activation indicates the ordering bug is still reachable
+(e.g. via `update.py:restart_local_edge` or a non-relay caller).
+
+### Query example
+
+```bash
+scripts/query-events --sql "SELECT signal, payload FROM events WHERE signal = 'relay.socket.recovery' ORDER BY seq DESC LIMIT 20"
 ```
 
 ## Event Service Self-Health Signals

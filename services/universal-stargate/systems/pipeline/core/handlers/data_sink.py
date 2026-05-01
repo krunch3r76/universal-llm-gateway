@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from universal_logging import get_logger
 

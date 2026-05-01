@@ -187,15 +187,16 @@ def _run_start(
     model_path = Path(
         node_env.get("MODEL_PATH", str(Path.home() / ".models"))
     ).expanduser()
-    # Claim bind-mount sources before any Compose command. If /tmp was cleared
-    # on reboot, Docker would otherwise create /tmp/universal-protocol as root.
+    env = _build_env(node_env)
+    env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
+    # Stop before claiming bind-mount sources. If /tmp was cleared on reboot,
+    # Docker would create /tmp/universal-protocol as root while the container
+    # is still running and holding the bind mount open.
+    _stop_existing_container(node_id, env)
     err = ensure_relay_dirs(_ROOT, node_id, model_path)
     if err:
         print("ERROR:", err, file=sys.stderr)
         return 1
-    env = _build_env(node_env)
-    env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
-    _stop_existing_container(node_id, env)
     result = subprocess.run(
         ["docker", "compose", "-f", str(_COMPOSE_PATH), "up", "-d", "--force-recreate"],
         env=env,

@@ -18,9 +18,10 @@ from .token_management import _check_context_feasibility
 from .types import ModelCallResult
 
 if TYPE_CHECKING:
-    from ..protocol import PipelineContext
     from collections.abc import Callable
+
     from ...schemas import StepConfig
+    from ..protocol import PipelineContext
 
 logger = get_logger(__name__)
 

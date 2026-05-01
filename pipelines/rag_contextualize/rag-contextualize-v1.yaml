@@ -42,9 +42,11 @@ steps:
     map_inputs:
       user_msg: mapNs.iteration.value.user_msg
     generation_parameters:
-      # Anthropic research: 50-100 token prefixes are the sweet spot for 1024-token chunks.
-      # 150 gives headroom for longer chunks.
-      max_tokens: 150
+      # Target length is controlled by the system prompt (2-3 sentences, under 100 tokens).
+      # max_tokens is a safety net only — set generously so the ceiling never competes
+      # with the prompt. 150 caused truncation on dense legal content; 500 gives ample
+      # headroom while protecting throughput on local inference.
+      max_tokens: 500
       temperature: 0.1
       # Suppress qwen3 thinking mode. Profile (qwen3-instruct) also sets this,
       # but user-specified params cannot be overridden — this is the hard guard.
