@@ -476,7 +476,11 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
         agent: Persona identity if set, else ``None`` for persona-free dispatches
         model: Raw model string as supplied by the caller
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
-        boot_level: ``team`` (persona dispatch) or ``none`` (persona-free)
+        boot_level: Internal observability vocabulary derived from agent
+            presence at dispatch: ``team`` (persona dispatch) or ``none``
+            (persona-free). NOT a caller-supplied parameter; the public MCP
+            surface is ``team_generate`` (persona) plus ``frontier_generate``
+            (raw) with no ``boot`` field.
         remote_mcp: True iff adapter-level remote MCP injection is active
     """
     return Event(
@@ -488,6 +492,56 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
             "provider": provider,
             "boot_level": boot_level,
             "remote_mcp": remote_mcp,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineFrontierDispatchEmptyCompletion(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    turns_used: int,
+    tool_calls_made: int,
+    finish_reason: str | None,
+    block_reason: str | None,
+) -> Event:
+    """Emitted when ``frontier_dispatch_v1`` returns ``content=""`` on the
+    non-exhausted branch — worst-case silent-successful-looking failure mode.
+
+    Caller would otherwise receive ``status: completed`` with empty body.
+    Handler raises ``EmptyCompletionError`` after this event, converting the
+    terminal state to ``failed`` so polling callers see a structured envelope.
+
+    Distinct from ``PipelineFrontierDispatchExhausted`` (intentional non-content
+    when ``max_tool_turns`` is reached) — this fires only when the model
+    genuinely returned empty content without exhausting the loop.
+
+    Originally surfaced by Orion execution ``d65c723b`` (Cortex assertion 7903).
+
+    Payload:
+        execution_id: Pipeline execution UUID
+        agent: Persona identity if set, else ``None``
+        model: Raw model string as supplied by the caller
+        provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
+        turns_used: Number of tool-call/response cycles before terminal
+        tool_calls_made: Total tool invocations across all turns
+        finish_reason: Provider-native finish reason, if exposed by ``NativeLoopResult``
+        block_reason: Provider-native block reason, if exposed by ``NativeLoopResult``
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.empty.completion",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "turns_used": turns_used,
+            "tool_calls_made": tool_calls_made,
+            "finish_reason": finish_reason,
+            "block_reason": block_reason,
         },
         scope="node",
     )
@@ -521,7 +575,9 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
         agent: Persona identity (gate: only emitted when set)
         model: Raw model string as supplied by the caller
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
-        boot_level: Boot tier at dispatch time (``team`` or ``full``)
+        boot_level: Internal observability vocabulary derived from agent
+            presence at dispatch. NOT a caller-supplied parameter; the public
+            MCP surface has no ``boot`` field.
         output_tokens: Final completion token count from the adapter usage
         tool_calls_made: Total tool invocations across all turns
         finish_reason: Provider-native finish reason, if any
@@ -571,6 +627,9 @@ def PipelineFrontierDispatchTerminationShadow(  # noqa: N802
     the detector itself enforces both gates.
 
     Payload:
+        boot_level: Internal observability vocabulary derived from agent
+            presence at dispatch. NOT a caller-supplied parameter; the public
+            MCP surface has no ``boot`` field.
         reason: ``refusal`` | ``incapacity`` | ``policy`` | ``scope`` |
             ``token_exhaustion`` | ``loop``
         confidence: [0, 1] scalar, multi-evidence boost applied
@@ -631,7 +690,11 @@ def PipelineFrontierDispatchBootMismatch(  # noqa: N802
         execution_id: Pipeline execution UUID
         agent: Agent slug (e.g. ``oppie``, ``orion``)
         provider: Effective provider (``xai``, ``openai``, etc.)
-        boot_mode: Boot level that caused the violation (``team``)
+        boot_mode: Internal handler-derived dispatch tier that caused the
+            violation (``team`` for persona dispatches). NOT a caller-supplied
+            value; derived at the handler from agent presence. The public MCP
+            surface has no ``boot`` parameter — see ``team_generate`` /
+            ``frontier_generate``.
         reason: Human-readable explanation including fix guidance
     """
     return Event(

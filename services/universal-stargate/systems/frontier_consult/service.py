@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
+
 from .events import (
     FrontierEndpointPersonaResolved,
     FrontierEndpointRejected,
@@ -22,9 +23,11 @@ EventPublisher = Callable[[Any], None]
 # llm_generate (which routes through /v1/chat/completions) for these models.
 # ∀ new Chat-Completions-only OpenAI models: add to this set AND update
 # llm_generate docstring in services/mcp-server/tools/llm.py.
-_CHAT_COMPLETIONS_ONLY_MODELS: frozenset[str] = frozenset({
-    "openai/gpt-5-search-api",
-})
+_CHAT_COMPLETIONS_ONLY_MODELS: frozenset[str] = frozenset(
+    {
+        "openai/gpt-5-search-api",
+    }
+)
 
 
 def _is_chat_completions_only(model: str) -> bool:
@@ -41,7 +44,6 @@ class FrontierGenerateRequest:
     messages: list[dict[str, Any]]
     model: str | None = None
     agent: str | None = None
-    boot: str = "none"
     system: str = ""
     tools: list[str] | None = None
     reasoning_effort: str | None = None
@@ -184,7 +186,6 @@ async def build_dispatch_body(
                 request_id=request_id,
                 agent=req.agent,
                 model=req.model,
-                boot=req.boot,
                 has_tools=bool(req.tools),
             )
         )
@@ -211,13 +212,14 @@ async def build_dispatch_body(
                     ),
                 )
             )
-        if req.boot in {"team", "full"}:
-            system_assembled = assemble_system_prompt(
-                req.agent,
-                briefing_card_md=bundle.briefing_card_md,
-                continuation_md=bundle.continuation_md,
-                extra_system=req.system,
-            )
+        # Persona injection is driven by agent presence. Persona-free dispatches
+        # skip this branch entirely via the outer ``if req.agent`` guard.
+        system_assembled = assemble_system_prompt(
+            req.agent,
+            briefing_card_md=bundle.briefing_card_md,
+            continuation_md=bundle.continuation_md,
+            extra_system=req.system,
+        )
 
     effective_model = req.model or meta.default_model
     if not effective_model:
@@ -240,10 +242,11 @@ async def build_dispatch_body(
             agent=req.agent,
             field="model",
             reason=(
-                f"{effective_model!r} is a Chat Completions-only model — it is unavailable "
-                "on the OpenAI Responses API that frontier_generate uses. "
+                f"{effective_model!r} is a Chat Completions-only model — "
+                "it is unavailable on the OpenAI Responses API that "
+                "team_generate / frontier_generate use. "
                 f"Use llm_generate(model={effective_model!r}, messages=...) instead "
-                "(note: llm_generate has a narrower surface — no agent, tools, boot, "
+                "(note: llm_generate has a narrower surface — no agent, tools, "
                 "result_delivery, or transcript_id)."
             ),
             event_publisher=event_publisher,

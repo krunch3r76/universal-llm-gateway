@@ -1,4 +1,4 @@
-"""Endpoint-level signals for ``/api/v1/frontier/generate``."""
+"""Endpoint-level signals for team/frontier generate routes."""
 
 from __future__ import annotations
 
@@ -10,16 +10,19 @@ def FrontierEndpointRequested(  # noqa: N802
     request_id: str,
     agent: str | None,
     model: str | None,
-    boot: str,
     has_tools: bool,
 ) -> Event:
+    """Endpoint admission for team/frontier generate routes.
+
+    Persona-vs-raw is encoded by ``agent``: if non-null, this was a team
+    dispatch; if null, this was the persona-free raw engine path.
+    """
     return Event(
         signal="frontier.endpoint.requested",
         payload={
             "request_id": request_id,
             "agent": agent,
             "model": model,
-            "boot": boot,
             "has_tools": has_tools,
         },
         scope="node",

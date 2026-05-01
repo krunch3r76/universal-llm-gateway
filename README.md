@@ -99,7 +99,7 @@ Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each
 | Cortex | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal |
 | File I/O | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops |
 | RAG | Semantic search, answer generation, article upsert, scope routing |
-| Frontier models | `frontier_generate(frontier=grok|claude|openai|gemini)` for deep reasoning and synthesis |
+| Frontier models | `team_generate(agent=...)` for persona consults; `frontier_generate(model=...)` for raw provider-native reasoning and synthesis |
 | Infrastructure | Service lifecycle (`manage`), observability queries, pipeline execution |
 
 ### RAG (Retrieval)

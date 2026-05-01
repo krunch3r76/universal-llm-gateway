@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -19,6 +20,7 @@ from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
 from .turns_models import MAX_TURN_BODY_CHARS
+from .watchdog import run_watchdog
 
 logger = logging.getLogger("agent-bus")
 
@@ -55,8 +57,14 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         init_db()
+        watchdog_task = asyncio.create_task(run_watchdog())
         logger.info("agent-bus started")
-        yield
+        try:
+            yield
+        finally:
+            watchdog_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog_task
 
     app = FastAPI(
         title="agent-bus",

@@ -1,9 +1,9 @@
-"""Anomaly detection: short output on team/full boot.
+"""Anomaly detection: short output on persona dispatches.
 
-Team/full boot-level consults that return ``output_tokens < 500`` are almost
-always a silent failure (thinking-budget starvation, model confusion,
-tool-loop misrouting). The content preview lets the next triage answer
-"nonsense or just short?" from events alone.
+Persona dispatches that return ``output_tokens < 500`` are almost always a
+silent failure (thinking-budget starvation, model confusion, tool-loop
+misrouting). The content preview lets the next triage answer "nonsense or just
+short?" from events alone.
 
 Pure function — the caller decides how to emit the returned payload.
 """
@@ -15,8 +15,13 @@ from dataclasses import asdict, dataclass
 SHORT_OUTPUT_TOKEN_THRESHOLD = 500
 CONTENT_PREVIEW_CHAR_LIMIT = 500
 
-# Boot levels that exercise the team toolset / full briefing — short output
-# from a plain ``boot='none'`` or ``boot='mcp'`` run is expected, not anomalous.
+# Detector gate: only emit short-output observability for persona dispatches.
+# The handler derives ``boot_level="team" if agent else "none"`` at dispatch
+# time; there is no caller-facing ``boot`` parameter on the public
+# ``team_generate`` / ``frontier_generate`` MCP tools. ``boot_level`` is
+# internal observability vocabulary marking the dispatch tier. The ``full``
+# alias is preserved for event-store backward read compatibility on historical
+# rows.
 _GATED_BOOT_LEVELS: frozenset[str] = frozenset({"team", "full"})
 
 

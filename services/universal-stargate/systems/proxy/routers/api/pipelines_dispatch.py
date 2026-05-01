@@ -46,37 +46,42 @@ router = APIRouter(tags=["pipelines-dispatch"])
 
 _MAX_WAIT_SECONDS = 60.0
 
-# Pipeline ID of the raw native-frontier dispatch path. Bare callers that
-# reach it with ``pipeline_options.agent`` set are bypassing the persona
-# contract layer at ``/api/v1/frontier/generate`` (which sets
-# ``_endpoint_request_id`` on its outgoing pipeline_options). We attach a
-# ``hint`` to the 202 envelope so those callers see the right tool on the
-# very response that returned ``execution_id``.
+# Pipeline ID of the raw native-frontier dispatch path. Bare callers that reach
+# it are bypassing the persona/raw split at the canonical doors:
+# ``/api/v1/team/generate`` (persona) and ``/api/v1/frontier/generate`` (raw),
+# both of which set ``_endpoint_request_id`` on outgoing pipeline_options. We
+# attach a ``hint`` to the 202 envelope so callers see the right tool on the
+# response that returned ``execution_id``.
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
-_FRONTIER_GENERATE_HINT = (
-    "agent personas are best dispatched via `frontier_generate` — persona "
+_TEAM_GENERATE_HINT = (
+    "agent personas are best dispatched via `team_generate` — persona "
     "allowlists (allowed_models / allowed_options / tools), default_model "
     "resolution, and birth + briefing assembly are bypassed on the raw "
     '`pipeline(pipeline_id="frontier-dispatch")` path.'
 )
+_FRONTIER_GENERATE_HINT = (
+    "raw native-frontier calls are best dispatched via `frontier_generate` — "
+    "it is the public persona-free door with structured admission and "
+    'consistent observability. The raw `pipeline(pipeline_id="frontier-dispatch")` '
+    "path skips the canonical admission gate."
+)
 
 
 def _frontier_generate_hint_for(dispatch: DispatchRequest) -> str | None:
-    """Return the persona-bypass hint when applicable, else ``None``.
+    """Return the canonical-door hint when applicable, else ``None``.
 
-    Triggers iff the dispatch targets ``frontier-dispatch`` with an
-    ``agent`` in ``pipeline_options`` AND lacks the ``_endpoint_request_id``
-    marker that ``/api/v1/frontier/generate`` injects. Both clauses are
-    required so the public persona endpoint (the canonical door) does not
-    self-warn.
+    Triggers iff the dispatch targets ``frontier-dispatch`` AND lacks the
+    ``_endpoint_request_id`` marker that canonical generate routes inject.
+    The hint branches on agent presence: with ``agent`` recommend
+    ``team_generate``; without ``agent`` recommend ``frontier_generate``.
     """
     if dispatch.model != _FRONTIER_DISPATCH_PIPELINE_ID:
         return None
     opts = dispatch.pipeline_options or {}
-    if not opts.get("agent"):
-        return None
     if opts.get("_endpoint_request_id"):
         return None
+    if opts.get("agent"):
+        return _TEAM_GENERATE_HINT
     return _FRONTIER_GENERATE_HINT
 
 

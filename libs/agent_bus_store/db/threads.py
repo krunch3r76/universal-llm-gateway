@@ -42,6 +42,7 @@ def _thread_detail_sql() -> str:
     return """\
     SELECT
         t.id, t.slug, t.status, t.summary, t.created_at, t.updated_at,
+        t.bus_lifecycle_state,
         COUNT(tu.id)                                        AS turn_count,
         SUM(CASE WHEN tu.read_at IS NULL THEN 1 ELSE 0 END) AS unread_count,
         (SELECT subject FROM turns
@@ -53,6 +54,18 @@ def _thread_detail_sql() -> str:
     FROM threads t
     LEFT JOIN turns tu ON tu.thread = t.id
     """
+
+
+def _load_dispatch_links(
+    conn: sqlite3.Connection, thread_id: str
+) -> list[dict[str, Any]]:
+    """Return dispatch link summaries for a single thread."""
+    rows = conn.execute(
+        "SELECT execution_id, pipeline_id, linked_at, terminal_status, delivery_at "
+        "FROM thread_dispatch_links WHERE thread_id = ? ORDER BY linked_at ASC",
+        (thread_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def _normalize_tags(tags: list[str] | None) -> list[str]:
@@ -111,11 +124,15 @@ def set_thread_tags(conn: sqlite3.Connection, thread_id: str, tags: list[str]) -
 
 
 def list_threads_v2(
-    *, status: str | None = None, tags: list[str] | None = None
+    *,
+    status: str | None = None,
+    tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
 ) -> list[dict[str, Any]]:
-    """List threads with optional status + AND-tag filter.
+    """List threads with optional status + lifecycle_state + AND-tag filter.
 
     `tags`: threads must have ALL listed tags. None or [] = no tag filter.
+    `lifecycle_state`: exact match on bus_lifecycle_state. None = no filter.
     """
     base = _thread_detail_sql()
     params: list[Any] = []
@@ -123,6 +140,9 @@ def list_threads_v2(
     if status is not None:
         wheres.append("t.status = ?")
         params.append(status)
+    if lifecycle_state is not None:
+        wheres.append("t.bus_lifecycle_state = ?")
+        params.append(lifecycle_state)
     tag_list = _normalize_tags(tags)
     if tag_list:
         # AND match: join thread_tags and require all N tags matched.
@@ -147,6 +167,7 @@ def list_threads_v2(
 
 
 def get_thread(thread_id: str) -> dict[str, Any] | None:
+    """Fetch thread detail without dispatch_links (used for non-lifecycle paths)."""
     sql = f"{_thread_detail_sql()} WHERE t.id = ? GROUP BY t.id"
     with connect() as conn:
         row = conn.execute(sql, (thread_id,)).fetchone()
@@ -154,6 +175,20 @@ def get_thread(thread_id: str) -> dict[str, Any] | None:
             return None
         detail = dict(row)
         detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+        detail.setdefault("dispatch_links", [])
+        return detail
+
+
+def get_thread_with_links(thread_id: str) -> dict[str, Any] | None:
+    """Fetch thread detail including dispatch_links (for lifecycle-aware paths)."""
+    sql = f"{_thread_detail_sql()} WHERE t.id = ? GROUP BY t.id"
+    with connect() as conn:
+        row = conn.execute(sql, (thread_id,)).fetchone()
+        if row is None:
+            return None
+        detail = dict(row)
+        detail["tags"] = _load_thread_tags(conn, [thread_id]).get(thread_id, [])
+        detail["dispatch_links"] = _load_dispatch_links(conn, thread_id)
         return detail
 
 
@@ -242,8 +277,11 @@ def create_thread(
     slug: str,
     summary: str | None = None,
     tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
 ) -> dict[str, Any] | None:
-    """Returns thread detail, or None if thread_id was supplied and already exists."""
+    """Returns thread detail with dispatch_links, or None if thread_id already exists."""
+    from .lifecycle import _transition_lifecycle_state
+
     if thread_id is None:
         thread_id = next_thread_id()
     ts = now()
@@ -260,7 +298,9 @@ def create_thread(
         )
         if tags:
             set_thread_tags(conn, thread_id, tags)
-    thread_detail = get_thread(thread_id)
+        if lifecycle_state is not None:
+            _transition_lifecycle_state(conn, thread_id, lifecycle_state, "create")
+    thread_detail = get_thread_with_links(thread_id)
     if thread_detail is None:
         raise RuntimeError(f"Failed to fetch newly created thread {thread_id}")
     return thread_detail

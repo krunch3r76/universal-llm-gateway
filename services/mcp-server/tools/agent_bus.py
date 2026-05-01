@@ -267,13 +267,20 @@ def _resolve_turn_id(
     return None, {"error": f"Turn {turn_number} not found in thread {thread}"}
 
 
-def _threads_impl(*, status: str, tags: list[str] | None = None) -> dict[str, Any]:
+def _threads_impl(
+    *,
+    status: str,
+    tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
+) -> dict[str, Any]:
     params: list[tuple[str, str]] = []
     if status != "all":
         params.append(("status", status))
     tag_list = [t.strip() for t in (tags or []) if t and t.strip()]
     for tag in tag_list:
         params.append(("tags", tag))
+    if lifecycle_state:
+        params.append(("lifecycle_state", lifecycle_state))
     qs = urlencode(params)
     path = f"/threads?{qs}" if qs else "/threads"
     result = _relay("agent-bus", "GET", path)
@@ -286,8 +293,9 @@ def _threads_impl(*, status: str, tags: list[str] | None = None) -> dict[str, An
     )
     count = len(threads)
     logger.info(
-        "agent_bus threads: status=%s tags=%s -> %d threads",
+        "agent_bus threads: status=%s lifecycle=%s tags=%s -> %d threads",
         status,
+        lifecycle_state or "-",
         ",".join(tag_list) or "-",
         count,
     )
@@ -296,6 +304,38 @@ def _threads_impl(*, status: str, tags: list[str] | None = None) -> dict[str, An
         status=status,
         tag_count=len(tag_list),
         count=count,
+    )
+    return result
+
+
+def _create_thread_impl(
+    *,
+    slug: str,
+    summary: str | None = None,
+    tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
+    thread_id: str | None = None,
+) -> dict[str, Any]:
+    """Create a thread without a turn via POST /threads."""
+    payload: dict[str, Any] = {"slug": slug}
+    if summary is not None:
+        payload["summary"] = summary
+    if tags:
+        payload["tags"] = tags
+    if lifecycle_state is not None:
+        payload["lifecycle_state"] = lifecycle_state
+    if thread_id is not None:
+        payload["id"] = thread_id
+    result = _relay("agent-bus", "POST", "/threads", body=payload)
+    if isinstance(result, dict) and "error" in result:
+        return {"error": f"agent-bus error creating thread: {result['error']}"}
+    created_id = result.get("id", "") if isinstance(result, dict) else ""
+    logger.info("agent_bus create_thread: thread=%s slug=%s", created_id, slug)
+    record(
+        "mcp.agentbus.thread.created",
+        thread=created_id,
+        slug=slug,
+        via="create_thread",
     )
     return result
 
@@ -526,9 +566,31 @@ def _get_dispatch(*, thread: str = "", turn_number: int = 0) -> dict[str, Any]:
 
 
 def _threads_dispatch(
-    *, status: str = "active", tags: list[str] | None = None
+    *,
+    status: str = "active",
+    tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
 ) -> dict[str, Any]:
-    return _threads_impl(status=status, tags=tags)
+    return _threads_impl(status=status, tags=tags, lifecycle_state=lifecycle_state)
+
+
+def _create_thread_dispatch(
+    *,
+    slug: str = "",
+    summary: str | None = None,
+    tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
+    thread_id: str | None = None,
+) -> dict[str, Any]:
+    if not slug:
+        return {"error": "create_thread requires: slug"}
+    return _create_thread_impl(
+        slug=slug,
+        summary=summary,
+        tags=tags,
+        lifecycle_state=lifecycle_state,
+        thread_id=thread_id,
+    )
 
 
 def _update_dispatch(
@@ -626,6 +688,7 @@ _AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "fetch": _fetch_dispatch,
     "get": _get_dispatch,
     "threads": _threads_dispatch,
+    "create_thread": _create_thread_dispatch,
     "close": _close_dispatch,
     "update_thread": _update_thread_dispatch,
     "update": _update_dispatch,
@@ -649,10 +712,11 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         arguments: operation arguments as an object or a JSON string
 
         Operations:
-          threads       (status?, tags?)                                — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter
+          threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
+          create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?)  — get turns; at least one of to/thread required
           get           (thread, turn_number)                           — get one specific turn
-          post          (slug, to, subject, body, from_agent?, summary?, attachments?, tags?) — start a new thread
+          post          (slug, to, subject, body, from_agent?, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn)
           reply         (thread, to, subject, body, after_turn, from_agent?, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read)
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
@@ -660,6 +724,13 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn
           delete_thread (thread, force?)                                — delete an entire thread
+
+        Thread response fields (ThreadDetail):
+          id, slug, status, summary, turn_count, unread_count, tags, created_at, updated_at
+          bus_lifecycle_state: str | null — lifecycle state for dispatch-managed threads
+            (pending → admitted → delivered; null = not lifecycle-managed)
+          dispatch_links: list — pipeline executions linked to this thread via dispatch-admit;
+            each entry has: execution_id, pipeline_id, linked_at, terminal_status, delivery_at
 
         Tags (free-form strings on threads):
           Suggested `namespace:value` convention — nothing is enforced:
@@ -674,6 +745,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5}')
           agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n...", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
+          agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')
+          agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')
           agent_bus(tool="update_thread", arguments='{"thread": "553", "tags": ["project:claudeburst", "type:restore"]}')
         """
         from ._agent_tools import _parse_dispatch_arguments

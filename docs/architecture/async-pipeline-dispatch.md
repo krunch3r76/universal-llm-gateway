@@ -319,15 +319,14 @@ Pipeline caller shape:
 `pipeline_options.model` is required; `agent` is optional; everything else has
 sensible defaults.
 
-MCP callers typically reach this via the public `frontier_generate` tool
-(async dispatch to `POST /api/v1/frontier/generate`):
+MCP callers typically reach this via `team_generate` for persona consults or
+`frontier_generate` for raw persona-free calls:
 
 ```python
-frontier_generate(
+team_generate(
     agent="orion",
     messages=[{"role": "user", "content": "..."}],
-    boot="team",
-    generation_options={"reasoning_effort": "high"},
+    reasoning_effort="high",
     caller_agent="cursor",
 )
 # Then: pipeline(op="result", execution_id=<id>, wait_seconds=60.0)

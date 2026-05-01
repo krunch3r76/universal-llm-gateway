@@ -88,57 +88,13 @@ CREATE INDEX IF NOT EXISTS idx_thread_tags_tag ON thread_tags(tag);
 """
 
 
-def _migrate_turns_drop_agent_checks(conn: sqlite3.Connection) -> None:
-    """Remove hardcoded CHECK constraints on from_agent/to_agent.
-
-    Agent name validation is handled by Pydantic at the API layer.
-    Hardcoded CHECK constraints in SQLite create drift when new agents
-    are added to the Python enum.
-    """
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='turns'"
-    ).fetchone()
-    if row is None:
-        return
-    schema_sql: str = row[0]
-    if "CHECK (from_agent" not in schema_sql:
-        return
-    conn.executescript("""
-        CREATE TABLE turns_new (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            thread          TEXT NOT NULL REFERENCES threads(id),
-            turn_number     INTEGER NOT NULL,
-            from_agent      TEXT NOT NULL,
-            to_agent        TEXT NOT NULL,
-            subject         TEXT NOT NULL,
-            body            TEXT NOT NULL,
-            status          TEXT NOT NULL DEFAULT 'open'
-                            CHECK (status IN ('open', 'resolved', 'superseded', 'waiting')),
-            supersedes_turn INTEGER,
-            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-            read_at         TEXT,
-            UNIQUE(thread, turn_number)
-        );
-        INSERT INTO turns_new SELECT * FROM turns;
-        DROP TABLE turns;
-        ALTER TABLE turns_new RENAME TO turns;
-    """)
-
-
-_TURNS_INDEXES = """\
-CREATE INDEX IF NOT EXISTS idx_turns_thread ON turns(thread, turn_number DESC);
-CREATE INDEX IF NOT EXISTS idx_turns_to_unread ON turns(to_agent, read_at)
-    WHERE read_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_turns_status ON turns(thread, status);
-"""
-
-
 def init_db() -> None:
+    from .migrations import run_migrations
+
     with connect() as conn:
         conn.executescript(_MESSAGES_SCHEMA)
         conn.executescript(_TURNS_SCHEMA)
-        _migrate_turns_drop_agent_checks(conn)
-        conn.executescript(_TURNS_INDEXES)
+        run_migrations(conn)
 
 
 @contextmanager

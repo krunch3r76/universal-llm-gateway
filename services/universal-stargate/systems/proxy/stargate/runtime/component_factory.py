@@ -748,6 +748,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
         proxy.pipeline_dispatch_tracker = PipelineExecutionTracker(
             event_bus=proxy.event_bus,
             delivery_sender=_delivery_sender,
+            agent_bus_token=_agent_bus_token,
         )
         logger.info("✅ PipelineExecutionTracker initialized for async dispatch")
 

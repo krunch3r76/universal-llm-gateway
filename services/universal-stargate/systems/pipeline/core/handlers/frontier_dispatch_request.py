@@ -129,7 +129,9 @@ def resolve_system_prompt(step: StepConfig, context: PipelineContext) -> str:
 
     Precedence: ``pipeline_options.system`` > ``step.system_prompt`` >
     first system message in ``context.messages``. ``pipeline_options.system``
-    is used by MCP ``frontier_generate`` when ``boot='mcp'``.
+    carries the caller-supplied prompt for both ``team_generate`` and
+    ``frontier_generate`` MCP dispatches; for persona dispatches the Stargate
+    endpoint also auto-assembles birth + briefing + continuation upstream.
     """
     opt_system = context.options.get("system")
     if isinstance(opt_system, str) and opt_system:

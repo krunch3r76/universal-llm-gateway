@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
 from ..events.dispatch import (
@@ -189,6 +190,8 @@ class PipelineExecutionTracker:
         journal_writer: (
             Callable[[PipelineExecutionRecord], Awaitable[None]] | None
         ) = None,
+        agent_bus_url: str = DEFAULT_AGENT_BUS_URL,
+        agent_bus_token: str = "",
     ) -> None:
         self.event_bus = event_bus
         self.max_records = max_records
@@ -197,6 +200,8 @@ class PipelineExecutionTracker:
         self._delivery_sender = delivery_sender
         self._journal_writer = journal_writer
         self._pending_tasks: set[asyncio.Task[Any]] = set()
+        self._agent_bus_url = agent_bus_url
+        self._agent_bus_token = agent_bus_token
 
     def _emit(self, event: Event) -> None:
         """Fire-and-forget publish; drop silently if no bus is wired.
@@ -262,6 +267,63 @@ class PipelineExecutionTracker:
             task.add_done_callback(self._pending_tasks.discard)
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Failed to schedule dispatch journaling: %s", exc)
+
+    def _schedule_dispatch_admit(self, record: PipelineExecutionRecord) -> None:
+        """Fire-and-forget POST /threads/{id}/dispatch-admit after register_execution.
+
+        No-op when agent_bus_token is unset (disabled path). Failures emit
+        mcp.agentbus.dispatch.admit.failed and are otherwise swallowed so
+        the tracker admission path is never affected.
+        """
+        if not self._agent_bus_token:
+            return
+        try:
+            task = asyncio.create_task(self._do_dispatch_admit(record))
+            self._pending_tasks.add(task)
+            task.add_done_callback(self._pending_tasks.discard)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(
+                "Failed to schedule dispatch-admit for %s: %s", record.execution_id, exc
+            )
+
+    async def _do_dispatch_admit(self, record: PipelineExecutionRecord) -> None:
+        """POST dispatch-admit to agent-bus; emit failure event on error."""
+        from ..events.delivery import AgentBusDispatchAdmitFailed
+
+        delivery = record.result_delivery or {}
+        thread = delivery.get("bus_thread", "")
+        pipeline_id = record.pipeline
+
+        payload = {
+            "execution_id": record.execution_id,
+            "pipeline_id": pipeline_id,
+            "caller_agent": record.caller_agent,
+        }
+        try:
+            async with make_async_client(self._agent_bus_url, timeout=10.0) as client:
+                response = await client.post(
+                    f"/threads/{thread}/dispatch-admit",
+                    headers={"Authorization": f"Bearer {self._agent_bus_token}"},
+                    json=payload,
+                )
+                if response.status_code not in (200, 201):
+                    self._emit(
+                        AgentBusDispatchAdmitFailed(
+                            execution_id=record.execution_id,
+                            thread=thread,
+                            status_code=response.status_code,
+                            error_preview=response.text[:200],
+                        )
+                    )
+        except Exception as exc:
+            self._emit(
+                AgentBusDispatchAdmitFailed(
+                    execution_id=record.execution_id,
+                    thread=thread,
+                    status_code=0,
+                    error_preview=str(exc)[:200],
+                )
+            )
 
     def _prune_terminal_records(self) -> None:
         """Drop terminal records whose age exceeds ``retention_seconds``.
@@ -346,6 +408,10 @@ class PipelineExecutionTracker:
                 caller_agent=record.caller_agent,
             )
         )
+
+        if result_delivery and result_delivery.get("bus_thread"):
+            self._schedule_dispatch_admit(record)
+
         return record
 
     def get(self, execution_id: str) -> PipelineExecutionRecord | None:

@@ -12,7 +12,7 @@ orchestrates both detectors and their Stargate event-factory translations:
 The handler calls this unconditionally after the native loop returns on both
 exhausted and completed paths; persona-free dispatches pass
 ``boot_level="none"`` and short-circuit inside the detectors, which own
-boot-level gating.
+internal dispatch-tier gating.
 
 Return value: list of anomaly hint dicts to be merged into the handler's
 ``hints`` list and surfaced in the poll-result JSON. Each dict has at minimum
@@ -150,9 +150,7 @@ def _emit_output_short(
             "may be degraded — retry with a different provider or inspect "
             "pipeline-trace for details"
         ),
-        "suggestion": (
-            "retry with an Anthropic model or another available provider"
-        ),
+        "suggestion": ("retry with an Anthropic model or another available provider"),
     }
 
 

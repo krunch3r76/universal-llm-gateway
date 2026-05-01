@@ -114,6 +114,30 @@ def PipelineDispatchDeliveryCloseFailed(  # noqa: N802
 
 
 @event_factory
+def AgentBusDispatchAdmitFailed(  # noqa: N802
+    execution_id: str,
+    thread: str,
+    status_code: int,
+    error_preview: str,
+) -> Event:
+    """Emitted when the POST /threads/{id}/dispatch-admit call fails.
+
+    Signal: mcp.agentbus.dispatch.admit.failed — shared vocabulary with
+    agent-bus lifecycle events. Tracker admission and record state are
+    unchanged; the failure is observable but non-fatal.
+    """
+    return Event(
+        signal="mcp.agentbus.dispatch.admit.failed",
+        payload={
+            "execution_id": execution_id,
+            "thread": thread,
+            "status_code": status_code,
+            "error_preview": error_preview,
+        },
+    )
+
+
+@event_factory
 def AgentBusThreadClosedEphemeral(  # noqa: N802
     thread: str,
 ) -> Event:

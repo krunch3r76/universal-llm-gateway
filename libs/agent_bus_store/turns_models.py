@@ -114,11 +114,24 @@ class TurnStatusUpdate(BaseModel):
 # --- Thread schemas ---
 
 
+class DispatchLinkSummary(BaseModel):
+    """Single dispatch link attached to a lifecycle-managed thread."""
+
+    execution_id: str
+    pipeline_id: str
+    linked_at: datetime
+    terminal_status: str | None = None
+    delivery_at: datetime | None = None
+
+
 class ThreadCreate(BaseModel):
     id: str | None = None
     slug: str
     summary: str | None = None
     tags: list[str] = Field(default_factory=list)
+    # When set, opts this thread into lifecycle management from creation.
+    # None = no lifecycle (backward-compat default).
+    lifecycle_state: str | None = None
 
 
 class ThreadDetail(BaseModel):
@@ -134,6 +147,8 @@ class ThreadDetail(BaseModel):
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+    bus_lifecycle_state: str | None = None
+    dispatch_links: list[DispatchLinkSummary] = Field(default_factory=list)
 
 
 class ThreadSummaryResponse(BaseModel):
@@ -201,3 +216,11 @@ class ThreadClose(BaseModel):
 
     summary: str | None = None
     mark_all_read: bool = True
+
+
+class DispatchAdmit(BaseModel):
+    """Payload for POST /threads/{id}/dispatch-admit."""
+
+    execution_id: str
+    pipeline_id: str
+    caller_agent: str | None = None

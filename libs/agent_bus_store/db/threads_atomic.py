@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .connection import connect, now
-from .threads import _next_auto_id, get_thread, set_thread_tags
+from .lifecycle import TERMINAL_STATES, _transition_lifecycle_state
+from .threads import _next_auto_id, get_thread_with_links, set_thread_tags
 
 
 def create_thread_with_turn(
@@ -20,12 +21,16 @@ def create_thread_with_turn(
     after_turn: int | None = None,
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
+    lifecycle_state: str | None = None,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Atomically create a thread and its first turn in one transaction.
 
     Returns (thread_detail, turn_id, created_at, turn_number).
     The thread ID is auto-assigned. Both the thread and the turn are
     committed together - no partial state is possible.
+
+    lifecycle_state: when provided, transitions the new thread into that
+    state as part of the same transaction and emits the coordination event.
     """
     from .turns import UnreadTurnsExist, _insert_attachments
 
@@ -37,6 +42,9 @@ def create_thread_with_turn(
             "VALUES (?, ?, ?, ?, ?)",
             (thread_id, slug, summary, ts, ts),
         )
+
+        if lifecycle_state is not None:
+            _transition_lifecycle_state(conn, thread_id, lifecycle_state, "create")
 
         if after_turn is not None:
             unread_rows = conn.execute(
@@ -66,7 +74,7 @@ def create_thread_with_turn(
         if tags:
             set_thread_tags(conn, thread_id, tags)
 
-    thread_detail = get_thread(thread_id)
+    thread_detail = get_thread_with_links(thread_id)
     assert thread_detail is not None
     return thread_detail, turn_id, ts, turn_number
 
@@ -85,7 +93,7 @@ def close_thread(
     ts = now()
     with connect() as conn:
         row = conn.execute(
-            "SELECT id FROM threads WHERE id = ?", (thread_id,)
+            "SELECT id, bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
         if row is None:
             return None
@@ -104,4 +112,55 @@ def close_thread(
         params.append(thread_id)
         conn.execute(f"UPDATE threads SET {', '.join(sets)} WHERE id = ?", params)
 
-    return get_thread(thread_id)
+        # Advance lifecycle only when thread is actively managed (active → completed).
+        # Other non-terminal states (pending, admitted) are not transitioned here;
+        # the caller is responsible for ensuring the thread reached active first.
+        lifecycle = row["bus_lifecycle_state"]
+        if lifecycle == "active":
+            _transition_lifecycle_state(conn, thread_id, "completed", "close")
+
+    return get_thread_with_links(thread_id)
+
+
+def admit_dispatch(
+    *,
+    thread_id: str,
+    execution_id: str,
+    pipeline_id: str,
+    caller_agent: str | None = None,
+) -> dict[str, Any] | None:
+    """Register a dispatch link and (if pending) admit the thread.
+
+    Returns updated thread detail with dispatch_links populated, or None
+    if the thread is not found. Raises ValueError on terminal-state conflicts.
+
+    NULL-state threads remain caller-owned: the link is registered but no
+    lifecycle transition occurs (documented coverage gap — callers wanting
+    recovery must pre-create with lifecycle_state="pending").
+    """
+    ts = now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id, bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return None
+
+        lifecycle = row["bus_lifecycle_state"]
+        if lifecycle in TERMINAL_STATES:
+            raise ValueError(
+                f"Thread {thread_id!r} is in terminal state {lifecycle!r}; "
+                "dispatch-admit rejected"
+            )
+
+        conn.execute(
+            "INSERT OR IGNORE INTO thread_dispatch_links "
+            "(thread_id, execution_id, pipeline_id, caller_agent, linked_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (thread_id, execution_id, pipeline_id, caller_agent, ts),
+        )
+
+        if lifecycle == "pending":
+            _transition_lifecycle_state(conn, thread_id, "admitted", "admit")
+
+    return get_thread_with_links(thread_id)

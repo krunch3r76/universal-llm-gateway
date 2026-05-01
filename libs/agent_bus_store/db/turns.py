@@ -88,7 +88,8 @@ def insert_turn(
     ts = now()
     with connect() as conn:
         row = conn.execute(
-            "SELECT id, status FROM threads WHERE id = ?", (thread,)
+            "SELECT id, status, bus_lifecycle_state FROM threads WHERE id = ?",
+            (thread,),
         ).fetchone()
         if row is None:
             slug = thread_slug or thread
@@ -108,6 +109,21 @@ def insert_turn(
                 "UPDATE threads SET status = 'active', updated_at = ? WHERE id = ?",
                 (ts, thread),
             )
+            # Advance lifecycle state when the closed thread is lifecycle-managed
+            # and currently in a terminal state.
+            from .lifecycle import TERMINAL_STATES, _transition_lifecycle_state
+
+            lifecycle = row["bus_lifecycle_state"]
+            if lifecycle in TERMINAL_STATES:
+                _transition_lifecycle_state(conn, thread, "active", "reopen")
+        else:
+            # First turn posted to an admitted thread activates it — the delivery
+            # path from Stargate hits this when it POSTs the pipeline result turn.
+            lifecycle = row["bus_lifecycle_state"]
+            if lifecycle == "admitted":
+                from .lifecycle import _transition_lifecycle_state
+
+                _transition_lifecycle_state(conn, thread, "active", "turn_posted")
 
         if supersedes_turn is not None:
             target = conn.execute(

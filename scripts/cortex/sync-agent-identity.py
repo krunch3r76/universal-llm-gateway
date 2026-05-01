@@ -12,7 +12,7 @@ its birth prompt — that's the closest semantics in the existing edge taxonomy.
 Also patches ``ai_agent:{slug}.attributes`` with the persona contract
 (frontier_kind, default_model, allowed_models, tools, allowed_options,
 persona_seed_ref) from ``AGENT_REGISTRY``, for consumers such as
-``libs/agent_seat/hydrate_agent`` and the Stargate ``/api/v1/frontier/generate``
+``libs/agent_seat/hydrate_agent`` and the Stargate ``/api/v1/team/generate``
 endpoint.
 
 Idempotence: the sync compares the stored ``content_hash`` (sha256 of the
@@ -42,6 +42,7 @@ from typing import Any, cast
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "libs"))
 
+from sync_agent_identity_registry import AGENT_REGISTRY  # noqa: E402
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -50,17 +51,16 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 # (b) the persona contract written onto ai_agent:{slug}.attributes
 #     (frontier_kind, default_model, allowed_models, tools, allowed_options,
 #      persona_seed_ref) — consumed by libs/agent_seat/hydrate_agent and the
-#     Stargate /api/v1/frontier/generate endpoint.
+#     Stargate /api/v1/team/generate endpoint.
 #
 # `tools` / `allowed_options`:
 #   None → permissive (full tool registry / any generation_options key).
 #   list → strict whitelist enforced at the endpoint.
 # ────────────────────────────────────────────────────────────────────────────
 
-from sync_agent_identity_registry import AGENT_REGISTRY
-
 DEFAULT_SESSION_ID = "agent-identity-sync"
 DEFAULT_AGENT = "cursor-claude"
+EDGE_TYPE = "derived_from"
 
 _PERSONA_ATTR_KEYS = (
     "frontier_kind",

@@ -30,6 +30,11 @@ logger = logging.getLogger("cortex-api.belief-guard")
 TOUCHED_COSINE_THRESHOLD = 0.72
 SUPERSEDE_COSINE_THRESHOLD = 0.85
 CONTRADICTION_SIMILARITY_THRESHOLD = 0.80
+# Minimum normalized BM25 similarity to treat a polarity conflict as a real
+# contradiction. sim=0.0 means no term overlap — never a valid block signal.
+# ∀ sim < threshold: skip polarity check entirely (false-positive suppressor for
+# high-density entities where diverse claims share incidental vocabulary).
+CONTRADICTION_MIN_SIM_THRESHOLD = 0.35
 
 _CONFIDENCE_RANK = {"confirmed": 3, "believed": 2, "suspected": 1, "hypothesized": 0}
 
@@ -243,27 +248,36 @@ def check_write_contradiction(
 ) -> ContradictionResult:
     """Detect entity-local semantic contradictions before assertion commit.
 
-    Uses FTS5 only — no embedding call. The write path must not block on a
+    Uses FTS5 with normalized BM25 scores. The write path must not block on a
     model HTTP round-trip; vector search improves recall but runs post-commit.
     Scoped to entity-local only (AGM G3, not global consistency).
+
+    ∀ contradiction block: sim >= CONTRADICTION_MIN_SIM_THRESHOLD.
+    sim=0.0 (no term overlap) is never a valid block signal — high-density
+    entities accumulate diverse assertions that share incidental vocabulary
+    (e.g. entity name, common verbs) without being topically related.
     """
     fts_rows = _entity_fts_search(conn, claim, entity_id, limit=10)
+    if not fts_rows:
+        return ContradictionResult()
+
+    max_rank = max((abs(r.get("rank", 0)) for r in fts_rows), default=1.0) or 1.0
     similar = [
         SimilarAssertion(
             assertion_id=r["id"],
             claim=r["claim"],
             confidence=r["confidence"],
-            similarity=0.0,
+            similarity=round(abs(r.get("rank", 0)) / max_rank, 4),
             entity_id=entity_id,
             retrieval_source="fts",
         )
         for r in fts_rows
     ]
 
-    # FTS already filtered for textual relevance; check polarity on all candidates.
-    # Cosine-based threshold is not applicable to BM25 ranks — omit it here.
     conflicts: list[ConflictDetail] = []
     for s in similar:
+        if s.similarity < CONTRADICTION_MIN_SIM_THRESHOLD:
+            continue
         if not detect_polarity_conflict(claim, s.claim):
             continue
         conflicts.append(

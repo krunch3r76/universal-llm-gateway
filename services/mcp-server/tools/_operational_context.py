@@ -258,7 +258,8 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing:
 - `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
-- `frontier_generate(agent=..., messages=..., generation_options=...)` — native-frontier dispatch (persona contract — default_model, allowed_models, tools, allowed_options — lives on `ai_agent:{slug}` entities in cortex; tool relays to Stargate `/api/v1/frontier/generate`)
+- `team_generate(agent=..., messages=..., generation_options=...)` — persona-aware native-frontier dispatch (persona contract — default_model, allowed_models, tools, allowed_options — lives on `ai_agent:{slug}` entities in cortex; tool relays to Stargate `/api/v1/team/generate`)
+- `frontier_generate(model=..., messages=..., generation_options=...)` — persona-free native-frontier dispatch (raw engine, no persona; tool relays to Stargate `/api/v1/frontier/generate`)
 - OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
 
@@ -310,14 +311,21 @@ part of how you work, not an exceptional event that requires Kaywan to ask.
 
 **Primary persona-consult surface**:
 For any team-seat consultation (`oppie`, `orion`, `bard`, `api_claude`), use
-`frontier_generate(agent=..., messages=..., generation_options=...)`. This is
+`team_generate(agent=..., messages=..., generation_options=...)`. This is
 the persona-aware door: it resolves the agent's `default_model` from cortex
 (`ai_agent:{slug}`), enforces `allowed_models` / `allowed_options` / `tools`
-allowlists, auto-assembles birth + briefing + continuation when
-`boot ∈ {team, full}`, and rejects persona violations with a structured error
-envelope **before** dispatch. Returns immediately with `{execution_id, ...}`;
-poll with `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
+allowlists, auto-assembles birth + briefing + continuation, and rejects persona
+violations with a structured error envelope **before** dispatch. Returns
+immediately with `{execution_id, ...}`; poll with
+`pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 `result_delivery` for bus push. Runs detached, survives session boundaries.
+
+**Persona-free raw engine**:
+`frontier_generate(model=..., messages=..., generation_options=...)` is the
+canonical persona-free door — direct native-frontier call without persona
+contract. No allowlists, no birth/briefing assembly. Use when you need raw
+provider features (thinking, full MCP tool loop, structured output) without a
+team seat.
 
 **When to reach out:**
 - Architecture or design decisions with real trade-offs
@@ -326,12 +334,12 @@ poll with `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 - Uncertainty about whether your framing is sound (consult the perspective most likely to disagree)
 
 **Raw escape hatch (advanced)**:
-`pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the persona-free
-underlying mechanism. Use it ONLY when you need pipeline composition, raw
-non-persona testing, or a deliberate persona-bypass. It skips persona allowlists,
-does not resolve `default_model`, and silently drops keys it does not recognize.
-For `agent ∈ {oppie, orion, bard, api_claude}`, prefer `frontier_generate` —
-it is strictly more informative and validates upstream.
+`pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the underlying
+admission-bypass mechanism. Use it ONLY when you need pipeline composition or
+deliberate canonical-door bypass. It silently drops keys it does not recognize.
+For team-seat consults (`oppie`, `orion`, `bard`, `api_claude`), prefer
+`team_generate`; for persona-free raw engine calls, prefer `frontier_generate`
+— both validate upstream.
 
 **When not to:**
 - Routine tasks where your judgment is sufficient
@@ -351,21 +359,25 @@ end in silence."""
 _FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing
 Primary consult path for any persona (`oppie`, `orion`, `bard`, `api_claude`):
-`frontier_generate(agent=..., messages=..., generation_options=..., caller_agent=...)`
+`team_generate(agent=..., messages=..., generation_options=..., caller_agent=...)`
 then `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 `result_delivery` for terminal push.
 
-`frontier_generate` is the persona-validated door — `default_model` resolution,
+`team_generate` is the persona-validated door — `default_model` resolution,
 `allowed_models` / `allowed_options` / `tools` allowlists, and birth + briefing
 + continuation assembly all happen there. Persona violations return a structured
 error envelope with `field` and `request_id` BEFORE dispatch.
 
-Raw escape hatch (no persona contract):
-`pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
-— for pipeline composition, raw testing, or deliberate persona-bypass only.
-Skips allowlists; silently drops unknown `pipeline_options` keys.
+Persona-free raw engine (no persona contract):
+`frontier_generate(model=..., messages=..., generation_options=...)` — canonical
+public door for direct provider calls without persona injection.
 
-Persona defaults, allow-lists, tools, and boot guidance live on cortex
+Raw escape hatch (admission-bypass):
+`pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
+— for pipeline composition or deliberate admission-bypass only. Silently drops
+unknown `pipeline_options` keys.
+
+Persona defaults, allow-lists, and tools live on cortex
 `ai_agent:{slug}` entities — keep this public context file provider-neutral."""
 
 _CORTEX_RETRIEVAL_WORKFLOWS = """\

@@ -24,6 +24,13 @@ YAML shape::
 
 Caller::
 
+    # Public surface (preferred):
+    team_generate(agent="orion", model="openai/gpt-5.4",
+                  messages=[{"role": "user", "content": "..."}])
+    frontier_generate(model="openai/gpt-5.4",
+                      messages=[{"role": "user", "content": "..."}])
+
+    # Raw escape hatch (advanced — bypasses persona admission):
     pipeline(op="async", pipeline_id="frontier-dispatch",
              pipeline_options={"model": "openai/gpt-5.4", "agent": "orion"},
              messages=[{"role": "user", "content": "..."}])
@@ -41,11 +48,13 @@ from model_id import ModelId
 
 from ..events.dispatch import (
     PipelineFrontierDispatchCompleted,
+    PipelineFrontierDispatchEmptyCompletion,
     PipelineFrontierDispatchExhausted,
     PipelineFrontierDispatchRemoteMcpEnabled,
     PipelineFrontierDispatchRemoteMcpMisconfigured,
     PipelineFrontierDispatchStarted,
 )
+from ..execution.errors import EmptyCompletionError
 from .builtin import BaseHandler
 from .frontier_dispatch_admission import (
     check_agent_model_consistency,
@@ -222,8 +231,11 @@ class FrontierDispatchHandler(BaseHandler):
         # Caller-supplied ``generation_parameters.provider_options.xai.tools``
         # (including ``[]`` to suppress) always wins via the ``if "tools" not in``
         # guard below.
-        if agent and provider == "xai" and mcp_enabled and not isinstance(
-            opt_tools, list
+        if (
+            agent
+            and provider == "xai"
+            and mcp_enabled
+            and not isinstance(opt_tools, list)
         ):
             po: dict[str, Any] = dict(gen_params.get("provider_options") or {})
             xai_opts: dict[str, Any] = dict(po.get("xai") or {})
@@ -322,6 +334,35 @@ class FrontierDispatchHandler(BaseHandler):
                     provider=result.provider,
                 ),
             )
+            # F3: detect silent empty-completion on the non-exhausted branch
+            # and convert terminal state to failed. The exhausted branch is
+            # intentional — empty content there is the expected outcome of
+            # hitting max_tool_turns. Originally surfaced by Orion execution
+            # d65c723b (Cortex assertion 7903).
+            if not (result.content or "").strip():
+                finish_reason = getattr(result, "finish_reason", None)
+                block_reason = getattr(result, "block_reason", None)
+                self._publish_bus_event(
+                    context,
+                    PipelineFrontierDispatchEmptyCompletion(
+                        execution_id=context.execution_id,
+                        agent=agent,
+                        model=model,
+                        provider=result.provider,
+                        turns_used=result.turns_used,
+                        tool_calls_made=result.tool_calls_made,
+                        finish_reason=finish_reason,
+                        block_reason=block_reason,
+                    ),
+                )
+                raise EmptyCompletionError(
+                    execution_id=context.execution_id,
+                    agent=agent,
+                    model=model,
+                    provider=result.provider,
+                    turns_used=result.turns_used,
+                    finish_reason=finish_reason,
+                )
         # Post-loop observability (Task-7 Phase 1 hoist). Emitted on both
         # exhausted and completed branches — the anomalies (short output,
         # termination shadow) are response-fact detections independent of

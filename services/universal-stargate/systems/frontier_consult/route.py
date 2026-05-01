@@ -1,4 +1,4 @@
-"""POST /api/v1/frontier/generate admission gate over async dispatch."""
+"""Admission gates for team/persona and raw frontier dispatch."""
 
 from __future__ import annotations
 
@@ -17,19 +17,19 @@ from .service import (
     build_dispatch_body,
 )
 
-router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])
+team_router = APIRouter(prefix="/api/v1/team", tags=["team"])
+frontier_router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])
 logger = get_logger(__name__)
 
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
 
-class FrontierGenerateBody(BaseModel):
-    model_config = {"extra": "allow"}
+class TeamGenerateBody(BaseModel):
+    model_config = {"extra": "forbid"}
 
     messages: list[dict[str, Any]]
+    agent: str
     model: str | None = None
-    agent: str | None = None
-    boot: str = "none"
     system: str = ""
     tools: list[str] | None = None
     reasoning_effort: str | None = None
@@ -42,27 +42,25 @@ class FrontierGenerateBody(BaseModel):
     timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
 
 
-@router.post("/generate", status_code=202)
-async def frontier_generate(
-    body: FrontierGenerateBody,
-    response: Response,
-) -> dict[str, Any]:
-    req = FrontierGenerateRequest(
-        messages=body.messages,
-        model=body.model,
-        agent=body.agent,
-        boot=body.boot,
-        system=body.system,
-        tools=body.tools,
-        reasoning_effort=body.reasoning_effort,
-        generation_options=body.generation_options,
-        max_tool_turns=body.max_tool_turns,
-        transcript_id=body.transcript_id,
-        remote_mcp=body.remote_mcp,
-        result_delivery=body.result_delivery,
-        caller_agent=body.caller_agent,
-        timeout_seconds=body.timeout_seconds,
-    )
+class FrontierGenerateBody(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    messages: list[dict[str, Any]]
+    model: str
+    system: str = ""
+    reasoning_effort: str | None = None
+    generation_options: dict[str, Any] | None = None
+    max_tool_turns: int | None = None
+    transcript_id: str | None = None
+    remote_mcp: bool | None = None
+    result_delivery: dict[str, Any] | None = None
+    caller_agent: str | None = None
+    timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
+
+
+async def _dispatch(
+    req: FrontierGenerateRequest, response: Response
+) -> dict[str, Any] | JSONResponse:
     try:
         from systems.proxy.dependencies import get_proxy
 
@@ -77,7 +75,7 @@ async def frontier_generate(
         dispatch_body = await build_dispatch_body(req, event_publisher=_publish_event)
     except FrontierEndpointError as exc:
         logger.warning(
-            "frontier_generate rejected: request_id=%s field=%s reason=%s",
+            "dispatch rejected: request_id=%s field=%s reason=%s",
             exc.request_id,
             exc.field,
             exc.reason,
@@ -94,7 +92,7 @@ async def frontier_generate(
         return forward.json()
     except ValueError as exc:
         logger.error(
-            "frontier_generate forward returned non-JSON: status=%s error=%s",
+            "dispatch forward returned non-JSON: status=%s error=%s",
             forward.status_code,
             exc,
         )
@@ -104,3 +102,23 @@ async def frontier_generate(
                 "message": forward.text[:500],
             }
         }
+
+
+@team_router.post("/generate", status_code=202, response_model=None)
+async def team_generate(
+    body: TeamGenerateBody,
+    response: Response,
+) -> dict[str, Any] | JSONResponse:
+    """Persona-required dispatch (team-seat consults)."""
+    req = FrontierGenerateRequest(**body.model_dump())
+    return await _dispatch(req, response)
+
+
+@frontier_router.post("/generate", status_code=202, response_model=None)
+async def frontier_generate(
+    body: FrontierGenerateBody,
+    response: Response,
+) -> dict[str, Any] | JSONResponse:
+    """Persona-free dispatch (raw engine)."""
+    req = FrontierGenerateRequest(**body.model_dump())
+    return await _dispatch(req, response)

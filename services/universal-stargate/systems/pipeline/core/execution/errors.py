@@ -285,7 +285,8 @@ class UnknownPipelineOptionsError(PipelineError):
     hours of agent debugging when reasoning levers appeared to be ignored.
     Hard-rejecting unknown keys at admission catches the typo upstream and
     points the caller at the right key or the right tool
-    (``frontier_generate`` for persona consults).
+    (``team_generate`` for persona consults; ``frontier_generate`` for
+    persona-free raw engine).
     """
 
     step_name: str
@@ -299,8 +300,9 @@ class UnknownPipelineOptionsError(PipelineError):
             f"[Step '{self.step_name}']{who} unknown pipeline_options "
             f"keys: {self.unknown_keys}. Accepted: {self.accepted_keys}. "
             "For persona consults (oppie/orion/bard/api_claude) prefer "
-            "`frontier_generate` — it validates options against the "
-            "persona's allowlist."
+            "`team_generate` — it validates options against the persona's "
+            "allowlist. For raw persona-free dispatches prefer "
+            "`frontier_generate`."
         )
 
     def to_dict(self) -> dict:
@@ -402,6 +404,53 @@ class BootProviderMismatchError(PipelineError):
             "provider": self.provider,
             "boot_mode": self.boot_mode,
             "reason": self.reason,
+        }
+
+
+@dataclass
+class EmptyCompletionError(PipelineError):
+    """Raised when ``frontier_dispatch_v1`` returns ``content=""`` on the
+    non-exhausted branch — silent successful-looking completion with no body.
+
+    Distinct from the exhausted branch (intentional outcome of hitting
+    ``max_tool_turns``). This guard fires only when the model genuinely
+    returned empty content without exhausting the loop.
+
+    Originally surfaced by Orion execution ``d65c723b`` (Cortex assertion
+    7903): ``status: completed`` + ``content: ""`` + no error envelope. The
+    executor's normal exception path catches this and maps the terminal
+    state from ``completed`` → ``failed`` so callers polling via
+    ``pipeline(op="result", ...)`` see the structured envelope.
+    """
+
+    execution_id: str
+    agent: str | None
+    model: str
+    provider: str
+    turns_used: int
+    finish_reason: str | None
+
+    def __str__(self) -> str:
+        who = f" agent={self.agent!r}" if self.agent else ""
+        return (
+            f"Frontier dispatch returned empty content: model={self.model!r} "
+            f"provider={self.provider!r} turns_used={self.turns_used}{who} "
+            f"finish_reason={self.finish_reason!r} "
+            f"execution_id={self.execution_id}. "
+            "Terminal state converted to failed."
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "EmptyCompletionError",
+            "code": "empty_completion",
+            "retryable": self.retryable,
+            "execution_id": self.execution_id,
+            "agent": self.agent,
+            "model": self.model,
+            "provider": self.provider,
+            "turns_used": self.turns_used,
+            "finish_reason": self.finish_reason,
         }
 
 

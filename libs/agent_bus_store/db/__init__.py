@@ -9,13 +9,14 @@ from .threads import (
     get_thread,
     get_thread_summary,
     get_thread_turns_asc,
+    get_thread_with_links,
     list_threads_v2,
     normalize_thread_id,
     rename_thread,
     set_thread_tags,
     update_thread,
 )
-from .threads_atomic import close_thread, create_thread_with_turn
+from .threads_atomic import admit_dispatch, close_thread, create_thread_with_turn
 from .turns import (
     TurnAlreadyAcknowledged,
     UnreadTurnsExist,
@@ -32,6 +33,7 @@ __all__ = [
     "ThreadHasReadTurns",
     "TurnAlreadyAcknowledged",
     "UnreadTurnsExist",
+    "admit_dispatch",
     "close_thread",
     "create_thread",
     "create_thread_with_turn",
@@ -41,6 +43,7 @@ __all__ = [
     "get_thread",
     "get_thread_summary",
     "get_thread_turns_asc",
+    "get_thread_with_links",
     "get_turn_by_number",
     "get_turns",
     "init_db",

@@ -60,8 +60,8 @@ def prepend_dispatch_context(system: str) -> str:
     """Prepend ``<dispatch_context>`` preamble with the current UTC date.
 
     v1: ``current_date`` only — always injected, no opt-out. Anchors
-    temporal reasoning for every ``frontier_dispatch_v1`` execution
-    regardless of boot level.
+    temporal reasoning for every ``frontier_dispatch_v1`` execution regardless
+    of persona/raw dispatch tier.
     """
     today = datetime.now(UTC).date().isoformat()
     ctx = (
@@ -141,9 +141,12 @@ _XAI_MULTI_AGENT_SUBSTRING: str = "multi-agent"
 _XAI_MULTI_AGENT_BOOT_MISMATCH_REASON: str = (
     "xAI multi-agent models reject client-side MCP function tools; the "
     "API tools= field would be [] regardless of mcp setting. "
-    "Fix options: (a) pass tools=[] explicitly via frontier_generate — "
+    "Fix options: (a) pass tools=[] explicitly via team_generate — "
     "suppresses the API tool surface while persona identity is still injected "
-    "by frontier_generate upstream; (b) pass mcp=False — same API effect."
+    "by team_generate upstream; (b) pass mcp=False — same API effect. "
+    "(``boot_mode`` in the corresponding event is internal observability "
+    "vocabulary derived from agent presence at the dispatch handler; there "
+    "is no caller-facing boot parameter on team_generate or frontier_generate.)"
 )
 
 

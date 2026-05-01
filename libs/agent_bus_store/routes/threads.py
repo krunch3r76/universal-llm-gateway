@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from ..auth import require_token
 from ..db import (
     ThreadHasReadTurns,
+    admit_dispatch,
     close_thread,
     create_thread,
     create_thread_with_turn,
@@ -24,6 +25,8 @@ from ..db import (
 )
 from ..db.turns import UnreadTurnsExist
 from ..turns_models import (
+    DispatchAdmit,
+    DispatchLinkSummary,
     ThreadClose,
     ThreadCreate,
     ThreadDetail,
@@ -42,6 +45,21 @@ router = APIRouter(dependencies=[Depends(require_token)])
 
 def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
     """Convert a thread aggregate row to the typed API response model."""
+    raw_links = row.get("dispatch_links") or []
+    links = [
+        DispatchLinkSummary(
+            execution_id=lnk["execution_id"],
+            pipeline_id=lnk["pipeline_id"],
+            linked_at=datetime.fromisoformat(lnk["linked_at"]),
+            terminal_status=lnk.get("terminal_status"),
+            delivery_at=(
+                datetime.fromisoformat(lnk["delivery_at"])
+                if lnk.get("delivery_at")
+                else None
+            ),
+        )
+        for lnk in raw_links
+    ]
     return ThreadDetail(
         id=row["id"],
         slug=row["slug"],
@@ -55,6 +73,8 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
         tags=row.get("tags", []) or [],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        bus_lifecycle_state=row.get("bus_lifecycle_state"),
+        dispatch_links=links,
     )
 
 
@@ -65,13 +85,19 @@ def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
 async def list_threads_route(
     thread_status: ThreadStatus | None = Query(None, alias="status"),
     tags: list[str] | None = Query(None),
+    lifecycle_state: str | None = Query(None),
 ) -> ThreadListResponse:
-    """List threads with optional status + AND-tag filtering.
+    """List threads with optional status + AND-tag + lifecycle_state filtering.
 
     `tags`: repeat the param to filter on multiple tags (AND semantics).
     Example: `GET /threads?tags=project:X&tags=type:bug`.
+
+    `lifecycle_state`: filter by exact lifecycle state value.
+    Example: `GET /threads?lifecycle_state=pending`.
     """
-    rows = list_threads_v2(status=thread_status, tags=tags)
+    rows = list_threads_v2(
+        status=thread_status, tags=tags, lifecycle_state=lifecycle_state
+    )
     return ThreadListResponse(threads=[_thread_detail(r) for r in rows])
 
 
@@ -175,7 +201,11 @@ async def create_thread_route(body: ThreadCreate) -> ThreadDetail:
     if body.id is not None:
         body.id = normalize_thread_id(body.id)
     row = create_thread(
-        thread_id=body.id, slug=body.slug, summary=body.summary, tags=body.tags
+        thread_id=body.id,
+        slug=body.slug,
+        summary=body.summary,
+        tags=body.tags,
+        lifecycle_state=body.lifecycle_state,
     )
     if row is None:
         raise HTTPException(
@@ -274,6 +304,37 @@ async def rename_thread_route(thread_id: str, body: ThreadRename) -> ThreadDetai
     thread_id = normalize_thread_id(thread_id)
     try:
         row = rename_thread(thread_id, new_id=body.new_id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {thread_id} not found",
+        )
+    return _thread_detail(row)
+
+
+@router.post(
+    "/threads/{thread_id}/dispatch-admit",
+    response_model=ThreadDetail,
+)
+async def dispatch_admit_route(thread_id: str, body: DispatchAdmit) -> ThreadDetail:
+    """Register a pipeline dispatch link and advance lifecycle state.
+
+    - If bus_lifecycle_state == "pending": transitions to "admitted".
+    - If bus_lifecycle_state is NULL: link registered, no lifecycle transition
+      (documented coverage gap — pre-create with lifecycle_state="pending" for
+      full recovery support).
+    - Returns 409 when thread is in a terminal state.
+    """
+    thread_id = normalize_thread_id(thread_id)
+    try:
+        row = admit_dispatch(
+            thread_id=thread_id,
+            execution_id=body.execution_id,
+            pipeline_id=body.pipeline_id,
+            caller_agent=body.caller_agent,
+        )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     if row is None:
