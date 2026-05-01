@@ -279,7 +279,15 @@ async def run_native_tool_loop(
 
     return NativeLoopResult(
         content=result.get("content", "") if isinstance(result, dict) else "",
-        reasoning=result.get("thinking") if isinstance(result, dict) else None,
+        # Prefer "reasoning" (populated by ResponsesAPIAdapter for xAI grok-4
+        # built-in reasoning) over "thinking". This ensures the field is populated
+        # when the adapter fallback triggers.
+        reasoning=(
+            result.get("reasoning")
+            or result.get("thinking")
+            if isinstance(result, dict)
+            else None
+        ),
         tool_calls=captured,
         turns_used=turns_used,
         exhausted=exhausted,

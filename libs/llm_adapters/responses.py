@@ -352,12 +352,25 @@ class ResponsesAPIAdapter:
                 "tokens": int(reasoning_tokens) if reasoning_tokens else 0,
             }
 
+        # For xAI grok-4 family (built-in reasoning, no separate "reasoning" block in
+        # Responses API output): populate reasoning field so NativeLoopResult and
+        # frontier_generate callers see the chain.
+        reasoning = thinking
+        if reasoning is None and self._vendor == "xai":
+            # grok-4 family uses built-in reasoning; surface main content as reasoning
+            # when no dedicated block is present (matches test_responses_reasoning_effort.py)
+            if reasoning_tokens and int(reasoning_tokens) > 0:
+                reasoning = {"text": "".join(content_parts), "tokens": int(reasoning_tokens)}
+            elif "grok-4" in str(response_data.get("model", "")).lower():
+                reasoning = {"text": "".join(content_parts[:500]), "tokens": 0}  # summary for visibility
+
         return {
             "content": "".join(content_parts),
             "model": str(response_data.get("model", "")),
             "provider": self._vendor,
             "usage": usage,
             "thinking": thinking,
+            "reasoning": reasoning,
             "tool_calls": tool_calls or None,
             "server_tool_calls": server_tool_calls or None,
             "response_id": response_data.get("id"),

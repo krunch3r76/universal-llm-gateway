@@ -413,6 +413,8 @@ class FrontierDispatchHandler(BaseHandler):
             "provider": result.provider,
             "hydration": hydration_meta,
             "hints": anomaly_hints,
+            "reasoning": result.reasoning,
+            "raw_response": result.raw,
         }
         return output
 
