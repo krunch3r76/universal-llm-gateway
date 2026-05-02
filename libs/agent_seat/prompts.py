@@ -31,6 +31,7 @@ _BIRTH_PROMPT_FILENAMES: dict[str, str] = {
     "web": "web-claude-birth.md",
     "cursor": "cursor-claude-birth.md",
     "bard": "bard-birth.md",
+    "forge": "forge-birth.md",
 }
 
 

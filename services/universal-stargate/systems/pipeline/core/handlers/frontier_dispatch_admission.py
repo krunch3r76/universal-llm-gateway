@@ -28,7 +28,6 @@ ceiling.  Five responsibilities:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -41,17 +40,18 @@ from agent_seat.registry import (
 
 from ..events.dispatch import (
     PipelineFrontierDispatchAgentModelMismatch,
-    PipelineFrontierDispatchBootMismatch,
     PipelineFrontierDispatchRemoteMcpUnsupported,
+    PipelineFrontierDispatchToolSuppressed,
 )
 from ..execution.errors import (
     AgentModelMismatchError,
-    BootProviderMismatchError,
     RemoteMcpUnsupportedError,
     UnknownPipelineOptionsError,
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..schemas import StepConfig
     from .protocol import PipelineContext
 
@@ -102,7 +102,7 @@ def check_agent_model_consistency(
                 requested_model=model,
                 valid_family=valid_family,
                 mismatch_kind="provider",
-            )
+            ),
         )
         raise AgentModelMismatchError(
             agent=agent,
@@ -120,7 +120,7 @@ def check_agent_model_consistency(
                 requested_model=model,
                 valid_family=valid_family,
                 mismatch_kind="variant",
-            )
+            ),
         )
         raise AgentModelMismatchError(
             agent=agent,
@@ -138,17 +138,6 @@ def check_agent_model_consistency(
 # signal — it matches _AGENT_MODEL_REQUIREMENTS["oppie"] in registry.py.
 _XAI_MULTI_AGENT_SUBSTRING: str = "multi-agent"
 
-_XAI_MULTI_AGENT_BOOT_MISMATCH_REASON: str = (
-    "xAI multi-agent models reject client-side MCP function tools; the "
-    "API tools= field would be [] regardless of mcp setting. "
-    "Fix options: (a) pass tools=[] explicitly via team_generate — "
-    "suppresses the API tool surface while persona identity is still injected "
-    "by team_generate upstream; (b) pass mcp=False — same API effect. "
-    "(``boot_mode`` in the corresponding event is internal observability "
-    "vocabulary derived from agent presence at the dispatch handler; there "
-    "is no caller-facing boot parameter on team_generate or frontier_generate.)"
-)
-
 
 def check_boot_provider_compatibility(
     *,
@@ -160,47 +149,44 @@ def check_boot_provider_compatibility(
     execution_id: str,
     publish: Callable[[object], None],
 ) -> None:
-    """Reject xAI multi-agent team-boot dispatches that would silently coerce tools=[].
+    """Apply silent provider-derived tool coercion for incompatible (provider, boot)
+    pairs; no longer raises to caller.
 
-    xAI multi-agent models (model ID contains "multi-agent") reject client-side
-    MCP function tools. When ``agent`` is set and ``mcp_enabled=True``,
-    ``resolve_dispatch_tool_set`` would return ``tools=[]`` silently (Case 2,
-    xAI branch) while the caller expects a tool-capable dispatch. This raises a
-    structured ``BootProviderMismatchError`` instead.
+    Per todo:retire-tools-allowlist-as-caller-concern, tools is not a caller
+    concern. For xAI multi-agent models (contains "multi-agent") with
+    mcp_enabled=True, silently coerce by allowing dispatch with tools=[] /
+    mcp_tool_loop=False (no client-side MCP function tools) and emit
+    ``pipeline.frontier.dispatch.tool.suppressed`` telemetry. Server-side
+    xAI builtins still injected via provider_options.xai.tools.
 
-    Non-multi-agent xAI models (e.g. grok-4.3, grok-4.20-reasoning) support
-    standard function calling and are not gated.
+    Non-multi-agent xAI models and other providers are unaffected.
 
-    Skipped when:
-    - ``isinstance(opt_tools, list)`` — caller-supplied explicit tool list
-      routes to Case 1 in ``resolve_dispatch_tool_set``; API surface is deliberate
-    - ``agent is None`` — no persona dispatch, no multi-agent constraint
-    - ``not mcp_enabled`` — caller already suppressed the API tool surface
-    - model ID does not contain "multi-agent" — non-multi-agent xAI model
+    Skipped (no coercion) when:
+    - ``isinstance(opt_tools, list)`` — explicit caller intent via frontier_generate
+    - ``agent is None`` — persona-free dispatch
+    - ``not mcp_enabled`` — caller already suppressed
+    - not xAI multi-agent model
 
-    Emits ``pipeline.frontier.dispatch.boot.mismatch`` and raises
-    ``BootProviderMismatchError`` on violation.
+    The BootProviderMismatchError remains for genuine unresolvable misconfigs.
     """
     if isinstance(opt_tools, list) or agent is None or not mcp_enabled:
         return
     if provider != "xai" or _XAI_MULTI_AGENT_SUBSTRING not in model:
         return
-    reason = _XAI_MULTI_AGENT_BOOT_MISMATCH_REASON
+    reason = "xai_multi_agent_client_tools_unsupported"
     publish(
-        PipelineFrontierDispatchBootMismatch(
+        PipelineFrontierDispatchToolSuppressed(
             execution_id=execution_id,
             agent=agent,
+            model=model,
             provider=provider,
-            boot_mode="team",
             reason=reason,
-        )
+        ),
     )
-    raise BootProviderMismatchError(
-        agent=agent,
-        provider=provider,
-        boot_mode="team",
-        reason=reason,
-    )
+    # Silent coercion: no error raised to caller. Downstream
+    # resolve_dispatch_tool_set sets tools=[] for this case; mcp_tool_loop=False;
+    # CORTEX_TOOL_QUICKREF suppressed in prompt. Provider builtins via
+    # provider_options.xai.tools still available.
 
 
 def reject_unknown_runtime_options(
@@ -280,7 +266,7 @@ def resolve_remote_mcp(
                 provider=provider,
                 requested=requested,
                 reason=reason,
-            )
+            ),
         )
         raise RemoteMcpUnsupportedError(
             step_name=step.id,

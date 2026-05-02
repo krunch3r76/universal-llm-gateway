@@ -68,12 +68,15 @@ def _normalize_slug_to_entity(agent: str) -> str:
 
 @dataclass(slots=True)
 class AgentMeta:
-    """Persona contract loaded from ``ai_agent:{slug}.attributes``."""
+    """Persona contract loaded from ``ai_agent:{slug}.attributes``.
+
+    Tools field retired (todo:retire-tools-allowlist-as-caller-concern); tool
+    surface is provider-derived and universal. No per-persona allowlist.
+    """
 
     frontier_kind: str | None = None
     default_model: str | None = None
     allowed_models: list[str] = field(default_factory=list)
-    tools: list[str] | None = None
     allowed_options: list[str] | None = None
 
 
@@ -101,7 +104,7 @@ async def _cortex_get(path: str) -> Any:
     """Single GET to Cortex UDS; returns parsed JSON or ``{"error": ...}``."""
     try:
         async with make_async_client(
-            DEFAULT_CORTEX_URL, timeout=_FETCH_TIMEOUT
+            DEFAULT_CORTEX_URL, timeout=_FETCH_TIMEOUT,
         ) as client:
             resp = await client.get(path)
     except Exception as exc:
@@ -118,7 +121,7 @@ async def _bus_get(path: str) -> Any:
     """Single GET to agent-bus UDS; returns parsed JSON or ``{"error": ...}``."""
     try:
         async with make_async_client(
-            DEFAULT_AGENT_BUS_URL, timeout=_FETCH_TIMEOUT
+            DEFAULT_AGENT_BUS_URL, timeout=_FETCH_TIMEOUT,
         ) as client:
             resp = await client.get(path)
     except Exception as exc:
@@ -173,7 +176,6 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
             str(default_model_raw) if isinstance(default_model_raw, str) else None
         ),
         allowed_models=_as_str_list(attributes.get("allowed_models")),
-        tools=_as_optional_str_list(attributes.get("tools")),
         allowed_options=_as_optional_str_list(attributes.get("allowed_options")),
     )
 
@@ -243,7 +245,7 @@ def _render_briefing(
     """
     today = datetime.now(UTC).astimezone(_LA)
     parts: list[str] = [
-        f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}"
+        f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}",
     ]
 
     if skills:
@@ -251,7 +253,7 @@ def _render_briefing(
             "\n## Agent Skills "
             "(read on trigger match — "
             "`fs(sandbox='cortex', op='read', "
-            "path='agent-skills/<NAME>.md')`)"
+            "path='agent-skills/<NAME>.md')`)",
         )
         for s in skills:
             slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
@@ -279,7 +281,7 @@ def _render_briefing(
         last = sessions[0]
         parts.append(
             f"\n## Last Session — {last.get('agent', '?')} "
-            f"({last.get('timestamp', '?')})"
+            f"({last.get('timestamp', '?')})",
         )
         summary = (last.get("summary") or "")[:300]
         if summary:
@@ -327,7 +329,7 @@ async def hydrate_agent(
     session_qs = urlencode({"limit": profile["session_limit"]})
     normalized_agent = normalize_agent_slug(agent)
     unread_qs = urlencode(
-        {"to": normalized_agent, "unread": "true", "last": 10, "compact": "true"}
+        {"to": normalized_agent, "unread": "true", "last": 10, "compact": "true"},
     )
     todo_qs = urlencode({"limit": 15})
     skills_qs = urlencode({"type": "agent_skill", "limit": 50})
@@ -344,7 +346,7 @@ async def hydrate_agent(
         tasks["deadlines"] = asyncio.create_task(_cortex_get("/deadlines"))
     if profile["include_review_queue"]:
         tasks["staging"] = asyncio.create_task(
-            _cortex_get("/staging?status=pending&limit=5")
+            _cortex_get("/staging?status=pending&limit=5"),
         )
 
     self_entity = _SELF_ENTITY.get(normalized_agent)
@@ -354,10 +356,10 @@ async def hydrate_agent(
                 "entity_id": self_entity,
                 "superseded": "false",
                 "limit": profile["self_reflections_limit"],
-            }
+            },
         )
         tasks["self_reflections"] = asyncio.create_task(
-            _cortex_get(f"/assertions?{refl_qs}")
+            _cortex_get(f"/assertions?{refl_qs}"),
         )
 
     continuation_task: asyncio.Task[tuple[str | None, str | None]] | None = None

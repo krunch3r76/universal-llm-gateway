@@ -1,5 +1,4 @@
-"""
-Pipeline error hierarchy with structured serialization.
+"""Pipeline error hierarchy with structured serialization.
 
 ∀ error: error.to_dict() → JSON-compatible dict for API responses
 """
@@ -174,14 +173,14 @@ class StepTimeoutError(PipelineError):
         progress_parts: list[str] = []
         if self.items_total is not None and self.items_completed is not None:
             progress_parts.append(
-                f"{self.items_completed}/{self.items_total} claims verified"
+                f"{self.items_completed}/{self.items_total} claims verified",
             )
         elif self.items_total is not None:
             progress_parts.append(f"{self.items_total} claims tracked")
 
         progress_parts.append(f"{self.model_call_count} model calls attempted")
         progress_parts.append(
-            f"{self.prompt_tokens + self.completion_tokens} tokens used"
+            f"{self.prompt_tokens + self.completion_tokens} tokens used",
         )
         return f"{message}\n  Progress: {', '.join(progress_parts)}"
 
@@ -366,21 +365,15 @@ class AgentModelMismatchError(PipelineError):
 
 @dataclass
 class BootProviderMismatchError(PipelineError):
-    """Raised when (boot_mode, provider) creates a runtime tool-surface contract
-    violation: the provider would silently receive ``tools=[]`` at the API layer
-    while the caller expected a tool-capable dispatch.
+    """Raised for genuine (boot_mode, provider) misconfigurations that infra
+    cannot silently coerce. Primary case (xAI multi-agent + mcp=True) now uses
+    silent ``PipelineFrontierDispatchToolSuppressed`` + coercion per
+    todo:retire-tools-allowlist-as-caller-concern; this error kept for other
+    unresolvable mismatches.
 
-    Structural case: ``provider='xai'`` with ``boot_mode='team'`` (``agent``
-    set + ``mcp_enabled=True``) — xAI multi-agent models reject client-side
-    function tools, so ``resolve_dispatch_tool_set`` coerces ``tools=[]``.
-    Without this guard, the caller receives a silently degraded dispatch
-    (no tool calls, no error, no admission signal).
-
-    Note: ``build_subagent_preamble`` appends ``CORTEX_TOOL_QUICKREF``
-    unconditionally for all persona dispatches. This error fires before
-    hydration to prevent the API-level contract violation. Prompt-layer
-    suppression (removing ``CORTEX_TOOL_QUICKREF`` when tool loop will be
-    disabled) is a separate follow-up.
+    Note: prompt-layer CORTEX_TOOL_QUICKREF suppression now handled in
+    resolve_dispatch_tool_set via include_cortex_quickref param based on
+    effective tools/mcp.
     """
 
     agent: str
@@ -456,8 +449,7 @@ class EmptyCompletionError(PipelineError):
 
 @dataclass
 class MapPartialFailureError(PipelineError):
-    """
-    Raised when map step completes with partial success below threshold.
+    """Raised when map step completes with partial success below threshold.
 
     Contains per-iteration details for debugging:
     - Model and gateway routing
@@ -503,7 +495,7 @@ class MapPartialFailureError(PipelineError):
         lines = [
             f"Map step '{self.step_name}' did not meet success threshold: "
             f"{self.completed_count}/{self.total_count} succeeded "
-            f"(required: {threshold_str})"
+            f"(required: {threshold_str})",
         ]
 
         # Add per-iteration details

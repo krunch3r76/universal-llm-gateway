@@ -36,9 +36,12 @@ def FrontierEndpointPersonaResolved(  # noqa: N802
     frontier_kind: str | None,
     default_model: str | None,
     allowed_models_count: int,
-    tools_count: int | None,
     allowed_options_count: int | None,
 ) -> Event:
+    """Persona resolution at /team/generate and frontier_generate endpoints.
+
+    tools_count retired per todo:retire-tools-allowlist-as-caller-concern.
+    """
     return Event(
         signal="frontier.endpoint.persona.resolved",
         payload={
@@ -47,7 +50,6 @@ def FrontierEndpointPersonaResolved(  # noqa: N802
             "frontier_kind": frontier_kind,
             "default_model": default_model,
             "allowed_models_count": allowed_models_count,
-            "tools_count": tools_count,
             "allowed_options_count": allowed_options_count,
         },
         scope="node",

@@ -20,5 +20,6 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
     "oppie": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:oppie"},
     "orion": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:orion"},
     "bard": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:bard"},
+    "forge": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:forge"},
     "subagent": {**_FULL_CAPACITY},
 }

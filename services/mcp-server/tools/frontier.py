@@ -153,6 +153,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         messages: list[dict[str, Any]],
         model: str | None = None,
         system: str = "",
+        tools: list[str] | None = None,
         reasoning_effort: str | None = None,
         generation_options: dict[str, Any] | None = None,
         max_tool_turns: int | None = None,
@@ -163,41 +164,23 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Persona-aware team-seat dispatch (async-by-default).
 
-        Default door for any team consult: ``oppie``, ``orion``, ``bard``,
-        ``api_claude``. Stargate resolves the persona's ``default_model``,
-        enforces ``allowed_models`` / ``allowed_options`` / ``tools`` allowlists
-        (defined on cortex ``ai_agent:{slug}`` entities), and auto-assembles
-        birth + briefing + continuation as the system prompt. Persona violations
-        are returned as a structured error envelope before dispatch.
+        Default door for any team consult (`oppie`, `orion`, `bard`,
+        `api_claude`, `forge`). Stargate resolves persona contract and
+        assembles birth prompt + briefing + continuation.
 
-        Returns immediately with ``{execution_id, pipeline, status, started_at}``.
-        Poll with ``pipeline(op="result", execution_id=<id>, wait_seconds=60.0)``
-        or pass ``result_delivery`` for terminal push to an agent-bus thread.
+        Returns immediately with `{execution_id, pipeline, status, started_at}`.
+        Poll with `pipeline(op="result", execution_id=...)` or use
+        `result_delivery` for terminal push to an agent-bus thread.
 
-        Args:
-          - ``agent`` (required): persona slug (``oppie``, ``orion``, ``bard``,
-            ``api_claude``). Must resolve to an ``ai_agent:{slug}`` entity.
-          - ``model``: optional provider-qualified model ID. When omitted, the
-            persona's ``default_model`` is used. When supplied, it must be in
-            the persona's ``allowed_models``.
-          - ``reasoning_effort``: ``"low"``, ``"medium"``, or ``"high"``.
-          - ``generation_options``: pass-through generation params
-            (``temperature``, ``max_tokens``, ``top_p``, ``top_k``, ``stop``,
-            ``seed``, ``response_format``, ``tool_choice``, ``thinking``).
-          - ``max_tool_turns``: maximum tool-call/response cycles. Defaults to
-            10. Raise to 25-100 for investigation-grade tasks.
-          - ``result_delivery``: ``{bus_thread, bus_from_agent, bus_to_agent,
-            bus_subject, bus_brief_summary, bus_attachments, bus_lifecycle}``.
-          - ``caller_agent``: dispatch provenance string.
-          - ``timeout_seconds``: pipeline wall-clock cap.
-
-        For raw, persona-free dispatches use ``frontier_generate`` instead.
+        For raw engine calls without persona assembly use `frontier_generate`.
         """
         body: dict[str, Any] = {
             "messages": messages,
             "agent": agent,
             "system": system,
         }
+        if tools is not None:
+            body["tools"] = tools
         for key, val in (
             ("model", model),
             ("reasoning_effort", reasoning_effort),
@@ -243,24 +226,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         empty system. For team-seat dispatches use ``team_generate`` instead.
 
         Returns immediately with ``{execution_id, pipeline, status, started_at}``.
-        Poll with ``pipeline(op="result", execution_id=<id>, wait_seconds=60.0)``
-        or pass ``result_delivery`` for terminal push.
-
-        Args:
-          - ``model`` (required): provider-qualified model ID
-            (``openai/gpt-5.4``, ``anthropic/claude-sonnet-4-6``,
-            ``xai/grok-4.20-reasoning``, etc.). Chat-Completions-only OpenAI
-            search variants are rejected; use ``llm_generate`` for those.
-          - ``reasoning_effort``: ``"low"``, ``"medium"``, or ``"high"``.
-          - ``generation_options``: pass-through generation params.
-          - ``max_tool_turns``: maximum tool-call/response cycles. Defaults to
-            10. Raise to 25-100 for investigation-grade tasks.
-          - ``result_delivery``: see ``team_generate`` for the bus contract.
-          - ``caller_agent``: dispatch provenance string.
-          - ``timeout_seconds``: pipeline wall-clock cap.
-
-        Supplying ``agent`` is rejected at the Stargate route boundary; use
-        ``team_generate`` for persona dispatch.
+        Poll with ``pipeline(op="result", execution_id=...)`` or use
+        ``result_delivery`` for terminal push.
         """
         body: dict[str, Any] = {
             "messages": messages,

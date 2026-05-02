@@ -20,6 +20,7 @@ _AGENT_PROVIDERS: dict[str, str] = {
     "orion": "openai",
     "bard": "google",
     "api_claude": "anthropic",
+    "forge": "xai",
 }
 
 # Default model per agent (canonical, mirrors Cortex assertions 5255–5258).
@@ -28,6 +29,7 @@ _AGENT_DEFAULTS: dict[str, str] = {
     "orion": "openai/gpt-5.4",
     "bard": "google/gemini-2.5-pro",
     "api_claude": "anthropic/claude-sonnet-4-6",
+    "forge": "xai/grok-4.20-0309-reasoning",
 }
 
 # Allowed model families per agent (for mismatch event payload).
@@ -48,6 +50,12 @@ _AGENT_VALID_FAMILIES: dict[str, list[str]] = {
         "anthropic/claude-opus-4",
         "anthropic/claude-opus-4-7",
         "anthropic/claude-3-5-sonnet",
+    ],
+    # Forge uses Grok reasoning variants (not multi-agent; tool calling supported
+    # via xAI Responses API for these specific reasoning builds).
+    "forge": [
+        "xai/grok-4.20-0309-reasoning",
+        "xai/grok-4.3",
     ],
 }
 
@@ -87,6 +95,8 @@ def normalize_agent_slug(slug: str) -> str:
         "cursor_claude": "cursor",
         "cursor_grok": "cursor_grok",
         "grok": "cursor_grok",
+        "forge": "forge",
+        "cursor_forge": "forge",
     }
     return aliases.get(norm, norm)
 

@@ -778,3 +778,32 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
         },
         scope="node",
     )
+
+
+@event_factory
+def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    reason: str,
+) -> Event:
+    """Emitted when infrastructure silently coerces the tool surface (mcp_enabled=False,
+    tools=[], no CORTEX_TOOL_QUICKREF) for provider that cannot accept client-side
+    MCP function tools (e.g. xAI multi-agent models).
+
+    Replaces previous caller-facing BootProviderMismatchError per
+    todo:retire-tools-allowlist-as-caller-concern. Callers see normal success;
+    telemetry visible to operators via observability or recent-events queries.
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.tool.suppressed",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "reason": reason,
+        },
+        scope="node",
+    )

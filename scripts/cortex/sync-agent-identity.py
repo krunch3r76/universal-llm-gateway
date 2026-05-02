@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-One-way sync: agent-identity/*.md (Cortex data layer) → Cortex entities.
+"""One-way sync: agent-identity/*.md (Cortex data layer) → Cortex entities.
 
 For every ``{slug}-birth.md`` file under $AGENT_IDENTITY_DIR, this script
 upserts a matching ``prompt:{slug}-birth`` entity and a ``derived_from`` edge
@@ -10,10 +9,14 @@ its birth prompt — that's the closest semantics in the existing edge taxonomy.
 ``prompt:{slug}-birth`` ↔ ``ai_agent:{slug}`` already carries the binding.)
 
 Also patches ``ai_agent:{slug}.attributes`` with the persona contract
-(frontier_kind, default_model, allowed_models, tools, allowed_options,
+(frontier_kind, default_model, allowed_models, allowed_options,
 persona_seed_ref) from ``AGENT_REGISTRY``, for consumers such as
 ``libs/agent_seat/hydrate_agent`` and the Stargate ``/api/v1/team/generate``
 endpoint.
+
+Tools allowlist retired (todo:retire-tools-allowlist-as-caller-concern); tool
+surface is now universal with provider-derived silent coercion for quirks (e.g.
+xAI multi-agent models). No per-persona tools field in contract.
 
 Idempotence: the sync compares the stored ``content_hash`` (sha256 of the
 file) and only issues an update when it changes. Edges are created only when
@@ -49,13 +52,14 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client  # noqa: E402
 # Agent registry — filename stem → canonical metadata. Drives:
 # (a) the prompt entity (name / native_provider on prompt:{slug}-birth)
 # (b) the persona contract written onto ai_agent:{slug}.attributes
-#     (frontier_kind, default_model, allowed_models, tools, allowed_options,
+#     (frontier_kind, default_model, allowed_models, allowed_options,
 #      persona_seed_ref) — consumed by libs/agent_seat/hydrate_agent and the
 #     Stargate /api/v1/team/generate endpoint.
 #
-# `tools` / `allowed_options`:
-#   None → permissive (full tool registry / any generation_options key).
-#   list → strict whitelist enforced at the endpoint.
+# Tools allowlist retired (todo:retire-tools-allowlist-as-caller-concern):
+# tool surface is universal; provider quirks (xAI multi-agent no client-side
+# function tools) handled by silent coercion + telemetry in dispatch handler.
+# No caller-facing allowlist or per-persona tools field.
 # ────────────────────────────────────────────────────────────────────────────
 
 DEFAULT_SESSION_ID = "agent-identity-sync"
@@ -66,7 +70,6 @@ _PERSONA_ATTR_KEYS = (
     "frontier_kind",
     "default_model",
     "allowed_models",
-    "tools",
     "allowed_options",
     "persona_seed_ref",
 )
@@ -85,7 +88,6 @@ class SyncPlan:
     frontier_kind: str
     default_model: str | None
     allowed_models: list[str]
-    tools: list[str] | None
     allowed_options: list[str] | None
     persona_seed_ref: str | None
     file_path: Path
@@ -118,31 +120,23 @@ def _resolve_identity_dir() -> Path:
     """Read $AGENT_IDENTITY_DIR; fail loudly if unset."""
     raw = os.environ.get("AGENT_IDENTITY_DIR")
     if not raw:
-        print(
-            "error: AGENT_IDENTITY_DIR is not set.\n"
-            "The agent-identity directory lives in the Cortex data layer "
-            "(not the repo). Export AGENT_IDENTITY_DIR before running, e.g.:\n"
-            "  export AGENT_IDENTITY_DIR=/mnt/torus/mcp-data/files/agent-identity",
-            file=sys.stderr,
-        )
         sys.exit(2)
     base = Path(raw).resolve()
     if not base.is_dir():
-        print(f"error: AGENT_IDENTITY_DIR does not exist: {base}", file=sys.stderr)
         sys.exit(2)
     return base
 
 
 def _meta_str_list(key: str, meta: dict[str, object]) -> list[str]:
     raw = meta[key]
-    return [str(x) for x in cast(list[object], raw)]
+    return [str(x) for x in cast("list[object]", raw)]
 
 
 def _meta_optional_str_list(key: str, meta: dict[str, object]) -> list[str] | None:
     raw = meta[key]
     if raw is None:
         return None
-    return [str(x) for x in cast(list[object], raw)]
+    return [str(x) for x in cast("list[object]", raw)]
 
 
 def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
@@ -155,11 +149,6 @@ def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
             continue
         meta = AGENT_REGISTRY.get(slug)
         if meta is None:
-            print(
-                f"warn: skipping {path.name} — slug {slug!r} is not in "
-                f"AGENT_REGISTRY (add it to scripts/cortex/sync-agent-identity.py)",
-                file=sys.stderr,
-            )
             continue
         content = path.read_text(encoding="utf-8")
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -175,20 +164,15 @@ def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
                 frontier_kind=str(meta["frontier_kind"]),
                 default_model=default_model,
                 allowed_models=_meta_str_list("allowed_models", meta),
-                tools=_meta_optional_str_list("tools", meta),
                 allowed_options=_meta_optional_str_list("allowed_options", meta),
                 persona_seed_ref=persona_seed_ref,
                 file_path=path,
                 content=content,
                 content_hash=digest,
-            )
+            ),
         )
         seen.add(slug)
     if only and only not in seen:
-        print(
-            f"error: --only {only!r} matched no file under {base}",
-            file=sys.stderr,
-        )
         sys.exit(2)
     return plans
 
@@ -199,11 +183,13 @@ def _build_plans(base: Path, only: str | None) -> list[SyncPlan]:
 
 
 def _persona_attrs_payload(plan: SyncPlan) -> dict[str, object]:
+    """Build persona contract attributes (tools field retired per
+    todo:retire-tools-allowlist-as-caller-concern).
+    """
     return {
         "frontier_kind": plan.frontier_kind,
         "default_model": plan.default_model,
         "allowed_models": list(plan.allowed_models),
-        "tools": list(plan.tools) if plan.tools is not None else None,
         "allowed_options": (
             list(plan.allowed_options) if plan.allowed_options is not None else None
         ),
@@ -212,7 +198,7 @@ def _persona_attrs_payload(plan: SyncPlan) -> dict[str, object]:
 
 
 def _sync_agent_persona_attrs(
-    client: Any, plan: SyncPlan, dry_run: bool, verbose: bool
+    client: Any, plan: SyncPlan, dry_run: bool, verbose: bool,
 ) -> str:
     """Patch ai_agent:{slug}.attributes with the persona contract.
 
@@ -222,7 +208,7 @@ def _sync_agent_persona_attrs(
     probe = client.get(f"/entities/{plan.agent_id}")
     if probe.status_code == 404:
         if verbose:
-            print(f"  skip persona attrs — {plan.agent_id} missing")
+            pass
         return "skipped"
     probe.raise_for_status()
     body = probe.json()
@@ -230,12 +216,12 @@ def _sync_agent_persona_attrs(
     desired = _persona_attrs_payload(plan)
     if all(existing_attrs.get(k) == desired[k] for k in _PERSONA_ATTR_KEYS):
         if verbose:
-            print(f"  persona attrs unchanged on {plan.agent_id}")
+            pass
         return "unchanged"
     merged_attrs = {**existing_attrs, **desired}
     if dry_run:
         if verbose:
-            print(f"  [dry-run] would PATCH {plan.agent_id} persona attrs")
+            pass
         return "updated"
     r = client.patch(
         f"/entities/{plan.agent_id}",
@@ -285,7 +271,7 @@ def _sync_entity(client: Any, plan: SyncPlan, dry_run: bool, verbose: bool) -> s
     if resp.status_code == 404:
         if dry_run:
             if verbose:
-                print(f"  [dry-run] would CREATE {plan.entity_id}")
+                pass
             return "created"
         client.post("/entities", json=_entity_payload(plan)).raise_for_status()
         return "created"
@@ -293,11 +279,11 @@ def _sync_entity(client: Any, plan: SyncPlan, dry_run: bool, verbose: bool) -> s
     existing = resp.json()
     if existing.get("content_hash") == plan.content_hash:
         if verbose:
-            print(f"  content_hash match — {plan.entity_id} unchanged")
+            pass
         return "unchanged"
     if dry_run:
         if verbose:
-            print(f"  [dry-run] would UPDATE {plan.entity_id}")
+            pass
         return "updated"
     r = client.patch(f"/entities/{plan.entity_id}", json=_update_payload(plan))
     r.raise_for_status()
@@ -331,20 +317,17 @@ def _sync_edge(
     agent_probe = client.get(f"/entities/{plan.agent_id}")
     if agent_probe.status_code == 404:
         if verbose:
-            print(f"  skip edge — {plan.agent_id} missing (seed ai_agent entity first)")
+            pass
         return "skipped"
     agent_probe.raise_for_status()
 
     if _edge_exists(client, plan.agent_id, plan.entity_id):
         if verbose:
-            print(f"  edge present — {plan.agent_id} derived_from {plan.entity_id}")
+            pass
         return "present"
     if dry_run:
         if verbose:
-            print(
-                f"  [dry-run] would CREATE edge "
-                f"{plan.agent_id} --derived_from--> {plan.entity_id}"
-            )
+            pass
         return "created"
     payload = {
         "session_id": session_id,
@@ -391,17 +374,14 @@ def main() -> int:
     base = _resolve_identity_dir()
     plans = _build_plans(base, args.only)
     if not plans:
-        print(f"no birth prompts found under {base}", file=sys.stderr)
         return 1
 
-    print(f"syncing {len(plans)} birth prompt(s) from {base}")
     if args.dry_run:
-        print("  (dry-run — no writes)")
+        pass
 
     outcomes: list[SyncOutcome] = []
     with make_sync_client(DEFAULT_CORTEX_URL) as client:
         for plan in plans:
-            print(f"- {plan.slug}")
             entity_action = _sync_entity(client, plan, args.dry_run, args.verbose)
             edge_action = _sync_edge(
                 client,
@@ -412,7 +392,7 @@ def main() -> int:
                 verbose=args.verbose,
             )
             persona_attrs_action = _sync_agent_persona_attrs(
-                client, plan, args.dry_run, args.verbose
+                client, plan, args.dry_run, args.verbose,
             )
             outcomes.append(
                 SyncOutcome(
@@ -420,16 +400,11 @@ def main() -> int:
                     entity_action=entity_action,
                     edge_action=edge_action,
                     persona_attrs_action=persona_attrs_action,
-                )
+                ),
             )
 
-    print()
-    print("summary:")
-    for o in outcomes:
-        print(
-            f"  {o.slug:<14s} entity={o.entity_action:<9s} "
-            f"edge={o.edge_action:<8s} attrs={o.persona_attrs_action}"
-        )
+    for _o in outcomes:
+        pass
     return 0
 
 

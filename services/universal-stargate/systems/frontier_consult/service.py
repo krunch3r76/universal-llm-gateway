@@ -113,31 +113,6 @@ def _enforce_model(
     )
 
 
-def _enforce_tools(
-    *,
-    request_id: str,
-    agent: str | None,
-    requested: list[str],
-    meta: AgentMeta,
-    event_publisher: EventPublisher | None,
-) -> None:
-    if meta.tools is None:
-        return
-    extra = sorted(set(requested) - set(meta.tools))
-    if not extra:
-        return
-    reason = (
-        f"tools {extra} not allowed for agent {agent!r}; "
-        f"persona allows: {sorted(meta.tools)}"
-    )
-    raise _emit_rejection(
-        request_id=request_id,
-        agent=agent,
-        field="tools",
-        reason=reason,
-        event_publisher=event_publisher,
-    )
-
 
 def _enforce_options(
     *,
@@ -168,11 +143,14 @@ def _enforce_options(
 def _resolve_effective_tools(
     requested: list[str] | None, meta: AgentMeta
 ) -> list[str] | None:
+    """Derive effective tools from caller request only (persona meta.tools retired
+    per todo:retire-tools-allowlist-as-caller-concern). Downstream dispatch
+    handler performs provider-derived resolution and silent coercion for quirks
+    (e.g. xAI multi-agent models).
+    """
     if requested is not None:
         return list(requested)
-    if meta.tools is not None:
-        return list(meta.tools)
-    return None
+    return None  # permissive; let frontier_dispatch_tools.resolve_dispatch_tool_set decide
 
 
 async def build_dispatch_body(
@@ -204,7 +182,6 @@ async def build_dispatch_body(
                     frontier_kind=meta.frontier_kind,
                     default_model=meta.default_model,
                     allowed_models_count=len(meta.allowed_models),
-                    tools_count=(len(meta.tools) if meta.tools is not None else None),
                     allowed_options_count=(
                         len(meta.allowed_options)
                         if meta.allowed_options is not None
@@ -276,14 +253,11 @@ async def build_dispatch_body(
         meta=meta,
         event_publisher=event_publisher,
     )
-    if req.tools is not None:
-        _enforce_tools(
-            request_id=request_id,
-            agent=req.agent,
-            requested=req.tools,
-            meta=meta,
-            event_publisher=event_publisher,
-        )
+    # Tools enforcement retired (no per-persona allowlist; see
+    # todo:retire-tools-allowlist-as-caller-concern). Caller may still supply
+    # explicit tools for compatibility, but meta.tools ignored. Downstream
+    # frontier_dispatch handler derives full set + performs silent coercion for
+    # provider quirks (e.g. xAI multi-agent).
     effective_tools = _resolve_effective_tools(req.tools, meta)
     mcp_enabled = effective_tools is None or bool(effective_tools)
 

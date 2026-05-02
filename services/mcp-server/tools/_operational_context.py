@@ -258,7 +258,7 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing:
 - `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
-- `team_generate(agent=..., messages=..., generation_options=...)` — persona-aware native-frontier dispatch (persona contract — default_model, allowed_models, tools, allowed_options — lives on `ai_agent:{slug}` entities in cortex; tool relays to Stargate `/api/v1/team/generate`)
+- `team_generate(agent=..., messages=..., generation_options=...)` — persona-aware native-frontier dispatch (persona contract — default_model, allowed_models, allowed_options — lives on `ai_agent:{slug}` entities in cortex; tool relays to Stargate `/api/v1/team/generate`). Tools surface is universal; provider quirks handled by silent coercion in frontier_dispatch (no per-persona allowlist).
 - `frontier_generate(model=..., messages=..., generation_options=...)` — persona-free native-frontier dispatch (raw engine, no persona; tool relays to Stargate `/api/v1/frontier/generate`)
 - OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
@@ -313,8 +313,7 @@ part of how you work, not an exceptional event that requires Kaywan to ask.
 For any team-seat consultation (`oppie`, `orion`, `bard`, `api_claude`), use
 `team_generate(agent=..., messages=..., generation_options=...)`. This is
 the persona-aware door: it resolves the agent's `default_model` from cortex
-(`ai_agent:{slug}`), enforces `allowed_models` / `allowed_options` / `tools`
-allowlists, auto-assembles birth + briefing + continuation, and rejects persona
+(`ai_agent:{slug}`), enforces `allowed_models` / `allowed_options`, auto-assembles birth + briefing + continuation, and rejects persona
 violations with a structured error envelope **before** dispatch. Returns
 immediately with `{execution_id, ...}`; poll with
 `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
@@ -364,7 +363,7 @@ then `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 `result_delivery` for terminal push.
 
 `team_generate` is the persona-validated door — `default_model` resolution,
-`allowed_models` / `allowed_options` / `tools` allowlists, and birth + briefing
+`allowed_models` / `allowed_options`, and birth + briefing
 + continuation assembly all happen there. Persona violations return a structured
 error envelope with `field` and `request_id` BEFORE dispatch.
 
@@ -377,7 +376,7 @@ Raw escape hatch (admission-bypass):
 — for pipeline composition or deliberate admission-bypass only. Silently drops
 unknown `pipeline_options` keys.
 
-Persona defaults, allow-lists, and tools live on cortex
+Persona defaults and allow-lists live on cortex (tools retired as caller concern — universal catalog with silent provider coercion)
 `ai_agent:{slug}` entities — keep this public context file provider-neutral."""
 
 _CORTEX_RETRIEVAL_WORKFLOWS = """\
