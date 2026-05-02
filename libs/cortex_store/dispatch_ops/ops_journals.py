@@ -19,6 +19,7 @@ from ..routes.session_journals import (
     _list_session_journals_impl,
 )
 from ._shared import _FILES_ROOT, _SESSION_ID_RE, _derive_session_id_local, record
+from .ops_review_gate import _run_session_audit_or_block
 
 logger = logging.getLogger("cortex-api.dispatch_ops.journals")
 
@@ -60,7 +61,9 @@ def _op_deadline_resolve(
             (deadline_id,),
         )
         if not rows:
-            return {"error": f"Deadline entity not found or not type='deadline': {deadline_id}"}
+            return {
+                "error": f"Deadline entity not found or not type='deadline': {deadline_id}"
+            }
 
         attrs_raw = rows[0]["attributes"]
         current_attrs: dict[str, Any] = (
@@ -101,7 +104,11 @@ def _op_deadline_resolve(
         outcome_set = True
     except sqlite3.Error as exc:
         logger.warning("deadline_resolve outcome update failed: %s", exc)
-        record("mcp.cortex.deadline.outcome.failed", deadline_id=deadline_id, error=str(exc))
+        record(
+            "mcp.cortex.deadline.outcome.failed",
+            deadline_id=deadline_id,
+            error=str(exc),
+        )
 
     logger.info(
         "deadline_resolve: %s — assertion=%s outcome=%s outcome_set=%s",
@@ -188,6 +195,7 @@ def _op_session_close(
     open_items: list[str] | None = None,
     entity_ids: list[str] | None = None,
     prior_session_id: str | None = None,
+    defer_gaps: dict[str, str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required = {
@@ -221,6 +229,18 @@ def _op_session_close(
             "error": "transcript_md must contain at least one '## Turn' heading "
             "or a '## Session Summary' section."
         }
+
+    # Session audit gate — MUST fire before any file I/O or DB mutation (C3).
+    # In WARN mode: populates _warning in response but close proceeds.
+    # In BLOCK mode (Phase 2.1): returns structured error before any disk write.
+    audit_outcome = _run_session_audit_or_block(
+        session_id=session_id,
+        agent=agent,
+        entity_ids=entity_ids or [],
+        defer_gaps=defer_gaps,
+    )
+    if audit_outcome.get("blocked"):
+        return audit_outcome
 
     transcript_path = f"notes/system/transcripts/{session_id}.md"
     abs_path = _FILES_ROOT / transcript_path
@@ -284,4 +304,6 @@ def _op_session_close(
         session_id=session_id,
         transcript_path=transcript_path,
     )
+    if audit_outcome.get("warning"):
+        result["_warning"] = audit_outcome["warning"]
     return result

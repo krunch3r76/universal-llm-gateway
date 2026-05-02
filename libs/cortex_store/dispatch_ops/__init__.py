@@ -64,6 +64,7 @@ from .ops_reflective import (
     _op_rj_write,
 )
 from .ops_relationships import _op_relationship_create, _op_relationships
+from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
 from .ops_todos import _op_todo_audit, _op_todo_candidates
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
@@ -117,6 +118,9 @@ _OPS: dict[str, Any] = {
     "todo_audit": _op_todo_audit,
     "register_skill_substrate": _op_register_skill_substrate,
     "audit": _op_audit,
+    "session_audit": _op_session_audit,
+    "case_audit": _op_case_audit,
+    "fill_gaps": _op_fill_gaps,
     "rj_write": _op_rj_write,
     "rj_read": _op_rj_read,
     "rj_list": _op_rj_list,

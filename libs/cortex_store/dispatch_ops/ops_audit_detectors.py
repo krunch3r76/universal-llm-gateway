@@ -475,9 +475,15 @@ def get_all_detectors() -> dict[str, Any]:
 def run_detectors(
     kinds: list[str] | None = None,
     subject: str | None = None,
+    subjects: list[str] | None = None,
     include_filesystem: bool = False,
 ) -> list[dict[str, Any]]:
-    """Run selected detectors. Graph-only by default (W1). include_filesystem=true adds fs ones."""
+    """Run selected detectors. Graph-only by default (W1). include_filesystem=true adds fs ones.
+
+    subjects: when non-empty, runs all subjects through each detector inside a single
+    DB connection — avoids N open/close cycles per entity (W1 <100ms budget).
+    Takes precedence over subject when provided. Deduplicates by audit_id.
+    """
     with cortex_conn() as conn:
         detectors = get_all_detectors()
         if kinds is None:
@@ -487,6 +493,20 @@ def run_detectors(
                 selected.extend(list(FS_TOUCHING_KINDS))
         else:
             selected = [k for k in kinds if k in ALL_KINDS]
+
+        if subjects:
+            # Batched multi-subject path — single DB connection, deduplicate by audit_id.
+            seen: set[str] = set()
+            findings: list[dict[str, Any]] = []
+            for subj in subjects:
+                for k in selected:
+                    if k in detectors:
+                        for f in detectors[k](conn, subj):
+                            if f["audit_id"] not in seen:
+                                seen.add(f["audit_id"])
+                                findings.append(f)
+            return findings
+
         findings = []
         for k in selected:
             if k in detectors:

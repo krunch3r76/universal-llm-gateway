@@ -48,7 +48,7 @@ def age_staged(request: AgeStagedRequest = Body(...)) -> AgeStagedResponse:
     """
     now = datetime.now(UTC)
     commit_threshold = now - timedelta(days=request.commit_days)
-    # reject_threshold = now - timedelta(days=request.reject_days)  # TODO: full 90d reject logic
+    reject_threshold = now - timedelta(days=request.reject_days)
 
     with cortex_conn() as conn:
         # Find staged older than thresholds (simplified query; full would join entities, check edges/duplicates)
@@ -84,17 +84,29 @@ def age_staged(request: AgeStagedRequest = Body(...)) -> AgeStagedResponse:
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=UTC)
                     days_old = (now - ts).days
-                except Exception:
+                except Exception as exc:
+                    # [quality:exceptions] carve-out: cortex_store routes cannot import
+                    # the workspace event bus without circularity; logger.warning is the
+                    # approved fallback for non-fatal parse errors with safe defaults.
+                    logger.warning(
+                        "age_staged: timestamp parse failed for assertion %s: %s",
+                        aid,
+                        exc,
+                    )
                     days_old = 999
             else:
                 days_old = 999
-            preview.append({
-                "id": aid,
-                "entity_id": eid,
-                "claim_preview": row["claim"][:80] + "..." if row.get("claim") else "",
-                "score": score,
-                "days_old": days_old,
-            })
+            preview.append(
+                {
+                    "id": aid,
+                    "entity_id": eid,
+                    "claim_preview": row["claim"][:80] + "..."
+                    if row.get("claim")
+                    else "",
+                    "score": score,
+                    "days_old": days_old,
+                }
+            )
 
             if request.dry_run:
                 continue
@@ -108,8 +120,14 @@ def age_staged(request: AgeStagedRequest = Body(...)) -> AgeStagedResponse:
                         ts = ts.replace(tzinfo=UTC)
                     if (now - ts).total_seconds() < 3600:  # <1h
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # [quality:exceptions] carve-out: see timestamp parse block above.
+                    logger.warning(
+                        "age_staged: guard timestamp parse failed for assertion %s: %s",
+                        aid,
+                        exc,
+                    )
+                    continue
 
             # Simple criteria per spec (full would add near_duplicate check, edge count, parent retention)
             if score >= 0.7 and not is_ephemeral:
@@ -123,6 +141,22 @@ def age_staged(request: AgeStagedRequest = Body(...)) -> AgeStagedResponse:
                 committed += 1
                 logger.info("Aged to committed: assertion:%s on %s", aid, eid)
             elif score < 0.5 and is_ephemeral:
+                # Only reject if old enough to meet the reject_days threshold (distinct from commit_threshold).
+                try:
+                    ts_str2 = created.replace("Z", "+00:00")
+                    ts2 = datetime.fromisoformat(ts_str2)
+                    if ts2.tzinfo is None:
+                        ts2 = ts2.replace(tzinfo=UTC)
+                    if ts2 >= reject_threshold:
+                        continue
+                except Exception as exc:
+                    # [quality:exceptions] carve-out: see timestamp parse block above.
+                    logger.warning(
+                        "age_staged: reject threshold parse failed for assertion %s: %s",
+                        aid,
+                        exc,
+                    )
+                    continue  # guard failed — skip rejection rather than fall through
                 update_body = AssertionUpdate(
                     review_status="rejected",
                     reviewer="system:age-policy",
