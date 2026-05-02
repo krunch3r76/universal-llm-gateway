@@ -2108,7 +2108,25 @@ semantic detector is a known gap (API Claude mod #1, thread 576 t5). Sunset
 commitment — phrase detection degrades to a secondary weak signal once the
 semantic layer ships; target milestone is post-calibration-window close.
 
-### Agent-Bus Signals
+
+
+### Cortex Audit Signals
+
+Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detectors.py` via `record()` shim. All signals use `role="observation"`, `scope="global"` per existing shim defaults. Introduced in Phase 1b of `todo:cortex-graph-projection-and-audit-primitives`.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `cortex.composite.registered` | `composite`, `entity_ids`, `status` (`"created"` \| `"existing"`) | Emitted on successful `register_skill_substrate` composite op. Phase 1a. |
+| `cortex.audit.completed` | `subject`, `gap_count`, `criticals`, `warnings`, `infos`, `kinds_run`, `duration_ms`, `include_filesystem` | Emitted at end of every `audit` / `case_audit` / `session_audit` run. `subject` is entity_id or `"all"`. |
+| `cortex.audit.gap.detected` | `kind`, `subject`, `severity`, `detail`, `audit_id` | One emission per finding. `kind` is in payload (never baked into signal name per C2). `audit_id` is a 12-char MD5 correlation key stable across runs for the same `kind:subject` pair. |
+| `cortex.audit.budget.exceeded` | `duration_ms`, `budget_ms`, `subject` | Emitted when a run exceeds budget (`100ms` graph-only, `2000ms` with filesystem). |
+| `cortex.session.audit.gaps.observed` | `session_id`, `gap_count`, `criticals` (list of `{kind, subject}`) | WARN mode (Phase 2.0): session_close completed despite findings. |
+| `cortex.session.audit.blocked` | `session_id`, `criticals` (list of `{kind, subject, detail}`) | BLOCK mode (Phase 2.1) only: critical gap with no `defer_gaps` reason caused session_close to abort. `role="coordination"`. **Not yet emitted — Phase 2.1 pending.** |
+| `cortex.render.applied` | `view`, `subject`, `path`, `bytes_written` | Phase 4 (deferred): `render_into` success. Not yet emitted. |
+
+**Implementation note:** `cortex.session.audit.blocked` is the only `coordination`-role signal in this family. The `record()` shim defaults to `role="observation"` — confirm shim supports per-call role override before Phase 2.1 BLOCK-mode flip; if not, surface as a precondition.
+
+
 
 The consolidated `agent_bus(tool=...)` tool emits operation-level signals.
 With atomic server-side endpoints, partial-failure and stage signals are
