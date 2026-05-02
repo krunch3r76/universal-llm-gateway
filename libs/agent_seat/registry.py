@@ -1,9 +1,11 @@
 """Agent model registry — static dispatch identity for team seats.
 
-Maps agent slugs to their canonical provider family and default model.
-``web`` is intentionally absent — it is a strategic-advisor seat, not a
-dispatch target (∀ dispatch with ``agent='web'``: caller error, not a
-registry gap; documented on Cortex assertion 5258).
+Provides ``normalize_agent_slug()`` (handles case, "Oppie"/"Oppia"→"oppie",
+hyphen/underscore variants) + mapping dicts for provider/defaults/valid families.
+
+``web`` is intentionally absent from dispatch registry — it is a
+strategic-advisor seat, not a dispatch target (∀ dispatch with
+``agent='web'``: caller error; see Cortex assertion 5258).
 
 Used by the pipeline handler for:
 - pre-hydration admission check (agent + model provider consistency)
@@ -58,34 +60,79 @@ _AGENT_MODEL_REQUIREMENTS: dict[str, str] = {
 }
 
 
+def normalize_agent_slug(slug: str) -> str:
+    """Normalize dispatch agent slug to canonical lowercase form.
+
+    Handles:
+    - Case variations (Oppie → oppie)
+    - Common misspellings from persona prompts / model output (Oppia → oppie)
+    - Hyphen/underscore/ space variants (api-claude, web claude → canonical key)
+    - Returns key that matches _AGENT_* dicts and _SELF_ENTITY in hydration.
+
+    This ensures team_generate, hydrate_agent, load_birth_prompt etc. accept
+    natural references from birth prompts (e.g. web claude's "Oppie").
+    """
+    if not isinstance(slug, str):
+        slug = str(slug)
+    norm = slug.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases: dict[str, str] = {
+        "oppie": "oppie",
+        "oppia": "oppie",  # common misspelling
+        "orion": "orion",
+        "bard": "bard",
+        "api_claude": "api_claude",
+        "web": "web",
+        "web_claude": "web",
+        "cursor": "cursor",
+        "cursor_claude": "cursor",
+        "cursor_grok": "cursor_grok",
+        "grok": "cursor_grok",
+    }
+    return aliases.get(norm, norm)
+
+
 def resolve_agent_model(agent: str) -> str:
     """Return the default model for a dispatch agent slug.
 
     Raises ``ValueError`` for unknown slugs (including ``'web'``).
+    Normalizes case/variants first (Oppie, Oppia → oppie).
     """
-    model = _AGENT_DEFAULTS.get(agent)
+    canonical = normalize_agent_slug(agent)
+    model = _AGENT_DEFAULTS.get(canonical)
     if model is None:
         valid = sorted(_AGENT_DEFAULTS)
         raise ValueError(
-            f"Unknown dispatch agent {agent!r}. Valid: {valid}. "
-            "Note: 'web' is not a dispatch target."
+            f"Unknown dispatch agent {agent!r} (normalized: {canonical!r}). "
+            f"Valid: {valid}. Note: 'web' is not a dispatch target."
         )
     return model
 
 
 def resolve_agent_provider(agent: str) -> str | None:
-    """Return the expected provider for an agent slug, or ``None`` if unknown."""
-    return _AGENT_PROVIDERS.get(agent)
+    """Return the expected provider for an agent slug, or ``None`` if unknown.
+
+    Normalizes case/variants first (Oppie → oppie).
+    """
+    canonical = normalize_agent_slug(agent)
+    return _AGENT_PROVIDERS.get(canonical)
 
 
 def resolve_agent_valid_family(agent: str) -> list[str]:
-    """Return the allowed model list for an agent, or ``[]`` if unknown."""
-    return _AGENT_VALID_FAMILIES.get(agent, [])
+    """Return the allowed model list for an agent, or ``[]`` if unknown.
+
+    Normalizes case/variants first (Oppie → oppie).
+    """
+    canonical = normalize_agent_slug(agent)
+    return _AGENT_VALID_FAMILIES.get(canonical, [])
 
 
 def resolve_agent_model_requirement(agent: str) -> str | None:
-    """Return the required model-variant substring for an agent, or ``None``."""
-    return _AGENT_MODEL_REQUIREMENTS.get(agent)
+    """Return the required model-variant substring for an agent, or ``None``.
+
+    Normalizes case/variants first (Oppie → oppie).
+    """
+    canonical = normalize_agent_slug(agent)
+    return _AGENT_MODEL_REQUIREMENTS.get(canonical)
 
 
 def check_agent_model_requirement(agent: str, model: str) -> str | None:
@@ -94,14 +141,17 @@ def check_agent_model_requirement(agent: str, model: str) -> str | None:
 
     ∀ agent ∈ _AGENT_MODEL_REQUIREMENTS: model MUST contain the required
     substring. Oppie specifically MUST use an xAI multi-agent variant.
+
+    Normalizes slug first (Oppie/Oppia → oppie).
     """
-    required = _AGENT_MODEL_REQUIREMENTS.get(agent)
+    canonical = normalize_agent_slug(agent)
+    required = _AGENT_MODEL_REQUIREMENTS.get(canonical)
     if required is None:
         return None
     if required in model:
         return None
     return (
-        f"Agent {agent!r} requires a model containing {required!r}; "
-        f"got {model!r}. Non-multi-agent xAI models reject client-side "
-        "tools at the API level."
+        f"Agent {agent!r} (canonical: {canonical}) requires a model containing "
+        f"{required!r}; got {model!r}. Non-multi-agent xAI models reject "
+        "client-side tools at the API level."
     )

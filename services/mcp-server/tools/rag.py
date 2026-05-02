@@ -365,30 +365,35 @@ def register_rag_tools(mcp: FastMCP) -> None:
     def rag_search(
         query: str,
         top_k: int = 20,
+        limit: int | None = None,
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
     ) -> dict[str, Any]:
-        """Search the knowledge base and return raw context chunks.
+        """PRIMARY agent surface for MCP retrieval. Returns raw context chunks
+        with source labels for the agent to cite, gate (lawyer-stance), and
+        reason over. Use by default.
 
-        Returns assembled context with source labels for the agent to
-        reason over. Prefer this over rag_answer when exploring a topic,
-        gathering evidence for broader analysis, or when the question is
-        open-ended. Use rag_answer instead when a direct synthesized
-        answer is sufficient.
+        `rag_answer` (or rag(op="answer")) remains valid when a synthesized
+        answer is the end product or for iterative retrieval (`deep=True`) on
+        analysis-grade questions per lawyer-stance.md; prefer rag_search for
+        citation-discipline workflows and raw context needs.
 
         Uses multi-query rewriting, reciprocal rank fusion, entity/relation
-        merging, and property index boost.
+        merging, and property index boost. `limit` accepted as alias for
+        `top_k` (normalizes in function; covers both rag(op=) and dispatch paths).
 
         IMPORTANT: query must be natural language. Boolean operators (OR, AND)
         degrade dense retrieval — use parallel calls per concept instead.
 
         Call rag_list_scopes() for the current set of valid scope names.
 
-        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag")
+        Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
 
         Args:
             query: Natural language search query.
             top_k: Maximum chunks after RRF merge (default 20).
+            limit: Alias for top_k (preferred in some MCP contexts; mutually
+                exclusive with explicit top_k if values differ).
             scope: Named scope filter as single string, comma-separated string,
                 or list of scope strings (e.g. "research",
                 "research, knowledge_systems",
@@ -412,6 +417,13 @@ def register_rag_tools(mcp: FastMCP) -> None:
             return {"error": prefix_error}
         if scope_override is not None and prefixes is not None:
             return {"error": "scope and prefix are mutually exclusive; set only one."}
+
+        # Parameter ergonomics: limit alias for top_k (Finding 3). Covers
+        # both rag(op=...) router and dispatch(tool="rag_search") paths.
+        if limit is not None:
+            if top_k != 20 and limit != top_k:
+                return {"error": "conflicting top_k and limit values; pass only one"}
+            top_k = limit
         if scope_override is not None:
             pipeline_options["scope_override"] = scope_override
         if prefixes is not None:
@@ -501,22 +513,23 @@ def register_rag_tools(mcp: FastMCP) -> None:
         prefix: str | list[str] | None = None,
         deep: bool = False,
     ) -> dict[str, Any]:
-        """Ask a specific question and get a grounded, synthesized answer.
+        """Returns a grounded, synthesized answer via retrieval + LLM rewriting.
 
-        Prefer this over rag(op="search") for direct factual or technical
-        questions where a synthesized answer is the end goal. Use
-        rag(op="search") instead when you need raw context chunks to weave
-        into broader reasoning or combine with non-RAG context.
+        Valid and recommended when a synthesized answer is the desired end
+        product or for `deep=True` iterative retrieval on analysis-grade
+        questions (see lawyer-stance.md). For raw context, citation, and
+        agent reasoning/gating workflows, prefer `rag_search` / `rag(op="search")`
+        instead.
 
         Has a relevance gate: returns empty if retrieved context doesn't
-        directly address the question. Fall back to rag(op="search") if this
-        returns empty — it always returns whatever matches.
+        directly address the question. Fall back to rag_search if this
+        returns empty.
 
         Set deep=True for complex multi-faceted questions that benefit
         from iterative retrieval (up to 2 gap-filling passes).
 
         IMPORTANT: question must be natural language. Boolean operators (OR, AND)
-        degrade dense retrieval — use parallel rag(op="search") calls per concept instead.
+        degrade dense retrieval — use parallel rag_search calls per concept instead.
 
         Call rag_list_scopes() for the current set of valid scope names.
 

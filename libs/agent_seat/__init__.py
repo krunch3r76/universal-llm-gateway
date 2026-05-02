@@ -48,6 +48,7 @@ from agent_seat.prompts import (
     build_subagent_preamble,
     load_birth_prompt,
 )
+from agent_seat.registry import normalize_agent_slug
 from agent_seat.tools import (
     BRAVE_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
@@ -73,6 +74,7 @@ __all__ = [
     "get_mcp_tool_definitions",
     "hydrate_agent",
     "load_birth_prompt",
+    "normalize_agent_slug",
     "resolve_tool_definitions",
     "run_native_tool_loop",
     "resolve_tools",

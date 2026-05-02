@@ -512,8 +512,8 @@ def _build_server() -> FastMCP:
         arguments: operation arguments as an object or a JSON string
 
         Operations:
-          search            (query, scope?, prefix?, top_k?)    — semantic search; scope/prefix are mutually exclusive
-          answer            (question, scope?, prefix?, deep?)  — RAG-grounded answer; deep=true for iterative retrieval
+          search            (query, scope?, prefix?, top_k?|limit?) — semantic search (primary agent surface); scope/prefix mutually exclusive; limit aliases top_k
+          answer            (question, scope?, prefix?, deep?)  — RAG-grounded synthesized answer (valid for end-product or deep=True analysis-grade per lawyer-stance); use rag_search for raw context/citation
           list_scopes       ()                                  — list scopes with prefixes and coverage
           coverage          ()                                  — per-scope indexed file counts
           upsert_article    (url, title?, scope?)               — index article by URL

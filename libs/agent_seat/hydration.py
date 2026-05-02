@@ -27,6 +27,8 @@ from transport_utils import (
     make_async_client,
 )
 
+from .registry import normalize_agent_slug
+
 _LA = ZoneInfo("America/Los_Angeles")
 
 logger = logging.getLogger(__name__)
@@ -56,11 +58,12 @@ _SELF_ENTITY: dict[str, str] = {
 def _normalize_slug_to_entity(agent: str) -> str:
     """Map runtime agent slug → cortex ``ai_agent:{...}`` entity id.
 
-    ``_SELF_ENTITY`` carries hyphenation aliases (``web`` → ``web-claude``
-    etc.).  Falls back to ``ai_agent:{agent}`` for unknown slugs, which is
-    correct for callers that already pass the canonical hyphenated form.
+    Uses registry.normalize_agent_slug (case-insensitive, supports Oppie/Oppia
+    etc.) before lookup in _SELF_ENTITY. Falls back to ``ai_agent:{canonical}``
+    for unknown slugs.
     """
-    return _SELF_ENTITY.get(agent, f"ai_agent:{agent}")
+    canonical = normalize_agent_slug(agent)
+    return _SELF_ENTITY.get(canonical, f"ai_agent:{canonical}")
 
 
 @dataclass(slots=True)
@@ -239,7 +242,9 @@ def _render_briefing(
     directly. Keeps hydration self-contained.
     """
     today = datetime.now(UTC).astimezone(_LA)
-    parts: list[str] = [f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}"]
+    parts: list[str] = [
+        f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}"
+    ]
 
     if skills:
         parts.append(
@@ -320,13 +325,13 @@ async def hydrate_agent(
 
     # Query parameters for per-agent scoping.
     session_qs = urlencode({"limit": profile["session_limit"]})
+    normalized_agent = normalize_agent_slug(agent)
     unread_qs = urlencode(
-        {"to": agent, "unread": "true", "last": 10, "compact": "true"}
+        {"to": normalized_agent, "unread": "true", "last": 10, "compact": "true"}
     )
     todo_qs = urlencode({"limit": 15})
     skills_qs = urlencode({"type": "agent_skill", "limit": 50})
 
-    normalized_agent = agent.replace("-", "_")
     tasks: dict[str, asyncio.Task[Any]] = {
         "sessions": asyncio.create_task(_cortex_get(f"/session-journals?{session_qs}")),
         "threads": asyncio.create_task(_bus_get("/threads?status=active")),

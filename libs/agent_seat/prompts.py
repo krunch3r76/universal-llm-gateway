@@ -18,6 +18,8 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from .registry import normalize_agent_slug
+
 logger = logging.getLogger(__name__)
 
 _BOOT_SEPARATOR = "\n\n---\n\n"
@@ -75,15 +77,17 @@ def _read_identity_file(resolved_path: str) -> str:
 def load_birth_prompt(agent: str) -> str:
     """Load the dispatched agent's birth prompt. Raises if missing.
 
-    Unlike ``_frontier_boot._load_birth_prompt`` which returns ``None`` on
-    missing-file and logs a warning, this variant fails loud: a dispatch
-    pipeline cannot proceed without the agent's canonical identity.
+    Normalizes slug first via registry.normalize_agent_slug (handles Oppie,
+    Oppia, case, variants) so persona references work. Unlike the MCP
+    frontier_boot variant, this fails loud.
     """
-    filename = _BIRTH_PROMPT_FILENAMES.get(agent)
+    canonical = normalize_agent_slug(agent)
+    filename = _BIRTH_PROMPT_FILENAMES.get(canonical)
     if not filename:
         known = ", ".join(sorted(_BIRTH_PROMPT_FILENAMES))
         raise ValueError(
-            f"Unknown agent {agent!r}. Known agents with birth prompts: {known}"
+            f"Unknown agent {agent!r} (normalized: {canonical!r}). "
+            f"Known agents with birth prompts: {known}"
         )
     base = _agent_identity_base()
     candidate = (base / filename).resolve()

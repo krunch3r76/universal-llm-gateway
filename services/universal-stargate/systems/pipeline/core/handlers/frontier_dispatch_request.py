@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_seat import normalize_agent_slug
+
 from ..execution.resolver import NamespaceResolver, traverse_path
 
 if TYPE_CHECKING:
@@ -93,14 +95,13 @@ def resolve_agent(opts: dict[str, Any], step: StepConfig) -> str | None:
 
     Precedence: ``pipeline_options.agent`` > step domain field > None.
 
-    Normalizes hyphen-form slugs to underscore-form so callers using
-    either ``api-claude`` or ``api_claude`` hit the same registry entry.
+    Uses normalize_agent_slug (handles case, Oppie/Oppia, hyphen/underscore
+    variants) so natural references from personas work with registry.
     """
     agent = opts.get("agent") or step.get_domain_field("agent")
     if agent is None:
         return None
-    agent_str = str(agent).strip().replace("-", "_")
-    return agent_str or None
+    return normalize_agent_slug(str(agent)) or None
 
 
 def resolve_user_prompt(step: StepConfig, context: PipelineContext) -> str:
