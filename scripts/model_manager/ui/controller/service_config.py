@@ -849,7 +849,7 @@ def _recover_root_owned_bind_dir(bind_dir: Path) -> bool:
     return True
 
 
-def ensure_socket_dir() -> str | None:
+def ensure_socket_dir(node_id: str | None = None) -> str | None:
     """Ensure /tmp/universal-protocol exists and is world-writable/traversable.
 
     Returns an error message if the directory cannot be made world-writable,
@@ -857,9 +857,10 @@ def ensure_socket_dir() -> str | None:
     (a different uid than the host user) writes a Unix socket into it — so the
     directory must be world-writable, not just writable by the current host user.
 
-    If the directory is root-owned (e.g. Docker daemon created it via bind-mount
-    auto-creation after a host reboot), attempts recovery by removing and
-    recreating it as the current user.
+    Docker daemon often creates the bind-mount source as root:root (no sudo
+    involved on host). Recovery now uses a Docker one-off container for cleanup
+    (no host sudo required). Post-recovery we recheck current mode — 777 is
+    sufficient even if still owned by root.
     """
     import stat as stat_mod
 
@@ -872,16 +873,27 @@ def ensure_socket_dir() -> str | None:
         if owner_uid == 0 and os.getuid() != 0:
             logger.warning(
                 "Socket dir %s is root-owned (Docker bind-mount race); "
-                "attempting recovery",
+                "attempting recovery (node_id=%s)",
                 socket_dir,
+                node_id,
             )
-            recovered = _recover_root_owned_socket_dir(socket_dir)
+            recovered = _recover_root_owned_socket_dir(socket_dir, node_id=node_id)
             if not recovered:
-                mode = stat_mod.S_IMODE(socket_dir.stat().st_mode)
+                # Re-check after recovery attempt — 777 is what matters
+                try:
+                    stat_result = socket_dir.stat()
+                    mode = stat_mod.S_IMODE(stat_result.st_mode)
+                    if bool(mode & stat_mod.S_IWOTH) and bool(mode & stat_mod.S_IXOTH):
+                        logger.info(
+                            "Recovery partial success: dir is now world-writable"
+                        )
+                        return None
+                except OSError:
+                    pass
                 return (
                     f"Socket directory {socket_dir} is root-owned "
                     f"(uid={owner_uid}, mode={oct(mode)}) and recovery failed. "
-                    f"Fix with: sudo rm -rf {socket_dir}"
+                    f"Fix with: sudo rm -rf {socket_dir} (or use UI Deploy)"
                 )
             return None
         logger.warning(
@@ -905,84 +917,125 @@ def ensure_socket_dir() -> str | None:
     return None
 
 
-def _recover_root_owned_socket_dir(socket_dir: Path) -> bool:
-    """Remove a root-owned socket dir and recreate as current user.
+def _recover_root_owned_socket_dir(
+    socket_dir: Path, node_id: str | None = None
+) -> bool:
+    """Remove a root-owned socket dir and recreate with correct perms.
 
-    Docker daemon creates bind-mount source dirs as root when the host path
-    doesn't exist (e.g. after reboot clears tmpfs /tmp). This function
-    recovers by removing the root-owned directory and recreating it.
+    Docker daemon creates bind-mount target dirs as root (classic /tmp race
+    after reboot or first container start). We MUST clean it without relying
+    on host sudo.
 
-    Returns True on success, False if recovery failed.
+    Primary path is a one-off Docker container that mounts the parent and
+    cleans as root from inside the container. This fulfills "no sudo required
+    — the directory itself was created without sudo".
+
+    Stops the edge container first (node-aware project name). No fallback
+    to sudo.
     """
-    import shutil
     import subprocess
 
-    _stop_edge_container_for_socket_recovery()
+    _stop_edge_container_for_socket_recovery(node_id=node_id)
 
-    # Try direct removal first (won't work on sticky-bit /tmp for root-owned dirs)
+    # Primary (and only) path: Docker-based cleanup — no host sudo needed.
+    # The alpine container runs as root and can delete the root-owned dir.
     try:
-        shutil.rmtree(socket_dir)
-    except PermissionError:
-        # Need elevated privileges — try sudo
-        try:
-            result = subprocess.run(
-                ["sudo", "-n", "rm", "-rf", str(socket_dir)],
-                capture_output=True,
-                text=True,
+        cleanup_cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{socket_dir.parent}:/host-tmp",
+            "alpine:3",
+            "sh",
+            "-c",
+            f"rm -rf /host-tmp/{socket_dir.name} && "
+            f"mkdir -p /host-tmp/{socket_dir.name} && "
+            f"chmod 777 /host-tmp/{socket_dir.name} && "
+            f"chown $(id -u):$(id -g) /host-tmp/{socket_dir.name} 2>/dev/null || true",
+        ]
+        result = subprocess.run(
+            cleanup_cmd,
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if result.returncode == 0:
+            logger.info(
+                "Recovered root-owned socket dir via Docker cleanup: %s", socket_dir
             )
-            if result.returncode != 0:
-                logger.error(
-                    "Cannot remove root-owned %s (sudo -n failed: %s)",
-                    socket_dir,
-                    result.stderr.strip(),
+            # Verify
+            try:
+                stat = socket_dir.stat()
+                logger.info(
+                    "Post-recovery ownership: uid=%s mode=%s",
+                    stat.st_uid,
+                    oct(stat.st_mode),
                 )
-                return False
-        except FileNotFoundError:
-            logger.error("sudo not found; cannot remove root-owned %s", socket_dir)
-            return False
-        except OSError as exc:
-            logger.error(
-                "Error running sudo to remove root-owned %s: %s",
+            except Exception:
+                pass
+            return True
+        else:
+            logger.warning(
+                "Docker cleanup of %s returned %d: %s",
                 socket_dir,
-                exc,
+                result.returncode,
+                (result.stderr or result.stdout or "no output").strip()[:200],
             )
-            return False
+    except Exception as exc:
+        logger.error("Docker socket-dir cleanup failed: %s", exc)
 
-    # Recreate as current user
+    # Last resort: try as current user (will fail if still root-owned)
     try:
+        if socket_dir.exists():
+            import shutil
+
+            shutil.rmtree(socket_dir)
         socket_dir.mkdir(parents=True, exist_ok=True)
         socket_dir.chmod(0o777)
+        logger.info("Recovered socket dir (non-root path): %s", socket_dir)
+        return True
     except OSError as exc:
-        logger.error("Failed to recreate %s after removal: %s", socket_dir, exc)
+        logger.error("Failed to create socket dir %s: %s", socket_dir, exc)
         return False
 
-    logger.info("Recovered root-owned socket dir: %s", socket_dir)
-    return True
 
+def _stop_edge_container_for_socket_recovery(node_id: str | None = None) -> None:
+    """Best-effort compose down to release /tmp/universal-protocol bind mount.
 
-def _stop_edge_container_for_socket_recovery() -> None:
-    """Best-effort compose down to release /tmp/universal-protocol bind mount."""
+    Uses correct project name for relay nodes (edge-jupiter) so the bind mount
+    is properly released before we clean the socket dir.
+    """
     import subprocess
 
     compose_file = WORKSPACE_ROOT / "docker" / "compose" / "gpu-edge.yml"
     if not compose_file.exists():
         return
+
+    cmd = [
+        "docker",
+        "compose",
+        "-f",
+        str(compose_file),
+        "down",
+        "--timeout",
+        "10",
+    ]
+    if node_id:
+        cmd.extend(["-p", f"edge-{node_id}"])
+
     result = subprocess.run(
-        [
-            "docker",
-            "compose",
-            "-f",
-            str(compose_file),
-            "down",
-            "--timeout",
-            "10",
-        ],
+        cmd,
         cwd=str(WORKSPACE_ROOT),
         capture_output=True,
         text=True,
     )
     if result.returncode == 0:
-        logger.info("Stopped edge container before socket-dir recovery")
+        project = f"edge-{node_id}" if node_id else "default"
+        logger.info(
+            "Stopped edge container (project=%s) before socket-dir recovery", project
+        )
     else:
         logger.debug(
             "docker compose down during socket-dir recovery returned %d: %s",
@@ -995,7 +1048,7 @@ def ensure_relay_dirs(
     workspace_root: Path, node_id: str, model_path: Path
 ) -> str | None:
     """Ensure socket dir and bind-mount dirs for relay. Return error message or None."""
-    err = ensure_socket_dir()
+    err = ensure_socket_dir(node_id=node_id)
     if err:
         return err
     return ensure_bind_mount_dirs(workspace_root, node_id, model_path)

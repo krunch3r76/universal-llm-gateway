@@ -320,7 +320,10 @@ continuation (with self_reflections for all) using a lightweight boot profile
 preserved), and rejects persona violations with a structured error envelope
 **before** dispatch. Returns immediately with `{execution_id, ...}`; poll
 with `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
-`result_delivery` for bus push. Runs detached, survives session boundaries.
+`result_delivery` for a terminal pointer-envelope notification (posts
+execution metadata + poll URL to the bus thread — NOT model content;
+poll `pipeline(op="result")` after receiving the envelope to retrieve
+the actual output). Runs detached, survives session boundaries.
 
 **MCP access**: All team members except Oppie/Oppia receive full client-side
 MCP tools (`mcp=true`, full tool loop, Cortex quickref in prompt). Oppie/Oppia
@@ -370,7 +373,9 @@ Primary consult path for any team member (`oppie`, `orion`, `bard`, `api_claude`
 `forge`, `cursor-claude`, `cursor_orion`):
 `team_generate(agent=..., messages=..., generation_options=..., caller_agent=...)`
 then `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
-`result_delivery` for terminal push.
+`result_delivery` for a terminal pointer-envelope notification (posts
+execution metadata + poll URL — NOT model content; poll op="result" after
+receiving the envelope to retrieve actual output).
 
 MCP access validated for all except Oppie/Oppia (multi-agent xAI suppresses
 client-side function tools; uses server-side xAI builtins instead — see

@@ -47,7 +47,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
         spot ≈1536px long side, ~1615-token image budget).
 
         For financial documents that need structured JSON, prefer
-        document_ocr_structured (via private_dispatch) instead.
+        `document_ocr_structured` (now available as primary tool or via dispatch).
 
         Args:
             path: PDF or image path relative to /data/files/.
@@ -161,6 +161,7 @@ def register_document_ocr_tools(mcp: FastMCP) -> None:
                 results.append(result)
             except Exception as exc:
                 logger.warning("Failed to OCR %s: %s", rel_path, exc)
+                record("mcp.document.ocr.file.failed", path=rel_path, error=str(exc))
                 errors.append({"path": rel_path, "error": str(exc)})
 
         elapsed = monotonic_now() - t0

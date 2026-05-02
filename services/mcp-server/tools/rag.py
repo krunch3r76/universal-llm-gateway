@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 from mcp_events import monotonic_now, record
 from provider_model_limits import local_model_inference_timeout, rag_pipeline_timeout
+from transport_utils import make_sync_client
 
 from ._rag_http import (
     _handle_rag_call_error,
@@ -66,8 +67,8 @@ def _pipeline_call(
     if pipeline_options:
         body["pipeline_options"] = pipeline_options
 
-    url = f"{_STARGATE_URL}/v1/chat/completions"
-    with httpx.Client(timeout=timeout) as client:
+    url = "/v1/chat/completions"
+    with make_sync_client(_STARGATE_URL, timeout=timeout) as client:
         resp = client.post(url, json=body)
         resp.raise_for_status()
         return resp.json()
@@ -369,14 +370,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
     ) -> dict[str, Any]:
-        """PRIMARY agent surface for MCP retrieval. Returns raw context chunks
-        with source labels for the agent to cite, gate (lawyer-stance), and
-        reason over. Use by default.
-
-        `rag_answer` (or rag(op="answer")) remains valid when a synthesized
-        answer is the end product or for iterative retrieval (`deep=True`) on
-        analysis-grade questions per lawyer-stance.md; prefer rag_search for
-        citation-discipline workflows and raw context needs.
+        """PRIMARY (and only) agent surface for MCP RAG retrieval. Returns raw
+        context chunks with source labels for the agent to cite, gate (lawyer-stance),
+        and reason over. Use by default. The rag_answer pipeline is buried in MCP
+        and should not be used by agents (only for debugging the pipeline itself
+        via direct dispatch or /v1/chat/completions with model=rag-answer*).
 
         Uses multi-query rewriting, reciprocal rank fusion, entity/relation
         merging, and property index boost. `limit` accepted as alias for
@@ -506,32 +504,22 @@ def register_rag_tools(mcp: FastMCP) -> None:
             "context": content,
         }
 
-    @mcp.tool(title="RAG: Answer")
+    @mcp.tool(title="RAG: Answer (DEBUG ONLY)")
     def rag_answer(
         question: str,
         scope: str | list[str] | None = None,
         prefix: str | list[str] | None = None,
         deep: bool = False,
     ) -> dict[str, Any]:
-        """Returns a grounded, synthesized answer via retrieval + LLM rewriting.
+        """DEBUG-ONLY: Calls the buried rag-answer / rag-answer-deep pipeline.
 
-        Valid and recommended when a synthesized answer is the desired end
-        product or for `deep=True` iterative retrieval on analysis-grade
-        questions (see lawyer-stance.md). For raw context, citation, and
-        agent reasoning/gating workflows, prefer `rag_search` / `rag(op="search")`
-        instead.
+        Agents MUST NOT use this (or rag(op="answer")). The only legitimate
+        use is debugging the RAG answer pipeline itself via MCP (e.g. to call
+        the underlying /v1/chat/completions endpoint with model=rag-answer*).
+        For all agent work, use rag_search / rag(op="search") exclusively.
 
-        Has a relevance gate: returns empty if retrieved context doesn't
-        directly address the question. Fall back to rag_search if this
-        returns empty.
-
-        Set deep=True for complex multi-faceted questions that benefit
-        from iterative retrieval (up to 2 gap-filling passes).
-
-        IMPORTANT: question must be natural language. Boolean operators (OR, AND)
-        degrade dense retrieval — use parallel rag_search calls per concept instead.
-
-        Call rag_list_scopes() for the current set of valid scope names.
+        Has relevance gate and optional deep=True iterative retrieval.
+        See rag_search docstring and tool-reference.md for agent policy.
 
         Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_answer")
 
@@ -810,9 +798,9 @@ def register_rag_tools(mcp: FastMCP) -> None:
         if extra_blocklist is not None:
             body["extra_blocklist"] = extra_blocklist
 
-        url = f"{_STARGATE_URL}/api/v1/rag/refresh_corpus_hints"
+        url = "/api/v1/rag/refresh_corpus_hints"
         try:
-            with httpx.Client(timeout=60.0) as client:
+            with make_sync_client(_STARGATE_URL, timeout=60.0) as client:
                 resp = client.post(url, json=body)
                 resp.raise_for_status()
                 payload = resp.json()

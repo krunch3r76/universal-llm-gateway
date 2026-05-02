@@ -494,7 +494,6 @@ def _build_server() -> FastMCP:
 
     rag_op_tool: dict[str, str] = {
         "search": "rag_search",
-        "answer": "rag_answer",
         "list_scopes": "rag_list_scopes",
         "coverage": "rag_coverage",
         "upsert_article": "rag_upsert_article",
@@ -512,8 +511,7 @@ def _build_server() -> FastMCP:
         arguments: operation arguments as an object or a JSON string
 
         Operations:
-          search            (query, scope?, prefix?, top_k?|limit?) — semantic search (primary agent surface); scope/prefix mutually exclusive; limit aliases top_k
-          answer            (question, scope?, prefix?, deep?)  — RAG-grounded synthesized answer (valid for end-product or deep=True analysis-grade per lawyer-stance); use rag_search for raw context/citation
+          search            (query, scope?, prefix?, top_k?|limit?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
           list_scopes       ()                                  — list scopes with prefixes and coverage
           coverage          ()                                  — per-scope indexed file counts
           upsert_article    (url, title?, scope?)               — index article by URL

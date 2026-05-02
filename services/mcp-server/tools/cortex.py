@@ -43,7 +43,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
           journal_read      (limit?)                                 — recent session journals
           journal_write     (timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, session_id?, prior_session_id?, markdown_content?) — [DEPRECATED: use session_close] write journal; auto-creates transcript entity + continues edge
-          session_close     (session_id, agent, transcript_md, summary, domains?, decisions?, open_items?, entity_ids?, prior_session_id?) — ATOMIC session close: validates transcript, writes file, creates entity + journal row + continues edge in one call. Rejects stubs.
+          session_close     (session_id, agent, transcript_md, summary, domains?, decisions?, open_items?, entity_ids?, prior_session_id?) — ATOMIC session close: validates transcript, writes file, creates entity + journal row + continues edge in one call. Rejects stubs. Response includes transcript_entity_id (e.g. "transcript:web-YYYY-MM-DD-HHMM") — capture this and surface it to the user; use it as evidence_uri in any assertions seeded from this session.
           review_queue      (limit?)                                 — provisional entities + flagged assertions
           edge_create       (session_id, agent, from_node, to_node, edge_type, strength?, context?) — seed reasoning connection. Common edge_types: depends_on, leads_to, caused_by, contradicts, supersedes, relates_to, evidence_for, corroborates, derived_from, extends, promises, expects, continues, analogous_to, reasoned_about. Call edge_types for full taxonomy + directionality.
           edges             (from_node?, to_node?, edge_type?, agent?, session_id?, limit?) — query edges
@@ -71,6 +71,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           deadline_resolve  (deadline_id, resolution_note, resolved_at, evidence?, fulfilling_assertion_id?) — atomic two-write close: confirmed RESOLVED assertion + outcome:met on attributes. Eliminates ghost-deadline boot failures where agents forget the second write.
           todo_candidates   (q/query?, limit?, workflow_state?, priority?, domain?, domain_exclude?, context?) — ranked TODO retrieval for user intent; prefer over broad open TODO enumeration
           todo_audit        (stale_days?, limit?, domain?, priority?) — old/open TODO audit for deferral, closure, merge, or spec conversion
+          audit             (subject?, kinds?, include_filesystem?) — run gap detectors for integrity audit (graph-only default; include_filesystem=true for fs checks). Returns findings + counts. Phase 1b of cortex-graph-projection-and-audit-primitives.
 
         confidence values: confirmed / believed / suspected / hypothesized
         review_status values: committed / flagged / staged / rejected
@@ -79,7 +80,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           entity_create → assert → relationship_create → entity_get
           ingest_document → assert_from_chunk → relationship_create → entity_get
           supersede → entity_get (verify old superseded, new visible)
-          session_close → assert on relevant entities (seed decisions/observations) → post bus debrief → entity_get (confirm transcript entity)
+          session_close → capture transcript_entity_id from response → surface to user → assert on relevant entities using transcript_entity_id as evidence_uri → post bus debrief → entity_get (confirm transcript entity)
           journal_write [DEPRECATED] → use session_close instead
 
         Example:

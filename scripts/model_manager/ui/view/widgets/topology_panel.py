@@ -66,6 +66,7 @@ _STATUS_REASON_DISPLAY: dict[str, str] = {
     "no_recent_telemetry": "no recent federation telemetry for relay",
     "connected_no_models": "relay connected but zero models advertised",
     "connected_models_unknown": "relay connected but model source probe unavailable",
+    "socket_dir_root_owned": "socket dir /tmp/universal-protocol root-owned (Docker bind-mount race — prevented by proactive ensure_socket_dir() in deploy scripts)",
 }
 
 
@@ -596,9 +597,8 @@ class TopologyPanel(Widget):
 
         # Phase 3: All other services (parallel, best-effort). Event service is the
         # only intentional sequential blocker per topology policy; gateway/agent_bus/
-        # stargate/cloud_proxy/mcp/cortex_api now run concurrently. RAG is
-        # deliberately deferred to a post-fleet phase (after all nodes/remotes
-        # have had a chance to come up and register models/telemetry).
+        # stargate/cloud_proxy/mcp/cortex_api/rag now run concurrently. RAG
+        # activation retries until nodes have registered models/telemetry.
         start_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
             ("gateway", svc.start_gateway),
             ("stargate", svc.start_stargate),
@@ -631,6 +631,8 @@ class TopologyPanel(Widget):
                 else svc.start_cortex_api
             )
             start_ops.append(("cortex_api", cortex_api_op))
+        if is_rag_configured():
+            start_ops.append(("rag", svc.start_rag))
 
         start_results = await self._run_ops_parallel(start_ops)
         start_dict: dict[str, bool] = {}

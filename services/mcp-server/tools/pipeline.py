@@ -46,14 +46,14 @@ def _fetch_pipelines_metadata() -> dict[str, Any]:
     Returns:
         Decoded JSON payload from ``/api/v1/pipelines``.
     """
-    url = f"{_STARGATE_URL}/api/v1/pipelines"
+    url = "/api/v1/pipelines"
     try:
-        with httpx.Client(timeout=_VALIDATE_TIMEOUT) as client:
+        with make_sync_client(_STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError:
-        logger.warning("Failed to fetch pipelines metadata from %s", url, exc_info=True)
+        logger.warning("Failed to fetch pipelines metadata from %s/%s", _STARGATE_URL, url, exc_info=True)
         raise
 
 
@@ -154,8 +154,8 @@ def _pipeline_run(
     tp_exec_id: str | None = None
     try:
         toolprogress_phase("pipeline", "stargate_post_begin", pipeline=pipeline_id)
-        url = f"{_STARGATE_URL}/v1/chat/completions"
-        with httpx.Client(timeout=effective_timeout) as client:
+        url = "/v1/chat/completions"
+        with make_sync_client(_STARGATE_URL, timeout=effective_timeout) as client:
             resp = client.post(url, json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -252,9 +252,9 @@ def _pipeline_async(
     if caller_agent:
         body["caller_agent"] = caller_agent
 
-    url = f"{_STARGATE_URL}/api/v1/pipelines/dispatch"
+    url = "/api/v1/pipelines/dispatch"
     try:
-        with httpx.Client(timeout=_DISPATCH_TIMEOUT) as client:
+        with make_sync_client(_STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
             resp = client.post(url, json=body)
         if resp.status_code >= 400:
             try:
@@ -296,9 +296,9 @@ def _pipeline_async(
 
 def _pipeline_stats() -> dict[str, Any]:
     """Fetch tracker occupancy snapshot from Stargate."""
-    url = f"{_STARGATE_URL}/api/v1/pipelines/dispatch/stats"
+    url = "/api/v1/pipelines/dispatch/stats"
     try:
-        with httpx.Client(timeout=_VALIDATE_TIMEOUT) as client:
+        with make_sync_client(_STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return resp.json()
@@ -308,9 +308,9 @@ def _pipeline_stats() -> dict[str, Any]:
 
 def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
     """Cancel an in-flight async-dispatched execution."""
-    url = f"{_STARGATE_URL}/api/v1/pipelines/executions/{execution_id}"
+    url = f"/api/v1/pipelines/executions/{execution_id}"
     try:
-        with httpx.Client(timeout=_DISPATCH_TIMEOUT) as client:
+        with make_sync_client(_STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
             resp = client.delete(url)
             resp.raise_for_status()
             return resp.json()
@@ -324,9 +324,9 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     wait_clamped = max(0.0, min(wait_seconds, _RESULT_MAX_WAIT))
     http_timeout = wait_clamped + _RESULT_POLL_BUFFER
 
-    url = f"{_STARGATE_URL}/api/v1/pipelines/executions/{execution_id}"
+    url = f"/api/v1/pipelines/executions/{execution_id}"
     try:
-        with httpx.Client(timeout=http_timeout) as client:
+        with make_sync_client(_STARGATE_URL, timeout=http_timeout) as client:
             resp = client.get(url, params={"wait": wait_clamped})
         if resp.status_code >= 400:
             try:
@@ -446,10 +446,14 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         - ``"async"`` — async dispatch; returns ``execution_id`` immediately.
           Required: ``pipeline_id``, ``messages``. Optional: ``options``,
           ``result_delivery`` (``{bus_thread, bus_from_agent, bus_to_agent,
-          bus_subject}`` — phase 2 bus delivery hook). Use for long-running
-          pipelines that exceed the MCP 300s client read timeout
-          (Orion-grade reasoning, deep consensus runs, etc.). Poll completion
-          with ``op="result"``.
+          bus_subject[, bus_brief_summary, bus_lifecycle]}`` — terminal
+          notification hook; posts a **pointer envelope** to the bus thread
+          at completion, NOT the model output; the envelope contains
+          ``execution_id``, ``status``, ``poll`` URL, ``usage``, and
+          ``duration_s`` — receive it, then call ``op="result"`` to fetch
+          actual content). Use for long-running pipelines that exceed the
+          MCP 300s client read timeout (Orion-grade reasoning, deep consensus
+          runs, etc.). Poll completion with ``op="result"``.
 
           **Persona consults — use ``team_generate`` instead.** If you
           would dispatch ``pipeline_id="frontier-dispatch"`` with

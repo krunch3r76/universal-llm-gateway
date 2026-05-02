@@ -99,3 +99,36 @@ def _derive_session_id_local(agent: str, timestamp: str) -> str:
         return f"{agent}-{year}-{mon}-{day}-{hour}{minute}"
     now = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
     return f"{agent}-{now}"
+
+
+def _validate_canonical_sandbox_path(
+    candidate: str,
+    *,
+    canonical_subdir: str,  # e.g. "agent-skills" for agent_skill:
+    must_be_file: bool = True,
+) -> Path:
+    """Resolve candidate strictly inside _FILES_ROOT/<canonical_subdir>.
+
+    Rejects:
+      - paths whose resolved realpath leaves the canonical subdir
+      - .. traversal that escapes _FILES_ROOT
+      - absolute paths under workspaces/ or any other sandbox alias
+
+    Returns the resolved Path on success; raises ValueError otherwise.
+    Used by register_skill_substrate, register_evidence, etc. (W5 from
+    cortex-primitives v2 plan).
+    """
+    canonical_root = (_FILES_ROOT / canonical_subdir).resolve()
+    if Path(candidate).is_absolute():
+        resolved = Path(candidate).resolve()
+    else:
+        resolved = (_FILES_ROOT / candidate).resolve()
+    canonical_str = str(canonical_root) + os.sep
+    if not (str(resolved) + os.sep).startswith(canonical_str):
+        raise ValueError(
+            f"path {candidate!r} resolves to {resolved} — "
+            f"outside canonical sandbox {canonical_root}"
+        )
+    if must_be_file and not resolved.is_file():
+        raise ValueError(f"path {candidate!r} does not resolve to a file")
+    return resolved

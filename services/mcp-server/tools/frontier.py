@@ -170,7 +170,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         Returns immediately with `{execution_id, pipeline, status, started_at}`.
         Poll with `pipeline(op="result", execution_id=...)` or use
-        `result_delivery` for terminal push to an agent-bus thread.
+        `result_delivery` for a pointer envelope push at terminal transition
+        (posts execution metadata + poll URL to the bus thread — NOT model
+        content; poll `pipeline(op="result")` after receiving the envelope
+        to retrieve the actual output).
 
         For raw engine calls without persona assembly use `frontier_generate`.
         """
@@ -227,7 +230,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         Returns immediately with ``{execution_id, pipeline, status, started_at}``.
         Poll with ``pipeline(op="result", execution_id=...)`` or use
-        ``result_delivery`` for terminal push.
+        ``result_delivery`` for a pointer envelope push at terminal transition
+        (posts execution metadata + poll URL — NOT model content; poll
+        ``pipeline(op="result")`` after receiving the envelope to retrieve
+        the actual output).
         """
         body: dict[str, Any] = {
             "messages": messages,

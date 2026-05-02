@@ -179,24 +179,29 @@ def _stop_existing_container(node_id: str, compose_env: dict[str, str]) -> None:
 def _run_start(
     node_id: str, node_env: dict[str, str], do_build: bool, scope: str = "all"
 ) -> int:
+    # Proactive socket directory pre-creation (first step). Prevents the Docker
+    # daemon from creating /tmp/universal-protocol as root:root during bind-mount
+    # (the exact race that made relay-jupiter unreachable). The ensure_relay_dirs()
+    # now uses a sudo-free Docker one-off cleanup if needed.
+    model_path = Path(
+        node_env.get("MODEL_PATH", str(Path.home() / ".models"))
+    ).expanduser()
+    err = ensure_relay_dirs(_ROOT, node_id, model_path)
+    if err:
+        print("ERROR:", err, file=sys.stderr)
+        return 1
+
     if do_build and _run_build(node_env, scope) != 0:
         return 1
     if not _COMPOSE_PATH.exists():
         print("ERROR: Compose file not found:", _COMPOSE_PATH, file=sys.stderr)
         return 1
-    model_path = Path(
-        node_env.get("MODEL_PATH", str(Path.home() / ".models"))
-    ).expanduser()
     env = _build_env(node_env)
     env["COMPOSE_PROJECT_NAME"] = f"edge-{node_id}"
-    # Stop before claiming bind-mount sources. If /tmp was cleared on reboot,
-    # Docker would create /tmp/universal-protocol as root while the container
-    # is still running and holding the bind mount open.
+    # Stop any existing container *after* socket dir is guaranteed correct.
+    # The recovery inside ensure_socket_dir() already stops the edge container
+    # if needed to release the bind mount.
     _stop_existing_container(node_id, env)
-    err = ensure_relay_dirs(_ROOT, node_id, model_path)
-    if err:
-        print("ERROR:", err, file=sys.stderr)
-        return 1
     result = subprocess.run(
         ["docker", "compose", "-f", str(_COMPOSE_PATH), "up", "-d", "--force-recreate"],
         env=env,

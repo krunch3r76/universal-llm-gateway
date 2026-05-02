@@ -24,6 +24,8 @@ from .ops_assertions import (
     _op_search,
     _op_supersede,
 )
+from .ops_audit import _op_audit
+from .ops_composites import _op_register_skill_substrate
 from .ops_edges import (
     _op_edge_create,
     _op_edge_retire,
@@ -113,6 +115,8 @@ _OPS: dict[str, Any] = {
     "tag_resolve": _op_tag_resolve,
     "todo_candidates": _op_todo_candidates,
     "todo_audit": _op_todo_audit,
+    "register_skill_substrate": _op_register_skill_substrate,
+    "audit": _op_audit,
     "rj_write": _op_rj_write,
     "rj_read": _op_rj_read,
     "rj_list": _op_rj_list,
