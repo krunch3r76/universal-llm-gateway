@@ -150,6 +150,8 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(graph.router)
     app.include_router(reaper.router)
     app.include_router(reflective_journal.router)
+    from .routes.triage import router as triage_router
+    app.include_router(triage_router, prefix="/assertions")
     app.include_router(dispatch.router)
 
     @app.get("/health")

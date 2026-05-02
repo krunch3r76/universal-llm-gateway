@@ -67,14 +67,19 @@ def build_on_tool_event(
                 provider=provider,
             )
         else:
+            # Richer failure event for better observability. Do not retry the
+            # exact same (tool_name, arguments) combination on deterministic errors.
             event = PipelineFrontierDispatchToolFailed(
                 agent=agent,
                 execution_id=execution_id,
                 tool_name=str(payload.get("tool_name", "")),
                 turn=int(payload.get("turn", 0)),
                 elapsed_ms=float(payload.get("elapsed_ms", 0.0)),
-                error="tool returned error envelope",
+                error=str(payload.get("error", "tool returned error envelope")),
                 provider=provider,
+                arguments=payload.get("arguments"),
+                full_error=payload.get("full_error"),
+                retry_count=int(payload.get("retry_count", 0)),
             )
         publish(event)
 

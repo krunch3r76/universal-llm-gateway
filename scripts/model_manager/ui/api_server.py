@@ -147,6 +147,11 @@ class ManageAPIServer:
 
             _write_json(writer, resp)
             await writer.drain()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            # Normal client disconnect after one-shot JSON-RPC request (UDS close,
+            # timeout, etc.); do not log as ERROR per quality gates. Events handle
+            # the lifecycle telemetry.
+            pass
         except Exception:
             logger.exception("Manage API connection error")
         finally:
@@ -176,7 +181,8 @@ class ManageAPIServer:
             return None, {"code": -32602, "message": str(exc)}
         except Exception as exc:
             duration = round(time.monotonic() - t0, 3)
-            logger.error("Manage API %s(%s) failed: %s", method, service, exc)
+            # Event emission is primary (per quality gates); log is secondary.
+            logger.warning("Manage API %s(%s) failed: %s", method, service, exc)
             await self._event_bus.publish(
                 ManageServiceFailed(
                     method=method, service=service, error=str(exc), duration_s=duration

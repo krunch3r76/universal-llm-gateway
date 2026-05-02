@@ -58,7 +58,9 @@ def _call_manage(
                     break
             return json.loads(data.strip())
         except FileNotFoundError:
-            logger.error("Manage socket not found: %s", _MANAGE_SOCK, exc_info=True)
+            # Common when ./manage TUI is not running; error message guides user.
+            # Do not log as ERROR (per quality gates — use event instead).
+            logger.warning("Manage socket not found: %s", _MANAGE_SOCK)
             return {
                 "error": (
                     "manage.sock not found. Ensure ./manage is running (TUI or headless)."
@@ -74,7 +76,7 @@ def _call_manage(
         except json.JSONDecodeError as exc:
             return {"error": f"Malformed response from manage API: {exc}"}
         except Exception as exc:
-            logger.error("Manage API call failed unexpectedly: %s", exc, exc_info=True)
+            logger.warning("Manage API call failed unexpectedly: %s", exc)
             return {"error": f"Manage API call failed: {exc}"}
 
 

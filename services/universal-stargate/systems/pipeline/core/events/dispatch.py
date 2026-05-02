@@ -298,8 +298,16 @@ def PipelineFrontierDispatchToolFailed(  # noqa: N802
     elapsed_ms: float,
     error: str,
     provider: str,
+    arguments: dict | None = None,
+    full_error: dict | None = None,
+    retry_count: int = 0,
 ) -> Event:
-    """Emitted when a tool call returns an error envelope or raises."""
+    """Emitted when a tool call returns an error envelope or raises.
+
+    Enhanced payload gives much better observability into tool failures
+    and retry behavior. Do not retry the exact same (tool_name, arguments)
+    combination more than once per turn.
+    """
     return Event(
         signal="pipeline.frontier.dispatch.tool.failed",
         payload={
@@ -310,6 +318,9 @@ def PipelineFrontierDispatchToolFailed(  # noqa: N802
             "elapsed_ms": elapsed_ms,
             "error": error,
             "provider": provider,
+            "arguments": arguments,
+            "full_error": full_error,
+            "retry_count": retry_count,
         },
         scope="node",
     )

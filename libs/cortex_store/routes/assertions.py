@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from pydantic import ValidationError
@@ -719,7 +719,7 @@ def create_assertion(
 
 
 @router.patch("/{assertion_id}", response_model=AssertionItem)
-def update_assertion(assertion_id: int, body: AssertionUpdate) -> AssertionItem:
+def update_assertion(assertion_id: int, body: AssertionUpdate | dict[str, Any]) -> AssertionItem:
     """Update assertion metadata — supersession, confidence, review status."""
     import datetime as dt
 
@@ -733,44 +733,58 @@ def update_assertion(assertion_id: int, body: AssertionUpdate) -> AssertionItem:
                 detail=f"Assertion not found: {assertion_id}",
             )
 
-        if body.superseded_by is not None:
+        if isinstance(body, dict):
+            superseded_by = body.get("superseded_by")
+            review_status = body.get("review_status")
+        else:
+            superseded_by = body.superseded_by
+            review_status = body.review_status
+        if superseded_by is not None:
             target = query(
-                conn, "SELECT id FROM assertions WHERE id = ?", (body.superseded_by,)
+                conn, "SELECT id FROM assertions WHERE id = ?", (superseded_by,)
             )
             if not target:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Superseding assertion not found: {body.superseded_by}",
+                    detail=f"Superseding assertion not found: {superseded_by}",
                 )
 
         if (
-            body.review_status is not None
-            and body.review_status not in _VALID_REVIEW_STATUS
+            review_status is not None
+            and review_status not in _VALID_REVIEW_STATUS
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid review_status: {body.review_status!r}. "
+                detail=f"Invalid review_status: {review_status!r}. "
                 f"Must be one of {sorted(_VALID_REVIEW_STATUS)}",
             )
 
-        if body.confidence is not None and body.confidence not in _VALID_CONFIDENCE:
+        confidence = body.get("confidence") if isinstance(body, dict) else getattr(body, "confidence", None)
+        if confidence is not None and confidence not in _VALID_CONFIDENCE:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid confidence: {body.confidence!r}. "
+                detail=f"Invalid confidence: {confidence!r}. "
                 f"Must be one of {sorted(_VALID_CONFIDENCE)}",
             )
 
-        update_map: dict[str, object] = {
-            "superseded_by": body.superseded_by,
-            "valid_until": body.valid_until,
-            "confidence": body.confidence,
-            "confidence_score": body.confidence_score,
-            "review_status": body.review_status,
-            "reviewer": body.reviewer,
-            "reviewed_at": body.reviewed_at,
-            "resolution_status": body.resolution_status,
-            "fulfillment_assertion_id": body.fulfillment_assertion_id,
-        }
+        update_map: dict[str, object] = {}
+        if isinstance(body, dict):
+            for k in ("superseded_by", "valid_until", "confidence", "confidence_score", "review_status", "reviewer", "reviewed_at", "review_notes", "resolution_status", "fulfillment_assertion_id"):
+                if k in body and body[k] is not None:
+                    update_map[k] = body[k]
+        else:
+            update_map = {
+                "superseded_by": body.superseded_by,
+                "valid_until": body.valid_until,
+                "confidence": body.confidence,
+                "confidence_score": body.confidence_score,
+                "review_status": body.review_status,
+                "reviewer": body.reviewer,
+                "reviewed_at": body.reviewed_at,
+                "review_notes": body.review_notes,
+                "resolution_status": body.resolution_status,
+                "fulfillment_assertion_id": body.fulfillment_assertion_id,
+            }
         sets: list[str] = []
         params: list[object] = []
         for col, val in update_map.items():

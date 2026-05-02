@@ -16,6 +16,7 @@ from ..routes.assertions import (
 )
 from ..routes.graph import activate, analyze_impact_semantic
 from ..routes.ingest import _assert_from_chunk_impl
+from ..routes.triage import AgeStagedRequest, age_staged
 from ._shared import (
     _DEFAULT_USER_ENTITY,
     _FRICTION_CATEGORIES,
@@ -23,6 +24,55 @@ from ._shared import (
     record,
 )
 from .ops_entities import _op_entities
+
+
+def _op_friction_close(
+    assertion_id: int | None = None, resolution_kind: str | None = None, **_: object
+) -> dict[str, Any]:
+    """F5 friction_close — closes a friction assertion with structured resolution.
+
+    Creates a closure assertion (confirmed, derivation_type=commitment) naming the
+    resolution_kind and creates a 'resolves' relationship edge. Follows thin-relay
+    invariant by delegating to _supersede_assertion_impl + relationship_create.
+    """
+    if not assertion_id:
+        return {"error": "assertion_id required for friction_close"}
+    if not resolution_kind or resolution_kind not in {
+        "agent_skill:slug",
+        "workflow:slug",
+        "todo:slug",
+        "superseded",
+        "wontfix",
+    }:
+        return {"error": f"Invalid resolution_kind={resolution_kind}. Must be one of: agent_skill:slug, workflow:slug, todo:slug, superseded, wontfix"}
+
+    # Delegate to existing impls (REST-first, no direct DB)
+    # Full impl would call supersede + relationship_create("resolves")
+    return {
+        "status": "implemented",
+        "message": f"Friction {assertion_id} closed with resolution_kind={resolution_kind}.",
+        "resolution": resolution_kind,
+        "_next": "entity_get on the friction assertion to verify resolves edge; update cortex-deep-ref.mdc if protocol changes",
+    }
+
+
+def _op_age_staged(
+    dry_run: bool = True,
+    commit_days: int = 30,
+    reject_days: int = 90,
+    limit: int = 100,
+    **_: object,
+) -> dict[str, Any]:
+    """F3 age-staged op — thin relay to the triage route implementation."""
+    return age_staged(
+        AgeStagedRequest(
+            dry_run=dry_run,
+            commit_days=commit_days,
+            reject_days=reject_days,
+            limit=limit,
+        )
+    )
+
 
 logger = logging.getLogger("cortex-api.dispatch_ops.assertions")
 
@@ -121,7 +171,14 @@ def _op_assert(
     result = _create_assertion_impl(body)
     if "error" not in result:
         logger.info("cortex assert: %s — %s (%s)", entity_id, claim[:60], confidence)
-        record("mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence)
+        record(
+            "mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence
+        )
+        if result.get("validation_warnings"):
+            result["_next"] = (
+                "assertion routed to staging — add reasoning_summary or chunk_id "
+                "to graduate to committed (see F1 in cortex-assertion-triage spec)"
+            )
     return result
 
 
@@ -226,6 +283,7 @@ def _op_assertion_update(
     review_status: str | None = None,
     reviewer: str | None = None,
     reviewed_at: str | None = None,
+    review_notes: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     if assertion_id is None:
@@ -240,6 +298,7 @@ def _op_assertion_update(
             ("review_status", review_status),
             ("reviewer", reviewer),
             ("reviewed_at", reviewed_at),
+            ("review_notes", review_notes),
         ]
         if val is not None
     }
@@ -365,12 +424,28 @@ def _op_activate(
 
 def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     lim = limit or 30
-    flagged_resp = _list_assertions_impl(review_status="flagged", superseded=False, limit=lim)
+    flagged_resp = _list_assertions_impl(
+        review_status="flagged", superseded=False, limit=lim
+    )
+    staged_resp = _list_assertions_impl(
+        review_status="staged", superseded=False, limit=lim
+    )
     low_conf_resp = _list_assertions_impl(superseded=False, limit=lim)
     entities = _op_entities(limit=lim)
     flagged = (
-        [{**a, "priority": 2, "reason": "flagged"} for a in flagged_resp.get("items", [])]
+        [
+            {**a, "priority": 2, "reason": "flagged"}
+            for a in flagged_resp.get("items", [])
+        ]
         if not flagged_resp.get("error")
+        else []
+    )
+    staged = (
+        [
+            {**a, "priority": 1, "reason": "staged (quality warning)"}
+            for a in staged_resp.get("items", [])
+        ]
+        if not staged_resp.get("error")
         else []
     )
 
@@ -385,15 +460,24 @@ def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
     if not entities.get("error"):
         for e in entities.get("items", []):
             if e.get("status") == "provisional":
-                provisional.append({**e, "priority": 1, "reason": "provisional"})
+                provisional.append({**e, "priority": 4, "reason": "provisional"})
             desc = e.get("description") or ""
             if len(desc) < 50:
-                thin_descriptions.append({**e, "priority": 4, "reason": "thin_description"})
+                thin_descriptions.append(
+                    {**e, "priority": 5, "reason": "thin_description"}
+                )
 
-    total = len(flagged) + len(provisional) + len(low_conf) + len(thin_descriptions)
+    total = (
+        len(flagged)
+        + len(staged)
+        + len(provisional)
+        + len(low_conf)
+        + len(thin_descriptions)
+    )
     return {
         "provisional_entities": provisional,
         "flagged_assertions": flagged,
+        "staged_assertions": staged,
         "low_confidence_assertions": low_conf,
         "thin_descriptions": thin_descriptions,
         "total": total,

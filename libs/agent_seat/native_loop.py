@@ -162,6 +162,9 @@ async def _execute_tool_calls(
                         "ok": ok,
                         "elapsed_ms": round(elapsed_ms, 1),
                         "provider": provider,
+                        "arguments": args,
+                        "full_error": {"message": result_str} if not ok else None,
+                        "retry_count": 0,  # Can be incremented by caller if retry logic added
                     },
                 )
             except Exception as cb_exc:

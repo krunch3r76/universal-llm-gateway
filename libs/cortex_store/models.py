@@ -233,6 +233,7 @@ class AssertionUpdate(BaseModel):
     review_status: ReviewStatus | None = None
     reviewer: str | None = None
     reviewed_at: str | None = None
+    review_notes: str | None = None
     resolution_status: ResolutionStatus | None = None
     fulfillment_assertion_id: int | None = None
 

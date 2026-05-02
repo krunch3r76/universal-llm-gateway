@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from mcp_events import record
-
 from ._boot_runner import run_cortex_boot
 
 if TYPE_CHECKING:
@@ -48,32 +46,36 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         agent: str = "cursor",
         session_id: str = "",
     ) -> dict[str, Any]:
-        """DEPRECATED — use cortex(tool="session_close", ...) for atomic closes.
+        """HARD-DEPRECATED — use cortex(tool="session_close", ...) for atomic closes.
 
-        This tool only returns step-by-step instructions without performing
-        the close.  The atomic version (cortex dispatch) validates transcript
-        content, writes the file, and creates entity + journal row + edge
-        in one call.
+        This tool only returned step-by-step instructions without performing
+        the close. The atomic version (cortex dispatch to /session-journals/close)
+        validates transcript content/length/structure, writes the file, and creates
+        entity + journal row + continues edge in a **single validated transaction**.
 
-        Kept for backward compatibility.  Will be removed in a future release.
+        The 2059 hallucination (agent reported success despite failed writes during
+        restart) was caused by following the old path. This tool now fails loudly.
+
+        Use:
+        cortex(tool="session_close", arguments={
+          "session_id": "...",
+          "agent": "cursor",
+          "transcript_md": "# full transcript markdown ...",
+          "summary": "summary >=20 chars",
+          ...
+        })
 
         Args:
-          agent      — agent identity: cursor, web, api (default: "cursor")
-          session_id — session ID from boot (if empty, mints one from current UTC)
+          agent, session_id — ignored (fails with directive)
         """
-        from .._session_close import build_session_close
-
-        result = build_session_close(agent=agent, session_id=session_id)
-        if "error" not in result:
-            result["_deprecation"] = (
-                "This tool is deprecated. Use cortex(tool='session_close', "
-                'arguments=\'{"session_id": "...", "agent": "...", '
-                '"transcript_md": "...", "summary": "..."}\') instead. '
-                "The atomic version prevents stub-only closes."
-            )
-            record(
-                "mcp.session.close",
-                agent=agent,
-                transcript_id=result.get("transcript_id"),
-            )
-        return result
+        return {
+            "error": "deprecated_session_close_reminder",
+            "use": (
+                "cortex(tool='session_close', arguments={"
+                "'session_id': '...', 'agent': 'cursor', 'transcript_md': '<full md>', "
+                "'summary': '<summary>=20 chars', 'domains': [...], ...}) — "
+                "atomic path that writes file + DB tx with validation. See "
+                "agent-bus thread 824 and libs/cortex_store/dispatch_ops/ops_journals.py"
+            ),
+            "detail": "The reminder path enabled hallucinated closes; atomic path prevents it.",
+        }

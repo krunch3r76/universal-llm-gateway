@@ -22,7 +22,9 @@ _WORKFLOW_HINTS: dict[str, str] = {
     ),
     "assert": (
         "next: relationship_create if this claim connects two entities; "
-        "entity_get to verify the assertion appears on the entity"
+        "entity_get to verify the assertion appears on the entity. "
+        "If validation_warnings present, assertion was routed to staged — "
+        "add reasoning_summary or chunk_id to graduate."
     ),
     "assert_from_chunk": (
         "next: relationship_create if connecting entities; entity_get to verify"
@@ -50,7 +52,8 @@ _WORKFLOW_HINTS: dict[str, str] = {
     "session_close": (
         "next: seed content assertions on relevant entities (decisions, observations); "
         "post to agent bus thread 480 with session debrief; "
-        "entity_get on transcript_entity_id to confirm the full record"
+        "entity_get on transcript_entity_id to confirm the full record. "
+        "Review staged_assertions from review_queue (F2) — add reasoning_summary or chunk_id to graduate."
     ),
     "search": (
         "next: extract entity_ids from results → activate (for structurally "

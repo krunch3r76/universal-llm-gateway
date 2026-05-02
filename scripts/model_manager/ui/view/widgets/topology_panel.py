@@ -560,9 +560,11 @@ class TopologyPanel(Widget):
     ) -> bool:
         """Restart local services with best-effort phased orchestration.
 
-        ∀ start operations: try/except wrapped, logged, never abort.
-        Critical failures (event_service/gateway/stargate/agent_bus) are surfaced
-        distinctly from optional-service failures.
+        Event service runs first (observability backbone that can block). All
+        other services (gateway, stargate, agent_bus, rag, mcp, etc.) run in
+        parallel via TaskGroup. ∀ start operations: try/except wrapped, logged,
+        never abort. Critical failures (event_service/gateway/stargate/agent_bus)
+        are surfaced distinctly from optional-service failures.
         """
         svc = cast("ModelManagerApp", self.app).service_controller
         mk = _MASTER_ROW_KEY
@@ -579,7 +581,7 @@ class TopologyPanel(Widget):
         if not already_stopped:
             await self._stop_local_services()
 
-        # Phase 2: Event service (observability backbone)
+        # Phase 2: Event service (observability backbone — blocks parallel starts)
         event_service_op = (
             svc.rebuild_event_service
             if rebuild_supporting_services
@@ -592,26 +594,22 @@ class TopologyPanel(Widget):
             if not await self._wait_event_service_healthy(timeout=30):
                 self._append_line(mk, "  ⚠ event_service unhealthy (continuing)")
 
-        # Phase 3: Critical local services
-        await self._run_single(
-            mk, "gateway", svc.start_gateway, failures, phase="start"
-        )
+        # Phase 3: All other services (parallel, best-effort). Event service is the
+        # only intentional sequential blocker per topology policy; gateway/agent_bus/
+        # stargate/cloud_proxy/mcp/cortex_api now run concurrently. RAG is
+        # deliberately deferred to a post-fleet phase (after all nodes/remotes
+        # have had a chance to come up and register models/telemetry).
+        start_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
+            ("gateway", svc.start_gateway),
+            ("stargate", svc.start_stargate),
+        ]
         if is_agent_bus_configured():
             agent_bus_op = (
                 svc.rebuild_agent_bus
                 if rebuild_supporting_services
                 else svc.start_agent_bus
             )
-            await self._run_single(
-                mk, "agent_bus", agent_bus_op, failures, phase="start"
-            )
-
-        # Phase 4: Stargate + optional services (parallel, best-effort)
-        start_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
-            ("stargate", svc.start_stargate),
-        ]
-        if is_rag_configured():
-            start_ops.append(("rag", svc.start_rag))
+            start_ops.append(("agent_bus", agent_bus_op))
         if is_cloud_proxy_configured():
             start_ops.append(("cloud_proxy", svc.start_cloud_proxy))
         if is_mcp_configured(ws_root):
@@ -671,7 +669,6 @@ class TopologyPanel(Widget):
         svc = cast("ModelManagerApp", self.app).service_controller
         mk = _MASTER_ROW_KEY
         assert self._workspace_root is not None
-        ws_root = self._workspace_root
 
         stop_ops: list[tuple[str, Callable[[], Awaitable[str]]]] = [
             ("gateway", svc.stop_gateway),
