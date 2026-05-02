@@ -258,7 +258,7 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing:
 - `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
-- `team_generate(agent=..., messages=..., generation_options=...)` — persona-aware native-frontier dispatch (persona contract — default_model, allowed_models, allowed_options — lives on `ai_agent:{slug}` entities in cortex; tool relays to Stargate `/api/v1/team/generate`). Tools surface is universal; provider quirks handled by silent coercion in frontier_dispatch (no per-persona allowlist).
+- `team_generate(agent=..., messages=..., generation_options=...)` — persona-aware native-frontier dispatch for all team members (`oppie`, `orion`, `bard`, `api_claude`, `forge`, cursor variants). Persona contract from `ai_agent:{slug}` (default_model, allowed_models, allowed_options); gives full MCP access (`mcp=true`, client tools, quickref) to all except Oppie/Oppia (multi-agent xAI uses server-side builtins only; see admission in frontier_dispatch_admission.py). Relays to Stargate `/api/v1/team/generate`. Tools surface universal; provider quirks via silent coercion in frontier_dispatch (no per-persona allowlist).
 - `frontier_generate(model=..., messages=..., generation_options=...)` — persona-free native-frontier dispatch (raw engine, no persona; tool relays to Stargate `/api/v1/frontier/generate`)
 - OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
@@ -310,14 +310,23 @@ The trAId is not decoration — use it. Consulting team members should be a natu
 part of how you work, not an exceptional event that requires Kaywan to ask.
 
 **Primary persona-consult surface**:
-For any team-seat consultation (`oppie`, `orion`, `bard`, `api_claude`), use
-`team_generate(agent=..., messages=..., generation_options=...)`. This is
-the persona-aware door: it resolves the agent's `default_model` from cortex
-(`ai_agent:{slug}`), enforces `allowed_models` / `allowed_options`, auto-assembles birth + briefing + continuation, and rejects persona
-violations with a structured error envelope **before** dispatch. Returns
-immediately with `{execution_id, ...}`; poll with
-`pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
+For any team-seat consultation (`oppie`, `orion`, `bard`, `api_claude`, `forge`,
+`cursor-claude`, `cursor_orion`), use `team_generate(agent=..., messages=...,
+generation_options=...)`. This is the persona-aware door: it resolves the
+agent's `default_model` from cortex (`ai_agent:{slug}`), enforces
+`allowed_models` / `allowed_options`, auto-assembles birth + briefing +
+continuation (with self_reflections for all) using a lightweight boot profile
+(deadlines + review-queue omitted for fast dispatch; 3-reflection floor
+preserved), and rejects persona violations with a structured error envelope
+**before** dispatch. Returns immediately with `{execution_id, ...}`; poll
+with `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 `result_delivery` for bus push. Runs detached, survives session boundaries.
+
+**MCP access**: All team members except Oppie/Oppia receive full client-side
+MCP tools (`mcp=true`, full tool loop, Cortex quickref in prompt). Oppie/Oppia
+(multi-agent xAI model) receives server-side xAI builtins only (`tools=[]`,
+no client MCP function calling — validated in `check_boot_provider_compatibility`
+and `resolve_dispatch_tool_set`).
 
 **Persona-free raw engine**:
 `frontier_generate(model=..., messages=..., generation_options=...)` is the
@@ -336,9 +345,9 @@ team seat.
 `pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the underlying
 admission-bypass mechanism. Use it ONLY when you need pipeline composition or
 deliberate canonical-door bypass. It silently drops keys it does not recognize.
-For team-seat consults (`oppie`, `orion`, `bard`, `api_claude`), prefer
-`team_generate`; for persona-free raw engine calls, prefer `frontier_generate`
-— both validate upstream.
+For team-seat consults (all members above), prefer `team_generate`; for
+persona-free raw engine calls, prefer `frontier_generate` — both validate
+upstream (MCP gating, model consistency, remote_mcp rules).
 
 **When not to:**
 - Routine tasks where your judgment is sufficient
@@ -357,10 +366,15 @@ end in silence."""
 
 _FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing
-Primary consult path for any persona (`oppie`, `orion`, `bard`, `api_claude`):
+Primary consult path for any team member (`oppie`, `orion`, `bard`, `api_claude`,
+`forge`, `cursor-claude`, `cursor_orion`):
 `team_generate(agent=..., messages=..., generation_options=..., caller_agent=...)`
 then `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
 `result_delivery` for terminal push.
+
+MCP access validated for all except Oppie/Oppia (multi-agent xAI suppresses
+client-side function tools; uses server-side xAI builtins instead — see
+`frontier_dispatch_tools.resolve_dispatch_tool_set` and admission checks).
 
 `team_generate` is the persona-validated door — `default_model` resolution,
 `allowed_models` / `allowed_options`, and birth + briefing

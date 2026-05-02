@@ -454,12 +454,11 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           **Persona consults — use ``team_generate`` instead.** If you
           would dispatch ``pipeline_id="frontier-dispatch"`` with
           ``options.agent`` set to a team seat (``oppie``, ``orion``,
-          ``bard``, ``api_claude``), prefer ``team_generate(agent=...,
-          messages=..., generation_options=...)``. ``team_generate``
-          resolves the persona's ``default_model``, enforces
-          ``allowed_models`` / ``allowed_options`` / ``tools`` allowlists,
-          auto-assembles birth + briefing + continuation, and rejects
-          violations with a structured envelope BEFORE dispatch.
+          ``bard``, ``api_claude``, ``forge``, cursor variants), prefer
+          ``team_generate(agent=..., messages=..., generation_options=...)``.
+          ``team_generate`` resolves the persona's ``default_model`` from
+          Cortex, enforces contract, assembles full boot context (MCP access
+          for all except Oppie/Oppia), and rejects violations BEFORE dispatch.
 
           **Persona-free raw engine — use ``frontier_generate``.** For
           dispatches without a team seat, ``frontier_generate`` is the

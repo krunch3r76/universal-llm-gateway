@@ -35,14 +35,35 @@ logger = logging.getLogger(__name__)
 
 _FETCH_TIMEOUT = 20.0
 
-# Per-agent boot profile. Mirrors _BOOT_PROFILES in cortex_named_tools.py but
-# scoped to what the dispatched-agent briefing needs (no cursor-specific
-# knobs). Unknown agents fall back to _DEFAULT_PROFILE.
+# Boot profiles for dispatched-agent hydration. Mirrors _BOOT_PROFILES in
+# cortex_named_tools.py but scoped to what the dispatched-agent briefing needs
+# (no cursor-specific knobs).
+#
+# ``default`` — full briefing for full-context dispatches
+# ``light``   — lightweight briefing for team_generate / frontier_generate(agent=...)
+#               soft boot. Drops deadlines + review-queue fetches (latency win
+#               beyond token reduction — the include_* gates in hydrate_agent
+#               below short-circuit the fetches entirely, not just rendering).
+#               self_reflections_limit kept at 3 as a floor — they encode the
+#               persona's "how I work as me" memory and drive consult quality
+#               more than any other section. Do not strip below 3.
 _DEFAULT_PROFILE: dict[str, Any] = {
     "include_deadlines": True,
     "include_review_queue": True,
     "session_limit": 3,
     "self_reflections_limit": 5,
+}
+
+_LIGHT_PROFILE: dict[str, Any] = {
+    "include_deadlines": False,
+    "include_review_queue": False,
+    "session_limit": 1,
+    "self_reflections_limit": 3,
+}
+
+_PROFILES: dict[str, dict[str, Any]] = {
+    "default": _DEFAULT_PROFILE,
+    "light": _LIGHT_PROFILE,
 }
 
 _SELF_ENTITY: dict[str, str] = {
@@ -52,15 +73,23 @@ _SELF_ENTITY: dict[str, str] = {
     "bard": "ai_agent:bard",
     "api_claude": "ai_agent:api-claude",
     "cursor": "ai_agent:cursor-claude",
+    "forge": "ai_agent:forge",
+    "cursor_orion": "ai_agent:cursor_orion",
+    # cursor_grok intentionally absent — registry alias chain routes
+    # cursor_forge → forge → ai_agent:forge. Legacy cursor_grok dispatches
+    # fail at the build_dispatch_body admission gate (no default_model in
+    # _AGENT_DEFAULTS), so they never reach hydration.
 }
 
 
 def _normalize_slug_to_entity(agent: str) -> str:
     """Map runtime agent slug → cortex ``ai_agent:{...}`` entity id.
 
-    Uses registry.normalize_agent_slug (case-insensitive, supports Oppie/Oppia
-    etc.) before lookup in _SELF_ENTITY. Falls back to ``ai_agent:{canonical}``
-    for unknown slugs.
+    Uses registry.normalize_agent_slug (case-insensitive, supports Oppie/Oppia,
+    cursor_orion, cursor_grok, forge, etc.) before lookup in _SELF_ENTITY.
+    Falls back to ``ai_agent:{canonical}`` for unknown slugs. This ensures
+    self_reflections, assertions, and full boot context for all team_generate
+    targets (MCP access validated for all except Oppie/Oppia multi-agent).
     """
     canonical = normalize_agent_slug(agent)
     return _SELF_ENTITY.get(canonical, f"ai_agent:{canonical}")
@@ -104,7 +133,8 @@ async def _cortex_get(path: str) -> Any:
     """Single GET to Cortex UDS; returns parsed JSON or ``{"error": ...}``."""
     try:
         async with make_async_client(
-            DEFAULT_CORTEX_URL, timeout=_FETCH_TIMEOUT,
+            DEFAULT_CORTEX_URL,
+            timeout=_FETCH_TIMEOUT,
         ) as client:
             resp = await client.get(path)
     except Exception as exc:
@@ -121,7 +151,8 @@ async def _bus_get(path: str) -> Any:
     """Single GET to agent-bus UDS; returns parsed JSON or ``{"error": ...}``."""
     try:
         async with make_async_client(
-            DEFAULT_AGENT_BUS_URL, timeout=_FETCH_TIMEOUT,
+            DEFAULT_AGENT_BUS_URL,
+            timeout=_FETCH_TIMEOUT,
         ) as client:
             resp = await client.get(path)
     except Exception as exc:
@@ -316,17 +347,26 @@ def _render_briefing(
 async def hydrate_agent(
     agent: str,
     transcript_id: str | None = None,
+    *,
+    profile: str = "default",
 ) -> HydrationBundle:
     """Fetch the dispatched agent's boot state and render a briefing card.
 
     Parallel fetches: session-journals, deadlines, unread bus turns, threads,
     todos, self-assertions, optional transcript continuation. Any individual
     fetch failure is absorbed — the briefing simply omits that section.
+
+    ``profile`` selects fetch + render shape from ``_PROFILES``:
+    - ``"default"`` — full context (deadlines, review queue, 5 reflections, 3 sessions)
+    - ``"light"``   — soft boot for team_generate / frontier_generate(agent=...)
+                      (drops deadlines + review queue, 3 reflections floor, 1 session)
+    Truthiness gates in ``_render_briefing`` collapse empty sections naturally;
+    no separate render-shape flag needed.
     """
-    profile = _DEFAULT_PROFILE
+    profile_dict = _PROFILES[profile]
 
     # Query parameters for per-agent scoping.
-    session_qs = urlencode({"limit": profile["session_limit"]})
+    session_qs = urlencode({"limit": profile_dict["session_limit"]})
     normalized_agent = normalize_agent_slug(agent)
     unread_qs = urlencode(
         {"to": normalized_agent, "unread": "true", "last": 10, "compact": "true"},
@@ -342,9 +382,9 @@ async def hydrate_agent(
         "agent_meta": asyncio.create_task(_fetch_agent_meta(normalized_agent)),
         "skills": asyncio.create_task(_cortex_get(f"/entities?{skills_qs}")),
     }
-    if profile["include_deadlines"]:
+    if profile_dict["include_deadlines"]:
         tasks["deadlines"] = asyncio.create_task(_cortex_get("/deadlines"))
-    if profile["include_review_queue"]:
+    if profile_dict["include_review_queue"]:
         tasks["staging"] = asyncio.create_task(
             _cortex_get("/staging?status=pending&limit=5"),
         )
@@ -355,7 +395,7 @@ async def hydrate_agent(
             {
                 "entity_id": self_entity,
                 "superseded": "false",
-                "limit": profile["self_reflections_limit"],
+                "limit": profile_dict["self_reflections_limit"],
             },
         )
         tasks["self_reflections"] = asyncio.create_task(

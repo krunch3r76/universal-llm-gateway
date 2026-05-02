@@ -147,7 +147,15 @@ async def resolve_dispatch_tool_set(
         # (bool(tools) and not remote_mcp) is known before system-prompt assembly,
         # allowing CORTEX_TOOL_QUICKREF to be suppressed when the model will have
         # no client-side Cortex tool available.
-        bundle = await hydrate_agent(agent, transcript_id)
+        #
+        # Soft boot: mirror frontier_consult.service.build_dispatch_body's
+        # ``profile="light"`` choice. The endpoint already assembled an upstream
+        # system prompt (passed in as ``system_prompt`` here) and resolve_system_prompt
+        # forwards it via pipeline_options["system"]; this function then re-assembles
+        # with extra_system=system_prompt. If the two hydration calls used different
+        # profiles, the heavier one would dominate the final dispatched prompt
+        # because ``assemble_system_prompt`` appends both briefings.
+        bundle = await hydrate_agent(agent, transcript_id, profile="light")
         publish(
             PipelineFrontierDispatchHydrated(
                 agent=agent,

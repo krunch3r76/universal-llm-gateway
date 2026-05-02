@@ -172,7 +172,14 @@ async def build_dispatch_body(
     system_assembled = req.system or ""
 
     if req.agent:
-        bundle = await hydrate_agent(req.agent, req.transcript_id)
+        # Soft boot: team_generate / frontier_generate(agent=...) dispatches use
+        # the lightweight profile by default. Drops deadlines + review-queue
+        # fetches; keeps a 3-reflection floor. The pipeline-handler hydration
+        # in resolve_dispatch_tool_set must mirror this profile to avoid the
+        # final dispatched prompt regaining a heavy briefing card.
+        bundle = await hydrate_agent(
+            req.agent, req.transcript_id, profile="light"
+        )
         meta = bundle.agent_meta
         if event_publisher is not None:
             event_publisher(

@@ -156,7 +156,9 @@ async def test_handler_team_mode_fires_hydrated_event(
     monkeypatch: pytest.MonkeyPatch,
     published_events: list[Any],
 ) -> None:
-    async def fake_hydrate(agent: str, transcript_id: str | None) -> _FakeBundle:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None, **_k: Any
+    ) -> _FakeBundle:
         return _FakeBundle()
 
     def fake_assemble(agent: str, **_k: Any) -> str:
@@ -192,7 +194,9 @@ async def test_handler_persona_free_mode_skips_hydration(
 ) -> None:
     hydrate_calls: list[str] = []
 
-    async def fake_hydrate(agent: str, transcript_id: str | None) -> _FakeBundle:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None, **_k: Any
+    ) -> _FakeBundle:
         hydrate_calls.append(agent)
         return _FakeBundle()
 
@@ -471,7 +475,9 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
 ) -> None:
     captured: dict[str, Any] = {}
 
-    async def fake_hydrate(agent: str, transcript_id: str | None) -> _FakeBundle:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None, **_k: Any
+    ) -> _FakeBundle:
         return _FakeBundle()
 
     def fake_assemble(agent: str, **_k: Any) -> str:
@@ -928,7 +934,9 @@ def _make_oppie_fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Patch hydrate_agent / assemble_system_prompt / run_native_tool_loop."""
     captured: dict[str, Any] = {}
 
-    async def fake_hydrate(agent: str, transcript_id: str | None) -> _FakeBundle:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None, **_k: Any
+    ) -> _FakeBundle:
         return _FakeBundle()
 
     def fake_assemble(agent: str, **_k: Any) -> str:
