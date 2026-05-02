@@ -29,11 +29,11 @@ from .ops_entities import _op_entities
 def _op_friction_close(
     assertion_id: int | None = None, resolution_kind: str | None = None, **_: object
 ) -> dict[str, Any]:
-    """F5 friction_close — closes a friction assertion with structured resolution.
+    """Stub for F5 friction_close — validates inputs but performs no write.
 
-    Creates a closure assertion (confirmed, derivation_type=commitment) naming the
-    resolution_kind and creates a 'resolves' relationship edge. Follows thin-relay
-    invariant by delegating to _supersede_assertion_impl + relationship_create.
+    TODO: wire actual delegation — supersede(assertion_id) + relationship_create("resolves").
+    Until wired, no write is performed; callers must not treat a success response
+    as confirmation of any state change.
     """
     if not assertion_id:
         return {"error": "assertion_id required for friction_close"}
@@ -44,13 +44,16 @@ def _op_friction_close(
         "superseded",
         "wontfix",
     }:
-        return {"error": f"Invalid resolution_kind={resolution_kind}. Must be one of: agent_skill:slug, workflow:slug, todo:slug, superseded, wontfix"}
+        return {
+            "error": f"Invalid resolution_kind={resolution_kind}. Must be one of: agent_skill:slug, workflow:slug, todo:slug, superseded, wontfix"
+        }
 
     # Delegate to existing impls (REST-first, no direct DB)
-    # Full impl would call supersede + relationship_create("resolves")
+    # TODO: wire actual delegation — supersede(assertion_id) + relationship_create("resolves")
+    # Until wired, this is a stub: no write is performed. Do not treat a success response as confirmation.
     return {
-        "status": "implemented",
-        "message": f"Friction {assertion_id} closed with resolution_kind={resolution_kind}.",
+        "status": "stub",
+        "message": f"friction_close for {assertion_id} with resolution_kind={resolution_kind} is not yet wired — no write performed.",
         "resolution": resolution_kind,
         "_next": "entity_get on the friction assertion to verify resolves edge; update cortex-deep-ref.mdc if protocol changes",
     }

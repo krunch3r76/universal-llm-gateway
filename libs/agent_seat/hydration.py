@@ -66,6 +66,8 @@ _PROFILES: dict[str, dict[str, Any]] = {
     "light": _LIGHT_PROFILE,
 }
 
+_KNOWN_CAPABILITY_TIERS: frozenset[str] = frozenset({"inline-only"})
+
 _SELF_ENTITY: dict[str, str] = {
     "oppie": "ai_agent:oppie",
     "orion": "ai_agent:orion",
@@ -101,12 +103,20 @@ class AgentMeta:
 
     Tools field retired (todo:retire-tools-allowlist-as-caller-concern); tool
     surface is provider-derived and universal. No per-persona allowlist.
+
+    ``capability_tier`` is a separate, agent-level dispatch-surface gate. When
+    set to ``"inline-only"`` the dispatch handler coerces the tool surface to
+    empty regardless of provider/model — used to demote agents to
+    inline-substrate-only operation (no MCP, no client tools, no Cortex
+    quickref). Reinstatement is a single entity-attribute update, no code
+    change.
     """
 
     frontier_kind: str | None = None
     default_model: str | None = None
     allowed_models: list[str] = field(default_factory=list)
     allowed_options: list[str] | None = None
+    capability_tier: str | None = None
 
 
 @dataclass(slots=True)
@@ -199,6 +209,17 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
         return AgentMeta()
     frontier_kind_raw = attributes.get("frontier_kind")
     default_model_raw = attributes.get("default_model")
+    capability_tier_raw = attributes.get("capability_tier")
+    if (
+        capability_tier_raw is not None
+        and str(capability_tier_raw) not in _KNOWN_CAPABILITY_TIERS
+    ):
+        logger.warning(
+            "agent_seat: unrecognized capability_tier %r — treating as None (known: %s)",
+            capability_tier_raw,
+            sorted(_KNOWN_CAPABILITY_TIERS),
+        )
+        capability_tier_raw = None
     return AgentMeta(
         frontier_kind=(
             str(frontier_kind_raw) if isinstance(frontier_kind_raw, str) else None
@@ -208,6 +229,9 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
         ),
         allowed_models=_as_str_list(attributes.get("allowed_models")),
         allowed_options=_as_optional_str_list(attributes.get("allowed_options")),
+        capability_tier=(
+            str(capability_tier_raw) if isinstance(capability_tier_raw, str) else None
+        ),
     )
 
 

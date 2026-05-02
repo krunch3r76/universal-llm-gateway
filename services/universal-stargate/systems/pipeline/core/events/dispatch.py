@@ -799,13 +799,21 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
     provider: str,
     reason: str,
 ) -> Event:
-    """Emitted when infrastructure silently coerces the tool surface (mcp_enabled=False,
-    tools=[], no CORTEX_TOOL_QUICKREF) for provider that cannot accept client-side
-    MCP function tools (e.g. xAI multi-agent models).
+    """Emitted when agent-tier demotion forces the tool surface to empty.
 
-    Replaces previous caller-facing BootProviderMismatchError per
-    todo:retire-tools-allowlist-as-caller-concern. Callers see normal success;
-    telemetry visible to operators via observability or recent-events queries.
+    Primary trigger: ``capability_tier == "inline-only"`` on the dispatched
+    agent's Cortex entity (``ai_agent:{slug}.attributes.capability_tier``).
+    This gate is orthogonal to the provider-derived xAI multi-agent suppression,
+    which coerces ``tools=[]`` silently without emitting this event.
+
+    Reinstatement is a single Cortex entity-attribute update; no code change.
+    Callers see normal success; telemetry visible to operators via observability
+    or recent-events queries.
+
+    NOTE: The xAI multi-agent branch in ``resolve_dispatch_tool_set`` does NOT
+    emit this event. If xAI suppression should also be observable, add a
+    ``publish(PipelineFrontierDispatchToolSuppressed(...))`` call to that branch
+    with ``reason="provider_xai_multi_agent"``.
     """
     return Event(
         signal="pipeline.frontier.dispatch.tool.suppressed",

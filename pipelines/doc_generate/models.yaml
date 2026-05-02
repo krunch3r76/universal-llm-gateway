@@ -1,5 +1,9 @@
 models:
+  # Claude-family: drafting from sparse docstrings is navigation-heavy; frontier
+  # models degrade without rich docs and docstrings. Revert manually per
+  # todo:subsystem-baseline-tracking when docstring-quality is green.
   draft_model:
-    model: google/gemini-2.5-flash
+    model: anthropic/claude-sonnet-4-6
+  # Kept on Claude-family for consistency with draft quality during bootstrap.
   review_model:
-    model: google/gemini-2.5-flash
+    model: anthropic/claude-sonnet-4-6
