@@ -6,7 +6,10 @@ service over its Unix domain socket.  Designed for use by Cursor agents
 (via Shell tool) to avoid extension-host freezes on large payloads.
 
 Usage:
+  agent-bus fetch-unread --to cursor --mark-read
+  agent-bus fetch-unread --thread 049 --mark-read
   agent-bus fetch --to cursor --last 1 --unread --mark-read
+  agent-bus fetch --thread 049 --unread --context 3 --mark-read
   agent-bus fetch --thread 049 --last 5
   agent-bus post --slug "my-topic" --to web --subject "Title" --body-file /tmp/body.md
   agent-bus post --slug "my-topic" --to web --subject "Title" --body "text" --attach /tmp/file.json
@@ -75,6 +78,55 @@ def _request(
 
 
 def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
+    context = getattr(args, "context", 0)
+    indent = None if getattr(args, "compact", False) else 2
+
+    if context > 0 and args.thread:
+        # Phase 1: count unread turns to size the fetch window.
+        peek_params: dict[str, Any] = {
+            "thread": args.thread,
+            "last": 200,
+            "unread": "true",
+            "compact": "true",
+        }
+        peek = _request("GET", f"/turns?{urlencode(peek_params)}", token)
+        unread_count = len(peek.get("turns", []))
+
+        # Phase 2: fetch (context + unread + 1) turns — the +1 is a probe that
+        # lets us detect whether earlier turns exist without a separate count query.
+        fetch_last = context + max(unread_count, 1) + 1
+        fetch_params: dict[str, Any] = {"thread": args.thread, "last": fetch_last}
+        if args.mark_read:
+            fetch_params["mark_read"] = "true"
+        if getattr(args, "compact", False):
+            fetch_params["compact"] = "true"
+
+        result = _request("GET", f"/turns?{urlencode(fetch_params)}", token)
+        turns = result.get("turns", [])
+
+        has_earlier = len(turns) >= fetch_last
+        if has_earlier:
+            turns = turns[1:]  # drop probe turn, keep context + unread window
+
+        thread_info: dict[str, Any] = {
+            "turns_in_response": len(turns),
+            "unread_count": unread_count,
+            "has_earlier_turns": has_earlier,
+        }
+        if has_earlier:
+            thread_info["notice"] = (
+                f"This thread has turns before those shown. "
+                f"Use --last {fetch_last + 20} --thread {args.thread} to fetch more context."
+            )
+
+        output = dict(result)
+        output["turns"] = turns
+        output["_thread_info"] = thread_info
+        print(json.dumps(output, indent=indent, default=str))
+        return
+
+    # Standard path — always attach _thread_info when fetching a specific thread
+    # so the agent knows whether it has the full picture.
     params: dict[str, Any] = {"last": args.last}
     if args.thread:
         params["thread"] = args.thread
@@ -82,12 +134,42 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
         params["to"] = args.to
         if args.unread:
             params["unread"] = "true"
-        if args.compact:
-            params["compact"] = "true"
+    if getattr(args, "compact", False):
+        params["compact"] = "true"
     if args.mark_read:
         params["mark_read"] = "true"
     result = _request("GET", f"/turns?{urlencode(params)}", token)
-    indent = None if args.compact else 2
+
+    if args.thread:
+        turns = result.get("turns", [])
+        has_earlier = len(turns) >= args.last
+        thread_info = {
+            "turns_in_response": len(turns),
+            "has_earlier_turns": has_earlier,
+        }
+        if has_earlier:
+            thread_info["notice"] = (
+                f"Fetched {args.last} turn(s) — thread may have earlier turns. "
+                f"Use --last {args.last * 2} or --context 3 to widen the window."
+            )
+        result["_thread_info"] = thread_info
+
+    print(json.dumps(result, indent=indent, default=str))
+
+
+def _cmd_fetch_unread(args: argparse.Namespace, token: str) -> None:
+    """Fetch all unread turns for --to or --thread with no count cap."""
+    indent = None if getattr(args, "compact", False) else 2
+    params: dict[str, Any] = {"unread": "true"}
+    if args.thread:
+        params["thread"] = args.thread
+    if args.to:
+        params["to"] = args.to
+    if getattr(args, "compact", False):
+        params["compact"] = "true"
+    if args.mark_read:
+        params["mark_read"] = "true"
+    result = _request("GET", f"/turns?{urlencode(params)}", token)
     print(json.dumps(result, indent=indent, default=str))
 
 
@@ -311,6 +393,25 @@ def _build_parser() -> argparse.ArgumentParser:
         "--mark-read", action="store_true", help="Mark returned turns as read"
     )
     f.add_argument("--compact", action="store_true", help="Omit turn bodies")
+    f.add_argument(
+        "--context",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Fetch N prior turns as context before the first unread turn (default 0)",
+    )
+
+    # fetch-unread (explicit: all unread, no last cap)
+    fu = sub.add_parser(
+        "fetch-unread",
+        help="Fetch all unread turns for a recipient or thread (no count limit)",
+    )
+    fu.add_argument("--to", help="Agent name (inbox mode)")
+    fu.add_argument("--thread", help="Thread ID (thread mode)")
+    fu.add_argument(
+        "--mark-read", action="store_true", help="Mark returned turns as read"
+    )
+    fu.add_argument("--compact", action="store_true", help="Omit turn bodies")
 
     # post (new thread + first turn)
     po = sub.add_parser("post", help="Create a new thread and post the first turn")
@@ -426,6 +527,7 @@ def main() -> None:
     try:
         {
             "fetch": _cmd_fetch,
+            "fetch-unread": _cmd_fetch_unread,
             "post": _cmd_post,
             "reply": _cmd_reply,
             "append": _cmd_append,

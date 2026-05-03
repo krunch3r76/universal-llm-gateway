@@ -63,7 +63,12 @@ from .ops_reflective import (
     _op_rj_read,
     _op_rj_write,
 )
-from .ops_relationships import _op_relationship_create, _op_relationships
+from .ops_relationships import (
+    _op_relationship_create,
+    _op_relationship_delete,
+    _op_relationship_update,
+    _op_relationships,
+)
 from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
 from .ops_todos import _op_todo_audit, _op_todo_candidates
 from .workflow_hints import (
@@ -93,6 +98,8 @@ _OPS: dict[str, Any] = {
     "assert_from_chunk": _op_assert_from_chunk,
     "relationships": _op_relationships,
     "relationship_create": _op_relationship_create,
+    "relationship_delete": _op_relationship_delete,
+    "relationship_update": _op_relationship_update,
     "stats": _op_stats,
     "surface_forms": _op_surface_forms,
     "deadlines": _op_deadlines,

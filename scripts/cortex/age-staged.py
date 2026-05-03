@@ -13,26 +13,32 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Age staged assertions (F3)")
-    parser.add_argument(
-        "--dry-run", action="store_true", default=True, help="Default: dry run"
-    )
+    # Default is dry-run. Pass --live to perform actual writes.
+    # --dry-run flag intentionally absent: the default is already dry-run and an
+    # explicit flag would be dead code (args.dry_run is never read once --live
+    # is the sole opt-in).  [quality:unused]
     parser.add_argument(
         "--live", action="store_true", help="Run live (sets reviewer=system:age-policy)"
     )
-    parser.add_argument("--days", type=int, default=30, help="Age threshold (commit_days)")
-    parser.add_argument("--limit", type=int, default=100, help="Max candidates to process (larger set)")
+    parser.add_argument(
+        "--days", type=int, default=30, help="Age threshold (commit_days)"
+    )
+    parser.add_argument(
+        "--limit", type=int, default=100, help="Max candidates to process (larger set)"
+    )
     args = parser.parse_args()
 
-    if args.live:
-        args.dry_run = False
+    dry_run = not args.live  # default is dry-run; --live opts in explicitly
 
     body = {
-        "dry_run": args.dry_run,
+        "dry_run": dry_run,
         "commit_days": args.days,
         "limit": args.limit,
     }
 
-    print(f"Age-staged CLI (F3) — calling /assertions/age-staged with limit={args.limit}, dry_run={args.dry_run}")
+    print(
+        f"Age-staged CLI (F3) — calling /assertions/age-staged with limit={args.limit}, dry_run={dry_run}"
+    )
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=30.0) as client:
             r = client.post("/assertions/age-staged", json=body)
@@ -49,9 +55,13 @@ def main() -> int:
     if preview:
         print(f"\nPreview of first {len(preview)} candidates:")
         for p in preview:
-            print(f"  - {p.get('entity_id')}: {p.get('claim_preview', '')[:60]}... (days_old={p.get('days_old')}, score={p.get('score')})")
+            print(
+                f"  - {p.get('entity_id')}: {p.get('claim_preview', '')[:60]}... (days_old={p.get('days_old')}, score={p.get('score')})"
+            )
 
-    print("\nAging policy applied to larger set. Check review_queue or stats for impact.")
+    print(
+        "\nAging policy applied to larger set. Check review_queue or stats for impact."
+    )
     return 0
 
 

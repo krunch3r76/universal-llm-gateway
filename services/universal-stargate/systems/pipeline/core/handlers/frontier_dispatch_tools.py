@@ -118,7 +118,10 @@ async def resolve_dispatch_tool_set(
         resolve_tool_definitions,
     )
 
-    from ..events.dispatch import PipelineFrontierDispatchHydrated
+    from ..events.dispatch import (
+        PipelineFrontierDispatchHydrated,
+        PipelineFrontierDispatchToolSuppressed,
+    )
 
     if isinstance(opt_tools, list):
         # Case 1: endpoint-supplied tool list (frontier_generate with explicit tools).
@@ -165,7 +168,26 @@ async def resolve_dispatch_tool_set(
                 continuation_id=bundle.continuation_id,
             )
         )
-        if remote_mcp or not mcp_enabled:
+        # Agent-tier suppression: ai_agent:{slug}.attributes.capability_tier
+        # may be set to "inline-only" to revoke the tool surface for an agent
+        # regardless of provider/model. Orthogonal to the provider-derived
+        # xai-multi-agent suppression below — that gate is keyed on the model
+        # rejecting client-side tools at the API level; this gate is keyed on
+        # the agent itself being demoted to inline-substrate operation. The
+        # CORTEX_TOOL_QUICKREF block downstream is suppressed automatically
+        # via ``include_cortex_quickref=bool(tools)``.
+        if bundle.agent_meta.capability_tier == "inline-only":
+            tools = []
+            publish(
+                PipelineFrontierDispatchToolSuppressed(
+                    execution_id=execution_id,
+                    agent=agent,
+                    model=model,
+                    provider=provider,
+                    reason="capability_tier_inline_only",
+                ),
+            )
+        elif remote_mcp or not mcp_enabled:
             tools = []
         elif provider == "xai" and "multi-agent" in model:
             # Multi-agent xAI models reject client-side function tools;

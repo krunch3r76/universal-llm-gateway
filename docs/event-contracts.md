@@ -2155,6 +2155,36 @@ unnecessary — each operation succeeds or fails atomically.
 
 All signals: `role="observation"`, `scope="global"`.
 
+
+### Document OCR Signals
+
+Single-file events (``mcp.document.ocr.called``, ``mcp.document.ocr.completed``)
+are emitted by ``services/mcp-server/tools/document_ocr.py``. Directory-batch
+events (``mcp.document.ocr.directory.*``, ``mcp.document.ocr.file.failed``) are
+emitted by ``libs/cortex_store/routes/documents.py`` — the cortex-api endpoint
+the thin MCP ``document_ocr_directory`` tool relays to. All signals:
+``role="observation"``, ``scope="global"``.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.document.ocr.called` | `path` | `document_ocr` tool invoked; file path relative to `/data/files/`. Emitted by mcp-server. |
+| `mcp.document.ocr.completed` | `path`, `pages`, `total_tokens`, `duration_s` | `document_ocr` finished successfully. `pages` is the count of pages processed; `total_tokens` is the total vision-model token cost across all pages. Emitted by mcp-server. |
+| `mcp.document.ocr.directory.called` | `directory` | `document_ocr_directory` MCP tool invoked, relay reached cortex-api. Directory path relative to `CORTEX_FILES_ROOT`. Emitted by cortex-api. |
+| `mcp.document.ocr.directory.completed` | `directory`, `file_count`, `success_count`, `error_count`, `duration_s` | Directory OCR batch finished. `file_count` is total scannable files discovered; `success_count`/`error_count` reflect per-file outcomes. Always emitted — even when `error_count > 0` (partial success is not a failure at the batch level). Emitted by cortex-api. |
+| `mcp.document.ocr.file.failed` | `path`, `error` | One file in a `document_ocr_directory` batch failed to OCR. `path` is relative to `CORTEX_FILES_ROOT`. Emitted once per failed file before the batch-level signal. Emitted by cortex-api. |
+
+
+
+### Cortex Session Close Signals
+
+Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_close` via `record()`. All signals: `role="observation"`, `scope="global"`.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `mcp.session.close.atomic` | `agent`, `session_id`, `transcript_path` | Session closed successfully — transcript written to disk and journal row + entity created atomically. Fires once per successful `session_close` op, after all writes complete and before returning the response. |
+| `mcp.session.close.write.failed` | `session_id`, `agent`, `error` | `OSError` raised while writing the transcript file to `notes/system/transcripts/{session_id}.md`. Session close aborted at this point — no DB mutations have occurred. `error` is `str(exc)`. |
+| `mcp.session.close.cleanup.failed` | `session_id`, `agent` | `OSError` raised while unlinking the transcript file during rollback (post-DB error). The DB write failed first (surfaced as an error in the response); this signal indicates the rollback cleanup also failed, leaving an orphaned transcript file at `notes/system/transcripts/{session_id}.md`. Warrants manual inspection. |
+
 ## MCP Stdio Proxy Signals
 
 Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits `mcp.transport.*`

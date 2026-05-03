@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
-_PREVIEW_MAX_LAST = max(1, int(os.getenv("MCP_AGENT_BUS_PREVIEW_MAX_LAST", "20")))
+_FETCH_CONTEXT_CAP = max(1, int(os.getenv("MCP_AGENT_BUS_CONTEXT_CAP", "50")))
 
 
 def _structured_body_too_large(
@@ -482,23 +482,58 @@ def _delete_turn_impl(*, thread: str, turn_number: int, force: bool) -> dict[str
 # ── Dispatch wrappers (validation + defaults for JSON dispatch) ─────────────
 
 
+def _fetch_unread_dispatch(
+    *,
+    to: str | None = None,
+    thread: str | None = None,
+    mark_read: bool = False,
+    compact: bool = False,
+) -> dict[str, Any]:
+    """Fetch all unread turns for a recipient or thread — no count cap."""
+    effective_to = to if to else None
+    effective_thread = thread if thread else None
+    if effective_to is None and effective_thread is None:
+        return {"error": "fetch_unread requires at least one of: to, thread"}
+    return _fetch_impl(
+        to=effective_to,
+        thread=effective_thread,
+        last=None,
+        unread=True,
+        mark_read=mark_read,
+        compact=compact,
+    )
+
+
 def _fetch_dispatch(
     *,
     to: str | None = None,
     thread: str | None = None,
-    last: int = 5,
+    last: int = 10,
     unread: bool = True,
     mark_read: bool = False,
     compact: bool = True,
+    all: bool = False,
 ) -> dict[str, Any]:
-    """Dispatch wrapper for fetch — applies preview cap and normalizes empty strings."""
+    """Dispatch wrapper for fetch — normalizes empty strings and resolves last/all/unread.
+
+    Semantics:
+    - all=True  → no limit (fetches every matching turn); overrides last
+    - unread=True → no limit on the unread set; last is ignored for the unread filter
+    - otherwise  → last capped at MCP_AGENT_BUS_CONTEXT_CAP (default 50)
+    """
     effective_to = to if to else None
     effective_thread = thread if thread else None
-    safe_last = max(1, min(last, _PREVIEW_MAX_LAST))
+    if all:
+        effective_last = None
+    elif unread:
+        # Fetch all unread; last is irrelevant when the filter already constrains the set
+        effective_last = None
+    else:
+        effective_last = max(1, min(last, _FETCH_CONTEXT_CAP))
     return _fetch_impl(
         to=effective_to,
         thread=effective_thread,
-        last=safe_last,
+        last=effective_last,
         unread=unread,
         mark_read=mark_read,
         compact=compact,
@@ -686,6 +721,7 @@ _AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "post": _post_dispatch,
     "reply": _reply_dispatch,
     "fetch": _fetch_dispatch,
+    "fetch_unread": _fetch_unread_dispatch,
     "get": _get_dispatch,
     "threads": _threads_dispatch,
     "create_thread": _create_thread_dispatch,
@@ -714,7 +750,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Operations:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
-          fetch         (to?, thread?, last?, unread?, compact?, mark_read?)  — get turns; at least one of to/thread required
+          fetch_unread  (to?, thread?, mark_read?, compact?)                        — fetch ALL unread turns for a recipient or thread; no count cap; at least one of to/thread required
+          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored); last caps context-only fetches (default 10)
           get           (thread, turn_number)                           — get one specific turn
           post          (slug, to, subject, body, from_agent?, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn)
           reply         (thread, to, subject, body, after_turn, from_agent?, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read)

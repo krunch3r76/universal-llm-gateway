@@ -435,6 +435,32 @@ class RelationshipList(BaseModel):
     items: list[RelationshipItem]
 
 
+class RelationshipUpdate(BaseModel):
+    """Mutable fields of a relationship. At least one must be supplied.
+
+    Source, target, and type define relationship identity — to correct those,
+    delete the relationship and recreate with the correct values.
+    """
+
+    role: str | None = None
+    strength: float | None = None
+    evidence: str | None = None
+    valid_from: str | None = None
+    valid_until: str | None = None
+    source_uri: str | None = None
+    session_id: str | None = None
+    agent: str | None = None
+
+    _validate_source_uri = field_validator("source_uri")(
+        _reject_cortex_dropbox_source_uri
+    )
+
+
+class RelationshipDeleteResponse(BaseModel):
+    deleted: bool
+    id: int
+
+
 # --- Deadlines ---
 
 

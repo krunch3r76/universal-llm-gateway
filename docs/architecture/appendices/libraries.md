@@ -94,6 +94,15 @@ See workspace rule `modelid.mdc` for the full invariant set.
 
 ---
 
+## `libs/ocr_core`
+
+Shared OCR and vision-resize helpers: PDF/image page rendering, adaptive resize to
+token budgets, Stargate vision calls (`ocr_pages`, `ocr_directory`). Used by the
+MCP server's document OCR tools and related ingest paths; keeps OCR logic out of
+`services/mcp-server/tools/` as a thin relay layer.
+
+---
+
 ## `libs/process_ipc`
 
 Simplified inter-process communication for single-worker process management.

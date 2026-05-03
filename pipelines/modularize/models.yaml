@@ -1,11 +1,12 @@
 models:
   # Used by plan_split / plan_refactor to analyze structure, decide whether a
   # clean split is feasible, and produce the restructuring instructions.
-  # Claude-family: plan_split requires cross-file reasoning over un-baselined
-  # territory where frontier MCP traversal degrades. Revert manually per
-  # todo:subsystem-baseline-tracking when the target subsystem is overhauled.
+  # Orion (gpt-5.5) with two-phase discipline: read-only plan pass → human
+  # approval → execute. The approval gate compensates for navigation ambiguity
+  # on un-baselined territory; Claude-family bootstrap restriction lifted.
+  # See .cursor/rules/orion-feedback-discipline_ws.mdc.
   plan_model:
-    model: anthropic/claude-sonnet-4-6
+    model: openai/gpt-5.5
   # Used by execute_split / execute_refactor to turn those instructions into the
   # concrete module map, symbol assignment, and implementation guide.
   # This step is mechanical given good instructions — frontier is acceptable here.

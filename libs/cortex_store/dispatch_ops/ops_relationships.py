@@ -1,11 +1,16 @@
-"""Relationship ops — list and create."""
+"""Relationship ops — list, create, update, and soft-delete."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-from ..routes.relationships import _create_relationship_impl, _list_relationships_impl
+from ..routes.relationships import (
+    _create_relationship_impl,
+    _delete_relationship_impl,
+    _list_relationships_impl,
+    _update_relationship_impl,
+)
 from ._shared import record
 
 logger = logging.getLogger("cortex-api.dispatch_ops.relationships")
@@ -73,5 +78,59 @@ def _op_relationship_create(
             source_id=source_id,
             target_id=target_id,
             type_id=type_id,
+        )
+    return result
+
+
+def _op_relationship_delete(
+    relationship_id: int | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if relationship_id is None:
+        return {"error": "relationship_id is required"}
+    result = _delete_relationship_impl(int(relationship_id))
+    if "error" not in result:
+        logger.info("cortex relationship_delete: id=%d", relationship_id)
+        record("mcp.cortex.relationship.deleted", relationship_id=relationship_id)
+    return result
+
+
+def _op_relationship_update(
+    relationship_id: int | None = None,
+    role: str | None = None,
+    strength: float | None = None,
+    evidence: str | None = None,
+    valid_from: str | None = None,
+    valid_until: str | None = None,
+    source_uri: str | None = None,
+    session_id: str | None = None,
+    agent: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if relationship_id is None:
+        return {"error": "relationship_id is required"}
+    body: dict[str, Any] = {}
+    for key, val in [
+        ("role", role),
+        ("strength", strength),
+        ("evidence", evidence),
+        ("valid_from", valid_from),
+        ("valid_until", valid_until),
+        ("source_uri", source_uri),
+        ("session_id", session_id),
+        ("agent", agent),
+    ]:
+        if val is not None:
+            body[key] = val
+    result = _update_relationship_impl(int(relationship_id), body)
+    if "error" not in result:
+        logger.info(
+            "cortex relationship_update: id=%d (fields: %s)",
+            relationship_id,
+            list(body.keys()),
+        )
+        record(
+            "mcp.cortex.relationship.updated",
+            relationship_id=relationship_id,
         )
     return result

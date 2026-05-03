@@ -52,6 +52,7 @@ pymupdf4llm
 pymupdf-layout
 ebooklib
 beautifulsoup4
+Pillow>=10.0
 
 # ============================================================================
 # Scientific Computing (pipeline handlers — consensus dedup clustering)

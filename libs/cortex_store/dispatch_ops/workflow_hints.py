@@ -87,6 +87,14 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "filed_against, respondent_in, evidence_for, recipient_of, issued_by, "
         "owns, references, parent_of/child_of, sibling_of, related_to, and more."
     ),
+    "relationship_delete": (
+        "next: relationship_create if recreating with the correct direction or type; "
+        "entity_get on the formerly linked entities to confirm the link no longer appears"
+    ),
+    "relationship_update": (
+        "next: entity_get on source or target entity to confirm the update is reflected. "
+        "To fix relationship direction or type, use relationship_delete then relationship_create."
+    ),
     "activate": (
         "next: review the spreading activation results for structurally connected "
         "assertions the original search wouldn't find directly"
@@ -115,6 +123,10 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "create_relationship": "relationship_create",
     "list_relationships": "relationships",
     "get_relationships": "relationships",
+    "delete_relationship": "relationship_delete",
+    "remove_relationship": "relationship_delete",
+    "update_relationship": "relationship_update",
+    "patch_relationship": "relationship_update",
     "create_edge": "edge_create",
     "list_edges": "edges",
     "get_edges": "edges",

@@ -1,3 +1,5 @@
+"""Relationship ops — list, create, update, and soft-delete."""
+
 from __future__ import annotations
 
 import datetime
@@ -10,8 +12,10 @@ from ..db import cortex_conn, query
 from ..models import (
     RelationshipCreate,
     RelationshipCreateResponse,
+    RelationshipDeleteResponse,
     RelationshipItem,
     RelationshipList,
+    RelationshipUpdate,
 )
 
 SYMMETRIC_REL_TYPES: frozenset[str] = frozenset({"related_to", "co-occurs_with"})
@@ -42,8 +46,8 @@ def list_relationships(
     type_id: str | None = None,
     limit: int = Query(50, ge=1, le=500),
 ) -> RelationshipList:
-    """List relationships, optionally filtered by entity (source or target) or type."""
-    clauses: list[str] = []
+    """List active relationships, optionally filtered by entity or type."""
+    clauses: list[str] = ["r.active = 1"]
     params: list[str | int] = []
 
     if entity_id:
@@ -53,7 +57,7 @@ def list_relationships(
         clauses.append("r.type = ?")
         params.append(type_id)
 
-    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    where = f" WHERE {' AND '.join(clauses)}"
     sql = f"SELECT {_SELECT} {_FROM}{where} ORDER BY r.created_at DESC LIMIT ?"
     params.append(limit)
 
@@ -164,6 +168,92 @@ def create_relationship(
     return RelationshipCreateResponse(was_new=was_new, item=item)
 
 
+@router.delete("/{relationship_id}", response_model=RelationshipDeleteResponse)
+def delete_relationship(relationship_id: int) -> RelationshipDeleteResponse:
+    """Soft-delete a relationship by setting active=0.
+
+    The row is preserved for provenance. Active relationships exclude deleted
+    rows by default. To correct source, target, or type — which define
+    relationship identity — delete and recreate with the correct values.
+    """
+    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT id, active FROM relationships WHERE id = ?",
+            (relationship_id,),
+        )
+        if not rows:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"Relationship {relationship_id} not found",
+            )
+        if not rows[0]["active"]:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Relationship {relationship_id} is already deleted",
+            )
+        conn.execute(
+            "UPDATE relationships SET active = 0, updated_at = ? WHERE id = ?",
+            (now, relationship_id),
+        )
+        conn.commit()
+    return RelationshipDeleteResponse(deleted=True, id=relationship_id)
+
+
+@router.patch("/{relationship_id}", response_model=RelationshipItem)
+def update_relationship(
+    relationship_id: int,
+    body: RelationshipUpdate,
+) -> RelationshipItem:
+    """Patch mutable fields of an active relationship.
+
+    Only supplied non-null fields are updated. Source, target, and type define
+    relationship identity and cannot be changed — delete and recreate instead.
+    """
+    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "No fields to update",
+        )
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT id, active FROM relationships WHERE id = ?",
+            (relationship_id,),
+        )
+        if not rows:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"Relationship {relationship_id} not found",
+            )
+        if not rows[0]["active"]:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Relationship {relationship_id} is deleted",
+            )
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        params: list[object] = [*updates.values(), now, relationship_id]
+        conn.execute(
+            f"UPDATE relationships SET {set_clause}, updated_at = ? WHERE id = ?",
+            params,
+        )
+        conn.commit()
+        updated = query(
+            conn,
+            f"SELECT {_SELECT} {_FROM} WHERE r.id = ?",
+            (relationship_id,),
+        )
+    if not updated:
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Could not read back updated relationship",
+        )
+    return RelationshipItem(**updated[0])
+
+
 def _list_relationships_impl(**kwargs: object) -> dict[str, object]:
     return list_relationships(**kwargs).model_dump(mode="json")
 
@@ -172,3 +262,15 @@ def _create_relationship_impl(payload: dict[str, object]) -> dict[str, object]:
     response = Response()
     data = create_relationship(RelationshipCreate.model_validate(payload), response)
     return data.model_dump(mode="json")
+
+
+def _delete_relationship_impl(relationship_id: int) -> dict[str, object]:
+    return delete_relationship(relationship_id).model_dump(mode="json")
+
+
+def _update_relationship_impl(
+    relationship_id: int, payload: dict[str, object]
+) -> dict[str, object]:
+    return update_relationship(
+        relationship_id, RelationshipUpdate.model_validate(payload)
+    ).model_dump(mode="json")

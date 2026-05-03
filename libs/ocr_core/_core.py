@@ -1,8 +1,13 @@
-"""Core OCR logic: PDF→image rendering, multi-provider vision, multi-page batching.
+"""Core OCR logic — extracted from services/mcp-server/tools/_document_ocr.py.
 
-Uses PyMuPDF (fitz) for PDF→PNG conversion and frontier vision models (via
-Stargate) for text extraction.  Supports both generic OCR and structured
-financial extraction.
+PDF→image rendering, multi-provider vision, multi-page batching. Shared
+between mcp-server (single-file ``document_ocr`` tool) and cortex-api
+(``POST /documents/ocr/directory`` endpoint).
+
+Key design: ``stargate_url`` is an explicit parameter on every function that
+needs to call a vision model. Callers resolve it once (typically from
+``transport_utils.DEFAULT_STARGATE_URL``) and thread it through. No module-level
+URL globals — the lib is environment-agnostic.
 
 Supported providers (frontier-only — direct API, no OpenRouter):
 - openai/gpt-5.4  (default — strongest overall, best for photographed documents with printed material)
@@ -20,12 +25,15 @@ within ``token_budget`` (defaults to the profile's sweet-spot budget).
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from pathlib import Path
 from typing import Any
 
+import httpx
+from transport_utils import make_sync_client
+
 from ._vision_resize import profile_for_model, resize_to_budget
-from .llm import _call_stargate
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +41,7 @@ _DEFAULT_DPI = 200
 _MAX_PAGES_PER_BATCH = 4
 _OCR_MODEL = "openai/gpt-5.4"
 _OCR_MAX_TOKENS = 8192
+_STARGATE_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 _DEFAULT_OCR_PROMPT = (
     "Extract all text from this document. Preserve tables, columns, "
@@ -43,6 +52,7 @@ _OCR_SYSTEM = (
 )
 
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".bmp"})
+_SCANNABLE_SUFFIXES = frozenset({".pdf"}) | _IMAGE_SUFFIXES
 
 
 def _pdf_page_to_base64(
@@ -105,9 +115,58 @@ def _build_image_blocks(
     ]
 
 
+def _call_stargate(
+    stargate_url: str,
+    messages: list[dict[str, Any]],
+    *,
+    model: str,
+    system: str = "",
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """POST to Stargate /v1/chat/completions — returns raw OpenAI-format response.
+
+    Uses ``transport_utils.make_sync_client`` so both UDS and TCP Stargate URLs
+    work. Returns ``{"error": "..."}`` on transport/HTTP failure.
+    """
+    wire: list[dict[str, Any]] = []
+    if system:
+        wire.append({"role": "system", "content": system})
+    wire.extend(messages)
+    body: dict[str, Any] = {
+        "model": model,
+        "messages": wire,
+        "stream": False,
+    }
+    if max_tokens is not None:
+        body["max_tokens"] = max_tokens
+    try:
+        with make_sync_client(stargate_url, timeout=_STARGATE_TIMEOUT.read) as client:
+            resp = client.post("/v1/chat/completions", json=body)
+    except httpx.TimeoutException:
+        return {"error": "Stargate timeout"}
+    except httpx.RequestError as exc:
+        logger.error("Stargate request failed: %s", exc)
+        return {"error": "Stargate connection failed"}
+    if resp.status_code >= 400:
+        logger.warning("Stargate returned %d for model=%s", resp.status_code, model)
+        return {
+            "error": f"Upstream error ({resp.status_code})",
+            "detail": resp.text[:500],
+        }
+    try:
+        data = resp.json()
+    except json.JSONDecodeError:
+        return {"error": "Stargate returned invalid JSON"}
+    if not isinstance(data, dict):
+        return {"error": "Stargate returned non-object JSON"}
+    return data
+
+
 def _call_vision(
+    stargate_url: str,
     image_blocks: list[dict[str, Any]],
     user_prompt: str,
+    *,
     system: str = _OCR_SYSTEM,
     model: str = _OCR_MODEL,
     max_tokens: int = _OCR_MAX_TOKENS,
@@ -115,13 +174,15 @@ def _call_vision(
     """Send image blocks + text prompt to a vision model via Stargate.
 
     Routes through ``/v1/chat/completions`` so any Stargate-routable vision
-    model works (Anthropic, OpenAI, xAI).  Returns the raw OpenAI-format
+    model works (Anthropic, OpenAI, xAI). Returns the raw OpenAI-format
     response dict, or ``{"error": "..."}`` on failure.
     """
     content: list[dict[str, Any]] = list(image_blocks)
     content.append({"type": "text", "text": user_prompt})
     messages = [{"role": "user", "content": content}]
-    return _call_stargate(messages, model=model, system=system, max_tokens=max_tokens)
+    return _call_stargate(
+        stargate_url, messages, model=model, system=system, max_tokens=max_tokens
+    )
 
 
 def _extract_text_from_response(resp: dict[str, Any]) -> str:
@@ -159,7 +220,7 @@ def _log_estimate_vs_actual(
     ``actual_prompt_tokens`` includes text overhead (system prompt + user
     text + image markers), so it will be higher than the image-only
     estimate by a small, roughly fixed amount. We log both raw and delta so
-    Kaywan can eyeball drift while we collect ≥50 samples.
+    operators can eyeball drift while we collect ≥50 samples.
 
     Level is WARN when ``is_proxy`` (xAI currently) so drift surfaces
     immediately; INFO otherwise.
@@ -180,6 +241,7 @@ def _log_estimate_vs_actual(
 def ocr_pages(
     abs_path: Path,
     *,
+    stargate_url: str,
     prompt: str = _DEFAULT_OCR_PROMPT,
     pages: list[int] | None = None,
     dpi: int = _DEFAULT_DPI,
@@ -189,8 +251,11 @@ def ocr_pages(
     """OCR a PDF or image file, returning extracted text per page.
 
     For PDFs: renders each page, adaptively resizes per-provider profile,
-    batches into groups of 4, sends to a vision model via Stargate.  For
+    batches into groups of 4, sends to a vision model via Stargate. For
     images: sends the (resized) image directly.
+
+    ``stargate_url`` is required and threaded through to every Stargate call.
+    Resolve via ``transport_utils.DEFAULT_STARGATE_URL`` at the call site.
 
     ``token_budget`` (image-only token target) defaults to the provider
     profile's sweet-spot budget (e.g. ~1615 for OpenAI's 1536² sweet spot
@@ -204,7 +269,7 @@ def ocr_pages(
             abs_path, model=model, token_budget=token_budget
         )
         blocks = _build_image_blocks([(data, media)])
-        resp = _call_vision(blocks, prompt, model=model)
+        resp = _call_vision(stargate_url, blocks, prompt, model=model)
         _log_estimate_vs_actual(
             model=model,
             estimated_image_tokens=est,
@@ -243,7 +308,7 @@ def ocr_pages(
 
         page_labels = ", ".join(str(idx + 1) for idx in batch)
         batch_prompt = f"Pages: {page_labels}\n\n{prompt}"
-        resp = _call_vision(blocks, batch_prompt, model=model)
+        resp = _call_vision(stargate_url, blocks, batch_prompt, model=model)
         _log_estimate_vs_actual(
             model=model,
             estimated_image_tokens=batch_est,

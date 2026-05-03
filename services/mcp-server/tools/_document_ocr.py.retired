@@ -1,0 +1,127 @@
+"""MCP-server compatibility shim over ``libs/ocr_core``.
+
+The OCR primitives live in :mod:`ocr_core`. Both ``mcp-server`` and
+``cortex-api`` import from there. This module exists only to:
+
+1. Preserve the ``services.mcp-server.tools._document_ocr`` import surface
+   used by ``tools/document_ocr.py`` and ``tools/local/document_ocr_structured.py``.
+2. Bind the MCP server's resolved ``STARGATE_URL`` into the OCR call chain
+   so existing callers keep their ``ocr_pages(...)`` signature without a
+   mandatory ``stargate_url`` kwarg.
+
+For new code, import from :mod:`ocr_core` directly and pass an explicit
+``stargate_url`` resolved via ``transport_utils.DEFAULT_STARGATE_URL``.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import ocr_core
+
+from .llm import _STARGATE_URL
+
+# Re-exports so the legacy ``from tools._document_ocr import ...`` surface keeps
+# resolving (used by ``tools/local/document_ocr_structured.py`` and any other
+# call site that pulled helpers off this module).
+_IMAGE_SUFFIXES = ocr_core._IMAGE_SUFFIXES
+_MAX_PAGES_PER_BATCH = ocr_core._MAX_PAGES_PER_BATCH
+_OCR_MODEL = ocr_core._OCR_MODEL
+_OCR_SYSTEM = ocr_core._OCR_SYSTEM
+_DEFAULT_OCR_PROMPT = ocr_core._DEFAULT_OCR_PROMPT
+_build_image_blocks = ocr_core._build_image_blocks
+_extract_text_from_response = ocr_core._extract_text_from_response
+_pdf_page_count = ocr_core._pdf_page_count
+has_text_layer = ocr_core.has_text_layer
+
+
+def _call_stargate(
+    messages: list[dict[str, Any]],
+    *,
+    model: str,
+    system: str = "",
+    max_tokens: int | None = None,
+) -> dict[str, Any]:
+    """Backward-compatible wrapper — binds the MCP server's STARGATE_URL."""
+    return ocr_core._call_stargate(
+        _STARGATE_URL, messages, model=model, system=system, max_tokens=max_tokens
+    )
+
+
+def _call_vision(
+    image_blocks: list[dict[str, Any]],
+    user_prompt: str,
+    system: str = ocr_core._OCR_SYSTEM,
+    model: str = ocr_core._OCR_MODEL,
+    max_tokens: int = 8192,
+) -> dict[str, Any]:
+    """Backward-compatible wrapper — binds the MCP server's STARGATE_URL.
+
+    ``system`` and ``model`` are positional-OK to match
+    ``document_ocr_structured``'s pre-existing call site.
+    """
+    return ocr_core._call_vision(
+        _STARGATE_URL,
+        image_blocks,
+        user_prompt,
+        system=system,
+        model=model,
+        max_tokens=max_tokens,
+    )
+
+
+def _image_file_to_base64(
+    path: Path,
+    *,
+    model: str = ocr_core._OCR_MODEL,
+    token_budget: int | None = None,
+) -> tuple[str, str, int]:
+    """Backward-compatible wrapper with default model/token_budget.
+
+    The lib's ``_image_file_to_base64`` requires both kwargs. This wrapper
+    supplies sensible defaults so legacy single-arg callers still work.
+    """
+    return ocr_core._image_file_to_base64(
+        path, model=model, token_budget=token_budget
+    )
+
+
+def _pdf_page_to_base64(
+    pdf_path: Path,
+    page_num: int,
+    dpi: int = 200,
+    *,
+    model: str = ocr_core._OCR_MODEL,
+    token_budget: int | None = None,
+) -> tuple[str, str, int]:
+    """Backward-compatible wrapper accepting positional ``dpi``.
+
+    The lib's ``_pdf_page_to_base64`` requires kwargs-only ``dpi``; the
+    pre-existing ``document_ocr_structured.py`` callsite passes ``dpi``
+    positionally. This wrapper smooths over the difference.
+    """
+    return ocr_core._pdf_page_to_base64(
+        pdf_path, page_num, dpi=dpi, model=model, token_budget=token_budget
+    )
+
+
+def ocr_pages(
+    abs_path: Path,
+    *,
+    prompt: str = ocr_core._DEFAULT_OCR_PROMPT,
+    pages: list[int] | None = None,
+    dpi: int = 200,
+    model: str = ocr_core._OCR_MODEL,
+    token_budget: int | None = None,
+) -> dict[str, Any]:
+    """Backward-compatible ``ocr_pages`` — binds the MCP server's STARGATE_URL."""
+    return ocr_core.ocr_pages(
+        abs_path,
+        stargate_url=_STARGATE_URL,
+        prompt=prompt,
+        pages=pages,
+        dpi=dpi,
+        model=model,
+        token_budget=token_budget,
+    )

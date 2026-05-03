@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 _OWNER_NAME = os.getenv("CORTEX_OWNER_NAME", "the user")
@@ -127,25 +128,9 @@ Never treat "too large" as "skip" — it means "navigate differently.\""""
 
 _JOURNALING_PROTOCOL = """\
 ## Session Journaling
-Every session MUST produce a journal. Write throughout, not just at the end.
-File: `notes/system/journal/{journal_prefix}-YYYY-MM-DD-HHmm.md` via `fs(sandbox="cortex", op="write", …)`.
-Row: `cortex(tool="journal_write", arguments='{{"agent": "{agent}", "summary": "…", "domains": ["…"], "decisions": ["…"], "open_items": ["…"]}}')`.
-
-Template:
-```
-# {{Agent}} Session — YYYY-MM-DD HH:MM UTC
-## Context
-What prompted this session, continuation from what.
-## Arc
-Narrative of what happened.
-## Decisions
-Numbered, with reasoning (what was decided AND why, what was rejected).
-## Observations
-Behavioral/situational observations — also seed via observe().
-## Open Items
-Carried forward or newly created.
-```
-When: after significant work, before context switches, before ending."""
+Session close: see `notes/system/shared/session-close-protocol.md` (canonical \
+protocol for all agents; per-agent bindings — `agent` field, session_id prefix, \
+sign-off — in the bindings table at end of that doc)."""
 
 _THREAD_LIFECYCLE = """\
 ## Thread & Session Lifecycle
@@ -204,6 +189,45 @@ A compliant transcript contains:
 4. Write journal row: `cortex(tool="journal_write", …)` — 2-3 sentence thin index
 5. Post session-close entry to agent-activity-journal (thread 480)
 6. Report transcript ID and file path to the user"""
+
+# ── Per-agent addenda ───────────────────────────────────────────────────────
+#
+# Genuine per-agent content that follows the canonical Session Journaling
+# pointer. Adding a new agent's addendum is a single dict entry — no `if`
+# branch in the renderer. Multi-block values are supported by listing them in
+# order; the renderer emits each block as its own section (joined by "\n\n").
+#
+# Section anchors are documentation-only; they help reviewers see what each
+# block addresses without affecting render order (insertion order is preserved
+# by Python 3.7+ dicts).
+
+_CURSOR_LOCAL_ENFORCEMENT = """\
+Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
+`.cursor/rules/session-close.mdc`) implement the canonical protocol."""
+
+_WEB_TRANSCRIPT_PREPROCESSING = """\
+Web applies `agent-skills/web-transcript-preprocessing.md` to trim raw tool \
+payloads immediately before calling `session_close`."""
+
+_SUBAGENT_INHERITANCE = """\
+Subagents typically inherit close behavior from the calling agent. When a \
+subagent closes its own session, use the calling agent's bindings."""
+
+_AGENT_ADDENDA: dict[str, dict[str, str]] = {
+    "cursor": {
+        "session-close-pointer": _CURSOR_LOCAL_ENFORCEMENT,
+        "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
+        "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
+    },
+    "web": {
+        "session-close-pointer": _WEB_TRANSCRIPT_PREPROCESSING,
+        "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
+        "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
+    },
+    "subagent": {
+        "session-close-pointer": _SUBAGENT_INHERITANCE,
+    },
+}
 
 _DEADLINES_PROTOCOL = f"""\
 ## Deadlines
@@ -462,20 +486,24 @@ def render_operational_context(
 ) -> str:
     """Render protocol reference for the agent, conditionally gated by profile and state."""
     flags = _OPERATIONAL_FLAGS.get(agent, _OPERATIONAL_FLAGS["web"])
-    subs: dict[str, Any] = {"agent": agent, "journal_prefix": agent}
+    subs: dict[str, Any] = {"agent": agent}
     sections: list[str] = []
 
+    generated_at = datetime.now(UTC).isoformat(timespec="seconds")
+    sections.append(
+        f"<!-- generated: {generated_at} by render_operational_context(agent={agent!r}) "
+        f"— regenerated at every cortex_boot for {agent}; do not edit -->"
+    )
     sections.append(_CORTEX_SCHEMA_PREAMBLE)
     sections.append(_SANDBOX_MAP)
     sections.append(_AGENT_BUS_COMPACT.format(**subs))
     if unread_count > 0:
         sections.append(_AGENT_BUS_EXAMPLES.format(**subs))
     sections.append(_AGENT_BUS_LARGE_PAYLOADS)
-    sections.append(_JOURNALING_PROTOCOL.format(**subs))
+    sections.append(_JOURNALING_PROTOCOL)
+    for addendum in _AGENT_ADDENDA.get(agent, {}).values():
+        sections.append(addendum)
     sections.append(_THREAD_LIFECYCLE)
-    if agent in ("web", "cursor"):
-        sections.append(_SESSION_CLOSE_MARKDOWN_AUDIT)
-        sections.append(_TRANSCRIPT_CLOSE_PROTOCOL)
     if flags.get("deadlines"):
         sections.append(_DEADLINES_PROTOCOL)
     if flags.get("review_queue"):

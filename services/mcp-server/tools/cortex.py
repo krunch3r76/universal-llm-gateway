@@ -37,8 +37,10 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           assert            (entity_id, claim, confidence, evidence, derivation_type, confidence_score?, evidence_uris?, seeded_by?, observed_at?, valid_from?, reasoning_summary?, force?, supersedes_id?) — write assertion. observed_at auto-fills to now() if absent. valid_from REQUIRED when claim contains a date pattern (YYYY-MM-DD, ISO ts, named dates) unless derivation_type is an observation type. derivation_type values: inference (agent synthesis from prior context), user_statement (user told you directly), agent_observation (tool output / runtime), direct_observation (deterministic read), compression (requires chunk_id + evidence_uris — ingested document), quotation (requires chunk_id + evidence_uris — verbatim quote), commitment, stated, other. Full taxonomy + co-requirements returned inline in 422 body as valid_derivation_types.
           assertion_update  (assertion_id, superseded_by?, valid_until?, confidence?, review_status?, reviewer?, reviewed_at?, review_notes?) — update assertion metadata (review_status=NULL clears flag)
           supersede         (old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent) — atomic close+create
-          relationships     (entity_id?, type_id?, limit?)          — list with names, strength
+          relationships     (entity_id?, type_id?, limit?)          — list active relationships with names, strength
           relationship_create (source_id, target_id, type_id, role?, strength?, evidence?, session_id?, agent?) — create relationship with optional provenance
+          relationship_delete (relationship_id)                    — soft-delete an erroneous relationship (row preserved for provenance; no longer appears in list)
+          relationship_update (relationship_id, role?, strength?, evidence?, valid_from?, valid_until?, source_uri?, session_id?, agent?) — patch mutable fields; to fix direction or type, delete and recreate
           stats             ()                                       — dashboard counts
           surface_forms     (entity_id?, mention?, mention_type?, limit?) — resolution cache
           journal_read      (limit?)                                 — recent session journals

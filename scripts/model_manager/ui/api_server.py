@@ -9,15 +9,19 @@ Started unconditionally on ./manage launch alongside the Textual TUI.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
+import socket
 import time
+import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from universal_event_bus import EventBus
 
+from .api_dispatch import execute, write_json
 from .manage_events import (
     ManageServiceCompleted,
     ManageServiceFailed,
@@ -26,7 +30,6 @@ from .manage_events import (
 
 if TYPE_CHECKING:
     from .controller.service_ctl.core import ServiceController
-    from .model.service_state import ServiceInfo, ServiceState
 
 logger = logging.getLogger(__name__)
 
@@ -36,41 +39,17 @@ _SOCK_PATH = Path(
 _MAX_REQUEST_BYTES = (
     65_536  # Max allowed size for an incoming JSON-RPC request in bytes
 )
-_VALID_SERVICES = frozenset(
-    {
-        "gateway",
-        "stargate",
-        "rag",
-        "cloud_proxy",
-        "mcp",
-        "event_service",
-        "cortex_api",
-        "agent_bus",
-        "email_bridge",
-    }
-)  # All recognized service names for API operations
-# Services that support the 'rebuild' operation. For host subprocesses this is
-# restart-equivalent because source is loaded from disk on start.
-_REBUILD_SERVICES = frozenset(
-    {"mcp", "event_service", "cortex_api", "agent_bus", "email_bridge"}
-)
-# Services that support 'sync_restart' — deploy local source edits and bring
-# the service back up. Path differs per service:
-#   gateway  → restart (libs/, services/, config/ are bind-mounted)
-#   mcp      → cached --refresh-source rebuild + restart (~20s)
-#   host procs → restart (source loaded from disk on start)
-_SYNC_RESTART_SERVICES = frozenset(
-    {
-        "gateway",
-        "mcp",
-        "stargate",
-        "rag",
-        "cloud_proxy",
-        "cortex_api",
-        "agent_bus",
-        "event_service",
-    }
-)
+_LIVE_PROBE_TIMEOUT_S = 0.5
+_TRACEBACK_TAIL_BYTES = 1500
+
+
+class ManageSocketBusyError(RuntimeError):
+    """Raised when manage.sock is already bound by a live process.
+
+    Distinguished from generic OSError so the TUI can surface a
+    targeted "another ./manage is already running" message instead
+    of the generic permission/path failure path.
+    """
 
 
 class ManageAPIServer:
@@ -87,8 +66,23 @@ class ManageAPIServer:
         self._server: asyncio.AbstractServer | None = None
 
     async def start(self) -> None:
-        """Start the UDS listener, removing any stale socket from a prior run."""
+        """Start the UDS listener, removing any stale socket from a prior run.
+
+        Refuses to rebind when another live process is already listening on
+        manage.sock. Silently unlink+rebind orphans the existing controller
+        in-kernel: new connections route to the most-recently-bound inode but
+        the older listener's fd is still held, leaving a "listening" socket
+        only the orphaned process can read from. Detection is cooperative —
+        the launcher (./manage) sees the refusal and exits cleanly.
+        """
         _SOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if _is_socket_alive(_SOCK_PATH):
+            raise ManageSocketBusyError(
+                f"manage.sock at {_SOCK_PATH} is already bound by a live "
+                f"process. Another ./manage instance is running. Refusing to "
+                f"rebind — would orphan the existing controller. Stop the "
+                f"other instance (or kill its PID) before launching this one."
+            )
         _SOCK_PATH.unlink(missing_ok=True)
         self._server = await asyncio.start_unix_server(
             self._handle_connection, path=str(_SOCK_PATH)
@@ -114,7 +108,7 @@ class ManageAPIServer:
                 return
 
             def _write_error(code: int, message: str, req_id: Any = None) -> None:
-                _write_json(
+                write_json(
                     writer,
                     {
                         "jsonrpc": "2.0",
@@ -145,7 +139,7 @@ class ManageAPIServer:
             else:
                 resp = {"jsonrpc": "2.0", "result": result, "id": req_id}
 
-            _write_json(writer, resp)
+            write_json(writer, resp)
             await writer.drain()
         except (ConnectionResetError, BrokenPipeError, OSError):
             # Normal client disconnect after one-shot JSON-RPC request (UDS close,
@@ -155,8 +149,14 @@ class ManageAPIServer:
         except Exception:
             logger.exception("Manage API connection error")
         finally:
-            writer.close()
-            await writer.wait_closed()
+            # Defensive: if the peer already tore down the socket, close()/
+            # wait_closed() can raise. Letting that propagate leaves the
+            # per-connection asyncio.Task in an errored state, which has been
+            # observed to coincide with subsequent connections being reset
+            # by peer until the controller is restarted.
+            with contextlib.suppress(OSError, asyncio.CancelledError):
+                writer.close()
+                await writer.wait_closed()
 
     async def _dispatch(
         self, method: str, params: dict[str, Any]
@@ -170,7 +170,7 @@ class ManageAPIServer:
         )
 
         try:
-            result = await _execute(self._controller, method, service, params)
+            result = await execute(self._controller, method, service, params)
         except ValueError as exc:
             duration = round(time.monotonic() - t0, 3)
             await self._event_bus.publish(
@@ -181,14 +181,26 @@ class ManageAPIServer:
             return None, {"code": -32602, "message": str(exc)}
         except Exception as exc:
             duration = round(time.monotonic() - t0, 3)
-            # Event emission is primary (per quality gates); log is secondary.
-            logger.warning("Manage API %s(%s) failed: %s", method, service, exc)
+            tb_tail = traceback.format_exc()[-_TRACEBACK_TAIL_BYTES:]
+            error_msg = f"{type(exc).__name__}: {exc}"
+            # logger.exception persists the full traceback to whatever handler
+            # is wired (see app.py — the manage-api log handler). Surfacing the
+            # tail in the JSON-RPC error.data lets agents read it without
+            # round-tripping through the on-disk log.
+            logger.exception("Manage API %s(%s) failed", method, service)
             await self._event_bus.publish(
                 ManageServiceFailed(
-                    method=method, service=service, error=str(exc), duration_s=duration
+                    method=method,
+                    service=service,
+                    error=error_msg,
+                    duration_s=duration,
                 )
             )
-            return None, {"code": -32000, "message": str(exc)}
+            return None, {
+                "code": -32000,
+                "message": error_msg,
+                "data": {"traceback": tb_tail},
+            }
 
         duration = round(time.monotonic() - t0, 3)
         await self._event_bus.publish(
@@ -197,191 +209,28 @@ class ManageAPIServer:
         return result, None
 
 
-# ---------------------------------------------------------------------------
-# Dispatch helpers — module-level for testability
-# ---------------------------------------------------------------------------
+def _is_socket_alive(path: Path) -> bool:
+    """Return True iff a process is actively listening on path.
 
-
-async def _execute(
-    ctl: ServiceController, method: str, service: str, params: dict[str, Any]
-) -> dict[str, Any]:
-    """Dispatch a validated JSON-RPC method to ServiceController."""
-    svc = ctl.service_state
-
-    match method:
-        case "status":
-            infos = await asyncio.to_thread(svc.check_all)
-            return {
-                "services": {
-                    i.name.lower().replace(" ", "_"): i.status.value for i in infos
-                },
-                "build": await asyncio.to_thread(_gateway_build_status, ctl),
-            }
-
-        case "health":
-            _require_service(service)
-            info = await asyncio.to_thread(_check_one, svc, service)
-            result = {
-                "service": service,
-                "status": info.status.value,
-                "detail": info.detail,
-            }
-            if service == "gateway":
-                result["build"] = await asyncio.to_thread(_gateway_build_status, ctl)
-            return result
-
-        case "wait_healthy":
-            _require_service(service)
-            timeout = float(params.get("timeout", 120.0))
-            waited = await _wait_healthy(svc, service, timeout)
-            return {"healthy": True, "waited_s": round(waited, 1)}
-
-        case "start":
-            _require_service(service)
-            msg = await _start(ctl, service)
-            return {"status": "ok", "message": msg}
-
-        case "stop":
-            _require_service(service)
-            msg = await _stop(ctl, service)
-            return {"status": "ok", "message": msg}
-
-        case "restart":
-            _require_service(service)
-            stop_msg = await _stop(ctl, service)
-            start_msg = await _start(ctl, service)
-            return {"status": "ok", "message": f"{stop_msg}\n{start_msg}"}
-
-        case "rebuild":
-            _require_service(service)
-            if service not in _REBUILD_SERVICES:
-                raise ValueError(
-                    f"rebuild not supported for '{service}'; "
-                    f"supported: {', '.join(sorted(_REBUILD_SERVICES))}"
-                )
-            msg = await _rebuild(ctl, service)
-            return {"status": "ok", "message": msg}
-
-        case "sync_restart":
-            _require_service(service)
-            if service not in _SYNC_RESTART_SERVICES:
-                raise ValueError(
-                    f"sync_restart not supported for '{service}'; "
-                    f"supported: {', '.join(sorted(_SYNC_RESTART_SERVICES))}"
-                )
-            msg = await _sync_restart(ctl, service)
-            return {"status": "ok", "message": msg}
-
-        case _:
-            raise ValueError(
-                f"Unknown method: '{method}'. "
-                "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild"
-            )
-
-
-def _require_service(service: str) -> None:
-    """Raise ValueError if service is not a known service name."""
-    if service not in _VALID_SERVICES:
-        raise ValueError(
-            f"Unknown service: '{service}'. Valid: {', '.join(sorted(_VALID_SERVICES))}"
-        )
-
-
-def _check_one(svc: ServiceState, service: str) -> ServiceInfo:
-    """Return ServiceInfo for a single service (synchronous, call via to_thread)."""
-    if service not in _VALID_SERVICES:
-        raise ValueError(f"Unknown service: '{service}'")
+    Distinguishes a live listener from a stale socket file (which the existing
+    unlink+rebind path correctly handles). A successful connect() means the
+    kernel has a listener with a queued backlog accepting our SYN; only a live
+    process can produce that. ConnectionRefusedError means the inode exists
+    but no process owns it (stale file). FileNotFoundError means no inode.
+    """
+    if not path.exists():
+        return False
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(_LIVE_PROBE_TIMEOUT_S)
     try:
-        return getattr(svc, f"check_{service}")()
-    except AttributeError:
-        raise ValueError(f"Unknown service: '{service}'")
-
-
-def _gateway_build_status(ctl: ServiceController) -> dict[str, Any]:
-    """Return gateway build state for status/progress probes."""
-    info = ctl.check_image()
-    return {
-        "running": ctl.build_running,
-        "image_status": info.status.value,
-        "image_id": info.image_id,
-        "created": info.created,
-        "size": info.size,
-    }
-
-
-async def _wait_healthy(svc: ServiceState, service: str, timeout: float) -> float:
-    """Poll service health until RUNNING or timeout; return elapsed seconds."""
-    from .model.service_state import ServiceStatus
-
-    t0 = time.monotonic()
-    deadline = t0 + timeout
-    while True:
-        info = await asyncio.to_thread(_check_one, svc, service)
-        if info.status == ServiceStatus.RUNNING:
-            return time.monotonic() - t0
-        if time.monotonic() >= deadline:
-            raise TimeoutError(
-                f"'{service}' not healthy after {timeout:.0f}s "
-                f"(last status: {info.status.value})"
-            )
-        await asyncio.sleep(2.0)
-
-
-async def _start(ctl: ServiceController, service: str) -> str:
-    """Call the appropriate ServiceController start method."""
-    if service not in _VALID_SERVICES:
-        raise ValueError(f"Unknown service: '{service}'")
-    return await getattr(ctl, f"start_{service}")()
-
-
-async def _stop(ctl: ServiceController, service: str) -> str:
-    """Call the appropriate ServiceController stop method."""
-    if service not in _VALID_SERVICES:
-        raise ValueError(f"Unknown service: '{service}'")
-    return await getattr(ctl, f"stop_{service}")()
-
-
-async def _rebuild(ctl: ServiceController, service: str) -> str:
-    """Full --no-cache rebuild + restart of a managed service.
-
-    Heavy path — pulls fresh base images and rebuilds every layer. For container
-    services this can take tens of minutes (gateway: 60-90 min recompiling vLLM
-    CUDA kernels). Reserved for engine/pip/Dockerfile changes; agents should
-    prefer 'sync_restart' for routine code edits.
-
-    `gateway` is intentionally absent here: agents reach gateway only via
-    'sync_restart' (which is just 'restart' under bind-mount). Engine rebuilds
-    go through the TUI Build Image flow.
-    """
-    if service == "mcp":
-        return await ctl.rebuild_mcp(no_cache=True)
-    if service == "event_service":
-        return await ctl.rebuild_event_service()
-    if service == "cortex_api":
-        return await ctl.rebuild_cortex_api()
-    if service == "agent_bus":
-        return await ctl.rebuild_agent_bus()
-    if service == "email_bridge":
-        return await ctl.rebuild_email_bridge(no_cache=True)
-    raise ValueError(f"rebuild not supported for '{service}'")
-
-
-async def _sync_restart(ctl: ServiceController, service: str) -> str:
-    """Deploy local source edits and bring the service back up.
-
-    Per-service strategy:
-      gateway      → restart (libs/, services/, config/ are bind-mounted)
-      mcp          → cached --refresh-source rebuild + restart (~20s)
-      stargate, rag, cloud_proxy, cortex_api, agent_bus, event_service → restart
-    """
-    if service == "mcp":
-        return await ctl.rebuild_mcp(no_cache=False)
-    stop_msg = await _stop(ctl, service)
-    start_msg = await _start(ctl, service)
-    return f"{stop_msg}\n{start_msg}"
-
-
-def _write_json(writer: asyncio.StreamWriter, obj: dict[str, Any]) -> None:
-    """Serialize obj to JSON and write a newline-terminated line to writer."""
-    writer.write(json.dumps(obj).encode() + b"\n")
+        sock.connect(str(path))
+    except (FileNotFoundError, ConnectionRefusedError):
+        return False
+    except OSError:
+        # ENOTCONN, EAGAIN, ECONNRESET — treat as "not a live listener". The
+        # caller will unlink and rebind; if a real listener does appear in
+        # the race window, the bind itself will fail with EADDRINUSE.
+        return False
+    finally:
+        sock.close()
+    return True

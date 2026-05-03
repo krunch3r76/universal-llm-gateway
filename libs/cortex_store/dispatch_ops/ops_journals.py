@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,48 @@ from ._shared import _FILES_ROOT, _SESSION_ID_RE, _derive_session_id_local, reco
 from .ops_review_gate import _run_session_audit_or_block
 
 logger = logging.getLogger("cortex-api.dispatch_ops.journals")
+
+_ACTION_LOG_RE = re.compile(
+    r"^I (then |also )?(read|posted|dispatched|pulled|ran|wrote|called)",
+    re.MULTILINE,
+)
+_USER_VOICE_RE = re.compile(r"\*\*User:\*\*|\bUser:\s|^#{1,4}\s+User\b", re.MULTILINE)
+_ASSISTANT_VOICE_RE = re.compile(
+    r"\*\*Assistant:\*\*|\bAssistant:\s|^#{1,4}\s+Assistant\b", re.MULTILINE
+)
+
+
+def _validate_transcript_structure(
+    transcript_md: str, summary_len: int = 0
+) -> list[str]:
+    """Return a list of structural warning strings (empty = clean).
+
+    ∀ warnings: advisory only — callers must not block the close.
+    ∀ summary_len > 0: Canary 4 (transcript shorter than its own summary) checked.
+    """
+    violations: list[str] = []
+
+    user_blocks = len(_USER_VOICE_RE.findall(transcript_md))
+    assistant_blocks = len(_ASSISTANT_VOICE_RE.findall(transcript_md))
+    action_log_matches = len(_ACTION_LOG_RE.findall(transcript_md))
+
+    if user_blocks == 0:
+        violations.append(
+            "No user-voice blocks found — likely action log, not transcript"
+        )
+    if assistant_blocks == 0:
+        violations.append("No assistant-voice blocks found")
+    if action_log_matches >= 3 and user_blocks == 0:
+        violations.append(
+            f"Action-log pattern detected ({action_log_matches} matches, no user turns)"
+        )
+    if summary_len > 0 and len(transcript_md) <= summary_len:
+        violations.append(
+            f"Transcript length ({len(transcript_md)}) is not longer than "
+            f"summary length ({summary_len}) — Canary 4"
+        )
+
+    return violations
 
 
 def _op_deadlines(**_: object) -> dict[str, Any]:
@@ -251,6 +294,12 @@ def _op_session_close(
         logger.error(
             "session_close: failed to write transcript to %s: %s", abs_path, exc
         )
+        record(
+            "mcp.session.close.write.failed",
+            session_id=session_id,
+            agent=agent,
+            error=str(exc),
+        )
         return {"error": f"Transcript file write failed: {exc}"}
     if not abs_path.is_file():
         logger.error(
@@ -290,6 +339,11 @@ def _op_session_close(
             logger.warning(
                 "Failed to clean up transcript file after DB error: %s", abs_path
             )
+            record(
+                "mcp.session.close.cleanup.failed",
+                session_id=session_id,
+                agent=agent,
+            )
         return result
 
     logger.info(
@@ -306,4 +360,16 @@ def _op_session_close(
     )
     if audit_outcome.get("warning"):
         result["_warning"] = audit_outcome["warning"]
+
+    transcript_warnings = _validate_transcript_structure(
+        transcript_md, summary_len=len(summary)
+    )
+    if transcript_warnings:
+        logger.warning(
+            "session_close: transcript structure warnings for %s: %s",
+            session_id,
+            transcript_warnings,
+        )
+    result["transcript_warnings"] = transcript_warnings
+
     return result

@@ -24,6 +24,7 @@ from .routes import (
     chunks,
     deadlines,
     dispatch,
+    documents,
     edges,
     entities,
     entity_status,
@@ -145,6 +146,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(extraction_runs.router)
     app.include_router(gated.router)
     app.include_router(ingest.router)
+    app.include_router(documents.router)
     app.include_router(resolve.router)
     app.include_router(tags.router)
     app.include_router(graph.router)

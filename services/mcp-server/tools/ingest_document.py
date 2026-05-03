@@ -12,9 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
+from ocr_core import has_text_layer, ocr_pages
 
-from ._document_ocr import has_text_layer, ocr_pages
 from ._file_helpers import FILES_ROOT, resolve_files_path
+from .llm import _STARGATE_URL
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -51,7 +52,7 @@ def _extract_text(path: Path, fmt: str, dpi: int, model: str) -> str:
         return _read_pdf(path)
 
     if fmt in ("scanned_pdf", "image"):
-        kwargs: dict[str, Any] = {"dpi": dpi}
+        kwargs: dict[str, Any] = {"stargate_url": _STARGATE_URL, "dpi": dpi}
         if model:
             kwargs["model"] = model
         result = ocr_pages(path, **kwargs)

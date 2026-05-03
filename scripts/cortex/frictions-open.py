@@ -17,7 +17,12 @@ def main() -> int:
 
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=10.0) as client:
-            r = client.get("/assertions", params={"review_status": "staged", "limit": args.limit})
+            # Friction assertions are seeded with entity_id="service:{name}" — filter by that
+            # prefix to avoid false positives from staged assertions that happen to contain
+            # the word "friction" in their claim text.
+            r = client.get(
+                "/assertions", params={"review_status": "staged", "limit": args.limit}
+            )
             r.raise_for_status()
             data = r.json()
             items = data.get("items", [])
@@ -25,8 +30,16 @@ def main() -> int:
         print(f"Error querying cortex: {e}")
         items = []
 
-    friction_count = len([i for i in items if "friction" in str(i.get("claim", "")).lower()])
-    print(f"Frictions-open CLI (F5) — found ~{friction_count} open frictions in staged pool (sampled {len(items)}).")
+    # Count frictions by entity_id prefix "service:" (canonical) rather than claim text scan.
+    # Note: this is still an approximation — the /assertions endpoint does not support
+    # entity_id prefix filtering, so we fetch staged assertions and filter client-side.
+    friction_items = [
+        i for i in items if str(i.get("entity_id", "")).startswith("service:")
+    ]
+    friction_count = len(friction_items)
+    print(
+        f"Frictions-open CLI (F5) — found ~{friction_count} open frictions in staged pool (sampled {len(items)}, filtered by entity_id prefix 'service:')."
+    )
     print(
         'Use cortex(tool="friction_close", arguments={"assertion_id": ID, "resolution_kind": "agent_skill:slug"}) to close.'
     )

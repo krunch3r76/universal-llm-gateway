@@ -100,11 +100,14 @@ def _make_context(
 
 
 class _FakeBundle:
-    def __init__(self) -> None:
+    def __init__(self, *, capability_tier: str | None = None) -> None:
+        from agent_seat.hydration import AgentMeta
+
         self.briefing_card_md = "# Briefing"
         self.continuation_md = None
         self.section_counts = {"briefing_bytes": 42, "todos": 3}
         self.continuation_id = None
+        self.agent_meta = AgentMeta(capability_tier=capability_tier)
 
 
 class _FakeLoopResult:
@@ -1051,3 +1054,126 @@ async def test_oppie_explicit_tools_via_frontier_generate_suppresses_injection(
     po = captured["req"].provider_options
     if po is not None:
         assert "tools" not in po.get("xai", {})
+
+
+# ---------------------------------------------------------------------------
+# Agent-tier suppression: capability_tier=inline-only forces tools=[] regardless
+# of provider/model. Orthogonal to the xai-multi-agent suppression.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_inline_only_capability_tier_forces_empty_tool_surface(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    published_events: list[Any],
+) -> None:
+    """Forge runs ``xai/grok-4.20-0309-reasoning`` (NOT a multi-agent model),
+    so the existing provider-derived suppression does not catch it. With
+    ``capability_tier=inline-only`` set on the entity, the agent-tier check
+    must coerce ``tools=[]`` and emit ``tool.suppressed`` with reason
+    ``capability_tier_inline_only``.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None, **_k: Any
+    ) -> _FakeBundle:
+        return _FakeBundle(capability_tier="inline-only")
+
+    def fake_assemble(agent: str, **kwargs: Any) -> str:
+        captured["include_quickref"] = kwargs.get("include_cortex_quickref")
+        return f"SYSTEM[{agent}]"
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="xai")
+
+    # ``hydrate_agent`` and ``assemble_system_prompt`` are looked up via lazy
+    # ``from agent_seat import ...`` inside ``resolve_dispatch_tool_set``, so
+    # patches must land on the package re-export, not on ``fd_mod``.
+    import agent_seat
+
+    monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    context = _make_context(
+        options={"model": "xai/grok-4.20-0309-reasoning", "agent": "forge"},
+    )
+    await handler.execute(_FakeStep(), context)
+
+    suppressed = [
+        e
+        for e in published_events
+        if e.signal == "pipeline.frontier.dispatch.tool.suppressed"
+    ]
+    assert len(suppressed) == 1
+    assert suppressed[0].payload["reason"] == "capability_tier_inline_only"
+    assert suppressed[0].payload["agent"] == "forge"
+    assert captured["req"].tools is None  # tools=[] flows downstream as None
+    assert captured["include_quickref"] is False
+
+
+@pytest.mark.asyncio
+async def test_default_capability_tier_does_not_suppress(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    published_events: list[Any],
+) -> None:
+    """Without ``capability_tier=inline-only`` on the entity, the agent-tier
+    gate is a no-op — provider-derived paths still apply normally.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None, **_k: Any
+    ) -> _FakeBundle:
+        return _FakeBundle(capability_tier=None)
+
+    async def fake_resolve(
+        names: tuple[str, ...], *, fallback: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "function",
+                "function": {"name": "fs", "description": "", "parameters": {}},
+            }
+        ]
+
+    def fake_assemble(agent: str, **kwargs: Any) -> str:
+        captured["include_quickref"] = kwargs.get("include_cortex_quickref")
+        return f"SYSTEM[{agent}]"
+
+    async def fake_loop(**_k: Any) -> _FakeLoopResult:
+        return _FakeLoopResult(provider="anthropic")
+
+    # See companion test for rationale on patching ``agent_seat`` directly
+    # (lazy import inside ``resolve_dispatch_tool_set``).
+    import agent_seat
+
+    from systems.pipeline.core.handlers import frontier_dispatch_tools as fdt_mod
+
+    monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(fdt_mod, "resolve_default_tools", fake_resolve)
+    monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    # ``remote_mcp: False`` forces the client-side tool branch (default for
+    # anthropic is remote_mcp=True, which would empty the tool set first).
+    context = _make_context(
+        options={
+            "model": "anthropic/claude-sonnet-4-6",
+            "agent": "api_claude",
+            "remote_mcp": False,
+        },
+    )
+    await handler.execute(_FakeStep(), context)
+
+    suppressed = [
+        e
+        for e in published_events
+        if e.signal == "pipeline.frontier.dispatch.tool.suppressed"
+    ]
+    assert suppressed == []
+    assert captured["include_quickref"] is True
