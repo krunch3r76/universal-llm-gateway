@@ -149,7 +149,6 @@ async def _relay(
 def register_frontier_tools(mcp: FastMCP) -> None:
     """Register dispatch tools: team_dispatch and frontier_dispatch."""
 
-
     @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
         op: Literal["generate", "to_thread"],
@@ -157,7 +156,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         messages: list[dict[str, Any]],
         model: str | None = None,
         system: str = "",
-        tools: list[str] | None = None,
         reasoning_effort: str | None = None,
         generation_options: dict[str, Any] | None = None,
         max_tool_turns: int | None = None,
@@ -178,7 +176,23 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           is required. ``subject`` is optional (auto-derived from last message
           if absent).
 
-        Use ``frontier_dispatch`` for raw engine calls without a persona.
+        Tool surface (no caller knob — derived from agent provider):
+        - xAI agents (``oppie``, ``forge``) — **no MCP tool access**. The
+          underlying xAI Responses path either rejects client-side function
+          tools (multi-agent variants) or is structurally inline-substrate for
+          this seat; substrate must be inlined into ``messages``.
+        - All other agents (``orion``, ``bard``, ``api_claude``) — full MCP
+          catalog via the in-process tool loop / remote-MCP.
+
+        Callers that need explicit no-tools persona-free dispatch should use
+        ``frontier_dispatch(mcp=False, ...)``.
+
+        ``transcript_id`` — caller's session ID for provenance attribution only.
+        It is recorded in the execution record alongside ``caller_agent`` so
+        dispatches can be traced back to the originating session. It is NOT
+        forwarded to the dispatched agent's context — the receiving agent never
+        sees it. Pass your current session ID (e.g. ``"cursor-2026-05-04-0910"``);
+        a forward-reference to an in-progress session is fine.
         """
         body: dict[str, Any] = {
             "op": op,
@@ -206,8 +220,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             if subject is not None:
                 body["subject"] = subject
 
-        if tools is not None:
-            body["tools"] = tools
         for key, val in (
             ("model", model),
             ("reasoning_effort", reasoning_effort),
@@ -239,6 +251,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         model: str,
         messages: list[dict[str, Any]],
         system: str = "",
+        mcp: bool = False,
         reasoning_effort: str | None = None,
         generation_options: dict[str, Any] | None = None,
         max_tool_turns: int | None = None,
@@ -257,6 +270,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``op="to_thread"``: admits dispatch; model's reply lands on ``thread``.
           ``thread`` is required.
 
+        ``mcp`` defaults to ``False`` (one-shot reasoning; no tool loop) — the
+        canonical use of persona-free dispatch is inline-substrate single-shot
+        calls. Pass ``mcp=True`` to enable the full MCP catalog tool loop.
+
+        ``transcript_id`` — caller's session ID for provenance attribution only.
+        Recorded in the execution record; never forwarded to the dispatched model.
+        A forward-reference to an in-progress session is fine.
+
         Use ``team_dispatch`` for persona-aware dispatch with agent seat assignment.
         """
         body: dict[str, Any] = {
@@ -264,6 +285,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             "messages": messages,
             "model": model,
             "system": system,
+            "mcp": mcp,
         }
         if op == "generate":
             if thread is not None or subject is not None:

@@ -35,7 +35,7 @@ AGENT_REGISTRY: dict[str, dict[str, object]] = {
         "name": "Bard",
         "provider": "Google",
         "frontier_kind": "google",
-        "default_model": "google/gemini-2.5-pro",
+        "default_model": "google/gemini-2.5-flash",
         "allowed_models": resolve_agent_valid_family("bard"),
         "allowed_options": None,
         "persona_seed_ref": "agent-identity/bard-birth.md",

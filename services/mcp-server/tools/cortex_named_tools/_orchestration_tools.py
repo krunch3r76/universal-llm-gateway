@@ -27,12 +27,23 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
 
         The briefing card contains: deadlines, unread bus summary, review queue
         count, last session summary, top todos, self-observations, and temporal
-        alerts. Heavy data (full sessions, assertions, gated entities, file
+        alerts. When the latest session has a captured handoff, the Last Session
+        block renders a verbatim **Handoff** section; otherwise it falls back to
+        the summary plus `_Hint: no_handoff_captured_`. The section manifest also
+        includes a `continuity` entry pointing at `GET /boot-continuity via cortex-api`.
+        Heavy data (full sessions, assertions, gated entities, file
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
           agent         — agent profile: cursor, web, api, api_claude, oppie, orion, subagent (default: "cursor")
-          transcript_id — if provided, loads continuation context for that transcript
+          transcript_id — if provided, loads continuation context for that transcript.
+                          The transcript entity must already exist in Cortex, which means
+                          the session it references must have already closed. When a
+                          dispatcher passes its own *in-progress* session ID (a
+                          forward-reference), the entity does not yet exist — boot
+                          proceeds without continuation context and surfaces a
+                          ``transcript_id_note`` in the response. This is expected
+                          behavior, not a failure.
 
         Key response fields:
           session_id             — server-minted ID; hold for entire session

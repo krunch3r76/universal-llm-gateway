@@ -116,8 +116,19 @@ def run_cortex_boot(
     on demand via the manifest hints.
     """
     transcript_continuation = _resolve_transcript(transcript_id)
+    _tc_warning: str | None = None
     if transcript_continuation and "error" in transcript_continuation:
-        return transcript_continuation
+        # Forward-reference: the dispatching session is still active and has not
+        # yet written its transcript entity to Cortex.  This is expected, not a
+        # caller error.  Degrade gracefully — boot proceeds without continuation
+        # context, consistent with hydrate_agent() in libs/agent_seat/hydration.py.
+        _tc_warning = (
+            f"transcript_id {transcript_continuation['transcript_id']!r} was not found in "
+            "Cortex. If this ID was supplied by a session that is still active, the entity "
+            "will not be committed until that session closes — this is expected. "
+            "Boot proceeds without continuation context."
+        )
+        transcript_continuation = None
 
     t_boot = datetime.now(UTC)
     session_id = (
@@ -179,7 +190,9 @@ def run_cortex_boot(
         unread_threads=unread_threads,
         review_total=extracted["review_total"],
         review_top=review_top,
-        last_session=extracted["sessions"][0] if extracted["sessions"] else None,
+        last_session=(extracted.get("continuity") or {}).get("last_session")
+        or (extracted["sessions"][0] if extracted["sessions"] else None),
+        continuity=extracted.get("continuity") or None,
         self_reflections=extracted["self_reflections"] or None,
         todos=extracted["todos"] or None,
         todo_total=len(extracted["todos"]),
@@ -201,7 +214,6 @@ def run_cortex_boot(
         skills_unpartitioned_count=extracted.get("skills_unpartitioned_count", 0),
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
-        rag_state=extracted.get("rag_pipeline") or None,
     )
 
     artifacts = _build_artifacts(
@@ -270,5 +282,8 @@ def run_cortex_boot(
                 f'arguments=\'{{"entity_id": "{tc_summary["entity_id"]}"}}\')'
             ),
         }
+
+    if _tc_warning:
+        result["transcript_id_note"] = _tc_warning
 
     return result

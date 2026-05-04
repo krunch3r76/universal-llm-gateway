@@ -160,7 +160,7 @@ async def test_handler_team_mode_fires_hydrated_event(
     published_events: list[Any],
 ) -> None:
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> _FakeBundle:
         return _FakeBundle()
 
@@ -198,7 +198,7 @@ async def test_handler_persona_free_mode_skips_hydration(
     hydrate_calls: list[str] = []
 
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> _FakeBundle:
         hydrate_calls.append(agent)
         return _FakeBundle()
@@ -479,7 +479,7 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
     captured: dict[str, Any] = {}
 
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> _FakeBundle:
         return _FakeBundle()
 
@@ -515,10 +515,17 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
 
 
 @pytest.mark.asyncio
-async def test_handler_persona_free_defaults_use_canonical_rag_tool(
+async def test_handler_persona_free_defaults_use_full_mcp_catalog(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Persona-free dispatch (no agent) gets the full live MCP catalog.
+
+    Closes the BOE-19-P-vintage divergence (assertion 7974, 2026-05-01) where
+    ``frontier_dispatch`` (no agent) exposed only the curated read-only tier
+    while ``team_dispatch`` (with agent) exposed the full catalog. The
+    dispatch path no longer determines the tool surface.
+    """
     captured: dict[str, Any] = {}
 
     async def fake_defs() -> list[dict[str, Any]]:
@@ -531,21 +538,29 @@ async def test_handler_persona_free_defaults_use_canonical_rag_tool(
                     "parameters": {"type": "object", "properties": {}},
                 },
             }
-            for name in ["rag"]
+            for name in ["cortex", "rag", "agent_bus", "fs", "observability"]
         ]
 
     async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
         captured["tools"] = kwargs["req"].tools
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "get_mcp_tool_definitions", fake_defs)
+    import agent_seat
+
+    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
     monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4"})
     await handler.execute(step, context)
 
-    assert [t["function"]["name"] for t in captured["tools"]] == ["cortex", "rag"]
+    assert [t["function"]["name"] for t in captured["tools"]] == [
+        "cortex",
+        "rag",
+        "agent_bus",
+        "fs",
+        "observability",
+    ]
 
 
 @pytest.mark.asyncio
@@ -938,7 +953,7 @@ def _make_oppie_fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     captured: dict[str, Any] = {}
 
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> _FakeBundle:
         return _FakeBundle()
 
@@ -1077,7 +1092,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     captured: dict[str, Any] = {}
 
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> _FakeBundle:
         return _FakeBundle(capability_tier="inline-only")
 
@@ -1127,7 +1142,7 @@ async def test_default_capability_tier_does_not_suppress(
     captured: dict[str, Any] = {}
 
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> _FakeBundle:
         return _FakeBundle(capability_tier=None)
 

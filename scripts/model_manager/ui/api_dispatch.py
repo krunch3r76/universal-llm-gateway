@@ -217,6 +217,13 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
     raise ValueError(f"rebuild not supported for '{service}'")
 
 
+# Services whose state or render logic can change the boot surface.
+# After `sync_restart` on one of these, the boot-render-diff smoke gate runs
+# against the last recorded baseline to surface drift at deploy time rather
+# than on the next agent's session start. See agent-bus thread 883.
+_BOOT_RENDER_DIFF_SERVICES = frozenset({"cortex_api", "mcp"})
+
+
 async def _sync_restart(ctl: ServiceController, service: str) -> str:
     """Deploy local source edits and bring the service back up.
 
@@ -226,7 +233,55 @@ async def _sync_restart(ctl: ServiceController, service: str) -> str:
       stargate, rag, cloud_proxy, cortex_api, agent_bus, event_service → restart
     """
     if service == "mcp":
-        return await ctl.rebuild_mcp(no_cache=False)
-    stop_msg = await _stop(ctl, service)
-    start_msg = await _start(ctl, service)
-    return f"{stop_msg}\n{start_msg}"
+        msg = await ctl.rebuild_mcp(no_cache=False)
+    else:
+        stop_msg = await _stop(ctl, service)
+        start_msg = await _start(ctl, service)
+        msg = f"{stop_msg}\n{start_msg}"
+
+    if service in _BOOT_RENDER_DIFF_SERVICES:
+        diff_msg = await _run_boot_render_diff()
+        if diff_msg:
+            msg = f"{msg}\n\n{diff_msg}"
+
+    return msg
+
+
+async def _run_boot_render_diff() -> str:
+    """Run `scripts/boot-render-diff` and return its advisory output.
+
+    Fail-soft: never raises, never blocks sync_restart completion. A
+    timeout, non-zero exit, or crashed subprocess becomes a brief warning
+    line in the restart log — the restart itself is authoritative.
+    """
+    import pathlib
+    import subprocess
+
+    script = (
+        pathlib.Path(__file__).resolve().parents[3] / "scripts" / "boot-render-diff"
+    )
+    if not script.is_file():
+        return ""
+
+    def _run() -> str:
+        try:
+            proc = subprocess.run(
+                [str(script)],
+                capture_output=True,
+                text=True,
+                timeout=45.0,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                "[boot-render-diff] timed out after 45s (advisory; restart unaffected)"
+            )
+        except Exception as exc:  # pragma: no cover — defensive
+            return f"[boot-render-diff] failed: {exc} (advisory; restart unaffected)"
+
+        body = (proc.stdout or "").strip()
+        if proc.returncode != 0 and proc.stderr:
+            body = (body + "\n" + proc.stderr.strip()).strip()
+        return body
+
+    return await asyncio.to_thread(_run)

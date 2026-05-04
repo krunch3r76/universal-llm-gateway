@@ -29,7 +29,13 @@ def _resolve_transcript(
             "error": "transcript_not_found",
             "transcript_id": clean_id,
             "transcript_entity_id": entity_key,
-            "detail": f"Entity {entity_key} not found in Cortex. Typo or stale reference?",
+            "detail": (
+                f"Entity {entity_key} not found in Cortex. "
+                "If the session that supplied this transcript_id is still active, "
+                "the entity will not be committed until that session closes — "
+                "this is expected, not an error. "
+                "Boot will proceed without continuation context."
+            ),
         }
 
     source_uri = entity_raw.get("source_uri") or ""

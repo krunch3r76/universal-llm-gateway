@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
-from .operations import (
+from universal_logging import get_logger
+
+from .operation_parameters import (
     _coerce_limit,
     _coerce_since_ts,
     _get_session_start_ts,
@@ -14,7 +15,7 @@ from .operations import (
 )
 from .store import EventStore
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _STARTUP_SIGNALS: tuple[str, ...] = (
     "cloud.proxy.started",

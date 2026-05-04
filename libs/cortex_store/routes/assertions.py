@@ -49,6 +49,7 @@ from ..models import (
     SupersedeResponse,
 )
 from ..near_dup import check_near_duplicate, record_near_duplicate
+from ..projection_guard import assert_projection_covers_required
 
 logger = logging.getLogger("cortex-api.assertions")
 
@@ -139,6 +140,17 @@ _JSON_FIELDS = frozenset({"evidence_uris"})
 _ASSERTION_COMPACT_COLS = (
     "id, entity_id, claim, confidence, seeded_by, derivation_type, "
     "observed_at, created_at, evidence"
+)
+
+# Fail loud at module import (i.e. at `sync_restart cortex_api`) when the
+# compact projection drifts out of alignment with `AssertionItem`'s required
+# fields — the drift that produced the silent zero-items regression in
+# agent-bus thread 882 turn 13.
+assert_projection_covers_required(
+    cols=_ASSERTION_COMPACT_COLS,
+    model=AssertionItem,
+    const_name="_ASSERTION_COMPACT_COLS",
+    source_file=__file__,
 )
 
 _VALID_CONFIDENCE = {"confirmed", "believed", "suspected", "hypothesized"}

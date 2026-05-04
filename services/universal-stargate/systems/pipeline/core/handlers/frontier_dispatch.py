@@ -90,7 +90,13 @@ class FrontierDispatchHandler(BaseHandler):
     """Native-endpoint frontier dispatch with persona-conditional hydration."""
 
     step_type: str = "frontier_dispatch_v1"
-    _READ_TOOL_NAMES: tuple[str, ...] = ("cortex", "rag")
+    # ``_TEAM_TOOL_NAMES`` is the curated tier consulted only by Anthropic
+    # persona-bound dispatch (Case 2, anthropic branch in
+    # ``resolve_dispatch_tool_set``). Other providers — and persona-free
+    # dispatch (Case 3) — receive the full live MCP catalog. The previous
+    # ``_READ_TOOL_NAMES = ("cortex", "rag")`` curated read-only tier was
+    # retired with the BOE-19-P case-study reopening (Cortex assertion 7974,
+    # 2026-05-01): tool surface is no longer dispatch-path-dependent.
     _TEAM_TOOL_NAMES: tuple[str, ...] = ("cortex", "rag", "agent_bus")
 
     # Caller-supplied keys accepted on ``pipeline_options`` for
@@ -110,7 +116,6 @@ class FrontierDispatchHandler(BaseHandler):
             "remote_mcp",
             "tools",
             "max_tool_turns",
-            "transcript_id",
             "system",
             "generation_parameters",
             "_endpoint_request_id",
@@ -157,12 +162,6 @@ class FrontierDispatchHandler(BaseHandler):
         max_turns = int(raw_turns)
         if max_turns < 1:
             raise ValueError(f"max_tool_turns must be >= 1, got {max_turns}")
-        transcript_id_raw = opts.get("transcript_id") or step.get_domain_field(
-            "transcript_id"
-        )
-        transcript_id: str | None = (
-            str(transcript_id_raw) if transcript_id_raw is not None else None
-        )
 
         user_prompt = resolve_user_prompt(step, context)
         opt_tools = opts.get("tools")
@@ -182,8 +181,6 @@ class FrontierDispatchHandler(BaseHandler):
             agent=agent,
             model=model,
             provider=provider,
-            transcript_id=transcript_id,
-            read_tool_names=self._READ_TOOL_NAMES,
             team_tool_names=self._TEAM_TOOL_NAMES,
             endpoint_request_id=opts.get("_endpoint_request_id"),
             system_prompt=resolve_system_prompt(step, context),
@@ -312,6 +309,8 @@ class FrontierDispatchHandler(BaseHandler):
             raise
         latency_ms = (time.monotonic() - call_start) * 1000.0
 
+        finish_reason = getattr(result, "finish_reason", None)
+        block_reason = getattr(result, "block_reason", None)
         if result.exhausted:
             self._publish_bus_event(
                 context,
@@ -322,6 +321,9 @@ class FrontierDispatchHandler(BaseHandler):
                     tool_calls_made=result.tool_calls_made,
                     provider=result.provider,
                     op=opts.get("op", ""),
+                    finish_reason=finish_reason,
+                    block_reason=block_reason,
+                    enforcement="client",
                 ),
             )
         else:
@@ -337,6 +339,8 @@ class FrontierDispatchHandler(BaseHandler):
                     completion_tokens=result.usage.get("output_tokens", 0),
                     provider=result.provider,
                     op=opts.get("op", ""),
+                    finish_reason=finish_reason,
+                    block_reason=block_reason,
                 ),
             )
             # F3: detect silent empty-completion on the non-exhausted branch
@@ -344,22 +348,47 @@ class FrontierDispatchHandler(BaseHandler):
             # intentional — empty content there is the expected outcome of
             # hitting max_tool_turns. Originally surfaced by Orion execution
             # d65c723b (Cortex assertion 7903).
+            #
+            # Sub-case: a provider-managed tool loop (remote-MCP, or any
+            # loop where the provider stops on its own ceiling) returns
+            # ``content=""`` with ``finish_reason in {tool_calls, length}``.
+            # The native loop never sets ``result.exhausted`` (it only saw
+            # one provider round-trip), so without finish_reason inspection
+            # this looks like a generic empty completion. Re-route to the
+            # ``exhausted`` signal with ``enforcement="provider"`` so traces
+            # are queryable as ceiling hits — observed on execution
+            # ``e07481c4`` (todo:frontier-dispatch-empty-content-exhaustion).
             if not (result.content or "").strip():
-                finish_reason = getattr(result, "finish_reason", None)
-                block_reason = getattr(result, "block_reason", None)
-                self._publish_bus_event(
-                    context,
-                    PipelineFrontierDispatchEmptyCompletion(
-                        execution_id=context.execution_id,
-                        agent=agent,
-                        model=model,
-                        provider=result.provider,
-                        turns_used=result.turns_used,
-                        tool_calls_made=result.tool_calls_made,
-                        finish_reason=finish_reason,
-                        block_reason=block_reason,
-                    ),
-                )
+                ceiling_finish_reasons = {"tool_calls", "tool_use", "length"}
+                if finish_reason in ceiling_finish_reasons:
+                    self._publish_bus_event(
+                        context,
+                        PipelineFrontierDispatchExhausted(
+                            agent=agent,
+                            execution_id=context.execution_id,
+                            turns_used=result.turns_used,
+                            tool_calls_made=result.tool_calls_made,
+                            provider=result.provider,
+                            op=opts.get("op", ""),
+                            finish_reason=finish_reason,
+                            block_reason=block_reason,
+                            enforcement="provider",
+                        ),
+                    )
+                else:
+                    self._publish_bus_event(
+                        context,
+                        PipelineFrontierDispatchEmptyCompletion(
+                            execution_id=context.execution_id,
+                            agent=agent,
+                            model=model,
+                            provider=result.provider,
+                            turns_used=result.turns_used,
+                            tool_calls_made=result.tool_calls_made,
+                            finish_reason=finish_reason,
+                            block_reason=block_reason,
+                        ),
+                    )
                 raise EmptyCompletionError(
                     execution_id=context.execution_id,
                     agent=agent,
@@ -416,6 +445,8 @@ class FrontierDispatchHandler(BaseHandler):
             "exhausted": result.exhausted,
             "cancelled": result.cancelled,
             "provider": result.provider,
+            "finish_reason": finish_reason,
+            "block_reason": block_reason,
             "hydration": hydration_meta,
             "hints": anomaly_hints,
             "reasoning": result.reasoning,

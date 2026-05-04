@@ -349,6 +349,8 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
     completion_tokens: int,
     provider: str,
     op: str = "",
+    finish_reason: str | None = None,
+    block_reason: str | None = None,
 ) -> Event:
     """Emitted when the native tool loop returns final content.
 
@@ -359,6 +361,12 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
         reasoning_present: Whether the model surfaced reasoning trace text
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        finish_reason: Provider-native finish reason from the final response
+            (``stop`` | ``tool_calls`` | ``length`` | ``end_turn`` | None).
+            Surfaced so callers can distinguish a clean stop from a ceiling-hit
+            (``tool_calls`` or ``length`` with empty content) without parsing
+            the raw envelope.
+        block_reason: Provider-native block reason, if any (Google safety stops).
     """
     return Event(
         signal="pipeline.frontier.dispatch.completed",
@@ -372,6 +380,8 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
             "completion_tokens": completion_tokens,
             "provider": provider,
             "op": op,
+            "finish_reason": finish_reason,
+            "block_reason": block_reason,
         },
         scope="node",
     )
@@ -800,6 +810,9 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
     tool_calls_made: int,
     provider: str,
     op: str = "",
+    finish_reason: str | None = None,
+    block_reason: str | None = None,
+    enforcement: str = "client",
 ) -> Event:
     """Emitted when the tool loop hits ``max_tool_turns`` without terminal content.
 
@@ -807,8 +820,19 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
     configured budget. Content returned to the caller may be empty or the
     last assistant message that still included tool_calls.
 
+    Two enforcement paths fire this signal:
+    - ``enforcement="client"`` (default): the in-process ``run_native_tool_loop``
+      cut the loop at ``max_turns``. ``result.exhausted`` is True.
+    - ``enforcement="provider"``: a provider-managed loop (remote-MCP) returned
+      ``content=""`` with ``finish_reason in {"tool_calls", "length"}``. The
+      pipeline never saw an explicit exhausted flag, but the response shape is
+      indistinguishable from a ceiling hit.
+
     Payload:
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        finish_reason: Provider-native finish reason on the final response.
+        block_reason: Provider-native block reason, if any.
+        enforcement: ``client`` | ``provider`` — which side stopped the loop.
     """
     return Event(
         signal="pipeline.frontier.dispatch.exhausted",
@@ -819,6 +843,9 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
             "tool_calls_made": tool_calls_made,
             "provider": provider,
             "op": op,
+            "finish_reason": finish_reason,
+            "block_reason": block_reason,
+            "enforcement": enforcement,
         },
         scope="node",
     )
@@ -856,6 +883,48 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
             "model": model,
             "provider": provider,
             "reason": reason,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineFrontierDispatchToolListSupplied(  # noqa: N802
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    tool_count: int,
+    tool_names: list[str],
+) -> Event:
+    """Emitted when a caller passes an explicit ``pipeline_options.tools`` list.
+
+    Soft invariant violation per Kaywan 2026-05-01 (Cortex assertion 7974):
+    *"tools are not a concern to any agent or human — all tools are available
+    by default."* The dispatch infrastructure exposes the full MCP catalog
+    when ``mcp=True``; explicit ``tools`` lists pin a narrower surface than
+    the system would otherwise provide and bypass the universal-catalog
+    contract.
+
+    The list is honored (no rejection — soft, not hard, invariant) so legacy
+    callers continue to function while the pattern is surfaced for retirement.
+    Track via ``observability(operation='recent-events',
+    params={'signal': 'pipeline.frontier.dispatch.tools.supplied'})``
+    to identify call sites still relying on the explicit-tools escape hatch.
+
+    Signal segment-count: capped at 5 by ``EVENT_SIGNAL_PATTERN`` in
+    ``libs/universal_event_bus/events/validation.py`` — hence ``tools``
+    (plural) collapses what would otherwise be ``tool.list.supplied`` (6).
+    """
+    return Event(
+        signal="pipeline.frontier.dispatch.tools.supplied",
+        payload={
+            "execution_id": execution_id,
+            "agent": agent,
+            "model": model,
+            "provider": provider,
+            "tool_count": tool_count,
+            "tool_names": tool_names,
         },
         scope="node",
     )

@@ -34,7 +34,6 @@ class _DispatchCommon(BaseModel):
 
     messages: list[dict[str, Any]]
     system: str = ""
-    tools: list[str] | None = None
     reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
     max_tool_turns: int | None = None
@@ -78,6 +77,10 @@ class FrontierDispatchGenerateBody(_DispatchCommon):
 
     op: Literal["generate"]
     model: str
+    # ``mcp`` knob is exposed only on the persona-free surface. Default is
+    # False — the canonical use of frontier_dispatch is one-shot inline-substrate
+    # reasoning. Pass True to enable the MCP tool loop.
+    mcp: bool = False
 
 
 class FrontierDispatchToThreadBody(_DispatchCommon):
@@ -87,6 +90,7 @@ class FrontierDispatchToThreadBody(_DispatchCommon):
     model: str
     thread: str
     subject: str | None = None
+    mcp: bool = False
 
 
 FrontierDispatchBody = Annotated[
@@ -107,7 +111,6 @@ def _normalize_op_body(
     common: dict[str, Any] = {
         "messages": body.messages,
         "system": body.system,
-        "tools": body.tools,
         "reasoning_effort": body.reasoning_effort,
         "generation_options": body.generation_options,
         "max_tool_turns": body.max_tool_turns,
@@ -117,11 +120,15 @@ def _normalize_op_body(
         "timeout_seconds": body.timeout_seconds,
     }
 
-    # Carry agent / model depending on variant
+    # Carry agent / model / mcp depending on variant. ``mcp`` is exposed only
+    # on the frontier (persona-free) surface; team variants derive mcp from
+    # agent provider in service.build_dispatch_body.
     if hasattr(body, "agent"):
         common["agent"] = body.agent
     if hasattr(body, "model"):
         common["model"] = body.model
+    if hasattr(body, "mcp"):
+        common["mcp"] = body.mcp
 
     if body.op == "generate":
         common["output_contract"] = "inline"

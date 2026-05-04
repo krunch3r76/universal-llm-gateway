@@ -48,7 +48,7 @@ class FrontierGenerateRequest:
     model: str | None = None
     agent: str | None = None
     system: str = ""
-    tools: list[str] | None = None
+    mcp: bool | None = None
     reasoning_effort: str | None = None
     generation_options: dict[str, Any] | None = None
     max_tool_turns: int | None = None
@@ -197,20 +197,6 @@ def _enforce_options(
     )
 
 
-def _resolve_effective_tools(
-    requested: list[str] | None, meta: AgentMeta
-) -> list[str] | None:
-    """Derive effective tools from caller request only (persona meta.tools retired
-    per todo:retire-tools-allowlist-as-caller-concern). Downstream dispatch
-    handler performs provider-derived resolution and silent coercion for quirks
-    (e.g. xAI multi-agent models).
-    """
-    if requested is not None:
-        return list(requested)
-    # Permissive: let frontier_dispatch_tools.resolve_dispatch_tool_set decide.
-    return None
-
-
 async def build_dispatch_body(
     req: FrontierGenerateRequest, event_publisher: EventPublisher | None = None
 ) -> dict[str, Any]:
@@ -222,7 +208,6 @@ async def build_dispatch_body(
                 request_id=request_id,
                 agent=req.agent,
                 model=req.model,
-                has_tools=bool(req.tools),
             )
         )
 
@@ -235,9 +220,7 @@ async def build_dispatch_body(
         # fetches; keeps a 3-reflection floor. The pipeline-handler hydration
         # in resolve_dispatch_tool_set must mirror this profile to avoid the
         # final dispatched prompt regaining a heavy briefing card.
-        bundle = await hydrate_agent(
-            req.agent, req.transcript_id, profile="light", model=req.model
-        )
+        bundle = await hydrate_agent(req.agent, profile="light", model=req.model)
         meta = bundle.agent_meta
         if event_publisher is not None:
             event_publisher(
@@ -256,28 +239,9 @@ async def build_dispatch_body(
             )
         # Persona injection is driven by agent presence. Persona-free dispatches
         # skip this branch entirely via the outer ``if req.agent`` guard.
-        #
-        # Reject tools=[] for MCP-capable non-inline-only agents. Inline-only
-        # agents (capability_tier="inline-only", xAI multi-agent models today)
-        # have their tool affordances suppressed from the prompt via
-        # bundle.inline_only, so tools=[] on the wire is consistent with what
-        # the prompt tells them. For other agents (Orion, Bard, Claudes), the
-        # birth prompt and preamble still reference tool access, so tools=[]
-        # would create false affordances — reject instead. Callers who want
-        # no tools should use frontier_dispatch (persona-free dispatch).
-        if req.tools == [] and not bundle.inline_only:
-            raise _emit_rejection(
-                request_id=request_id,
-                agent=req.agent,
-                field="tools",
-                reason=(
-                    f"tools=[] suppresses the MCP tool loop for agent {req.agent!r}, "
-                    "whose birth prompt expects tool access. Use frontier_dispatch "
-                    "for persona-free dispatch, or set capability_tier='inline-only' "
-                    "on the agent entity to explicitly demote it."
-                ),
-                event_publisher=event_publisher,
-            )
+        # The team_dispatch surface has no ``mcp`` knob — tool surface is
+        # derived from the agent provider in the mcp_enabled computation
+        # below (xAI agents → mcp=False; all others → mcp=True).
         system_assembled = assemble_system_prompt(
             req.agent,
             briefing_card_md=bundle.briefing_card_md,
@@ -341,13 +305,20 @@ async def build_dispatch_body(
         meta=meta,
         event_publisher=event_publisher,
     )
-    # Tools enforcement retired (no per-persona allowlist; see
-    # todo:retire-tools-allowlist-as-caller-concern). Caller may still supply
-    # explicit tools for compatibility, but meta.tools ignored. Downstream
-    # frontier_dispatch handler derives full set + performs silent coercion for
-    # provider quirks (e.g. xAI multi-agent).
-    effective_tools = _resolve_effective_tools(req.tools, meta)
-    mcp_enabled = effective_tools is None or bool(effective_tools)
+    # Tools field retired from the public dispatch surface
+    # (todo:retire-tools-param-from-dispatch-mcp-surface). Tool surface is now
+    # contract-derived per dispatch surface:
+    # - team_dispatch (req.agent is set, no caller mcp knob): xAI agents
+    #   (oppie, forge) get mcp=False — multi-agent variants reject client-side
+    #   function tools at the API layer; non-multi-agent xAI reasoning models
+    #   are inline-substrate by team-seat contract. All other team agents
+    #   (orion, bard, api_claude) get mcp=True.
+    # - frontier_dispatch (no req.agent): caller's mcp knob is honored;
+    #   defaults to False at the wire (one-shot reasoning).
+    if req.agent is not None:
+        mcp_enabled = not effective_model.startswith("xai/")
+    else:
+        mcp_enabled = bool(req.mcp) if req.mcp is not None else False
 
     pipeline_options: dict[str, Any] = {
         "model": effective_model,
@@ -358,12 +329,8 @@ async def build_dispatch_body(
     }
     if req.agent:
         pipeline_options["agent"] = req.agent
-    if effective_tools is not None:
-        pipeline_options["tools"] = effective_tools
     if req.max_tool_turns is not None:
         pipeline_options["max_tool_turns"] = req.max_tool_turns
-    if req.transcript_id:
-        pipeline_options["transcript_id"] = req.transcript_id
     if req.remote_mcp is not None:
         pipeline_options["remote_mcp"] = req.remote_mcp
 
@@ -391,6 +358,12 @@ async def build_dispatch_body(
         body["timeout_seconds"] = req.timeout_seconds
     if req.caller_agent:
         body["caller_agent"] = req.caller_agent
+    if req.transcript_id:
+        # Provenance attribution only: records the caller's session ID in the
+        # execution envelope so dispatches can be traced back to their origin.
+        # ∀ dispatched agents: this field is never forwarded into pipeline_options
+        # or the agent's context — the receiving model never sees it.
+        body["caller_transcript_id"] = req.transcript_id
     if req.target_thread is not None:
         body["target_thread"] = req.target_thread
     if req.op is not None:

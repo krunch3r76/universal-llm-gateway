@@ -10,12 +10,15 @@ def FrontierEndpointRequested(  # noqa: N802
     request_id: str,
     agent: str | None,
     model: str | None,
-    has_tools: bool,
 ) -> Event:
     """Endpoint admission for team/frontier generate routes.
 
     Persona-vs-raw is encoded by ``agent``: if non-null, this was a team
     dispatch; if null, this was the persona-free raw engine path.
+
+    ``has_tools`` field retired with the public ``tools`` parameter
+    (todo:retire-tools-param-from-dispatch-mcp-surface) — the field could
+    no longer fire True after the surface graduation.
     """
     return Event(
         signal="frontier.endpoint.requested",
@@ -23,7 +26,6 @@ def FrontierEndpointRequested(  # noqa: N802
             "request_id": request_id,
             "agent": agent,
             "model": model,
-            "has_tools": has_tools,
         },
         scope="node",
     )

@@ -446,7 +446,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             handoff_entry_id = _insert_reflective_entry_tx(
                 conn,
                 agent=body.agent,
-                register="session_handoff",
+                register="self",
                 entry=handoff_prompt,
                 kind="handoff",
                 session_id=body.session_id,

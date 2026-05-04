@@ -236,6 +236,124 @@ components:
           type: array
           items: { $ref: "#/components/schemas/SessionJournalItem" }
 
+    SessionCloseRequest:
+      type: object
+      required: [session_id, agent, transcript_md, summary]
+      properties:
+        session_id:
+          type: string
+          description: "Pattern: {agent}-YYYY-MM-DD-HHMM"
+        agent: { type: string }
+        transcript_md:
+          type: string
+          description: >
+            Verbatim dual-layer transcript. Must contain a structural layer
+            (## Turn N or ## Session Summary) AND a verbatim layer (### User
+            blocks). Hollow structures (no ### User blocks) return 422.
+        summary:
+          type: string
+          description: ">= 20 chars; synthesis of session"
+        domains:
+          type: array
+          items: { type: string }
+          nullable: true
+        decisions:
+          type: array
+          items: { type: string }
+          nullable: true
+        open_items:
+          type: array
+          items: { type: string }
+          nullable: true
+        entity_ids:
+          type: array
+          items: { type: string }
+          nullable: true
+        prior_session_id:
+          type: string
+          nullable: true
+          description: >
+            Previous same-agent session id; creates a `continues` edge from
+            this transcript to the prior. Omit only when this is the first
+            session in an arc.
+        handoff_prompt:
+          type: string
+          nullable: true
+          description: >
+            Agent-authored continuation prompt for the next session. Lands
+            server-side as a reflective journal entry (kind="handoff",
+            register="self") linked to this transcript via
+            link_type="handoff_for". Renders verbatim in the next boot
+            card's Last Session block. Omission triggers a non-blocking
+            post-close `missing_handoff` warning. See
+            agent-skills/web-session-close.md Step 2c.
+        dry_run:
+          type: boolean
+          default: false
+          description: "Validate-only, no file or DB write"
+
+    SessionCloseResponse:
+      type: object
+      required: [transcript_entity_id, transcript_path, journal_row_id, session_id]
+      properties:
+        transcript_entity_id:
+          type: string
+          description: "e.g. transcript:web-2026-05-04-0844"
+        transcript_path: { type: string }
+        journal_row_id: { type: integer }
+        session_id: { type: string }
+        handoff_entry_id:
+          type: integer
+          nullable: true
+          description: >
+            Reflective journal entry id when handoff_prompt was provided;
+            null otherwise. Use as direct reference to the handoff entry
+            for downstream tooling (e.g. arc-view handoffs queries).
+        transcript_warnings:
+          type: array
+          items: { type: string }
+          description: "Advisory structural warnings (non-blocking)"
+        _warning:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: >
+            Audit warnings from pre-close gate (warn mode) and/or post-close
+            detectors. Post-close findings under `post_close_findings`
+            include `missing_handoff` and `prior_session_id_omitted` kinds.
+
+    BootContinuityResponse:
+      type: object
+      properties:
+        last_session:
+          type: object
+          properties:
+            session_id: { type: string }
+            agent: { type: string }
+            timestamp: { type: string }
+            summary: { type: string }
+            transcript_entity_id: { type: string }
+          nullable: true
+        handoff:
+          type: object
+          properties:
+            entry_id: { type: integer }
+            text: { type: string }
+          nullable: true
+          description: "Verbatim handoff prompt from prior session"
+        continuity_chain:
+          type: array
+          items: { type: string }
+          description: "Ordered session_ids forming the recent chain"
+        continuations:
+          type: array
+          items: { type: string }
+          description: "Sibling continuations from the prior session, if any"
+        hints:
+          type: array
+          items: { type: string }
+          description: 'Render hints (e.g. "no_handoff_captured")'
+
   responses:
     BadRequest:
       description: Invalid request parameters
@@ -474,3 +592,64 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SessionJournalItem" }
+
+  /session-journals/close:
+    post:
+      operationId: closeSession
+      summary: Atomic session close (transcript + entity + journal + continues edge + optional handoff)
+      description: >
+        Single-transaction session close. Writes transcript file, creates
+        `transcript:{session_id}` entity, inserts the session journal row,
+        creates a `continues` edge to `prior_session_id` if provided, and
+        optionally inserts a reflective journal handoff entry linked to the
+        transcript. Rejects stub transcripts and dual-layer-hollow transcripts
+        with 422. Post-close detectors (`missing_handoff`,
+        `prior_session_id_omitted`) attach warnings to `_warning` but do not
+        block. See agent-skills/web-session-close.md and
+        agent-skills/session-close-audit.md.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SessionCloseRequest" }
+      responses:
+        "201":
+          description: Session closed atomically
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionCloseResponse" }
+        "422":
+          description: >
+            Transcript validation failed. Reason codes:
+            transcript.hollow, transcript.missing_structure,
+            summary.too_short, session_id.invalid.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  reason: { type: string }
+
+  /boot-continuity:
+    get:
+      operationId: getBootContinuity
+      summary: Continuity payload for an agent's next boot card
+      description: >
+        Returns the prior session's handoff prompt (if captured), the
+        recent continuity chain, and any sibling continuations. Used by
+        cortex_boot to render the Last Session block. Falls back to a
+        `no_handoff_captured` hint when the prior session omitted
+        `handoff_prompt`.
+      parameters:
+        - name: agent
+          in: query
+          required: true
+          schema: { type: string }
+          description: "Agent whose latest session continuity to render"
+      responses:
+        "200":
+          description: Continuity payload
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BootContinuityResponse" }

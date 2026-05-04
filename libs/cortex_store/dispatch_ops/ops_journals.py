@@ -533,7 +533,33 @@ def _op_session_close(
         if val is not None:
             body[key] = val
 
-    result = _close_session_impl(body)
+    try:
+        result = _close_session_impl(body)
+    except Exception as exc:
+        try:
+            abs_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Failed to clean up transcript file after session_close exception: %s",
+                abs_path,
+            )
+            record(
+                "mcp.session.close.cleanup.failed",
+                session_id=session_id,
+                agent=agent,
+            )
+        logger.error(
+            "session_close: DB transaction raised after transcript write for %s: %s",
+            session_id,
+            exc,
+        )
+        record(
+            "mcp.session.close.write.failed",
+            session_id=session_id,
+            agent=agent,
+            error=str(exc),
+        )
+        return {"error": f"Session close failed after transcript write: {exc}"}
     if "error" in result:
         try:
             abs_path.unlink(missing_ok=True)

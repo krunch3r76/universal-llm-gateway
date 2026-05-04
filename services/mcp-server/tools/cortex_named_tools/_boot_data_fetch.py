@@ -2,86 +2,12 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 from urllib.parse import urlencode
-
-import httpx
 
 from .._boot_helpers import safe_list
 from .._cortex_relay import _cx
 from .._local_relay import relay as _relay
-
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
-
-
-def _fetch_rag_pipeline_state(stargate_url: str) -> dict[str, Any]:
-    """Fetch RAG pipeline stall indicators for the boot briefing.
-
-    Synchronous — submitted to the boot ThreadPoolExecutor alongside other relay
-    callables. Uses httpx.Client (sync) so the coroutine is not submitted to a
-    thread pool unawaited. Timeout is 2s to bound boot-path latency.
-
-    Returns {"unreachable": True} on total failure; partial failures return
-    whatever data was successfully fetched (pending/stale may both be 0 on
-    partial failure, which is acceptable — boot should not fail because RAG is down).
-    """
-    from mcp_events import record as _record
-
-    pending = 0
-    failures = 0
-    stale_vocab = 0
-    auth_token = os.environ.get("MCP_AUTH_TOKEN", "")
-    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
-    try:
-        with httpx.Client(timeout=2.0, headers=headers) as client:
-            try:
-                queue_resp = client.get(f"{stargate_url}/api/v1/rag/extraction/queue")
-                if queue_resp.status_code == 200:
-                    data = queue_resp.json()
-                    pending = data.get("breakdown", {}).get("total", 0)
-                else:
-                    _record(
-                        "mcp.rag.boot.fetch.failed",
-                        endpoint="extraction/queue",
-                        error=f"HTTP {queue_resp.status_code}",
-                    )
-            except Exception as exc:
-                _record(
-                    "mcp.rag.boot.fetch.failed",
-                    endpoint="extraction/queue",
-                    error=str(exc),
-                )
-
-            try:
-                status_resp = client.get(f"{stargate_url}/api/v1/rag/indexing/status")
-                if status_resp.status_code == 200:
-                    data = status_resp.json()
-                    failures = data.get(
-                        "indexing_failures_permanent_count", 0
-                    ) + data.get("indexing_failures_transient_count", 0)
-                    stale_vocab = data.get("stale_corpus_hints_count", 0)
-                else:
-                    _record(
-                        "mcp.rag.boot.fetch.failed",
-                        endpoint="indexing/status",
-                        error=f"HTTP {status_resp.status_code}",
-                    )
-            except Exception as exc:
-                _record(
-                    "mcp.rag.boot.fetch.failed",
-                    endpoint="indexing/status",
-                    error=str(exc),
-                )
-
-        return {
-            "pending_contextualization": pending,
-            "indexing_failures": failures,
-            "stale_corpus_hints": stale_vocab,
-        }
-    except Exception as exc:
-        _record("mcp.rag.boot.fetch.failed", endpoint="all", error=str(exc))
-        return {"unreachable": True}
 
 
 def _build_futures_spec(
@@ -97,7 +23,6 @@ def _build_futures_spec(
     """
     cx = recorder.wrap("cortex", _cx)
     relay = recorder.wrap("agent-bus", _relay)
-    rag = recorder.wrap("stargate", _fetch_rag_pipeline_state)
 
     unread_turns_qs = urlencode(
         {"to": agent, "unread": "true", "last": 10, "compact": "true"}
@@ -115,6 +40,7 @@ def _build_futures_spec(
     # Read-only fetch-graph audit (blocking contract for BootMode.INSPECT):
     #
     # - sessions: GET /session-journals?...            -> list-only read
+    # - continuity: GET /boot-continuity?agent=...     -> list-only read
     # - threads: GET /threads?status=active            -> list-only read
     # - unread_turns: GET /turns?...                   -> read-only (no mark_read)
     # - deadlines: GET /deadlines                      -> list-only read
@@ -125,13 +51,14 @@ def _build_futures_spec(
     # - recent_mentions: GET /boot-recent-mentions?... -> list-only read
     # - skills: GET /entities?type=agent_skill...      -> list-only read
     # - recent_work: GET /boot-recent-work             -> list-only read
-    # - rag_pipeline: GET /api/v1/rag/* status routes  -> list-only read
     # - self_reflections: GET /assertions?...          -> list-only read
     #
     # Any mutating fetch in this graph is a hard blocker for INSPECT mode.
     futures_spec: dict[str, tuple[Any, ...]] = {
         # read-only: list recent session journals for boot continuity
         "sessions": (cx, "GET", f"/session-journals?{session_qs}"),
+        # read-only: fetch last-session handoff + continuity chain
+        "continuity": (cx, "GET", f"/boot-continuity?{urlencode({'agent': agent})}"),
         # read-only: compact attention list — has_unread=true&limit=10
         "threads": (relay, "agent-bus", "GET", f"/threads?{threads_qs}"),
         # read-only: unread lookup only; query does not include mark_read
@@ -194,8 +121,6 @@ def _build_futures_spec(
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (cx, "GET", "/boot-recent-work")
-    # read-only: fetch RAG status endpoints (queue + indexing status)
-    futures_spec["rag_pipeline"] = (rag, _STARGATE_URL)
 
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
@@ -261,11 +186,6 @@ def _extract_boot_results(
         else []
     )
 
-    rag_pipeline_raw = raw.get("rag_pipeline")
-    rag_pipeline: dict[str, Any] = (
-        rag_pipeline_raw if isinstance(rag_pipeline_raw, dict) else {}
-    )
-
     if agent == "web":
         _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
         todos = [t for t in todos if t.get("domain") not in _web_domain_exclude]
@@ -292,6 +212,7 @@ def _extract_boot_results(
 
     return {
         "sessions": sessions,
+        "continuity": raw.get("continuity") if isinstance(raw.get("continuity"), dict) else {},
         "deadlines": deadlines,
         "threads": threads,
         "unread_turns": unread_turns,
@@ -308,5 +229,4 @@ def _extract_boot_results(
         "temporal_active": temporal_active,
         "expired_unresolved": expired_unresolved,
         "review_total": review_total,
-        "rag_pipeline": rag_pipeline,
     }

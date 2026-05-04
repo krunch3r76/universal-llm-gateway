@@ -102,34 +102,6 @@ def _deadline_line(d: dict[str, Any], today: datetime) -> str:
     )
 
 
-def render_rag_stanza(rag: dict[str, Any]) -> str:
-    """Render a compact RAG pipeline health line for the boot card.
-
-    Returns an empty string when the pipeline is healthy (no actionable signals).
-    Only renders on actionable signals: pending > 0, failures > 0, or unreachable.
-
-    `stale_corpus_hints` is intentionally NOT rendered here — it's a steady-state
-    counter (typically 50+) with no out-of-band threshold, and surfaced bare it
-    becomes observability noise. Agents who care can query `rag(op="coverage")`.
-    """
-    if not rag:
-        return ""
-    if rag.get("unreachable"):
-        return "RAG pipeline : unreachable — skip ingest work this session\n"
-    pending = rag.get("pending_contextualization", 0)
-    failures = rag.get("indexing_failures", 0)
-    if pending == 0 and failures == 0:
-        return ""
-    lines = ["RAG pipeline"]
-    if pending:
-        lines.append(
-            f"  Pending contextualization : {pending} sources   (Jupiter required)"
-        )
-    if failures:
-        lines.append(f"  Indexing failures          : {failures}")
-    return "\n".join(lines) + "\n"
-
-
 def render_briefing_card(
     *,
     deadlines: list[dict[str, Any]] | None = None,
@@ -138,6 +110,7 @@ def render_briefing_card(
     review_total: int | None = None,
     review_top: list[dict[str, Any]] | None = None,
     last_session: dict[str, Any] | None = None,
+    continuity: dict[str, Any] | None = None,
     self_reflections: list[dict[str, Any]] | None = None,
     todos: list[dict[str, Any]] | None = None,
     todo_total: int = 0,
@@ -152,7 +125,6 @@ def render_briefing_card(
     skills_unpartitioned_count: int = 0,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
-    rag_state: dict[str, Any] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -280,7 +252,28 @@ def render_briefing_card(
         ts = last_session.get("timestamp", "?")
         rel = _relative_time(str(ts), now)
         parts.append(f"\n## Last Session — {agent} ({rel})")
-        parts.append(last_session.get("summary", "No summary.")[:300])
+        handoff = continuity.get("handoff") if isinstance(continuity, dict) else None
+        chain = continuity.get("continuity_chain", []) if isinstance(continuity, dict) else []
+        continuations = continuity.get("continuations", []) if isinstance(continuity, dict) else []
+        hints = continuity.get("hints", []) if isinstance(continuity, dict) else []
+        if handoff and handoff.get("text"):
+            parts.append("**Handoff**")
+            parts.append(str(handoff.get("text", "")).strip())
+        else:
+            parts.append(last_session.get("summary", "No summary.")[:300])
+            if "no_handoff_captured" in hints:
+                parts.append("")
+                parts.append("_Hint: no_handoff_captured_")
+        if chain:
+            parts.append("")
+            parts.append("**Continuity**")
+            if continuations:
+                prefix = chain[:-1]
+                latest = chain[-1]
+                rendered = " → ".join(prefix + [f"[continuations: {', '.join(continuations + [latest])}]", "[you are here]"])
+            else:
+                rendered = " → ".join(chain + ["[you are here]"])
+            parts.append(rendered)
         open_items = last_session.get("open_items", [])
         if open_items:
             parts.append(f"**Open items** ({len(open_items)}):")
@@ -303,11 +296,6 @@ def render_briefing_card(
             for t in in_flight_todos:
                 domain_tag = f" [{t['domain']}]" if t.get("domain") else ""
                 parts.append(f"- `{t.get('id', '?')}`{domain_tag} {t.get('name', '')}")
-
-    if rag_state is not None:
-        rag_stanza = render_rag_stanza(rag_state)
-        if rag_stanza:
-            parts.append(f"\n## System Health\n{rag_stanza}")
 
     if todos:
         parts.append(f"\n## Todos — {todo_total} open")
@@ -388,5 +376,6 @@ def render_briefing_card(
         reflective_total=reflective_total,
         recent_mentions=recent_mentions,
         skills=skills,
+        continuity=continuity,
     )
     return card, manifest

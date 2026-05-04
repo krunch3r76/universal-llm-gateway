@@ -23,7 +23,7 @@ async def test_permissive_persona_accepts_anything(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
@@ -41,7 +41,6 @@ async def test_permissive_persona_accepts_anything(
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "hello"}],
         agent="orion",
-        tools=["cortex"],
         generation_options={"max_tokens": 12, "temperature": 0.2},
     )
     body = await build_dispatch_body(req)
@@ -49,14 +48,15 @@ async def test_permissive_persona_accepts_anything(
     assert body["model"] == "frontier-dispatch"
     assert options["agent"] == "orion"
     assert options["model"] == "openai/gpt-5.4-mini"
-    assert options["tools"] == ["cortex"]
+    assert "tools" not in options
+    assert options["mcp"] is True
     assert options["_endpoint_request_id"]
 
 
 @pytest.mark.asyncio
 async def test_strict_persona_rejects_model(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
@@ -81,10 +81,73 @@ async def test_strict_persona_rejects_model(monkeypatch: pytest.MonkeyPatch) -> 
     assert exc.value.field == "model"
 
 
-# test_strict_persona_rejects_tools removed — tools allowlist retired per
-# TODO:retire-tools-allowlist-as-caller-concern. Explicit tools now always
-# accepted (enforcement was in _enforce_tools which is gone); downstream
-# dispatch handler derives tool set.
+# test_strict_persona_rejects_tools removed — tools field retired per
+# todo:retire-tools-param-from-dispatch-mcp-surface. The Stargate request
+# schema no longer accepts ``tools``. team_dispatch has no caller mcp knob
+# either; tool surface is derived from the agent provider (xAI agents →
+# mcp=False, all others → mcp=True). See
+# test_team_dispatch_xai_agent_auto_suppresses_mcp +
+# test_team_dispatch_non_xai_agent_enables_mcp.
+
+
+@pytest.mark.asyncio
+async def test_team_dispatch_xai_agent_auto_suppresses_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """xAI team agents (oppie, forge) get mcp=False auto-derived — no caller knob."""
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="xai/grok-4.20-multi-agent-0309",
+                allowed_models=["xai/grok-4.20-multi-agent-0309"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        agent="oppie",
+    )
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["mcp"] is False
+
+
+@pytest.mark.asyncio
+async def test_team_dispatch_non_xai_agent_enables_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-xAI team agents (orion, bard, api_claude) get mcp=True auto-derived."""
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.4-mini",
+                allowed_models=[],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        agent="orion",
+    )
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["mcp"] is True
 
 
 @pytest.mark.asyncio
@@ -92,7 +155,7 @@ async def test_strict_persona_rejects_generation_options_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
@@ -120,7 +183,7 @@ async def test_strict_persona_rejects_generation_options_keys(
 @pytest.mark.asyncio
 async def test_default_model_used_when_omitted(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_hydrate(
-        agent: str, transcript_id: str | None, **_k: Any
+        agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
         return _bundle(
             AgentMeta(
@@ -145,7 +208,8 @@ async def test_default_model_used_when_omitted(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
-async def test_request_id_is_propagated_and_permissive_tools_fallback() -> None:
+async def test_request_id_is_propagated_and_persona_free_mcp_defaults_false() -> None:
+    """Persona-free dispatch defaults to mcp=False (one-shot reasoning)."""
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
         model="openai/gpt-5.4-mini",
@@ -154,7 +218,19 @@ async def test_request_id_is_propagated_and_permissive_tools_fallback() -> None:
     options: dict[str, Any] = body["pipeline_options"]
     assert options["_endpoint_request_id"]
     assert "tools" not in options
-    assert options["mcp"] is True
+    assert options["mcp"] is False
+
+
+@pytest.mark.asyncio
+async def test_persona_free_mcp_true_propagates() -> None:
+    """Persona-free dispatch honors caller-supplied mcp=True."""
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5.4-mini",
+        mcp=True,
+    )
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["mcp"] is True
 
 
 @pytest.mark.asyncio

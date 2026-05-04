@@ -92,8 +92,6 @@ async def resolve_dispatch_tool_set(
     agent: str | None,
     model: str,
     provider: str,
-    transcript_id: str | None,
-    read_tool_names: tuple[str, ...],
     team_tool_names: tuple[str, ...],
     endpoint_request_id: str | None,
     system_prompt: str,
@@ -104,10 +102,18 @@ async def resolve_dispatch_tool_set(
 
     Three cases:
     - Endpoint-supplied: ``opt_tools`` is a ``list`` (from ``frontier_dispatch``).
+      Soft invariant violation per Kaywan 2026-05-01 (Cortex assertion 7974):
+      tools are not a caller concern; the catalog is universal. Honored for
+      compatibility but emits ``pipeline.frontier.dispatch.tool.list.supplied``.
     - Persona-bound: ``agent`` is set — hydrates agent and selects tool tier.
       xAI: multi-agent models get ``tools=[]`` (server-side built-ins injected
-      via ``provider_options``); non-multi-agent models get client-side tools.
-    - Persona-free: no agent, curated read-only tools or none.
+      via ``provider_options``); non-multi-agent models get the full live MCP
+      catalog.
+    - Persona-free: no agent — full live MCP catalog when ``mcp_enabled``,
+      same surface as persona-bound generic-provider dispatch. The dispatch
+      path (``frontier_dispatch`` vs ``team_dispatch``) no longer determines
+      the tool surface; ``mcp=False`` or ``remote_mcp`` is the suppression
+      signal.
     """
     from agent_seat import (
         TEAM_TOOL_DEFINITIONS,
@@ -120,11 +126,17 @@ async def resolve_dispatch_tool_set(
 
     from ..events.dispatch import (
         PipelineFrontierDispatchHydrated,
+        PipelineFrontierDispatchToolListSupplied,
         PipelineFrontierDispatchToolSuppressed,
     )
 
     if isinstance(opt_tools, list):
         # Case 1: endpoint-supplied tool list (frontier_dispatch with explicit tools).
+        # Soft invariant: the dispatch infrastructure exposes the full MCP catalog
+        # by default when ``mcp=True``. Callers that pass an explicit ``tools`` list
+        # are pinning a narrower set than the system would otherwise provide; this
+        # is honored for back-compat but logged + observed so the pattern can be
+        # surfaced and retired (assertion 7974).
         if agent and not endpoint_request_id:
             raise ValueError(
                 "pipeline_options.tools with pipeline_options.agent is only "
@@ -134,6 +146,24 @@ async def resolve_dispatch_tool_set(
         resolved_names = [str(name) for name in opt_tools if isinstance(name, str)]
         if len(resolved_names) != len(opt_tools):
             raise ValueError("pipeline_options.tools must be a list[str]")
+        logger.warning(
+            "frontier dispatch caller supplied explicit tools list "
+            "(soft invariant violation; catalog is universal when mcp=True): "
+            "execution_id=%s agent=%s tool_count=%d",
+            execution_id,
+            agent or "",
+            len(resolved_names),
+        )
+        publish(
+            PipelineFrontierDispatchToolListSupplied(
+                execution_id=execution_id,
+                agent=agent,
+                model=model,
+                provider=provider,
+                tool_count=len(resolved_names),
+                tool_names=resolved_names,
+            ),
+        )
         if not mcp_enabled or remote_mcp:
             tools: list[dict[str, Any]] = []
         else:
@@ -158,9 +188,7 @@ async def resolve_dispatch_tool_set(
         # with extra_system=system_prompt. If the two hydration calls used different
         # profiles, the heavier one would dominate the final dispatched prompt
         # because ``assemble_system_prompt`` appends both briefings.
-        bundle = await hydrate_agent(
-            agent, transcript_id, profile="light", model=model
-        )
+        bundle = await hydrate_agent(agent, profile="light", model=model)
         publish(
             PipelineFrontierDispatchHydrated(
                 agent=agent,
@@ -219,12 +247,15 @@ async def resolve_dispatch_tool_set(
         }
         return tools, assembled_system, hydration_meta
 
-    # Case 3: persona-free dispatch — read-only curated tools or none.
+    # Case 3: persona-free dispatch — full live MCP catalog when mcp_enabled.
+    # Aligned with Case 2's generic-provider branch so the dispatch path
+    # (frontier_dispatch vs team_dispatch) no longer determines the tool
+    # surface — closes the BOE-19-P-vintage divergence where frontier_dispatch
+    # exposed only ("cortex", "rag") while team_dispatch exposed the full
+    # catalog. ``mcp=False`` or ``remote_mcp`` remains the suppression signal.
     if not mcp_enabled or remote_mcp:
         tools = []
     else:
-        tools = await resolve_default_tools(
-            read_tool_names,
-            fallback=list(TOOL_DEFINITIONS),
-        )
+        live = await get_mcp_tool_definitions()
+        tools = live or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
     return tools, system_prompt, {"agent": None}

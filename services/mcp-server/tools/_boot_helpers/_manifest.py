@@ -14,6 +14,7 @@ def _build_manifest(
     reflective_total: int,
     recent_mentions: list[dict[str, Any]] | None,
     skills: list[dict[str, Any]] | None,
+    continuity: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the section manifest returned alongside the briefing card."""
     manifest: list[dict[str, Any]] = []
@@ -43,6 +44,14 @@ def _build_manifest(
             "hint": "cortex(tool='journal_read', arguments='{\"limit\": 5}')",
         }
     )
+    if continuity:
+        manifest.append(
+            {
+                "section": "continuity",
+                "has_handoff": bool(continuity.get("handoff")),
+                "hint": "GET /boot-continuity via cortex-api",
+            }
+        )
     if unread_count > 0:
         manifest.append(
             {

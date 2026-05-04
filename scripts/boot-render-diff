@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+"""Advisory smoke gate — diffs boot-render manifest vs the last recorded baseline.
+
+Motivated by agent-bus thread 882 turn 12 → turn 13: a `session_tag`
+prefix (~25 bytes) silently crept into every cursor briefing card's
+"Your Notes" section via a renderer-side regex parse of `evidence`.
+Byte-count checks missed it; only the second render pass caught it by
+eye. This script makes that class of drift mechanically detectable on
+every deploy.
+
+What it does
+------------
+For each agent profile (`cursor`, `web`, …), runs `run_cortex_boot` in
+INSPECT mode and writes a canonical manifest containing:
+
+* One entry per ``injected_artifact`` with its ``name``, ``bytes``, and
+  ``sha256`` (the canonical-text hash — catches content drift).
+* One entry per ``fetch`` with its tool+params, ``rows``, and ``bytes``
+  (catches projection-shape drift — the thread-882 turn-13 class).
+
+The manifest is stored at ``tmp/boot-baselines/{agent}.json``. On each
+run, the current manifest is compared to the stored baseline; the diff
+is printed to stdout. The baseline is then overwritten with the current
+manifest so the next run has a fresh reference.
+
+Emission policy is **advisory**: exit 0 on drift (since briefing cards
+drift naturally — countdowns tick, deadlines land, new assertions seed).
+Hard-fail would be silenced; advisory-visible stays useful. Only actual
+failures (can't reach cortex-api, can't parse response) exit nonzero.
+
+Trigger
+-------
+Wired into the ``sync_restart`` flow for ``cortex_api`` and ``mcp``
+(services whose state or render logic can change the boot surface). The
+diff surfaces in the manage daemon's restart console log where a human
+is already looking. Pre-commit triggers are explicitly rejected —
+they'd reproduce the attention-layer failure this gate is meant to
+prevent.
+
+Usage
+-----
+    scripts/boot-render-diff                 # diff all known agents
+    scripts/boot-render-diff --agent cursor  # diff one agent
+    scripts/boot-render-diff --seed          # write baselines, skip diff
+
+Exit status
+-----------
+* 0 — success (regardless of whether drift was detected)
+* 1 — infrastructure failure (cortex-api unreachable, bad response)
+"""
+
+from __future__ import annotations
+
+import argparse
+import difflib
+import hashlib
+import json
+import logging
+import sys
+import traceback
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+BASELINE_DIR = REPO_ROOT / "tmp" / "boot-baselines"
+DEFAULT_AGENTS = ("cursor", "web")
+
+
+def _import_boot_runner() -> Any:
+    """Late-bind the MCP server's boot runner.
+
+    The script lives outside the mcp-server package so it can run from a
+    host shell (the manage daemon) without importing the whole fastmcp
+    stack up-front. Fails softly with a clear message when the package
+    isn't reachable.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "services" / "mcp-server"))
+    try:
+        from tools.cortex_named_tools._boot_runner import (  # type: ignore[import-not-found]
+            BootMode,
+            run_cortex_boot,
+        )
+    except ImportError as exc:
+        print(
+            f"boot-render-diff: cannot import MCP boot runner ({exc}). "
+            "Ensure ~/.venvs/universal is active and the repo is on sys.path.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+    return run_cortex_boot, BootMode
+
+
+def _canonical_manifest(agent: str, result: dict[str, Any]) -> dict[str, Any]:
+    """Extract the stable-diff subset of a boot result.
+
+    Explicitly excludes timing (``duration_ms``), server-minted IDs
+    (``session_id``), wall clocks (``utc_now``, ``local_time``), and
+    filesystem paths that vary per run. What remains is the render's
+    *content surface*: artifact bytes/sha256 and per-fetch bytes/rows.
+    """
+    artifacts_out: list[dict[str, Any]] = []
+    for art in result.get("injected_artifacts", []) or []:
+        artifacts_out.append(
+            {
+                "name": art.get("name"),
+                "mode": art.get("mode"),
+                "bytes": art.get("bytes"),
+                "sha256": art.get("sha256"),
+                "sections": art.get("sections"),
+            }
+        )
+    # Fetches are executed in a ThreadPoolExecutor — their arrival order is
+    # nondeterministic. Canonicalize by (tool, json(params)) so the manifest
+    # is stable across runs; a new tool appearing or a fetch disappearing is
+    # real drift, but reordering of identical fetches is not.
+    fetch_index: dict[tuple[str, str], dict[str, Any]] = {}
+    for art in result.get("injected_artifacts", []) or []:
+        for fetch in art.get("fetches", []) or []:
+            tool = str(fetch.get("tool"))
+            params_key = json.dumps(fetch.get("params") or {}, sort_keys=True)
+            fetch_index[(tool, params_key)] = {
+                "tool": tool,
+                "params": fetch.get("params") or {},
+                "rows": fetch.get("rows"),
+                "bytes": fetch.get("bytes"),
+            }
+    fetches_out = [fetch_index[k] for k in sorted(fetch_index)]
+    artifacts_out.sort(key=lambda a: (a.get("name") or "", a.get("mode") or ""))
+
+    briefing = next(
+        (a for a in artifacts_out if a.get("name") == "briefing_card"),
+        None,
+    )
+    return {
+        "agent": agent,
+        "briefing_card_sha256": briefing.get("sha256") if briefing else None,
+        "briefing_card_bytes": briefing.get("bytes") if briefing else None,
+        "artifacts": artifacts_out,
+        "fetches": fetches_out,
+    }
+
+
+def _canonical_text(manifest: dict[str, Any]) -> str:
+    """Pretty-sorted JSON form for stable diffing."""
+    return json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+
+
+def _baseline_path(agent: str) -> Path:
+    return BASELINE_DIR / f"{agent}.json"
+
+
+def _load_baseline(agent: str) -> str | None:
+    path = _baseline_path(agent)
+    if not path.is_file():
+        return None
+    return path.read_text()
+
+
+def _write_baseline(agent: str, manifest_text: str) -> None:
+    BASELINE_DIR.mkdir(parents=True, exist_ok=True)
+    _baseline_path(agent).write_text(manifest_text)
+
+
+def _render_manifest(agent: str) -> dict[str, Any]:
+    run_cortex_boot, boot_mode = _import_boot_runner()
+    # Silence INFO-level httpx fetch chatter — the manifest is enough.
+    logging.disable(logging.WARNING)
+    try:
+        result = run_cortex_boot(agent=agent, transcript_id="", mode=boot_mode.INSPECT)
+    finally:
+        logging.disable(logging.NOTSET)
+    return _canonical_manifest(agent, result)
+
+
+def _format_diff(old: str, new: str, agent: str) -> str:
+    diff = difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+        fromfile=f"{agent}.baseline",
+        tofile=f"{agent}.current",
+        n=3,
+    )
+    return "".join(diff)
+
+
+def _diff_one(agent: str, *, seed_only: bool) -> int:
+    """Return count of diff-hunk lines emitted (0 == clean or baseline-seeded)."""
+    try:
+        manifest = _render_manifest(agent)
+    except Exception as exc:  # infrastructure failure — surface loudly
+        print(f"boot-render-diff[{agent}]: render failed: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return -1
+
+    current = _canonical_text(manifest)
+    baseline = _load_baseline(agent)
+
+    sha = hashlib.sha256(current.encode()).hexdigest()[:12]
+
+    if baseline is None:
+        _write_baseline(agent, current)
+        print(
+            f"boot-render-diff[{agent}]: seeded baseline (manifest sha {sha}), "
+            f"{len(manifest['fetches'])} fetches, "
+            f"briefing_card={manifest.get('briefing_card_bytes')} B "
+            f"sha={(manifest.get('briefing_card_sha256') or '')[:12]}"
+        )
+        return 0
+
+    if seed_only:
+        _write_baseline(agent, current)
+        print(f"boot-render-diff[{agent}]: baseline refreshed (manifest sha {sha})")
+        return 0
+
+    if baseline == current:
+        print(
+            f"boot-render-diff[{agent}]: no drift (manifest sha {sha}, "
+            f"{len(manifest['fetches'])} fetches)"
+        )
+        return 0
+
+    diff_text = _format_diff(baseline, current, agent)
+    hunk_lines = sum(
+        1
+        for line in diff_text.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+    print(
+        f"boot-render-diff[{agent}]: DRIFT DETECTED (manifest sha {sha}, {hunk_lines} changed lines)"
+    )
+    print(diff_text, end="")
+    _write_baseline(agent, current)
+    return hunk_lines
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--agent",
+        action="append",
+        help=f"Agent profile to check (repeatable). Default: {', '.join(DEFAULT_AGENTS)}.",
+    )
+    parser.add_argument(
+        "--seed",
+        action="store_true",
+        help="Overwrite existing baselines without comparing. Use after intentional render changes.",
+    )
+    args = parser.parse_args(argv)
+
+    agents = tuple(args.agent) if args.agent else DEFAULT_AGENTS
+    failures = 0
+    for agent in agents:
+        rc = _diff_one(agent, seed_only=args.seed)
+        if rc < 0:
+            failures += 1
+
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

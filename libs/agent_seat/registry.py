@@ -27,7 +27,7 @@ _AGENT_PROVIDERS: dict[str, str] = {
 _AGENT_DEFAULTS: dict[str, str] = {
     "oppie": "xai/grok-4.20-multi-agent-0309",
     "orion": "openai/gpt-5.4",
-    "bard": "google/gemini-2.5-pro",
+    "bard": "google/gemini-2.5-flash",
     "api_claude": "anthropic/claude-sonnet-4-6",
     "forge": "xai/grok-4.20-0309-reasoning",
 }
