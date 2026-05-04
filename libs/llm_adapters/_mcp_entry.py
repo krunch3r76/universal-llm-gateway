@@ -1,7 +1,7 @@
 """Shared helpers for provider-native remote-MCP entries.
 
 Builds the per-provider MCP descriptor shape used both by the pipeline /
-``frontier_generate`` path (via ``FrontierRequest.remote_mcp=True`` →
+``frontier_dispatch`` path (via ``FrontierRequest.remote_mcp=True`` →
 adapter ``build_frontier_request``) and by the cloud-proxy external-wire
 path (``-mcp`` suffix detection in ``native_routes._forward_native``).
 

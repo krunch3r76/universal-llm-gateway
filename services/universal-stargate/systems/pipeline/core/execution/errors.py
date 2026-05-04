@@ -232,7 +232,7 @@ class RemoteMcpUnsupportedError(PipelineError):
     value is incompatible with the resolved provider's current capability.
 
     Enforcement lives in the step handler so direct pipeline dispatches (not
-    just MCP ``frontier_generate``) are validated. Capability matrix
+    just MCP ``frontier_dispatch``) are validated. Capability matrix
     (∀ provider ∉ the handler's remote-MCP allowlist: ``remote_mcp=True`` is
     rejected; ∀ provider: ``remote_mcp=False`` is accepted):
 
@@ -284,7 +284,7 @@ class UnknownPipelineOptionsError(PipelineError):
     hours of agent debugging when reasoning levers appeared to be ignored.
     Hard-rejecting unknown keys at admission catches the typo upstream and
     points the caller at the right key or the right tool
-    (``team_generate`` for persona consults; ``frontier_generate`` for
+    (``team_dispatch`` for persona consults; ``frontier_dispatch`` for
     persona-free raw engine).
     """
 
@@ -299,10 +299,10 @@ class UnknownPipelineOptionsError(PipelineError):
             f"[Step '{self.step_name}']{who} unknown pipeline_options "
             f"keys: {self.unknown_keys}. Accepted: {self.accepted_keys}. "
             "For persona consults (oppie/orion/bard/api_claude/forge/cursor-*) prefer "
-            "`team_generate` — it validates options against the persona's "
+            "`team_dispatch` — it validates options against the persona's "
             "contract from Cortex ai_agent entity (MCP access granted to all "
             "except Oppie/Oppia multi-agent). For raw persona-free dispatches "
-            "prefer `frontier_generate`."
+            "prefer `frontier_dispatch`."
         )
 
     def to_dict(self) -> dict:

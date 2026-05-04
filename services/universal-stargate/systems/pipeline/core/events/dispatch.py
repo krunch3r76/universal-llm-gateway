@@ -596,7 +596,7 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
     Replaces the deprecated ``mcp.frontier.output.short`` signal: the same
     anomaly is now observable for every ``frontier_dispatch_v1`` caller
     (MCP sugar, pipeline callers, future HTTP surfaces) instead of only
-    callers entering through ``frontier_generate``. Gate is ``boot_level ∈
+    callers entering through ``frontier_dispatch``. Gate is ``boot_level ∈
     {team, full}`` plus the short-output threshold — enforced inside
     ``detect_output_short``. The handler passes ``boot_level="team"`` for
     persona dispatches and ``"none"`` otherwise; the detector filters the
@@ -732,8 +732,8 @@ def PipelineFrontierDispatchBootMismatch(  # noqa: N802
         boot_mode: Internal handler-derived dispatch tier that caused the
             violation (``team`` for persona dispatches). NOT a caller-supplied
             value; derived at the handler from agent presence. The public MCP
-            surface has no ``boot`` parameter — see ``team_generate`` /
-            ``frontier_generate``.
+            surface has no ``boot`` parameter — see ``team_dispatch`` /
+            ``frontier_dispatch``.
         reason: Human-readable explanation including fix guidance
     """
     return Event(

@@ -43,10 +43,13 @@ def _build_artifacts(
     """Assemble the InjectedArtifact list for a boot.
 
     Shared between LIVE mode (run_cortex_boot) and INSPECT mode
-    (boot_inspect → run_cortex_boot with mode=INSPECT). When op_ctx_written
-    is False, the operational_context artifact is recorded as `inline`
-    (its bytes are returned to the caller via operational_context_inline,
-    not written to disk).
+    (boot_inspect → run_cortex_boot with mode=INSPECT). The
+    operational_context artifact is recorded as `written_file` with `path`
+    set to the canonical on-disk location regardless of whether THIS boot
+    wrote the file. INSPECT does not perform the disk write (preserving
+    its no-side-effects contract) but still surfaces the path so callers
+    can `fs read` it directly — that file is rewritten by every LIVE boot
+    for the same agent.
 
     Ownership notes:
 
@@ -71,12 +74,20 @@ def _build_artifacts(
         ),
         InjectedArtifact.from_text(
             name="operational_context",
-            mode="written_file" if op_ctx_written else "inline",
+            # Always reported as `written_file` — the path is the contract.
+            # LIVE writes; INSPECT relies on prior LIVE having written. The
+            # bytes/sha256 still describe THIS boot's render so cross-boot
+            # diff stays accurate.
+            mode="written_file",
             source=f"render_operational_context(agent={agent!r})",
             text=ops_context,
-            path=op_ctx_path if op_ctx_written else None,
+            path=op_ctx_path,
         ),
     ]
+    # `op_ctx_written` is retained on the call surface for callers that need
+    # to distinguish "this boot wrote the file" from "the file may already
+    # exist on disk"; not currently consumed downstream of artifact assembly.
+    _ = op_ctx_written
     # Every sections_available entry → one manifest_only artifact.
     for section in manifest:
         artifacts.append(
@@ -173,13 +184,21 @@ def run_cortex_boot(
         todos=extracted["todos"] or None,
         todo_total=len(extracted["todos"]),
         temporal_active=extracted["temporal_active"] or None,
-        expired_unresolved=extracted["expired_unresolved"] or None,
+        # Expired-unresolved is intentionally NOT rendered on the briefing card.
+        # The bucket is dominated by stale temporal-ledger rows (Chase statement
+        # periods, PG&E billing cycles) that aged past `valid_until` but have no
+        # corresponding "resolution event" — the supersede footer the section
+        # used to render assumed an action that doesn't exist for billing
+        # cycles. Forensic access still works via the temporal endpoint
+        # directly: `cortex GET /boot-temporal` returns the bucket whether or
+        # not the briefing renders it.
+        expired_unresolved=None,
         transcript_continuation=tc_summary,
-        op_ctx_path=op_ctx_path,
         reflective_entries=extracted["rj_entries"] or None,
         reflective_total=extracted["rj_total"],
         recent_mentions=extracted["recent_mentions"] or None,
         skills=extracted["skills"] or None,
+        skills_unpartitioned_count=extracted.get("skills_unpartitioned_count", 0),
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
         rag_state=extracted.get("rag_pipeline") or None,
@@ -228,8 +247,17 @@ def run_cortex_boot(
         "local_time": t_boot.astimezone(_LA).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "briefing_card": card,
         "sections_available": manifest,
-        "operational_context_inline": ops_context if mode == BootMode.INSPECT else None,
-        "operational_context_ref": op_ctx_path if op_ctx_written else None,
+        # Inline emission is retired — the operational_context artifact
+        # ships ~22 KB of mostly-static protocol prose that LIVE mode
+        # already writes to disk. INSPECT callers `fs read` the path
+        # directly, identical to LIVE callers. Field preserved (None) so
+        # legacy consumers don't NPE on missing key.
+        "operational_context_inline": None,
+        # Path is now the contract for both modes. LIVE writes the file;
+        # INSPECT reads what LIVE wrote (or accepts a 404 if no LIVE boot
+        # for this agent has run yet — acceptable degradation, the content
+        # is deterministic from the renderer at the same git rev).
+        "operational_context_ref": op_ctx_path,
         "injected_artifacts": serialize_manifest(artifacts),
         "audit_dump_path": audit_dump_path,
     }

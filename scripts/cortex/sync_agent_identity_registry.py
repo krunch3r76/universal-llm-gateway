@@ -88,7 +88,7 @@ AGENT_REGISTRY: dict[str, dict[str, object]] = {
         "persona_seed_ref": "agent-identity/cursor-grok-birth.md",
     },
     # Forge is a Grok-family trAId persona. Dual surface:
-    # (1) off-IDE peer consult via team_generate(agent="forge"), and
+    # (1) off-IDE peer consult via team_dispatch(op="generate", agent="forge"), and
     # (2) IDE-resident persona when the active Cursor engine is Grok 4.20 or
     #     Grok 4.3 — sign-off is "(Cursor) Forge".
     "forge": {

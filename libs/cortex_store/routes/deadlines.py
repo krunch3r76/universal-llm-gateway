@@ -14,16 +14,31 @@ router = APIRouter(prefix="/deadlines", tags=["deadlines"])
 
 _RESOLVED_OUTCOMES = frozenset({"defaulted", "met", "withdrawn", "superseded"})
 
-# Inline query — includes deadline_id for the assertion-based resolution filter.
+# Two attribute-key shapes exist on deadline entities:
+#   - `$.date` (older deadlines created pre-2026-04)
+#   - `$.deadline_date` (newer deadlines, including BOE-19-P 2026-05-05)
+# COALESCE both so neither shape silently drops out of the boot card.
+#
+# Includes deadline_id for the assertion-based resolution filter.
 # ∀ entity d with type-relationship 'deadline_for' m: d.id is needed so
 # _has_resolved_assertion() can check confirmed RESOLVED assertions on d directly.
+#
+# UNION arm 2 surfaces todo entities that carry their own `deadline_date`
+# attribute (and aren't already routed through a linked deadline entity).
+# Per agent-bus thread 882 (option A): one unified ranked list of date-bearing
+# items — agents reading the boot don't care about the source-table distinction.
+# The matter_id/matter_name cells are repurposed to point at the todo itself
+# so the briefing card render shape is unchanged.
 _DEADLINES_SQL = """
     SELECT
         m.id AS matter_id,
         m.name AS matter_name,
         d.id AS deadline_id,
         d.name AS deadline_name,
-        json_extract(d.attributes, '$.date') AS deadline_date,
+        COALESCE(
+            json_extract(d.attributes, '$.deadline_date'),
+            json_extract(d.attributes, '$.date')
+        ) AS deadline_date,
         json_extract(d.attributes, '$.description') AS deadline_description,
         json_extract(d.attributes, '$.urgency') AS urgency,
         json_extract(d.attributes, '$.outcome') AS outcome
@@ -31,6 +46,23 @@ _DEADLINES_SQL = """
     JOIN relationships r ON r.to_entity = m.id AND r.type = 'deadline_for'
     JOIN entities d ON r.from_entity = d.id
     WHERE m.type = 'legal_matter'
+
+    UNION ALL
+
+    SELECT
+        t.id AS matter_id,
+        t.name AS matter_name,
+        t.id AS deadline_id,
+        t.name AS deadline_name,
+        json_extract(t.attributes, '$.deadline_date') AS deadline_date,
+        NULL AS deadline_description,
+        json_extract(t.attributes, '$.urgency') AS urgency,
+        NULL AS outcome
+    FROM entities t
+    WHERE t.type = 'todo'
+      AND json_extract(t.attributes, '$.deadline_date') IS NOT NULL
+      AND (t.workflow_state IS NULL OR t.workflow_state IN ('open', 'in_progress'))
+
     ORDER BY deadline_date
 """
 

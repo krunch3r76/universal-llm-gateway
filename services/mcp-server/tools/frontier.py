@@ -1,21 +1,26 @@
-"""Team and frontier dispatch MCP relays to Stargate.
+"""team_dispatch + frontier_dispatch MCP relays to Stargate.
 
-Four tools in two generations:
+Two tools, two contracts:
 
-**Current generation (dispatch-surface-split Phase 1):**
-- ``team_dispatch(op=..., agent=...)`` — persona-required, op-discriminated.
-  ``op="generate"`` returns inline; ``op="to_thread"`` posts result to thread.
-- ``frontier_dispatch(op=..., model=...)`` — persona-free, op-discriminated.
+- ``team_dispatch(op=..., agent=..., messages=..., ...)`` is the persona-required
+  door for team-seat consults (oppie, orion, bard, api_claude, forge).
+  Op enum: "generate" (returns content via tracker) or "to_thread"
+  (dispatches with reply landing on ``thread``).
+- ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is the persona-free
+  raw engine call. Same op enum.
 
-**Legacy (Phase 4 retirement pending):**
-- ``team_generate(agent=...)`` — persona-required door, ``result_delivery``-based
-  push. Active surface: 32 observed calls in last 15h. ¬remove until Phase 4.
-- ``frontier_generate(...)`` — persona-free raw engine call. No observed traffic
-  (signal absent from Event Service). Phase 4 rename is a near-no-op.
+Both are thin async-by-default relays: forward to Stargate, return the dispatch
+envelope (execution_id, pipeline, started_at, status) immediately.
 
-All four tools share ``_relay`` for transport, JSON envelope handling, and error
-normalization. The split lives at the public-API boundary (tool registration):
-no caller-facing flag toggles persona injection.
+Callers:
+- For ``op="generate"``: poll with ``pipeline(op="result", execution_id=...)``
+  to retrieve content.
+- For ``op="to_thread"``: read the agent's reply with
+  ``agent_bus(tool="fetch", arguments={"thread": ...})``. The tracker's
+  terminal status reflects observed reply on the thread.
+
+Both tools share ``_relay`` for transport, JSON envelope handling, and error
+normalization.
 """
 
 from __future__ import annotations
@@ -45,9 +50,9 @@ async def _relay(
 ) -> dict[str, Any]:
     """Forward body to a Stargate endpoint and normalize the response envelope.
 
-    Shared by both ``team_generate`` and ``frontier_generate`` registrations.
+    Shared by ``team_dispatch`` and ``frontier_dispatch``.
     The ``record_prefix`` parameter routes telemetry rows to the right per-tool
-    signal namespace (``mcp.team.generate.*`` vs ``mcp.frontier.generate.*``).
+    signal namespace (``mcp.team.dispatch.*`` vs ``mcp.frontier.dispatch.*``).
     """
     async with make_async_client(
         DEFAULT_STARGATE_URL, timeout=_RELAY_TIMEOUT
@@ -142,126 +147,8 @@ async def _relay(
 
 
 def register_frontier_tools(mcp: FastMCP) -> None:
-    """Register dispatch tools: current-gen (team_dispatch, frontier_dispatch)
-    and legacy (team_generate, frontier_generate — Phase 4 retirement pending)."""
+    """Register dispatch tools: team_dispatch and frontier_dispatch."""
 
-    @mcp.tool(title="Team Generate")
-    async def team_generate(
-        agent: str,
-        messages: list[dict[str, Any]],
-        model: str | None = None,
-        system: str = "",
-        tools: list[str] | None = None,
-        reasoning_effort: str | None = None,
-        generation_options: dict[str, Any] | None = None,
-        max_tool_turns: int | None = None,
-        transcript_id: str | None = None,
-        result_delivery: dict[str, Any] | None = None,
-        caller_agent: str | None = None,
-        timeout_seconds: int | None = None,
-    ) -> dict[str, Any]:
-        """Persona-aware team-seat dispatch (async-by-default).
-
-        Default door for any team consult (`oppie`, `orion`, `bard`,
-        `api_claude`, `forge`). Stargate resolves persona contract and
-        assembles birth prompt + briefing + continuation.
-
-        Returns immediately with `{execution_id, pipeline, status, started_at}`.
-        Poll with `pipeline(op="result", execution_id=...)` or use
-        `result_delivery` for a pointer envelope push at terminal transition
-        (posts execution metadata + poll URL to the bus thread — NOT model
-        content; poll `pipeline(op="result")` after receiving the envelope
-        to retrieve the actual output).
-
-        For raw engine calls without persona assembly use `frontier_generate`.
-        """
-        body: dict[str, Any] = {
-            "messages": messages,
-            "agent": agent,
-            "system": system,
-        }
-        if tools is not None:
-            body["tools"] = tools
-        for key, val in (
-            ("model", model),
-            ("reasoning_effort", reasoning_effort),
-            ("generation_options", generation_options),
-            ("max_tool_turns", max_tool_turns),
-            ("transcript_id", transcript_id),
-            ("result_delivery", result_delivery),
-            ("caller_agent", caller_agent),
-            ("timeout_seconds", timeout_seconds),
-        ):
-            if val is not None:
-                body[key] = val
-
-        record(
-            "mcp.team.generate.called",
-            agent=agent,
-            model=model or "",
-            reasoning_effort=reasoning_effort or "",
-        )
-        return await _relay(
-            endpoint="/api/v1/team/generate",
-            body=body,
-            record_prefix="mcp.team.generate",
-        )
-
-    @mcp.tool(title="Frontier Generate")
-    async def frontier_generate(
-        messages: list[dict[str, Any]],
-        model: str,
-        system: str = "",
-        reasoning_effort: str | None = None,
-        generation_options: dict[str, Any] | None = None,
-        max_tool_turns: int | None = None,
-        transcript_id: str | None = None,
-        result_delivery: dict[str, Any] | None = None,
-        caller_agent: str | None = None,
-        timeout_seconds: int | None = None,
-    ) -> dict[str, Any]:
-        """Persona-free raw native-frontier dispatch (async-by-default).
-
-        Direct engine call: no persona, no allowlists, no system-prompt
-        assembly. Caller supplies their own ``system`` prompt or omits it for an
-        empty system. For team-seat dispatches use ``team_generate`` instead.
-
-        Returns immediately with ``{execution_id, pipeline, status, started_at}``.
-        Poll with ``pipeline(op="result", execution_id=...)`` or use
-        ``result_delivery`` for a pointer envelope push at terminal transition
-        (posts execution metadata + poll URL — NOT model content; poll
-        ``pipeline(op="result")`` after receiving the envelope to retrieve
-        the actual output).
-        """
-        body: dict[str, Any] = {
-            "messages": messages,
-            "model": model,
-            "system": system,
-        }
-        for key, val in (
-            ("reasoning_effort", reasoning_effort),
-            ("generation_options", generation_options),
-            ("max_tool_turns", max_tool_turns),
-            ("transcript_id", transcript_id),
-            ("result_delivery", result_delivery),
-            ("caller_agent", caller_agent),
-            ("timeout_seconds", timeout_seconds),
-        ):
-            if val is not None:
-                body[key] = val
-
-        record(
-            "mcp.frontier.generate.called",
-            model=model,
-            reasoning_effort=reasoning_effort or "",
-        )
-        return await _relay(
-            endpoint="/api/v1/frontier/generate",
-            body=body,
-            record_prefix="mcp.frontier.generate",
-        )
-
-    # ---- dispatch-surface-split Phase 1: op-discriminated tools ----
 
     @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
@@ -292,8 +179,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           if absent).
 
         Use ``frontier_dispatch`` for raw engine calls without a persona.
-
-        Replaces ``team_generate`` (Phase 4 retirement pending).
         """
         body: dict[str, Any] = {
             "op": op,
@@ -373,8 +258,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``thread`` is required.
 
         Use ``team_dispatch`` for persona-aware dispatch with agent seat assignment.
-
-        Replaces ``frontier_generate`` (Phase 4 retirement pending).
         """
         body: dict[str, Any] = {
             "op": op,

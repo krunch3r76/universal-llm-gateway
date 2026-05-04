@@ -77,7 +77,7 @@ def normalize_agent_slug(slug: str) -> str:
     - Hyphen/underscore/ space variants (api-claude, web claude → canonical key)
     - Returns key that matches _AGENT_* dicts and _SELF_ENTITY in hydration.
 
-    This ensures team_generate, hydrate_agent, load_birth_prompt etc. accept
+    This ensures team_dispatch, hydrate_agent, load_birth_prompt etc. accept
     natural references from birth prompts (e.g. web claude's "Oppie").
     """
     if not isinstance(slug, str):

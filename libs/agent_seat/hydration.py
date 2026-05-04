@@ -40,7 +40,7 @@ _FETCH_TIMEOUT = 20.0
 # (no cursor-specific knobs).
 #
 # ``default`` — full briefing for full-context dispatches
-# ``light``   — lightweight briefing for team_generate / frontier_generate(agent=...)
+# ``light``   — lightweight briefing for team_dispatch / frontier_dispatch(agent=...)
 #               soft boot. Drops deadlines + review-queue fetches (latency win
 #               beyond token reduction — the include_* gates in hydrate_agent
 #               below short-circuit the fetches entirely, not just rendering).
@@ -90,7 +90,7 @@ def _normalize_slug_to_entity(agent: str) -> str:
     Uses registry.normalize_agent_slug (case-insensitive, supports Oppie/Oppia,
     cursor_orion, cursor_grok, forge, etc.) before lookup in _SELF_ENTITY.
     Falls back to ``ai_agent:{canonical}`` for unknown slugs. This ensures
-    self_reflections, assertions, and full boot context for all team_generate
+    self_reflections, assertions, and full boot context for all team_dispatch
     targets (MCP access validated for all except Oppie/Oppia multi-agent).
     """
     canonical = normalize_agent_slug(agent)
@@ -396,7 +396,7 @@ async def hydrate_agent(
 
     ``profile`` selects fetch + render shape from ``_PROFILES``:
     - ``"default"`` — full context (deadlines, review queue, 5 reflections, 3 sessions)
-    - ``"light"``   — soft boot for team_generate / frontier_generate(agent=...)
+    - ``"light"``   — soft boot for team_dispatch / frontier_dispatch(agent=...)
                       (drops deadlines + review queue, 3 reflections floor, 1 session)
     Truthiness gates in ``_render_briefing`` collapse empty sections naturally;
     no separate render-shape flag needed.

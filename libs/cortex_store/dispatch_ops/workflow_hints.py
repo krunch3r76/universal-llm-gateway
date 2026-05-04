@@ -108,7 +108,8 @@ _FRICTION_HINT = (
 )
 
 _CORTEX_FORMAT_HINT = (
-    "arguments must be an object or a JSON-encoded object. "
+    "arguments must be a JSON-encoded object string (the MCP tool schema "
+    "declares type=string). "
     'Example: cortex(tool="entity_get", arguments=\'{"entity_id": "service:mcp-server"}\')'
 )
 

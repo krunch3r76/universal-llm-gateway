@@ -128,11 +128,18 @@ def list_threads_v2(
     status: str | None = None,
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
+    has_unread: bool | None = None,
+    limit: int | None = None,
 ) -> list[dict[str, Any]]:
     """List threads with optional status + lifecycle_state + AND-tag filter.
 
     `tags`: threads must have ALL listed tags. None or [] = no tag filter.
     `lifecycle_state`: exact match on bus_lifecycle_state. None = no filter.
+    `has_unread`: when True, only return threads with at least one unread turn.
+        When False, only return threads with zero unread turns. None = no
+        filter (default; preserves prior behaviour).
+    `limit`: cap result count. None = no cap. Applied after ORDER BY so the
+        most recently updated threads are returned first.
     """
     base = _thread_detail_sql()
     params: list[Any] = []
@@ -157,7 +164,21 @@ def list_threads_v2(
         params.extend(tag_list)
         params.append(len(tag_list))
     where_clause = f"WHERE {' AND '.join(wheres)}" if wheres else ""
-    sql = f"{base} {where_clause} GROUP BY t.id ORDER BY t.updated_at DESC"
+    # has_unread filters on the aggregate unread_count, so it goes in HAVING
+    # (post-aggregation) rather than WHERE.
+    having_clause = ""
+    if has_unread is True:
+        having_clause = "HAVING unread_count > 0"
+    elif has_unread is False:
+        having_clause = "HAVING unread_count = 0"
+    limit_clause = ""
+    if limit is not None:
+        limit_clause = "LIMIT ?"
+        params.append(int(limit))
+    sql = (
+        f"{base} {where_clause} GROUP BY t.id "
+        f"{having_clause} ORDER BY t.updated_at DESC {limit_clause}"
+    )
     with connect() as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
         tag_map = _load_thread_tags(conn, [r["id"] for r in rows])

@@ -597,7 +597,7 @@ async def test_handler_rejects_raw_agent_plus_endpoint_tools(
         }
     )
 
-    with pytest.raises(ValueError, match="only supported via frontier_generate"):
+    with pytest.raises(ValueError, match="only supported via frontier_dispatch"):
         await handler.execute(step, context)
 
 
@@ -1024,11 +1024,11 @@ async def test_oppie_mcp_false_suppresses_xai_builtin_injection(
 
 
 @pytest.mark.asyncio
-async def test_oppie_explicit_tools_via_frontier_generate_suppresses_injection(
+async def test_oppie_explicit_tools_via_frontier_dispatch_suppresses_injection(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Explicit pipeline_options.tools via frontier_generate bypasses injection.
+    """Explicit pipeline_options.tools via frontier_dispatch bypasses injection.
 
     When a caller passes tools=[] to force persona-only mode (via
     _endpoint_request_id), the xAI server-side built-in injection must not fire.

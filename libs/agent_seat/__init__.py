@@ -1,7 +1,7 @@
 """Agent-seat primitives: tool definitions, hydration, system-prompt assembly, native tool loop.
 
 Shared between:
-- MCP's ``frontier_generate`` (tool definitions + native tool loop via
+- MCP's ``frontier_dispatch`` (tool definitions + native tool loop via
   ``services/mcp-server/tools/_frontier_core.py`` — which delegates to
   ``native_loop.run_native_tool_loop``)
 - Stargate's ``frontier_dispatch_v1`` pipeline handler (tool definitions +

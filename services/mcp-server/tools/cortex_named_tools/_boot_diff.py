@@ -1,9 +1,11 @@
 """Diff two inspect-mode boot results by artifact content.
 
-Inline content (briefing_card, operational_context_inline) is compared against
-canonicalized text where ISO-8601 timestamps are masked. Non-inline artifacts
-use sha256/bytes metadata from injected_artifacts because raw text is not
-present in inspect responses for those entries.
+Inline content (briefing_card) is compared against canonicalized text where
+ISO-8601 timestamps are masked. The operational_context artifact is
+compared via sha256/bytes metadata from injected_artifacts — its inline
+emission was retired (file-on-disk is the contract for both LIVE and
+INSPECT). All other non-inline artifacts likewise use sha256/bytes
+because raw text is not present in inspect responses for those entries.
 """
 
 from __future__ import annotations
@@ -37,8 +39,6 @@ def _build_boot_diff(
 
     primary_card = _canonicalize_for_diff(primary.get("briefing_card"))
     secondary_card = _canonicalize_for_diff(secondary.get("briefing_card"))
-    primary_ops = _canonicalize_for_diff(primary.get("operational_context_inline"))
-    secondary_ops = _canonicalize_for_diff(secondary.get("operational_context_inline"))
 
     deltas: list[dict[str, Any]] = []
     if primary_card != secondary_card:
@@ -50,17 +50,11 @@ def _build_boot_diff(
                 "secondary_canonical_bytes": len(secondary_card.encode("utf-8")),
             }
         )
-    if primary_ops != secondary_ops:
-        deltas.append(
-            {
-                "name": "operational_context",
-                "kind": "inline_canonical_text",
-                "primary_canonical_bytes": len(primary_ops.encode("utf-8")),
-                "secondary_canonical_bytes": len(secondary_ops.encode("utf-8")),
-            }
-        )
 
-    inline_names = {"briefing_card", "operational_context"}
+    # operational_context falls into the sha256_mismatch path along with the
+    # other non-inline artifacts; its inline emission was retired alongside
+    # the boot bandwidth trim.
+    inline_names = {"briefing_card"}
     shared_non_inline = sorted(
         (set(primary_artifacts) & set(secondary_artifacts)) - inline_names
     )

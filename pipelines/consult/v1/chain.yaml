@@ -45,9 +45,6 @@
 #     },
 #     caller_agent="cursor",
 #   )
-# Note: result_delivery is retired (dispatch-surface-split Phase 4). Use
-# team_dispatch(op="to_thread", ...) for bus-mode dispatch going forward.
-
 schema_version: 6
 id: consult-pipeline-v1
 version: "1"

@@ -767,11 +767,11 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style agent_bus tool on the MCP server instance."""
 
     @mcp.tool(title="Agent Bus")
-    def agent_bus(tool: str, arguments: dict[str, Any] | str = "{}") -> Any:
+    def agent_bus(tool: str, arguments: str = "{}") -> Any:
         """Inter-agent message bus — threads, turns, read/reply coordination.
 
         tool: operation name (see table below)
-        arguments: operation arguments as an object or a JSON string
+        arguments: JSON-encoded object string (e.g. '{"thread": "111"}')
 
         Operations:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
@@ -827,8 +827,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
             if parsed is None:
                 return {
                     "error": (
-                        "arguments must be an object or a JSON-encoded object; "
-                        f"got {type(arguments).__name__}"
+                        "arguments must be a JSON-encoded object string "
+                        f"(e.g. '{{\"thread\": \"111\"}}'); got {type(arguments).__name__} "
+                        f"that did not parse as a JSON object"
                     )
                 }
             accepted = set(inspect.signature(handler).parameters)

@@ -1,6 +1,6 @@
 """Tool surface for the multi-model agent loop.
 
-Sync tool-call dispatcher used by MCP's ``frontier_generate``. Tool schema
+Sync tool-call dispatcher used by MCP's ``frontier_dispatch``. Tool schema
 definitions are sourced from ``libs/agent_seat/tools.py`` (single source of
 truth shared with the pipeline ``frontier_dispatch_v1`` handler). Cortex ops
 relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus._AGENT_BUS_OPS``.
@@ -45,10 +45,10 @@ assertions, and relationships.
 def _parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
     """Parse dispatch-style arguments (JSON string or dict). None on failure.
 
-    Both forms are advertised in the tool schema (``dict[str, Any] | str``) so
-    remote-MCP clients whose provider-side validators reject string-typed
-    ``arguments`` (xAI Responses API) can pass objects while legacy callers
-    (Cursor, web clients) keep passing JSON strings unchanged.
+    The MCP tool schemas declare ``arguments: string`` — that's the canonical
+    wire form for every supported MCP client. Dict passthrough is retained as
+    defense-in-depth for non-MCP callers that invoke the same handlers
+    directly with already-parsed payloads (e.g. internal test helpers).
     """
     if isinstance(raw, dict):
         return raw

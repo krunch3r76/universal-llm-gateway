@@ -138,7 +138,7 @@ class PipelineExecutionRecord:
     output_contract: Literal["inline", "thread"] = "inline"
     # Mirrors result_delivery.bus_thread for op="to_thread"
     target_thread: str | None = None
-    # None = legacy path (team_generate / frontier_generate callers)
+    # None = no op discrimination supplied (direct pipeline callers)
     op: Literal["generate", "to_thread"] | None = None
     # ISO-8601 Z; populated by Phase 2 delivery observation
     thread_reply_observed_at: str | None = None

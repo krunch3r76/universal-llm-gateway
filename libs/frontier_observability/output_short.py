@@ -18,7 +18,7 @@ CONTENT_PREVIEW_CHAR_LIMIT = 500
 # Detector gate: only emit short-output observability for persona dispatches.
 # The handler derives ``boot_level="team" if agent else "none"`` at dispatch
 # time; there is no caller-facing ``boot`` parameter on the public
-# ``team_generate`` / ``frontier_generate`` MCP tools. ``boot_level`` is
+# ``team_dispatch`` / ``frontier_dispatch`` MCP tools. ``boot_level`` is
 # internal observability vocabulary marking the dispatch tier. The ``full``
 # alias is preserved for event-store backward read compatibility on historical
 # rows.

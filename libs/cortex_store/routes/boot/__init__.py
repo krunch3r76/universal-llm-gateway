@@ -9,6 +9,7 @@ from . import (
     recent_work,
     reflective,
     sections,
+    skills,
     temporal,
     todos,
 )
@@ -22,5 +23,6 @@ router.include_router(legal_contacts.router)
 router.include_router(recent_mentions.router)
 router.include_router(recent_work.router)
 router.include_router(reflective.router)
+router.include_router(skills.router)
 
 __all__ = ["router"]

@@ -237,7 +237,7 @@ async def _agent_bus_request(
     Stargate's async-dispatch ``result_delivery`` path and the MCP-server's
     ``_local_relay``). Without this header, agent-bus's ``require_token``
     returns 401, breaking persona-side ``agent_bus`` calls from
-    ``team_generate`` tool loops (e.g. Orion posting completion briefs).
+    ``team_dispatch`` tool loops (e.g. Orion posting completion briefs).
     """
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
     if not token:

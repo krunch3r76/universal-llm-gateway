@@ -86,6 +86,25 @@ async def list_threads_route(
     thread_status: ThreadStatus | None = Query(None, alias="status"),
     tags: list[str] | None = Query(None),
     lifecycle_state: str | None = Query(None),
+    has_unread: bool | None = Query(
+        None,
+        description=(
+            "When true, only return threads with at least one unread turn. "
+            "When false, only return threads with zero unread turns. Omit "
+            "for no unread filtering (default)."
+        ),
+    ),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=500,
+        description=(
+            "Cap the result count after ordering by most recent update. "
+            "Boot consumers pair this with `has_unread=true&limit=10` to "
+            "deliver only the inbound attention list without paginating "
+            "the full active-thread set."
+        ),
+    ),
 ) -> ThreadListResponse:
     """List threads with optional status + AND-tag + lifecycle_state filtering.
 
@@ -94,9 +113,16 @@ async def list_threads_route(
 
     `lifecycle_state`: filter by exact lifecycle state value.
     Example: `GET /threads?lifecycle_state=pending`.
+
+    `has_unread` + `limit`: compact attention projection.
+    Example: `GET /threads?status=active&has_unread=true&limit=10`.
     """
     rows = list_threads_v2(
-        status=thread_status, tags=tags, lifecycle_state=lifecycle_state
+        status=thread_status,
+        tags=tags,
+        lifecycle_state=lifecycle_state,
+        has_unread=has_unread,
+        limit=limit,
     )
     return ThreadListResponse(threads=[_thread_detail(r) for r in rows])
 

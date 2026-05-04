@@ -79,9 +79,10 @@ def _list_entities_impl(
     entity_type: str | None = None,
     workflow_state: str | None = None,
     limit: int = 50,
+    for_agent: str | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     clauses: list[str] = []
-    params: list[str | int] = []
+    params: list[object] = []
 
     if entity_type:
         clauses.append("type = ?")
@@ -90,6 +91,19 @@ def _list_entities_impl(
     if workflow_state is not None:
         clauses.append("workflow_state = ?")
         params.append(workflow_state)
+
+    if for_agent:
+        # applicable_agents is a JSON list attribute that names the agent
+        # slugs that should see the entity. NULL / missing → treated as
+        # universal via COALESCE so pre-backfill behaviour is "include".
+        # Currently used by agent_skill but the filter is generic — any
+        # entity type carrying applicable_agents participates.
+        clauses.append(
+            "EXISTS (SELECT 1 FROM json_each("
+            "COALESCE(json_extract(attributes, '$.applicable_agents'), "
+            "json_array('*'))) WHERE value IN ('*', ?))"
+        )
+        params.append(for_agent)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = (
@@ -110,11 +124,25 @@ def list_entities(
         "json_extract(attributes,'$.status') pattern).",
     ),
     limit: int = Query(50, ge=1, le=500),
+    for_agent: str | None = Query(
+        None,
+        description=(
+            "Filter to entities whose `applicable_agents` JSON-list "
+            "attribute contains either `*` (universal) or this agent "
+            "slug. Entities without the attribute are treated as "
+            "universal. Currently consumed by agent_skill boot pulls "
+            "but the filter is generic across all types."
+        ),
+    ),
 ) -> EntityList:
     """List entities, optionally constrained to one entity type / workflow_state."""
     with cortex_conn() as conn:
         data = _list_entities_impl(
-            conn, entity_type=type, workflow_state=workflow_state, limit=limit
+            conn,
+            entity_type=type,
+            workflow_state=workflow_state,
+            limit=limit,
+            for_agent=for_agent,
         )
     return EntityList(items=[EntitySummary(**item) for item in data["items"]])
 

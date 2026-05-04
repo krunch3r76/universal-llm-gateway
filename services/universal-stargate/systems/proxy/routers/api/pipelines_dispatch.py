@@ -48,32 +48,32 @@ _MAX_WAIT_SECONDS = 60.0
 
 # Pipeline ID of the raw native-frontier dispatch path. Bare callers that reach
 # it are bypassing the persona/raw split at the canonical doors:
-# ``/api/v1/team/generate`` (persona) and ``/api/v1/frontier/generate`` (raw),
+# ``/api/v1/team/dispatch`` (persona) and ``/api/v1/frontier/dispatch`` (raw),
 # both of which set ``_endpoint_request_id`` on outgoing pipeline_options. We
 # attach a ``hint`` to the 202 envelope so callers see the right tool on the
 # response that returned ``execution_id``.
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
 _TEAM_GENERATE_HINT = (
-    "agent personas are best dispatched via `team_generate` — persona "
+    "agent personas are best dispatched via `team_dispatch` — persona "
     "allowlists (allowed_models / allowed_options / tools), default_model "
     "resolution, and birth + briefing assembly are bypassed on the raw "
     '`pipeline(pipeline_id="frontier-dispatch")` path.'
 )
 _FRONTIER_GENERATE_HINT = (
-    "raw native-frontier calls are best dispatched via `frontier_generate` — "
+    "raw native-frontier calls are best dispatched via `frontier_dispatch` — "
     "it is the public persona-free door with structured admission and "
     'consistent observability. The raw `pipeline(pipeline_id="frontier-dispatch")` '
     "path skips the canonical admission gate."
 )
 
 
-def _frontier_generate_hint_for(dispatch: DispatchRequest) -> str | None:
+def _canonical_dispatch_hint_for(dispatch: DispatchRequest) -> str | None:
     """Return the canonical-door hint when applicable, else ``None``.
 
     Triggers iff the dispatch targets ``frontier-dispatch`` AND lacks the
-    ``_endpoint_request_id`` marker that canonical generate routes inject.
+    ``_endpoint_request_id`` marker that canonical dispatch routes inject.
     The hint branches on agent presence: with ``agent`` recommend
-    ``team_generate``; without ``agent`` recommend ``frontier_generate``.
+    ``team_dispatch``; without ``agent`` recommend ``frontier_dispatch``.
     """
     if dispatch.model != _FRONTIER_DISPATCH_PIPELINE_ID:
         return None
@@ -334,7 +334,7 @@ async def dispatch_pipeline(
     }
     if dispatch.target_thread is not None:
         response_body["thread"] = dispatch.target_thread
-    hint = _frontier_generate_hint_for(dispatch)
+    hint = _canonical_dispatch_hint_for(dispatch)
     if hint is not None:
         response_body["hint"] = hint
 

@@ -107,6 +107,12 @@ def test_boot_inspect_has_no_live_side_effects(
     assert "mcp.cortex.boot" not in events
     assert result["mode"] == "inspect"
     assert result["briefing_card"]
-    assert result["operational_context_inline"]
+    # Inline emission retired — INSPECT no longer ships ~22 KB of
+    # operational_context prose; callers `fs read` the path directly, the
+    # same way LIVE consumers always have. The path is reported regardless
+    # of whether THIS boot wrote the file (LIVE writes; INSPECT defers).
+    assert result["operational_context_inline"] is None
+    assert result["operational_context_ref"] == (
+        "notes/system/shared/operational-context-web.md"
+    )
     assert result["audit_dump_path"] is None
-    assert result["operational_context_ref"] is None

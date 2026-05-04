@@ -173,9 +173,6 @@ _PRIMARY_TOOLS: set[str] = {
     "email",
     "claudeburst",
     "bot_supervisor",
-    # Frontier consult — persona-aware and persona-free surfaces
-    "team_generate",
-    "frontier_generate",
 }
 
 
@@ -275,10 +272,7 @@ def _build_server() -> FastMCP:
     register_security_tools(mcp)
     register_security_js_tools(mcp)
 
-    _pre_private_tools = asyncio.run(_tool_names(mcp))
     _discover_private_tools(mcp)
-    _post_private_tools = asyncio.run(_tool_names(mcp))
-    _private_tool_names = _post_private_tools - _pre_private_tools
 
     @mcp.tool(title="Server Health Check")
     def health() -> dict[str, str]:
@@ -294,14 +288,6 @@ def _build_server() -> FastMCP:
         record("mcp.response.guard.init_failed", error="see server logs")
 
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
-
-    private_overflow: dict[str, Callable[..., Any]] = {}
-    if _private_tool_names:
-        private_overflow = {
-            k: v for k, v in overflow_registry.items() if k in _private_tool_names
-        }
-        for k in private_overflow:
-            del overflow_registry[k]
 
     valid_sandboxes = {"cortex", "workspaces"}
     sandbox_tool: dict[str, str] = {
@@ -506,11 +492,11 @@ def _build_server() -> FastMCP:
     }
 
     @mcp.tool(title="RAG Knowledge Retrieval")
-    async def rag(op: str, arguments: dict[str, Any] | str = "{}") -> Any:
+    async def rag(op: str, arguments: str = "{}") -> Any:
         """RAG knowledge retrieval and index management — dispatch by op name.
 
         op: operation name (see table below)
-        arguments: operation arguments as an object or a JSON string
+        arguments: JSON-encoded object string (e.g. '{"query": "...", "scope": "research"}')
 
         Operations:
           search            (query, scope?, prefix?, top_k?|limit?) — semantic search (PRIMARY and ONLY agent surface for RAG); scope/prefix mutually exclusive; limit aliases top_k. Agents MUST use this (or dedicated rag_search); rag_answer pipeline is buried for MCP debugging of /v1/chat/completions with rag-answer* models only.
@@ -555,8 +541,9 @@ def _build_server() -> FastMCP:
             if args is None:
                 return {
                     "error": (
-                        "arguments must be an object or a JSON-encoded object; "
-                        f"got {type(arguments).__name__}"
+                        "arguments must be a JSON-encoded object string "
+                        f"(e.g. '{{\"query\": \"...\"}}'); got {type(arguments).__name__} "
+                        f"that did not parse as a JSON object"
                     )
                 }
 
@@ -571,10 +558,10 @@ def _build_server() -> FastMCP:
             toolprogress_end(t_prog, prog_timer, "rag", error=err, op=op)
 
     @mcp.tool(title="Tool Dispatcher")
-    async def dispatch(tool: str, arguments: dict[str, Any] | str = "{}") -> Any:
+    async def dispatch(tool: str, arguments: str = "{}") -> Any:
         """Call any server tool by name — gateway to tools beyond the primary set.
 
-        arguments: operation arguments as an object or a JSON string.
+        arguments: JSON-encoded object string (e.g. '{"key": "value"}').
         Full catalog: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")
         """
         from tools._agent_tools import _parse_dispatch_arguments
@@ -593,11 +580,6 @@ def _build_server() -> FastMCP:
 
         fn = overflow_registry.get(tool)
         if fn is None:
-            if private_overflow and tool in private_overflow:
-                raise ValueError(
-                    f"Tool {tool!r} is a personal tool — use "
-                    f"private_dispatch(tool={tool!r}, ...) instead."
-                )
             raise ValueError(
                 f"Unknown dispatch tool: {tool!r}. "
                 f"Available: {sorted(overflow_registry)}"
@@ -608,8 +590,9 @@ def _build_server() -> FastMCP:
                 "tool": tool,
                 "result": {
                     "error": (
-                        "arguments must be an object or a JSON-encoded object; "
-                        f"got {type(arguments).__name__}"
+                        "arguments must be a JSON-encoded object string "
+                        f"(e.g. '{{\"key\": \"value\"}}'); got {type(arguments).__name__} "
+                        f"that did not parse as a JSON object"
                     )
                 },
             }
@@ -626,58 +609,12 @@ def _build_server() -> FastMCP:
             return result
         return {"tool": tool, "result": result}
 
-    if private_overflow:
-        _PRIMARY_TOOLS.add("private_dispatch")
-
-        @mcp.tool(title="Private Tool Dispatcher")
-        async def private_dispatch(
-            tool: str, arguments: dict[str, Any] | str = "{}"
-        ) -> Any:
-            """Call personal/domain-specific tools by name.
-
-            arguments: operation arguments as an object or a JSON string.
-            Use `private_dispatch(tool="list")` to see available tools.
-            """
-            from tools._agent_tools import _parse_dispatch_arguments
-
-            if tool == "list":
-                return {"available_tools": sorted(private_overflow)}
-
-            fn = private_overflow.get(tool)
-            if fn is None:
-                raise ValueError(
-                    f"Unknown private tool: {tool!r}. "
-                    f"Available: {sorted(private_overflow)}"
-                )
-            parsed = _parse_dispatch_arguments(arguments)
-            if parsed is None:
-                return {
-                    "tool": tool,
-                    "result": {
-                        "error": (
-                            "arguments must be an object or a JSON-encoded object; "
-                            f"got {type(arguments).__name__}"
-                        )
-                    },
-                }
-            record("mcp.tool.private.called", tool=tool)
-            result = fn(**parsed)
-            if asyncio.iscoroutine(result):
-                result = await result
-            record("mcp.tool.private.success", tool=tool)
-            if hasattr(result, "model_dump"):
-                return result
-            return {"tool": tool, "result": result}
-
     primary_count = len(_PRIMARY_TOOLS)
     overflow_count = len(overflow_registry)
-    private_count = len(private_overflow)
     logger.info(
-        "Tool pruning: %d primary (advertised), %d overflow (via dispatch), "
-        "%d private (via private_dispatch)",
+        "Tool pruning: %d primary (advertised), %d overflow (via dispatch)",
         primary_count,
         overflow_count,
-        private_count,
     )
     if overflow_registry:
         logger.info(

@@ -102,6 +102,11 @@ def _build_futures_spec(
     unread_turns_qs = urlencode(
         {"to": agent, "unread": "true", "last": 10, "compact": "true"}
     )
+    # Boot card displays at most 10 unread threads (briefing card §
+    # "Agent Bus — N unread"). The full active-thread set runs into the
+    # hundreds; ask the API for the projection we render and stop paying
+    # ~60 KB UDS per boot to filter client-side.
+    threads_qs = urlencode({"status": "active", "has_unread": "true", "limit": 10})
     session_qs_parts: dict[str, str | int] = {"limit": profile.get("session_limit", 3)}
     if profile.get("session_agent_filter"):
         session_qs_parts["agent"] = profile["session_agent_filter"]
@@ -127,8 +132,8 @@ def _build_futures_spec(
     futures_spec: dict[str, tuple[Any, ...]] = {
         # read-only: list recent session journals for boot continuity
         "sessions": (cx, "GET", f"/session-journals?{session_qs}"),
-        # read-only: list active bus threads for attention routing
-        "threads": (relay, "agent-bus", "GET", "/threads?status=active"),
+        # read-only: compact attention list — has_unread=true&limit=10
+        "threads": (relay, "agent-bus", "GET", f"/threads?{threads_qs}"),
         # read-only: unread lookup only; query does not include mark_read
         "unread_turns": (relay, "agent-bus", "GET", f"/turns?{unread_turns_qs}"),
     }
@@ -140,13 +145,26 @@ def _build_futures_spec(
         # read-only: fetch pending staging queue slice
         futures_spec["staging"] = (cx, "GET", "/staging?status=pending&limit=5")
 
-    todo_qs_parts: dict[str, Any] = {"limit": 15}
+    # Briefing card renders at most 5 todos and a count — ship the compact
+    # projection (id, title, priority, domain) instead of the full description /
+    # source_uri payload that the renderer drops.
+    todo_qs_parts: dict[str, Any] = {"limit": 15, "compact": "true"}
     if agent == "web":
         todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
     # read-only: fetch todo index for briefing card prioritization
     futures_spec["todos"] = (cx, "GET", f"/boot-todos?{urlencode(todo_qs_parts)}")
-    # read-only: fetch active/expired temporal assertions
-    futures_spec["temporal"] = (cx, "GET", "/boot-temporal")
+    # read-only: fetch active/expired temporal assertions; briefing renders
+    # only [:5] of each bucket — pass per-bucket limits so the API does the
+    # slicing and we stop shipping 4×10 rows when we use 4×5.
+    temporal_qs = urlencode(
+        {
+            "active_limit": 5,
+            "upcoming_limit": 5,
+            "expired_limit": 5,
+            "resolved_limit": 10,
+        }
+    )
+    futures_spec["temporal"] = (cx, "GET", f"/boot-temporal?{temporal_qs}")
 
     rj_agent = {"cursor": "cursor-claude", "web": "web-claude"}.get(agent, agent)
     # read-only: fetch reflective journal entries for agent continuity
@@ -162,11 +180,17 @@ def _build_futures_spec(
         "GET",
         f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
-    # read-only: fetch agent_skill entities for on-demand skill pointers
+    # read-only: compact skill projection (id, name, description_first_sentence)
+    # via dedicated /boot-skills endpoint. The wider /entities surface ships
+    # full description bodies the renderer drops anyway. `for_agent` filters
+    # to skills whose `applicable_agents` attribute contains `*` (universal)
+    # or this agent slug — pre-backfill skills without the attribute are
+    # treated as universal so the filter is non-narrowing until each entity
+    # opts in via `entity_update`.
     futures_spec["skills"] = (
         cx,
         "GET",
-        f"/entities?{urlencode({'type': 'agent_skill', 'limit': 50})}",
+        f"/boot-skills?{urlencode({'limit': 50, 'for_agent': agent})}",
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (cx, "GET", "/boot-recent-work")
@@ -210,6 +234,15 @@ def _extract_boot_results(
 
     recent_mentions: list[dict[str, Any]] = safe_list(raw.get("recent_mentions", []))
     skills: list[dict[str, Any]] = safe_list(raw.get("skills", []))
+    # `/boot-skills` ships a sibling `unpartitioned_count` (skills missing
+    # `applicable_agents`). Surfaced on the briefing card as a drift reminder
+    # so the partition script doesn't go stale silently.
+    skills_raw = raw.get("skills", {})
+    skills_unpartitioned: int = (
+        int(skills_raw.get("unpartitioned_count", 0) or 0)
+        if isinstance(skills_raw, dict)
+        else 0
+    )
 
     recent_work_raw = raw.get("recent_work", {})
     plan_phases: list[dict[str, Any]] = (
@@ -264,6 +297,7 @@ def _extract_boot_results(
         "rj_total": rj_total,
         "recent_mentions": recent_mentions,
         "skills": skills,
+        "skills_unpartitioned_count": skills_unpartitioned,
         "plan_phases": plan_phases,
         "in_flight_todos": in_flight_todos,
         "temporal_active": temporal_active,

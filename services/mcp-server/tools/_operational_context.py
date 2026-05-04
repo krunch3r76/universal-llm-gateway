@@ -287,8 +287,7 @@ Inference routing:
 - `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
 - `team_dispatch(op=..., agent=..., messages=..., ...)` — persona-aware native-frontier dispatch for all team members (`oppie`, `orion`, `bard`, `api_claude`, `forge`, cursor variants). `op="generate"` returns content inline; `op="to_thread"` posts agent reply to `thread`. Persona contract from `ai_agent:{slug}`; tools surface universal; provider quirks via silent coercion.
 - `frontier_dispatch(op=..., model=..., messages=..., ...)` — persona-free native-frontier dispatch (raw engine, no persona). Same `op` enum as `team_dispatch`.
-- OpenRouter and local models → use `llm_generate`, not provider-native tools
-- **Legacy** `team_generate` / `frontier_generate` are retiring (Phase 4); use `team_dispatch` / `frontier_dispatch` for all new work."""
+- OpenRouter and local models → use `llm_generate`, not provider-native tools"""
 
 
 def _render_observe_and_search(agent: str) -> str:
@@ -381,11 +380,6 @@ For team-seat consults (all members above), prefer `team_dispatch`; for
 persona-free raw engine calls, prefer `frontier_dispatch` — both validate
 upstream (MCP gating, model consistency, remote_mcp rules).
 
-**Legacy tools retiring**: `team_generate` and `frontier_generate` are being retired
-(Phase 4 of dispatch-surface-split). All new dispatches MUST use `team_dispatch` /
-`frontier_dispatch`. The legacy tools still accept calls but `result_delivery` is
-rejected with HTTP 422.
-
 **When not to:**
 - Routine tasks where your judgment is sufficient
 - Simple factual lookups or mechanical operations
@@ -436,9 +430,6 @@ Raw escape hatch (admission-bypass):
 `pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
 — for pipeline composition or deliberate admission-bypass only. Silently drops
 unknown `pipeline_options` keys.
-
-**Legacy tools retiring**: `team_generate` / `frontier_generate` — retiring in Phase 4.
-All new dispatches MUST use `team_dispatch` / `frontier_dispatch`.
 
 Persona defaults and allow-lists live on cortex (tools retired as caller concern — universal catalog with silent provider coercion)
 `ai_agent:{slug}` entities — keep this public context file provider-neutral."""

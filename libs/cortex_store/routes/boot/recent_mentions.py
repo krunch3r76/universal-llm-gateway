@@ -16,7 +16,22 @@ router = APIRouter(tags=["boot"])
 # trailing window. Surfaces names that came up in session work so boot agents
 # recognize them without re-derivation. Noisy system types are excluded by
 # default; callers may override via type_exclude.
-_RECENT_MENTIONS_DEFAULT_EXCLUDE = ("transcript", "todo", "journal", "assertion")
+#
+# Renderable types should be the things a person would *recognize as a name*
+# (people, cases, decisions, plans, services, agents) — not internal structure
+# nodes. Structural accumulators (`plan_phase`, `boot_session`) and types
+# canonically surfaced elsewhere on the boot card (`agent_skill` → Skills
+# section, `transcript`/`todo`/`journal`/`assertion` → dedicated surfaces) are
+# pruned at the API default so every consumer benefits.
+_RECENT_MENTIONS_DEFAULT_EXCLUDE = (
+    "transcript",
+    "todo",
+    "journal",
+    "assertion",
+    "plan_phase",
+    "agent_skill",
+    "boot_session",
+)
 
 # Compaction-pointer assertions are pure bookkeeping noise on the boot card —
 # an entity that just received N pointer-writes appears as "N new" while no
@@ -67,9 +82,11 @@ def get_boot_recent_mentions(
     type_exclude: str | None = Query(
         None,
         description=(
-            "Comma-separated entity types to exclude. "
-            "Defaults to 'transcript,todo,journal,assertion' "
-            "(system/meta types already surfaced elsewhere)."
+            "Comma-separated entity types to exclude. Defaults to "
+            "'transcript,todo,journal,assertion,plan_phase,agent_skill,"
+            "boot_session' — system/meta and structural types already "
+            "surfaced elsewhere on the boot card. Pass an explicit list "
+            "(possibly empty) to override."
         ),
     ),
     include_compaction_pointers: bool = Query(

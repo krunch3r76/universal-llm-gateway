@@ -22,11 +22,11 @@ def register_cortex_tools(mcp: FastMCP) -> None:
     """Register the dispatch-style cortex tool on the MCP server instance."""
 
     @mcp.tool(title="Cortex Knowledge Graph")
-    def cortex(tool: str, arguments: dict[str, Any] | str = "{}") -> Any:
+    def cortex(tool: str, arguments: str = "{}") -> Any:
         """Cortex knowledge system — entities, assertions, relationships, edges, journals.
 
         tool: operation name (see table below)
-        arguments: operation arguments as an object or a JSON string
+        arguments: JSON-encoded object string (e.g. '{"entity_id": "type:slug"}')
 
         Operations:
           entities          (type?, workflow_state?, limit?)         — list entities (workflow_state filters the typed column; use todo_candidates for routine TODO retrieval)

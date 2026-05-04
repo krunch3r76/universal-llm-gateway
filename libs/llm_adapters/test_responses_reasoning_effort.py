@@ -68,7 +68,7 @@ def test_openai_supports_reasoning_effort_true(model: str) -> None:
         "gpt-4",
         # Note: gpt-5-search-api starts with "gpt-5" so _openai_supports_reasoning_effort
         # returns True for it — but it never reaches this adapter in practice because
-        # frontier_generate admission rejects it via _is_chat_completions_only first.
+        # frontier_dispatch admission rejects it via _is_chat_completions_only first.
     ],
 )
 def test_openai_supports_reasoning_effort_false(model: str) -> None:

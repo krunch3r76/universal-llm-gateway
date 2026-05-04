@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -11,6 +11,75 @@ from ._manifest import _build_manifest
 from ._time import _relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
+
+# Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
+# the truncator prefers the last sentence boundary at-or-before the cap so the
+# preview doesn't chop mid-sentence ("If I sit with —" was the canonical bug).
+_PREVIEW_MAX_CHARS = 200
+# Self-reflection recency cap. Older notes drift out of the boot card — agents
+# can re-fetch via /assertions if they're chasing a specific historical claim.
+_SELF_REFLECTION_MAX_AGE_DAYS = 14
+
+
+def _truncate_at_sentence(text: str, max_chars: int) -> str:
+    """Truncate `text` at the last sentence boundary at-or-before `max_chars`.
+
+    Sentence boundaries: '. ', '! ', '? ', or terminal '.'/'!'/'?' at the cap.
+    Falls back to a hard-cut + ellipsis when no boundary is found in the
+    second half of the window — short fragments stay intact, long unbroken
+    prose still gets a clean visual cutoff.
+    """
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    window = text[:max_chars]
+    # Search for sentence terminators in the back half of the window so a
+    # period in the first 20 chars doesn't truncate aggressively.
+    cutoff_floor = max_chars // 2
+    best = -1
+    for marker in (". ", "! ", "? "):
+        idx = window.rfind(marker)
+        if idx >= cutoff_floor and idx + len(marker) > best:
+            best = idx + len(marker.rstrip())
+    if best > 0:
+        return text[:best].rstrip()
+    return window.rstrip() + "…"
+
+
+def _filter_recent_self_reflections(
+    self_reflections: list[dict[str, Any]],
+    now: datetime,
+    *,
+    max_age_days: int = _SELF_REFLECTION_MAX_AGE_DAYS,
+) -> list[dict[str, Any]]:
+    """Drop self-reflections older than `max_age_days` based on created_at.
+
+    The fetcher already orders DESC by created_at; this is a recency cap on
+    top of the fixed limit (default 5). When the agent has fewer than 5
+    recent reflections, the section degrades naturally — no padding with
+    stale entries.
+    """
+    if not self_reflections:
+        return []
+    threshold = now - timedelta(days=max_age_days)
+    fresh: list[dict[str, Any]] = []
+    for a in self_reflections:
+        created = a.get("created_at") or a.get("observed_at") or ""
+        if not created:
+            # No timestamp — keep it; better to render than silently drop.
+            fresh.append(a)
+            continue
+        try:
+            ts = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+        except ValueError:
+            fresh.append(a)
+            continue
+        if ts >= threshold:
+            fresh.append(a)
+    return fresh
 
 
 def _deadline_line(d: dict[str, Any], today: datetime) -> str:
@@ -37,7 +106,11 @@ def render_rag_stanza(rag: dict[str, Any]) -> str:
     """Render a compact RAG pipeline health line for the boot card.
 
     Returns an empty string when the pipeline is healthy (no actionable signals).
-    Only renders when pending > 0, failures > 0, stale corpus hints > 0, or unreachable.
+    Only renders on actionable signals: pending > 0, failures > 0, or unreachable.
+
+    `stale_corpus_hints` is intentionally NOT rendered here — it's a steady-state
+    counter (typically 50+) with no out-of-band threshold, and surfaced bare it
+    becomes observability noise. Agents who care can query `rag(op="coverage")`.
     """
     if not rag:
         return ""
@@ -45,17 +118,12 @@ def render_rag_stanza(rag: dict[str, Any]) -> str:
         return "RAG pipeline : unreachable — skip ingest work this session\n"
     pending = rag.get("pending_contextualization", 0)
     failures = rag.get("indexing_failures", 0)
-    stale = rag.get("stale_corpus_hints", 0)
-    if pending == 0 and failures == 0 and stale == 0:
+    if pending == 0 and failures == 0:
         return ""
     lines = ["RAG pipeline"]
     if pending:
         lines.append(
             f"  Pending contextualization : {pending} sources   (Jupiter required)"
-        )
-    if stale:
-        lines.append(
-            f"  Stale corpus hints         : {stale}          (scopes with hints newer than last classify)"
         )
     if failures:
         lines.append(f"  Indexing failures          : {failures}")
@@ -76,12 +144,12 @@ def render_briefing_card(
     temporal_active: list[dict[str, Any]] | None = None,
     expired_unresolved: list[dict[str, Any]] | None = None,
     transcript_continuation: dict[str, Any] | None = None,
-    op_ctx_path: str = "",
     reflective_entries: list[dict[str, Any]] | None = None,
     reflective_total: int = 0,
     recent_mentions: list[dict[str, Any]] | None = None,
     recent_mentions_window_days: int = 7,
     skills: list[dict[str, Any]] | None = None,
+    skills_unpartitioned_count: int = 0,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
     rag_state: dict[str, Any] | None = None,
@@ -116,15 +184,37 @@ def render_briefing_card(
         )
         for s in skills:
             slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
-            trigger = (s.get("description") or "").strip()
-            parts.append(f"- **{slug}** — {trigger}")
+            # Prefer the API-side projection (`/boot-skills` ships
+            # `description_first_sentence`); fall back to first-sentence split
+            # over a full `description` field for any caller still wiring the
+            # legacy `/entities?type=agent_skill` shape through.
+            short = s.get("description_first_sentence")
+            if not short:
+                full = (s.get("description") or "").strip()
+                short = full.split(". ", 1)[0].rstrip(".")
+            parts.append(f"- **{slug}** — {short}")
+        # Drift reminder: surface skills missing `applicable_agents` so the
+        # partition script (`scripts/cortex/backfill_agent_skill_applicability.py`)
+        # doesn't go stale silently as new and temp skills land. Silent when 0.
+        if skills_unpartitioned_count:
+            parts.append(
+                f"\n> **Skill partition drift**: {skills_unpartitioned_count} "
+                f"skill(s) missing `applicable_agents` (default to universal "
+                f"via COALESCE). Audit: `scripts/cortex/"
+                f"backfill_agent_skill_applicability.py --audit`."
+            )
 
     if deadlines is not None:
+        # Drop rows without a real deadline date — they carry no urgency signal.
+        dated = [
+            d for d in deadlines
+            if d.get("deadline_date") and str(d.get("deadline_date")).lower() != "none"
+        ]
         parts.append("\n## Deadlines")
-        if not deadlines:
+        if not dated:
             parts.append("No active deadlines.")
         else:
-            for d in deadlines:
+            for d in dated:
                 parts.append(_deadline_line(d, now))
 
     if expired_unresolved:
@@ -142,12 +232,12 @@ def render_briefing_card(
                     pass
             claim_preview = (a.get("claim") or "")[:100]
             aid = a.get("id", "?")
-            parts.append(f'- **{name}**{days_tag} — "{claim_preview}"')
-            parts.append(
-                f"  -> If resolved, supersede: "
-                f'`cortex(tool="supersede", '
-                f"arguments='{{\"old_assertion_id\": {aid}, ...}}')`"
-            )
+            parts.append(f'- **{name}** [id={aid}]{days_tag} — "{claim_preview}"')
+        parts.append(
+            "  → If resolved: "
+            "`cortex(tool=\"supersede\", "
+            "arguments='{\"old_assertion_id\": <id>, ...}')`"
+        )
 
     if temporal_active:
         parts.append(f"\n## Temporally Active ({len(temporal_active)})")
@@ -248,15 +338,22 @@ def render_briefing_card(
             parts.append(f"- **{name}** ({etype}) — {rel}{cnt_tag}")
 
     if self_reflections:
-        parts.append(f"\n## Your Notes ({len(self_reflections)})")
-        for a in self_reflections:
-            session = a.get("evidence", "")
-            session_tag = ""
-            if session:
-                m = re.search(r"(cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4}", session)
-                if m:
-                    session_tag = f"[{m.group()}] "
-            parts.append(f"- {session_tag}{a.get('claim', '')[:200]}")
+        recent_reflections = _filter_recent_self_reflections(self_reflections, now)
+        if recent_reflections:
+            parts.append(f"\n## Your Notes ({len(recent_reflections)})")
+            for a in recent_reflections:
+                session = a.get("evidence", "")
+                session_tag = ""
+                if session:
+                    m = re.search(
+                        r"(cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4}", session
+                    )
+                    if m:
+                        session_tag = f"[{m.group()}] "
+                claim_preview = _truncate_at_sentence(
+                    a.get("claim", ""), _PREVIEW_MAX_CHARS
+                )
+                parts.append(f"- {session_tag}{claim_preview}")
 
     if reflective_entries:
         parts.append(f"\n## Reflective Journal ({reflective_total} total)")
@@ -264,7 +361,9 @@ def render_briefing_card(
             kind = e.get("kind", "entry")
             kind_tag = f" [{kind}]" if kind != "entry" else ""
             register = e.get("register", "?")
-            entry_preview = (e.get("entry") or "")[:200]
+            entry_preview = _truncate_at_sentence(
+                e.get("entry") or "", _PREVIEW_MAX_CHARS
+            )
             parts.append(f"- *{register}*{kind_tag}: {entry_preview}")
         if reflective_total > 5:
             parts.append(
@@ -278,7 +377,6 @@ def render_briefing_card(
         in_flight_todos=in_flight_todos,
         todo_total=todo_total,
         unread_count=unread_count,
-        op_ctx_path=op_ctx_path,
         reflective_total=reflective_total,
         recent_mentions=recent_mentions,
         skills=skills,

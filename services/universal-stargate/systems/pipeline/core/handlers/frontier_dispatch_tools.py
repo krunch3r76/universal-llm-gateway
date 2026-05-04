@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 # Suppression / override: pass ``generation_parameters.provider_options.xai.tools``
 # explicitly (including ``[]`` to suppress all server-side tools).  ``mcp=False``
 # also suppresses injection — it is the unified "no tools" signal for xAI personas.
-# Explicit ``pipeline_options.tools`` via frontier_generate also prevents injection.
+# Explicit ``pipeline_options.tools`` via frontier_dispatch also prevents injection.
 XAI_BUILTIN_TOOLS: list[dict[str, Any]] = [
     {"type": "web_search"},
     {"type": "x_search"},
@@ -103,7 +103,7 @@ async def resolve_dispatch_tool_set(
     """Resolve (tools, system, hydration_meta) for the three dispatch modes.
 
     Three cases:
-    - Endpoint-supplied: ``opt_tools`` is a ``list`` (from ``frontier_generate``).
+    - Endpoint-supplied: ``opt_tools`` is a ``list`` (from ``frontier_dispatch``).
     - Persona-bound: ``agent`` is set — hydrates agent and selects tool tier.
       xAI: multi-agent models get ``tools=[]`` (server-side built-ins injected
       via ``provider_options``); non-multi-agent models get client-side tools.
@@ -124,11 +124,11 @@ async def resolve_dispatch_tool_set(
     )
 
     if isinstance(opt_tools, list):
-        # Case 1: endpoint-supplied tool list (frontier_generate with explicit tools).
+        # Case 1: endpoint-supplied tool list (frontier_dispatch with explicit tools).
         if agent and not endpoint_request_id:
             raise ValueError(
                 "pipeline_options.tools with pipeline_options.agent is only "
-                "supported via frontier_generate; raw pipeline dispatch cannot "
+                "supported via frontier_dispatch; raw pipeline dispatch cannot "
                 "validate persona tool policy"
             )
         resolved_names = [str(name) for name in opt_tools if isinstance(name, str)]

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .protocol import PipelineContext
 
 # Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
-# knob on ``frontier_generate`` / ``/api/v1/frontier/generate``.
+# knob on ``frontier_dispatch`` / ``/api/v1/frontier/dispatch``.
 #
 # - Anthropic: ``budget_tokens`` (max_tokens auto-bumped by the adapter).
 #   Numbers parallel Google's 2.5 budget map for predictable behavior.
@@ -130,8 +130,8 @@ def resolve_system_prompt(step: StepConfig, context: PipelineContext) -> str:
 
     Precedence: ``pipeline_options.system`` > ``step.system_prompt`` >
     first system message in ``context.messages``. ``pipeline_options.system``
-    carries the caller-supplied prompt for both ``team_generate`` and
-    ``frontier_generate`` MCP dispatches; for persona dispatches the Stargate
+    carries the caller-supplied prompt for both ``team_dispatch`` and
+    ``frontier_dispatch`` MCP dispatches; for persona dispatches the Stargate
     endpoint also auto-assembles birth + briefing + continuation upstream.
     """
     opt_system = context.options.get("system")

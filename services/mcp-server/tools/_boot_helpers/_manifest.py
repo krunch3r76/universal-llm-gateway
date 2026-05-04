@@ -11,7 +11,6 @@ def _build_manifest(
     in_flight_todos: list[dict[str, Any]] | None,
     todo_total: int,
     unread_count: int,
-    op_ctx_path: str,
     reflective_total: int,
     recent_mentions: list[dict[str, Any]] | None,
     skills: list[dict[str, Any]] | None,
@@ -52,13 +51,10 @@ def _build_manifest(
                 "hint": 'agent_bus(tool=\'fetch\', arguments=\'{"thread": "480", "last": 10}\')',
             }
         )
-    if op_ctx_path:
-        manifest.append(
-            {
-                "section": "operational_context",
-                "hint": f"fs(sandbox='cortex', op='md_list', path='{op_ctx_path}')",
-            }
-        )
+    # operational_context is represented as a top-level injected artifact
+    # (written_file in LIVE, inline in INSPECT). It MUST NOT also appear here
+    # as a manifest_only section — that produced a duplicate in boot_inspect
+    # output. The artifact's own `path` field carries the fs hint.
     manifest.append(
         {
             "section": "self_reflections",

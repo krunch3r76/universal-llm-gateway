@@ -98,7 +98,7 @@ def _openai_supports_reasoning_effort(model: str) -> bool:
     models (gpt-4o, gpt-4.1, gpt-4o-mini) reject it with
     'unsupported_parameter' — as does any model that routes through the
     Chat Completions API surface instead of Responses (those are caught
-    earlier at frontier_generate admission via _is_chat_completions_only).
+    earlier at frontier_dispatch admission via _is_chat_completions_only).
     ∀ new reasoning-capable OpenAI model: confirm it starts with one of
     these prefixes or extend this set.
     """
@@ -354,7 +354,7 @@ class ResponsesAPIAdapter:
 
         # For xAI grok-4 family (built-in reasoning, no separate "reasoning" block in
         # Responses API output): populate reasoning field so NativeLoopResult and
-        # frontier_generate callers see the chain.
+        # frontier_dispatch callers see the chain.
         reasoning = thinking
         if reasoning is None and self._vendor == "xai":
             # grok-4 family uses built-in reasoning; surface main content as reasoning

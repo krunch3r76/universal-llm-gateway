@@ -22,7 +22,7 @@ _PIPELINE_ID = "frontier-dispatch"
 EventPublisher = Callable[[Any], None]
 
 # Models that only support the Chat Completions API and are unavailable on the
-# OpenAI Responses API path used by frontier_generate. Callers must use
+# OpenAI Responses API path used by frontier_dispatch. Callers must use
 # llm_generate (which routes through /v1/chat/completions) for these models.
 # ∀ new Chat-Completions-only OpenAI models: add to this set AND update
 # llm_generate docstring in services/mcp-server/tools/llm.py.
@@ -54,7 +54,6 @@ class FrontierGenerateRequest:
     max_tool_turns: int | None = None
     transcript_id: str | None = None
     remote_mcp: bool | None = None
-    result_delivery: dict[str, Any] | None = None
     caller_agent: str | None = None
     timeout_seconds: int | None = None
     # dispatch-surface-split Phase 1: explicit op discrimination
@@ -231,8 +230,8 @@ async def build_dispatch_body(
     system_assembled = req.system or ""
 
     if req.agent:
-        # Soft boot: team_generate / frontier_generate(agent=...) dispatches use
-        # the lightweight profile by default. Drops deadlines + review-queue
+        # Soft boot: team_dispatch / frontier_dispatch dispatches use the
+        # lightweight profile by default. Drops deadlines + review-queue
         # fetches; keeps a 3-reflection floor. The pipeline-handler hydration
         # in resolve_dispatch_tool_set must mirror this profile to avoid the
         # final dispatched prompt regaining a heavy briefing card.
@@ -265,7 +264,7 @@ async def build_dispatch_body(
         # the prompt tells them. For other agents (Orion, Bard, Claudes), the
         # birth prompt and preamble still reference tool access, so tools=[]
         # would create false affordances — reject instead. Callers who want
-        # no tools should use frontier_generate (persona-free dispatch).
+        # no tools should use frontier_dispatch (persona-free dispatch).
         if req.tools == [] and not bundle.inline_only:
             raise _emit_rejection(
                 request_id=request_id,
@@ -273,7 +272,7 @@ async def build_dispatch_body(
                 field="tools",
                 reason=(
                     f"tools=[] suppresses the MCP tool loop for agent {req.agent!r}, "
-                    "whose birth prompt expects tool access. Use frontier_generate "
+                    "whose birth prompt expects tool access. Use frontier_dispatch "
                     "for persona-free dispatch, or set capability_tier='inline-only' "
                     "on the agent entity to explicitly demote it."
                 ),
@@ -310,10 +309,10 @@ async def build_dispatch_body(
             reason=(
                 f"{effective_model!r} is a Chat Completions-only model — "
                 "it is unavailable on the OpenAI Responses API that "
-                "team_generate / frontier_generate use. "
+                "team_dispatch / frontier_dispatch use. "
                 f"Use llm_generate(model={effective_model!r}, messages=...) instead "
                 "(note: llm_generate has a narrower surface — no agent, tools, "
-                "result_delivery, or transcript_id)."
+                "or transcript_id)."
             ),
             event_publisher=event_publisher,
         )
@@ -390,8 +389,6 @@ async def build_dispatch_body(
     }
     if req.timeout_seconds is not None:
         body["timeout_seconds"] = req.timeout_seconds
-    if req.result_delivery is not None:
-        body["result_delivery"] = req.result_delivery
     if req.caller_agent:
         body["caller_agent"] = req.caller_agent
     if req.target_thread is not None:

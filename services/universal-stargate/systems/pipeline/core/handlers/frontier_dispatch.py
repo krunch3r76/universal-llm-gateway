@@ -25,9 +25,9 @@ YAML shape::
 Caller::
 
     # Public surface (preferred):
-    team_generate(agent="orion", model="openai/gpt-5.4",
+    team_dispatch(op="generate", agent="orion", model="openai/gpt-5.4",
                   messages=[{"role": "user", "content": "..."}])
-    frontier_generate(model="openai/gpt-5.4",
+    frontier_dispatch(op="generate", model="openai/gpt-5.4",
                       messages=[{"role": "user", "content": "..."}])
 
     # Raw escape hatch (advanced — bypasses persona admission):
@@ -228,7 +228,7 @@ class FrontierDispatchHandler(BaseHandler):
         # For xAI agent dispatches, inject the server-side built-in tool set as
         # the default.  Two conditions suppress injection:
         #   (a) mcp=False — unified "no tools" signal; respected for xAI personas.
-        #   (b) Caller supplied an explicit ``tools`` list via frontier_generate
+        #   (b) Caller supplied an explicit ``tools`` list via frontier_dispatch
         #       (isinstance(opt_tools, list)); their intent overrides the default.
         # Caller-supplied ``generation_parameters.provider_options.xai.tools``
         # (including ``[]`` to suppress) always wins via the ``if "tools" not in``

@@ -43,11 +43,21 @@ def get_boot_todos(
         None,
         description="Comma-separated domains to exclude (e.g. 'infra,rag,pipeline').",
     ),
+    compact: bool = Query(
+        False,
+        description=(
+            "When true, omit `description`, `context`, and `source_uri` from "
+            "each item. Boot consumers only render id/title/priority/domain "
+            "and pay an order-of-magnitude bandwidth cost on the full payload "
+            "otherwise."
+        ),
+    ),
 ) -> dict[str, Any]:
     """Open todo entities for boot briefings, priority-ordered.
 
     Cursor boot passes context=code to exclude personal/financial/legal todos.
     Web boot passes domain_exclude to filter out infra/rag/pipeline/mcp todos.
+    Boot consumers pass compact=true to drop fields they do not render.
     """
     params: list[str | int] = []
     if context:
@@ -77,16 +87,27 @@ def get_boot_todos(
         rows = db_query(conn, sql, tuple(params))
     finally:
         conn.close()
-    items = [
-        {
-            "id": r["id"],
-            "title": r["name"],
-            "priority": r["priority"],
-            "domain": r["domain"],
-            "context": r["context"],
-            "description": r["description"],
-            "source_uri": r["source_uri"],
-        }
-        for r in rows
-    ]
+    if compact:
+        items = [
+            {
+                "id": r["id"],
+                "title": r["name"],
+                "priority": r["priority"],
+                "domain": r["domain"],
+            }
+            for r in rows
+        ]
+    else:
+        items = [
+            {
+                "id": r["id"],
+                "title": r["name"],
+                "priority": r["priority"],
+                "domain": r["domain"],
+                "context": r["context"],
+                "description": r["description"],
+                "source_uri": r["source_uri"],
+            }
+            for r in rows
+        ]
     return {"items": items}

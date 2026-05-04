@@ -24,40 +24,6 @@ logger = get_logger(__name__)
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
 
-class TeamGenerateBody(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    messages: list[dict[str, Any]]
-    agent: str
-    model: str | None = None
-    system: str = ""
-    tools: list[str] | None = None
-    reasoning_effort: str | None = None
-    generation_options: dict[str, Any] | None = None
-    max_tool_turns: int | None = None
-    transcript_id: str | None = None
-    remote_mcp: bool | None = None
-    result_delivery: dict[str, Any] | None = None
-    caller_agent: str | None = None
-    timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
-
-
-class FrontierGenerateBody(BaseModel):
-    model_config = {"extra": "forbid"}
-
-    messages: list[dict[str, Any]]
-    model: str
-    system: str = ""
-    reasoning_effort: str | None = None
-    generation_options: dict[str, Any] | None = None
-    max_tool_turns: int | None = None
-    transcript_id: str | None = None
-    remote_mcp: bool | None = None
-    result_delivery: dict[str, Any] | None = None
-    caller_agent: str | None = None
-    timeout_seconds: int | None = Field(default=None, gt=0, le=86_400)
-
-
 # ---- dispatch-surface-split Phase 1: op-discriminated body models ----
 
 
@@ -129,39 +95,14 @@ FrontierDispatchBody = Annotated[
 ]
 
 
-def _derive_subject(
-    body: TeamDispatchToThreadBody | FrontierDispatchToThreadBody,
-) -> str | None:
-    """Auto-derive subject from last user message when not supplied."""
-    if body.subject:
-        return body.subject
-    # Find the last user-role message and use first 80 chars of content
-    for msg in reversed(body.messages):
-        content = msg.get("content", "")
-        if isinstance(content, str) and content:
-            return content[:80]
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = block.get("text", "")
-                    if text:
-                        return text[:80]
-    return None
-
-
 def _normalize_op_body(
     body: TeamDispatchGenerateBody
     | TeamDispatchToThreadBody
     | FrontierDispatchGenerateBody
     | FrontierDispatchToThreadBody,
 ) -> dict[str, Any]:
-    """Translate a discriminated dispatch body into ``FrontierGenerateRequest`` kwargs.
-
-    Phase 1 coexistence: ``to_thread`` calls populate BOTH the legacy
-    ``result_delivery`` struct (consumed by ``async_tracker_delivery.py``) AND
-    the new ``output_contract`` / ``target_thread`` / ``op`` tracker fields.
-    Phase 2 will remove the legacy ``result_delivery`` write once reply-observation
-    replaces the envelope-turn delivery path.
+    """Translate a discriminated dispatch body into ``FrontierGenerateRequest``
+    kwargs.
     """
     common: dict[str, Any] = {
         "messages": body.messages,
@@ -189,25 +130,6 @@ def _normalize_op_body(
 
     # op == "to_thread"
     thread: str = body.thread  # type: ignore[attr-defined]
-    subject = _derive_subject(body)  # type: ignore[arg-type]
-
-    # Derive legacy ``result_delivery`` from the op arguments (Phase 0 § Bus-Mode
-    # Argument Derivation). ``bus_from_agent``: persona identity for team_dispatch,
-    # caller_agent for frontier_dispatch (no persona). ``bus_to_agent``: caller.
-    if hasattr(body, "agent"):
-        bus_from = body.agent  # type: ignore[attr-defined]
-    else:
-        bus_from = body.caller_agent or "cursor"
-
-    result_delivery: dict[str, Any] = {
-        "bus_thread": thread,
-        "bus_from_agent": bus_from,
-        "bus_to_agent": body.caller_agent or "all",
-    }
-    if subject:
-        result_delivery["bus_subject"] = subject
-
-    common["result_delivery"] = result_delivery
     common["output_contract"] = "thread"
     common["target_thread"] = thread
     common["op"] = "to_thread"
@@ -258,26 +180,6 @@ async def _dispatch(
                 "message": forward.text[:500],
             }
         }
-
-
-@team_router.post("/generate", status_code=202, response_model=None)
-async def team_generate(
-    body: TeamGenerateBody,
-    response: Response,
-) -> dict[str, Any] | JSONResponse:
-    """Persona-required dispatch (team-seat consults)."""
-    req = FrontierGenerateRequest(**body.model_dump())
-    return await _dispatch(req, response)
-
-
-@frontier_router.post("/generate", status_code=202, response_model=None)
-async def frontier_generate(
-    body: FrontierGenerateBody,
-    response: Response,
-) -> dict[str, Any] | JSONResponse:
-    """Persona-free dispatch (raw engine)."""
-    req = FrontierGenerateRequest(**body.model_dump())
-    return await _dispatch(req, response)
 
 
 # ---- dispatch-surface-split Phase 1: op-discriminated routes ----

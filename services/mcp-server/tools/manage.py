@@ -242,9 +242,29 @@ def register_manage_tools(mcp: FastMCP) -> None:
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus, email_bridge
 
+        IMPORTANT — sync_restart(service="mcp") self-restart semantics:
+          This MCP server is itself the "mcp" service. When you call
+          sync_restart(service="mcp"), the server kills itself to rebuild and
+          restart. The HTTPS call carrying this tool invocation will be cut
+          mid-flight — you will see a transport-level error (MCP -32603, HTTP
+          500, SSL EOF, or connection reset). This is EXPECTED and means the
+          rebuild was triggered successfully, NOT that the socket is gone or
+          the operation failed. After this error:
+            1. Wait ~20–30s for the new container to come up.
+            2. Call manage(action="status") to confirm it is running again.
+               One or two retries on that call are normal during startup.
+            3. Verify the image is fresh: docker images universal-mcp-server
+               --format "Created: {{.CreatedAt}}" should show a timestamp
+               within the last few minutes.
+            4. Run scripts/refresh-cursor-mcp-descriptors if schemas changed.
+          Do NOT interpret the transport error as evidence that manage.sock is
+          missing or that the operation failed.
+
         Post-code-change workflow (canonical):
           1. quality_gate(files=[...])
           2. manage(action="sync_restart", service=X)
+             — if service="mcp": expect transport error (see above); verify
+               success with a status check after ~25s
           3. manage(action="wait_healthy", service=X, timeout=120)
         """
         if action == "rebuild" and service in {"gateway", "mcp"}:

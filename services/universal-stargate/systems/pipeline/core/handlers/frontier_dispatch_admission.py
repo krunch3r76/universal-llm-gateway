@@ -162,7 +162,7 @@ def check_boot_provider_compatibility(
     Non-multi-agent xAI models and other providers are unaffected.
 
     Skipped (no coercion) when:
-    - ``isinstance(opt_tools, list)`` — explicit caller intent via frontier_generate
+    - ``isinstance(opt_tools, list)`` — explicit caller intent via frontier_dispatch
     - ``agent is None`` — persona-free dispatch
     - ``not mcp_enabled`` — caller already suppressed
     - not xAI multi-agent model

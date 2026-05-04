@@ -97,13 +97,13 @@ The entry point for outside agents to connect into the stack. Frontier models an
 Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each tool category has a distinct security policy.
 
 
-| Tool Category   | Examples                                                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Cortex          | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal                                                |
-| File I/O        | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops                                                 |
-| RAG             | Semantic search, answer generation, article upsert, scope routing                                                               |
-| Frontier models | `team_generate(agent=...)` for persona consults; `frontier_generate(model=...)` for raw provider-native reasoning and synthesis |
-| Infrastructure  | Service lifecycle (`manage`), observability queries, pipeline execution                                                         |
+| Tool Category   | Examples                                                                                                                                        |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cortex          | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal                                                                |
+| File I/O        | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops                                                                 |
+| RAG             | Semantic search, answer generation, article upsert, scope routing                                                                               |
+| Frontier models | `team_dispatch(op=..., agent=...)` for persona consults; `frontier_dispatch(op=..., model=...)` for raw provider-native reasoning and synthesis |
+| Infrastructure  | Service lifecycle (`manage`), observability queries, pipeline execution                                                                         |
 
 
 ### RAG (Retrieval)

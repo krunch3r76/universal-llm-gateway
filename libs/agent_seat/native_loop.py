@@ -8,7 +8,7 @@ via the adapter's ``append_tool_round``.
 
 Key design: the HTTP transport is injected via ``send_native`` so the same
 loop serves both in-process (Stargate pipeline handler) and HTTP-hop (MCP
-frontier_generate, tests) callers. The provider-native path string is
+frontier_dispatch, tests) callers. The provider-native path string is
 resolved via ``NATIVE_PATHS`` and passed to ``send_native``; the caller
 decides what URL that path maps to.
 """

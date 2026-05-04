@@ -3,7 +3,7 @@
 Builds the stacked system prompt from the dispatched agent's birth prompt
 (``$AGENT_IDENTITY_DIR/{agent}-birth.md``), a subagent preamble, and the
 optional hydration briefing card. Mirrors the ``_frontier_boot.assemble_boot_context``
-logic so the pipeline handler and MCP ``frontier_generate`` present the
+logic so the pipeline handler and MCP ``frontier_dispatch`` present the
 same persona to the model.
 
 The birth-prompt resolution path matches Stargate's ``_resolve_agent_identity_path``
