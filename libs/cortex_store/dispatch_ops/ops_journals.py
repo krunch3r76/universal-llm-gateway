@@ -17,9 +17,11 @@ from ..routes.deadlines import _RESOLVED_OUTCOMES, _list_deadlines_impl
 from ..routes.session_journals import (
     _close_session_impl,
     _create_session_journal_impl,
+    _emit_rejected,
     _list_session_journals_impl,
 )
 from ._shared import _FILES_ROOT, _SESSION_ID_RE, _derive_session_id_local, record
+from .ops_audit_detectors import run_detectors
 from .ops_review_gate import _run_session_audit_or_block
 
 logger = logging.getLogger("cortex-api.dispatch_ops.journals")
@@ -40,7 +42,12 @@ def _validate_transcript_structure(
     """Return a list of structural warning strings (empty = clean).
 
     ∀ warnings: advisory only — callers must not block the close.
-    ∀ summary_len > 0: Canary 4 (transcript shorter than its own summary) checked.
+    The `user_blocks == 0` check has been promoted to a hard 422 in
+    `routes/session_journals.py:close_session` (and mirrored in the dispatch
+    handler's pre-write validation block). This advisory layer covers the
+    secondary failure modes that don't gate the close: missing assistant voice,
+    action-log pattern density, Canary 4 (transcript shorter than its summary).
+    ∀ summary_len > 0: Canary 4 checked.
     """
     violations: list[str] = []
 
@@ -48,10 +55,8 @@ def _validate_transcript_structure(
     assistant_blocks = len(_ASSISTANT_VOICE_RE.findall(transcript_md))
     action_log_matches = len(_ACTION_LOG_RE.findall(transcript_md))
 
-    if user_blocks == 0:
-        violations.append(
-            "No user-voice blocks found — likely action log, not transcript"
-        )
+    # NOTE: user_blocks == 0 is now a hard 422 upstream (transcript.hollow);
+    # we no longer surface it here to avoid double-reporting.
     if assistant_blocks == 0:
         violations.append("No assistant-voice blocks found")
     if action_log_matches >= 3 and user_blocks == 0:
@@ -67,8 +72,38 @@ def _validate_transcript_structure(
     return violations
 
 
-def _op_deadlines(**_: object) -> dict[str, Any]:
-    return _list_deadlines_impl()
+def _append_session_close_warnings(
+    result: dict[str, Any],
+    *,
+    session_id: str,
+    agent: str,
+) -> None:
+    """Attach post-close warning findings for handoff capture and continuity hints."""
+    findings = run_detectors(
+        kinds=["missing_handoff", "prior_session_id_omitted"],
+        subject=f"transcript:{session_id}",
+        include_filesystem=False,
+    )
+    if not findings:
+        return
+    warning_block = result.setdefault("_warning", {})
+    if not isinstance(warning_block, dict):
+        warning_block = {"upstream": warning_block}
+        result["_warning"] = warning_block
+    existing = warning_block.setdefault("post_close_findings", [])
+    if isinstance(existing, list):
+        existing.extend(findings)
+    else:
+        warning_block["post_close_findings"] = findings
+    record(
+        "cortex.session.audit.gaps.observed",
+        session_id=session_id,
+        agent=agent,
+        gap_count=len(findings),
+        criticals=[],
+        deferred=[],
+        mode="post_close_warning",
+    )
 
 
 def _op_deadline_resolve(
@@ -238,6 +273,7 @@ def _op_session_close(
     open_items: list[str] | None = None,
     entity_ids: list[str] | None = None,
     prior_session_id: str | None = None,
+    handoff_prompt: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
@@ -254,24 +290,73 @@ def _op_session_close(
     assert session_id and agent and transcript_md and summary
 
     if not _SESSION_ID_RE.match(session_id):
-        return {
-            "error": f"session_id {session_id!r} does not match "
+        detail = (
+            f"session_id {session_id!r} does not match "
             "pattern {{agent}}-YYYY-MM-DD-HHMM"
-        }
+        )
+        _emit_rejected(
+            "session_id.invalid",
+            session_id=session_id,
+            agent=agent,
+            detail=detail,
+        )
+        return {"error": detail}
     if len(summary) < 20:
-        return {"error": f"summary must be >= 20 characters (got {len(summary)})"}
+        detail = f"summary must be >= 20 characters (got {len(summary)})"
+        _emit_rejected(
+            "summary.too_short",
+            session_id=session_id,
+            agent=agent,
+            detail=detail,
+        )
+        return {"error": detail}
     if len(transcript_md) < 200:
-        return {
-            "error": f"transcript_md must be >= 200 characters (got {len(transcript_md)}). "
+        detail = (
+            f"transcript_md must be >= 200 characters (got {len(transcript_md)}). "
             "Stub-only closes are rejected."
-        }
+        )
+        _emit_rejected(
+            "transcript.missing_structure",
+            session_id=session_id,
+            agent=agent,
+            detail=detail,
+        )
+        return {"error": detail}
 
     has_structure = "## Turn" in transcript_md or "## Session Summary" in transcript_md
     if not has_structure:
-        return {
-            "error": "transcript_md must contain at least one '## Turn' heading "
+        detail = (
+            "transcript_md must contain at least one '## Turn' heading "
             "or a '## Session Summary' section."
-        }
+        )
+        _emit_rejected(
+            "transcript.missing_structure",
+            session_id=session_id,
+            agent=agent,
+            detail=detail,
+        )
+        return {"error": detail}
+
+    # Dual-layer doctrine — fail fast before file write when verbatim layer
+    # is hollow (web-2026-05-03-0431 failure mode). The route handler enforces
+    # this too, but checking here avoids writing an orphan transcript file
+    # to disk that would need cleanup on the route's 422.
+    user_blocks = len(_USER_VOICE_RE.findall(transcript_md))
+    if user_blocks == 0:
+        detail = (
+            "transcript_md has structural headings but zero User-voice blocks "
+            "(`**User:**` / `User:` / `### User`). This is the dual-layer "
+            "doctrine failure: structural layer present, verbatim layer hollow. "
+            "Rewrite mechanically — copy each user message verbatim into a "
+            "`### User` block. See agent-skills/web-session-close.md Step 2."
+        )
+        _emit_rejected(
+            "transcript.hollow",
+            session_id=session_id,
+            agent=agent,
+            detail=detail,
+        )
+        return {"error": detail}
 
     # Session audit gate — MUST fire before any file I/O or DB mutation (C3).
     # In WARN mode: populates _warning in response but close proceeds.
@@ -327,6 +412,7 @@ def _op_session_close(
         ("open_items", open_items),
         ("entity_ids", entity_ids),
         ("prior_session_id", prior_session_id),
+        ("handoff_prompt", handoff_prompt),
     ]:
         if val is not None:
             body[key] = val
@@ -360,6 +446,7 @@ def _op_session_close(
     )
     if audit_outcome.get("warning"):
         result["_warning"] = audit_outcome["warning"]
+    _append_session_close_warnings(result, session_id=session_id, agent=agent)
 
     transcript_warnings = _validate_transcript_structure(
         transcript_md, summary_len=len(summary)

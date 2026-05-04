@@ -231,12 +231,35 @@ async def _agent_bus_request(
     path: str,
     body: dict[str, Any] | None = None,
 ) -> dict[str, Any] | list[Any]:
-    """Async agent-bus relay. Returns parsed JSON (list or dict)."""
+    """Async agent-bus relay. Returns parsed JSON (list or dict).
+
+    Injects the ``AGENT_BUS_TOKEN`` bearer (Stargate env, same token used by
+    Stargate's async-dispatch ``result_delivery`` path and the MCP-server's
+    ``_local_relay``). Without this header, agent-bus's ``require_token``
+    returns 401, breaking persona-side ``agent_bus`` calls from
+    ``team_generate`` tool loops (e.g. Orion posting completion briefs).
+    """
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    if not token:
+        logger.error(
+            "agent_seat agent_bus call missing AGENT_BUS_TOKEN — agent-bus "
+            "will reject with 401. Set AGENT_BUS_TOKEN in the Stargate "
+            "container env."
+        )
+        return {
+            "error": (
+                "agent-bus auth not configured: AGENT_BUS_TOKEN missing from "
+                "Stargate environment"
+            )
+        }
+    headers = {"Authorization": f"Bearer {token}"}
     try:
         async with make_async_client(
             DEFAULT_AGENT_BUS_URL, timeout=_DEFAULT_TIMEOUT
         ) as client:
-            resp = await client.request(method.upper(), path, json=body)
+            resp = await client.request(
+                method.upper(), path, json=body, headers=headers
+            )
     except Exception as exc:
         logger.error("agent-bus relay failed: %s %s — %s", method, path, exc)
         return {"error": f"agent-bus connection failed: {exc}"}

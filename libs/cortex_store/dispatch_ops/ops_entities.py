@@ -36,6 +36,7 @@ def _op_entity_get(
     entity_id: str | None = None,
     include_edges: bool = False,
     edge_limit: int = 20,
+    include_compaction_pointers: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if not entity_id:
@@ -46,6 +47,7 @@ def _op_entity_get(
             entity_id=entity_id,
             include_edges=include_edges,
             edge_limit=edge_limit,
+            include_compaction_pointers=include_compaction_pointers,
         )
 
 

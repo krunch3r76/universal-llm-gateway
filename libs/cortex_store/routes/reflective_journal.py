@@ -26,7 +26,9 @@ from ..models import (
 logger = logging.getLogger("cortex-api.reflective_journal")
 router = APIRouter(prefix="/reflective-journal", tags=["reflective-journal"])
 
-_VALID_KINDS = frozenset({"entry", "reflection", "revision", "consolidation"})
+_VALID_KINDS = frozenset(
+    {"entry", "reflection", "revision", "consolidation", "handoff"}
+)
 _VALID_LINK_TYPES = frozenset(
     {
         "contradicts",
@@ -36,8 +38,90 @@ _VALID_LINK_TYPES = frozenset(
         "unresolved_with",
         "continues",
         "related",
+        "handoff_for",
     }
 )
+
+
+def _insert_reflective_entry_tx(
+    conn: object,
+    *,
+    agent: str,
+    register: str,
+    entry: str,
+    kind: str,
+    session_id: str | None = None,
+    revises: int | None = None,
+    consolidation_data_json: str | None = None,
+) -> int:
+    """Insert a reflective journal row on an existing transaction."""
+    if kind not in _VALID_KINDS:
+        raise ValueError(f"Invalid kind {kind!r}. Must be one of: {sorted(_VALID_KINDS)}")
+    if kind == "revision" and revises is None:
+        raise ValueError("revises is required for kind='revision'")
+    if kind == "consolidation" and consolidation_data_json is None:
+        raise ValueError("consolidation_data_json is required for kind='consolidation'")
+    if kind != "consolidation" and consolidation_data_json is not None:
+        raise ValueError(
+            "consolidation_data_json is only valid for kind='consolidation'"
+        )
+    if revises is not None:
+        exists = query(
+            conn,  # type: ignore[arg-type]
+            "SELECT 1 FROM reflective_journal WHERE id = ?",
+            (revises,),
+        )
+        if not exists:
+            raise ValueError(f"revises target {revises} not found")
+    cur = conn.execute(  # type: ignore[union-attr]
+        "INSERT INTO reflective_journal "
+        "(agent, register, entry, kind, session_id, revises, consolidation_data) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (agent, register, entry, kind, session_id, revises, consolidation_data_json),
+    )
+    entry_id = cur.lastrowid
+    assert entry_id is not None
+    return int(entry_id)
+
+
+def _insert_journal_link_tx(
+    conn: object,
+    *,
+    from_entry: int,
+    to_entry: int | None = None,
+    to_entity: str | None = None,
+    link_type: str,
+) -> int:
+    """Insert a journal link on an existing transaction."""
+    if to_entry is None and to_entity is None:
+        raise ValueError("Either to_entry or to_entity is required")
+    if link_type not in _VALID_LINK_TYPES:
+        raise ValueError(
+            f"Invalid link_type {link_type!r}. Must be one of: {sorted(_VALID_LINK_TYPES)}"
+        )
+    exists = query(
+        conn,  # type: ignore[arg-type]
+        "SELECT 1 FROM reflective_journal WHERE id = ?",
+        (from_entry,),
+    )
+    if not exists:
+        raise ValueError(f"Entry {from_entry} not found")
+    if to_entry is not None:
+        target_exists = query(
+            conn,  # type: ignore[arg-type]
+            "SELECT 1 FROM reflective_journal WHERE id = ?",
+            (to_entry,),
+        )
+        if not target_exists:
+            raise ValueError(f"Entry {to_entry} not found")
+    cur = conn.execute(  # type: ignore[union-attr]
+        "INSERT INTO journal_links (from_entry, to_entry, to_entity, link_type) "
+        "VALUES (?, ?, ?, ?)",
+        (from_entry, to_entry, to_entity, link_type),
+    )
+    link_id = cur.lastrowid
+    assert link_id is not None
+    return int(link_id)
 
 
 def _row_to_item(

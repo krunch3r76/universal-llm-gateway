@@ -102,6 +102,7 @@ class EntityDetail(_EntityCommon):
     relationships: list[RelationshipItem] = Field(default_factory=list)
     reasoning_edges: list[EdgeItem] = Field(default_factory=list)
     action_hints: list[ActionHint] | None = None
+    compaction_projection: CompactionProjection | None = None
 
 
 class EntityUpdate(BaseModel):
@@ -297,9 +298,26 @@ class AssertionCreateResponse(BaseModel):
     contradiction_warnings: list[ContradictionConflict] | None = None
 
 
+class CompactionProjection(BaseModel):
+    """Metadata emitted when §6.10 compaction-pointer projection was applied.
+
+    Present on ``AssertionList`` and ``EntityDetail`` when the response was
+    reordered or collapsed due to compaction-pointer detection.  ``None`` when
+    no compaction pattern was found or when ``include_compaction_pointers=True``
+    was passed (raw-stream mode).
+    """
+
+    mode: str  # "pointers_deprioritized" | "tombstone_collapsed" | "aggregate_pointers_excluded"
+    pointer_count: int
+    summary_count: int = 0
+    children: list[str] = Field(default_factory=list)
+    navigation_hint: str | None = None
+
+
 class AssertionList(BaseModel):
     items: list[AssertionItem]
     action_hints: list[ActionHint] | None = None
+    compaction_projection: CompactionProjection | None = None
 
 
 class AssertionSearchItem(BaseModel):
@@ -524,10 +542,12 @@ class SessionCloseRequest(BaseModel):
     open_items: list[str] | None = None
     entity_ids: list[str] | None = None
     prior_session_id: str | None = None
+    handoff_prompt: str | None = None
 
 
 class SessionCloseResponse(BaseModel):
     transcript_entity_id: str
+    handoff_entry_id: int | None = None
     transcript_path: str
     journal_row_id: int
     session_id: str
@@ -743,7 +763,9 @@ class EdgeRetire(BaseModel):
 
 # --- Reflective Journal ---
 
-ReflectiveKind = Literal["entry", "reflection", "revision", "consolidation"]
+ReflectiveKind = Literal[
+    "entry", "reflection", "revision", "consolidation", "handoff"
+]
 JournalLinkType = Literal[
     "contradicts",
     "refines",
@@ -752,6 +774,7 @@ JournalLinkType = Literal[
     "unresolved_with",
     "continues",
     "related",
+    "handoff_for",
 ]
 
 

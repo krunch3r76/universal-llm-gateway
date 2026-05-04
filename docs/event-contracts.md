@@ -1719,6 +1719,8 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 | Signal | Required Payload | Description |
 |---|---|---|
 | `mcp.rag.boot.fetch.failed` | `endpoint`, `error` | RAG pipeline state fetch failed during cortex_boot; `endpoint` ∈ {`extraction/queue`, `indexing/status`, `all`}; `all` means the outer httpx.Client context failed |
+| `mcp.cortex.boot.manifest.assembled` | `agent`, `artifact_count`, `total_bytes` | Injected-artifacts manifest assembled after cortex_boot fetch + render; `total_bytes` sums bytes across all artifacts where `bytes >= 0` (excludes `manifest_only` and `BYTES_UNAVAILABLE` entries) |
+| `mcp.cortex.boot.fetch.failed` | `error`, `error_type` | Boot fetch recorder could not serialize a fetch result to JSON; the corresponding `FetchRecord.bytes` is set to `-1` (`BYTES_UNAVAILABLE`); distinct from `bytes=0` (legitimately empty payload) |
 
 ### Doc Generate Events
 
@@ -2184,6 +2186,18 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 | `mcp.session.close.atomic` | `agent`, `session_id`, `transcript_path` | Session closed successfully — transcript written to disk and journal row + entity created atomically. Fires once per successful `session_close` op, after all writes complete and before returning the response. |
 | `mcp.session.close.write.failed` | `session_id`, `agent`, `error` | `OSError` raised while writing the transcript file to `notes/system/transcripts/{session_id}.md`. Session close aborted at this point — no DB mutations have occurred. `error` is `str(exc)`. |
 | `mcp.session.close.cleanup.failed` | `session_id`, `agent` | `OSError` raised while unlinking the transcript file during rollback (post-DB error). The DB write failed first (surfaced as an error in the response); this signal indicates the rollback cleanup also failed, leaving an orphaned transcript file at `notes/system/transcripts/{session_id}.md`. Warrants manual inspection. |
+| `mcp.session.close.rejected` | `session_id`, `agent`, `reason`, `detail` | Session close rejected at the validation gate — no file written, no DB mutations, no transcript entity. Returned to the caller as HTTP 422. Emitted by both the route handler (`libs/cortex_store/routes/session_journals.py:close_session`) and the dispatch handler (`_op_session_close`) — whichever fails first; the dispatch handler's check fires before file write to avoid orphaned files. `reason` is one of the four enumerated values below. `detail` carries the human-readable message for the agent's retry path. |
+
+### `mcp.session.close.rejected` reason enum
+
+| Reason | Triggered when | Agent fix |
+|---|---|---|
+| `session_id.invalid` | `session_id` does not match `{agent}-YYYY-MM-DD-HHMM` | Reformat the session_id with UTC timestamp. |
+| `summary.too_short` | `len(summary) < 20` | Extend the summary to ≥20 chars. |
+| `transcript.missing_structure` | `len(transcript_md) < 200` OR no `## Turn` / `## Session Summary` heading present | Add structural headings; ensure transcript body ≥200 chars. |
+| `transcript.hollow` | File has ≥1 `## Turn` heading but ZERO User-voice blocks (`**User:**` / `User:` / `### User`) anywhere — the dual-layer doctrine failure (structural ✓, verbatim ✗). Canonical case: `web-2026-05-03-0431.md`. | Rewrite mechanically: walk the context window from the top, copy each user message verbatim into a `### User` block. See `agent-skills/web-session-close.md` Step 2 for the dual-layer doctrine and mechanical-copy mandate. |
+
+Maximum one retry on 422 — if the second close also rejects, the agent surfaces the rejection reason explicitly to the user rather than spinning.
 
 ## MCP Stdio Proxy Signals
 

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query, status
 
 from ..db import cortex_conn, decode_row, json_encode, query
+from ..dispatch_ops._shared import record
 from ..models import (
     SessionCloseRequest,
     SessionCloseResponse,
@@ -15,6 +16,7 @@ from ..models import (
     SessionJournalItem,
     SessionJournalList,
 )
+from .reflective_journal import _insert_journal_link_tx, _insert_reflective_entry_tx
 
 logger = logging.getLogger("cortex-api.session_journals")
 router = APIRouter(prefix="/session-journals", tags=["session-journals"])
@@ -239,6 +241,30 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
 
 
 _SESSION_ID_RE = re.compile(r"^[a-z]+-\d{4}-\d{2}-\d{2}-\d{4}$")
+_USER_VOICE_RE = re.compile(r"\*\*User:\*\*|\bUser:\s|^#{1,4}\s+User\b", re.MULTILINE)
+
+# Reason enum for mcp.session.close.rejected — see docs/event-contracts.md
+_REJECT_REASONS = frozenset({
+    "transcript.hollow",
+    "transcript.missing_structure",
+    "summary.too_short",
+    "session_id.invalid",
+})
+
+
+def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> None:
+    """Emit mcp.session.close.rejected on every 422 reject path.
+
+    Reason MUST be one of _REJECT_REASONS (enforced via assertion in dev).
+    """
+    assert reason in _REJECT_REASONS, f"unknown reject reason {reason!r}"
+    record(
+        "mcp.session.close.rejected",
+        reason=reason,
+        session_id=session_id,
+        agent=agent,
+        detail=detail,
+    )
 
 
 @router.post(
@@ -259,39 +285,92 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     """
     # ── validation ──
     if not _SESSION_ID_RE.match(body.session_id):
+        detail = (
+            f"session_id {body.session_id!r} does not match "
+            "pattern {{agent}}-YYYY-MM-DD-HHMM"
+        )
+        _emit_rejected(
+            "session_id.invalid",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=detail,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"session_id {body.session_id!r} does not match "
-                "pattern {{agent}}-YYYY-MM-DD-HHMM"
-            ),
+            detail=detail,
         )
 
     if len(body.summary) < 20:
+        detail = f"summary must be >= 20 characters (got {len(body.summary)})"
+        _emit_rejected(
+            "summary.too_short",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=detail,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"summary must be >= 20 characters (got {len(body.summary)})",
+            detail=detail,
         )
 
     if len(body.transcript_md) < 200:
+        detail = (
+            f"transcript_md must be >= 200 characters (got {len(body.transcript_md)}). "
+            "Stub-only closes are rejected."
+        )
+        _emit_rejected(
+            "transcript.missing_structure",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=detail,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"transcript_md must be >= 200 characters (got {len(body.transcript_md)}). "
-                "Stub-only closes are rejected."
-            ),
+            detail=detail,
         )
 
     has_structure = (
         "## Turn" in body.transcript_md or "## Session Summary" in body.transcript_md
     )
     if not has_structure:
+        detail = (
+            "transcript_md must contain at least one '## Turn' heading "
+            "or a '## Session Summary' section."
+        )
+        _emit_rejected(
+            "transcript.missing_structure",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=detail,
+        )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "transcript_md must contain at least one '## Turn' heading "
-                "or a '## Session Summary' section."
-            ),
+            detail=detail,
+        )
+
+    # Dual-layer doctrine — verbatim layer must be present alongside structural.
+    # File with `## Turn` headings but zero User-voice blocks is the
+    # web-2026-05-03-0431 failure mode (structural ✓, verbatim ✗).
+    # See agent-skills/web-session-close.md Step 2 for the dual-layer doctrine
+    # and notes/system/shared/session-close-protocol.md Step 2 for the canon.
+    user_blocks = len(_USER_VOICE_RE.findall(body.transcript_md))
+    if user_blocks == 0:
+        detail = (
+            "transcript_md has structural headings but zero User-voice blocks "
+            "(`**User:**` / `User:` / `### User`). This is the dual-layer "
+            "doctrine failure: structural layer present, verbatim layer hollow. "
+            "Rewrite mechanically — copy each user message verbatim into a "
+            "`### User` block. See agent-skills/web-session-close.md Step 2."
+        )
+        _emit_rejected(
+            "transcript.hollow",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=detail,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=detail,
         )
 
     # ── derive values ──
@@ -300,6 +379,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     source_uri = f"files://{transcript_path}"
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     opened_at = _parse_opened_at(body.session_id)
+    handoff_prompt = body.handoff_prompt.strip() if body.handoff_prompt else None
 
     # ── derive entity name from summary (first ~6 words) ──
     name_words = body.summary.split()[:6]
@@ -308,6 +388,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         entity_name += "…"
 
     conn = cortex_conn()
+    handoff_entry_id: int | None = None
     try:
         # 1. Create transcript entity
         conn.execute(
@@ -360,6 +441,23 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 conn, body.session_id, body.prior_session_id, body.agent, now
             )
 
+        # 4. Optionally create handoff reflective entry + link
+        if handoff_prompt:
+            handoff_entry_id = _insert_reflective_entry_tx(
+                conn,
+                agent=body.agent,
+                register="session_handoff",
+                entry=handoff_prompt,
+                kind="handoff",
+                session_id=body.session_id,
+            )
+            _insert_journal_link_tx(
+                conn,
+                from_entry=handoff_entry_id,
+                to_entity=transcript_entity_id,
+                link_type="handoff_for",
+            )
+
         conn.commit()
     except Exception:
         conn.rollback()
@@ -382,6 +480,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
     return SessionCloseResponse(
         transcript_entity_id=transcript_entity_id,
+        handoff_entry_id=handoff_entry_id,
         transcript_path=transcript_path,
         journal_row_id=journal_row_id,
         session_id=body.session_id,

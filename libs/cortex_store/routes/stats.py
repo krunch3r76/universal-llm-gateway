@@ -4,6 +4,7 @@ import logging
 
 from fastapi import APIRouter
 
+from ..compaction import POINTER_SQL_LIKE
 from ..db import cortex_conn, query
 
 logger = logging.getLogger("cortex-api.stats")
@@ -25,6 +26,15 @@ def get_stats() -> dict:
     with cortex_conn() as conn:
         e_total = query(conn, "SELECT COUNT(*) as cnt FROM entities")[0]["cnt"]
         a_total = query(conn, "SELECT COUNT(*) as cnt FROM assertions")[0]["cnt"]
+        # todo:cortex-aggregate-compaction-filter — split assertion total into
+        # active content vs compaction-pointer bookkeeping. The two figures
+        # always sum to the prior single-count `total`, preserving callers
+        # that key off it.
+        a_pointers = query(
+            conn,
+            "SELECT COUNT(*) as cnt FROM assertions WHERE claim LIKE ?",
+            (POINTER_SQL_LIKE,),
+        )[0]["cnt"]
         r_total = query(conn, "SELECT COUNT(*) as cnt FROM relationships")[0]["cnt"]
         sf_total = query(conn, "SELECT COUNT(*) as cnt FROM surface_forms")[0]["cnt"]
         ch_total = query(conn, "SELECT COUNT(*) as cnt FROM chunks")[0]["cnt"]
@@ -37,6 +47,8 @@ def get_stats() -> dict:
             },
             "assertions": {
                 "total": a_total,
+                "active_content": a_total - a_pointers,
+                "compaction_pointers": a_pointers,
                 "by_confidence": _count_by(conn, "assertions", "confidence"),
                 "by_review_status": _count_by(conn, "assertions", "review_status"),
                 "by_derivation_type": _count_by(conn, "assertions", "derivation_type"),

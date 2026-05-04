@@ -31,6 +31,8 @@ GRAPH_ONLY_KINDS = {
     "document_not_wired_to_case",
     "case_attribute_skill_dangling",
     "marker_nesting_violation",
+    "missing_handoff",
+    "prior_session_id_omitted",
 }
 
 FS_TOUCHING_KINDS = {
@@ -59,6 +61,8 @@ SEVERITY = {
     "unregistered_document_in_markdown": "warning",
     "markdown_section_drift": "warning",
     "marker_nesting_violation": "warning",
+    "missing_handoff": "warning",
+    "prior_session_id_omitted": "warning",
     "case_marker_absent": "info",
 }
 
@@ -331,6 +335,67 @@ def detect_marker_nesting_violation(
     return []
 
 
+def detect_missing_handoff(conn, subject: str | None = None) -> list[dict[str, Any]]:
+    """Closed transcript exists but no handoff reflective entry points at it."""
+    sql = """
+        SELECT sj.session_id, sj.agent
+        FROM session_journals sj
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM journal_links jl
+            JOIN reflective_journal rj ON rj.id = jl.from_entry
+            WHERE jl.link_type = 'handoff_for'
+              AND jl.to_entity = 'transcript:' || sj.session_id
+              AND rj.kind = 'handoff'
+        )
+    """
+    params: tuple[Any, ...] = ()
+    if subject:
+        transcript_id = subject.removeprefix("transcript:")
+        sql += " AND sj.session_id = ?"
+        params = (transcript_id,)
+    rows = query(conn, sql, params)
+    return [
+        _finding(
+            "missing_handoff",
+            f"transcript:{r['session_id']}",
+            f"Session {r['session_id']} ({r['agent']}) closed without a captured handoff prompt.",
+        )
+        for r in rows
+    ]
+
+
+def detect_prior_session_id_omitted(
+    conn, subject: str | None = None
+) -> list[dict[str, Any]]:
+    """Session closed without prior_session_id despite an earlier same-agent session."""
+    sql = """
+        SELECT sj.session_id, sj.agent
+        FROM session_journals sj
+        WHERE sj.prior_session_id IS NULL
+          AND EXISTS (
+              SELECT 1
+              FROM session_journals earlier
+              WHERE earlier.agent = sj.agent
+                AND earlier.id < sj.id
+          )
+    """
+    params: tuple[Any, ...] = ()
+    if subject:
+        transcript_id = subject.removeprefix("transcript:")
+        sql += " AND sj.session_id = ?"
+        params = (transcript_id,)
+    rows = query(conn, sql, params)
+    return [
+        _finding(
+            "prior_session_id_omitted",
+            f"transcript:{r['session_id']}",
+            f"Session {r['session_id']} ({r['agent']}) omitted prior_session_id even though an earlier same-agent session exists.",
+        )
+        for r in rows
+    ]
+
+
 # --- Filesystem-touching detectors (opt-in) ---
 
 
@@ -464,6 +529,8 @@ def get_all_detectors() -> dict[str, Any]:
         "document_not_wired_to_case": detect_document_not_wired_to_case,
         "case_attribute_skill_dangling": detect_case_attribute_skill_dangling,
         "marker_nesting_violation": detect_marker_nesting_violation,
+        "missing_handoff": detect_missing_handoff,
+        "prior_session_id_omitted": detect_prior_session_id_omitted,
         "entity_source_uri_unresolved": detect_entity_source_uri_unresolved,
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
         "unregistered_document_in_markdown": detect_unregistered_document_in_markdown,

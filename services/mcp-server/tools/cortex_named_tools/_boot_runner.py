@@ -12,13 +12,77 @@ from zoneinfo import ZoneInfo
 from mcp_events import record
 
 from .._boot_helpers import render_briefing_card, render_operational_context
+from ._boot_audit_dump import write_audit_dump
 from ._boot_data_fetch import _build_futures_spec, _extract_boot_results
+from ._boot_manifest import FetchRecorder, InjectedArtifact, serialize_manifest
 from ._boot_profiles import _BOOT_PROFILES
 from ._boot_summarize import _build_review_top, _build_unread_threads
 from ._boot_transcript import _resolve_transcript
 
 _LA = ZoneInfo("America/Los_Angeles")
 logger = logging.getLogger(__name__)
+
+
+def _build_artifacts(
+    *,
+    agent: str,
+    card: str,
+    ops_context: str,
+    manifest: list[dict[str, Any]],
+    op_ctx_path: str,
+    op_ctx_written: bool,
+    recorder: FetchRecorder,
+) -> list[InjectedArtifact]:
+    """Assemble the InjectedArtifact list for a boot.
+
+    Shared between LIVE mode (run_cortex_boot) and INSPECT mode
+    (boot_inspect → run_cortex_boot with mode=INSPECT). When op_ctx_written
+    is False, the operational_context artifact is recorded as `inline`
+    (its bytes are returned to the caller via operational_context_inline,
+    not written to disk).
+
+    Ownership notes:
+
+    - `fetches` is snapshotted from `recorder.records` at assembly time
+      via `list(recorder.records)`, never aliased. A live-list handoff
+      would create ambiguous ownership if the recorder were ever reused
+      or extended after assembly.
+
+    - Every entry in `sections_available` becomes one `manifest_only`
+      artifact, regardless of hint syntax. The audit contract is "every
+      thing an agent can pull on demand is represented"; a tool-prefix
+      allowlist would silently drop entries with `cortex(...)`, `rag(...)`,
+      REST URIs, or future hint forms.
+    """
+    artifacts: list[InjectedArtifact] = [
+        InjectedArtifact.from_text(
+            name="briefing_card",
+            mode="inline",
+            source="render_briefing_card()",
+            text=card,
+            fetches=list(recorder.records),  # snapshot, not alias
+        ),
+        InjectedArtifact.from_text(
+            name="operational_context",
+            mode="written_file" if op_ctx_written else "inline",
+            source=f"render_operational_context(agent={agent!r})",
+            text=ops_context,
+            path=op_ctx_path if op_ctx_written else None,
+        ),
+    ]
+    # Every sections_available entry → one manifest_only artifact.
+    for section in manifest:
+        artifacts.append(
+            InjectedArtifact(
+                name=section["section"],
+                mode="manifest_only",
+                source=section.get("hint", ""),
+                bytes=0,  # not yet fetched
+                sha256="",
+                fetches=[],
+            )
+        )
+    return artifacts
 
 
 def run_cortex_boot(
@@ -40,7 +104,8 @@ def run_cortex_boot(
     session_id = f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
     profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["cursor"])
 
-    futures_spec = _build_futures_spec(agent, profile)
+    recorder = FetchRecorder()
+    futures_spec = _build_futures_spec(agent, profile, recorder)
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
         future_to_key = {f: k for k, f in submitted.items()}
@@ -106,6 +171,26 @@ def run_cortex_boot(
         rag_state=extracted.get("rag_pipeline") or None,
     )
 
+    artifacts = _build_artifacts(
+        agent=agent,
+        card=card,
+        ops_context=ops_context,
+        manifest=manifest,
+        op_ctx_path=op_ctx_path,
+        op_ctx_written=op_ctx_written,
+        recorder=recorder,
+    )
+
+    audit_dump_path = write_audit_dump(
+        session_id=session_id,
+        agent=agent,
+        boot_time=t_boot,
+        card=card,
+        ops_context=ops_context,
+        artifacts=artifacts,
+        transcript_continuation=tc_summary,
+    )
+
     logger.info(
         "cortex_boot: agent=%s card_size=%d manifest_sections=%d",
         agent,
@@ -113,6 +198,12 @@ def run_cortex_boot(
         len(manifest),
     )
     record("mcp.cortex.boot", agent=agent)
+    record(
+        "mcp.cortex.boot.manifest.assembled",
+        agent=agent,
+        artifact_count=len(artifacts),
+        total_bytes=sum(a.bytes for a in artifacts if a.bytes >= 0),
+    )
 
     result: dict[str, Any] = {
         "session_id": session_id,
@@ -121,6 +212,8 @@ def run_cortex_boot(
         "briefing_card": card,
         "sections_available": manifest,
         "operational_context_ref": op_ctx_path if op_ctx_written else None,
+        "injected_artifacts": serialize_manifest(artifacts),
+        "audit_dump_path": audit_dump_path,
     }
 
     if tc_summary:

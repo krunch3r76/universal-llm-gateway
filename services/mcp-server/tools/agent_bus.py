@@ -198,7 +198,7 @@ def _fetch_impl(
     *,
     to: str | None,
     thread: str | None,
-    last: int,
+    last: int | None,
     unread: bool,
     mark_read: bool,
     compact: bool,
@@ -213,7 +213,8 @@ def _fetch_impl(
         params["to"] = to
         params["unread"] = unread
         params["compact"] = compact
-    params["last"] = last
+    if last is not None:
+        params["last"] = last
     if mark_read:
         params["mark_read"] = "true"
 

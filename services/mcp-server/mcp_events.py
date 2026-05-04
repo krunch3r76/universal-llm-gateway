@@ -106,6 +106,11 @@ def record(signal: str, **payload: Any) -> None:
     """Publish a structured event to the event service.
 
     Signals follow dotted convention: mcp.{domain}.{action}
+
+    Boot signals (emitted by _boot_runner / _boot_manifest):
+      mcp.cortex.boot                    — boot completed (agent)
+      mcp.cortex.boot.manifest.assembled — manifest built (agent, artifact_count, total_bytes)
+      mcp.cortex.boot.fetch.failed       — byte-count serialization failed (error, error_type)
     """
     if _publisher is None:
         return

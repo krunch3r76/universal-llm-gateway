@@ -6,6 +6,7 @@ inspect reasoning connections between Cortex entities across sessions.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,10 +26,50 @@ _EDGE_SELECT_E = (
     "e.edge_source, e.context, e.prompt, e.seeded_by, e.valid_until, e.metadata, e.created_at"
 )
 
+_ASSERTION_PREFIX = "assertion:"
+
+
+def _endpoint_resolves(conn: sqlite3.Connection, node: str) -> bool:
+    """Return True if a node address resolves to a real graph node.
+
+    Per v2.3 §3.4, edge endpoints are addressed through one of two tables:
+
+    - ``assertion:N`` (integer N) → looked up in the ``assertions`` table
+      (assertion-as-evidence-for-entity, assertion-to-assertion provenance).
+    - any other id, including prefix shapes like ``todo:``, ``agent_skill:``,
+      ``doc:``, ``pattern:``, ``event:``, ``service:``, … → looked up in the
+      ``entities`` table. The colon in those ids is a primary-key convention,
+      not a separate namespace.
+
+    Malformed ``assertion:`` addresses (non-integer or empty suffix) return
+    False so the caller gets a clean ``dangling_edge`` error rather than an
+    integer-cast exception.
+    """
+    if node.startswith(_ASSERTION_PREFIX):
+        suffix = node[len(_ASSERTION_PREFIX) :]
+        try:
+            assertion_id = int(suffix)
+        except ValueError:
+            return False
+        return bool(
+            query(conn, "SELECT 1 FROM assertions WHERE id = ?", (assertion_id,))
+        )
+    return bool(query(conn, "SELECT 1 FROM entities WHERE id = ?", (node,)))
+
 
 @router.post("", response_model=EdgeItem, status_code=status.HTTP_201_CREATED)
 def create_edge(body: EdgeCreate) -> EdgeItem:
-    """Create a new active session edge after validating edge_type."""
+    """Create a new active session edge after validating edge_type and endpoints.
+
+    Both ``from_node`` and ``to_node`` MUST resolve per v2.3 §3.4: either an
+    ``entity_id`` (any prefix, looked up in the ``entities`` table) or
+    ``assertion:N`` (looked up in the ``assertions`` table). Unresolved
+    endpoints are rejected with HTTP 422 and ``reason: "dangling_edge"``.
+
+    Distinct from the referential check in ``POST /relationships``, which
+    restricts to entities only — relationships are structural; edges are
+    reasoning links and may target specific historical assertions.
+    """
     conn = cortex_conn()
     if not query(
         conn, "SELECT 1 FROM session_edge_types WHERE type = ?", (body.edge_type,)
@@ -45,6 +86,21 @@ def create_edge(body: EdgeCreate) -> EdgeItem:
                 "error": f"Unknown edge_type: {body.edge_type!r}",
                 "valid_types": valid,
                 "hint": "Use one of valid_types above, or GET /edges/types for descriptions and directionality.",
+            },
+        )
+    missing = [
+        node
+        for node in (body.from_node, body.to_node)
+        if not _endpoint_resolves(conn, node)
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "reason": "dangling_edge",
+                "error": f"Edge endpoints not found: {missing}",
+                "missing_nodes": missing,
+                "hint": "Create the entity first (entity_create) before seeding an edge against it.",
             },
         )
     ins = (

@@ -33,7 +33,10 @@ def register_model_status_tools(mcp: FastMCP) -> None:
     """Register model_status and list_models tools on the MCP server."""
 
     @mcp.tool(title="List Models")
-    def list_models(filter: str | None = None) -> dict[str, Any]:
+    def list_models(
+        filter: str | None = None,
+        type: str | None = None,
+    ) -> dict[str, Any]:
         """List all models available through the gateway.
 
         Calls Stargate ``GET /v1/models`` — the same catalog a human client
@@ -45,10 +48,13 @@ def register_model_status_tools(mcp: FastMCP) -> None:
                 Accepted values: ``anthropic``, ``xai``, ``openai``,
                 ``openrouter``, ``local`` (no-slash IDs).
                 Omit to return all models.
+            type: Optional type filter. Accepted values: ``model`` (cloud/local
+                inference models), ``pipeline`` (activated pipeline contexts).
+                Omit to return all entries.
 
         Returns:
             ``{"models": [{"id": str, "type": str, "owned_by": str}, ...],
-            "total": int, "filter": str | None}``
+            "total": int, "filter": str | None, "type": str | None}``
         """
         url = f"{_STARGATE_URL}/v1/models"
         try:
@@ -77,6 +83,9 @@ def register_model_status_tools(mcp: FastMCP) -> None:
                 prefix = filter.rstrip("/") + "/"
                 models = [m for m in models if m.get("id", "").startswith(prefix)]
 
+        if type:
+            models = [m for m in models if m.get("type") == type]
+
         return {
             "models": [
                 {
@@ -88,6 +97,7 @@ def register_model_status_tools(mcp: FastMCP) -> None:
             ],
             "total": len(models),
             "filter": filter,
+            "type": type,
         }
 
     @mcp.tool(title="Model Status")

@@ -46,6 +46,7 @@ from agent_seat.prompts import (
     CORTEX_TOOL_QUICKREF,
     assemble_system_prompt,
     build_subagent_preamble,
+    derive_inline_only,
     load_birth_prompt,
 )
 from agent_seat.registry import normalize_agent_slug
@@ -70,6 +71,7 @@ __all__ = [
     "TOOL_REGISTRY",
     "assemble_system_prompt",
     "build_subagent_preamble",
+    "derive_inline_only",
     "execute_tool",
     "get_mcp_tool_definitions",
     "hydrate_agent",

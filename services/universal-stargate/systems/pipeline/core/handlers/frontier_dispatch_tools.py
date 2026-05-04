@@ -158,7 +158,9 @@ async def resolve_dispatch_tool_set(
         # with extra_system=system_prompt. If the two hydration calls used different
         # profiles, the heavier one would dominate the final dispatched prompt
         # because ``assemble_system_prompt`` appends both briefings.
-        bundle = await hydrate_agent(agent, transcript_id, profile="light")
+        bundle = await hydrate_agent(
+            agent, transcript_id, profile="light", model=model
+        )
         publish(
             PipelineFrontierDispatchHydrated(
                 agent=agent,
@@ -208,6 +210,7 @@ async def resolve_dispatch_tool_set(
             continuation_md=bundle.continuation_md,
             extra_system=system_prompt,
             include_cortex_quickref=bool(tools) and not remote_mcp,
+            inline_only=bundle.inline_only,
         )
         hydration_meta = {
             "agent": agent,

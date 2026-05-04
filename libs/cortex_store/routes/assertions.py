@@ -16,6 +16,11 @@ from ..belief_guard import (
     guard_assertion_write,
 )
 from ..claim_hash import compute_claim_hash
+from ..compaction import (
+    apply_compaction_filter,
+    extract_summary_ids,
+    filter_compaction_pointers,
+)
 from ..db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ..enrichment import (
     enrich_assertion,
@@ -33,6 +38,7 @@ from ..models import (
     AssertionSearchItem,
     AssertionSearchResult,
     AssertionUpdate,
+    CompactionProjection,
     ContradictionConflict,
     EnrichRequest,
     EnrichResponse,
@@ -171,6 +177,15 @@ def list_assertions(
         Query(description="System-state: what the DB knew at this date (YYYY-MM-DD)"),
     ] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
+    include_compaction_pointers: Annotated[
+        bool,
+        Query(
+            description=(
+                "§6.10: return the raw assertion stream including compaction-pointer "
+                "rows. Default false — summaries surface first, pointers deprioritised."
+            )
+        ),
+    ] = False,
 ) -> AssertionList:
     """List assertions with entity, confidence, review_status, superseded, entity type, and temporal filters."""
     clauses: list[str] = []
@@ -236,8 +251,75 @@ def list_assertions(
                 row.get("id"),
                 exc_info=True,
             )
+
+    # §6.10 compaction-aware projection (Tier 0 — deterministic, no model).
+    # When compaction pointers are present but the referenced consolidation
+    # summary assertion is outside the LIMIT window (created before the pointers),
+    # fetch it via a supplementary ID-lookup so it can surface first.
+    raw_dicts = [i.model_dump(mode="json") for i in items]
+    # todo:cortex-aggregate-compaction-filter — aggregate (cross-entity) reads
+    # strict-exclude pointer assertions by default. Per-entity reads keep the
+    # §6.10 deprioritize-not-omit contract (assertion 8212).
+    aggregate_pointer_count = 0
+    if entity_id is None and not include_compaction_pointers:
+        raw_dicts, aggregate_pointer_count = filter_compaction_pointers(raw_dicts)
+    projected_dicts, proj_meta = apply_compaction_filter(
+        raw_dicts, include_compaction_pointers=include_compaction_pointers
+    )
+    if (
+        proj_meta is not None
+        and proj_meta.get("summary_count", 0) == 0
+        and proj_meta.get("pointer_count", 0) > 0
+        and not include_compaction_pointers
+    ):
+        # Summary was not captured by the LIMIT — fetch by referenced ID.
+        summary_ids = extract_summary_ids(raw_dicts)
+        existing_ids = {d["id"] for d in projected_dicts}
+        missing_ids = [sid for sid in summary_ids if sid not in existing_ids]
+        if missing_ids:
+            placeholders = ",".join("?" for _ in missing_ids)
+            with cortex_conn() as conn:
+                summary_rows = query(
+                    conn,
+                    f"SELECT {_ASSERTION_COLS} FROM assertions "
+                    f"WHERE id IN ({placeholders})",
+                    tuple(missing_ids),
+                )
+            for row in summary_rows:
+                try:
+                    fetched = AssertionItem(**decode_row(row, _JSON_FIELDS))
+                    projected_dicts.insert(0, fetched.model_dump(mode="json"))
+                except Exception:
+                    logger.warning(
+                        "Failed to deserialise supplementary summary %s",
+                        row.get("id"),
+                        exc_info=True,
+                    )
+            # Re-apply with summaries now present.
+            projected_dicts, proj_meta = apply_compaction_filter(projected_dicts)
+
+    if proj_meta is not None:
+        items = [AssertionItem(**d) for d in projected_dicts]
+    elif aggregate_pointer_count > 0:
+        # Strict-exclude path consumed pointer rows; re-materialize items.
+        items = [AssertionItem(**d) for d in raw_dicts]
+
     hints = detect_expired_unresolved([i.model_dump() for i in items])
-    return AssertionList(items=items, action_hints=hints or None)
+    if proj_meta is not None:
+        compaction_projection = CompactionProjection(**proj_meta)
+    elif aggregate_pointer_count > 0:
+        compaction_projection = CompactionProjection(
+            mode="aggregate_pointers_excluded",
+            pointer_count=aggregate_pointer_count,
+            summary_count=0,
+        )
+    else:
+        compaction_projection = None
+    return AssertionList(
+        items=items,
+        action_hints=hints or None,
+        compaction_projection=compaction_projection,
+    )
 
 
 _SEARCH_COLS = (
@@ -391,6 +473,14 @@ def search_assertions(
     superseded: bool = Query(False, description="Include superseded assertions"),
     entity_type: str | None = Query(None, description="Filter to entity type"),
     limit: int = Query(20, ge=1, le=100),
+    include_compaction_pointers: bool = Query(
+        False,
+        description=(
+            "When true, include compaction-pointer assertions in results. "
+            "Default false — pointers are bookkeeping rows that pollute "
+            "topical search (todo:cortex-aggregate-compaction-filter)."
+        ),
+    ),
 ) -> AssertionSearchResult:
     """Hybrid search: FTS5 + vector similarity with CombMAX score fusion.
 
@@ -400,12 +490,22 @@ def search_assertions(
     if not sanitized:
         return AssertionSearchResult(query=q, items=[], total=0, search_mode="fulltext")
 
+    # Over-fetch when filtering pointers so the returned count still approaches
+    # `limit` after exclusion. 4× covers the typical pointer-density worst case
+    # (manually-compacted entity dominates a focused query). The vector branch
+    # mirrors the over-fetch so fusion has comparable candidate pools.
+    fetch_multiplier = 4 if not include_compaction_pointers else 2
+
     with cortex_conn() as conn:
-        fts_rows = _fts_search(conn, sanitized, superseded, entity_type, limit * 2)
+        fts_rows = _fts_search(
+            conn, sanitized, superseded, entity_type, limit * fetch_multiplier
+        )
 
-    vector_results = _vector_search(q, n_results=limit * 2)
+    vector_results = _vector_search(q, n_results=limit * fetch_multiplier)
 
-    fused, search_mode = _combmax_fuse(fts_rows, vector_results, limit)
+    fused, search_mode = _combmax_fuse(
+        fts_rows, vector_results, limit * fetch_multiplier
+    )
 
     vector_only_ids: set[int] = set()
     if search_mode == "hybrid":
@@ -436,6 +536,14 @@ def search_assertions(
                             "rank",
                         ):
                             item[key] = val
+
+    # todo:cortex-aggregate-compaction-filter — strip compaction-pointer
+    # rows from search results by default. Done after fusion so vector-only
+    # hits (whose claim text was hydrated above) are filtered too.
+    fused, _ = filter_compaction_pointers(
+        fused, include_compaction_pointers=include_compaction_pointers
+    )
+    fused = fused[:limit]
 
     items: list[AssertionSearchItem] = []
     for item in fused:
@@ -719,7 +827,9 @@ def create_assertion(
 
 
 @router.patch("/{assertion_id}", response_model=AssertionItem)
-def update_assertion(assertion_id: int, body: AssertionUpdate | dict[str, Any]) -> AssertionItem:
+def update_assertion(
+    assertion_id: int, body: AssertionUpdate | dict[str, Any]
+) -> AssertionItem:
     """Update assertion metadata — supersession, confidence, review status."""
     import datetime as dt
 
@@ -749,17 +859,18 @@ def update_assertion(assertion_id: int, body: AssertionUpdate | dict[str, Any]) 
                     detail=f"Superseding assertion not found: {superseded_by}",
                 )
 
-        if (
-            review_status is not None
-            and review_status not in _VALID_REVIEW_STATUS
-        ):
+        if review_status is not None and review_status not in _VALID_REVIEW_STATUS:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid review_status: {review_status!r}. "
                 f"Must be one of {sorted(_VALID_REVIEW_STATUS)}",
             )
 
-        confidence = body.get("confidence") if isinstance(body, dict) else getattr(body, "confidence", None)
+        confidence = (
+            body.get("confidence")
+            if isinstance(body, dict)
+            else getattr(body, "confidence", None)
+        )
         if confidence is not None and confidence not in _VALID_CONFIDENCE:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -769,7 +880,18 @@ def update_assertion(assertion_id: int, body: AssertionUpdate | dict[str, Any]) 
 
         update_map: dict[str, object] = {}
         if isinstance(body, dict):
-            for k in ("superseded_by", "valid_until", "confidence", "confidence_score", "review_status", "reviewer", "reviewed_at", "review_notes", "resolution_status", "fulfillment_assertion_id"):
+            for k in (
+                "superseded_by",
+                "valid_until",
+                "confidence",
+                "confidence_score",
+                "review_status",
+                "reviewer",
+                "reviewed_at",
+                "review_notes",
+                "resolution_status",
+                "fulfillment_assertion_id",
+            ):
                 if k in body and body[k] is not None:
                     update_map[k] = body[k]
         else:

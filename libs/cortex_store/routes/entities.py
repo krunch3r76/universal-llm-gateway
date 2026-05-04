@@ -8,10 +8,12 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ..action_hints import detect_expired_unresolved
+from ..compaction import apply_compaction_filter
 from ..db import cortex_conn, decode_row, execute, json_encode, query
 from ..dispatch_ops._shared import record
 from ..models import (
     AssertionItem,
+    CompactionProjection,
     EdgeItem,
     EntityCreate,
     EntityDetail,
@@ -146,6 +148,7 @@ def _get_entity_impl(
     source: str = "agent",
     agent: str = "web",
     session_id: str | None = None,
+    include_compaction_pointers: bool = False,
 ) -> dict[str, object]:
     entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not entities:
@@ -205,6 +208,29 @@ def _get_entity_impl(
                 exc_info=True,
             )
 
+    # §6.10 compaction-aware projection (Tier 0 — deterministic, no model)
+    compaction_projection: CompactionProjection | None = None
+    raw_dicts = [a.model_dump(mode="json") for a in assertions]
+    archives_to_children: list[str] | None = None
+    try:
+        arc_rows = query(
+            conn,
+            "SELECT to_entity FROM relationships "
+            "WHERE from_entity = ? AND type = 'archives_to' AND active = 1",
+            (entity_id,),
+        )
+        archives_to_children = [r["to_entity"] for r in arc_rows]
+    except Exception:
+        logger.warning("archives_to lookup failed for %s", entity_id)
+    projected_dicts, proj_meta = apply_compaction_filter(
+        raw_dicts,
+        include_compaction_pointers=include_compaction_pointers,
+        archives_to_children=archives_to_children,
+    )
+    if proj_meta is not None:
+        assertions = [AssertionItem(**d) for d in projected_dicts]
+        compaction_projection = CompactionProjection(**proj_meta)
+
     relationships = [RelationshipItem(**row) for row in rel_rows]
     edges = [EdgeItem(**row) for row in edge_rows]
     hints = detect_expired_unresolved([a.model_dump() for a in assertions])
@@ -214,6 +240,7 @@ def _get_entity_impl(
         relationships=relationships,
         reasoning_edges=edges,
         action_hints=hints or None,
+        compaction_projection=compaction_projection,
     ).model_dump(mode="json")
 
 
@@ -226,6 +253,13 @@ def get_entity(
     ),
     edge_limit: int = Query(
         20, ge=1, le=100, description="Max reasoning edges to return"
+    ),
+    include_compaction_pointers: bool = Query(
+        False,
+        description=(
+            "§6.10: return the raw assertion stream including compaction-pointer "
+            "rows. Default false — summaries surface first, pointers deprioritised."
+        ),
     ),
 ) -> EntityDetail:
     """Fetch one entity with linked assertions, relationships, and optionally reasoning edges."""
@@ -241,6 +275,7 @@ def get_entity(
             source=source,
             agent=agent,
             session_id=session_id,
+            include_compaction_pointers=include_compaction_pointers,
         )
     return EntityDetail(**result)
 

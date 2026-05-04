@@ -48,7 +48,9 @@ def _fetch_rag_pipeline_state(stargate_url: str) -> dict[str, Any]:
                     )
             except Exception as exc:
                 _record(
-                    "mcp.rag.boot.fetch.failed", endpoint="extraction/queue", error=str(exc)
+                    "mcp.rag.boot.fetch.failed",
+                    endpoint="extraction/queue",
+                    error=str(exc),
                 )
 
             try:
@@ -67,7 +69,9 @@ def _fetch_rag_pipeline_state(stargate_url: str) -> dict[str, Any]:
                     )
             except Exception as exc:
                 _record(
-                    "mcp.rag.boot.fetch.failed", endpoint="indexing/status", error=str(exc)
+                    "mcp.rag.boot.fetch.failed",
+                    endpoint="indexing/status",
+                    error=str(exc),
                 )
 
         return {
@@ -83,8 +87,18 @@ def _fetch_rag_pipeline_state(stargate_url: str) -> dict[str, Any]:
 def _build_futures_spec(
     agent: str,
     profile: dict[str, Any],
+    recorder: Any,
 ) -> dict[str, tuple[Any, ...]]:
-    """Build the parallel-fetch spec for a boot briefing."""
+    """Build the parallel-fetch spec for a boot briefing.
+
+    `recorder` is a FetchRecorder whose .wrap() method proxies each callable
+    to capture provenance. Imported via Any to avoid a circular import with
+    _boot_manifest (which lives in the same package).
+    """
+    cx = recorder.wrap("cortex", _cx)
+    relay = recorder.wrap("agent-bus", _relay)
+    rag = recorder.wrap("stargate", _fetch_rag_pipeline_state)
+
     unread_turns_qs = urlencode(
         {"to": agent, "unread": "true", "last": 10, "compact": "true"}
     )
@@ -94,41 +108,41 @@ def _build_futures_spec(
     session_qs = urlencode(session_qs_parts)
 
     futures_spec: dict[str, tuple[Any, ...]] = {
-        "sessions": (_cx, "GET", f"/session-journals?{session_qs}"),
-        "threads": (_relay, "agent-bus", "GET", "/threads?status=active"),
-        "unread_turns": (_relay, "agent-bus", "GET", f"/turns?{unread_turns_qs}"),
+        "sessions": (cx, "GET", f"/session-journals?{session_qs}"),
+        "threads": (relay, "agent-bus", "GET", "/threads?status=active"),
+        "unread_turns": (relay, "agent-bus", "GET", f"/turns?{unread_turns_qs}"),
     }
 
     if profile.get("include_deadlines", True):
-        futures_spec["deadlines"] = (_cx, "GET", "/deadlines")
+        futures_spec["deadlines"] = (cx, "GET", "/deadlines")
     if profile.get("include_review_queue", True):
-        futures_spec["staging"] = (_cx, "GET", "/staging?status=pending&limit=5")
+        futures_spec["staging"] = (cx, "GET", "/staging?status=pending&limit=5")
 
     todo_qs_parts: dict[str, Any] = {"limit": 15}
     if agent == "web":
         todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
-    futures_spec["todos"] = (_cx, "GET", f"/boot-todos?{urlencode(todo_qs_parts)}")
-    futures_spec["temporal"] = (_cx, "GET", "/boot-temporal")
+    futures_spec["todos"] = (cx, "GET", f"/boot-todos?{urlencode(todo_qs_parts)}")
+    futures_spec["temporal"] = (cx, "GET", "/boot-temporal")
 
     rj_agent = {"cursor": "cursor-claude", "web": "web-claude"}.get(agent, agent)
     futures_spec["reflective_journal"] = (
-        _cx,
+        cx,
         "GET",
         f"/boot-reflective?{urlencode({'agent': rj_agent, 'limit': 5})}",
     )
 
     futures_spec["recent_mentions"] = (
-        _cx,
+        cx,
         "GET",
         f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
     futures_spec["skills"] = (
-        _cx,
+        cx,
         "GET",
         f"/entities?{urlencode({'type': 'agent_skill', 'limit': 50})}",
     )
-    futures_spec["recent_work"] = (_cx, "GET", "/boot-recent-work")
-    futures_spec["rag_pipeline"] = (_fetch_rag_pipeline_state, _STARGATE_URL)
+    futures_spec["recent_work"] = (cx, "GET", "/boot-recent-work")
+    futures_spec["rag_pipeline"] = (rag, _STARGATE_URL)
 
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
@@ -140,7 +154,7 @@ def _build_futures_spec(
                 "limit": self_reflections_limit,
             }
         )
-        futures_spec["self_reflections"] = (_cx, "GET", f"/assertions?{refl_qs}")
+        futures_spec["self_reflections"] = (cx, "GET", f"/assertions?{refl_qs}")
 
     return futures_spec
 

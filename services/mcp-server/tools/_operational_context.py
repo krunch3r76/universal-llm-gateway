@@ -206,7 +206,10 @@ Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
 `.cursor/rules/session-close.mdc`) implement the canonical protocol."""
 
 _WEB_TRANSCRIPT_PREPROCESSING = """\
-Web applies `agent-skills/web-transcript-preprocessing.md` to trim raw tool \
+Web's enforcement path is Cortex-resident — `agent-skills/web-session-close.md` \
+is the canonical close discipline (Step 2 dual-layer doctrine + mechanical-copy \
+mandate; Step 3b 422-retry semantics for `mcp.session.close.rejected`). \
+Web also applies `agent-skills/web-transcript-preprocessing.md` to trim raw tool \
 payloads immediately before calling `session_close`."""
 
 _SUBAGENT_INHERITANCE = """\

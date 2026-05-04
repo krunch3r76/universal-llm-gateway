@@ -178,7 +178,7 @@ async def build_dispatch_body(
         # in resolve_dispatch_tool_set must mirror this profile to avoid the
         # final dispatched prompt regaining a heavy briefing card.
         bundle = await hydrate_agent(
-            req.agent, req.transcript_id, profile="light"
+            req.agent, req.transcript_id, profile="light", model=req.model
         )
         meta = bundle.agent_meta
         if event_publisher is not None:
@@ -198,11 +198,34 @@ async def build_dispatch_body(
             )
         # Persona injection is driven by agent presence. Persona-free dispatches
         # skip this branch entirely via the outer ``if req.agent`` guard.
+        #
+        # Reject tools=[] for MCP-capable non-inline-only agents. Inline-only
+        # agents (capability_tier="inline-only", xAI multi-agent models today)
+        # have their tool affordances suppressed from the prompt via
+        # bundle.inline_only, so tools=[] on the wire is consistent with what
+        # the prompt tells them. For other agents (Orion, Bard, Claudes), the
+        # birth prompt and preamble still reference tool access, so tools=[]
+        # would create false affordances — reject instead. Callers who want
+        # no tools should use frontier_generate (persona-free dispatch).
+        if req.tools == [] and not bundle.inline_only:
+            raise _emit_rejection(
+                request_id=request_id,
+                agent=req.agent,
+                field="tools",
+                reason=(
+                    f"tools=[] suppresses the MCP tool loop for agent {req.agent!r}, "
+                    "whose birth prompt expects tool access. Use frontier_generate "
+                    "for persona-free dispatch, or set capability_tier='inline-only' "
+                    "on the agent entity to explicitly demote it."
+                ),
+                event_publisher=event_publisher,
+            )
         system_assembled = assemble_system_prompt(
             req.agent,
             briefing_card_md=bundle.briefing_card_md,
             continuation_md=bundle.continuation_md,
             extra_system=req.system,
+            inline_only=bundle.inline_only,
         )
 
     effective_model = req.model or meta.default_model

@@ -86,6 +86,7 @@ def _op_assertions(
     review_status: str | None = None,
     superseded: bool | None = None,
     limit: int | None = None,
+    include_compaction_pointers: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     return _list_assertions_impl(
@@ -94,6 +95,7 @@ def _op_assertions(
         review_status=review_status,
         superseded=superseded,
         limit=limit or 50,
+        include_compaction_pointers=include_compaction_pointers,
     )
 
 
@@ -371,6 +373,7 @@ def _op_search(
     limit: int | None = None,
     superseded: bool | None = None,
     entity_type: str | None = None,
+    include_compaction_pointers: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if not query:
@@ -380,6 +383,7 @@ def _op_search(
         superseded=bool(superseded),
         entity_type=entity_type,
         limit=limit or 20,
+        include_compaction_pointers=include_compaction_pointers,
     )
 
 
@@ -425,15 +429,32 @@ def _op_activate(
     )
 
 
-def _op_review_queue(limit: int | None = None, **_: object) -> dict[str, Any]:
+def _op_review_queue(
+    limit: int | None = None,
+    include_compaction_pointers: bool = False,
+    **_: object,
+) -> dict[str, Any]:
     lim = limit or 30
+    # todo:cortex-aggregate-compaction-filter — these are aggregate (no
+    # entity_id) reads; pointer rows are filtered by `list_assertions` itself
+    # unless the override is requested.
     flagged_resp = _list_assertions_impl(
-        review_status="flagged", superseded=False, limit=lim
+        review_status="flagged",
+        superseded=False,
+        limit=lim,
+        include_compaction_pointers=include_compaction_pointers,
     )
     staged_resp = _list_assertions_impl(
-        review_status="staged", superseded=False, limit=lim
+        review_status="staged",
+        superseded=False,
+        limit=lim,
+        include_compaction_pointers=include_compaction_pointers,
     )
-    low_conf_resp = _list_assertions_impl(superseded=False, limit=lim)
+    low_conf_resp = _list_assertions_impl(
+        superseded=False,
+        limit=lim,
+        include_compaction_pointers=include_compaction_pointers,
+    )
     entities = _op_entities(limit=lim)
     flagged = (
         [

@@ -137,6 +137,7 @@ class HydrationBundle:
     continuation_id: str | None = None
     section_counts: dict[str, int] = field(default_factory=dict)
     agent_meta: AgentMeta = field(default_factory=AgentMeta)
+    inline_only: bool = False
 
 
 async def _cortex_get(path: str) -> Any:
@@ -290,6 +291,7 @@ def _render_briefing(
     self_reflections: list[dict[str, Any]],
     review_total: int,
     skills: list[dict[str, Any]],
+    inline_only: bool = False,
 ) -> str:
     """Render the compact briefing card for the dispatched agent.
 
@@ -304,12 +306,23 @@ def _render_briefing(
     ]
 
     if skills:
-        parts.append(
-            "\n## Agent Skills "
-            "(read on trigger match — "
-            "`fs(sandbox='cortex', op='read', "
-            "path='agent-skills/<NAME>.md')`)",
-        )
+        if inline_only:
+            # No tool loop — suppress the fs(...) read instruction so the model
+            # is not given a false affordance. Skills are listed by name only;
+            # trigger descriptors still help the persona decide what it would
+            # ask the dispatching agent to fetch.
+            parts.append(
+                "\n## Agent Skills "
+                "(reference only — no tool loop this invocation; "
+                "request the body from the dispatching agent if needed)",
+            )
+        else:
+            parts.append(
+                "\n## Agent Skills "
+                "(read on trigger match — "
+                "`fs(sandbox='cortex', op='read', "
+                "path='agent-skills/<NAME>.md')`)",
+            )
         for s in skills:
             slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
             trigger = (s.get("description") or "").strip()
@@ -373,6 +386,7 @@ async def hydrate_agent(
     transcript_id: str | None = None,
     *,
     profile: str = "default",
+    model: str | None = None,
 ) -> HydrationBundle:
     """Fetch the dispatched agent's boot state and render a briefing card.
 
@@ -452,6 +466,15 @@ async def hydrate_agent(
         t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0
     ]
 
+    from .prompts import derive_inline_only
+
+    effective_model = model if model is not None else agent_meta.default_model
+    inline_only = derive_inline_only(
+        capability_tier=agent_meta.capability_tier,
+        frontier_kind=agent_meta.frontier_kind,
+        model=effective_model,
+    )
+
     briefing = _render_briefing(
         agent,
         sessions=sessions,
@@ -462,6 +485,7 @@ async def hydrate_agent(
         self_reflections=self_reflections,
         review_total=len(staging),
         skills=skills,
+        inline_only=inline_only,
     )
 
     section_counts = {
@@ -482,4 +506,5 @@ async def hydrate_agent(
         continuation_id=continuation_id,
         section_counts=section_counts,
         agent_meta=agent_meta,
+        inline_only=inline_only,
     )

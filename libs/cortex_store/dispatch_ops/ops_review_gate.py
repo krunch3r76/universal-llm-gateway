@@ -18,9 +18,21 @@ import time
 from typing import Any
 
 from ._shared import record
-from .ops_audit_detectors import GRAPH_ONLY_KINDS, run_detectors
+from .ops_audit_detectors import run_detectors
 
 _AUDIT_MODE_ENV = "CORTEX_SESSION_AUDIT_MODE"
+_PRE_CLOSE_GATE_KINDS = [
+    "dangling_attribute_reference",
+    "dangling_relationship_target",
+    "entity_source_uri_missing",
+    "entity_empty_description",
+    "case_no_assertions",
+    "case_no_relationships",
+    "case_no_documents",
+    "document_not_wired_to_case",
+    "case_attribute_skill_dangling",
+    "marker_nesting_violation",
+]
 
 
 def _run_session_audit_graph_only(

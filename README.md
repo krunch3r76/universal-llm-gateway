@@ -69,14 +69,16 @@ cd universal-llm-gateway
 
 The sole client-facing endpoint, Stargate routes requests to local models, federated GPU nodes, and cloud providers through a single OpenAI-compatible API.
 
-| Capability | Endpoint |
-|---|---|
-| Chat completions (SSE — Server-Sent Events — streaming) | `POST /v1/chat/completions` |
-| Embeddings | `POST /v1/embeddings` |
-| Model list (local + cloud + pipeline) | `GET /v1/models` |
-| Model selection (task-aware, cost budgets) | `POST /v1/models/select` |
-| Provider-native APIs (Anthropic, xAI, OpenAI) | `POST /api/v1/providers/{provider}/...` |
-| Health | `GET /health` |
+
+| Capability                                              | Endpoint                                |
+| ------------------------------------------------------- | --------------------------------------- |
+| Chat completions (SSE — Server-Sent Events — streaming) | `POST /v1/chat/completions`             |
+| Embeddings                                              | `POST /v1/embeddings`                   |
+| Model list (local + cloud + pipeline)                   | `GET /v1/models`                        |
+| Model selection (task-aware, cost budgets)              | `POST /v1/models/select`                |
+| Provider-native APIs (Anthropic, xAI, OpenAI)           | `POST /api/v1/providers/{provider}/...` |
+| Health                                                  | `GET /health`                           |
+
 
 **Pipelines** are virtual models that orchestrate multiple real models behind a single `model` name. They support graph execution with automatic parallelization, loops, conditional branching, retry, and hot-reload. Shipped pipelines include consensus (multi-model verification with veto gates), RAG answer (corpus-grounded retrieval + generation), consultation (domain-specialized assistants), and code review.
 
@@ -94,13 +96,15 @@ The entry point for outside agents to connect into the stack. Frontier models an
 
 Runs as a containerized FastAPI service on `:443` with TLS and bearer auth. Each tool category has a distinct security policy.
 
-| Tool Category | Examples |
-|---|---|
-| Cortex | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal |
-| File I/O | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops |
-| RAG | Semantic search, answer generation, article upsert, scope routing |
+
+| Tool Category   | Examples                                                                                                                        |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Cortex          | Entity/assertion CRUD, search, activate, supersede, impact, tags, edges, journal                                                |
+| File I/O        | Read/write across `cortex` and `workspaces` sandboxes with markdown section ops                                                 |
+| RAG             | Semantic search, answer generation, article upsert, scope routing                                                               |
 | Frontier models | `team_generate(agent=...)` for persona consults; `frontier_generate(model=...)` for raw provider-native reasoning and synthesis |
-| Infrastructure | Service lifecycle (`manage`), observability queries, pipeline execution |
+| Infrastructure  | Service lifecycle (`manage`), observability queries, pipeline execution                                                         |
+
 
 ### RAG (Retrieval)
 
@@ -117,6 +121,7 @@ Cortex is a graph-native knowledge system for persistent, formally-structured be
 **Knowledge graph**: Entities (people, decisions, documents, legal matters, services) connected by typed edges. Assertions carry confidence levels (`confirmed` / `believed` / `suspected` / `hypothesized`), temporal bounds, derivation provenance, and entrenchment scores.
 
 **Belief revision** — AGM (Alchourrón-Gärdenfors-Makinson) compliant (25/25 postulate tests, see [compliance report](docs/agm-compliance-report.md)):
+
 - Immutable revisions with atomic supersession — old belief closes, new belief opens, supersession chain preserved
 - Mutable tag pointers for named belief states (`current`, `approved`, `disputed`)
 - Hybrid retrieval: FTS5 (SQLite Full-Text Search 5) + vector search with CombMAX score fusion
@@ -153,29 +158,33 @@ scripts/query-events --op noise-profile --minutes 5
 
 ## Components
 
-| Component | Role | Deployment |
-|---|---|---|
-| **Stargate** (`:9999`) | Client endpoint, routing, federation orchestration | Host process |
-| **Gateway** | Inference engine, worker lifecycle, model loading | Container (`network_mode: "none"`) |
-| **Cortex API** | AGM-compliant knowledge graph — entities, assertions, belief revision, session edges. REST gateway over UDS; sole access path for agents. See [compliance report](docs/agm-compliance-report.md). | Host subprocess (UDS) |
-| **Agent Bus** | Inter-agent messaging | Host subprocess (UDS) |
-| **RAG Service** | Semantic search, indexing, knowledge extraction | Host process (UDS) |
-| **Cloud Proxy** | Cloud API relay (optional) | Container (UDS) |
-| **MCP Server** | Tool server for agents | Container (`:443`, TLS) |
-| **Event Service** | Centralized event store | Host subprocess (UDS) |
+
+| Component              | Role                                                                                                                                                                                              | Deployment                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| **Stargate** (`:9999`) | Client endpoint, routing, federation orchestration                                                                                                                                                | Host process                       |
+| **Gateway**            | Inference engine, worker lifecycle, model loading                                                                                                                                                 | Container (`network_mode: "none"`) |
+| **Cortex API**         | AGM-compliant knowledge graph — entities, assertions, belief revision, session edges. REST gateway over UDS; sole access path for agents. See [compliance report](docs/agm-compliance-report.md). | Host subprocess (UDS)              |
+| **Agent Bus**          | Inter-agent messaging                                                                                                                                                                             | Host subprocess (UDS)              |
+| **RAG Service**        | Semantic search, indexing, knowledge extraction                                                                                                                                                   | Host process (UDS)                 |
+| **Cloud Proxy**        | Cloud API relay (optional)                                                                                                                                                                        | Container (UDS)                    |
+| **MCP Server**         | Tool server for agents                                                                                                                                                                            | Container (`:443`, TLS)            |
+| **Event Service**      | Centralized event store                                                                                                                                                                           | Host subprocess (UDS)              |
+
 
 Managed via `./manage` (TUI). Config at `~/.gateway/stargate.yaml`.
 
 ## Model Support
 
-| Type | Engine | Examples |
-|---|---|---|
-| Text LLM | llama-cpp, vLLM | Qwen, Llama, Phi, Mistral |
-| Embedding | llama-cpp | bge-m3, qwen3-embedding |
-| Visual | llama-cpp | Gemma 4, LLaVA |
-| Audio | Whisper | Transcription |
-| Graphics | Diffusers | Flux.2 |
-| Cloud | Anthropic, xAI, OpenAI, Google, OpenRouter | Claude, Grok, GPT, Gemini |
+
+| Type      | Engine                                     | Examples                  |
+| --------- | ------------------------------------------ | ------------------------- |
+| Text LLM  | llama-cpp, vLLM                            | Qwen, Llama, Phi, Mistral |
+| Embedding | llama-cpp                                  | bge-m3, qwen3-embedding   |
+| Visual    | llama-cpp                                  | Gemma 4, LLaVA            |
+| Audio     | Whisper                                    | Transcription             |
+| Graphics  | Diffusers                                  | Flux.2                    |
+| Cloud     | Anthropic, xAI, OpenAI, Google, OpenRouter | Claude, Grok, GPT, Gemini |
+
 
 ## For AI Agents
 
@@ -215,16 +224,18 @@ universal-llm-gateway/
 
 ## Documentation
 
-| Area | Location |
-|---|---|
-| System architecture | [`docs/architecture/`](docs/architecture/overview.md) |
-| Pipeline system | [`services/universal-stargate/systems/pipeline/README.md`](services/universal-stargate/systems/pipeline/README.md) |
-| Federation | [`services/universal-stargate/systems/federation/README.md`](services/universal-stargate/systems/federation/README.md) |
-| RAG service | [`services/rag/README.md`](services/rag/README.md) |
-| MCP server | [`services/mcp-server/README.md`](services/mcp-server/README.md) |
-| Event contracts | [`docs/event-contracts.md`](docs/event-contracts.md) |
-| Cortex feature registry | [`docs/cursor/cortex-registry.md`](docs/cursor/cortex-registry.md) |
-| AGM compliance | [`docs/agm-compliance-report.md`](docs/agm-compliance-report.md) |
+
+| Area                    | Location                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| System architecture     | `[docs/architecture/](docs/architecture/overview.md)`                                                                  |
+| Pipeline system         | `[services/universal-stargate/systems/pipeline/README.md](services/universal-stargate/systems/pipeline/README.md)`     |
+| Federation              | `[services/universal-stargate/systems/federation/README.md](services/universal-stargate/systems/federation/README.md)` |
+| RAG service             | `[services/rag/README.md](services/rag/README.md)`                                                                     |
+| MCP server              | `[services/mcp-server/README.md](services/mcp-server/README.md)`                                                       |
+| Event contracts         | `[docs/event-contracts.md](docs/event-contracts.md)`                                                                   |
+| Cortex feature registry | `[docs/cursor/cortex-registry.md](docs/cursor/cortex-registry.md)`                                                     |
+| AGM compliance          | `[docs/agm-compliance-report.md](docs/agm-compliance-report.md)`                                                       |
+
 
 ## License
 
@@ -233,4 +244,6 @@ MIT License — see [LICENSE](LICENSE).
 ## Author
 
 **krunch3r76** ([@krunch3r76](https://github.com/krunch3r76))
+
 - Issues: [GitHub Issues](https://github.com/krunch3r76/universal-llm-gateway/issues)
+
