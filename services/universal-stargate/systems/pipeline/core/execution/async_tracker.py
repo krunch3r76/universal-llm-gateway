@@ -29,7 +29,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
@@ -134,6 +134,14 @@ class PipelineExecutionRecord:
     result_delivery: dict[str, Any] | None = None
     caller_agent: str | None = None
     terminal_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # dispatch-surface-split Phase 1: output contract + op tracking
+    output_contract: Literal["inline", "thread"] = "inline"
+    # Mirrors result_delivery.bus_thread for op="to_thread"
+    target_thread: str | None = None
+    # None = legacy path (team_generate / frontier_generate callers)
+    op: Literal["generate", "to_thread"] | None = None
+    # ISO-8601 Z; populated by Phase 2 delivery observation
+    thread_reply_observed_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/pipelines/executions/{id}``."""  # noqa: E501
@@ -166,6 +174,10 @@ class PipelineExecutionRecord:
             "result": result_payload,
             "error": error_payload,
             "caller_agent": self.caller_agent,
+            "output_contract": self.output_contract,
+            "target_thread": self.target_thread,
+            "op": self.op,
+            "thread_reply_observed_at": self.thread_reply_observed_at,
         }
 
 
@@ -225,14 +237,26 @@ class PipelineExecutionTracker:
         """Schedule bus delivery for a freshly-terminal record.
 
         No-op when no sender is wired. When a sender is wired but the
-        record has no ``result_delivery`` config, emit ``.skipped`` once
-        so observability can distinguish "no hook configured at startup"
-        (silent) from "hook present but no delivery config on this
-        record" (.skipped) from "hook failed" (.failed).
+        record has no delivery config (neither legacy ``result_delivery``
+        nor ``op="to_thread"`` with a ``target_thread``), emit ``.skipped``
+        once so observability can distinguish "no hook configured at startup"
+        (silent) from "hook present but no delivery config on this record"
+        (.skipped) from "hook failed" (.failed).
+
+        Phase 2: wraps the delivery call in ``_run_delivery_with_outcome``
+        so ``op="to_thread"`` timeout failures can demote a provisional
+        ``completed`` record to ``failed`` after reply observation exhausts.
         """
         if self._delivery_sender is None:
             return
-        if record.result_delivery is None:
+        # For bus-mode records, reply observation only makes sense when the model
+        # itself completed. If the model failed, there is no agent reply to observe.
+        if record.op == "to_thread" and record.status != "completed":
+            return
+        has_delivery_config = record.result_delivery is not None or (
+            record.op == "to_thread" and record.target_thread is not None
+        )
+        if not has_delivery_config:
             from ..events.delivery import PipelineDispatchDeliverySkipped
 
             self._emit(
@@ -244,11 +268,70 @@ class PipelineExecutionTracker:
             )
             return
         try:
-            task = asyncio.create_task(self._delivery_sender(record))
+            task = asyncio.create_task(self._run_delivery_with_outcome(record))
             self._pending_tasks.add(task)
             task.add_done_callback(self._pending_tasks.discard)
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning("Failed to schedule dispatch delivery: %s", exc)
+
+    async def _run_delivery_with_outcome(self, record: PipelineExecutionRecord) -> None:
+        """Invoke delivery sender; demote record to failed on bus-mode timeout.
+
+        Phase 2: ``op="to_thread"`` dispatches reach terminal ``completed``
+        from the model-completion side, but the true success criterion is
+        the agent's reply being observed on the target thread.  If the
+        delivery sender returns ``DeliveryOutcome(status="failed",
+        failure_reason="thread_reply_not_observed")``, this method demotes
+        the record from ``completed`` to ``failed`` and schedules journaling
+        so the final journal entry reflects the actual outcome.
+
+        For all other outcomes (delivered, skipped, non-bus-mode) the record
+        is unchanged here — side-effects (events, mutations) are the delivery
+        sender's responsibility.
+        """
+        from .async_tracker_delivery import DeliveryOutcome
+
+        try:
+            result = await self._delivery_sender(record)  # type: ignore[misc]
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Delivery sender raised unexpectedly: %s", exc)
+            result = None
+
+        if not isinstance(result, DeliveryOutcome):
+            # Legacy senders returned None; treat as delivered (no demotion).
+            if record.op == "to_thread":
+                self._schedule_journal(record)
+            return
+
+        if (
+            result.status == "failed"
+            and result.failure_reason == "thread_reply_not_observed"
+            and record.op == "to_thread"
+            and record.status == "completed"
+        ):
+            record.status = "failed"
+            record.error = PipelineExecutionError(
+                code="thread_reply_not_observed",
+                message=(
+                    f"Agent reply not observed on thread {record.target_thread!r} "
+                    "within delivery timeout."
+                ),
+            )
+            self._emit(
+                PipelineDispatchCompleted(
+                    pipeline_id=record.pipeline,
+                    execution_id=record.execution_id,
+                    status="failed",
+                    duration_s=time.monotonic() - record.started_at_monotonic,
+                    caller_agent=record.caller_agent,
+                    op=record.op or "",
+                    output_contract=record.output_contract,
+                )
+            )
+
+        # Journal deferred from complete_execution for to_thread records.
+        if record.op == "to_thread":
+            self._schedule_journal(record)
 
     def set_journal_writer(
         self,
@@ -359,6 +442,9 @@ class PipelineExecutionTracker:
         started_at: str,
         result_delivery: dict[str, Any] | None = None,
         caller_agent: str | None = None,
+        output_contract: Literal["inline", "thread"] = "inline",
+        target_thread: str | None = None,
+        op: Literal["generate", "to_thread"] | None = None,
     ) -> PipelineExecutionRecord:
         """Admit a new execution and emit ``pipeline.dispatch.async``.
 
@@ -397,15 +483,23 @@ class PipelineExecutionTracker:
             started_at_monotonic=time.monotonic(),
             result_delivery=result_delivery,
             caller_agent=caller_agent,
+            output_contract=output_contract,
+            target_thread=target_thread,
+            op=op,
         )
         self.records[execution_id] = record
 
+        has_delivery_hook = result_delivery is not None or (
+            op == "to_thread" and target_thread is not None
+        )
         self._emit(
             PipelineDispatchAsync(
                 pipeline_id=pipeline,
                 execution_id=execution_id,
-                has_delivery_hook=result_delivery is not None,
+                has_delivery_hook=has_delivery_hook,
                 caller_agent=record.caller_agent,
+                op=op or "",
+                output_contract=output_contract,
             )
         )
 
@@ -484,10 +578,17 @@ class PipelineExecutionTracker:
                 status="completed",
                 duration_s=duration_s,
                 caller_agent=record.caller_agent,
+                op=record.op or "",
+                output_contract=record.output_contract,
             )
         )
         self._schedule_delivery(record)
-        self._schedule_journal(record)
+        # Phase 2: for op="to_thread" records, journal is deferred until after
+        # reply observation completes (via _run_delivery_with_outcome). This
+        # ensures exactly one journal entry per record, carrying the FINAL status
+        # (either "completed" on reply observed, or "failed" on timeout).
+        if record.op != "to_thread":
+            self._schedule_journal(record)
 
     def fail_execution(
         self,
@@ -523,6 +624,8 @@ class PipelineExecutionTracker:
                 status="failed",
                 duration_s=duration,
                 caller_agent=record.caller_agent,
+                op=record.op or "",
+                output_contract=record.output_contract,
             )
         )
         self._schedule_delivery(record)

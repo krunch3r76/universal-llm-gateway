@@ -547,13 +547,22 @@ def _post_dispatch(
     to: str = "",
     subject: str = "",
     body: str = "",
-    from_agent: str = "cursor",
+    from_agent: str = "",
     summary: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    if not slug or not to or not subject or not body:
-        return {"error": "post requires: slug, to, subject, body"}
+    if not slug or not to or not subject or not body or not from_agent:
+        return {
+            "error": (
+                "post requires: slug, to, subject, body, from_agent. "
+                "from_agent must name the persona authoring the turn "
+                "(e.g. \"cursor\", \"claude-web\", \"forge\", \"orion\") "
+                "— there is no default; misattribution at this layer "
+                "creates wrong-persona turns under parallel-instance "
+                "dispatch (see todo:agent-bus-from-attribution-root-cause)."
+            )
+        }
     return _post_impl(
         slug=slug,
         to=to,
@@ -573,14 +582,30 @@ def _reply_dispatch(
     subject: str = "",
     body: str = "",
     after_turn: int = 0,
-    from_agent: str = "cursor",
+    from_agent: str = "",
     status: str = "open",
     mark_read: bool = False,
     close: bool = False,
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    if not thread or not to or not subject or not body or after_turn < 1:
-        return {"error": "reply requires: thread, to, subject, body, after_turn"}
+    if (
+        not thread
+        or not to
+        or not subject
+        or not body
+        or after_turn < 1
+        or not from_agent
+    ):
+        return {
+            "error": (
+                "reply requires: thread, to, subject, body, after_turn, from_agent. "
+                "from_agent must name the persona authoring the turn "
+                "(e.g. \"cursor\", \"claude-web\", \"forge\", \"orion\") "
+                "— there is no default; misattribution at this layer "
+                "creates wrong-persona turns under parallel-instance "
+                "dispatch (see todo:agent-bus-from-attribution-root-cause)."
+            )
+        }
     return _reply_impl(
         thread=thread,
         to=to,
@@ -754,8 +779,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           fetch_unread  (to?, thread?, mark_read?, compact?)                        — fetch ALL unread turns for a recipient or thread; no count cap; at least one of to/thread required
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored); last caps context-only fetches (default 10)
           get           (thread, turn_number)                           — get one specific turn
-          post          (slug, to, subject, body, from_agent?, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn)
-          reply         (thread, to, subject, body, after_turn, from_agent?, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read)
+          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the persona authoring the turn (e.g. "cursor", "claude-web", "forge", "orion"); there is no default.
+          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the persona authoring the turn; there is no default.
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
@@ -780,8 +805,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-          agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5}')
-          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n...", "tags": ["project:ulg", "type:bug"]}')
+          agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from_agent": "cursor"}')
+          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n...", "from_agent": "cursor", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')
           agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')

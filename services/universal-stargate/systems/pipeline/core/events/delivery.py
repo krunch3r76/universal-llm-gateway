@@ -9,6 +9,8 @@ Invariants:
 - ∀ delivery attempt: emit exactly one of ``.sent``, ``.failed``, ``.skipped``.
 - ``.skipped`` means ``result_delivery`` was absent or incomplete — not
   an error.
+- Phase 2: ``to_thread`` dispatches also emit ``.completed`` after reply
+  observation succeeds (turn count delta confirms the agent saw the reply).
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ def PipelineDispatchDeliverySent(  # noqa: N802
     thread: str,
     to_agent: str,
     from_agent: str,
+    op: str = "",
+    output_contract: str = "inline",
 ) -> Event:
     """Emitted when a terminal-state turn has been posted successfully."""
     return Event(
@@ -33,6 +37,8 @@ def PipelineDispatchDeliverySent(  # noqa: N802
             "thread": thread,
             "to_agent": to_agent,
             "from_agent": from_agent,
+            "op": op,
+            "output_contract": output_contract,
         },
     )
 
@@ -44,6 +50,8 @@ def PipelineDispatchDeliveryFailed(  # noqa: N802
     thread: str,
     status_code: int,
     error_preview: str,
+    op: str = "",
+    output_contract: str = "inline",
 ) -> Event:
     """Emitted when the agent-bus POST returned non-2xx or failed transport.
 
@@ -59,6 +67,8 @@ def PipelineDispatchDeliveryFailed(  # noqa: N802
             "thread": thread,
             "status_code": status_code,
             "error_preview": error_preview,
+            "op": op,
+            "output_contract": output_contract,
         },
     )
 
@@ -68,6 +78,8 @@ def PipelineDispatchDeliverySkipped(  # noqa: N802
     pipeline_id: str,
     execution_id: str,
     reason: str,
+    op: str = "",
+    output_contract: str = "inline",
 ) -> Event:
     """Emitted when delivery was not attempted.
 
@@ -82,6 +94,37 @@ def PipelineDispatchDeliverySkipped(  # noqa: N802
             "pipeline_id": pipeline_id,
             "execution_id": execution_id,
             "reason": reason,
+            "op": op,
+            "output_contract": output_contract,
+        },
+    )
+
+
+@event_factory
+def PipelineDispatchDeliveryCompleted(  # noqa: N802
+    pipeline_id: str,
+    execution_id: str,
+    thread: str,
+    observed_at: str,
+) -> Event:
+    """Emitted after reply observation confirms the thread received the turn.
+
+    Phase 2 — ``op="to_thread"`` dispatches only. The tracker sets
+    ``thread_reply_observed_at`` on the record before emitting this signal.
+    ``observed_at`` is ISO-8601 UTC (Z suffix).
+
+    This signal is the terminal success signal for ``to_thread`` dispatches:
+    ``.sent`` means the POST landed; ``.completed`` means the agent saw it.
+    """
+    return Event(
+        signal="pipeline.dispatch.delivery.completed",
+        payload={
+            "pipeline_id": pipeline_id,
+            "execution_id": execution_id,
+            "thread": thread,
+            "observed_at": observed_at,
+            "op": "to_thread",
+            "output_contract": "thread",
         },
     )
 

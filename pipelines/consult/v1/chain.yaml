@@ -43,15 +43,10 @@
 #       "thread_id": "<bus-thread>",
 #       "subject_anchor": "<short subject>",
 #     },
-#     result_delivery={
-#       "bus_thread": "<bus-thread>",
-#       "bus_from_agent": "cursor",
-#       "bus_to_agent": "<recipient>",
-#       "bus_subject": "<subject>",
-#       "bus_brief_summary": "Pipeline complete; see ratification_reply_markdown.",
-#     },
 #     caller_agent="cursor",
 #   )
+# Note: result_delivery is retired (dispatch-surface-split Phase 4). Use
+# team_dispatch(op="to_thread", ...) for bus-mode dispatch going forward.
 
 schema_version: 6
 id: consult-pipeline-v1

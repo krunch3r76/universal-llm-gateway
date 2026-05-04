@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
+import httpx
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
+from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from .events import (
     FrontierEndpointPersonaResolved,
@@ -54,6 +57,10 @@ class FrontierGenerateRequest:
     result_delivery: dict[str, Any] | None = None
     caller_agent: str | None = None
     timeout_seconds: int | None = None
+    # dispatch-surface-split Phase 1: explicit op discrimination
+    output_contract: Literal["inline", "thread"] = "inline"
+    target_thread: str | None = None
+    op: Literal["generate", "to_thread"] | None = None
 
 
 @dataclass(slots=True)
@@ -69,6 +76,58 @@ class FrontierEndpointError(Exception):
             "field": self.field,
             "request_id": self.request_id,
         }
+
+
+async def _verify_thread_writable(
+    thread: str,
+    *,
+    request_id: str,
+    url: str = DEFAULT_AGENT_BUS_URL,
+    auth_token: str = "",
+) -> None:
+    """Raise FrontierEndpointError when the target thread is missing or closed.
+
+    Called by ``build_dispatch_body()`` for ``op="to_thread"`` dispatches before
+    the request reaches the pipeline tracker.  Fast-fail before admission so
+    callers discover thread problems via a 422 rather than a timeout.
+
+    ∀ transport/auth failure: raise with ``status_code=503`` so the route
+    returns a 5xx rather than silently admitting an undeliverable dispatch.
+    """
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+    try:
+        async with make_async_client(url, timeout=5.0) as client:
+            resp = await client.get(f"/threads/{thread}", headers=headers)
+    except httpx.HTTPError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Agent-bus unreachable during thread check: {exc}",
+            status_code=503,
+        )
+    if resp.status_code == 404:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Thread '{thread}' not found.",
+            status_code=422,
+        )
+    if resp.status_code >= 400:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Thread '{thread}' check failed: HTTP {resp.status_code}.",
+            status_code=503,
+        )
+    data: dict[str, Any] = resp.json()
+    status: str = data.get("status", "")
+    if status == "closed":
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Thread '{thread}' is closed; cannot deliver to_thread dispatch.",
+            status_code=422,
+        )
 
 
 def _emit_rejection(
@@ -113,7 +172,6 @@ def _enforce_model(
     )
 
 
-
 def _enforce_options(
     *,
     request_id: str,
@@ -150,7 +208,8 @@ def _resolve_effective_tools(
     """
     if requested is not None:
         return list(requested)
-    return None  # permissive; let frontier_dispatch_tools.resolve_dispatch_tool_set decide
+    # Permissive: let frontier_dispatch_tools.resolve_dispatch_tool_set decide.
+    return None
 
 
 async def build_dispatch_body(
@@ -309,10 +368,25 @@ async def build_dispatch_body(
     if req.remote_mcp is not None:
         pipeline_options["remote_mcp"] = req.remote_mcp
 
+    # Phase 2 admission fast-fail: verify the target thread is open before admitting.
+    # This prevents silent undeliverable dispatches — callers learn via 422 rather
+    # than a 30-second delivery timeout.  Only performed for to_thread dispatches
+    # with a known token; skip if AGENT_BUS_TOKEN is absent (dev/test environments).
+    if req.output_contract == "thread" and req.target_thread:
+        _agent_bus_token = os.getenv("AGENT_BUS_TOKEN", "")
+        if _agent_bus_token:
+            await _verify_thread_writable(
+                req.target_thread,
+                request_id=request_id,
+                auth_token=_agent_bus_token,
+            )
+
     body: dict[str, Any] = {
         "model": _PIPELINE_ID,
         "messages": req.messages,
         "pipeline_options": pipeline_options,
+        # dispatch-surface-split Phase 1: pass op discrimination through to tracker
+        "output_contract": req.output_contract,
     }
     if req.timeout_seconds is not None:
         body["timeout_seconds"] = req.timeout_seconds
@@ -320,4 +394,8 @@ async def build_dispatch_body(
         body["result_delivery"] = req.result_delivery
     if req.caller_agent:
         body["caller_agent"] = req.caller_agent
+    if req.target_thread is not None:
+        body["target_thread"] = req.target_thread
+    if req.op is not None:
+        body["op"] = req.op
     return body

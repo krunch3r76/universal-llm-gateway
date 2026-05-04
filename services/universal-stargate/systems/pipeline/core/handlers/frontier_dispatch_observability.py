@@ -66,19 +66,24 @@ def emit_post_loop_observability(
     silent failures without consulting the event service.
     """
     output_tokens = int(result.usage.get("output_tokens", 0))
+    output_contract = context.options.get("output_contract", "inline")
     anomaly_hints: list[dict[str, Any]] = []
-    short_hint = _emit_output_short(
-        publish=publish,
-        execution_id=context.execution_id,
-        agent=agent,
-        boot_level=boot_level,
-        model=model,
-        provider=result.provider,
-        output_tokens=output_tokens,
-        tool_calls_made=result.tool_calls_made,
-        finish_reason=result.finish_reason,
-        block_reason=result.block_reason,
-        content=result.content,
+    short_hint = (
+        _emit_output_short(
+            publish=publish,
+            execution_id=context.execution_id,
+            agent=agent,
+            boot_level=boot_level,
+            model=model,
+            provider=result.provider,
+            output_tokens=output_tokens,
+            tool_calls_made=result.tool_calls_made,
+            finish_reason=result.finish_reason,
+            block_reason=result.block_reason,
+            content=result.content,
+        )
+        if output_contract == "inline"
+        else None  # bus-mode: pipeline result is action-narration by design
     )
     if short_hint is not None:
         anomaly_hints.append(short_hint)

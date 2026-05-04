@@ -125,6 +125,11 @@ class DispatchRequest(BaseModel):
     tracker record and into the ``pipeline.dispatch.*`` event payloads so
     downstream observability can attribute dispatches to a specific agent.
     Not authenticated; callers can claim any identity.
+
+    Phase 1 (dispatch-surface-split): ``output_contract``, ``target_thread``,
+    and ``op`` are set by the canonical Stargate routes (``/api/v1/team/dispatch``
+    and ``/api/v1/frontier/dispatch``).  Direct callers via legacy routes omit
+    them; the tracker defaults to ``output_contract="inline"`` and ``op=None``.
     """
 
     model_config = {"extra": "allow"}
@@ -134,6 +139,10 @@ class DispatchRequest(BaseModel):
     pipeline_options: dict[str, Any] | None = None
     result_delivery: ResultDeliveryConfig | None = None
     caller_agent: str | None = None
+    # dispatch-surface-split Phase 1: explicit op discrimination
+    output_contract: Literal["inline", "thread"] = "inline"
+    target_thread: str | None = None
+    op: Literal["generate", "to_thread"] | None = None
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -149,8 +158,13 @@ def _build_chat_completion_request(dispatch: DispatchRequest) -> ChatCompletionR
 
     ``ChatCompletionRequest`` has ``extra="allow"``, so ``pipeline_options``
     and any unknown fields are preserved for downstream ``prepare_request``.
+
+    Tracker-only fields (``result_delivery``, ``output_contract``,
+    ``target_thread``, ``op``) are excluded — they are already stored on
+    the tracker record and must not pollute the model-facing request shape.
     """
-    payload = dispatch.model_dump(exclude_none=True, exclude={"result_delivery"})
+    tracker_only = {"result_delivery", "output_contract", "target_thread", "op"}
+    payload = dispatch.model_dump(exclude_none=True, exclude=tracker_only)
     return ChatCompletionRequest(**payload)
 
 
@@ -244,6 +258,9 @@ async def dispatch_pipeline(
             started_at=started_at,
             result_delivery=delivery_payload,
             caller_agent=dispatch.caller_agent,
+            output_contract=dispatch.output_contract,
+            target_thread=dispatch.target_thread,
+            op=dispatch.op,
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)
@@ -315,6 +332,8 @@ async def dispatch_pipeline(
         "started_at": started_at,
         "status": "running",
     }
+    if dispatch.target_thread is not None:
+        response_body["thread"] = dispatch.target_thread
     hint = _frontier_generate_hint_for(dispatch)
     if hint is not None:
         response_body["hint"] = hint

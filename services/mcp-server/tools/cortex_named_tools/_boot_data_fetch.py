@@ -107,41 +107,70 @@ def _build_futures_spec(
         session_qs_parts["agent"] = profile["session_agent_filter"]
     session_qs = urlencode(session_qs_parts)
 
+    # Read-only fetch-graph audit (blocking contract for BootMode.INSPECT):
+    #
+    # - sessions: GET /session-journals?...            -> list-only read
+    # - threads: GET /threads?status=active            -> list-only read
+    # - unread_turns: GET /turns?...                   -> read-only (no mark_read)
+    # - deadlines: GET /deadlines                      -> list-only read
+    # - staging: GET /staging?status=pending&limit=5   -> list-only read
+    # - todos: GET /boot-todos?...                     -> list-only read
+    # - temporal: GET /boot-temporal                   -> list-only read
+    # - reflective_journal: GET /boot-reflective?...   -> list-only read
+    # - recent_mentions: GET /boot-recent-mentions?... -> list-only read
+    # - skills: GET /entities?type=agent_skill...      -> list-only read
+    # - recent_work: GET /boot-recent-work             -> list-only read
+    # - rag_pipeline: GET /api/v1/rag/* status routes  -> list-only read
+    # - self_reflections: GET /assertions?...          -> list-only read
+    #
+    # Any mutating fetch in this graph is a hard blocker for INSPECT mode.
     futures_spec: dict[str, tuple[Any, ...]] = {
+        # read-only: list recent session journals for boot continuity
         "sessions": (cx, "GET", f"/session-journals?{session_qs}"),
+        # read-only: list active bus threads for attention routing
         "threads": (relay, "agent-bus", "GET", "/threads?status=active"),
+        # read-only: unread lookup only; query does not include mark_read
         "unread_turns": (relay, "agent-bus", "GET", f"/turns?{unread_turns_qs}"),
     }
 
     if profile.get("include_deadlines", True):
+        # read-only: fetch pending deadline list
         futures_spec["deadlines"] = (cx, "GET", "/deadlines")
     if profile.get("include_review_queue", True):
+        # read-only: fetch pending staging queue slice
         futures_spec["staging"] = (cx, "GET", "/staging?status=pending&limit=5")
 
     todo_qs_parts: dict[str, Any] = {"limit": 15}
     if agent == "web":
         todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
+    # read-only: fetch todo index for briefing card prioritization
     futures_spec["todos"] = (cx, "GET", f"/boot-todos?{urlencode(todo_qs_parts)}")
+    # read-only: fetch active/expired temporal assertions
     futures_spec["temporal"] = (cx, "GET", "/boot-temporal")
 
     rj_agent = {"cursor": "cursor-claude", "web": "web-claude"}.get(agent, agent)
+    # read-only: fetch reflective journal entries for agent continuity
     futures_spec["reflective_journal"] = (
         cx,
         "GET",
         f"/boot-reflective?{urlencode({'agent': rj_agent, 'limit': 5})}",
     )
 
+    # read-only: fetch recent mentions for salience rendering
     futures_spec["recent_mentions"] = (
         cx,
         "GET",
         f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
+    # read-only: fetch agent_skill entities for on-demand skill pointers
     futures_spec["skills"] = (
         cx,
         "GET",
         f"/entities?{urlencode({'type': 'agent_skill', 'limit': 50})}",
     )
+    # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (cx, "GET", "/boot-recent-work")
+    # read-only: fetch RAG status endpoints (queue + indexing status)
     futures_spec["rag_pipeline"] = (rag, _STARGATE_URL)
 
     self_entity_id = profile.get("self_entity_id")
@@ -154,6 +183,7 @@ def _build_futures_spec(
                 "limit": self_reflections_limit,
             }
         )
+        # read-only: fetch non-superseded self-reflection assertions
         futures_spec["self_reflections"] = (cx, "GET", f"/assertions?{refl_qs}")
 
     return futures_spec

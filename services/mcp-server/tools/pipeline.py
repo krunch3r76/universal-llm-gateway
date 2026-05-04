@@ -455,24 +455,24 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           MCP 300s client read timeout (Orion-grade reasoning, deep consensus
           runs, etc.). Poll completion with ``op="result"``.
 
-          **Persona consults — use ``team_generate`` instead.** If you
+          **Persona consults — use ``team_dispatch`` instead.** If you
           would dispatch ``pipeline_id="frontier-dispatch"`` with
           ``options.agent`` set to a team seat (``oppie``, ``orion``,
           ``bard``, ``api_claude``, ``forge``, cursor variants), prefer
-          ``team_generate(agent=..., messages=..., generation_options=...)``.
-          ``team_generate`` resolves the persona's ``default_model`` from
+          ``team_dispatch(op="generate", agent=..., messages=..., ...)``.
+          ``team_dispatch`` resolves the persona's ``default_model`` from
           Cortex, enforces contract, assembles full boot context (MCP access
           for all except Oppie/Oppia), and rejects violations BEFORE dispatch.
 
-          **Persona-free raw engine — use ``frontier_generate``.** For
-          dispatches without a team seat, ``frontier_generate`` is the
+          **Persona-free raw engine — use ``frontier_dispatch``.** For
+          dispatches without a team seat, ``frontier_dispatch`` is the
           canonical door: it is the persona-free engine relay with structured
           admission. The raw ``frontier-dispatch`` path is for pipeline
           composition, non-persona testing, or deliberate admission-bypass; it
           enforces strict validation at the handler level (unknown
           ``runtime_options`` keys raise ``UnknownPipelineOptionsError``;
           agent/model provider mismatches raise a validation error) but skips
-          the persona allowlist gates in ``team_generate``.
+          the persona allowlist gates in ``team_dispatch``.
 
         - ``"result"`` — fetch or short-block on async-dispatched pipeline
           result. Returns tracker shape: ``{execution_id, pipeline, status,

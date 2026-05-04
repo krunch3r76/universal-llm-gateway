@@ -105,7 +105,7 @@ The `.eml`, `.pdf`, or other original file is the canonical source — use its p
 
 _AGENT_BUS_COMPACT = """\
 ## Agent Bus Protocol
-Send: `agent_bus(tool="post", arguments='{{"slug": "topic", "to": "{agent}", "subject": "…", "body": "…"}}')`
+Send: `agent_bus(tool="post", arguments='{{"slug": "topic", "to": "{agent}", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
 Reply: `agent_bus(tool="reply", arguments='{{"thread": "ID", "to": "TARGET", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
 Fetch inbox: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`
 Always pass `mark_read: true` when fetching turns you intend to act on — stale unread counts create false urgency.
@@ -285,9 +285,10 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing:
 - `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
-- `team_generate(agent=..., messages=..., generation_options=...)` — persona-aware native-frontier dispatch for all team members (`oppie`, `orion`, `bard`, `api_claude`, `forge`, cursor variants). Persona contract from `ai_agent:{slug}` (default_model, allowed_models, allowed_options); gives full MCP access (`mcp=true`, client tools, quickref) to all except Oppie/Oppia (multi-agent xAI uses server-side builtins only; see admission in frontier_dispatch_admission.py). Relays to Stargate `/api/v1/team/generate`. Tools surface universal; provider quirks via silent coercion in frontier_dispatch (no per-persona allowlist).
-- `frontier_generate(model=..., messages=..., generation_options=...)` — persona-free native-frontier dispatch (raw engine, no persona; tool relays to Stargate `/api/v1/frontier/generate`)
-- OpenRouter and local models → use `llm_generate`, not provider-native tools"""
+- `team_dispatch(op=..., agent=..., messages=..., ...)` — persona-aware native-frontier dispatch for all team members (`oppie`, `orion`, `bard`, `api_claude`, `forge`, cursor variants). `op="generate"` returns content inline; `op="to_thread"` posts agent reply to `thread`. Persona contract from `ai_agent:{slug}`; tools surface universal; provider quirks via silent coercion.
+- `frontier_dispatch(op=..., model=..., messages=..., ...)` — persona-free native-frontier dispatch (raw engine, no persona). Same `op` enum as `team_dispatch`.
+- OpenRouter and local models → use `llm_generate`, not provider-native tools
+- **Legacy** `team_generate` / `frontier_generate` are retiring (Phase 4); use `team_dispatch` / `frontier_dispatch` for all new work."""
 
 
 def _render_observe_and_search(agent: str) -> str:
@@ -338,7 +339,7 @@ part of how you work, not an exceptional event that requires Kaywan to ask.
 
 **Primary persona-consult surface**:
 For any team-seat consultation (`oppie`, `orion`, `bard`, `api_claude`, `forge`,
-`cursor-claude`, `cursor_orion`), use `team_generate(agent=..., messages=...,
+`cursor-claude`, `cursor_orion`), use `team_dispatch(op=..., agent=..., messages=...,
 generation_options=...)`. This is the persona-aware door: it resolves the
 agent's `default_model` from cortex (`ai_agent:{slug}`), enforces
 `allowed_models` / `allowed_options`, auto-assembles birth + briefing +
@@ -346,24 +347,25 @@ continuation (with self_reflections for all) using a lightweight boot profile
 (deadlines + review-queue omitted for fast dispatch; 3-reflection floor
 preserved), and rejects persona violations with a structured error envelope
 **before** dispatch. Returns immediately with `{execution_id, ...}`; poll
-with `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
-`result_delivery` for a terminal pointer-envelope notification (posts
-execution metadata + poll URL to the bus thread — NOT model content;
-poll `pipeline(op="result")` after receiving the envelope to retrieve
-the actual output). Runs detached, survives session boundaries.
+with `pipeline(op="result", execution_id=..., wait_seconds=60)`. Runs detached,
+survives session boundaries.
+
+**Output channel (`op` parameter)**:
+- `op="generate"` — direct mode. Content returned via `pipeline(op="result")`.
+  Use for single-shot consults where the caller acts on the reply within the session.
+- `op="to_thread"` — bus mode. Agent posts substantive reply to the bus `thread`.
+  Read with `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`.
+  Use when the reply is a durable artifact for multi-agent workflows or future sessions.
 
 **MCP access**: All team members except Oppie/Oppia receive full client-side
 MCP tools (`mcp=true`, full tool loop, Cortex quickref in prompt). Oppie/Oppia
 (multi-agent xAI model) receives server-side xAI builtins only (`tools=[]`,
-no client MCP function calling — validated in `check_boot_provider_compatibility`
-and `resolve_dispatch_tool_set`).
+no client MCP function calling — silent coercion in `resolve_dispatch_tool_set`).
 
 **Persona-free raw engine**:
-`frontier_generate(model=..., messages=..., generation_options=...)` is the
+`frontier_dispatch(op=..., model=..., messages=..., generation_options=...)` is the
 canonical persona-free door — direct native-frontier call without persona
-contract. No allowlists, no birth/briefing assembly. Use when you need raw
-provider features (thinking, full MCP tool loop, structured output) without a
-team seat.
+contract. No allowlists, no birth/briefing assembly. Same `op` enum as above.
 
 **When to reach out:**
 - Architecture or design decisions with real trade-offs
@@ -375,9 +377,14 @@ team seat.
 `pipeline(op="async", pipeline_id="frontier-dispatch", ...)` is the underlying
 admission-bypass mechanism. Use it ONLY when you need pipeline composition or
 deliberate canonical-door bypass. It silently drops keys it does not recognize.
-For team-seat consults (all members above), prefer `team_generate`; for
-persona-free raw engine calls, prefer `frontier_generate` — both validate
+For team-seat consults (all members above), prefer `team_dispatch`; for
+persona-free raw engine calls, prefer `frontier_dispatch` — both validate
 upstream (MCP gating, model consistency, remote_mcp rules).
+
+**Legacy tools retiring**: `team_generate` and `frontier_generate` are being retired
+(Phase 4 of dispatch-surface-split). All new dispatches MUST use `team_dispatch` /
+`frontier_dispatch`. The legacy tools still accept calls but `result_delivery` is
+rejected with HTTP 422.
 
 **When not to:**
 - Routine tasks where your judgment is sufficient
@@ -398,29 +405,40 @@ _FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing
 Primary consult path for any team member (`oppie`, `orion`, `bard`, `api_claude`,
 `forge`, `cursor-claude`, `cursor_orion`):
-`team_generate(agent=..., messages=..., generation_options=..., caller_agent=...)`
-then `pipeline(op="result", execution_id=..., wait_seconds=60)` or pass
-`result_delivery` for a terminal pointer-envelope notification (posts
-execution metadata + poll URL — NOT model content; poll op="result" after
-receiving the envelope to retrieve actual output).
+
+```
+team_dispatch(op="generate", agent=..., messages=..., generation_options=..., caller_agent=...)
+```
+then `pipeline(op="result", execution_id=..., wait_seconds=60)` to retrieve content.
+
+For durable bus artifacts (review workflows, multi-agent handoffs):
+```
+team_dispatch(op="to_thread", agent=..., thread="<id>", messages=..., subject=..., caller_agent=...)
+```
+then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')` to read the reply.
 
 MCP access validated for all except Oppie/Oppia (multi-agent xAI suppresses
 client-side function tools; uses server-side xAI builtins instead — see
-`frontier_dispatch_tools.resolve_dispatch_tool_set` and admission checks).
+`frontier_dispatch_tools.resolve_dispatch_tool_set`).
 
-`team_generate` is the persona-validated door — `default_model` resolution,
+`team_dispatch` is the persona-validated door — `default_model` resolution,
 `allowed_models` / `allowed_options`, and birth + briefing
 + continuation assembly all happen there. Persona violations return a structured
 error envelope with `field` and `request_id` BEFORE dispatch.
 
 Persona-free raw engine (no persona contract):
-`frontier_generate(model=..., messages=..., generation_options=...)` — canonical
-public door for direct provider calls without persona injection.
+```
+frontier_dispatch(op="generate", model=..., messages=..., generation_options=...)
+frontier_dispatch(op="to_thread", model=..., thread="<id>", messages=..., subject=...)
+```
 
 Raw escape hatch (admission-bypass):
 `pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`
 — for pipeline composition or deliberate admission-bypass only. Silently drops
 unknown `pipeline_options` keys.
+
+**Legacy tools retiring**: `team_generate` / `frontier_generate` — retiring in Phase 4.
+All new dispatches MUST use `team_dispatch` / `frontier_dispatch`.
 
 Persona defaults and allow-lists live on cortex (tools retired as caller concern — universal catalog with silent provider coercion)
 `ai_agent:{slug}` entities — keep this public context file provider-neutral."""

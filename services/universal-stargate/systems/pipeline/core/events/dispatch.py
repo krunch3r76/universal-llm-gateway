@@ -26,13 +26,17 @@ def PipelineDispatchAsync(  # noqa: N802
     execution_id: str,
     has_delivery_hook: bool,
     caller_agent: str | None = None,
+    op: str = "",
+    output_contract: str = "inline",
 ) -> Event:
     """Emitted when the async tracker admits a new execution.
 
     Payload:
         pipeline_id: Pipeline identifier
         execution_id: Newly minted execution UUID
-        has_delivery_hook: Whether a ``result_delivery`` config was supplied
+        has_delivery_hook: Whether a delivery config was supplied
+        op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        output_contract: Where the work product lands (``inline`` | ``thread``)
     """
     return Event(
         signal="pipeline.dispatch.async",
@@ -41,6 +45,8 @@ def PipelineDispatchAsync(  # noqa: N802
             "execution_id": execution_id,
             "has_delivery_hook": has_delivery_hook,
             "caller_agent": caller_agent,
+            "op": op,
+            "output_contract": output_contract,
         },
     )
 
@@ -52,6 +58,8 @@ def PipelineDispatchCompleted(  # noqa: N802
     status: str,
     duration_s: float,
     caller_agent: str | None = None,
+    op: str = "",
+    output_contract: str = "inline",
 ) -> Event:
     """Emitted when the async tracker records a terminal state.
 
@@ -60,6 +68,8 @@ def PipelineDispatchCompleted(  # noqa: N802
         execution_id: Execution UUID
         status: Terminal status (``completed`` or ``failed``)
         duration_s: Wall-clock seconds from admission to terminal transition
+        op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        output_contract: Where the work product lands (``inline`` | ``thread``)
     """
     return Event(
         signal="pipeline.dispatch.completed",
@@ -69,6 +79,8 @@ def PipelineDispatchCompleted(  # noqa: N802
             "status": status,
             "duration_s": duration_s,
             "caller_agent": caller_agent,
+            "op": op,
+            "output_contract": output_contract,
         },
     )
 
@@ -336,6 +348,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
     prompt_tokens: int,
     completion_tokens: int,
     provider: str,
+    op: str = "",
 ) -> Event:
     """Emitted when the native tool loop returns final content.
 
@@ -345,6 +358,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
         tool_calls_made: Total tool invocations across all turns
         reasoning_present: Whether the model surfaced reasoning trace text
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
+        op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
     """
     return Event(
         signal="pipeline.frontier.dispatch.completed",
@@ -357,6 +371,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "provider": provider,
+            "op": op,
         },
         scope="node",
     )
@@ -473,6 +488,7 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
     provider: str,
     boot_level: str,
     remote_mcp: bool,
+    op: str = "",
 ) -> Event:
     """Emitted when a ``frontier_dispatch_v1`` execution begins its native call.
 
@@ -490,9 +506,10 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
         boot_level: Internal observability vocabulary derived from agent
             presence at dispatch: ``team`` (persona dispatch) or ``none``
             (persona-free). NOT a caller-supplied parameter; the public MCP
-            surface is ``team_generate`` (persona) plus ``frontier_generate``
+            surface is ``team_dispatch`` (persona) plus ``frontier_dispatch``
             (raw) with no ``boot`` field.
         remote_mcp: True iff adapter-level remote MCP injection is active
+        op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
     """
     return Event(
         signal="pipeline.frontier.dispatch.started",
@@ -503,6 +520,7 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
             "provider": provider,
             "boot_level": boot_level,
             "remote_mcp": remote_mcp,
+            "op": op,
         },
         scope="node",
     )
@@ -570,6 +588,8 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
     finish_reason: str | None,
     block_reason: str | None,
     content_preview: str,
+    op: str = "",
+    output_contract: str = "inline",
 ) -> Event:
     """Emitted when a team/full dispatch returns ``output_tokens < 500``.
 
@@ -581,6 +601,10 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
     ``detect_output_short``. The handler passes ``boot_level="team"`` for
     persona dispatches and ``"none"`` otherwise; the detector filters the
     latter.
+
+    Phase 3 adds an additional gate: when ``output_contract != "inline"``
+    (bus-mode dispatch), the detector short-circuits before emitting so
+    action-narration content is never misclassified as provider degradation.
 
     Payload:
         agent: Persona identity (gate: only emitted when set)
@@ -594,6 +618,8 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
         finish_reason: Provider-native finish reason, if any
         block_reason: Provider-native block reason, if any
         content_preview: First ~500 chars of content, for triage
+        op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        output_contract: Where the work product lands (``inline`` | ``thread``)
     """
     return Event(
         signal="pipeline.frontier.dispatch.output.short",
@@ -608,6 +634,8 @@ def PipelineFrontierDispatchOutputShort(  # noqa: N802
             "finish_reason": finish_reason,
             "block_reason": block_reason,
             "content_preview": content_preview,
+            "op": op,
+            "output_contract": output_contract,
         },
         scope="node",
     )
@@ -771,12 +799,16 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
     turns_used: int,
     tool_calls_made: int,
     provider: str,
+    op: str = "",
 ) -> Event:
     """Emitted when the tool loop hits ``max_tool_turns`` without terminal content.
 
     Signals a misbehaving dispatch: the model kept requesting tools past the
     configured budget. Content returned to the caller may be empty or the
     last assistant message that still included tool_calls.
+
+    Payload:
+        op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
     """
     return Event(
         signal="pipeline.frontier.dispatch.exhausted",
@@ -786,6 +818,7 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
             "turns_used": turns_used,
             "tool_calls_made": tool_calls_made,
             "provider": provider,
+            "op": op,
         },
         scope="node",
     )

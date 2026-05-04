@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -20,7 +21,13 @@ from ._boot_summarize import _build_review_top, _build_unread_threads
 from ._boot_transcript import _resolve_transcript
 
 _LA = ZoneInfo("America/Los_Angeles")
+_OPS_CONTEXT_DIR = Path("/data/files/notes/system/shared")
 logger = logging.getLogger(__name__)
+
+
+class BootMode(Enum):
+    LIVE = "live"
+    INSPECT = "inspect"
 
 
 def _build_artifacts(
@@ -88,6 +95,7 @@ def _build_artifacts(
 def run_cortex_boot(
     agent: str = "cursor",
     transcript_id: str = "",
+    mode: BootMode = BootMode.LIVE,
 ) -> dict[str, Any]:
     """Build a persona-scoped Cortex boot briefing for internal callers and MCP.
 
@@ -101,7 +109,11 @@ def run_cortex_boot(
         return transcript_continuation
 
     t_boot = datetime.now(UTC)
-    session_id = f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
+    session_id = (
+        f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
+        if mode == BootMode.LIVE
+        else f"inspect-{agent}-{t_boot.strftime('%Y-%m-%d-%H%M%S')}"
+    )
     profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["cursor"])
 
     recorder = FetchRecorder()
@@ -122,13 +134,15 @@ def run_cortex_boot(
         review_total=extracted["review_total"],
     )
     op_ctx_written = False
-    try:
-        _op_dir = Path("/data/files/notes/system/shared")
-        _op_dir.mkdir(parents=True, exist_ok=True)
-        (_op_dir / f"operational-context-{agent}.md").write_text(ops_context)
-        op_ctx_written = True
-    except OSError:
-        logger.warning("Could not write operational context to %s", op_ctx_path)
+    if mode == BootMode.LIVE:
+        try:
+            _OPS_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
+            (_OPS_CONTEXT_DIR / f"operational-context-{agent}.md").write_text(
+                ops_context
+            )
+            op_ctx_written = True
+        except OSError:
+            logger.warning("Could not write operational context to %s", op_ctx_path)
 
     tc_summary: dict[str, Any] | None = None
     if transcript_continuation:
@@ -181,36 +195,40 @@ def run_cortex_boot(
         recorder=recorder,
     )
 
-    audit_dump_path = write_audit_dump(
-        session_id=session_id,
-        agent=agent,
-        boot_time=t_boot,
-        card=card,
-        ops_context=ops_context,
-        artifacts=artifacts,
-        transcript_continuation=tc_summary,
-    )
+    audit_dump_path: str | None = None
+    if mode == BootMode.LIVE:
+        audit_dump_path = write_audit_dump(
+            session_id=session_id,
+            agent=agent,
+            boot_time=t_boot,
+            card=card,
+            ops_context=ops_context,
+            artifacts=artifacts,
+            transcript_continuation=tc_summary,
+        )
 
-    logger.info(
-        "cortex_boot: agent=%s card_size=%d manifest_sections=%d",
-        agent,
-        len(card),
-        len(manifest),
-    )
-    record("mcp.cortex.boot", agent=agent)
-    record(
-        "mcp.cortex.boot.manifest.assembled",
-        agent=agent,
-        artifact_count=len(artifacts),
-        total_bytes=sum(a.bytes for a in artifacts if a.bytes >= 0),
-    )
+        logger.info(
+            "cortex_boot: agent=%s card_size=%d manifest_sections=%d",
+            agent,
+            len(card),
+            len(manifest),
+        )
+        record("mcp.cortex.boot", agent=agent)
+        record(
+            "mcp.cortex.boot.manifest.assembled",
+            agent=agent,
+            artifact_count=len(artifacts),
+            total_bytes=sum(a.bytes for a in artifacts if a.bytes >= 0),
+        )
 
     result: dict[str, Any] = {
         "session_id": session_id,
+        "mode": mode.value,
         "utc_now": t_boot.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "local_time": t_boot.astimezone(_LA).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "briefing_card": card,
         "sections_available": manifest,
+        "operational_context_inline": ops_context if mode == BootMode.INSPECT else None,
         "operational_context_ref": op_ctx_path if op_ctx_written else None,
         "injected_artifacts": serialize_manifest(artifacts),
         "audit_dump_path": audit_dump_path,

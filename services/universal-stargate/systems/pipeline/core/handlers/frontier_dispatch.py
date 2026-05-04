@@ -114,6 +114,8 @@ class FrontierDispatchHandler(BaseHandler):
             "system",
             "generation_parameters",
             "_endpoint_request_id",
+            # dispatch-surface-split Phase 1: consumed by output_short gate (Phase 3)
+            "output_contract",
         }
     )
 
@@ -279,6 +281,7 @@ class FrontierDispatchHandler(BaseHandler):
                 provider=provider,
                 boot_level="team" if agent else "none",
                 remote_mcp=remote_mcp,
+                op=opts.get("op", ""),
             ),
         )
 
@@ -318,6 +321,7 @@ class FrontierDispatchHandler(BaseHandler):
                     turns_used=result.turns_used,
                     tool_calls_made=result.tool_calls_made,
                     provider=result.provider,
+                    op=opts.get("op", ""),
                 ),
             )
         else:
@@ -332,6 +336,7 @@ class FrontierDispatchHandler(BaseHandler):
                     prompt_tokens=result.usage.get("input_tokens", 0),
                     completion_tokens=result.usage.get("output_tokens", 0),
                     provider=result.provider,
+                    op=opts.get("op", ""),
                 ),
             )
             # F3: detect silent empty-completion on the non-exhausted branch

@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ._boot_runner import run_cortex_boot
+from ._boot_diff import _build_boot_diff
+from ._boot_runner import BootMode, run_cortex_boot
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -40,6 +41,43 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           operational_context_ref — path to operational context file (read on demand)
         """
         return run_cortex_boot(agent=agent, transcript_id=transcript_id)
+
+    @mcp.tool(title="Boot Inspect")
+    def boot_inspect(
+        agent: str = "cursor",
+        transcript_id: str = "",
+        diff_with: str = "",
+    ) -> dict[str, Any]:
+        """Read-only inspection of the boot surface without boot side effects.
+
+        Runs the same fetch/render graph as `cortex_boot`, but in INSPECT mode:
+        no operational-context file write, no audit dump write, and no
+        `mcp.cortex.boot*` event emissions. Use this for audit/review and
+        profile diffs without mutating boot state.
+
+        Args:
+          agent         — primary agent profile to inspect
+          transcript_id — optional continuation transcript context for primary
+          diff_with     — optional secondary agent profile to diff against
+        """
+        primary = run_cortex_boot(
+            agent=agent,
+            transcript_id=transcript_id,
+            mode=BootMode.INSPECT,
+        )
+        if not diff_with:
+            return primary
+
+        secondary = run_cortex_boot(
+            agent=diff_with,
+            transcript_id="",
+            mode=BootMode.INSPECT,
+        )
+        return {
+            "primary": primary,
+            "secondary": secondary,
+            "diff": _build_boot_diff(primary, secondary),
+        }
 
     @mcp.tool(title="Session Close (Reminder)")
     def session_close(

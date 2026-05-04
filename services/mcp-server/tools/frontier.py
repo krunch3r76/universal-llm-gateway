@@ -1,29 +1,26 @@
-"""team_generate + frontier_generate split MCP relays to Stargate.
+"""Team and frontier dispatch MCP relays to Stargate.
 
-Two tools, two contracts:
+Four tools in two generations:
 
-- ``team_generate(agent=...)`` is the persona-required door for team-seat
-  consults (oppie, orion, bard, api_claude). The Stargate endpoint enforces
-  persona contract (allowed_models, tools, allowed_options) and assembles
-  birth + briefing + continuation. Persona contract lives on
-  ``ai_agent:{slug}`` entities in cortex (see scripts/cortex/sync-agent-identity.py).
-- ``frontier_generate(...)`` is the persona-free raw engine call. No persona,
-  no allowlists, no system-prompt assembly. Caller supplies their own ``system``.
+**Current generation (dispatch-surface-split Phase 1):**
+- ``team_dispatch(op=..., agent=...)`` — persona-required, op-discriminated.
+  ``op="generate"`` returns inline; ``op="to_thread"`` posts result to thread.
+- ``frontier_dispatch(op=..., model=...)`` — persona-free, op-discriminated.
 
-Both are thin async-by-default relays: forward to Stargate, return the
-dispatch envelope (execution_id, pipeline, started_at, status) immediately.
-Callers poll with ``pipeline(op="result", execution_id=...)`` or set
-``result_delivery`` for push delivery to an agent-bus thread on terminal
-transition.
+**Legacy (Phase 4 retirement pending):**
+- ``team_generate(agent=...)`` — persona-required door, ``result_delivery``-based
+  push. Active surface: 32 observed calls in last 15h. ¬remove until Phase 4.
+- ``frontier_generate(...)`` — persona-free raw engine call. No observed traffic
+  (signal absent from Event Service). Phase 4 rename is a near-no-op.
 
-The two relays share ``_relay`` for transport, JSON envelope handling, and
-error normalization. The split lives at the public-API boundary (tool
-registration): no caller-facing flag toggles persona injection.
+All four tools share ``_relay`` for transport, JSON envelope handling, and error
+normalization. The split lives at the public-API boundary (tool registration):
+no caller-facing flag toggles persona injection.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 from mcp_events import record
@@ -145,7 +142,8 @@ async def _relay(
 
 
 def register_frontier_tools(mcp: FastMCP) -> None:
-    """Register public ``team_generate`` and ``frontier_generate``."""
+    """Register dispatch tools: current-gen (team_dispatch, frontier_dispatch)
+    and legacy (team_generate, frontier_generate — Phase 4 retirement pending)."""
 
     @mcp.tool(title="Team Generate")
     async def team_generate(
@@ -261,4 +259,168 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             endpoint="/api/v1/frontier/generate",
             body=body,
             record_prefix="mcp.frontier.generate",
+        )
+
+    # ---- dispatch-surface-split Phase 1: op-discriminated tools ----
+
+    @mcp.tool(title="Team Dispatch")
+    async def team_dispatch(
+        op: Literal["generate", "to_thread"],
+        agent: str,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        system: str = "",
+        tools: list[str] | None = None,
+        reasoning_effort: str | None = None,
+        generation_options: dict[str, Any] | None = None,
+        max_tool_turns: int | None = None,
+        transcript_id: str | None = None,
+        caller_agent: str | None = None,
+        timeout_seconds: int | None = None,
+        thread: str | None = None,
+        subject: str | None = None,
+    ) -> dict[str, Any]:
+        """Persona-aware team-seat dispatch with explicit op discrimination.
+
+        Two ops:
+        - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
+          Poll with ``pipeline(op="result", execution_id=...)`` for content.
+          ``thread`` / ``subject`` must be absent when using this op.
+        - ``op="to_thread"``: admits dispatch; the agent's reply lands on
+          ``thread``; tracker terminal status reflects observed reply. ``thread``
+          is required. ``subject`` is optional (auto-derived from last message
+          if absent).
+
+        Use ``frontier_dispatch`` for raw engine calls without a persona.
+
+        Replaces ``team_generate`` (Phase 4 retirement pending).
+        """
+        body: dict[str, Any] = {
+            "op": op,
+            "messages": messages,
+            "agent": agent,
+            "system": system,
+        }
+        if op == "generate":
+            if thread is not None or subject is not None:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "thread/subject are not allowed when op='generate'",
+                    }
+                }
+        else:
+            if thread is None:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "thread is required when op='to_thread'",
+                    }
+                }
+            body["thread"] = thread
+            if subject is not None:
+                body["subject"] = subject
+
+        if tools is not None:
+            body["tools"] = tools
+        for key, val in (
+            ("model", model),
+            ("reasoning_effort", reasoning_effort),
+            ("generation_options", generation_options),
+            ("max_tool_turns", max_tool_turns),
+            ("transcript_id", transcript_id),
+            ("caller_agent", caller_agent),
+            ("timeout_seconds", timeout_seconds),
+        ):
+            if val is not None:
+                body[key] = val
+
+        record(
+            "mcp.team.dispatch.called",
+            agent=agent,
+            op=op,
+            model=model or "",
+            reasoning_effort=reasoning_effort or "",
+        )
+        return await _relay(
+            endpoint="/api/v1/team/dispatch",
+            body=body,
+            record_prefix="mcp.team.dispatch",
+        )
+
+    @mcp.tool(title="Frontier Dispatch")
+    async def frontier_dispatch(
+        op: Literal["generate", "to_thread"],
+        model: str,
+        messages: list[dict[str, Any]],
+        system: str = "",
+        reasoning_effort: str | None = None,
+        generation_options: dict[str, Any] | None = None,
+        max_tool_turns: int | None = None,
+        transcript_id: str | None = None,
+        caller_agent: str | None = None,
+        timeout_seconds: int | None = None,
+        thread: str | None = None,
+        subject: str | None = None,
+    ) -> dict[str, Any]:
+        """Persona-free raw native-frontier dispatch with explicit op discrimination.
+
+        Two ops:
+        - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
+          Poll with ``pipeline(op="result", execution_id=...)`` for content.
+          ``thread`` / ``subject`` must be absent.
+        - ``op="to_thread"``: admits dispatch; model's reply lands on ``thread``.
+          ``thread`` is required.
+
+        Use ``team_dispatch`` for persona-aware dispatch with agent seat assignment.
+
+        Replaces ``frontier_generate`` (Phase 4 retirement pending).
+        """
+        body: dict[str, Any] = {
+            "op": op,
+            "messages": messages,
+            "model": model,
+            "system": system,
+        }
+        if op == "generate":
+            if thread is not None or subject is not None:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "thread/subject are not allowed when op='generate'",
+                    }
+                }
+        else:
+            if thread is None:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "thread is required when op='to_thread'",
+                    }
+                }
+            body["thread"] = thread
+            if subject is not None:
+                body["subject"] = subject
+
+        for key, val in (
+            ("reasoning_effort", reasoning_effort),
+            ("generation_options", generation_options),
+            ("max_tool_turns", max_tool_turns),
+            ("transcript_id", transcript_id),
+            ("caller_agent", caller_agent),
+            ("timeout_seconds", timeout_seconds),
+        ):
+            if val is not None:
+                body[key] = val
+
+        record(
+            "mcp.frontier.dispatch.called",
+            op=op,
+            model=model,
+            reasoning_effort=reasoning_effort or "",
+        )
+        return await _relay(
+            endpoint="/api/v1/frontier/dispatch",
+            body=body,
+            record_prefix="mcp.frontier.dispatch",
         )

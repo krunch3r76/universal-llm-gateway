@@ -106,6 +106,10 @@ def _append_session_close_warnings(
     )
 
 
+def _op_deadlines(**_: object) -> dict[str, Any]:
+    return _list_deadlines_impl()
+
+
 def _op_deadline_resolve(
     deadline_id: str | None = None,
     resolution_note: str | None = None,
