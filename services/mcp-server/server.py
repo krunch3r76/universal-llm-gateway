@@ -34,7 +34,6 @@ from response_size_guard import register_response_guard
 from schema_compact import patch_fastmcp_tool_serialization
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
-
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
@@ -46,6 +45,7 @@ from tools.cortex_named_tools import register_cortex_named_tools
 from tools.document_ocr import register_document_ocr_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.filesystem._paths import _FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.ingest_document import register_ingest_document_tools
@@ -159,6 +159,9 @@ _PRIMARY_TOOLS: set[str] = {
     "model_status",
     "quality_gate",
     "observability",
+    # Frontier dispatch — most-used agent surfaces
+    "team_dispatch",
+    "frontier_dispatch",
     # Agent-bus (dispatch-style)
     "agent_bus",
     # Cortex (dispatch-style + boot)
@@ -443,7 +446,17 @@ def _build_server() -> FastMCP:
                 if fn is None:
                     return {"error": "copy_project_file tool not available"}
                 return fn(path, target)
-            valid = "read, write, append, prepend, replace, insert_at_line, move, copy, list, search"
+            if op == "delete":
+                if not path:
+                    return {"error": "'path' is required for delete"}
+                fn = overflow_registry.get("delete_project_file")
+                if fn is None:
+                    return {"error": "delete_project_file tool not available"}
+                result = fn(path)
+                if "error" not in result:
+                    result["_next"] = _FS_WORKFLOW_HINTS["delete_workspaces"]
+                return result
+            valid = "read, write, append, prepend, replace, insert_at_line, move, copy, delete, list, search"
             return {"error": f"Unknown workspaces op: {op!r}. Available: {valid}"}
 
         tool_name = sandbox_tool[sandbox]
@@ -542,7 +555,7 @@ def _build_server() -> FastMCP:
                 return {
                     "error": (
                         "arguments must be a JSON-encoded object string "
-                        f"(e.g. '{{\"query\": \"...\"}}'); got {type(arguments).__name__} "
+                        f'(e.g. \'{{"query": "..."}}\'); got {type(arguments).__name__} '
                         f"that did not parse as a JSON object"
                     )
                 }
@@ -591,7 +604,7 @@ def _build_server() -> FastMCP:
                 "result": {
                     "error": (
                         "arguments must be a JSON-encoded object string "
-                        f"(e.g. '{{\"key\": \"value\"}}'); got {type(arguments).__name__} "
+                        f'(e.g. \'{{"key": "value"}}\'); got {type(arguments).__name__} '
                         f"that did not parse as a JSON object"
                     )
                 },

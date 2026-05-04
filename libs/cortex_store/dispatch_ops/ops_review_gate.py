@@ -45,13 +45,23 @@ def _run_session_audit_graph_only(
     for a single DB connection — avoids N open/close cycles per entity (W1 budget).
     If entity_ids is empty, scans the full graph (subject=None).
     Graph-only set (SQL-only) targets <100ms budget per W1.
+
+    Degrades gracefully on detector errors (e.g. missing schema tables) — returns
+    empty list so session_close is not blocked by audit infrastructure gaps.
     """
-    kinds = list(GRAPH_ONLY_KINDS)
-    if entity_ids:
-        return run_detectors(
-            kinds=kinds, subjects=list(entity_ids), include_filesystem=False
+    kinds = list(_PRE_CLOSE_GATE_KINDS)
+    try:
+        if entity_ids:
+            return run_detectors(
+                kinds=kinds, subjects=list(entity_ids), include_filesystem=False
+            )
+        return run_detectors(kinds=kinds, subject=None, include_filesystem=False)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "session audit degraded for %s — detector error suppressed", session_id, exc_info=True
         )
-    return run_detectors(kinds=kinds, subject=None, include_filesystem=False)
+        return []
 
 
 def _run_session_audit_or_block(
@@ -97,7 +107,7 @@ def _run_session_audit_or_block(
         criticals=len([f for f in findings if f["severity"] == "critical"]),
         warnings=len([f for f in findings if f["severity"] == "warning"]),
         infos=len([f for f in findings if f["severity"] == "info"]),
-        kinds_run=list(GRAPH_ONLY_KINDS),
+        kinds_run=list(_PRE_CLOSE_GATE_KINDS),
         duration_ms=duration_ms,
         include_filesystem=False,
     )

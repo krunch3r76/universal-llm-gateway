@@ -12,8 +12,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import embeddings as cortex_embeddings
 from . import vector_store
@@ -153,8 +154,37 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(reaper.router)
     app.include_router(reflective_journal.router)
     from .routes.triage import router as triage_router
+
     app.include_router(triage_router, prefix="/assertions")
     app.include_router(dispatch.router)
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(  # noqa: ANN202
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        # Sole-maintainer environment — prefer surfacing exception type/message
+        # over a bare "Internal Server Error". Expensive debug loops on opaque
+        # 500s are the explicit motivator (todo:session-close-friction-audit P1,
+        # F1: NameError in audit gate hidden behind generic 500). Disable by
+        # setting CORTEX_DEBUG=0 if a deployment ever needs the redacted form.
+        logger.error(
+            "Unhandled exception in %s %s",
+            request.method,
+            request.url.path,
+            exc_info=True,
+        )
+        if os.environ.get("CORTEX_DEBUG", "1") == "0":
+            return JSONResponse(
+                status_code=500, content={"detail": "Internal Server Error"}
+            )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Internal Server Error",
+                "error": type(exc).__name__,
+                "message": str(exc),
+            },
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:

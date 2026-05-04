@@ -31,6 +31,7 @@ from mcp_events import record
 
 from ._file_helpers import read_file_result
 from .file_editor import perform_edit
+from .filesystem._paths import _SANDBOX_ROOT, _trash_destination
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -417,6 +418,47 @@ def register_project_tools(mcp: FastMCP) -> None:
         logger.info("copy_project_file: %s -> %s", rel_src, rel_dst)
         record("mcp.project.file.copied", source=rel_src, destination=rel_dst)
         return {"status": "copied", "from": rel_src, "to": rel_dst}
+
+    @mcp.tool(title="Delete Project File")
+    def delete_project_file(path: str) -> dict[str, str]:
+        """Soft-delete a project file by moving it to the cortex trash/ directory.
+
+        Uses the same trash location and collision-resolution logic as cortex
+        sandbox deletes — /data/files/trash/<path>. Restore via:
+          fs(sandbox='cortex', op='move', path='trash/<path>', target='<path>')
+
+        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
+
+        Args:
+            path: Relative path including repo prefix,
+                e.g. "universal-llm-gateway/tmp/old-plan.md".
+
+        Returns:
+            {"status": "trashed", "path": "<source>", "trash_path": "trash/<path>"}
+        """
+        if _PROJECT_READ_ONLY:
+            return cast("dict[str, str]", _read_only_error())
+
+        src = _safe_project_path(path)
+        if not src.exists():
+            return {"error": f"File not found: {path!r}"}
+        if not src.is_file():
+            return {
+                "error": f"Path is not a file (directories not supported): {path!r}"
+            }
+
+        dest = _trash_destination(path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dest))
+        trash_rel = str(dest.relative_to(_SANDBOX_ROOT))
+        logger.info("delete_project_file: trashed %s → %s", src, dest)
+        record(
+            "mcp.tool.file.trashed",
+            sandbox="workspaces",
+            path=path,
+            trash_path=trash_rel,
+        )
+        return {"status": "trashed", "path": path, "trash_path": trash_rel}
 
     @mcp.tool(title="List Project Files")
     def list_project_files(

@@ -200,11 +200,16 @@ def _build_futures_spec(
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
     if self_entity_id and self_reflections_limit > 0:
+        # §boot-compact: briefing renders only id/claim/observed_at/seeded_by
+        # /derivation_type/entity_id on the "Your Notes" section. Full-payload
+        # cost was ~11.2 KB per boot (ship-vs-render ratio ~28× for web);
+        # compact projection drops it to ~1–2 KB. Thread 882 turn 12 contract.
         refl_qs = urlencode(
             {
                 "entity_id": self_entity_id,
                 "superseded": "false",
                 "limit": self_reflections_limit,
+                "compact": "true",
             }
         )
         # read-only: fetch non-superseded self-reflection assertions

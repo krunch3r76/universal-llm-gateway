@@ -207,7 +207,8 @@ def render_briefing_card(
     if deadlines is not None:
         # Drop rows without a real deadline date — they carry no urgency signal.
         dated = [
-            d for d in deadlines
+            d
+            for d in deadlines
             if d.get("deadline_date") and str(d.get("deadline_date")).lower() != "none"
         ]
         parts.append("\n## Deadlines")
@@ -235,7 +236,7 @@ def render_briefing_card(
             parts.append(f'- **{name}** [id={aid}]{days_tag} — "{claim_preview}"')
         parts.append(
             "  → If resolved: "
-            "`cortex(tool=\"supersede\", "
+            '`cortex(tool="supersede", '
             "arguments='{\"old_assertion_id\": <id>, ...}')`"
         )
 
@@ -342,14 +343,21 @@ def render_briefing_card(
         if recent_reflections:
             parts.append(f"\n## Your Notes ({len(recent_reflections)})")
             for a in recent_reflections:
-                session = a.get("evidence", "")
-                session_tag = ""
-                if session:
+                # Compact projection ships a pre-extracted `session_tag`
+                # (e.g. "web-2026-04-30-0528") so the briefing can render the
+                # "[...]" prefix without carrying the full `evidence` payload.
+                # Fall back to parsing evidence for callers still using the
+                # non-compact shape.
+                tag = a.get("session_tag") or ""
+                if not tag:
+                    evidence = a.get("evidence", "") or ""
                     m = re.search(
-                        r"(cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4}", session
+                        r"(cursor|web|api|bard)-\d{4}-\d{2}-\d{2}-\d{4}",
+                        evidence,
                     )
                     if m:
-                        session_tag = f"[{m.group()}] "
+                        tag = m.group()
+                session_tag = f"[{tag}] " if tag else ""
                 claim_preview = _truncate_at_sentence(
                     a.get("claim", ""), _PREVIEW_MAX_CHARS
                 )

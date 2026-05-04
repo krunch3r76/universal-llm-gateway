@@ -46,6 +46,7 @@ from .ops_journals import (
     _op_journal_read,
     _op_journal_write,
     _op_session_close,
+    _op_session_close_preflight,
 )
 from .ops_misc import (
     _op_ingest_document,
@@ -71,6 +72,7 @@ from .ops_relationships import (
 )
 from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
 from .ops_todos import _op_todo_audit, _op_todo_candidates
+from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
     _CORTEX_HALLUCINATED_TOOLS,
@@ -107,6 +109,8 @@ _OPS: dict[str, Any] = {
     "journal_read": _op_journal_read,
     "journal_write": _op_journal_write,
     "session_close": _op_session_close,
+    "session_close_preflight": _op_session_close_preflight,
+    "assemble_transcript": _op_assemble_transcript,
     "review_queue": _op_review_queue,
     "edge_create": _op_edge_create,
     "edges": _op_edges,

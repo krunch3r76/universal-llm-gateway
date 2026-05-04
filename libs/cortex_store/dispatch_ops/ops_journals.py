@@ -267,6 +267,171 @@ def _op_journal_write(
     return result
 
 
+def _validate_session_close_payload(
+    *,
+    session_id: str | None,
+    agent: str | None,
+    transcript_md: str | None,
+    summary: str | None,
+    emit_rejected: bool = True,
+) -> dict[str, Any] | None:
+    """Run the structural validation layer for session_close.
+
+    Returns None on clean pass, or an error-dict suitable to return directly.
+    Mirrors the gates documented in `session-close.mdc` (session_id pattern,
+    summary length, transcript size + structure, dual-layer hollow guard).
+
+    `emit_rejected=False` suppresses the `mcp.session.close.rejected` event —
+    used by preflight/dry_run paths so probing does not pollute the event store.
+    """
+    required = {
+        "session_id": session_id,
+        "agent": agent,
+        "transcript_md": transcript_md,
+        "summary": summary,
+    }
+    for field, val in required.items():
+        if not val:
+            return {"error": f"{field} is required"}
+    assert session_id and agent and transcript_md and summary  # narrow types
+
+    def _reject(reason: str, detail: str) -> dict[str, Any]:
+        if emit_rejected:
+            _emit_rejected(
+                reason,
+                session_id=session_id,
+                agent=agent,
+                detail=detail,
+            )
+        return {"error": detail, "reason": reason}
+
+    if not _SESSION_ID_RE.match(session_id):
+        return _reject(
+            "session_id.invalid",
+            f"session_id {session_id!r} does not match "
+            "pattern {{agent}}-YYYY-MM-DD-HHMM",
+        )
+    if len(summary) < 20:
+        return _reject(
+            "summary.too_short",
+            f"summary must be >= 20 characters (got {len(summary)})",
+        )
+    if len(transcript_md) < 200:
+        return _reject(
+            "transcript.missing_structure",
+            f"transcript_md must be >= 200 characters (got {len(transcript_md)}). "
+            "Stub-only closes are rejected.",
+        )
+    has_structure = "## Turn" in transcript_md or "## Session Summary" in transcript_md
+    if not has_structure:
+        return _reject(
+            "transcript.missing_structure",
+            "transcript_md must contain at least one '## Turn' heading "
+            "or a '## Session Summary' section.",
+        )
+    if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
+        return _reject(
+            "transcript.hollow",
+            "transcript_md has structural headings but zero User-voice blocks "
+            "(`**User:**` / `User:` / `### User`). This is the dual-layer "
+            "doctrine failure: structural layer present, verbatim layer hollow. "
+            "Rewrite mechanically — copy each user message verbatim into a "
+            "`### User` block. See agent-skills/web-session-close.md Step 2.",
+        )
+    return None
+
+
+def _safe_run_audit(
+    *,
+    session_id: str,
+    agent: str,
+    entity_ids: list[str],
+    defer_gaps: dict[str, str] | None,
+) -> dict[str, Any]:
+    """Run audit gate with hard non-blocking guarantee (todo P4).
+
+    Wraps `_run_session_audit_or_block` so that no exception inside the audit
+    machinery (detector errors, schema gaps, record() failures) can ever turn
+    a session_close into HTTP 500. Returns the audit dict on clean run, or a
+    `{"warning": {"audit_degraded": True, ...}}` advisory on failure. Never
+    returns `{"blocked": True}` on its own — only forwards a real BLOCK verdict.
+    """
+    try:
+        return _run_session_audit_or_block(
+            session_id=session_id,
+            agent=agent,
+            entity_ids=entity_ids,
+            defer_gaps=defer_gaps,
+        )
+    except Exception as exc:
+        logger.warning(
+            "session audit gate raised — degrading to warning (session=%s agent=%s)",
+            session_id,
+            agent,
+            exc_info=True,
+        )
+        return {
+            "warning": {
+                "audit_degraded": True,
+                "error": type(exc).__name__,
+                "message": str(exc),
+            }
+        }
+
+
+def _op_session_close_preflight(
+    session_id: str | None = None,
+    agent: str | None = None,
+    transcript_md: str | None = None,
+    summary: str | None = None,
+    entity_ids: list[str] | None = None,
+    defer_gaps: dict[str, str] | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Validate session_close payload + audit-gate health WITHOUT writing.
+
+    Returns `{"ok": True, "warnings": [...], "audit": {...}}` if a real close
+    would succeed, or `{"ok": False, "error": ..., "reason": ...}` otherwise.
+
+    Use case: agents probe this before committing to the full close so any
+    infra issue (broken detectors, missing schema) surfaces in one round-trip
+    instead of the multi-turn debug loop documented in F2 of the source TODO.
+    """
+    validation_error = _validate_session_close_payload(
+        session_id=session_id,
+        agent=agent,
+        transcript_md=transcript_md,
+        summary=summary,
+        emit_rejected=False,
+    )
+    if validation_error is not None:
+        return {"ok": False, **validation_error}
+
+    assert session_id and agent and transcript_md and summary
+
+    audit_outcome = _safe_run_audit(
+        session_id=session_id,
+        agent=agent,
+        entity_ids=entity_ids or [],
+        defer_gaps=defer_gaps,
+    )
+    if audit_outcome.get("blocked"):
+        return {
+            "ok": False,
+            "reason": "session_audit_blocked",
+            **audit_outcome,
+        }
+
+    structural_warnings = _validate_transcript_structure(
+        transcript_md, summary_len=len(summary)
+    )
+    return {
+        "ok": True,
+        "warnings": structural_warnings,
+        "audit": audit_outcome,
+    }
+
+
 def _op_session_close(
     session_id: str | None = None,
     agent: str | None = None,
@@ -279,100 +444,47 @@ def _op_session_close(
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
     defer_gaps: dict[str, str] | None = None,
+    dry_run: bool = False,
     **_: object,
 ) -> dict[str, Any]:
-    required = {
-        "session_id": session_id,
-        "agent": agent,
-        "transcript_md": transcript_md,
-        "summary": summary,
-    }
-    for field, val in required.items():
-        if not val:
-            return {"error": f"{field} is required"}
+    validation_error = _validate_session_close_payload(
+        session_id=session_id,
+        agent=agent,
+        transcript_md=transcript_md,
+        summary=summary,
+        emit_rejected=not dry_run,
+    )
+    if validation_error is not None:
+        if dry_run:
+            return {"dry_run": True, "would_fail": True, **validation_error}
+        return {k: v for k, v in validation_error.items() if k != "reason"}
 
     assert session_id and agent and transcript_md and summary
-
-    if not _SESSION_ID_RE.match(session_id):
-        detail = (
-            f"session_id {session_id!r} does not match "
-            "pattern {{agent}}-YYYY-MM-DD-HHMM"
-        )
-        _emit_rejected(
-            "session_id.invalid",
-            session_id=session_id,
-            agent=agent,
-            detail=detail,
-        )
-        return {"error": detail}
-    if len(summary) < 20:
-        detail = f"summary must be >= 20 characters (got {len(summary)})"
-        _emit_rejected(
-            "summary.too_short",
-            session_id=session_id,
-            agent=agent,
-            detail=detail,
-        )
-        return {"error": detail}
-    if len(transcript_md) < 200:
-        detail = (
-            f"transcript_md must be >= 200 characters (got {len(transcript_md)}). "
-            "Stub-only closes are rejected."
-        )
-        _emit_rejected(
-            "transcript.missing_structure",
-            session_id=session_id,
-            agent=agent,
-            detail=detail,
-        )
-        return {"error": detail}
-
-    has_structure = "## Turn" in transcript_md or "## Session Summary" in transcript_md
-    if not has_structure:
-        detail = (
-            "transcript_md must contain at least one '## Turn' heading "
-            "or a '## Session Summary' section."
-        )
-        _emit_rejected(
-            "transcript.missing_structure",
-            session_id=session_id,
-            agent=agent,
-            detail=detail,
-        )
-        return {"error": detail}
-
-    # Dual-layer doctrine — fail fast before file write when verbatim layer
-    # is hollow (web-2026-05-03-0431 failure mode). The route handler enforces
-    # this too, but checking here avoids writing an orphan transcript file
-    # to disk that would need cleanup on the route's 422.
-    user_blocks = len(_USER_VOICE_RE.findall(transcript_md))
-    if user_blocks == 0:
-        detail = (
-            "transcript_md has structural headings but zero User-voice blocks "
-            "(`**User:**` / `User:` / `### User`). This is the dual-layer "
-            "doctrine failure: structural layer present, verbatim layer hollow. "
-            "Rewrite mechanically — copy each user message verbatim into a "
-            "`### User` block. See agent-skills/web-session-close.md Step 2."
-        )
-        _emit_rejected(
-            "transcript.hollow",
-            session_id=session_id,
-            agent=agent,
-            detail=detail,
-        )
-        return {"error": detail}
 
     # Session audit gate — MUST fire before any file I/O or DB mutation (C3).
     # In WARN mode: populates _warning in response but close proceeds.
     # In BLOCK mode (Phase 2.1): returns structured error before any disk write.
-    audit_outcome = _run_session_audit_or_block(
+    audit_outcome = _safe_run_audit(
         session_id=session_id,
         agent=agent,
         entity_ids=entity_ids or [],
         defer_gaps=defer_gaps,
     )
     if audit_outcome.get("blocked"):
+        if dry_run:
+            return {"dry_run": True, "would_fail": True, **audit_outcome}
         return audit_outcome
+
+    if dry_run:
+        structural_warnings = _validate_transcript_structure(
+            transcript_md, summary_len=len(summary)
+        )
+        return {
+            "dry_run": True,
+            "would_succeed": True,
+            "warnings": structural_warnings,
+            "audit": audit_outcome,
+        }
 
     transcript_path = f"notes/system/transcripts/{session_id}.md"
     abs_path = _FILES_ROOT / transcript_path

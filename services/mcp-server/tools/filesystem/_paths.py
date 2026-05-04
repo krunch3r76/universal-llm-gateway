@@ -15,9 +15,26 @@ _SHARED_IMAGE_HOST_ROOT = Path(
 )
 _ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
 _EDITABLE_SUFFIXES = {
-    ".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml",
-    ".csv", ".sh", ".bash", ".js", ".ts", ".html", ".css",
-    ".xml", ".ini", ".cfg", ".conf", ".env", ".log",
+    ".md",
+    ".txt",
+    ".py",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".csv",
+    ".sh",
+    ".bash",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".xml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+    ".log",
 }
 _BINARY_MAX_BYTES = 20 * 1024 * 1024
 
@@ -25,6 +42,11 @@ _FS_WORKFLOW_HINTS: dict[str, str] = {
     "delete": (
         "file moved to trash/ — restore via fs(op='move', path='trash/<original>', target='<original>') "
         "or purge permanently via remove_directory('trash')"
+    ),
+    "delete_workspaces": (
+        "file moved to cortex trash/ — restore via "
+        "fs(sandbox='cortex', op='move', path='trash/<original>', target='<original>') "
+        "or purge permanently via fs(sandbox='cortex', op='remove_directory', path='trash')"
     ),
     "move": (
         "next: cortex entity_update or assert with source_uri pointing to the "
