@@ -11,15 +11,35 @@ prompts:
         predicate(subject, object[, modifier ...])
 
       Rules:
-      - One predicate per line. Use snake_case for the predicate name.
+      - Output exactly one line. Use exactly one predicate.
+      - Use snake_case for the predicate name.
       - Subject and object refer to concrete entities or noun phrases.
-      - Modifiers (optional) carry temporal, modal, or qualifier info.
+      - Modifiers (optional) carry temporal, modal, polarity, or qualifier info.
       - Drop hedges, narration, and citation-style scaffolding.
-      - If the claim is purely descriptive with no clear relation, emit
-        describes(<entity_id>, "<short noun phrase>").
-      - Never explain. Output exactly one line.
+      - Prefer a relational predicate whenever any relation can be inferred.
+      - Treat descriptive claims as relational when they express:
+        - identity/apposition/role -> is_a, role, title
+        - attribute/property -> has_attribute, has_quality, color, size, status
+        - possession/part-whole -> has, part_of, contains
+        - location/jurisdiction/origin -> located_in, based_in, from
+        - membership/affiliation -> member_of, affiliated_with, employed_by
+        - temporal state -> status(subject, state, current|former)
+      - Prefer canonical predicates such as:
+        is_a, role, title, has_attribute, has_quality, located_in, based_in,
+        member_of, affiliated_with, employed_by, part_of, has, status
+      - Rewrite adjective forms into relations:
+        "X is red" -> has_attribute(X, red)
+        "X is a physician" -> is_a(X, physician)
+        "X is CEO of Y" -> role(X, ceo, Y)
+        "X is in Paris" -> located_in(X, Paris)
+        "X is French" -> from(X, France)
+        "X is a California company" -> based_in(X, California)
+      - Use describes(entity_id, short_noun_phrase) only as a last resort
+        when no plausible binary relation can be formed. No quotation marks
+        inside describes(...).
+      - Never explain.
     template: |
       Entity: {entity_id}
       Claim: {claim}
 
-      Predicate form:
+      Predicate form (prefer a relation anchored on the claim subject; use describes only if no binary relation is possible):

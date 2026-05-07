@@ -22,7 +22,9 @@ def _op_relationships(
     limit: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    return _list_relationships_impl(entity_id=entity_id, type_id=type_id, limit=limit or 50)
+    return _list_relationships_impl(
+        entity_id=entity_id, type_id=type_id, limit=limit or 50
+    )
 
 
 def _op_relationship_create(

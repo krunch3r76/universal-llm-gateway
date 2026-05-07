@@ -58,8 +58,11 @@ def _run_session_audit_graph_only(
         return run_detectors(kinds=kinds, subject=None, include_filesystem=False)
     except Exception:
         import logging
+
         logging.getLogger(__name__).warning(
-            "session audit degraded for %s — detector error suppressed", session_id, exc_info=True
+            "session audit degraded for %s — detector error suppressed",
+            session_id,
+            exc_info=True,
         )
         return []
 

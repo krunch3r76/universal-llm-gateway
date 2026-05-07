@@ -1222,7 +1222,8 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
     threading.Thread(target=reindex_assertion_fts, args=(new_id,), daemon=True).start()
     enrich_background(new_id, body.claim, body.entity_id, body.confidence)
 
-    vector_store.delete_assertion_embedding(body.old_assertion_id)
+    if vector_store.is_initialized():
+        vector_store.delete_assertion_embedding(body.old_assertion_id)
     _embed_assertion_background(
         new_id,
         {

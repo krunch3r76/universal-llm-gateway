@@ -1,3 +1,3 @@
 models:
   t2:
-    model: qwen3-14b-q4-k-m-40960
+    model: openai/gpt-4o-mini

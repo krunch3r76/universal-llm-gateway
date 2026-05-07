@@ -100,7 +100,10 @@ def _op_register_skill_substrate(
                     "name": [skill.get("name"), skill_id],
                     "source_uri": [skill.get("source_uri"), str(validated_path)],
                     "description": [skill.get("description"), description],
-                    "trigger_phrases": [sorted(current_phrases), sorted(requested_phrases)],
+                    "trigger_phrases": [
+                        sorted(current_phrases),
+                        sorted(requested_phrases),
+                    ],
                 }
                 return {
                     "error": "composite_conflict",
@@ -112,7 +115,9 @@ def _op_register_skill_substrate(
                         "entity_id": skill_entity_id,
                         "updates": {
                             "description": description,
-                            "attributes": {"trigger_phrases": sorted(requested_phrases)},
+                            "attributes": {
+                                "trigger_phrases": sorted(requested_phrases)
+                            },
                         },
                     },
                 }
