@@ -8,15 +8,27 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from ..action_hints import detect_expired_unresolved
-from ..compaction import apply_compaction_filter
+from ..compaction import (
+    POINTER_SQL_LIKE,
+    SUMMARY_SQL_LIKE,
+    apply_compaction_filter,
+    is_tombstone_only,
+    synthesize_predicate_summary,
+)
 from ..db import cortex_conn, decode_row, execute, json_encode, query
 from ..dispatch_ops._shared import record
 from ..models import (
     AssertionItem,
+    CardAssertion,
+    CardDebug,
+    CardEdgeTypeCount,
+    CardSection,
     CompactionProjection,
     EdgeItem,
+    EntityCard,
     EntityCreate,
     EntityDetail,
+    EntityIntent,
     EntityList,
     EntitySummary,
     EntityUpdate,
@@ -272,12 +284,227 @@ def _get_entity_impl(
     ).model_dump(mode="json")
 
 
-@router.get("/{entity_id}", response_model=EntityDetail)
+_CARD_TOP_K_DEFAULT = 7
+_CARD_INTENTS_DEFERRED = {"cluster", "impact"}
+
+
+def _get_entity_card_impl(
+    conn: sqlite3.Connection,
+    *,
+    entity_id: str,
+    top_k: int = _CARD_TOP_K_DEFAULT,
+    debug: bool = False,
+    source: str = "agent",
+    agent: str = "web",
+    session_id: str | None = None,
+) -> dict[str, object]:
+    """Card v0 read path (v2.4 §6.2 / §6.3).
+
+    Projection-aware fetch plan: identity columns + top-K active assertions
+    + relationship-type aggregates + archives_to count + section counts.
+    NOT a load-and-trim wrapper over `_get_entity_impl` — that would
+    violate the §6.2 architectural target (shrinking wire bytes without
+    shrinking the fetch plan is not the win).
+
+    Compaction-pointer ordering (§6.10) is honored at the SQL level: the
+    archive-summary rows surface ahead of compaction pointers and other
+    active assertions in the top-K.
+    """
+    rows_materialized = 0
+
+    ent_rows = query(
+        conn,
+        "SELECT id, type, name, description, status, workflow_state, "
+        "created_at, updated_at FROM entities WHERE id = ?",
+        (entity_id,),
+    )
+    rows_materialized += len(ent_rows)
+    if not ent_rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Entity not found: {entity_id}",
+        )
+    e = ent_rows[0]
+
+    # §6.10 ordering: archive summaries first, compaction pointers last.
+    # Parametrized via canonical SUMMARY_SQL_LIKE / POINTER_SQL_LIKE constants
+    # from compaction.py — single source of truth (DRY, case-insensitive via
+    # LOWER() on both sides). Active rows only — superseded payload is not
+    # part of Card v0 (§6.2: avoid wholesale loading of superseded).
+    a_rows = query(
+        conn,
+        "SELECT id, claim, confidence, derivation_type, valid_from, "
+        "observed_at FROM assertions WHERE entity_id = ? "
+        "AND superseded_by IS NULL "
+        "ORDER BY "
+        "  (CASE WHEN LOWER(claim) LIKE LOWER(?) THEN 0 ELSE 1 END) ASC, "
+        "  (CASE WHEN LOWER(claim) LIKE LOWER(?) THEN 1 ELSE 0 END) ASC, "
+        "  created_at DESC LIMIT ?",
+        (entity_id, SUMMARY_SQL_LIKE, POINTER_SQL_LIKE, top_k),
+    )
+    rows_materialized += len(a_rows)
+
+    count_rows = query(
+        conn,
+        "SELECT "
+        "  SUM(CASE WHEN superseded_by IS NULL THEN 1 ELSE 0 END) AS active_n, "
+        "  SUM(CASE WHEN superseded_by IS NOT NULL THEN 1 ELSE 0 END) AS superseded_n "
+        "FROM assertions WHERE entity_id = ?",
+        (entity_id,),
+    )
+    rows_materialized += len(count_rows)
+    active_n = int(count_rows[0]["active_n"] or 0) if count_rows else 0
+    superseded_n = int(count_rows[0]["superseded_n"] or 0) if count_rows else 0
+
+    et_rows = query(
+        conn,
+        "SELECT type AS type_id, COUNT(*) AS n FROM relationships "
+        "WHERE (from_entity = ? OR to_entity = ?) AND active = 1 "
+        "GROUP BY type ORDER BY n DESC",
+        (entity_id, entity_id),
+    )
+    rows_materialized += len(et_rows)
+    rel_total = sum(int(r["n"]) for r in et_rows)
+
+    arc_rows = query(
+        conn,
+        "SELECT to_entity FROM relationships "
+        "WHERE from_entity = ? AND type = 'archives_to' AND active = 1",
+        (entity_id,),
+    )
+    rows_materialized += len(arc_rows)
+    archives_to_count = len(arc_rows)
+    archives_to_children = [str(r["to_entity"]) for r in arc_rows]
+
+    se_rows = query(
+        conn,
+        "SELECT COUNT(*) AS n FROM session_edges "
+        "WHERE (from_node = ? OR to_node = ?) AND valid_until IS NULL",
+        (entity_id, entity_id),
+    )
+    rows_materialized += len(se_rows)
+    edges_n = int(se_rows[0]["n"]) if se_rows else 0
+
+    if source != "boot":
+        try:
+            conn.execute(
+                "INSERT INTO entity_access_log "
+                "(entity_id, agent, operation, source, session_id) "
+                "VALUES (?, ?, 'entity_get', ?, ?)",
+                (entity_id, agent, source, session_id),
+            )
+            conn.commit()
+        except Exception:
+            logger.warning("Access log insert failed for %s (card)", entity_id)
+
+    section_manifest = [
+        CardSection(id="assertions", label="Assertions (active)", count=active_n),
+        CardSection(
+            id="assertions_superseded",
+            label="Assertions (superseded)",
+            count=superseded_n,
+        ),
+        CardSection(id="relationships", label="Relationships", count=rel_total),
+        CardSection(id="archives_to", label="Archives", count=archives_to_count),
+        CardSection(id="reasoning_edges", label="Reasoning edges", count=edges_n),
+    ]
+
+    # §6.10 tombstone-collapse: if all active assertions are compaction pointers
+    # the operative content lives in a (possibly superseded) consolidation summary.
+    # Fetch that summary and substitute it as the sole top-K entry so the card
+    # shows meaningful content rather than a list of pointer claims.
+    all_active_claims = [str(r["claim"]) for r in a_rows]
+    if active_n > 0 and is_tombstone_only(all_active_claims):
+        summary_rows = query(
+            conn,
+            "SELECT id, claim, confidence, derivation_type, valid_from, observed_at "
+            "FROM assertions WHERE entity_id = ? "
+            "AND LOWER(claim) LIKE LOWER(?) ORDER BY created_at DESC LIMIT 1",
+            (entity_id, SUMMARY_SQL_LIKE),
+        )
+        rows_materialized += len(summary_rows)
+        top_k_for_card = [
+            CardAssertion(
+                id=int(r["id"]),
+                claim=str(r["claim"]),
+                confidence=r["confidence"],
+                derivation_type=r.get("derivation_type"),
+                valid_from=r.get("valid_from"),
+                observed_at=r.get("observed_at"),
+            )
+            for r in summary_rows
+        ]
+        predicate_summary: str | None = (
+            f"archived → see children [{', '.join(archives_to_children)}]"
+            if archives_to_children
+            else "tombstoned"
+        )
+    else:
+        top_k_for_card = [
+            CardAssertion(
+                id=int(r["id"]),
+                claim=str(r["claim"]),
+                confidence=r["confidence"],
+                derivation_type=r.get("derivation_type"),
+                valid_from=r.get("valid_from"),
+                observed_at=r.get("observed_at"),
+            )
+            for r in a_rows
+        ]
+        # §6.3 / §6.7 heuristic fallback: deterministic edge-derived summary.
+        # Populated from already-fetched relationship aggregates — no extra query,
+        # no LLM. Returns empty string when the entity has no edges (never None).
+        # Map SQL alias `n` → `count` to match synthesize_predicate_summary contract.
+        predicate_summary = synthesize_predicate_summary(
+            et_type_counts=[
+                {"type_id": str(r["type_id"]), "count": int(r["n"])} for r in et_rows
+            ],
+            archives_to_children=archives_to_children,
+        )
+
+    card = EntityCard(
+        id=str(e["id"]),
+        type=str(e["type"]),
+        name=str(e["name"]),
+        summary_row=e.get("description"),
+        status_summary={
+            "status": e.get("status"),
+            "workflow_state": e.get("workflow_state"),
+            "updated_at": e.get("updated_at"),
+        },
+        top_k_assertions=top_k_for_card,
+        edge_type_summary=[
+            CardEdgeTypeCount(type_id=str(r["type_id"]), count=int(r["n"]))
+            for r in et_rows
+        ],
+        archives_to_count=archives_to_count,
+        section_manifest=section_manifest,
+        predicate_summary=predicate_summary,
+        freshness={
+            "created_at": str(e["created_at"]),
+            "updated_at": str(e["updated_at"]),
+        },
+        debug=CardDebug(fetch_plan_row_volume=rows_materialized) if debug else None,
+    )
+    return card.model_dump(mode="json")
+
+
+@router.get("/{entity_id}")
 def get_entity(
     entity_id: str,
     request: Request,
+    intent: EntityIntent = Query(
+        "full",
+        description=(
+            "v2.4 §6.1 read intent. `full` (default) preserves the existing "
+            "EntityDetail payload. `card` returns Card v0 (§6.3) via a "
+            "projection-aware fetch plan. `cluster` and `impact` are "
+            "reserved in the surface but not implemented in Slice 1 — "
+            "calls return 501."
+        ),
+    ),
     include_edges: bool = Query(
-        False, description="Include reasoning edges from session_edges"
+        False, description="Include reasoning edges from session_edges (full only)"
     ),
     edge_limit: int = Query(
         20, ge=1, le=100, description="Max reasoning edges to return"
@@ -286,16 +513,62 @@ def get_entity(
         False,
         description=(
             "§6.10: return the raw assertion stream including compaction-pointer "
-            "rows. Default false — summaries surface first, pointers deprioritised."
+            "rows. Default false — summaries surface first, pointers deprioritised. "
+            "Applies to intent=full only."
         ),
     ),
-) -> EntityDetail:
-    """Fetch one entity with linked assertions, relationships, and optionally reasoning edges."""
+    debug: bool = Query(
+        False,
+        description=(
+            "§7.8 observability: when intent=card, attach a `debug` block "
+            "exposing `fetch_plan_row_volume` so callers can verify card "
+            "mode is executing a projection-aware fetch (§6.2), not a "
+            "load-and-trim over the full payload."
+        ),
+    ),
+    top_k: int = Query(
+        _CARD_TOP_K_DEFAULT,
+        ge=1,
+        le=50,
+        description=(
+            "v2.4 §6.3: number of top-K active assertions in Card v0 payload. "
+            "Tunable; default 7. Applies to intent=card only."
+        ),
+    ),
+) -> dict[str, object]:
+    """Fetch one entity at the requested intent.
+
+    `intent=full` returns the legacy EntityDetail payload (with assertions,
+    relationships, optional reasoning edges, compaction projection meta).
+    `intent=card` returns the v2.4 Card v0 payload (§6.3): identity,
+    status_summary, summary_row, top-K active assertions, edge_type_summary,
+    section_manifest, archives_to_count, freshness, reserved
+    `predicate_summary` slot.
+    """
     source = request.headers.get("x-cortex-source", "agent")
     agent = request.headers.get("x-cortex-agent", "web")
     session_id = request.headers.get("x-cortex-session")
+    if intent in _CARD_INTENTS_DEFERRED:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail={
+                "error": f"intent={intent!r} reserved but not implemented in Slice 1",
+                "supported_intents": ["full", "card"],
+                "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
+            },
+        )
     with cortex_conn() as conn:
-        result = _get_entity_impl(
+        if intent == "card":
+            return _get_entity_card_impl(
+                conn,
+                entity_id=entity_id,
+                top_k=top_k,
+                debug=debug,
+                source=source,
+                agent=agent,
+                session_id=session_id,
+            )
+        return _get_entity_impl(
             conn,
             entity_id=entity_id,
             include_edges=include_edges,
@@ -305,7 +578,6 @@ def get_entity(
             session_id=session_id,
             include_compaction_pointers=include_compaction_pointers,
         )
-    return EntityDetail(**result)
 
 
 _JSON_COLUMNS = frozenset({"aliases", "attributes"})

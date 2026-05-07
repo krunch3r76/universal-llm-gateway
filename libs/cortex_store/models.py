@@ -127,6 +127,75 @@ class EntityList(BaseModel):
     items: list[EntitySummary]
 
 
+# --- v2.4 read model: intent-shaped projections ---
+#
+# v2.4 §6.1 read-surface contract: `entity_get` accepts an `intent` selector
+# that names the projection shape ("full" — today's payload, "card" — Card v0,
+# "cluster"/"impact" — reserved). Slice 1 ships `full` (compatibility default)
+# and `card` only; cluster/impact are reserved in the surface and rejected at
+# the dispatch layer with a 501-style hint until later phases land.
+
+EntityIntent = Literal["full", "card", "cluster", "impact"]
+
+
+class CardAssertion(BaseModel):
+    """Compact assertion projection embedded in Card v0 top-K list."""
+
+    id: int
+    claim: str
+    confidence: AssertionConfidence
+    derivation_type: str | None = None
+    valid_from: str | None = None
+    observed_at: str | None = None
+
+
+class CardEdgeTypeCount(BaseModel):
+    type_id: str
+    count: int
+
+
+class CardSection(BaseModel):
+    id: str
+    label: str
+    count: int
+
+
+class CardDebug(BaseModel):
+    """§7.8 observability: emitted only when `?debug=1`.
+
+    `fetch_plan_row_volume` is the total row count materialized by the
+    projection-aware fetch plan — the number that proves card mode is not
+    secretly executing the full-entity load path (§6.2 anti-pattern).
+    """
+
+    fetch_plan_row_volume: int
+
+
+class EntityCard(BaseModel):
+    """Card v0 payload (v2.4 §6.3).
+
+    Stable, deterministic, bounded. The reserved `predicate_summary` slot
+    (§3.3, §6.3) is populated in a later phase; Slice 1 keeps it explicit
+    as `None` so the payload contract is stable before predicate enrichment
+    catches up. `intent` is the discriminator distinguishing Card v0 from
+    `EntityDetail`.
+    """
+
+    intent: Literal["card"] = "card"
+    id: str
+    type: str
+    name: str
+    summary_row: str | None = None
+    status_summary: dict[str, Any] | None = None
+    top_k_assertions: list[CardAssertion] = Field(default_factory=list)
+    edge_type_summary: list[CardEdgeTypeCount] = Field(default_factory=list)
+    archives_to_count: int = 0
+    section_manifest: list[CardSection] = Field(default_factory=list)
+    predicate_summary: str | None = None
+    freshness: dict[str, str] | None = None
+    debug: CardDebug | None = None
+
+
 # --- Assertions ---
 
 
@@ -763,9 +832,7 @@ class EdgeRetire(BaseModel):
 
 # --- Reflective Journal ---
 
-ReflectiveKind = Literal[
-    "entry", "reflection", "revision", "consolidation", "handoff"
-]
+ReflectiveKind = Literal["entry", "reflection", "revision", "consolidation", "handoff"]
 JournalLinkType = Literal[
     "contradicts",
     "refines",

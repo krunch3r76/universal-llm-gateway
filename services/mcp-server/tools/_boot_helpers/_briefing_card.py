@@ -252,25 +252,32 @@ def render_briefing_card(
         ts = last_session.get("timestamp", "?")
         rel = _relative_time(str(ts), now)
         parts.append(f"\n## Last Session — {agent} ({rel})")
-        handoff = continuity.get("handoff") if isinstance(continuity, dict) else None
-        chain = continuity.get("continuity_chain", []) if isinstance(continuity, dict) else []
-        continuations = continuity.get("continuations", []) if isinstance(continuity, dict) else []
-        hints = continuity.get("hints", []) if isinstance(continuity, dict) else []
-        if handoff and handoff.get("text"):
-            parts.append("**Handoff**")
-            parts.append(str(handoff.get("text", "")).strip())
-        else:
-            parts.append(last_session.get("summary", "No summary.")[:300])
-            if "no_handoff_captured" in hints:
-                parts.append("")
-                parts.append("_Hint: no_handoff_captured_")
+        chain = (
+            continuity.get("continuity_chain", [])
+            if isinstance(continuity, dict)
+            else []
+        )
+        continuations = (
+            continuity.get("continuations", []) if isinstance(continuity, dict) else []
+        )
+        # Handoffs are user-facing artifacts for manual copy-paste at end of chat;
+        # they MUST NOT auto-surface on subsequent boots (per assertion 8384,
+        # session web-2026-05-04-1057). The boot card surfaces only the
+        # last-session summary; absence of a handoff is not a gap.
+        parts.append(last_session.get("summary", "No summary.")[:300])
         if chain:
             parts.append("")
             parts.append("**Continuity**")
             if continuations:
                 prefix = chain[:-1]
                 latest = chain[-1]
-                rendered = " → ".join(prefix + [f"[continuations: {', '.join(continuations + [latest])}]", "[you are here]"])
+                rendered = " → ".join(
+                    prefix
+                    + [
+                        f"[continuations: {', '.join(continuations + [latest])}]",
+                        "[you are here]",
+                    ]
+                )
             else:
                 rendered = " → ".join(chain + ["[you are here]"])
             parts.append(rendered)

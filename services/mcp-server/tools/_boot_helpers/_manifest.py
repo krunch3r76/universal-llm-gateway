@@ -48,7 +48,6 @@ def _build_manifest(
         manifest.append(
             {
                 "section": "continuity",
-                "has_handoff": bool(continuity.get("handoff")),
                 "hint": "GET /boot-continuity via cortex-api",
             }
         )

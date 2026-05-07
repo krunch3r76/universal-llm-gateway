@@ -10,7 +10,10 @@ from fastapi import HTTPException
 
 from ..db import cortex_conn
 from ..routes.entities import (
+    _CARD_INTENTS_DEFERRED,
+    _CARD_TOP_K_DEFAULT,
     _create_entity_impl,
+    _get_entity_card_impl,
     _get_entity_impl,
     _list_entities_impl,
     _update_entity_impl,
@@ -37,11 +40,40 @@ def _op_entity_get(
     include_edges: bool = False,
     edge_limit: int = 20,
     include_compaction_pointers: bool = False,
+    intent: str = "full",
+    debug: bool = False,
+    top_k: int = _CARD_TOP_K_DEFAULT,
     **_: object,
 ) -> dict[str, Any]:
+    """Dispatch surface for entity_get (v2.4 §6.1).
+
+    intent="full" — legacy EntityDetail (default; compatibility).
+    intent="card" — Card v0 via projection-aware fetch (§6.3).
+    intent in {"cluster","impact"} — reserved; rejected until later phases.
+    """
     if not entity_id:
         return {"error": "entity_id is required"}
+    if intent not in {"full", "card", "cluster", "impact"}:
+        return {
+            "error": f"Unknown intent {intent!r}. Supported: full, card "
+            "(cluster, impact reserved for later phases).",
+        }
+    if intent in _CARD_INTENTS_DEFERRED:
+        return {
+            "error": f"intent={intent!r} reserved but not implemented in Slice 1",
+            "supported_intents": ["full", "card"],
+            "reference": "cortex-v2.4 §6.1, §7.1, §7.3",
+        }
+    if intent == "card" and (not isinstance(top_k, int) or top_k < 1 or top_k > 50):
+        return {"error": "top_k must be int in [1, 50]"}
     with cortex_conn() as conn:
+        if intent == "card":
+            return _get_entity_card_impl(
+                conn,
+                entity_id=entity_id,
+                top_k=top_k,
+                debug=debug,
+            )
         return _get_entity_impl(
             conn,
             entity_id=entity_id,

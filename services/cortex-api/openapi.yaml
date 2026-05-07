@@ -109,6 +109,10 @@ components:
     EntityDetail:
       type: object
       properties:
+        intent:
+          type: string
+          enum: [full]
+          description: Discriminator field — always "full". Absent on legacy responses.
         id: { type: string }
         type: { type: string }
         name: { type: string }
@@ -127,6 +131,63 @@ components:
         assertions:
           type: array
           items: { $ref: "#/components/schemas/AssertionItem" }
+
+    EntityCard:
+      type: object
+      description: |
+        Card v0 (cortex-v2.4 §6.3). Stable, deterministic, bounded
+        (~5–10KB target). Returned by `entity_get` when `intent=card`.
+        The `predicate_summary` slot is populated via edge-derived heuristic
+        synthesis (§6.7 fallback) and will be null only for tombstoned entities
+        with no archival children.
+      required: [intent]
+      properties:
+        intent: { type: string, enum: [card] }
+        id: { type: string }
+        type: { type: string }
+        name: { type: string }
+        summary_row: { type: string, nullable: true }
+        status_summary:
+          type: object
+          additionalProperties: true
+          nullable: true
+        top_k_assertions:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              claim: { type: string }
+              confidence: { type: string }
+              derivation_type: { type: string, nullable: true }
+              valid_from: { type: string, nullable: true }
+              observed_at: { type: string, nullable: true }
+        edge_type_summary:
+          type: array
+          items:
+            type: object
+            properties:
+              type_id: { type: string }
+              count: { type: integer }
+        archives_to_count: { type: integer }
+        section_manifest:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              label: { type: string }
+              count: { type: integer }
+        predicate_summary: { type: string, nullable: true }
+        freshness:
+          type: object
+          additionalProperties: { type: string }
+          nullable: true
+        debug:
+          type: object
+          nullable: true
+          properties:
+            fetch_plan_row_volume: { type: integer }
 
     EntityList:
       type: object
@@ -283,10 +344,9 @@ components:
             Agent-authored continuation prompt for the next session. Lands
             server-side as a reflective journal entry (kind="handoff",
             register="self") linked to this transcript via
-            link_type="handoff_for". Renders verbatim in the next boot
-            card's Last Session block. Omission triggers a non-blocking
-            post-close `missing_handoff` warning. See
-            agent-skills/web-session-close.md Step 2c.
+            link_type="handoff_for". Optional; omission does not trigger a
+            warning (handoffs are encouraged when moving to fresh context,
+            not required). See agent-skills/web-session-close.md Step 2c.
         dry_run:
           type: boolean
           default: false
@@ -320,7 +380,8 @@ components:
           description: >
             Audit warnings from pre-close gate (warn mode) and/or post-close
             detectors. Post-close findings under `post_close_findings`
-            include `missing_handoff` and `prior_session_id_omitted` kinds.
+            include `prior_session_id_omitted` kind (`missing_handoff`
+            retired — handoff absence is not a gap).
 
     BootContinuityResponse:
       type: object
@@ -352,7 +413,7 @@ components:
         hints:
           type: array
           items: { type: string }
-          description: 'Render hints (e.g. "no_handoff_captured")'
+          description: 'Continuity provenance hints (e.g. "prior_session_id_omitted")'
 
   responses:
     BadRequest:
@@ -501,19 +562,67 @@ paths:
   /entities/{entity_id}:
     get:
       operationId: getEntity
-      summary: Get entity with its assertions
+      summary: Get entity at requested read intent (v2.4 §6.1)
       parameters:
         - name: entity_id
           in: path
           required: true
           schema: { type: string }
+        - name: intent
+          in: query
+          required: false
+          description: |
+            v2.4 §6.1 read intent. `full` (default) preserves the EntityDetail
+            payload. `card` returns Card v0 (§6.3) via a projection-aware fetch.
+            `cluster` and `impact` are reserved but not implemented in Slice 1
+            (501).
+          schema:
+            type: string
+            enum: [full, card, cluster, impact]
+            default: full
+        - name: include_edges
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: edge_limit
+          in: query
+          required: false
+          schema: { type: integer, default: 20, minimum: 1, maximum: 100 }
+        - name: include_compaction_pointers
+          in: query
+          required: false
+          description: §6.10 (full intent only)
+          schema: { type: boolean, default: false }
+        - name: debug
+          in: query
+          required: false
+          description: §7.8 — attaches fetch_plan_row_volume on intent=card
+          schema: { type: boolean, default: false }
+        - name: top_k
+          in: query
+          required: false
+          description: v2.4 §6.3 — top-K active assertions in Card v0 (intent=card only)
+          schema: { type: integer, default: 7, minimum: 1, maximum: 50 }
       responses:
         "200":
-          description: Entity detail with assertions
+          description: |
+            Entity detail (intent=full) or Card v0 (intent=card). Discriminated
+            by the `intent` field on the card payload; `full` responses do not
+            carry an `intent` key.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/EntityDetail" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/EntityDetail"
+                  - $ref: "#/components/schemas/EntityCard"
+                discriminator:
+                  propertyName: intent
+                  mapping:
+                    full: "#/components/schemas/EntityDetail"
+                    card: "#/components/schemas/EntityCard"
         "404": { $ref: "#/components/responses/NotFound" }
+        "501":
+          description: intent reserved but not implemented (cluster, impact)
 
   /assertions:
     get:
@@ -603,9 +712,9 @@ paths:
         creates a `continues` edge to `prior_session_id` if provided, and
         optionally inserts a reflective journal handoff entry linked to the
         transcript. Rejects stub transcripts and dual-layer-hollow transcripts
-        with 422. Post-close detectors (`missing_handoff`,
-        `prior_session_id_omitted`) attach warnings to `_warning` but do not
-        block. See agent-skills/web-session-close.md and
+        with 422. Post-close detector (`prior_session_id_omitted`) attaches
+        warnings to `_warning` but does not block (`missing_handoff` retired
+        — handoff absence is not a gap). See agent-skills/web-session-close.md and
         agent-skills/session-close-audit.md.
       requestBody:
         required: true
@@ -637,10 +746,10 @@ paths:
       summary: Continuity payload for an agent's next boot card
       description: >
         Returns the prior session's handoff prompt (if captured), the
-        recent continuity chain, and any sibling continuations. Used by
-        cortex_boot to render the Last Session block. Falls back to a
-        `no_handoff_captured` hint when the prior session omitted
-        `handoff_prompt`.
+        recent continuity chain, and any sibling continuations. Used for
+        explicit handoff retrieval by agents moving to a fresh context.
+        The boot card renders the session summary, not handoff prose;
+        handoffs are not auto-surfaced at boot.
       parameters:
         - name: agent
           in: query

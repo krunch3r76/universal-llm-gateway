@@ -54,7 +54,10 @@ def _build_continuity_chain(conn: object, latest_session_id: str) -> list[str]:
 
 
 def _get_handoff(conn: object, transcript_entity_id: str) -> dict[str, Any] | None:
-    if not (_table_exists(conn, "reflective_journal") and _table_exists(conn, "journal_links")):
+    if not (
+        _table_exists(conn, "reflective_journal")
+        and _table_exists(conn, "journal_links")
+    ):
         return None
     rows = db_query(
         conn,  # type: ignore[arg-type]
@@ -101,7 +104,9 @@ def _get_sibling_continuations(
 
 @router.get("/boot-continuity")
 def get_boot_continuity(
-    agent: str = Query(..., description="Agent whose latest session continuity to render"),
+    agent: str = Query(
+        ..., description="Agent whose latest session continuity to render"
+    ),
 ) -> dict[str, Any]:
     """Return last-session handoff state and continuation context for boot cards."""
     conn = cortex_conn()
@@ -137,8 +142,12 @@ def get_boot_continuity(
             latest_session_id=row["session_id"],
         )
         hints: list[str] = []
-        if handoff is None:
-            hints.append("no_handoff_captured")
+        # Per assertion 8384 (session web-2026-05-04-1057): handoffs are
+        # user-facing artifacts for manual copy-paste at end of chat, not boot
+        # orientation material. Absence of a handoff is NOT a gap to surface at
+        # boot — the `no_handoff_captured` hint has been retired. The
+        # `prior_session_id_omitted` hint remains because it flags an actual
+        # provenance gap in session_journals.
         if row.get("prior_session_id") is None and len(continuity_chain) == 1:
             earlier = db_query(
                 conn,

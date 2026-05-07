@@ -27,10 +27,13 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
 
         The briefing card contains: deadlines, unread bus summary, review queue
         count, last session summary, top todos, self-observations, and temporal
-        alerts. When the latest session has a captured handoff, the Last Session
-        block renders a verbatim **Handoff** section; otherwise it falls back to
-        the summary plus `_Hint: no_handoff_captured_`. The section manifest also
-        includes a `continuity` entry pointing at `GET /boot-continuity via cortex-api`.
+        alerts. The Last Session block renders the session summary; handoff
+        prose is NOT auto-surfaced (handoffs are user-facing artifacts for
+        manual copy-paste at end of chat, not boot orientation material — see
+        assertion 8384, session web-2026-05-04-1057). The section manifest
+        includes a `continuity` entry pointing at `GET /boot-continuity via
+        cortex-api` for explicit fetches when an agent wants the prior
+        handoff.
         Heavy data (full sessions, assertions, gated entities, file
         contents) is NOT inlined — pull on demand via manifest hints.
 

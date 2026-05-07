@@ -30,7 +30,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
 
         Operations:
           entities          (type?, workflow_state?, limit?)         — list entities (workflow_state filters the typed column; use todo_candidates for routine TODO retrieval)
-          entity_get        (entity_id, include_edges?, edge_limit?) — get entity with assertions + relationships + optional reasoning edges
+          entity_get        (entity_id, intent?, include_edges?, edge_limit?, include_compaction_pointers?, debug?, top_k?) — get entity at requested read intent. intent="full" (default) returns the legacy EntityDetail (assertions + relationships + optional reasoning edges). intent="card" returns Card v0 (v2.4 §6.3): identity, status_summary, summary_row, top-K active assertions (default K=7), edge_type_summary, archives_to_count, section_manifest, freshness, reserved predicate_summary slot — projection-aware fetch (~5–10KB instead of full payload). intent in {"cluster","impact"} is reserved for later phases (501). Pass debug=true with intent="card" to attach fetch_plan_row_volume per §7.8.
           entity_create     (id, type, name, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?) — create entity. workflow_state is the typed per-type workflow column (e.g. todo: open|in_progress|done|deferred|cancelled); auto-filled to type's initial_state when omitted and the type has a registered schema.
           entity_update     (entity_id, name?, description?, status?, workflow_state?, notes?, aliases?, attributes?, source_uri?)  — update entity. source_uri auto-recomputes content_hash when set.
           assertions        (entity_id?, confidence?, review_status?, superseded?, limit?) — list assertions

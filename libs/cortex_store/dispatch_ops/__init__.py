@@ -175,7 +175,10 @@ def execute_op(tool: str, arguments: object) -> Any:
     hint = _WORKFLOW_HINTS.get(tool)
     if hint:
         result["_next"] = hint
-    if tool == "entity_get":
+    if tool == "entity_get" and result.get("intent") != "card":
+        # Card v0 (§6.3) has its own bounded shape (top_k_assertions /
+        # section_manifest); the EntityDetail-shaped completeness hint
+        # would misreport "no assertions" against the projection.
         _enrich_entity_completeness(result)
     return result
 

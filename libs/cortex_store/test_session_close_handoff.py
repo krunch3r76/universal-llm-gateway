@@ -123,9 +123,7 @@ def _payload(
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
 ) -> dict[str, Any]:
-    summary = (
-        "Validated the session-close handoff capture path and checked rollback behavior."
-    )
+    summary = "Validated the session-close handoff capture path and checked rollback behavior."
     return {
         "session_id": session_id,
         "agent": agent,
@@ -140,7 +138,9 @@ def _payload(
     }
 
 
-def _query_one(db_path: Path, sql: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+def _query_one(
+    db_path: Path, sql: str, params: tuple[Any, ...] = ()
+) -> dict[str, Any] | None:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
@@ -213,9 +213,10 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
     assert link["to_entity"] == "transcript:orion-2026-05-04-0844"
 
 
-def test_session_close_without_handoff_emits_missing_handoff_warning(
+def test_session_close_without_handoff_is_clean_no_warnings(
     session_env: dict[str, Path],
 ) -> None:
+    """Per assertion 8384: handoff absence is not a gap — no post-close warning."""
     db_path = session_env["db_path"]
 
     result = ops_journals._op_session_close(
@@ -225,7 +226,7 @@ def test_session_close_without_handoff_emits_missing_handoff_warning(
     assert result["handoff_entry_id"] is None
     warning = result.get("_warning", {})
     findings = warning.get("post_close_findings", [])
-    assert any(f["kind"] == "missing_handoff" for f in findings)
+    assert not any(f["kind"] == "missing_handoff" for f in findings)
     assert _query_count(db_path, "SELECT COUNT(*) FROM reflective_journal") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
@@ -251,7 +252,9 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_handoff_insert_failu
     )
 
     assert "Session close failed after transcript write" in result["error"]
-    assert not (files_root / "notes/system/transcripts/orion-2026-05-04-0845.md").exists()
+    assert not (
+        files_root / "notes/system/transcripts/orion-2026-05-04-0845.md"
+    ).exists()
     assert _query_count(db_path, "SELECT COUNT(*) FROM entities") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM session_journals") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM session_edges") == 0
@@ -280,7 +283,9 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_link_failure(
     )
 
     assert "Session close failed after transcript write" in result["error"]
-    assert not (files_root / "notes/system/transcripts/orion-2026-05-04-0846.md").exists()
+    assert not (
+        files_root / "notes/system/transcripts/orion-2026-05-04-0846.md"
+    ).exists()
     assert _query_count(db_path, "SELECT COUNT(*) FROM entities") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM session_journals") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM session_edges") == 0

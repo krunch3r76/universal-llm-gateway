@@ -35,15 +35,51 @@ _POINTER_ID_RE = re.compile(r"Compacted into archive summary (\d+)", re.IGNORECA
 _SUMMARY_RE = re.compile(r"^archive summary", re.IGNORECASE)
 
 # Aggregate-surface filter (todo:cortex-aggregate-compaction-filter):
-# SQLite LIKE pattern matching the same prefix as ``_POINTER_RE``. Used by
-# aggregate read surfaces (boot Recent Mentions, stats) to strict-exclude
-# pointer assertions in SQL rather than post-filter row-by-row.
+# SQLite LIKE patterns used by read surfaces to discriminate pointer / summary
+# rows at the SQL level rather than post-filter row-by-row.
 POINTER_SQL_LIKE = "Compacted into archive summary %"
+SUMMARY_SQL_LIKE = "archive summary%"
 
 
 def is_compaction_pointer(claim: str) -> bool:
     """True if *claim* is a compaction-pointer assertion."""
     return bool(_POINTER_RE.match(claim))
+
+
+def is_tombstone_only(claims: list[str]) -> bool:
+    """True if every claim in *claims* is a compaction pointer.
+
+    ∀ c ∈ claims: is_compaction_pointer(c). Empty list returns False — a
+    zero-assertion entity is not tombstoned, it is empty.
+    """
+    if not claims:
+        return False
+    return all(is_compaction_pointer(c) for c in claims)
+
+
+def synthesize_predicate_summary(
+    et_type_counts: list[dict[str, Any]],
+    archives_to_children: list[str],
+) -> str:
+    """Edge-derived heuristic predicate summary (v2.4 §6.3 / §6.7 fallback).
+
+    Deterministic. No LLM dependency. Produces a non-None summary from
+    relationship-type aggregates and archives_to children already materialized
+    by the card fetch plan — fulfills the §6.3 contract that the
+    ``predicate_summary`` slot is never None when the heuristic path runs.
+
+    Returns empty string when the entity has no active relationships and no
+    archival children.
+
+    ∀ r ∈ et_type_counts: r has keys ``type_id: str`` and ``count: int``.
+    """
+    parts: list[str] = []
+    for r in et_type_counts:
+        parts.append(f"{r['type_id']}({r['count']})")
+    if archives_to_children:
+        children_str = ", ".join(archives_to_children)
+        parts.append(f"archived_into([{children_str}])")
+    return "; ".join(parts)
 
 
 def is_consolidation_summary(claim: str) -> bool:

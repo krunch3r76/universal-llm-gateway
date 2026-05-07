@@ -78,9 +78,9 @@ def _append_session_close_warnings(
     session_id: str,
     agent: str,
 ) -> None:
-    """Attach post-close warning findings for handoff capture and continuity hints."""
+    """Attach post-close warning findings for session continuity provenance gaps."""
     findings = run_detectors(
-        kinds=["missing_handoff", "prior_session_id_omitted"],
+        kinds=["prior_session_id_omitted"],
         subject=f"transcript:{session_id}",
         include_filesystem=False,
     )
