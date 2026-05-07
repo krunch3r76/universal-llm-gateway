@@ -69,6 +69,7 @@ def make_conn() -> sqlite3.Connection:
             artifact_uri TEXT,
             artifact_storage TEXT,
             entrenchment_score REAL,
+            predicate_form TEXT,
             created_at TEXT
         );
         CREATE TABLE relationships (

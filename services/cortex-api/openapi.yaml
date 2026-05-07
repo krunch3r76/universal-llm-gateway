@@ -223,6 +223,13 @@ components:
           type: array
           items: { type: string }
           nullable: true
+        predicate_form:
+          type: string
+          nullable: true
+          description: |
+            Peer projection of `claim` for FOL-B retrieval (Cortex v2.4 §6.7).
+            Async-extracted by pipelines/predicate_extract/. NULL = not yet
+            extracted; non-NULL = the projector's last successful output.
         created_at: { type: string }
 
     AssertionList:

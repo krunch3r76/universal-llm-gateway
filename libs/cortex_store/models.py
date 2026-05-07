@@ -293,6 +293,9 @@ class AssertionItem(BaseModel):
     artifact_uri: str | None = None
     artifact_storage: str | None = None
     entrenchment_score: float | None = None
+    # v2.4 Slice 3: peer projection of `claim` for FOL-B retrieval (§6.7).
+    # NULL = not yet extracted; populated by pipelines/predicate_extract/.
+    predicate_form: str | None = None
     created_at: str
 
 

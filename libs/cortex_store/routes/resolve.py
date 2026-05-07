@@ -24,7 +24,7 @@ _ASSERTION_COLS = (
     "review_status, reviewer, reviewed_at, review_notes, "
     "resolution_status, fulfillment_assertion_id, quality_score, "
     "prospective_summary, events_json, artifact_uri, artifact_storage, "
-    "entrenchment_score, created_at"
+    "entrenchment_score, predicate_form, created_at"
 )
 
 _JSON_FIELDS = frozenset({"evidence_uris"})
@@ -161,7 +161,9 @@ def resolve_cortex_uri(
                 )
                 conn.commit()
             except Exception:
-                _resolve_logger.debug("Access log insert failed for tag_resolve %s", entity_id)
+                _resolve_logger.debug(
+                    "Access log insert failed for tag_resolve %s", entity_id
+                )
             return result
 
         # Revision pinning
