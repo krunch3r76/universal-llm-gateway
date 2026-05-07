@@ -14,6 +14,13 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, status
 
 from ..db import cortex_conn, decode_row, json_decode, query
+from ..entity_crud import (
+    _RELATIONSHIP_FROM,
+    _RELATIONSHIP_SELECT,
+)
+from ..entity_crud import (
+    ENTITY_JSON_FIELDS as _ENTITY_JSON_FIELDS,
+)
 from ..models import AssertionItem, RelationshipItem
 from ..observability_bridge import (
     build_in_flight,
@@ -30,11 +37,6 @@ from ..status_models import (
     TodoReference,
 )
 from .assertions import _ASSERTION_COLS
-from .entities import (
-    _ENTITY_JSON_FIELDS,
-    _RELATIONSHIP_FROM,
-    _RELATIONSHIP_SELECT,
-)
 
 logger = logging.getLogger("cortex-api.entity_status")
 router = APIRouter(tags=["entity_status"])
