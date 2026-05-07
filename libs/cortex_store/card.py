@@ -26,7 +26,6 @@ from .compaction import (
     POINTER_SQL_LIKE,
     SUMMARY_SQL_LIKE,
     is_tombstone_only,
-    synthesize_predicate_summary,
 )
 from .db import query
 from .models import (
@@ -35,6 +34,7 @@ from .models import (
     CardEdgeTypeCount,
     EntityCard,
 )
+from .predicate_summary import aggregate_predicate_summary
 
 logger = logging.getLogger("cortex-api.card")
 
@@ -71,10 +71,11 @@ def get_entity_card(
     e = ent_rows[0]
 
     # §6.10 ordering: archive summaries first, compaction pointers last.
+    # predicate_form included for Slice 4 aggregate_predicate_summary (§6.7).
     a_rows = query(
         conn,
         "SELECT id, claim, confidence, derivation_type, valid_from, "
-        "observed_at FROM assertions WHERE entity_id = ? "
+        "observed_at, predicate_form FROM assertions WHERE entity_id = ? "
         "AND superseded_by IS NULL "
         "ORDER BY "
         "  (CASE WHEN LOWER(claim) LIKE LOWER(?) THEN 0 ELSE 1 END) ASC, "
@@ -168,14 +169,16 @@ def get_entity_card(
         )
     else:
         top_k_for_card = [_card_assertion(r) for r in a_rows]
-        # §6.3 / §6.7 heuristic fallback: deterministic edge-derived summary.
-        # Returns empty string when the entity has no edges (never None) — the
-        # `predicate_summary` slot is reserved-and-populated from Phase 1.
-        predicate_summary = synthesize_predicate_summary(
+        # §6.3 / §6.7: three-tier predicate_form aggregation (Slice 4).
+        # Tier 0 joins populated predicate_forms; Tier 1 sync-enriches at most
+        # one miss; Tier 2 falls back to edge-derived heuristic (§6.7 scope-narrow).
+        predicate_summary = aggregate_predicate_summary(
+            top_k_assertions=a_rows,
             et_type_counts=[
                 {"type_id": str(r["type_id"]), "count": int(r["n"])} for r in et_rows
             ],
             archives_to_children=archives_to_children,
+            entity_id=entity_id,
         )
 
     card = EntityCard(
