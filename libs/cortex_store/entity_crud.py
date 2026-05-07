@@ -1,15 +1,18 @@
-"""Entity CRUD impls + workflow-state helpers extracted from routes/entities.py.
+"""Entity CRUD impls extracted from routes/entities.py.
 
-Holds the ``_*_impl`` functions and workflow-schema validation. The HTTP
-route handlers in ``routes/entities.py`` are thin wrappers that call into
-this module; the dispatch ops in ``dispatch_ops/ops_entities.py`` import
-the impls directly.
+Holds the ``_*_impl`` functions for entity persistence. The HTTP route
+handlers in ``routes/entities.py`` are thin wrappers that call into this
+module; the dispatch ops in ``dispatch_ops/ops_entities.py`` import the
+impls directly.
+
+Workflow-state schema, validation, and todo-closure-gap emission live in
+``workflow_state.py`` (split per SLOC waiver assertion 8521 on
+``spec:cortex-v2.4``).
 """
 
 from __future__ import annotations
 
 import datetime
-import json
 import logging
 import sqlite3
 
@@ -18,7 +21,6 @@ from fastapi import HTTPException, status
 from .action_hints import detect_expired_unresolved
 from .compaction import apply_compaction_filter
 from .db import cortex_conn, decode_row, execute, json_encode, query
-from .dispatch_ops._shared import record
 from .models import (
     AssertionItem,
     CompactionProjection,
@@ -30,6 +32,11 @@ from .models import (
 )
 from .routes.assertions import _ASSERTION_COLS
 from .routes.edges import _EDGE_COLS
+from .workflow_state import (
+    emit_todo_closure_gap_if_needed,
+    validate_workflow_state,
+    workflow_schema,
+)
 
 logger = logging.getLogger("cortex-api.entity_crud")
 
@@ -52,50 +59,6 @@ _RELATIONSHIP_FROM = """
     LEFT JOIN entities se ON se.id = r.from_entity
     LEFT JOIN entities te ON te.id = r.to_entity
 """
-
-
-def workflow_schema(
-    conn: sqlite3.Connection, entity_type: str
-) -> dict[str, object] | None:
-    """Fetch the workflow schema for *entity_type* if registered, else None."""
-    rows = query(
-        conn,
-        "SELECT enum_values, initial_state, terminal_states "
-        "FROM workflow_schemas WHERE entity_type = ?",
-        (entity_type,),
-    )
-    if not rows:
-        return None
-    row = rows[0]
-    return {
-        "enum_values": json.loads(row["enum_values"]),
-        "initial_state": row["initial_state"],
-        "terminal_states": (
-            json.loads(row["terminal_states"]) if row["terminal_states"] else None
-        ),
-    }
-
-
-def validate_workflow_state(
-    conn: sqlite3.Connection, entity_type: str, value: str
-) -> None:
-    """Reject *value* if entity_type has a registered enum that excludes it.
-
-    Types without a registered schema accept any value (free-form).
-    """
-    schema = workflow_schema(conn, entity_type)
-    if schema is None:
-        return
-    enum_values = schema["enum_values"]
-    assert isinstance(enum_values, list)
-    if value not in enum_values:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Invalid workflow_state {value!r} for type {entity_type!r}. "
-                f"Must be one of: {enum_values}"
-            ),
-        )
 
 
 def list_entities_impl(
@@ -243,47 +206,6 @@ def get_entity_impl(
     ).model_dump(mode="json")
 
 
-def _emit_todo_closure_gap_if_needed(
-    conn: sqlite3.Connection,
-    *,
-    entity_id: str,
-    entity_type: str,
-    new_workflow_state: str,
-    prior_workflow_state: str | None,
-) -> None:
-    """Emit a structured signal when a todo closes without an audit assertion.
-
-    Per todo:cortex-todo-closure-payload AC5 — visibility, not enforcement.
-    Fires when a todo transitions to workflow_state='done' with zero assertions
-    on the entity.
-    """
-    if entity_type != "todo":
-        return
-    if new_workflow_state != "done":
-        return
-    if prior_workflow_state == "done":
-        return
-    rows = query(
-        conn,
-        "SELECT COUNT(*) AS n FROM assertions WHERE entity_id = ?",
-        (entity_id,),
-    )
-    count = int(rows[0]["n"]) if rows else 0
-    if count > 0:
-        return
-    logger.warning(
-        "todo closure gap: %s transitioned to workflow_state=done with no "
-        "assertions on the entity. Prefer pipeline:todo-close to capture "
-        "summary + relationships + reasoning edges atomically.",
-        entity_id,
-    )
-    record(
-        "cortex.todo.closure.gap",
-        entity_id=entity_id,
-        prior_workflow_state=prior_workflow_state or "",
-    )
-
-
 def update_entity_impl(
     conn: sqlite3.Connection,
     *,
@@ -330,7 +252,7 @@ def update_entity_impl(
 
     new_workflow_state = updates.get("workflow_state")
     if isinstance(new_workflow_state, str):
-        _emit_todo_closure_gap_if_needed(
+        emit_todo_closure_gap_if_needed(
             conn,
             entity_id=entity_id,
             entity_type=str(existing[0]["type"]),
