@@ -22,6 +22,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class RemoteMcpUnsupportedError(RuntimeError):
+    """Raised when remote_mcp=True is requested for a vendor that does not support it.
+
+    Distinct from RemoteMcpEnvMissingError (misconfiguration) and NotImplementedError
+    (unplanned gap) so callers can catch-and-degrade to the local tool loop.
+    """
+
+
 def _normalize_tool_for_responses_api(tool: dict[str, Any]) -> dict[str, Any]:
     """Flatten Chat Completions function format to Responses API format.
 
@@ -247,6 +255,10 @@ class ResponsesAPIAdapter:
                 body["text"] = {"format": fmt}
 
         if req.remote_mcp:
+            if self._vendor == "xai":
+                raise RemoteMcpUnsupportedError(
+                    'xAI does not yet support remote MCP (type:"mcp" tool entries)'
+                )
             if req.mcp_tool_loop:
                 raise ValueError(
                     "remote_mcp=True is mutually exclusive with mcp_tool_loop=True"
@@ -360,9 +372,15 @@ class ResponsesAPIAdapter:
             # grok-4 family uses built-in reasoning; surface main content as reasoning
             # when no dedicated block is present (matches test_responses_reasoning_effort.py)
             if reasoning_tokens and int(reasoning_tokens) > 0:
-                reasoning = {"text": "".join(content_parts), "tokens": int(reasoning_tokens)}
+                reasoning = {
+                    "text": "".join(content_parts),
+                    "tokens": int(reasoning_tokens),
+                }
             elif "grok-4" in str(response_data.get("model", "")).lower():
-                reasoning = {"text": "".join(content_parts[:500]), "tokens": 0}  # summary for visibility
+                reasoning = {
+                    "text": "".join(content_parts[:500]),
+                    "tokens": 0,
+                }  # summary for visibility
 
         return {
             "content": "".join(content_parts),

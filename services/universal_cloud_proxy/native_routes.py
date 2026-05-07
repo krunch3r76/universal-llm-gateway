@@ -19,6 +19,7 @@ from llm_adapters._mcp_entry import (
     openai_xai_mcp_tool_entry,
 )
 from universal_event_bus import EventBus
+from universal_logging import get_logger
 
 from .events import CloudProxyRequestFailed, CloudProxyRequestForwarded
 from .forwarder import ProviderForwarder
@@ -27,6 +28,8 @@ from .native_boundary import (
     raw_model_from_native_body,
     workspace_catalog_id_from_native,
 )
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/providers", tags=["provider-native"])
 
@@ -63,6 +66,11 @@ def _inject_native_mcp(provider_key: str, body: dict) -> None:
             anthropic_mcp_server_entry(url, token, name=_MCP_SERVER_NAME),
         ]
     elif provider_key in {"openai", "xai"}:
+        if provider_key == "xai":
+            logger.info(
+                "remote MCP injection skipped — xAI does not yet support type:mcp"
+            )
+            return
         existing_tools = body.get("tools") or []
         body["tools"] = [
             *existing_tools,
