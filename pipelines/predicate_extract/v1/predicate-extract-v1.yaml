@@ -1,0 +1,41 @@
+# predicate-extract — assertion peer-projection extractor (v2.4 §6.7).
+#
+# Triggered fire-and-forget by libs/cortex_store/predicate_extract_dispatch.py
+# on every successful assertion insert. Single custom step does:
+#   1. cortex-api dispatch assertion_get → idempotency check (skip if
+#      predicate_form already populated; assertions are immutable per row,
+#      so NULL is the complete cache sentinel — no content_hash join).
+#   2. Tier-2 LLM call (qwen3-14b-q4-k-m-40960): natural-language claim →
+#      compact predicate-form expression for FOL-B retrieval.
+#   3. cortex-api dispatch assertion_update → write predicate_form back.
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="predicate-extract",
+#            messages=[{"role":"user","content":"extract"}],
+#            options={
+#              "assertion_id": <int>,
+#              "claim": "<natural language>",
+#              "entity_id": "<entity:slug>",
+#            })
+
+schema_version: 6
+id: predicate-extract
+version: "1.0"
+type: predicate_extract
+description: >
+  Extract a predicate-form (subject-predicate-object) projection for an
+  assertion's claim and write it back to cortex-api. Idempotent on
+  predicate_form IS NULL.
+output: extract
+
+options:
+  timeout_seconds: 90
+
+steps:
+  - name: extract
+    type: predicate_extract_apply_v1
+    model_ref: t2
+    prompt_ref: predicate_extract.v1.extract
+    generation_parameters:
+      temperature: 0.1
+      max_tokens: 128

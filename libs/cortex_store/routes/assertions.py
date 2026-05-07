@@ -49,6 +49,7 @@ from ..models import (
     SupersedeResponse,
 )
 from ..near_dup import check_near_duplicate, record_near_duplicate
+from ..predicate_extract_dispatch import dispatch_predicate_extract_background
 from ..projection_guard import assert_projection_covers_required
 
 logger = logging.getLogger("cortex-api.assertions")
@@ -954,6 +955,7 @@ def create_assertion(
             target=reindex_assertion_fts, args=(item.id,), daemon=True
         ).start()
         enrich_background(item.id, body.claim, body.entity_id, body.confidence)
+        dispatch_predicate_extract_background(item.id, body.claim, body.entity_id)
         _embed_assertion_background(
             item.id,
             {
@@ -1042,6 +1044,7 @@ def update_assertion(
                 "review_notes",
                 "resolution_status",
                 "fulfillment_assertion_id",
+                "predicate_form",
             ):
                 if k in body and body[k] is not None:
                     update_map[k] = body[k]
@@ -1057,6 +1060,7 @@ def update_assertion(
                 "review_notes": body.review_notes,
                 "resolution_status": body.resolution_status,
                 "fulfillment_assertion_id": body.fulfillment_assertion_id,
+                "predicate_form": body.predicate_form,
             }
         sets: list[str] = []
         params: list[object] = []

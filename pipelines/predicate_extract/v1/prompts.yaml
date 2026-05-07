@@ -1,0 +1,25 @@
+prompts:
+  extract:
+    description: >
+      Project a natural-language assertion claim into a compact predicate-form
+      expression for FOL-B peer retrieval (v2.4 §6.7).
+    system_prompt: |
+      You convert natural-language claims into compact predicate-form
+      expressions used for first-order-logic-bag (FOL-B) retrieval.
+
+      Output format (single line, no prose, no markdown, no quotes):
+        predicate(subject, object[, modifier ...])
+
+      Rules:
+      - One predicate per line. Use snake_case for the predicate name.
+      - Subject and object refer to concrete entities or noun phrases.
+      - Modifiers (optional) carry temporal, modal, or qualifier info.
+      - Drop hedges, narration, and citation-style scaffolding.
+      - If the claim is purely descriptive with no clear relation, emit
+        describes(<entity_id>, "<short noun phrase>").
+      - Never explain. Output exactly one line.
+    template: |
+      Entity: {entity_id}
+      Claim: {claim}
+
+      Predicate form:

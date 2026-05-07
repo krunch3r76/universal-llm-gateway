@@ -279,6 +279,31 @@ def _op_friction(
     return result
 
 
+def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str, Any]:
+    """Read a single assertion by id.
+
+    Used by `pipelines/predicate_extract/` for the §6.7 idempotency check
+    (predicate_form IS NULL sentinel) without forcing a list-and-filter
+    round trip. Returns the same shape as `_create_assertion_impl`'s
+    `item` field — `predicate_form` included.
+    """
+    if assertion_id is None:
+        return {"error": "assertion_id is required"}
+    from ..db import cortex_conn, decode_row, query
+    from ..models import AssertionItem
+    from ..routes.assertions import _ASSERTION_COLS, _JSON_FIELDS
+
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+            (assertion_id,),
+        )
+    if not rows:
+        return {"error": f"Assertion not found: {assertion_id}"}
+    return AssertionItem(**decode_row(rows[0], _JSON_FIELDS)).model_dump(mode="json")
+
+
 def _op_assertion_update(
     assertion_id: int | None = None,
     superseded_by: int | None = None,
@@ -289,6 +314,7 @@ def _op_assertion_update(
     reviewer: str | None = None,
     reviewed_at: str | None = None,
     review_notes: str | None = None,
+    predicate_form: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     if assertion_id is None:
@@ -304,6 +330,7 @@ def _op_assertion_update(
             ("reviewer", reviewer),
             ("reviewed_at", reviewed_at),
             ("review_notes", review_notes),
+            ("predicate_form", predicate_form),
         ]
         if val is not None
     }

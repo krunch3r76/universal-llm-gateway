@@ -310,6 +310,10 @@ class AssertionUpdate(BaseModel):
     review_notes: str | None = None
     resolution_status: ResolutionStatus | None = None
     fulfillment_assertion_id: int | None = None
+    # v2.4 Slice 3: peer projection writeback path. Populated by
+    # pipelines/predicate_extract/ after fire-and-forget dispatch from the
+    # assertion-create write hook.
+    predicate_form: str | None = None
 
 
 class SupersedeRequest(BaseModel):
