@@ -174,11 +174,12 @@ class CardDebug(BaseModel):
 class EntityCard(BaseModel):
     """Card v0 payload (v2.4 §6.3).
 
-    Stable, deterministic, bounded. The reserved `predicate_summary` slot
-    (§3.3, §6.3) is populated in a later phase; Slice 1 keeps it explicit
-    as `None` so the payload contract is stable before predicate enrichment
-    catches up. `intent` is the discriminator distinguishing Card v0 from
-    `EntityDetail`.
+    Stable, deterministic, bounded. `predicate_summary` (§3.3, §6.3) is
+    populated from Phase 1 onward via local-LLM `predicate_form` aggregation
+    when available, edge-derived heuristic synthesis when not (§6.7);
+    navigation-hint string for §6.10 tombstone-collapsed entities. Empty
+    string when no signal available — never `None`. `intent` is the
+    discriminator distinguishing Card v0 from `EntityDetail`.
     """
 
     intent: Literal["card"] = "card"
@@ -191,7 +192,7 @@ class EntityCard(BaseModel):
     edge_type_summary: list[CardEdgeTypeCount] = Field(default_factory=list)
     archives_to_count: int = 0
     section_manifest: list[CardSection] = Field(default_factory=list)
-    predicate_summary: str | None = None
+    predicate_summary: str = ""
     freshness: dict[str, str] | None = None
     debug: CardDebug | None = None
 
