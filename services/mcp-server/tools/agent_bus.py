@@ -486,11 +486,13 @@ def _delete_turn_impl(*, thread: str, turn_number: int, force: bool) -> dict[str
 def _fetch_unread_dispatch(
     *,
     to: str | None = None,
-    thread: str | None = None,
+    thread: str | int | None = None,
     mark_read: bool = False,
     compact: bool = False,
 ) -> dict[str, Any]:
     """Fetch all unread turns for a recipient or thread — no count cap."""
+    if isinstance(thread, int):
+        thread = str(thread)
     effective_to = to if to else None
     effective_thread = thread if thread else None
     if effective_to is None and effective_thread is None:
@@ -508,7 +510,7 @@ def _fetch_unread_dispatch(
 def _fetch_dispatch(
     *,
     to: str | None = None,
-    thread: str | None = None,
+    thread: str | int | None = None,
     last: int = 10,
     unread: bool = True,
     mark_read: bool = False,
@@ -522,6 +524,8 @@ def _fetch_dispatch(
     - unread=True → no limit on the unread set; last is ignored for the unread filter
     - otherwise  → last capped at MCP_AGENT_BUS_CONTEXT_CAP (default 50)
     """
+    if isinstance(thread, int):
+        thread = str(thread)
     effective_to = to if to else None
     effective_thread = thread if thread else None
     if all:
@@ -552,16 +556,24 @@ def _post_dispatch(
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
 ) -> dict[str, Any]:
-    if not slug or not to or not subject or not body or not from_agent:
+    missing: list[str] = []
+    if not slug:
+        missing.append("slug (str)")
+    if not to:
+        missing.append("to (str)")
+    if not subject:
+        missing.append("subject (str)")
+    if not body:
+        missing.append("body (str)")
+    if not from_agent:
+        missing.append(
+            "from_agent (str, REQUIRED — no default; name the persona authoring "
+            'this turn, e.g. "cursor", "claude-web", "forge", "orion")'
+        )
+    if missing:
         return {
-            "error": (
-                "post requires: slug, to, subject, body, from_agent. "
-                "from_agent must name the persona authoring the turn "
-                "(e.g. \"cursor\", \"claude-web\", \"forge\", \"orion\") "
-                "— there is no default; misattribution at this layer "
-                "creates wrong-persona turns under parallel-instance "
-                "dispatch (see todo:agent-bus-from-attribution-root-cause)."
-            )
+            "error": f"post: missing required field(s): {'; '.join(missing)}",
+            "missing_fields": [f.split(" ")[0] for f in missing],
         }
     return _post_impl(
         slug=slug,
@@ -577,7 +589,7 @@ def _post_dispatch(
 
 def _reply_dispatch(
     *,
-    thread: str = "",
+    thread: str | int = "",
     to: str = "",
     subject: str = "",
     body: str = "",
@@ -588,23 +600,30 @@ def _reply_dispatch(
     close: bool = False,
     attachments: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    if (
-        not thread
-        or not to
-        or not subject
-        or not body
-        or after_turn < 1
-        or not from_agent
-    ):
+    # Coerce integer thread IDs — agents frequently pass bare ints from JSON.
+    if isinstance(thread, int):
+        thread = str(thread)
+
+    missing: list[str] = []
+    if not thread:
+        missing.append('thread (str, e.g. "480")')
+    if not to:
+        missing.append("to (str)")
+    if not subject:
+        missing.append("subject (str)")
+    if not body:
+        missing.append("body (str)")
+    if after_turn < 1:
+        missing.append("after_turn (int >= 1)")
+    if not from_agent:
+        missing.append(
+            "from_agent (str, REQUIRED — no default; name the persona authoring "
+            'this turn, e.g. "cursor", "claude-web", "forge", "orion")'
+        )
+    if missing:
         return {
-            "error": (
-                "reply requires: thread, to, subject, body, after_turn, from_agent. "
-                "from_agent must name the persona authoring the turn "
-                "(e.g. \"cursor\", \"claude-web\", \"forge\", \"orion\") "
-                "— there is no default; misattribution at this layer "
-                "creates wrong-persona turns under parallel-instance "
-                "dispatch (see todo:agent-bus-from-attribution-root-cause)."
-            )
+            "error": f"reply: missing required field(s): {'; '.join(missing)}",
+            "missing_fields": [f.split(" ")[0] for f in missing],
         }
     return _reply_impl(
         thread=thread,
@@ -620,9 +639,11 @@ def _reply_dispatch(
     )
 
 
-def _get_dispatch(*, thread: str = "", turn_number: int = 0) -> dict[str, Any]:
+def _get_dispatch(*, thread: str | int = "", turn_number: int = 0) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread or turn_number < 1:
-        return {"error": "get requires: thread, turn_number (>= 1)"}
+        return {"error": "get requires: thread (str), turn_number (int >= 1)"}
     return _get_impl(thread=thread, turn_number=turn_number)
 
 
@@ -656,14 +677,16 @@ def _create_thread_dispatch(
 
 def _update_dispatch(
     *,
-    thread: str = "",
+    thread: str | int = "",
     turn_number: int = 0,
     body: str | None = None,
     append: bool | str | None = None,
     subject: str | None = None,
 ) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread or turn_number < 1:
-        return {"error": "update requires: thread, turn_number (>= 1)"}
+        return {"error": "update requires: thread (str), turn_number (int >= 1)"}
     if body is None and append is None and not subject:
         return {"error": "update requires at least one of: body, append, subject"}
     if append is True and body is None:
@@ -679,14 +702,16 @@ def _update_dispatch(
 
 def _update_thread_dispatch(
     *,
-    thread: str = "",
+    thread: str | int = "",
     status: str | None = None,
     summary: str | None = None,
     tags: list[str] | None = None,
     from_agent: str = "cursor",
 ) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread:
-        return {"error": "update_thread requires: thread"}
+        return {"error": "update_thread requires: thread (str)"}
     # If an empty string status is not allowed, add explicit validation here.
     # For now, assuming empty string should be treated as None for status updates.
     effective_status = status if (status and status != "open") else None
@@ -701,12 +726,14 @@ def _update_thread_dispatch(
 
 def _close_dispatch(
     *,
-    thread: str = "",
+    thread: str | int = "",
     summary: str | None = None,
     mark_all_read: bool = True,
 ) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread:
-        return {"error": "close requires: thread"}
+        return {"error": "close requires: thread (str)"}
     return _close_impl(
         thread=thread,
         summary=summary,
@@ -714,24 +741,34 @@ def _close_dispatch(
     )
 
 
-def _delete_thread_dispatch(*, thread: str = "", force: bool = False) -> dict[str, Any]:
+def _delete_thread_dispatch(
+    *, thread: str | int = "", force: bool = False
+) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread:
-        return {"error": "delete_thread requires: thread"}
+        return {"error": "delete_thread requires: thread (str)"}
     return _delete_thread_impl(thread=thread, force=force)
 
 
 def _delete_turn_dispatch(
-    *, thread: str = "", turn_number: int = 0, force: bool = False
+    *, thread: str | int = "", turn_number: int = 0, force: bool = False
 ) -> dict[str, Any]:
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread or turn_number < 1:
-        return {"error": "delete_turn requires: thread, turn_number (>= 1)"}
+        return {"error": "delete_turn requires: thread (str), turn_number (int >= 1)"}
     return _delete_turn_impl(thread=thread, turn_number=turn_number, force=force)
 
 
-def _mark_read_dispatch(*, thread: str = "", turn_number: int = 0) -> dict[str, Any]:
+def _mark_read_dispatch(
+    *, thread: str | int = "", turn_number: int = 0
+) -> dict[str, Any]:
     """Mark a specific turn as read. Clears it from unread counts."""
+    if isinstance(thread, int):
+        thread = str(thread)
     if not thread or turn_number < 1:
-        return {"error": "mark_read requires: thread, turn_number (>= 1)"}
+        return {"error": "mark_read requires: thread (str), turn_number (int >= 1)"}
     turn_id, err = _resolve_turn_id(thread=thread, turn_number=turn_number)
     if err:
         return err
@@ -828,7 +865,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                 return {
                     "error": (
                         "arguments must be a JSON-encoded object string "
-                        f"(e.g. '{{\"thread\": \"111\"}}'); got {type(arguments).__name__} "
+                        f'(e.g. \'{{"thread": "111"}}\'); got {type(arguments).__name__} '
                         f"that did not parse as a JSON object"
                     )
                 }

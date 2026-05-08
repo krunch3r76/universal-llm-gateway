@@ -47,7 +47,8 @@ def _post(assertion_id: int, claim: str, entity_id: str | None) -> None:
     }
     try:
         with httpx.Client(timeout=_REQUEST_TIMEOUT) as client:
-            client.post(f"{STARGATE_URL}/v1/chat/completions", json=payload)
+            resp = client.post(f"{STARGATE_URL}/v1/chat/completions", json=payload)
+            resp.raise_for_status()
     except Exception:
         logger.warning(
             "predicate_extract dispatch failed for assertion %d",

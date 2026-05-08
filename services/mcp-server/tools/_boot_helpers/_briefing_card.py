@@ -327,7 +327,7 @@ def render_briefing_card(
         for m in recent_mentions[:10]:
             name = m.get("entity_name", m.get("entity_id", "?"))
             etype = m.get("entity_type", "?")
-            cnt = m.get("recent_mention_count", 0)
+            cnt = m.get("inserted_count", 0)
             last_mentioned = m.get("last_mentioned_at")
             rel = _relative_time(last_mentioned, now) if last_mentioned else "?"
             cnt_tag = f", {cnt} new" if cnt else ", new entity"

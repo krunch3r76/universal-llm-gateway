@@ -2202,6 +2202,81 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 
 Maximum one retry on 422 — if the second close also rejects, the agent surfaces the rejection reason explicitly to the user rather than spinning.
 
+### Post-Write Hook Signals
+
+Emitted by `libs/cortex_store/_post_write_hooks.py` (the `run_observed_hook` wrapper) and by `scripts/reconcile_post_write_hooks.py`. Each successful `POST /assertions` schedules four fire-and-forget hooks; this family makes their per-hook outcome observable so silent failures (assertion 8873/8874 class — `predicate_form IS NULL` for hours despite a hook firing) are detectable from the event stream alone, without diffing DB state.
+
+All signals: `role="observation"`, `scope="global"`. Source: `cortex-api`.
+
+**Signal naming**: `assertion.<hook>.<phase>` where:
+
+- `<hook>` ∈ {`fts`, `enrichment`, `predicate_extract`, `embedding`}
+- `<phase>` ∈ {`started`, `completed`, `completed_no_effect`, `failed`, `skipped`}
+
+The hook never appears in the payload only — it is part of the signal name so existing per-signal filters (`signal LIKE 'assertion.predicate_extract.%'`) work without payload extraction. The phase distinction `completed` vs `completed_no_effect` carries the projection-fidelity invariant `[universal:rest]`: `completed` means the work ran AND the achieved-state sentinel observed the durable effect; `completed_no_effect` means the work ran without raising but the sentinel reports the durable effect is missing (the silent-failure shape).
+
+**Mandatory payload (every `assertion.<hook>.*` event)**:
+
+| Field | Type | Semantics |
+|---|---|---|
+| `assertion_id` | int | Primary join key. Always present. |
+| `hook` | str | One of {fts, enrichment, predicate_extract, embedding}. Redundant with signal name; carried in payload to simplify cross-hook joins. |
+| `attempt_id` | str (uuid4) | Distinguishes multiple invocations of the same hook for the same assertion. Required because enrichment internally re-invokes `reindex_assertion_fts` at the end of its run, producing two `assertion.fts.*` event sequences for one assertion insert; the wrapper assigns a fresh `attempt_id` to each call so the two sequences stay correlatable but distinct. Reconciliation re-dispatches also get fresh `attempt_id`s. |
+| `phase` | str | Same enum as the signal-name phase suffix. Carried in payload for SQL convenience. |
+
+**Phase-specific payload**:
+
+| Phase | Additional fields | When emitted |
+|---|---|---|
+| `started` | — | Immediately before the hook's work function runs. Enables live trace + duration computation. |
+| `completed` | `achieved=true`, `duration_ms` (int), `result` (dict\|null) | Work returned without raising AND the achieved-state sentinel confirmed the durable effect (FTS row present, `predicate_form` populated, embedding present in Chroma, enrichment per-kind result map shows `written` for at least one kind). For enrichment, `result` is a per-kind map: `{"prospective_summary": "written"\|"no_output"\|"skipped_disabled"\|"failed", "events_json": ...}`. For other hooks, `result` may be `null`. |
+| `completed_no_effect` | `achieved=false`, `duration_ms`, `result` (dict\|null) | Work returned without raising BUT the achieved-state sentinel reports no durable effect. The canonical silent-failure shape (e.g. predicate-extract HTTP 200 but `predicate_form` still NULL; enrichment ran but every kind reports `no_output` or `skipped_disabled`). Reconciliation treats these as gaps after the grace window. |
+| `failed` | `achieved=false`, `duration_ms`, `error_type` (str — exception class name), `error` (str — `str(exc)[:1000]`) | Hook work raised an exception. The exception is suppressed at the wrapper boundary (hooks remain fire-and-forget per invariant; write path is not perturbed) but the failure is durable in the event stream. |
+| `skipped` | `reason` (str) | Hook deliberately did not run. `reason` enum: `feature_disabled` (e.g. `_ENRICHMENT_ENABLED=false`), `prerequisite_missing` (e.g. embedding hook called with empty claim text), `duplicate_attempt` (reserved for future dedup). No `duration_ms` (no work ran). |
+
+**Reconciliation gap signal** — emitted by the periodic reconciler (`scripts/reconcile_post_write_hooks.py`):
+
+| Signal | Payload | Description |
+|---|---|---|
+| `assertion.<hook>.reconcile.gap` | `assertion_id`, `hook`, `assertion_age_s` (int), `grace_window_s` (int), `last_attempt_id` (str\|null), `last_phase` (str\|null), `redispatched` (bool) | A live assertion older than the grace window is missing the achieved-state for `<hook>`. `last_attempt_id` / `last_phase` reflect the most recent terminal event observed for this `(assertion_id, hook)` pair (null if no event was ever seen — the harshest silent-failure mode: hook never fired at all). `redispatched=true` if reconciliation also re-invoked the hook; `false` in `--dry-run` mode. |
+
+The gap signal name is parameterized on hook for the same filter reason as the main family. The plan's `assertion.enrichment.reconcile.gap` is one realization of the pattern; reconciliation may also emit `assertion.predicate_extract.reconcile.gap`, `assertion.fts.reconcile.gap`, `assertion.embedding.reconcile.gap`.
+
+**Invariants**:
+
+- ∀ successful `POST /assertions`: exactly four `started` events SHOULD appear (one per hook), unless a hook is `skipped` for a `feature_disabled` reason. Enrichment additionally produces a second `assertion.fts.started` (with a distinct `attempt_id`) when its post-work FTS reindex fires.
+- ∀ `started` event: a terminal event (`completed` | `completed_no_effect` | `failed`) MUST eventually follow with the same `attempt_id`. Absence of a terminal event (live-event path crashed mid-hook) is itself a class of silent failure — caught by reconciliation, not by event-stream invariants.
+- `skipped` events have no preceding `started` (the wrapper short-circuits before `started` fires when the skip reason is detectable up-front).
+- Per `[universal:no-bc]`: existing `logger.warning` lines that previously narrated hook outcomes are removed when the wrapper lands. Events are the single live mechanism; logs duplicating event content are deleted, not left in parallel.
+
+**Query examples**:
+
+```bash
+# All hook outcomes for one assertion
+scripts/query-events --sql "
+  SELECT ts_unix_ms, signal, json_extract(payload,'\$.attempt_id') attempt, json_extract(payload,'\$.achieved') achieved, json_extract(payload,'\$.error_type') err
+  FROM events
+  WHERE signal LIKE 'assertion.%'
+    AND json_extract(payload,'\$.assertion_id') = 8873
+  ORDER BY seq"
+
+# Silent-failure shape: hook completed but didn't achieve
+scripts/query-events --sql "
+  SELECT signal, COUNT(*) n
+  FROM events
+  WHERE signal LIKE 'assertion.%.completed_no_effect'
+    AND ts_unix_ms > (unixepoch()-3600)*1000
+  GROUP BY signal"
+
+# Reconciliation-discovered gaps in last 24h
+scripts/query-events --sql "
+  SELECT signal, json_extract(payload,'\$.assertion_id') id, json_extract(payload,'\$.assertion_age_s') age
+  FROM events
+  WHERE signal LIKE 'assertion.%.reconcile.gap'
+    AND ts_unix_ms > (unixepoch()-86400)*1000
+  ORDER BY seq DESC"
+```
+
 ## MCP Stdio Proxy Signals
 
 Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits `mcp.transport.*`
