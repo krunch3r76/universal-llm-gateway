@@ -1,4 +1,4 @@
-"""Responses API adapter for xAI Grok and OpenAI — Bearer auth, function calling.
+"""Responses API adapter class (xAI Grok, OpenAI) — Bearer auth, function calling.
 
 MCP tool calling uses client-side tool resolution (function_call items executed
 locally by the caller's tool loop).  No remote MCP tool injection
@@ -7,19 +7,27 @@ locally by the caller's tool loop).  No remote MCP tool injection
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
+
+from universal_logging import get_logger
 
 from llm_adapters._mcp_entry import (
     openai_xai_mcp_tool_entry,
     resolve_mcp_env,
 )
-from llm_adapters._tool_schema import sanitize_tool_parameters
+from llm_adapters.responses.normalization import (
+    _normalize_input_content,
+    _normalize_tool_for_responses_api,
+)
+from llm_adapters.responses.reasoning_capabilities import (
+    _openai_supports_reasoning_effort,
+    _xai_supports_reasoning_effort,
+)
 
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class RemoteMcpUnsupportedError(RuntimeError):
@@ -28,89 +36,6 @@ class RemoteMcpUnsupportedError(RuntimeError):
     Distinct from RemoteMcpEnvMissingError (misconfiguration) and NotImplementedError
     (unplanned gap) so callers can catch-and-degrade to the local tool loop.
     """
-
-
-def _normalize_tool_for_responses_api(tool: dict[str, Any]) -> dict[str, Any]:
-    """Flatten Chat Completions function format to Responses API format.
-
-    Chat Completions: {"type": "function", "function": {"name": ..., "description": ..., "parameters": ...}}
-    Responses API:    {"type": "function", "name": ..., "description": ..., "parameters": ...}
-
-    Server tools (web_search, x_search, etc.) and already-flat tools pass through unchanged.
-    """
-    fn = tool.get("function")
-    if not isinstance(fn, dict):
-        return tool
-    flat: dict[str, Any] = {"type": "function"}
-    if "name" in fn:
-        flat["name"] = fn["name"]
-    if "description" in fn:
-        flat["description"] = fn["description"]
-    if "parameters" in fn:
-        params = fn["parameters"]
-        if isinstance(params, dict):
-            flat["parameters"] = sanitize_tool_parameters(params)
-        else:
-            flat["parameters"] = params
-    for k, v in fn.items():
-        if k not in flat:
-            flat[k] = v
-    return flat
-
-
-def _normalize_input_content(content: Any) -> Any:
-    """Normalize message content for Responses API input messages.
-
-    The Responses API uses ``"type": "input_text"`` for input content blocks,
-    not ``"type": "text"`` (which is the output block type). Callers that build
-    messages with Chat-Completions-style ``{"type": "text", "text": "..."}``
-    blocks must be translated before sending to the Responses API.
-
-    String content passes through unchanged.
-    Single-text-block arrays are flattened to plain strings (simplest form).
-    Multi-block arrays have text blocks translated to ``input_text`` type.
-    """
-    if not isinstance(content, list):
-        return content
-    text_only = all(
-        isinstance(b, dict) and b.get("type") in {"text", "input_text"} for b in content
-    )
-    if text_only and len(content) == 1:
-        return str(content[0].get("text", ""))
-    normalized: list[dict[str, Any]] = []
-    for block in content:
-        if not isinstance(block, dict):
-            normalized.append(block)
-            continue
-        if block.get("type") == "text":
-            normalized.append({"type": "input_text", "text": block.get("text", "")})
-        else:
-            normalized.append(block)
-    return normalized
-
-
-def _xai_supports_reasoning_effort(model: str) -> bool:
-    """Only grok-3 family accepts reasoning.effort control.
-
-    All grok-4 family models (including -reasoning variants) reject
-    reasoningEffort despite xAI docs suggesting otherwise (tested 2026-03-31).
-    """
-    return any(prefix in model for prefix in ("grok-3-mini", "grok-3"))
-
-
-def _openai_supports_reasoning_effort(model: str) -> bool:
-    """Only OpenAI reasoning model families accept reasoning.effort.
-
-    The o-series (o1, o3, o4-mini) and gpt-5 family (gpt-5.x, gpt-5.x-*)
-    support the Responses API reasoning.effort parameter. Standard chat
-    models (gpt-4o, gpt-4.1, gpt-4o-mini) reject it with
-    'unsupported_parameter' — as does any model that routes through the
-    Chat Completions API surface instead of Responses (those are caught
-    earlier at frontier_dispatch admission via _is_chat_completions_only).
-    ∀ new reasoning-capable OpenAI model: confirm it starts with one of
-    these prefixes or extend this set.
-    """
-    return any(model.startswith(prefix) for prefix in ("o1", "o3", "o4", "gpt-5"))
 
 
 class ResponsesAPIAdapter:

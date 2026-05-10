@@ -31,6 +31,7 @@ from llm_adapters import (
 from model_id import ModelId
 
 from agent_seat.executor import execute_tool
+from agent_seat.tool_friction import ToolFrictionTracker
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ class NativeLoopResult:
     block_reason: str | None = None
     provider: str = ""
     raw: dict[str, Any] | None = None
+    exhaustion_summary: dict[str, Any] | None = None
 
     @property
     def tool_calls_made(self) -> int:
@@ -110,6 +112,9 @@ async def _execute_tool_calls(
     provider: str,
     turn: int,
     on_tool_event: ToolEventFn | None,
+    *,
+    friction: ToolFrictionTracker,
+    max_turns: int,
 ) -> tuple[list[dict[str, Any]], list[NativeToolCall]]:
     """Execute tool_calls in parallel; return (adapter_tool_results, captured)."""
 
@@ -119,24 +124,40 @@ async def _execute_tool_calls(
         name, args, call_id = _normalize_tool_call(raw_call)
         start = time.monotonic()
         ok = True
-        try:
-            result_str = await execute_tool(name, args)
-            try:
-                parsed = json.loads(result_str) if result_str else {}
-                if isinstance(parsed, dict) and "error" in parsed:
-                    ok = False
-            except json.JSONDecodeError:
-                pass
-        except Exception as exc:
-            logger.error(
-                "native_loop tool %s (turn %d, provider %s) failed: %s",
-                name,
-                turn,
-                provider,
-                exc,
+        remaining_turns = max_turns - turn + 1
+        skip = friction.should_skip(
+            name,
+            args,
+            remaining_turns=remaining_turns,
+        )
+        if skip is not None:
+            result_str = json.dumps(
+                {
+                    "error": skip.message,
+                    "code": skip.reason,
+                    "suggested_next_action": skip.suggested_next_action,
+                }
             )
-            result_str = json.dumps({"error": f"tool execution failed: {exc}"})
             ok = False
+        else:
+            try:
+                result_str = await execute_tool(name, args)
+                try:
+                    parsed = json.loads(result_str) if result_str else {}
+                    if isinstance(parsed, dict) and "error" in parsed:
+                        ok = False
+                except json.JSONDecodeError:
+                    pass
+            except Exception as exc:
+                logger.error(
+                    "native_loop tool %s (turn %d, provider %s) failed: %s",
+                    name,
+                    turn,
+                    provider,
+                    exc,
+                )
+                result_str = json.dumps({"error": f"tool execution failed: {exc}"})
+                ok = False
         elapsed_ms = (time.monotonic() - start) * 1000.0
 
         tc = NativeToolCall(
@@ -147,6 +168,7 @@ async def _execute_tool_calls(
             ok=ok,
             elapsed_ms=elapsed_ms,
         )
+        friction.observe(tc)
         if on_tool_event is not None:
             try:
                 signal = (
@@ -241,6 +263,7 @@ async def run_native_tool_loop(
     exhausted = False
     cancelled = False
     turns_used = 0
+    friction = ToolFrictionTracker()
 
     for turn_idx in range(max_turns):
         turns_used = turn_idx + 1
@@ -266,8 +289,13 @@ async def run_native_tool_loop(
             provider,
             turns_used,
             on_tool_event,
+            friction=friction,
+            max_turns=max_turns,
         )
         captured.extend(executed)
+        if friction.should_stop:
+            exhausted = True
+            break
 
         if not hasattr(adapter, "append_tool_round"):
             logger.warning(
@@ -286,8 +314,7 @@ async def run_native_tool_loop(
         # built-in reasoning) over "thinking". This ensures the field is populated
         # when the adapter fallback triggers.
         reasoning=(
-            result.get("reasoning")
-            or result.get("thinking")
+            result.get("reasoning") or result.get("thinking")
             if isinstance(result, dict)
             else None
         ),
@@ -302,4 +329,13 @@ async def run_native_tool_loop(
         block_reason=(result.get("block_reason") if isinstance(result, dict) else None),
         provider=provider,
         raw=raw,
+        exhaustion_summary=(
+            friction.build_summary(
+                execution_id=None,
+                turns_used=turns_used,
+                tool_calls=captured,
+            )
+            if exhausted
+            else None
+        ),
     )

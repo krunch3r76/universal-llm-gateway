@@ -449,6 +449,61 @@ class EmptyCompletionError(PipelineError):
 
 
 @dataclass
+class FrontierDispatchExhaustedError(PipelineError):
+    """Raised when ``frontier_dispatch_v1`` hits the tool-loop ceiling without
+    producing caller-visible content.
+
+    Exhaustion is a valid observability state, but returning ``content=""`` as
+    an OpenAI-successful chat completion makes clients look hung or silently
+    empty. Convert that terminal state to a structured pipeline failure.
+    """
+
+    execution_id: str
+    agent: str | None
+    model: str
+    provider: str
+    turns_used: int
+    tool_calls_made: int
+    finish_reason: str | None
+    block_reason: str | None
+    exhaustion_summary: dict | None = None
+
+    @property
+    def retryable(self) -> bool:
+        """Caller can continue the chat with the diagnostic as context."""
+        return True
+
+    def __str__(self) -> str:
+        who = f" agent={self.agent!r}" if self.agent else ""
+        return (
+            "Frontier dispatch exhausted its tool-loop budget with empty "
+            f"content: model={self.model!r} provider={self.provider!r} "
+            f"turns_used={self.turns_used} tool_calls_made={self.tool_calls_made}"
+            f"{who} finish_reason={self.finish_reason!r} "
+            f"block_reason={self.block_reason!r} "
+            f"execution_id={self.execution_id}. "
+            "Terminal state converted to failed."
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "FrontierDispatchExhaustedError",
+            "code": "frontier_dispatch_exhausted",
+            "retryable": self.retryable,
+            "recoverable": True,
+            "execution_id": self.execution_id,
+            "agent": self.agent,
+            "model": self.model,
+            "provider": self.provider,
+            "turns_used": self.turns_used,
+            "tool_calls_made": self.tool_calls_made,
+            "finish_reason": self.finish_reason,
+            "block_reason": self.block_reason,
+            "exhaustion_summary": self.exhaustion_summary,
+        }
+
+
+@dataclass
 class MapPartialFailureError(PipelineError):
     """Raised when map step completes with partial success below threshold.
 

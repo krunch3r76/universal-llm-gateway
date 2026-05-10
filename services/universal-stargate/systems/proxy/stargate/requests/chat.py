@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 from fastapi.responses import Response
 from universal_logging import get_logger
 
@@ -28,6 +28,7 @@ from src.scheduling.events import (
 # Import from service root to avoid "beyond top-level package" error
 from src.schemas.chat_completion import ChatCompletionRequest
 
+from .pipeline_lifecycle import execute_pipeline_chat_completion
 from .retry import execute_with_retry
 
 if TYPE_CHECKING:
@@ -137,58 +138,7 @@ async def process_chat_completion(
 
     if is_pipeline:
         logger.info("Routing to pipeline executor: %s", context.selected_model)
-        from systems.pipeline.core.dag import PipelineExecutionError
-        from systems.pipeline.core.execution.errors import PipelineError
-
-        execution_id: str | None = None
-        exec_header: dict[str, str] = {}
-        try:
-            return await proxy.pipeline_executor.execute(context)
-        except PipelineError as exc:
-            execution_id = getattr(exc, "execution_id", None)
-            exec_header = (
-                {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
-            )
-            error_dict = exc.to_dict()
-            if execution_id:
-                error_dict["execution_id"] = execution_id
-            error_dict["pipeline_id"] = context.selected_model
-            logger.error(
-                "Pipeline execution failed: %s - %s",
-                error_dict.get("error_type"),
-                str(exc),
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=error_dict,
-                headers=exec_header,
-            ) from exc
-        except PipelineExecutionError as exc:
-            execution_id = getattr(exc, "execution_id", None)
-            exec_header = (
-                {"X-Pipeline-Execution-Id": execution_id} if execution_id else {}
-            )
-            error_detail: dict[str, object] = {
-                "error_type": "PipelineExecutionError",
-                "retryable": True,
-                "message": f"Internal server error: {exc}",
-                "code": "internal_server_error",
-                "pipeline_id": context.selected_model,
-            }
-            if execution_id:
-                error_detail["execution_id"] = execution_id
-            logger.error(
-                "Pipeline execution error: %s (execution_id=%s)",
-                exc,
-                execution_id,
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=error_detail,
-                headers=exec_header,
-            ) from exc
+        return await execute_pipeline_chat_completion(proxy, context)
 
     model_id = str(context.selected_model)
     start_time = time.time()

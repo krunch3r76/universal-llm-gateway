@@ -190,7 +190,7 @@ def _normalize_pipeline_exception(
                 or "pipeline_execution_failed"
             )
             message = str(payload.get("message") or payload.get("error") or candidate)
-            return code, message, data
+            return code, message, data or payload
     return "pipeline_execution_failed", str(exc), data
 
 

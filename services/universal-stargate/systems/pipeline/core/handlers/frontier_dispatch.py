@@ -54,7 +54,7 @@ from ..events.dispatch import (
     PipelineFrontierDispatchRemoteMcpMisconfigured,
     PipelineFrontierDispatchStarted,
 )
-from ..execution.errors import EmptyCompletionError
+from ..execution.errors import EmptyCompletionError, FrontierDispatchExhaustedError
 from .builtin import BaseHandler
 from .frontier_dispatch_admission import (
     check_agent_model_consistency,
@@ -66,6 +66,7 @@ from .frontier_dispatch_admission import (
 from .frontier_dispatch_observability import emit_post_loop_observability
 from .frontier_dispatch_request import (
     resolve_agent,
+    resolve_messages,
     resolve_model,
     resolve_system_prompt,
     resolve_user_prompt,
@@ -133,8 +134,8 @@ class FrontierDispatchHandler(BaseHandler):
             step, context, self._ACCEPTED_RUNTIME_OPTION_KEYS
         )
         opts = context.options
-        model = await resolve_model(opts, step, context)
         agent = resolve_agent(opts, step)
+        model = await resolve_model(opts, step, context, agent=agent)
         provider = effective_provider_for_model(ModelId.parse(model).provider)
         publish = lambda event: self._publish_bus_event(context, event)  # noqa: E731
         if agent is not None:
@@ -174,6 +175,7 @@ class FrontierDispatchHandler(BaseHandler):
             execution_id=context.execution_id,
             publish=publish,
         )
+        boot_profile = str(step.get_domain_field("boot_profile") or "light")
         tools, system, hydration_meta = await resolve_dispatch_tool_set(
             mcp_enabled=mcp_enabled,
             remote_mcp=remote_mcp,
@@ -186,6 +188,7 @@ class FrontierDispatchHandler(BaseHandler):
             system_prompt=resolve_system_prompt(step, context),
             publish=publish,
             execution_id=context.execution_id,
+            boot_profile=boot_profile,
         )
 
         if remote_mcp:
@@ -243,9 +246,29 @@ class FrontierDispatchHandler(BaseHandler):
             po["xai"] = xai_opts
             gen_params["provider_options"] = po
 
+        if bool(step.get_domain_field("inject_runtime_context")):
+            effort_str = gen_params.get("reasoning_effort") or "default"
+            runtime_block = (
+                "\n\n## Active Runtime Context\n\n"
+                f"- pipeline_id: {context.pipeline.id}\n"
+                f"- model: {model} (resolved at dispatch time)\n"
+                f"- reasoning_effort: {effort_str}\n"
+                f"- boot_profile: {boot_profile}\n"
+                f"- tool_loop_budget: {max_turns} turns\n"
+                "\n"
+                "This block is injected by the dispatch handler and reflects "
+                "ground truth for *this* turn. Your persona briefing may name "
+                'a different "default model" — when in doubt, this block is '
+                "authoritative for the current call. The operator may switch "
+                "you to a different tier (mini / high / team-leader) between "
+                "turns; expect this block to change accordingly.\n"
+            )
+            system = (system or "") + runtime_block
+
         thinking = gen_params.get("thinking")
+        wire_messages = resolve_messages(step, context, user_prompt=user_prompt)
         req = FrontierRequest(
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=wire_messages,
             model=ModelId.parse(model).api_model_id,
             system=system or "",
             max_tokens=gen_params.get("max_tokens"),
@@ -311,6 +334,12 @@ class FrontierDispatchHandler(BaseHandler):
 
         finish_reason = getattr(result, "finish_reason", None)
         block_reason = getattr(result, "block_reason", None)
+        exhaustion_summary = getattr(result, "exhaustion_summary", None)
+        if isinstance(exhaustion_summary, dict):
+            exhaustion_summary = {
+                **exhaustion_summary,
+                "execution_id": context.execution_id,
+            }
         if result.exhausted:
             self._publish_bus_event(
                 context,
@@ -324,8 +353,21 @@ class FrontierDispatchHandler(BaseHandler):
                     finish_reason=finish_reason,
                     block_reason=block_reason,
                     enforcement="client",
+                    exhaustion_summary=exhaustion_summary,
                 ),
             )
+            if not (result.content or "").strip():
+                raise FrontierDispatchExhaustedError(
+                    execution_id=context.execution_id,
+                    agent=agent,
+                    model=model,
+                    provider=result.provider,
+                    turns_used=result.turns_used,
+                    tool_calls_made=result.tool_calls_made,
+                    finish_reason=finish_reason,
+                    block_reason=block_reason,
+                    exhaustion_summary=exhaustion_summary,
+                )
         else:
             self._publish_bus_event(
                 context,
@@ -344,10 +386,9 @@ class FrontierDispatchHandler(BaseHandler):
                 ),
             )
             # F3: detect silent empty-completion on the non-exhausted branch
-            # and convert terminal state to failed. The exhausted branch is
-            # intentional — empty content there is the expected outcome of
-            # hitting max_tool_turns. Originally surfaced by Orion execution
-            # d65c723b (Cortex assertion 7903).
+            # and convert terminal state to failed. Exhausted empty content is
+            # handled above as a distinct tool-loop budget failure. Originally
+            # surfaced by Orion execution d65c723b (Cortex assertion 7903).
             #
             # Sub-case: a provider-managed tool loop (remote-MCP, or any
             # loop where the provider stops on its own ceiling) returns
@@ -373,6 +414,7 @@ class FrontierDispatchHandler(BaseHandler):
                             finish_reason=finish_reason,
                             block_reason=block_reason,
                             enforcement="provider",
+                            exhaustion_summary=exhaustion_summary,
                         ),
                     )
                 else:
@@ -447,6 +489,7 @@ class FrontierDispatchHandler(BaseHandler):
             "provider": result.provider,
             "finish_reason": finish_reason,
             "block_reason": block_reason,
+            "exhaustion_summary": exhaustion_summary,
             "hydration": hydration_meta,
             "hints": anomaly_hints,
             "reasoning": result.reasoning,

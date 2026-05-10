@@ -2161,6 +2161,29 @@ unnecessary — each operation succeeds or fails atomically.
 All signals: `role="observation"`, `scope="global"`.
 
 
+### Email Bridge Ingest Signals
+
+Emitted by the `email-bridge` host-process satellite during `POST /ingest`.
+These signals make MCP relay timeouts diagnosable after the client-side 30s
+deadline: if `mcp.local.api.failed` reports `/ingest` timeout, the
+`email.ingest.*` and `email.pipeline.*` events show which message and stage was
+still running or failed. All signals: `role="observation"`, `scope="global"`.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `email.ingest.started` | `run_id`, `run_type`, `staged`, `requested_message_count` | Ingest run row created and request accepted. |
+| `email.ingest.selected` | `run_id`, `selected_count`, `requested_message_count` | Requested message IDs or pending queue resolved to DB rows. |
+| `email.ingest.message.started` | `run_id`, `message_id`, `staged`, `has_rendered_path` | Per-message ingest work began. |
+| `email.ingest.rendered.loaded` | `run_id`, `message_id`, `rendered_path`, `text_bytes` | Rendered markdown file loaded before pipeline submission. |
+| `email.pipeline.started` | `run_id`, `message_id`, `text_bytes`, `email_date` | `email-extract` pipeline request submitted to Stargate. |
+| `email.pipeline.completed` | `run_id`, `message_id`, `duration_s`, `entity_count`, `claim_count`, `relationship_count`, `edge_count` | Pipeline returned parseable proposal JSON. |
+| `email.pipeline.failed` | `run_id`, `message_id`, `error_type`, `duration_s` | Pipeline transport, HTTP, JSON, or unexpected failure. May also carry `status_code` and `error`. |
+| `email.ingest.message.staged` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `entity_count`, `claim_count`, `relationship_count`, `edge_count`, `secrets_suppressed` | Extracted proposals persisted to the staging table. |
+| `email.ingest.message.committed` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `new_entities`, `assertions_seeded`, `assertion_conflicts`, `relationships_seeded`, `reasoning_edges_seeded` | Direct ingest seeded Cortex successfully. |
+| `email.ingest.message.failed` | `run_id`, `message_id`, `stage`, `error`, `duration_s` | Per-message terminal failure. `stage` identifies the failing boundary (`rendered_path`, `rendered_file`, `extract_email`, `pipeline_result`, `stage_extraction`, or `ingest_email`). |
+| `email.ingest.completed` | `run_id`, `run_type`, `staged`, `selected_count`, `emails_succeeded`, `emails_failed`, `pipeline_version`, `duration_s` | Batch finished and `ingest_runs` was updated. |
+
+
 ### Document OCR Signals
 
 Single-file events (``mcp.document.ocr.called``, ``mcp.document.ocr.completed``)

@@ -29,7 +29,7 @@ from llm_adapters._tool_schema import sanitize_tool_parameters
 
 logger = logging.getLogger(__name__)
 
-_MAX_TOOL_CALL_TIMEOUT = 30.0
+_MAX_TOOL_CALL_TIMEOUT = 20 * 60.0
 _MAX_LOOP_TIMEOUT = 300.0
 _DEFAULT_MAX_ITERATIONS = 10
 _JSONRPC_VERSION = "2.0"

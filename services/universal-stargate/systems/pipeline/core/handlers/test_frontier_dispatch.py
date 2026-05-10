@@ -16,6 +16,7 @@ from typing import Any
 
 import pytest
 
+from systems.pipeline.core.execution.errors import FrontierDispatchExhaustedError
 from systems.pipeline.core.handlers import frontier_dispatch as fd_mod
 from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
@@ -340,6 +341,30 @@ async def test_handler_exhausted_emits_exhausted_signal(
     assert "pipeline.frontier.dispatch.exhausted" in signals
     assert "pipeline.frontier.dispatch.completed" not in signals
     assert out.json["exhausted"] is True
+
+
+@pytest.mark.asyncio
+async def test_handler_exhausted_empty_content_raises(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    published_events: list[Any],
+) -> None:
+    async def fake_loop(**_k: Any) -> _FakeLoopResult:
+        return _FakeLoopResult(
+            content="", exhausted=True, turns_used=16, provider="openai"
+        )
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "openai/gpt-5.4"})
+
+    with pytest.raises(FrontierDispatchExhaustedError):
+        await handler.execute(step, context)
+
+    signals = [e.signal for e in published_events]
+    assert "pipeline.frontier.dispatch.exhausted" in signals
+    assert "pipeline.frontier.dispatch.completed" not in signals
 
 
 def test_tool_event_translation_produces_frontier_signals(

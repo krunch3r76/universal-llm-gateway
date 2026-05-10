@@ -144,8 +144,13 @@ def _reply_impl(
         "subject": subject,
         "body": body,
         "status": status,
-        "after_turn": after_turn,
     }
+    # after_turn=0 means "skip the unread-concurrency check"; the REST contract
+    # treats absent/None the same way. Forwarding 0 verbatim would be read as
+    # "fail if any turn > 0 is unread" — i.e. always — defeating the broadcast-
+    # thread use case (480, etc.) the zero sentinel exists for.
+    if after_turn > 0:
+        payload["after_turn"] = after_turn
     if attachments:
         payload["attachments"] = attachments
     result = _relay("agent-bus", "POST", "/turns", body=payload)
@@ -613,8 +618,12 @@ def _reply_dispatch(
         missing.append("subject (str)")
     if not body:
         missing.append("body (str)")
-    if after_turn < 1:
-        missing.append("after_turn (int >= 1)")
+    # after_turn is a concurrency-check hint — required for replies into
+    # interactive coordination threads where unread peer turns block posting.
+    # Pass 0 to skip the check (broadcast/fan-out threads like 480 where no
+    # acknowledgment is expected from the recipient set).
+    if after_turn < 0:
+        missing.append("after_turn (int >= 0; 0 skips the unread-concurrency check)")
     if not from_agent:
         missing.append(
             "from_agent (str, REQUIRED — no default; name the persona authoring "

@@ -244,12 +244,15 @@ _SESSION_ID_RE = re.compile(r"^[a-z]+-\d{4}-\d{2}-\d{2}-\d{4}$")
 _USER_VOICE_RE = re.compile(r"\*\*User:\*\*|\bUser:\s|^#{1,4}\s+User\b", re.MULTILINE)
 
 # Reason enum for mcp.session.close.rejected — see docs/event-contracts.md
-_REJECT_REASONS = frozenset({
-    "transcript.hollow",
-    "transcript.missing_structure",
-    "summary.too_short",
-    "session_id.invalid",
-})
+_REJECT_REASONS = frozenset(
+    {
+        "transcript.hollow",
+        "transcript.missing_structure",
+        "summary.too_short",
+        "session_id.invalid",
+        "session.already_closed",
+    }
+)
 
 
 def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> None:
@@ -379,6 +382,44 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     source_uri = f"files://{transcript_path}"
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     opened_at = _parse_opened_at(body.session_id)
+
+    # ── idempotency gate: reject duplicate close for an already-closed session ──
+    # Pre-034 retries silently produced duplicate journal rows. Migration 034
+    # enforces UNIQUE(session_id); this check turns the IntegrityError into a
+    # structured 422 carrying the existing IDs so the caller can recover without
+    # reading them back.
+    existing = (
+        cortex_conn()
+        .execute(
+            "SELECT id, file_path FROM session_journals WHERE session_id = ?",
+            (body.session_id,),
+        )
+        .fetchone()
+    )
+    if existing is not None:
+        already_detail = {
+            "reason": "session.already_closed",
+            "session_id": body.session_id,
+            "transcript_entity_id": transcript_entity_id,
+            "transcript_path": existing["file_path"] or transcript_path,
+            "journal_row_id": existing["id"],
+            "message": (
+                f"session_close: {body.session_id} is already closed "
+                f"(journal_row_id={existing['id']}). The previous close is "
+                "the source of truth — do not retry; treat this as success."
+            ),
+        }
+        _emit_rejected(
+            "session.already_closed",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=already_detail["message"],
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=already_detail,
+        )
+
     handoff_prompt = body.handoff_prompt.strip() if body.handoff_prompt else None
 
     # ── derive entity name from summary (first ~6 words) ──

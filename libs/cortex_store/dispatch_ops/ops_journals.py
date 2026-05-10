@@ -535,6 +535,38 @@ def _op_session_close(
 
     try:
         result = _close_session_impl(body)
+    except HTTPException as exc:
+        # Preserve structured detail (dict) so callers can recover the existing
+        # transcript_entity_id / journal_row_id on session.already_closed and
+        # the discriminator reason on every other 422 path. The transcript file
+        # we just wrote is the same content as the prior committed close (or a
+        # rewrite-and-retry of a rejected close); idempotent overwrite is safe.
+        # On already_closed specifically, leave the file in place — it is the
+        # canonical artifact of the prior successful close.
+        detail = exc.detail
+        already_closed = (
+            isinstance(detail, dict)
+            and detail.get("reason") == "session.already_closed"
+        )
+        if not already_closed:
+            try:
+                abs_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Failed to clean up transcript file after session_close 422: %s",
+                    abs_path,
+                )
+                record(
+                    "mcp.session.close.cleanup.failed",
+                    session_id=session_id,
+                    agent=agent,
+                )
+        if isinstance(detail, dict):
+            return {
+                "error": detail.get("message") or "session_close rejected",
+                **detail,
+            }
+        return {"error": str(detail), "reason": "session_close.rejected"}
     except Exception as exc:
         try:
             abs_path.unlink(missing_ok=True)

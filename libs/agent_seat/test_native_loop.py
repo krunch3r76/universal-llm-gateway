@@ -157,6 +157,70 @@ async def test_native_loop_exhaustion(
 
 
 @pytest.mark.asyncio
+async def test_native_loop_stops_on_repeated_section_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        assert name == "fs"
+        assert args["op"] == "md_read"
+        return json.dumps({"error": "Section not found: Missing Section"})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    send = _FakeSend(
+        [
+            _anthropic_tool_use(
+                "fs",
+                {
+                    "op": "md_read",
+                    "path": "docs/example.md",
+                    "section": "Missing Section",
+                },
+                "t1",
+            ),
+            _anthropic_tool_use(
+                "fs",
+                {
+                    "op": "md_read",
+                    "path": "docs/example.md",
+                    "section": "Missing Section",
+                },
+                "t2",
+            ),
+            _anthropic_terminal("should not reach"),
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "read section"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "fs", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+
+    assert result.exhausted is True
+    assert result.turns_used == 2
+    assert result.tool_calls_made == 2
+    assert result.exhaustion_summary is not None
+    assert result.exhaustion_summary["exhaustion_reason"].startswith(
+        "repeated_section_not_found"
+    )
+    assert result.exhaustion_summary["failed_tools"][0]["tool"] == "fs.md_read"
+
+
+@pytest.mark.asyncio
 async def test_native_loop_cancellation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

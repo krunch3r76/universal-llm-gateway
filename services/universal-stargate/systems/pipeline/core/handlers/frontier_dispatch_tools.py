@@ -97,6 +97,7 @@ async def resolve_dispatch_tool_set(
     system_prompt: str,
     publish: Callable[..., None],
     execution_id: str,
+    boot_profile: str = "light",
 ) -> tuple[list[dict[str, Any]], str, dict[str, Any]]:
     """Resolve (tools, system, hydration_meta) for the three dispatch modes.
 
@@ -188,7 +189,12 @@ async def resolve_dispatch_tool_set(
         # with extra_system=system_prompt. If the two hydration calls used different
         # profiles, the heavier one would dominate the final dispatched prompt
         # because ``assemble_system_prompt`` appends both briefings.
-        bundle = await hydrate_agent(agent, profile="light", model=model)
+        # Profile selection: virtual-model agent-seat pipelines may opt into
+        # the heavier "default" briefing (deadlines + review queue + 3 sessions
+        # + 5 self-reflections) via step.boot_profile. team_dispatch /
+        # frontier_dispatch admission paths leave this at "light" — the
+        # comment block above on double-hydration explains why.
+        bundle = await hydrate_agent(agent, profile=boot_profile, model=model)
         publish(
             PipelineFrontierDispatchHydrated(
                 agent=agent,

@@ -813,6 +813,7 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
     finish_reason: str | None = None,
     block_reason: str | None = None,
     enforcement: str = "client",
+    exhaustion_summary: dict | None = None,
 ) -> Event:
     """Emitted when the tool loop hits ``max_tool_turns`` without terminal content.
 
@@ -846,6 +847,7 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
             "finish_reason": finish_reason,
             "block_reason": block_reason,
             "enforcement": enforcement,
+            "exhaustion_summary": exhaustion_summary,
         },
         scope="node",
     )
