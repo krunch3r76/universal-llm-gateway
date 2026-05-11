@@ -9,8 +9,6 @@ wrapper plus a forwarder entry.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -28,6 +26,7 @@ from .native_boundary import (
     raw_model_from_native_body,
     workspace_catalog_id_from_native,
 )
+from .native_streaming import preflight_native_byte_stream
 
 logger = get_logger(__name__)
 
@@ -170,13 +169,48 @@ async def _forward_native(
         raise HTTPException(status_code=503, detail=error_text) from exc
 
     if streaming:
-
-        async def _stream() -> AsyncIterator[bytes]:
-            chunks = forwarder.forward_native_stream(
-                provider=provider_key, request_body=body
+        chunks = forwarder.forward_native_stream(
+            provider=provider_key, request_body=body
+        )
+        try:
+            primed = await preflight_native_byte_stream(chunks)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code if exc.response else 502
+            error_text = str(exc)[:300]
+            await _publish_failed(
+                event_bus,
+                provider=provider_key,
+                model=workspace_id,
+                status_code=status,
+                error=error_text,
+                adapter_type=adapter,
             )
-            async for chunk in chunks:
-                yield chunk
+            raise HTTPException(
+                status_code=status,
+                detail=f"Upstream provider error: {error_text}",
+            ) from exc
+        except httpx.HTTPError as exc:
+            error_text = str(exc)[:300]
+            await _publish_failed(
+                event_bus,
+                provider=provider_key,
+                model=workspace_id,
+                status_code=502,
+                error=error_text,
+                adapter_type=adapter,
+            )
+            raise HTTPException(status_code=502, detail=error_text) from exc
+        except ValueError as exc:
+            error_text = str(exc)[:300]
+            await _publish_failed(
+                event_bus,
+                provider=provider_key,
+                model=workspace_id,
+                status_code=500,
+                error=error_text,
+                adapter_type=adapter,
+            )
+            raise HTTPException(status_code=500, detail=error_text) from exc
 
         if event_bus:
             await event_bus.publish(
@@ -188,7 +222,7 @@ async def _forward_native(
                     surface=surface,
                 )
             )
-        return StreamingResponse(_stream(), media_type="text/event-stream")
+        return StreamingResponse(primed, media_type="text/event-stream")
 
     try:
         result = await forwarder.forward_native(

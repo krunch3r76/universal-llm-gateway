@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, override
 
 import uvicorn
 from auth_middleware import AuthMiddleware
+from edge_telemetry_middleware import EdgeTelemetryMiddleware
 from fastmcp import FastMCP
 from mcp_events import record
 from mcp_request_middleware import McpRequestEventsMiddleware
@@ -763,8 +764,12 @@ def main() -> None:
         )
 
     # Middleware composition order (outermost first):
-    # AuthMiddleware → McpRequestEventsMiddleware → AcceptNormalize → GZip → asgi_app
-    # Rejected tokens terminate before mcp.request.started fires.
+    # EdgeTelemetry → AuthMiddleware → McpRequestEventsMiddleware → AcceptNormalize → GZip → asgi_app
+    # EdgeTelemetry observes every HTTP request before any auth or routing
+    # decisions, so traffic that AuthMiddleware short-circuits (/health,
+    # CORS preflights) and traffic from external probes still produces an
+    # mcp.edge.request.observed record.  Rejected tokens still terminate
+    # before mcp.request.started fires.
     compressed_app = GZipMiddleware(asgi_app, minimum_size=500)
     accept_app = _AcceptNormalizeMiddleware(compressed_app)
     evented_app = McpRequestEventsMiddleware(accept_app)
@@ -773,10 +778,11 @@ def main() -> None:
         token=auth_token,
         oauth_service=oauth_service,
     )
+    observed_app = EdgeTelemetryMiddleware(protected_app)
 
     logger.info("Starting MCP server on %s:%d", _HOST, _PORT)
     config = uvicorn.Config(
-        protected_app,
+        observed_app,
         host=_HOST,
         port=_PORT,
         ssl_certfile=_CERT_FILE,

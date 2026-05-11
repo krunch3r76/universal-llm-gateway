@@ -15,6 +15,7 @@ import os
 import re
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from artifact_proxy import (
     handle_artifact_preflight,
@@ -37,6 +38,7 @@ from llm_proxy import (
 from mcp_events import record
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from tools.clip import normalize_clip_content
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
 )
@@ -45,12 +47,9 @@ from workbench_relay import (
     handle_relay,
 )
 
-from tools.clip import normalize_clip_content
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
-    from starlette.types import ASGIApp, Receive, Scope, Send
     from oauth_service import OAuthService
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +57,21 @@ PUBLIC_PATHS = frozenset(
     {
         "/.well-known/oauth-protected-resource",
         "/.well-known/oauth-authorization-server",
+        "/.well-known/openid-configuration",
         "/oauth/authorize",
+        "/oauth/register",
         "/oauth/token",
     }
 )
+PUBLIC_PATH_PREFIXES = (
+    "/.well-known/oauth-protected-resource/",
+    "/.well-known/oauth-authorization-server/",
+    "/.well-known/openid-configuration/",
+)
+
+
+def _is_public_path(path: str) -> bool:
+    return path in PUBLIC_PATHS or path.startswith(PUBLIC_PATH_PREFIXES)
 
 
 class AuthMiddleware:
@@ -101,9 +111,21 @@ class AuthMiddleware:
         return slug or "untitled"
 
     @staticmethod
-    def _extract_bearer_token(authorization: str) -> str | None:
-        """Return the bearer token value or None when the header is malformed."""
+    def _extract_authorization_token(authorization: str) -> str | None:
+        """Return token from ``Authorization``.
+
+        Accept both standard ``Bearer <token>`` and raw token values. xAI's
+        Remote MCP docs say the configured value is placed in the Authorization
+        header; the API path currently normalizes bearer values, but the Web
+        connector's custom-token UI is ambiguous. Raw-token acceptance keeps
+        auth mandatory while making that connector shape work.
+        """
+        authorization = authorization.strip()
+        if not authorization:
+            return None
         scheme, _, token = authorization.partition(" ")
+        if not token:
+            return scheme.strip()
         if scheme.lower() != "bearer" or not token.strip():
             return None
         return token.strip()
@@ -124,14 +146,16 @@ class AuthMiddleware:
         ``default``. When a Cursor token is configured and matched, requests map
         to ``cursor_safe``. All other static tokens map to ``default``.
         """
-        if self._cursor_token and auth_header == f"Bearer {self._cursor_token}":
+        token = self._extract_authorization_token(auth_header)
+        if self._cursor_token and token == self._cursor_token:
             return "cursor_safe"
         return "default"
 
     def _is_static_token_authorized(self, auth_header: str) -> bool:
         """Return True when auth header matches configured static token(s)."""
-        return auth_header == f"Bearer {self._token}" or (
-            self._cursor_token and auth_header == f"Bearer {self._cursor_token}"
+        token = self._extract_authorization_token(auth_header)
+        return token == self._token or (
+            self._cursor_token and token == self._cursor_token
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -157,7 +181,7 @@ class AuthMiddleware:
             await response(scope, receive, send)
             return
 
-        if path in PUBLIC_PATHS:
+        if _is_public_path(path):
             await self._app(scope, receive, send)
             return
 
@@ -283,7 +307,7 @@ class AuthMiddleware:
             await self._app(scope, receive, send)
             return
 
-        token = self._extract_bearer_token(auth_header)
+        token = self._extract_authorization_token(auth_header)
         if token is not None and self._oauth_service is not None:
             token_record = self._oauth_service.validate_access_token(token)
             if token_record is not None:

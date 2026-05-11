@@ -35,6 +35,31 @@ def _normalize_tool_for_responses_api(tool: dict[str, Any]) -> dict[str, Any]:
     return flat
 
 
+def _normalize_image_url_block(block: dict[str, Any]) -> dict[str, Any]:
+    """Map Chat Completions ``image_url`` block to Responses ``input_image``."""
+    raw = block.get("image_url")
+    out: dict[str, Any] = {"type": "input_image"}
+    if isinstance(raw, str):
+        if not raw:
+            msg = "image_url block has empty string image_url"
+            raise ValueError(msg)
+        out["image_url"] = raw
+    elif isinstance(raw, dict):
+        url = raw.get("url")
+        if not isinstance(url, str) or not url:
+            msg = "image_url block requires image_url.url as a non-empty string"
+            raise ValueError(msg)
+        out["image_url"] = url
+        if "detail" in raw:
+            out["detail"] = raw["detail"]
+    else:
+        msg = "image_url block requires image_url as a string or object with url"
+        raise ValueError(msg)
+    if "detail" in block and "detail" not in out:
+        out["detail"] = block["detail"]
+    return out
+
+
 def _normalize_input_content(content: Any) -> Any:
     """Normalize message content for Responses API input messages.
 
@@ -42,6 +67,11 @@ def _normalize_input_content(content: Any) -> Any:
     not ``"type": "text"`` (which is the output block type). Callers that build
     messages with Chat-Completions-style ``{"type": "text", "text": "..."}``
     blocks must be translated before sending to the Responses API.
+
+    Chat-Completions-style ``{"type": "image_url", ...}`` becomes
+    ``{"type": "input_image", "image_url": "<url>", ...}``. Already-normalized
+    ``input_image``, ``input_file``, and ``computer_screenshot`` blocks pass
+    through unchanged.
 
     String content passes through unchanged.
     Single-text-block arrays are flattened to plain strings (simplest form).
@@ -59,8 +89,11 @@ def _normalize_input_content(content: Any) -> Any:
         if not isinstance(block, dict):
             normalized.append(block)
             continue
-        if block.get("type") == "text":
+        btype = block.get("type")
+        if btype == "text":
             normalized.append({"type": "input_text", "text": block.get("text", "")})
+        elif btype == "image_url":
+            normalized.append(_normalize_image_url_block(block))
         else:
             normalized.append(block)
     return normalized

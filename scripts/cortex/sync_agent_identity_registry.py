@@ -74,19 +74,6 @@ AGENT_REGISTRY: dict[str, dict[str, object]] = {
         "allowed_options": None,
         "persona_seed_ref": "agent-identity/cursor-claude-birth.md",
     },
-    # cursor_grok is the Cursor-resident worker (xAI Grok family). Not a persona.
-    # default_model is notional — Cursor selects the active model from its own UI.
-    "cursor-grok": {
-        "name": "cursor_grok",
-        "provider": "xAI",
-        "frontier_kind": "xai",
-        "default_model": "xai/grok-4.20-multi-agent-0309",
-        "allowed_models": [
-            "xai/grok-4.20-multi-agent-0309",
-        ],
-        "allowed_options": None,
-        "persona_seed_ref": "agent-identity/cursor-grok-birth.md",
-    },
     # Forge is a Grok-family trAId persona. Dual surface:
     # (1) off-IDE peer consult via team_dispatch(op="generate", agent="forge"), and
     # (2) IDE-resident persona when the active Cursor engine is Grok 4.20 or
@@ -99,5 +86,21 @@ AGENT_REGISTRY: dict[str, dict[str, object]] = {
         "allowed_models": resolve_agent_valid_family("forge"),
         "allowed_options": None,
         "persona_seed_ref": "agent-identity/forge-birth.md",
+    },
+    # web-grok is the trAId orientation slot for Grok on grok.com (auto / 4.3 /
+    # Expert — anything besides SuperHeavy). NOT a persona overlay: empirically,
+    # persona-displacement seeds (web-forge, web-oppie) do not adhere on
+    # grok.com because the platform asserts an "I am Grok" identity below the
+    # user-supplied system prompt. The web-grok seed is orientation-shaped and
+    # preserves "I am Grok"; it adds attribution, cortex routing, and tool
+    # topology conventions. Not API-reachable. Sign-off is `web-grok`.
+    "web-grok": {
+        "name": "web-grok",
+        "provider": "xAI",
+        "frontier_kind": "xai",
+        "default_model": None,
+        "allowed_models": [],
+        "allowed_options": None,
+        "persona_seed_ref": "agent-identity/web-grok-birth.md",
     },
 }

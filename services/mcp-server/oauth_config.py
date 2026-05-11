@@ -41,9 +41,11 @@ class OAuthServerConfig:
     resource_server_url: str
     authorize_path: str = "/oauth/authorize"
     token_path: str = "/oauth/token"
+    registration_path: str = "/oauth/register"
     resource_metadata_path: str = "/.well-known/oauth-protected-resource"
     authorization_metadata_path: str = "/.well-known/oauth-authorization-server"
     supported_scopes: list[str] | None = None
+    dynamic_client_redirect_hosts: list[str] | None = None
     clients: list[OAuthClientConfig] | None = None
     enabled: bool = True
 
@@ -134,7 +136,17 @@ def load_oauth_config() -> OAuthServerConfig | None:
         logger.error("OAuth issuer must use https:// — got %s", issuer)
         sys.exit(1)
 
-    resource_server_url = os.getenv("MCP_RESOURCE_SERVER_URL", "").strip() or issuer
+    resource_server_url = os.getenv("MCP_RESOURCE_SERVER_URL", "").strip()
+    if not resource_server_url:
+        configured_resource = oauth_block.get("resource_server_url")
+        if isinstance(configured_resource, str) and configured_resource.strip():
+            resource_server_url = configured_resource.strip()
+    if not resource_server_url:
+        configured_mcp_url = config_root.get("mcp_server_url")
+        if isinstance(configured_mcp_url, str) and configured_mcp_url.strip():
+            resource_server_url = configured_mcp_url.strip()
+    if not resource_server_url:
+        resource_server_url = issuer
 
     raw_scopes = oauth_block.get("scopes", ["mcp"])
     supported_scopes: list[str] = []
@@ -144,6 +156,8 @@ def load_oauth_config() -> OAuthServerConfig | None:
         ]
     if not supported_scopes:
         supported_scopes = ["mcp"]
+
+    dynamic_redirect_hosts = _load_dynamic_redirect_hosts(oauth_block)
 
     clients: list[OAuthClientConfig] = []
     raw_clients = oauth_block.get("clients", [])
@@ -157,6 +171,26 @@ def load_oauth_config() -> OAuthServerConfig | None:
         issuer=issuer.rstrip("/"),
         resource_server_url=resource_server_url.rstrip("/"),
         supported_scopes=supported_scopes,
+        dynamic_client_redirect_hosts=dynamic_redirect_hosts,
         clients=clients,
         enabled=True,
     )
+
+
+def _load_dynamic_redirect_hosts(oauth_block: dict[str, object]) -> list[str]:
+    """Return host allowlist for OAuth dynamic client registrations."""
+    env_value = os.getenv("MCP_OAUTH_DYNAMIC_REDIRECT_HOSTS", "").strip()
+    if env_value:
+        return [host.strip().lower() for host in env_value.split(",") if host.strip()]
+
+    configured = oauth_block.get("dynamic_client_redirect_hosts")
+    if isinstance(configured, list):
+        hosts = [
+            host.strip().lower()
+            for host in configured
+            if isinstance(host, str) and host.strip()
+        ]
+        if hosts:
+            return hosts
+
+    return ["grok.com", "*.grok.com", "x.ai", "*.x.ai"]

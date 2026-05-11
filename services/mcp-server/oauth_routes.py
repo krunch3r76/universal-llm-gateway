@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 
+from mcp_events import record
 from oauth_service import AuthorizationRequest, OAuthError, OAuthService
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -18,19 +19,50 @@ from starlette.routing import Route
 def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
     """Build Starlette Route objects for OAuth endpoints."""
 
-    async def resource_metadata(_request: Request) -> Response:
+    async def resource_metadata(request: Request) -> Response:
+        _record_oauth_route("resource_metadata", request)
         return JSONResponse(
             oauth_service.build_protected_resource_metadata(),
             headers={"cache-control": "public, max-age=3600"},
         )
 
-    async def authorization_metadata(_request: Request) -> Response:
+    async def authorization_metadata(request: Request) -> Response:
+        _record_oauth_route("authorization_metadata", request)
         return JSONResponse(
             oauth_service.build_authorization_server_metadata(),
             headers={"cache-control": "public, max-age=3600"},
         )
 
+    async def dynamic_client_registration(request: Request) -> Response:
+        _record_oauth_route("dynamic_client_registration", request)
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise OAuthError("invalid_client_metadata", "JSON body must be object")
+            registration = oauth_service.register_dynamic_client(payload)
+            return JSONResponse(registration, status_code=201)
+        except OAuthError as exc:
+            record(
+                "mcp.oauth.dynamic_client.rejected",
+                reason=exc.error,
+                description=exc.description,
+            )
+            return JSONResponse(
+                {"error": exc.error, "error_description": exc.description},
+                status_code=400,
+            )
+        except ValueError:
+            record("mcp.oauth.dynamic_client.rejected", reason="invalid_json")
+            return JSONResponse(
+                {
+                    "error": "invalid_client_metadata",
+                    "error_description": "Request body must be valid JSON",
+                },
+                status_code=400,
+            )
+
     async def authorize_get(request: Request) -> Response:
+        _record_oauth_route("authorize_get", request)
         try:
             auth_req = oauth_service.validate_authorization_request(
                 response_type=request.query_params.get("response_type", ""),
@@ -51,6 +83,7 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
         return _render_consent_page(auth_req)
 
     async def authorize_post(request: Request) -> Response:
+        _record_oauth_route("authorize_post", request)
         form = await request.form()
         try:
             auth_req = oauth_service.validate_authorization_request(
@@ -76,6 +109,7 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
             )
 
     async def token_exchange(request: Request) -> Response:
+        _record_oauth_route("token_exchange", request)
         form = await request.form()
         try:
             exchange_req = oauth_service.validate_token_exchange(
@@ -99,14 +133,48 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
             "/.well-known/oauth-protected-resource", resource_metadata, methods=["GET"]
         ),
         Route(
+            "/.well-known/oauth-protected-resource/{resource_path:path}",
+            resource_metadata,
+            methods=["GET"],
+        ),
+        Route(
             "/.well-known/oauth-authorization-server",
             authorization_metadata,
             methods=["GET"],
         ),
+        Route(
+            "/.well-known/oauth-authorization-server/{issuer_path:path}",
+            authorization_metadata,
+            methods=["GET"],
+        ),
+        Route(
+            "/.well-known/openid-configuration",
+            authorization_metadata,
+            methods=["GET"],
+        ),
+        Route(
+            "/.well-known/openid-configuration/{issuer_path:path}",
+            authorization_metadata,
+            methods=["GET"],
+        ),
+        Route("/oauth/register", dynamic_client_registration, methods=["POST"]),
         Route("/oauth/authorize", authorize_get, methods=["GET"]),
         Route("/oauth/authorize", authorize_post, methods=["POST"]),
         Route("/oauth/token", token_exchange, methods=["POST"]),
     ]
+
+
+def _record_oauth_route(operation: str, request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    record(
+        "mcp.oauth.route.requested",
+        operation=operation,
+        method=request.method,
+        path=request.url.path,
+        client_ip=client_ip,
+        user_agent=request.headers.get("user-agent", ""),
+        has_authorization_header=bool(request.headers.get("authorization")),
+    )
 
 
 def _render_consent_page(auth_req: AuthorizationRequest) -> HTMLResponse:

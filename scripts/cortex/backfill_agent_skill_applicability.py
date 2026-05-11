@@ -83,6 +83,7 @@ PARTITION: dict[str, list[str]] = {
 # but orion/forge don't need.
 OVERRIDES: dict[str, list[str]] = {
     # "agent_skill:legal-opinion-corpus-ingestion": ["web", "cursor"],
+    "agent_skill:xai-mcp-calling-shape": ["web-grok", "superheavy"],
 }
 
 

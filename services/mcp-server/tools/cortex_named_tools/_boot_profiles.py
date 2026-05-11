@@ -21,5 +21,7 @@ _BOOT_PROFILES: dict[str, dict[str, Any]] = {
     "orion": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:orion"},
     "bard": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:bard"},
     "forge": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:forge"},
+    "superheavy": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:superheavy"},
+    "web-grok": {**_FULL_CAPACITY, "self_entity_id": "ai_agent:web-grok"},
     "subagent": {**_FULL_CAPACITY},
 }

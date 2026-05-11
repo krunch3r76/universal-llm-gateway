@@ -15,7 +15,8 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import urlencode
+from fnmatch import fnmatchcase
+from urllib.parse import urlencode, urlparse
 
 from mcp_events import record
 from oauth_config import OAuthServerConfig
@@ -98,6 +99,10 @@ class OAuthService:
     def token_endpoint(self) -> str:
         return f"{self._config.issuer}{self._config.token_path}"
 
+    @property
+    def registration_endpoint(self) -> str:
+        return f"{self._config.issuer}{self._config.registration_path}"
+
     def build_protected_resource_metadata(self) -> dict[str, object]:
         return {
             "resource": self._config.resource_server_url,
@@ -114,7 +119,62 @@ class OAuthService:
             "grant_types_supported": ["authorization_code"],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
+            "registration_endpoint": self.registration_endpoint,
             "scopes_supported": self._config.supported_scopes or ["mcp"],
+        }
+
+    def register_dynamic_client(self, payload: dict[str, object]) -> dict[str, object]:
+        """Register a public OAuth client for MCP connector onboarding.
+
+        Dynamic registration is intentionally narrow: PKCE public clients only,
+        authorization-code flow only, and redirect hosts constrained by config.
+        """
+        redirect_uris = self._parse_redirect_uris(payload.get("redirect_uris"))
+        token_auth_method = str(
+            payload.get("token_endpoint_auth_method", "none") or "none"
+        )
+        if token_auth_method != "none":
+            raise OAuthError(
+                "invalid_client_metadata",
+                "token_endpoint_auth_method must be none",
+            )
+
+        grant_types = payload.get("grant_types", ["authorization_code"])
+        if not _valid_dynamic_grant_types(grant_types):
+            raise OAuthError(
+                "invalid_client_metadata",
+                "authorization_code grant_type is required",
+            )
+
+        response_types = payload.get("response_types", ["code"])
+        if not _list_subset(response_types, {"code"}):
+            raise OAuthError(
+                "invalid_client_metadata",
+                "only code response_type is supported",
+            )
+
+        client_id = f"dyn-{secrets.token_urlsafe(24)}"
+        self._store.save_client(
+            RegisteredClient(
+                client_id=client_id,
+                client_secret=None,
+                redirect_uris=redirect_uris,
+            )
+        )
+        record(
+            "mcp.oauth.dynamic_client.registered",
+            client_id=client_id,
+            redirect_hosts=sorted(
+                {urlparse(uri).hostname or "" for uri in redirect_uris}
+            ),
+        )
+        return {
+            "client_id": client_id,
+            "client_id_issued_at": int(time.time()),
+            "redirect_uris": redirect_uris,
+            "grant_types": ["authorization_code"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
         }
 
     def validate_authorization_request(
@@ -156,6 +216,42 @@ class OAuthService:
             code_challenge=code_challenge,
             code_challenge_method=code_challenge_method,
         )
+
+    def _parse_redirect_uris(self, raw_redirect_uris: object) -> list[str]:
+        if not isinstance(raw_redirect_uris, list):
+            raise OAuthError(
+                "invalid_client_metadata",
+                "redirect_uris must be a non-empty list",
+            )
+        redirect_uris = [
+            value.strip()
+            for value in raw_redirect_uris
+            if isinstance(value, str) and value.strip()
+        ]
+        if not redirect_uris:
+            raise OAuthError(
+                "invalid_client_metadata",
+                "redirect_uris must be a non-empty list",
+            )
+        for redirect_uri in redirect_uris:
+            self._validate_dynamic_redirect_uri(redirect_uri)
+        return redirect_uris
+
+    def _validate_dynamic_redirect_uri(self, redirect_uri: str) -> None:
+        parsed = urlparse(redirect_uri)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not host:
+            raise OAuthError(
+                "invalid_redirect_uri",
+                "dynamic redirect_uri must be an https URL",
+            )
+
+        allowed_hosts = self._config.dynamic_client_redirect_hosts or []
+        if not any(_host_allowed(host, pattern) for pattern in allowed_hosts):
+            raise OAuthError(
+                "invalid_redirect_uri",
+                "dynamic redirect_uri host is not allowed",
+            )
 
     def issue_authorization_code(self, request: AuthorizationRequest) -> str:
         self._store.purge_expired()
@@ -317,3 +413,34 @@ class OAuthService:
                 return computed == expected_challenge
             case _:
                 return False
+
+
+def _list_subset(value: object, allowed: set[str]) -> bool:
+    if not isinstance(value, list):
+        return False
+    values = {item for item in value if isinstance(item, str)}
+    return bool(values) and values.issubset(allowed)
+
+
+def _valid_dynamic_grant_types(value: object) -> bool:
+    """Return True for DCR grant metadata compatible with this server.
+
+    Some MCP clients register both authorization_code and refresh_token even
+    when the initial connection only needs the authorization-code flow.  We do
+    not issue refresh tokens, but accepting this metadata lets the client reach
+    the consent + token exchange path and rely on the returned grant_types.
+    """
+    if not isinstance(value, list):
+        return False
+    values = {item for item in value if isinstance(item, str)}
+    return "authorization_code" in values and values.issubset(
+        {"authorization_code", "refresh_token"}
+    )
+
+
+def _host_allowed(host: str, pattern: str) -> bool:
+    pattern = pattern.lower()
+    if pattern.startswith("*."):
+        suffix = pattern[1:]
+        return host.endswith(suffix) and host != pattern[2:]
+    return fnmatchcase(host, pattern)
