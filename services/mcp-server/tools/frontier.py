@@ -2,8 +2,10 @@
 
 Two tools, two contracts:
 
-- ``team_dispatch(op=..., agent=..., messages=..., ...)`` is the persona-required
+- ``team_dispatch(op=..., role=..., messages=..., ...)`` is the role-required
   door for team-seat consults (oppie, orion, bard, api_claude, forge).
+  ``role`` selects a ``role:{slug}`` execution contract (Phase 5 of the
+  agent-naming cleanup arc; see ``notes/system/specs/role-schema.md``).
   Op enum: "generate" (returns content via tracker) or "to_thread"
   (dispatches with reply landing on ``thread``).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is the persona-free
@@ -152,7 +154,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
         op: Literal["generate", "to_thread"],
-        agent: str,
+        role: str,
         messages: list[dict[str, Any]],
         model: str | None = None,
         system: str = "",
@@ -165,39 +167,48 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         thread: str | None = None,
         subject: str | None = None,
     ) -> dict[str, Any]:
-        """Persona-aware team-seat dispatch with explicit op discrimination.
+        """Role-aware team-seat dispatch with explicit op discrimination.
+
+        ``role`` selects a ``role:{slug}`` execution contract — see
+        ``notes/system/specs/role-schema.md``. Phase 5 of the agent-naming
+        cleanup arc replaced the legacy ``agent=`` parameter; the role
+        contract carries allowed_models / default_model / mcp_required /
+        capability_tier and the persona prose lives in the file referenced
+        by ``role:{slug}.persona_seed_ref``.
 
         Two ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
           ``thread`` / ``subject`` must be absent when using this op.
-        - ``op="to_thread"``: admits dispatch; the agent's reply lands on
+        - ``op="to_thread"``: admits dispatch; the role's reply lands on
           ``thread``; tracker terminal status reflects observed reply. ``thread``
           is required. ``subject`` is optional (auto-derived from last message
           if absent).
 
-        Tool surface (no caller knob — derived from agent provider):
-        - xAI agents (``oppie``, ``forge``) — **no MCP tool access**. The
-          underlying xAI Responses path either rejects client-side function
-          tools (multi-agent variants) or is structurally inline-substrate for
-          this seat; substrate must be inlined into ``messages``.
-        - All other agents (``orion``, ``bard``, ``api_claude``) — full MCP
+        Tool surface (no caller knob — derived from role's frontier_kind +
+        capability_tier):
+        - xAI roles with ``capability_tier=inline-only`` (``oppie``) — **no
+          MCP tool access**. The underlying xAI Responses path rejects
+          client-side function tools on multi-agent variants; substrate must
+          be inlined into ``messages``.
+        - xAI reasoning-variant roles (``forge``) — supports tool calling but
+          inline-substrate dispatch is the team-seat default.
+        - All other roles (``orion``, ``bard``, ``api_claude``) — full MCP
           catalog via the in-process tool loop / remote-MCP.
 
-        Callers that need explicit no-tools persona-free dispatch should use
+        Callers that need explicit no-role one-shot dispatch should use
         ``frontier_dispatch(mcp=False, ...)``.
 
         ``transcript_id`` — caller's session ID for provenance attribution only.
         It is recorded in the execution record alongside ``caller_agent`` so
         dispatches can be traced back to the originating session. It is NOT
-        forwarded to the dispatched agent's context — the receiving agent never
-        sees it. Pass your current session ID (e.g. ``"cursor-2026-05-04-0910"``);
-        a forward-reference to an in-progress session is fine.
+        forwarded to the dispatched role's context — the receiving model never
+        sees it.
         """
         body: dict[str, Any] = {
             "op": op,
             "messages": messages,
-            "agent": agent,
+            "role": role,
             "system": system,
         }
         if op == "generate":
@@ -234,7 +245,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         record(
             "mcp.team.dispatch.called",
-            agent=agent,
+            role=role,
             op=op,
             model=model or "",
             reasoning_effort=reasoning_effort or "",

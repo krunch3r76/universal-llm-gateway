@@ -46,7 +46,7 @@ def _is_chat_completions_only(model: str) -> bool:
 class FrontierGenerateRequest:
     messages: list[dict[str, Any]]
     model: str | None = None
-    agent: str | None = None
+    role: str | None = None
     system: str = ""
     mcp: bool | None = None
     reasoning_effort: str | None = None
@@ -200,13 +200,20 @@ def _enforce_options(
 async def build_dispatch_body(
     req: FrontierGenerateRequest, event_publisher: EventPublisher | None = None
 ) -> dict[str, Any]:
-    """Apply persona rules and shape dispatch JSON for ``/pipelines/dispatch``."""
+    """Apply role rules and shape dispatch JSON for ``/pipelines/dispatch``.
+
+    Phase 5: ``req.role`` selects a ``role:{slug}`` execution contract loaded
+    by ``hydrate_agent`` (which fetches the role: entity per the updated
+    ``_SELF_ENTITY`` map). The internal ``agent=`` keyword to event payloads
+    and to ``hydrate_agent`` retains its historical name (event observability
+    schema preservation); only the public dispatch parameter is renamed.
+    """
     request_id = uuid.uuid4().hex[:12]
     if event_publisher is not None:
         event_publisher(
             FrontierEndpointRequested(
                 request_id=request_id,
-                agent=req.agent,
+                agent=req.role,
                 model=req.model,
             )
         )
@@ -214,19 +221,19 @@ async def build_dispatch_body(
     meta = AgentMeta()
     system_assembled = req.system or ""
 
-    if req.agent:
+    if req.role:
         # Soft boot: team_dispatch / frontier_dispatch dispatches use the
         # lightweight profile by default. Drops deadlines + review-queue
         # fetches; keeps a 3-reflection floor. The pipeline-handler hydration
         # in resolve_dispatch_tool_set must mirror this profile to avoid the
         # final dispatched prompt regaining a heavy briefing card.
-        bundle = await hydrate_agent(req.agent, profile="light", model=req.model)
+        bundle = await hydrate_agent(req.role, profile="light", model=req.model)
         meta = bundle.agent_meta
         if event_publisher is not None:
             event_publisher(
                 FrontierEndpointPersonaResolved(
                     request_id=request_id,
-                    agent=req.agent,
+                    agent=req.role,
                     frontier_kind=meta.frontier_kind,
                     default_model=meta.default_model,
                     allowed_models_count=len(meta.allowed_models),
@@ -237,13 +244,13 @@ async def build_dispatch_body(
                     ),
                 )
             )
-        # Persona injection is driven by agent presence. Persona-free dispatches
-        # skip this branch entirely via the outer ``if req.agent`` guard.
+        # Role injection is driven by role presence. Role-free dispatches
+        # skip this branch entirely via the outer ``if req.role`` guard.
         # The team_dispatch surface has no ``mcp`` knob — tool surface is
-        # derived from the agent provider in the mcp_enabled computation
-        # below (xAI agents → mcp=False; all others → mcp=True).
+        # derived from the role's frontier_kind in the mcp_enabled computation
+        # below (xAI roles → mcp=False; all others → mcp=True).
         system_assembled = assemble_system_prompt(
-            req.agent,
+            req.role,
             briefing_card_md=bundle.briefing_card_md,
             continuation_md=bundle.continuation_md,
             extra_system=req.system,
@@ -255,12 +262,12 @@ async def build_dispatch_body(
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="`model` is required when agent has no default_model",
+            reason="`model` is required when role has no default_model",
         )
 
     _enforce_model(
         request_id=request_id,
-        agent=req.agent,
+        agent=req.role,
         model=effective_model,
         meta=meta,
         event_publisher=event_publisher,
@@ -268,21 +275,21 @@ async def build_dispatch_body(
     if _is_chat_completions_only(effective_model):
         raise _emit_rejection(
             request_id=request_id,
-            agent=req.agent,
+            agent=req.role,
             field="model",
             reason=(
                 f"{effective_model!r} is a Chat Completions-only model — "
                 "it is unavailable on the OpenAI Responses API that "
                 "team_dispatch / frontier_dispatch use. "
                 f"Use llm_generate(model={effective_model!r}, messages=...) instead "
-                "(note: llm_generate has a narrower surface — no agent, tools, "
+                "(note: llm_generate has a narrower surface — no role, tools, "
                 "or transcript_id)."
             ),
             event_publisher=event_publisher,
         )
     generation_options = dict(req.generation_options or {})
     if req.reasoning_effort is not None:
-        # Typed param surfaces in generation_options so persona
+        # Typed param surfaces in generation_options so role
         # allowed_options enforcement applies uniformly. setdefault so an
         # explicit dict entry wins over the typed convenience arg.
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
@@ -300,22 +307,21 @@ async def build_dispatch_body(
         )
     _enforce_options(
         request_id=request_id,
-        agent=req.agent,
+        agent=req.role,
         opts=generation_options,
         meta=meta,
         event_publisher=event_publisher,
     )
-    # Tools field retired from the public dispatch surface
-    # (todo:retire-tools-param-from-dispatch-mcp-surface). Tool surface is now
+    # Tools field retired from the public dispatch surface. Tool surface is now
     # contract-derived per dispatch surface:
-    # - team_dispatch (req.agent is set, no caller mcp knob): xAI agents
-    #   (oppie, forge) get mcp=False — multi-agent variants reject client-side
-    #   function tools at the API layer; non-multi-agent xAI reasoning models
-    #   are inline-substrate by team-seat contract. All other team agents
-    #   (orion, bard, api_claude) get mcp=True.
-    # - frontier_dispatch (no req.agent): caller's mcp knob is honored;
+    # - team_dispatch (req.role is set, no caller mcp knob): xAI roles
+    #   (role:oppie, role:forge) get mcp=False — multi-agent variants reject
+    #   client-side function tools at the API layer; non-multi-agent xAI
+    #   reasoning models are inline-substrate by team-seat contract. All other
+    #   team roles (role:orion, role:bard, role:api-claude) get mcp=True.
+    # - frontier_dispatch (no req.role): caller's mcp knob is honored;
     #   defaults to False at the wire (one-shot reasoning).
-    if req.agent is not None:
+    if req.role is not None:
         mcp_enabled = not effective_model.startswith("xai/")
     else:
         mcp_enabled = bool(req.mcp) if req.mcp is not None else False
@@ -327,8 +333,8 @@ async def build_dispatch_body(
         "mcp": mcp_enabled,
         "_endpoint_request_id": request_id,
     }
-    if req.agent:
-        pipeline_options["agent"] = req.agent
+    if req.role:
+        pipeline_options["role"] = req.role
     if req.max_tool_turns is not None:
         pipeline_options["max_tool_turns"] = req.max_tool_turns
     if req.remote_mcp is not None:

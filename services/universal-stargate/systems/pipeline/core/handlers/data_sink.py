@@ -90,9 +90,7 @@ class DataSinkV1Handler:
                             scope_name,
                         )
                         continue
-                    await idx.store_scope_freshness(
-                        scope_name, h, classified_tier=tier
-                    )
+                    await idx.store_scope_freshness(scope_name, h, classified_tier=tier)
                 await idx.stamp_watermark("vocabulary")
                 await idx.stamp_watermark("corpus_hints")
 

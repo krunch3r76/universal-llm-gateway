@@ -118,6 +118,17 @@ contextualization and doc-generate pipelines.
 
 ---
 
+## `libs/role_lint`
+
+Stdlib-only validation for ``role:{slug}`` Cortex payloads. Rejects
+identity-coded prose in linted fields so dispatch entities stay
+execution-contract language; first-person persona copy belongs on
+``persona_seed_ref`` / birth prompts, not on the role entity. Used by the
+Cortex sync script path that publishes roles. See
+``notes/system/specs/role-schema-self-concept-lint.md``.
+
+---
+
 ## `libs/sse`
 
 Domain-agnostic Server-Sent Events (SSE) primitives. W3C-compliant byte→event

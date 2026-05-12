@@ -115,17 +115,22 @@ async def resolve_model(
 
 
 def resolve_agent(opts: dict[str, Any], step: StepConfig) -> str | None:
-    """Resolve agent identity.
+    """Resolve role-based dispatch identity.
 
-    Precedence: ``pipeline_options.agent`` > step domain field > None.
+    Phase 5: reads ``pipeline_options.role`` (the post-migration key) instead
+    of ``pipeline_options.agent``. The function name is preserved for blast-
+    radius reasons; the *return value* is a normalized role slug used for
+    Cortex ``role:{slug}`` resolution downstream.
+
+    Precedence: ``pipeline_options.role`` > step domain field ``role`` > None.
 
     Uses normalize_agent_slug (handles case, Oppie/Oppia, hyphen/underscore
-    variants) so natural references from personas work with registry.
+    variants) so natural references work with the registry alias chain.
     """
-    agent = opts.get("agent") or step.get_domain_field("agent")
-    if agent is None:
+    role = opts.get("role") or step.get_domain_field("role")
+    if role is None:
         return None
-    return normalize_agent_slug(str(agent)) or None
+    return normalize_agent_slug(str(role)) or None
 
 
 def resolve_user_prompt(step: StepConfig, context: PipelineContext) -> str:

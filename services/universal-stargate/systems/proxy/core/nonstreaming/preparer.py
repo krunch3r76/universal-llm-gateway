@@ -24,7 +24,6 @@ load_logging_config()
 from universal_logging import get_logger, format_json_for_log  # noqa: E402,I001
 
 from ....profiles import ProfileManager  # noqa: E402,I001
-from systems.persona_aliases.manager import PersonaAliasManager  # noqa: E402,I001
 from ...validation.json_schema_validator import (  # noqa: E402
     SchemaValidationError,
     validate_response_format,
@@ -109,7 +108,6 @@ class RequestPreparer:
         gateway_manager,
         transformation_engine: TransformationEngine,
         profile_manager: ProfileManager,
-        persona_alias_manager: PersonaAliasManager,
         token_manager,
         token_management_enabled: bool,
         config=None,
@@ -117,7 +115,6 @@ class RequestPreparer:
         self.gateway_manager = gateway_manager
         self._transformation_engine = transformation_engine
         self._profile_manager = profile_manager
-        self._persona_alias_manager = persona_alias_manager
         self.token_manager = token_manager
         self.token_management_enabled = token_management_enabled
         self._config = config
@@ -198,31 +195,7 @@ class RequestPreparer:
         if not requested_model_str:
             raise RequestErrorBuilder.model_not_specified()
 
-        persona_alias = self._persona_alias_manager.get(requested_model_str)
-        if persona_alias is not None:
-            # Fail fast on ambiguous persona layering.
-            # If an alias is used, the request must not also specify a profile/filter.
-            qp_profile = (
-                profile_override
-                or request.query_params.get("profile")
-                or request.query_params.get("filter")
-            )
-            if qp_profile:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "type": "invalid_request_error",
-                        "message": (
-                            "Persona alias request may not combine with profile/filter. "
-                            f"alias={persona_alias.alias_id} profile={qp_profile}"
-                        ),
-                        "param": "filter",
-                        "code": "invalid_persona_alias_conflict",
-                    },
-                )
-            selected_model_str = persona_alias.backing_model
-        else:
-            selected_model_str = requested_model_str
+        selected_model_str = requested_model_str
         if not selected_model_str:
             raise RequestErrorBuilder.model_not_specified()
 
@@ -327,14 +300,6 @@ class RequestPreparer:
         )
 
         context.requested_model = requested_model_str
-        if persona_alias is not None:
-            context.persona_alias_id = persona_alias.alias_id
-            context.persona_backing_model = persona_alias.backing_model
-            context.persona_system_prompt = persona_alias.system_prompt
-            context.persona_params = dict(persona_alias.params)
-            context.middleware_actions.append(
-                f"persona_alias_resolved:{persona_alias.alias_id}"
-            )
 
         request_profile = (
             profile_override

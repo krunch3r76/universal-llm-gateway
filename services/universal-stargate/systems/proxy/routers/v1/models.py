@@ -55,7 +55,6 @@ def _get_gateway_stats(proxy: StargateProxy) -> dict[str, int]:
 def _build_models_response(
     model_ids: list[str],
     pipeline_ids: list[str],
-    persona_aliases: list[dict[str, Any]] | None = None,
     context_metadata: dict[str, dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     """Build OpenAI-compatible models list response.
@@ -95,10 +94,6 @@ def _build_models_response(
                 "created": now,
             }
         )
-
-    if persona_aliases:
-        for entry in persona_aliases:
-            data.append(entry)
 
     return {"object": "list", "data": data}
 
@@ -158,11 +153,10 @@ async def list_models(
     include_metadata: bool = Query(
         False, description="Include context_length per model"
     ),
-    type: Literal["model", "pipeline", "persona_alias"] | None = Query(
+    type: Literal["model", "pipeline"] | None = Query(
         None,
         description="Filter by entry type: 'model' for inference models only, "
-        "'pipeline' for pipeline virtual IDs only, "
-        "'persona_alias' for user-local persona aliases only",
+        "'pipeline' for pipeline virtual IDs only",
     ),
     activation: Literal["unfiltered", "filtered"] | None = Query(
         None,
@@ -225,29 +219,11 @@ async def list_models(
         )
 
     # Apply type filter
-    models_to_include = model_ids if type not in ("pipeline", "persona_alias") else []
-    pipelines_to_include = (
-        pipeline_ids if type not in ("model", "persona_alias") else []
-    )
+    models_to_include = model_ids if type != "pipeline" else []
+    pipelines_to_include = pipeline_ids if type != "model" else []
 
-    persona_entries: list[dict[str, Any]] = []
-    if type in (None, "persona_alias"):
-        mgr = getattr(proxy, "persona_alias_manager", None)
-        if mgr:
-            for alias in mgr.list_aliases():
-                persona_entries.append(
-                    {
-                        "id": alias.alias_id,
-                        "object": "model",
-                        "type": "persona_alias",
-                        "owned_by": "user",
-                        "permission": ["generate"],
-                        "created": int(time.time()),
-                        "backing_model": alias.backing_model,
-                    }
-                )
     response = _build_models_response(
-        models_to_include, pipelines_to_include, persona_entries, context_metadata
+        models_to_include, pipelines_to_include, context_metadata
     )
 
     if include_sources:
@@ -287,59 +263,7 @@ async def get_model(
         description="Include aggregate load status (loaded/busy/loading/available)",
     ),
 ) -> dict[str, Any]:
-    """Get one model/context by synthetic ID or persona alias ID."""
-    mgr = getattr(proxy, "persona_alias_manager", None)
-    if mgr:
-        alias = mgr.get(model_id)
-        if alias is not None:
-            entry = _build_model_entry(model_id)
-            entry["type"] = "persona_alias"
-            entry["owned_by"] = "user"
-            entry["permission"] = ["generate"]
-            entry["backing_model"] = alias.backing_model
-            entry["activated"] = True
-            entry["available"] = True
-            if include_status or include_metadata:
-                # Resolve metadata/status for backing model only
-                # (alias itself is ingress-only).
-                backing = alias.backing_model
-                all_models = get_all_available_models(
-                    proxy.gateway_manager,
-                    proxy.federated_manager,
-                )
-                activated_models = get_activated_models_for_display(
-                    proxy.gateway_manager,
-                    proxy.federated_manager,
-                )
-                entry["backing_activated"] = backing in activated_models
-                entry["backing_available"] = backing in all_models
-                if include_metadata:
-                    context_metadata = get_model_context_metadata(
-                        proxy.gateway_manager,
-                        proxy.federated_manager,
-                    )
-                    meta = context_metadata.get(backing, {})
-                    if meta:
-                        entry["backing_metadata"] = meta
-                if include_status:
-                    fed = get_federation_integration()
-                    local_id = fed.config.stargate_id if fed and fed.config else "local"
-                    status_map = get_model_status_map(
-                        local_id,
-                        proxy.gateway_manager,
-                        proxy.federated_manager,
-                    )
-                    model_st = status_map.get(backing, {})
-                    if model_st.get("busy_on"):
-                        entry["backing_status"] = "busy"
-                    elif model_st.get("loading_on"):
-                        entry["backing_status"] = "loading"
-                    elif model_st.get("loaded_on"):
-                        entry["backing_status"] = "loaded"
-                    else:
-                        entry["backing_status"] = "available"
-            return entry
-
+    """Get one model/context by synthetic ID."""
     all_models = get_all_available_models(
         proxy.gateway_manager,
         proxy.federated_manager,

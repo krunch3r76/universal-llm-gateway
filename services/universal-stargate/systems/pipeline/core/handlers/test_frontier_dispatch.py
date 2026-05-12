@@ -177,7 +177,7 @@ async def test_handler_team_mode_fires_hydrated_event(
 
     step = _FakeStep()
     context = _make_context(
-        options={"model": "xai/grok-4.20-multi-agent-0309", "agent": "oppie"},
+        options={"model": "xai/grok-4.20-multi-agent-0309", "role": "oppie"},
     )
 
     out = await handler.execute(step, context)
@@ -533,7 +533,7 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
     monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
-    context = _make_context(options={"model": "openai/gpt-5.4", "agent": "orion"})
+    context = _make_context(options={"model": "openai/gpt-5.4", "role": "orion"})
     await handler.execute(step, context)
 
     assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
@@ -632,7 +632,7 @@ async def test_handler_rejects_raw_agent_plus_endpoint_tools(
     context = _make_context(
         options={
             "model": "openai/gpt-5.4",
-            "agent": "orion",
+            "role": "orion",
             "tools": ["web_search"],
         }
     )
@@ -674,7 +674,7 @@ async def test_handler_endpoint_agent_plus_tools_preserves_persona_metadata(
     context = _make_context(
         options={
             "model": "openai/gpt-5.4",
-            "agent": "orion",
+            "role": "orion",
             "system": "SYSTEM[orion]",
             "tools": ["web_search"],
             "_endpoint_request_id": "frontier-req-1",
@@ -739,12 +739,19 @@ def test_resolve_remote_mcp_defaults_by_provider() -> None:
 
 
 def test_resolve_agent_uses_options_then_domain_field() -> None:
-    h = FrontierDispatchHandler()
-    step_with_domain = _FakeStep(domain_fields={"agent": "bard"})
-    assert h._resolve_agent({}, step_with_domain) == "bard"
-    assert h._resolve_agent({"agent": "web"}, step_with_domain) == "web"
-    assert h._resolve_agent({"agent": ""}, step_with_domain) == "bard"
-    assert h._resolve_agent({}, _FakeStep()) is None
+    """Phase 5: resolve_agent reads pipeline_options.role > step.role > None.
+
+    The function name retains its historical 'agent' suffix (limit blast
+    radius across module-internal references); the *return value* is a
+    normalized role slug used for Cortex role:{slug} resolution.
+    """
+    from .frontier_dispatch_request import resolve_agent
+
+    step_with_domain = _FakeStep(domain_fields={"role": "bard"})
+    assert resolve_agent({}, step_with_domain) == "bard"
+    assert resolve_agent({"role": "web"}, step_with_domain) == "web"
+    assert resolve_agent({"role": ""}, step_with_domain) == "bard"
+    assert resolve_agent({}, _FakeStep()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -967,7 +974,7 @@ def _make_oppie_context(**extra_opts: Any) -> SimpleNamespace:
     return _make_context(
         options={
             "model": "xai/grok-4.20-multi-agent-0309",
-            "agent": "oppie",
+            "role": "oppie",
             **extra_opts,
         }
     )
@@ -1139,7 +1146,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
 
     context = _make_context(
-        options={"model": "xai/grok-4.20-0309-reasoning", "agent": "forge"},
+        options={"model": "xai/grok-4.20-0309-reasoning", "role": "forge"},
     )
     await handler.execute(_FakeStep(), context)
 
@@ -1204,7 +1211,7 @@ async def test_default_capability_tier_does_not_suppress(
     context = _make_context(
         options={
             "model": "anthropic/claude-sonnet-4-6",
-            "agent": "api_claude",
+            "role": "api_claude",
             "remote_mcp": False,
         },
     )

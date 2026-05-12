@@ -34,20 +34,20 @@ from .service import FrontierEndpointError, _verify_thread_writable
 def test_s1_generate_normalizes_to_inline() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
-        agent="orion",
+        role="orion",
         messages=[{"role": "user", "content": "pong"}],
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["output_contract"] == "inline"
     assert kwargs["op"] == "generate"
-    assert kwargs["agent"] == "orion"
+    assert kwargs["role"] == "orion"
     assert "target_thread" not in kwargs
 
 
 def test_s1_to_thread_normalizes_to_thread_contract() -> None:
     body = TeamDispatchToThreadBody(
         op="to_thread",
-        agent="orion",
+        role="orion",
         thread="867",
         messages=[{"role": "user", "content": "pong"}],
     )
@@ -66,7 +66,7 @@ def test_s2_generate_body_rejects_thread_field() -> None:
     with pytest.raises(ValidationError) as exc_info:
         TeamDispatchGenerateBody(
             op="generate",
-            agent="orion",
+            role="orion",
             thread="867",  # type: ignore[call-arg]  # forbidden extra field
             messages=[{"role": "user", "content": "x"}],
         )
@@ -85,7 +85,7 @@ def test_s3_generate_body_rejects_result_delivery() -> None:
     with pytest.raises(ValidationError):
         TeamDispatchGenerateBody(
             op="generate",
-            agent="orion",
+            role="orion",
             messages=[{"role": "user", "content": "x"}],
             result_delivery={"bus_thread": "867"},  # type: ignore[call-arg]
         )
@@ -100,7 +100,7 @@ def test_s5_to_thread_body_requires_thread() -> None:
     with pytest.raises(ValidationError) as exc_info:
         TeamDispatchToThreadBody(
             op="to_thread",
-            agent="orion",
+            role="orion",
             messages=[{"role": "user", "content": "x"}],
             # thread intentionally omitted
         )
@@ -129,7 +129,7 @@ def test_s6_op_required(_team_app: FastAPI) -> None:
     client = TestClient(_team_app, raise_server_exceptions=False)
     resp = client.post(
         "/api/v1/team/dispatch",
-        json={"agent": "orion", "messages": [{"role": "user", "content": "x"}]},
+        json={"role": "orion", "messages": [{"role": "user", "content": "x"}]},
     )
     assert resp.status_code == 422
     body = resp.json()
@@ -148,7 +148,7 @@ def test_s7_invalid_op_rejected(_team_app: FastAPI) -> None:
         "/api/v1/team/dispatch",
         json={
             "op": "invalid_op",
-            "agent": "orion",
+            "role": "orion",
             "messages": [{"role": "user", "content": "x"}],
         },
     )

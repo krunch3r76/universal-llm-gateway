@@ -63,11 +63,6 @@ class RequestContext:
         self.client_wants_streaming: bool = False
         # One-shot per-request profile name (if any)
         self.request_profile: str | None = None
-        # Persona alias context (optional, set during request preparation)
-        self.persona_alias_id: str | None = None
-        self.persona_backing_model: str | None = None
-        self.persona_system_prompt: str | None = None
-        self.persona_params: dict[str, Any] = {}
         self.selected_gateway_instance: GatewayInstance | None = None
         # Profile data (resolved once, used throughout request processing)
         self.profile_data: ProfileData | None = None

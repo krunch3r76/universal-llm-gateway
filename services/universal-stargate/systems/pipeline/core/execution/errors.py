@@ -284,8 +284,8 @@ class UnknownPipelineOptionsError(PipelineError):
     hours of agent debugging when reasoning levers appeared to be ignored.
     Hard-rejecting unknown keys at admission catches the typo upstream and
     points the caller at the right key or the right tool
-    (``team_dispatch`` for persona consults; ``frontier_dispatch`` for
-    persona-free raw engine).
+    (``team_dispatch`` for role-based consults; ``frontier_dispatch`` for
+    direct frontier dispatch).
     """
 
     step_name: str

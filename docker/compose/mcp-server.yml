@@ -86,7 +86,6 @@ services:
       - CORTEX_DEFAULT_USER_ENTITY=${CORTEX_DEFAULT_USER_ENTITY:-}
       - CORTEX_OWNER_NAME=${CORTEX_OWNER_NAME:-the user}
       - CORTEX_DEPLOYMENT_VOCABULARY=${CORTEX_DEPLOYMENT_VOCABULARY:-}
-      - CORTEX_PERSONA_SEEDS=${CORTEX_PERSONA_SEEDS:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:

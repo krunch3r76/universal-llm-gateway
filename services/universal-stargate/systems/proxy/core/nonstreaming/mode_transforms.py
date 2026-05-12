@@ -193,13 +193,6 @@ async def prepare_master_mode(
         context.middleware_actions.append(f"profile_resolved:{profile_data.name}")
 
     original_messages = extract_messages(context, preparer.transformer)
-    if context.persona_system_prompt and context.persona_alias_id:
-        original_messages = inject_profile_system_prompt(
-            original_messages,
-            context.persona_system_prompt,
-            f"persona_alias:{context.persona_alias_id}",
-            context,
-        )
     if (
         profile_data
         and profile_data.has_system_prompt()

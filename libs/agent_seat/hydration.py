@@ -69,37 +69,46 @@ _PROFILES: dict[str, dict[str, Any]] = {
 _KNOWN_CAPABILITY_TIERS: frozenset[str] = frozenset({"inline-only"})
 
 _SELF_ENTITY: dict[str, str] = {
-    "oppie": "ai_agent:oppie",
-    "orion": "ai_agent:orion",
-    "web": "ai_agent:web-claude",
-    "bard": "ai_agent:bard",
-    "api_claude": "ai_agent:api-claude",
-    "cursor": "ai_agent:cursor-claude",
-    "forge": "ai_agent:forge",
-    "cursor_orion": "ai_agent:cursor_orion",
+    "oppie": "role:oppie",
+    "orion": "role:orion",
+    "web": "role:web-claude",
+    "bard": "role:bard",
+    "api_claude": "role:api-claude",
+    "cursor": "role:cursor-claude",
+    "forge": "role:forge",
+    "cursor_orion": "role:cursor_orion",
     # cursor_grok intentionally absent — registry alias chain routes
-    # cursor_forge → forge → ai_agent:forge. Legacy cursor_grok dispatches
+    # cursor_forge → forge → role:forge. Legacy cursor_grok dispatches
     # fail at the build_dispatch_body admission gate (no default_model in
     # _AGENT_DEFAULTS), so they never reach hydration.
 }
 
 
 def _normalize_slug_to_entity(agent: str) -> str:
-    """Map runtime agent slug → cortex ``ai_agent:{...}`` entity id.
+    """Map runtime agent slug → cortex ``role:{...}`` entity id.
+
+    Phase 5 of the agent-naming cleanup arc moved dispatch-target metadata from
+    ``ai_agent:{slug}`` (persona+contract conflated) to ``role:{slug}``
+    (execution contract only; persona prose lives in the birth-prompt file
+    referenced by ``persona_seed_ref``). The hydration path resolves to the
+    role entity for both dispatch metadata fetches and self-reflection lookups.
 
     Uses registry.normalize_agent_slug (case-insensitive, supports Oppie/Oppia,
     cursor_orion, cursor_grok, forge, etc.) before lookup in _SELF_ENTITY.
-    Falls back to ``ai_agent:{canonical}`` for unknown slugs. This ensures
-    self_reflections, assertions, and full boot context for all team_dispatch
-    targets (MCP access validated for all except Oppie/Oppia multi-agent).
+    Falls back to ``role:{canonical}`` for unknown slugs.
     """
     canonical = normalize_agent_slug(agent)
-    return _SELF_ENTITY.get(canonical, f"ai_agent:{canonical}")
+    return _SELF_ENTITY.get(canonical, f"role:{canonical}")
 
 
 @dataclass(slots=True)
 class AgentMeta:
-    """Persona contract loaded from ``ai_agent:{slug}.attributes``.
+    """Execution contract loaded from ``role:{slug}.attributes``.
+
+    Phase 5 migrated this from ``ai_agent:{slug}.attributes`` — see
+    ``notes/system/specs/role-schema.md`` for the full role: schema. The
+    dataclass kept its historical name (``AgentMeta``) to limit blast radius;
+    semantically it is the role's execution contract.
 
     Tools field retired (todo:retire-tools-allowlist-as-caller-concern); tool
     surface is provider-derived and universal. No per-persona allowlist.

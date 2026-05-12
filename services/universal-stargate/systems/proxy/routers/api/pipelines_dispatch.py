@@ -54,10 +54,11 @@ _MAX_WAIT_SECONDS = 60.0
 # response that returned ``execution_id``.
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
 _TEAM_GENERATE_HINT = (
-    "agent personas are best dispatched via `team_dispatch` — persona "
-    "allowlists (allowed_models / allowed_options / tools), default_model "
-    "resolution, and birth + briefing assembly are bypassed on the raw "
-    '`pipeline(pipeline_id="frontier-dispatch")` path.'
+    "role-based consults are best dispatched via `team_dispatch` — role "
+    "contracts (allowed_models / allowed_options / mcp_required / "
+    "capability_tier), default_model resolution, and birth + briefing "
+    'assembly are bypassed on the raw `pipeline(pipeline_id="frontier-dispatch")` '
+    "path."
 )
 _FRONTIER_GENERATE_HINT = (
     "raw native-frontier calls are best dispatched via `frontier_dispatch` — "
@@ -72,15 +73,15 @@ def _canonical_dispatch_hint_for(dispatch: DispatchRequest) -> str | None:
 
     Triggers iff the dispatch targets ``frontier-dispatch`` AND lacks the
     ``_endpoint_request_id`` marker that canonical dispatch routes inject.
-    The hint branches on agent presence: with ``agent`` recommend
-    ``team_dispatch``; without ``agent`` recommend ``frontier_dispatch``.
+    The hint branches on role presence: with ``role`` recommend
+    ``team_dispatch``; without ``role`` recommend ``frontier_dispatch``.
     """
     if dispatch.model != _FRONTIER_DISPATCH_PIPELINE_ID:
         return None
     opts = dispatch.pipeline_options or {}
     if opts.get("_endpoint_request_id"):
         return None
-    if opts.get("agent"):
+    if opts.get("role"):
         return _TEAM_GENERATE_HINT
     return _FRONTIER_GENERATE_HINT
 

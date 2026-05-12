@@ -13,8 +13,8 @@ def FrontierEndpointRequested(  # noqa: N802
 ) -> Event:
     """Endpoint admission for team/frontier generate routes.
 
-    Persona-vs-raw is encoded by ``agent``: if non-null, this was a team
-    dispatch; if null, this was the persona-free raw engine path.
+    Role-vs-direct is encoded by ``agent``: if non-null, this was a
+    role-based team dispatch; if null, this was the direct frontier dispatch path.
 
     ``has_tools`` field retired with the public ``tools`` parameter
     (todo:retire-tools-param-from-dispatch-mcp-surface) — the field could

@@ -206,13 +206,13 @@ def reject_unknown_runtime_options(
     unknown = sorted(set(runtime.keys()) - accepted_keys)
     if not unknown:
         return
-    agent_raw = runtime.get("agent")
-    agent = str(agent_raw).strip() if isinstance(agent_raw, str) else None
+    role_raw = runtime.get("role")
+    role = str(role_raw).strip() if isinstance(role_raw, str) else None
     raise UnknownPipelineOptionsError(
         step_name=step.id,
         unknown_keys=unknown,
         accepted_keys=sorted(accepted_keys),
-        agent=agent or None,
+        agent=role or None,
     )
 
 

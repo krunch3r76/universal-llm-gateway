@@ -20,8 +20,15 @@ logger = get_logger(__name__)
 
 # Token categories that map to token_defaults keys
 TOKEN_CATEGORIES = (
-    "analyze", "classify", "answer", "enrich",
-    "verify", "post_process", "reseed", "review", "consult",
+    "analyze",
+    "classify",
+    "answer",
+    "enrich",
+    "verify",
+    "post_process",
+    "reseed",
+    "review",
+    "consult",
 )
 
 
@@ -88,7 +95,9 @@ def _apply_constraint(base_tokens: int, context: PipelineContext) -> int:
                 constrained = int(base_tokens * multiplier)
                 logger.info(
                     "Token constraint: %d → %d (multiplier=%.2f)",
-                    base_tokens, constrained, multiplier,
+                    base_tokens,
+                    constrained,
+                    multiplier,
                 )
                 return constrained
     return base_tokens

@@ -44,24 +44,31 @@ class _DispatchCommon(BaseModel):
 
 
 class TeamDispatchGenerateBody(_DispatchCommon):
-    """``team_dispatch`` with ``op="generate"`` — result returned inline via poll."""
+    """``team_dispatch`` with ``op="generate"`` — result returned inline via poll.
+
+    ``role`` selects a ``role:{slug}`` execution contract (Phase 5 of the
+    agent-naming cleanup arc). Replaces the legacy ``agent`` field.
+    """
 
     op: Literal["generate"]
-    agent: str
+    role: str
     model: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 
 
 class TeamDispatchToThreadBody(_DispatchCommon):
-    """``team_dispatch`` with ``op="to_thread"`` — result posted to agent-bus thread."""
+    """``team_dispatch`` with ``op="to_thread"`` — result posted to agent-bus thread.
+
+    ``role`` selects a ``role:{slug}`` execution contract.
+    """
 
     op: Literal["to_thread"]
-    agent: str
+    role: str
     thread: str
     subject: str | None = None
     model: str | None = None
-    # result_delivery MUST NOT appear — derived from thread + agent; extra="forbid"
+    # result_delivery MUST NOT appear — derived from thread + role; extra="forbid"
     # rejects any caller that supplies it.
 
 
@@ -120,11 +127,11 @@ def _normalize_op_body(
         "timeout_seconds": body.timeout_seconds,
     }
 
-    # Carry agent / model / mcp depending on variant. ``mcp`` is exposed only
-    # on the frontier (persona-free) surface; team variants derive mcp from
-    # agent provider in service.build_dispatch_body.
-    if hasattr(body, "agent"):
-        common["agent"] = body.agent
+    # Carry role / model / mcp depending on variant. ``mcp`` is exposed only
+    # on the frontier (role-free) surface; team variants derive mcp from
+    # the role's frontier_kind in service.build_dispatch_body.
+    if hasattr(body, "role"):
+        common["role"] = body.role
     if hasattr(body, "model"):
         common["model"] = body.model
     if hasattr(body, "mcp"):

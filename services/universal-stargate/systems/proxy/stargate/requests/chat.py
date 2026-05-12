@@ -18,7 +18,6 @@ from fastapi.responses import Response
 from universal_logging import get_logger
 
 from src.scheduling.events import (
-    RequestAliasResolved,
     RequestProcessing,
     RequestProfileResolved,
     RequestSnapshotReceived,
@@ -64,10 +63,6 @@ async def process_chat_completion(
     """
     requested_model = model_override or chat_request.model
     effective_model_override = model_override
-    if requested_model and getattr(proxy, "persona_alias_manager", None):
-        alias = proxy.persona_alias_manager.get(requested_model)
-        if alias is not None:
-            effective_model_override = alias.backing_model
 
     target_model_for_pipeline_check = effective_model_override or chat_request.model
     is_pipeline = (
@@ -146,16 +141,6 @@ async def process_chat_completion(
     if proxy.event_bus:
         try:
             profile_name = getattr(context, "request_profile", None)
-            if getattr(context, "persona_alias_id", None) and getattr(
-                context, "persona_backing_model", None
-            ):
-                await proxy.event_bus.publish_nowait(
-                    RequestAliasResolved(
-                        request_id=context.request_id,
-                        alias_id=context.persona_alias_id,
-                        backing_model_id=context.persona_backing_model,
-                    )
-                )
             if profile_name:
                 await proxy.event_bus.publish_nowait(
                     RequestProfileResolved(
