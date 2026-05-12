@@ -42,25 +42,32 @@ CORTEX_SOCKET = "/tmp/universal-protocol/cortex-api.sock"
 PARTITION: dict[str, list[str]] = {
     "*": [
         "agent_skill:architecture-invariants",
+        "agent_skill:boot-execution-discipline",
+        "agent_skill:case-evidence-retrieval",
         "agent_skill:cortex-entity-restructure",
+        "agent_skill:cortex-orientation",
         "agent_skill:cortex-v24-implementation-arc",
         "agent_skill:document-ocr",
         "agent_skill:docx-ingestion",
         "agent_skill:email-bridge-mailbox",
+        "agent_skill:engagement-stance",
+        "agent_skill:enrichment-quality-discipline",
+        "agent_skill:entity-creation-discipline",
         "agent_skill:financial-reasoning",
-        "agent_skill:frontier-consult-offload",
-        "agent_skill:frontier-dispatch",
         "agent_skill:image-video-generation",
         "agent_skill:jupiter-browser-via-mcp",
         "agent_skill:lawyer-stance",
         "agent_skill:legal-opinion-corpus-ingestion",
         "agent_skill:markdown-navigation",
-        "agent_skill:gatherer-plan-discipline",
+        "agent_skill:named-entity-verification-gate",
+        "agent_skill:no-silent-inference",
         "agent_skill:pre-deploy-gate-discipline",
+        "agent_skill:review-protocol-mandatory-chronology-verification",
+        "agent_skill:session-close",
         "agent_skill:session-close-audit",
         "agent_skill:thirdparty-api-mirror",
-    ],
-    "web": [
+        # Case-specific skills — applicable across both seats since cases are
+        # worked from whichever seat is convenient. Previously web-only.
         "agent_skill:boe19p-appeal-discipline",
         "agent_skill:chase-escrow-discipline",
         "agent_skill:chase-escrow-statement-ingestion",
@@ -77,14 +84,8 @@ PARTITION: dict[str, list[str]] = {
 }
 
 
-# Multi-agent assignments. Wins over the bucket-derived value above. Use this
-# for any skill whose applicability isn't a single agent or universal — e.g.
-# `["web", "cursor"]` for legal corpus tooling that cursor occasionally pulls
-# but gatherer/artisan don't need.
-OVERRIDES: dict[str, list[str]] = {
-    # "agent_skill:legal-opinion-corpus-ingestion": ["web", "cursor"],
-    "agent_skill:xai-mcp-calling-shape": ["web-grok", "superheavy"],
-}
+# Multi-agent assignments. Wins over the bucket-derived value above.
+OVERRIDES: dict[str, list[str]] = {}
 
 
 class _UDSConnection:

@@ -38,6 +38,7 @@ from ..turns_models import (
     ThreadWithTurnCreate,
     ThreadWithTurnCreated,
     TurnCreated,
+    turn_body_limit_error,
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -250,6 +251,14 @@ async def create_thread_with_turn_route(
     body: ThreadWithTurnCreate,
 ) -> ThreadWithTurnCreated:
     """Atomically create a thread and its first turn in one transaction."""
+    if error_detail := turn_body_limit_error(
+        body.body,
+        allow_long_body=body.allow_long_body,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=error_detail,
+        )
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
     try:
         thread_row, turn_id, ts, turn_number = create_thread_with_turn(

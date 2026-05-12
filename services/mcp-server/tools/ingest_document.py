@@ -7,12 +7,12 @@ Optionally registers a Cortex document entity.
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
 from ocr_core import has_text_layer, ocr_pages
+from universal_logging import get_logger
 
 from ._file_helpers import FILES_ROOT, resolve_files_path
 from .llm import _STARGATE_URL
@@ -20,7 +20,7 @@ from .llm import _STARGATE_URL
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _TEXT_EXTRACTABLE = frozenset({".pdf", ".docx", ".odt", ".eml", ".html", ".txt", ".md"})
 _IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".tiff", ".tif", ".webp", ".bmp"})
@@ -88,6 +88,13 @@ def _write_markdown(output_path: Path, source_rel: str, fmt: str, text: str) -> 
     output_path.write_text(header + text, encoding="utf-8")
 
 
+def _default_output_path(path: Path) -> Path:
+    """Return the default durable markdown sidecar path for extracted documents."""
+    if path.suffix.lower() == ".pdf":
+        return path.with_name(f"{path.stem}-readable.md")
+    return path.with_suffix(".extracted.md")
+
+
 def register_ingest_document_tools(mcp: FastMCP) -> None:
     """Register the ingest_document tool."""
 
@@ -122,7 +129,8 @@ def register_ingest_document_tools(mcp: FastMCP) -> None:
         Args:
             path: File path relative to /data/files/.
             output_path: Where to write the extracted markdown. Defaults to
-                ``{directory}/{stem}.extracted.md`` alongside the source.
+                ``{directory}/{stem}-readable.md`` for PDFs and
+                ``{directory}/{stem}.extracted.md`` for other formats.
             dpi: Render resolution for PDF→image conversion (default 200).
             model: OCR model override (default: Claude Sonnet via Anthropic).
             entity_id: Optional ``document:*`` Cortex entity ID to create.
@@ -164,7 +172,7 @@ def register_ingest_document_tools(mcp: FastMCP) -> None:
         if output_path:
             out_abs = resolve_files_path(output_path)
         else:
-            out_abs = abs_path.with_suffix(".extracted.md")
+            out_abs = _default_output_path(abs_path)
 
         _write_markdown(out_abs, path, fmt, text)
         out_rel = str(out_abs.relative_to(FILES_ROOT))

@@ -92,7 +92,7 @@ Always pass `mark_read: true` when fetching turns you intend to act on — stale
 Substantive content (specs, reviews, analysis, debriefs, long responses) belongs in a sidecar:
 1. Write to `notes/system/threads/<slug>-<subject>.md` via `fs(sandbox="cortex", op="write", …)`
 2. Post a short body: orientation sentence(s) + the sidecar path.
-Never put a document, full analysis, or long structured output directly into a turn body.
+Never put a document, full analysis, or long structured output directly into a turn body unless the recipient contract requires inline long-form delivery; in that rare case pass `allow_long_body: true` on `post`/`reply`.
 A *directive* means implement now. A *ticket* or *todo* means deferred work. Acknowledge receipt of directives before beginning."""
 
 _AGENT_BUS_EXAMPLES = """\
@@ -106,6 +106,7 @@ _AGENT_BUS_LARGE_PAYLOADS = """\
 ### Large Payload Protocol
 **Outbound**: apply the briefing rule before calling post/reply — don't wait for a 413.
 Write long content to `notes/system/threads/<slug>-<subject>.md` first, then reference it in a short body.
+Exception: if a web-agent communication must carry inline long-form content, pass `allow_long_body: true` explicitly on `post`/`reply`.
 
 **Inbound**: when fetch returns a stored-reference (e.g. `rs_XXXX`), don't skip the content. Options in order of preference:
 1. Narrow the window: `last=3`, `compact=true`, or fetch individual turns via `get`.

@@ -52,12 +52,15 @@ def _structured_body_too_large(
             f"({body_chars:,} chars, limit {limit:,}). "
             "Agent-bus convention: short briefing + sidecar markdown reference. "
             "Write long content to notes/system/threads/<thread>-<subject>.md "
-            "and reference it in a brief body."
+            "and reference it in a brief body. If inline long-form delivery is "
+            "required for this recipient, retry with allow_long_body=true."
         ),
         "reason": "body_too_large",
         "limit_chars": limit,
         "body_chars": body_chars,
-        "suggestion": detail.get("suggestion", "sidecar_markdown_or_trim"),
+        "suggestion": detail.get(
+            "suggestion", "sidecar_markdown_or_allow_long_body"
+        ),
     }
 
 
@@ -74,6 +77,7 @@ def _post_impl(
     summary: str | None,
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
+    allow_long_body: bool = False,
 ) -> dict[str, Any]:
     """Atomic thread+turn creation via POST /threads/with-turn."""
     payload: dict[str, Any] = {
@@ -91,6 +95,8 @@ def _post_impl(
         payload["attachments"] = attachments
     if tags:
         payload["tags"] = tags
+    if allow_long_body:
+        payload["allow_long_body"] = True
 
     result = _relay("agent-bus", "POST", "/threads/with-turn", body=payload)
     if "error" in result:
@@ -136,6 +142,7 @@ def _reply_impl(
     mark_read: bool,
     close: bool,
     attachments: list[dict[str, Any]] | None = None,
+    allow_long_body: bool = False,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "thread": thread,
@@ -153,6 +160,8 @@ def _reply_impl(
         payload["after_turn"] = after_turn
     if attachments:
         payload["attachments"] = attachments
+    if allow_long_body:
+        payload["allow_long_body"] = True
     result = _relay("agent-bus", "POST", "/turns", body=payload)
 
     if "error" in result:
@@ -560,6 +569,7 @@ def _post_dispatch(
     summary: str | None = None,
     attachments: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
+    allow_long_body: bool = False,
 ) -> dict[str, Any]:
     missing: list[str] = []
     if not slug:
@@ -589,6 +599,7 @@ def _post_dispatch(
         summary=summary,
         attachments=attachments,
         tags=tags,
+        allow_long_body=allow_long_body,
     )
 
 
@@ -604,6 +615,7 @@ def _reply_dispatch(
     mark_read: bool = False,
     close: bool = False,
     attachments: list[dict[str, Any]] | None = None,
+    allow_long_body: bool = False,
 ) -> dict[str, Any]:
     # Coerce integer thread IDs — agents frequently pass bare ints from JSON.
     if isinstance(thread, int):
@@ -645,6 +657,7 @@ def _reply_dispatch(
         mark_read=mark_read,
         close=close,
         attachments=attachments,
+        allow_long_body=allow_long_body,
     )
 
 
@@ -831,6 +844,9 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           Posting an oversized body returns 413. The sidecar pattern is not a
           workaround for the limit — it IS the intended usage model. Brief body
           + durable sidecar file is always preferred over an inline wall of text.
+          Rare exception: pass allow_long_body=true on post/reply only when the
+          recipient needs inline long-form content and a sidecar would break the
+          communication contract.
 
         Operations:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
@@ -838,8 +854,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           fetch_unread  (to?, thread?, mark_read?, compact?)                        — fetch ALL unread turns for a recipient or thread; no count cap; at least one of to/thread required
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored); last caps context-only fetches (default 10)
           get           (thread, turn_number)                           — get one specific turn
-          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.
-          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.
+          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.
+          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
@@ -865,6 +881,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from_agent": "cursor"}')
+          agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true}')
           agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n...", "from_agent": "cursor", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')

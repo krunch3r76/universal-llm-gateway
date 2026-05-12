@@ -182,6 +182,33 @@ request.routed
           └─> request.completed | request.failed | request.timed.out | request.client.disconnected
 ```
 
+### MCP Request Lifecycle
+
+MCP server request events are observation telemetry for `/mcp` HTTP traffic.
+Every request-scoped MCP event includes sanitized caller context from the
+authenticated ASGI scope when available:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_profile` | string | Active MCP profile (`default`, `cursor_safe`, etc.) |
+| `caller_identity` | string | Non-secret principal label: OAuth `client_id`, `cursor`, or configured static-token identity |
+| `oauth_client_id` | string | OAuth client ID when `auth_mode="oauth"` |
+| `client_ip` | string | Socket peer IP |
+| `mcp_method` | string | JSON-RPC method (`tools/call`, `tools/list`, etc.) |
+| `tool_name` | string | MCP tool name for `tools/call` requests |
+| `response_bytes` | integer | Bytes written on the HTTP response body |
+
+| Signal | Required Payload | Description |
+|--------|------------------|-------------|
+| `mcp.request.started` | `method`, `client_ip`, `auth_mode`, `mcp_method` | HTTP request accepted by MCP request middleware |
+| `mcp.request.completed` | `method`, `client_ip`, `duration_s`, `auth_mode`, `response_bytes` | Request returned without raising server-side exception |
+| `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode`, `response_bytes` | Request raised before completion |
+| `mcp.tool.file.read.timeout` | `path`, `extension`, `elapsed_s`, `timeout_s` | Server-side PDF extraction exceeded the fs read budget |
+| `fs.timeout.suspected` | `tool_name`, `duration_s`, `response_bytes`, `client_ip`, `auth_mode`, `mcp_method` | Derived signal for provider-side MCP cutoffs: `tool_name="fs"`, `duration_s >= 25`, and `0 < response_bytes <= 100` |
+
+`recent-failures` includes signals ending in `.failed`, `.error`, `.timeout`,
+and the derived `fs.timeout.suspected` signal.
+
 ### Capacity & Slot Lifecycle
 
 **Purpose**: Tracks physical slot allocation and release on gateways. Distinct from

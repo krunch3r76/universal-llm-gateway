@@ -24,7 +24,12 @@ async def _recent_failures(params: dict[str, Any], store: EventStore) -> dict[st
     if since_ts is None:
         since_ts = await _get_session_start_ts(store)
     where = [
-        "(signal LIKE '%.failed' OR signal LIKE '%.error')",
+        "("
+        "signal LIKE '%.failed' "
+        "OR signal LIKE '%.error' "
+        "OR signal LIKE '%.timeout' "
+        "OR signal = 'fs.timeout.suspected'"
+        ")",
         "role NOT IN ('debug', 'realtime')",
     ]
     query_params: list[Any] = []

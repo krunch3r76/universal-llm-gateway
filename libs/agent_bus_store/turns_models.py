@@ -32,9 +32,38 @@ def _reject_self_addressed(from_agent: str, to: str) -> None:
 
 # Agent-bus convention: turns are short briefings with sidecar markdown
 # references. Full documents belong in notes/system/threads/ and are
-# referenced, not inlined. Enforced at the REST surface — see the
-# RequestValidationError handler in server.py for the structured 413 envelope.
+# referenced, not inlined. A per-request escape hatch exists for rare
+# web-agent communications that require inline long form.
 MAX_TURN_BODY_CHARS = 8_000
+
+
+def body_too_large_envelope(*, limit: int, body_chars: int) -> dict[str, object]:
+    """Structured 413 detail for oversized turn bodies."""
+    return {
+        "reason": "body_too_large",
+        "limit_chars": limit,
+        "body_chars": body_chars,
+        "suggestion": "sidecar_markdown_or_allow_long_body",
+        "message": (
+            f"Turn body exceeds {limit:,} chars. "
+            "Agent-bus convention: short briefing + sidecar markdown reference. "
+            "Write long content to notes/system/threads/<thread>-<subject>.md "
+            "and reference it in a brief body. If inline long-form delivery is "
+            "required for this recipient, retry with allow_long_body=true."
+        ),
+    }
+
+
+def turn_body_limit_error(
+    body: str, *, allow_long_body: bool = False
+) -> dict[str, object] | None:
+    """Return the structured limit error unless this request opts into long form."""
+    if allow_long_body or len(body) <= MAX_TURN_BODY_CHARS:
+        return None
+    return body_too_large_envelope(
+        limit=MAX_TURN_BODY_CHARS,
+        body_chars=len(body),
+    )
 
 # --- Attachment schemas ---
 
@@ -83,7 +112,8 @@ class TurnCreate(BaseModel):
     from_agent: AgentName = Field(alias="from")
     to: AgentName
     subject: str
-    body: str = Field(max_length=MAX_TURN_BODY_CHARS)
+    body: str
+    allow_long_body: bool = False
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     supersedes_turn: int | None = None
@@ -220,7 +250,8 @@ class ThreadWithTurnCreate(BaseModel):
     from_agent: AgentName = Field(alias="from")
     to: AgentName
     subject: str
-    body: str = Field(max_length=MAX_TURN_BODY_CHARS)
+    body: str
+    allow_long_body: bool = False
     status: TurnStatus = TurnStatus.OPEN
     after_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None

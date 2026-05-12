@@ -10,7 +10,6 @@ can include the admission path in telemetry.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import time
@@ -39,6 +38,7 @@ from mcp_events import record
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from tools.clip import normalize_clip_content
+from universal_logging import get_logger
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
 )
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from oauth_service import OAuthService
     from starlette.types import ASGIApp, Receive, Scope, Send
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 PUBLIC_PATHS = frozenset(
     {
@@ -150,6 +150,14 @@ class AuthMiddleware:
         if self._cursor_token and token == self._cursor_token:
             return "cursor_safe"
         return "default"
+
+    def _resolve_static_caller_identity(self, auth_header: str) -> str:
+        """Return a non-secret principal label for static-token callers."""
+        token = self._extract_authorization_token(auth_header)
+        if self._cursor_token and token == self._cursor_token:
+            return "cursor"
+        configured = os.getenv("MCP_STATIC_CALLER_IDENTITY", "").strip()
+        return configured or "static"
 
     def _is_static_token_authorized(self, auth_header: str) -> bool:
         """Return True when auth header matches configured static token(s)."""
@@ -289,13 +297,16 @@ class AuthMiddleware:
         user_agent = request.headers.get("user-agent", "")
 
         if self._is_static_token_authorized(auth_header):
+            caller_identity = self._resolve_static_caller_identity(auth_header)
             scope["auth_mode"] = "static"
             scope["mcp_profile"] = self._resolve_profile(auth_header)
+            scope["mcp_caller_identity"] = caller_identity
             record(
                 "mcp.auth.admitted",
                 client_ip=client_ip,
                 client_port=client_port,
                 auth_mode="static",
+                caller_identity=caller_identity,
                 path=path,
                 user_agent=user_agent,
             )
@@ -311,18 +322,21 @@ class AuthMiddleware:
         if token is not None and self._oauth_service is not None:
             token_record = self._oauth_service.validate_access_token(token)
             if token_record is not None:
+                caller_identity = token_record.client_id
                 record(
                     "mcp.auth.admitted",
                     client_ip=client_ip,
                     client_port=client_port,
                     auth_mode="oauth",
                     oauth_client_id=token_record.client_id,
+                    caller_identity=caller_identity,
                     path=path,
                     user_agent=user_agent,
                 )
                 record("mcp.oauth.token.accepted", client_id=token_record.client_id)
                 scope["auth_mode"] = "oauth"
                 scope["oauth_client_id"] = token_record.client_id
+                scope["mcp_caller_identity"] = caller_identity
                 scope["mcp_profile"] = "default"
                 record(
                     "mcp.profile.bound",

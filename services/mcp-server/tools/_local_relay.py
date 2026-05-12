@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _REQUEST_TIMEOUT = 30.0
 _ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
     ("email-bridge", "POST", "/ingest"): 120.0,
+    ("email-bridge", "POST", "/pull"): 120.0,
 }
 
 _SERVICES: dict[str, dict[str, str]] = {

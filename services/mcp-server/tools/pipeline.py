@@ -452,8 +452,8 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           ``execution_id``, ``status``, ``poll`` URL, ``usage``, and
           ``duration_s`` — receive it, then call ``op="result"`` to fetch
           actual content). Use for long-running pipelines that exceed the
-          MCP 300s client read timeout (Orion-grade reasoning, deep consensus
-          runs, etc.). Poll completion with ``op="result"``.
+          MCP 300s client read timeout (high-effort reasoning models, deep
+          consensus runs, etc.). Poll completion with ``op="result"``.
 
           **Role-based consults — use ``team_dispatch`` instead.** If you
           would dispatch ``pipeline_id="frontier-dispatch"`` for a role-based

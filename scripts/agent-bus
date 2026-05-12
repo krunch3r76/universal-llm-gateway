@@ -12,8 +12,10 @@ Usage:
   agent-bus fetch --thread 049 --unread --context 3 --mark-read
   agent-bus fetch --thread 049 --last 5
   agent-bus post --slug "my-topic" --to web --subject "Title" --body-file /tmp/body.md
+  agent-bus post --slug "my-topic" --to web --subject "Title" --body-file /tmp/body.md --allow-long-body
   agent-bus post --slug "my-topic" --to web --subject "Title" --body "text" --attach /tmp/file.json
   agent-bus reply --thread 049 --to web --subject "done" --body "Phase 1 shipped" --after-turn 3
+  agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3 --allow-long-body
   agent-bus reply --thread 049 --to web --subject "done" --body-file /tmp/reply.md --after-turn 3 --attach /tmp/results.csv
   agent-bus threads
   agent-bus threads --status closed
@@ -216,6 +218,8 @@ def _cmd_post(args: argparse.Namespace, token: str) -> None:
     }
     if args.summary:
         payload["summary"] = args.summary
+    if args.allow_long_body:
+        payload["allow_long_body"] = True
     atts = _resolve_attachments(args.attach)
     if atts:
         payload["attachments"] = atts
@@ -240,6 +244,8 @@ def _cmd_reply(args: argparse.Namespace, token: str) -> None:
         "status": args.status,
         "after_turn": args.after_turn,
     }
+    if args.allow_long_body:
+        payload["allow_long_body"] = True
     atts = _resolve_attachments(args.attach)
     if atts:
         payload["attachments"] = atts
@@ -423,6 +429,14 @@ def _build_parser() -> argparse.ArgumentParser:
     po.add_argument("--summary", help="Thread summary")
     po.add_argument("--from-agent", default="cursor", help="Sender (default: cursor)")
     po.add_argument(
+        "--allow-long-body",
+        action="store_true",
+        help=(
+            "Explicitly bypass the 8k briefing limit for rare inline long-form "
+            "messages; prefer sidecar markdown by default"
+        ),
+    )
+    po.add_argument(
         "--attach",
         action="append",
         metavar="PATH",
@@ -440,6 +454,14 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--from-agent", default="cursor", help="Sender (default: cursor)")
     r.add_argument(
         "--status", default="open", help="Thread status hint (default: open)"
+    )
+    r.add_argument(
+        "--allow-long-body",
+        action="store_true",
+        help=(
+            "Explicitly bypass the 8k briefing limit for rare inline long-form "
+            "messages; prefer sidecar markdown by default"
+        ),
     )
     r.add_argument(
         "--mark-read",

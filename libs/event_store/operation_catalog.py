@@ -24,7 +24,7 @@ def _register(op: OperationDef) -> OperationDef:
 _register(
     OperationDef(
         name="recent-failures",
-        description="Last N failure/error events (default window: since last Stargate restart)",
+        description="Last N failure/error/timeout events (default window: since last Stargate restart)",
         params={"limit": {"type": "int", "default": 20}, "since_ts": {"type": "int"}},
         returns="event rows",
     )
@@ -52,7 +52,10 @@ _register(
     OperationDef(
         name="model-timeline",
         description="Load/execute/unload events for a specific model (default window: since last Stargate restart)",
-        params={"model_id": {"type": "string", "required": True}, "since_ts": {"type": "int"}},
+        params={
+            "model_id": {"type": "string", "required": True},
+            "since_ts": {"type": "int"},
+        },
         returns="event rows",
     )
 )
@@ -61,7 +64,10 @@ _register(
     OperationDef(
         name="request-trace",
         description="All events sharing a request_id",
-        params={"request_id": {"type": "string", "required": True}, "limit": {"type": "int", "default": 200}},
+        params={
+            "request_id": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 200},
+        },
         returns="event rows",
     )
 )
@@ -70,7 +76,10 @@ _register(
     OperationDef(
         name="request-lifecycle",
         description="Full snapshot phases for a request",
-        params={"request_id": {"type": "string", "required": True}, "limit": {"type": "int", "default": 200}},
+        params={
+            "request_id": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 200},
+        },
         returns="snapshot rows",
     )
 )
@@ -88,7 +97,10 @@ _register(
     OperationDef(
         name="pipeline-trace",
         description="Step-by-step trace for a pipeline execution",
-        params={"execution_id": {"type": "string", "required": True}, "limit": {"type": "int", "default": 200}},
+        params={
+            "execution_id": {"type": "string", "required": True},
+            "limit": {"type": "int", "default": 200},
+        },
         returns="compiled trace",
     )
 )
@@ -97,7 +109,10 @@ _register(
     OperationDef(
         name="compare-runs",
         description="Side-by-side metrics for two pipeline executions",
-        params={"run_a": {"type": "string", "required": True}, "run_b": {"type": "string", "required": True}},
+        params={
+            "run_a": {"type": "string", "required": True},
+            "run_b": {"type": "string", "required": True},
+        },
         returns="diff object",
     )
 )
@@ -147,7 +162,10 @@ _register(
     OperationDef(
         name="verify-tool-execution",
         description="Most recent completed or failed event for a given MCP tool signal prefix",
-        params={"signal_prefix": {"type": "string", "required": True}, "since_ts": {"type": "int"}},
+        params={
+            "signal_prefix": {"type": "string", "required": True},
+            "since_ts": {"type": "int"},
+        },
         returns="most recent outcome event (completed/failed) or empty",
     )
 )

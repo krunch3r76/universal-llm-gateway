@@ -19,31 +19,10 @@ from .db import init_db
 from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
-from .turns_models import MAX_TURN_BODY_CHARS
+from .turns_models import MAX_TURN_BODY_CHARS, body_too_large_envelope
 from .watchdog import run_watchdog
 
 logger = logging.getLogger("agent-bus")
-
-
-def _body_too_large_envelope(*, limit: int, body_chars: int) -> dict[str, object]:
-    """Structured 413 detail for oversized turn bodies.
-
-    Lets agents discriminate without parsing the human message —
-    `reason` is the stable error code, `limit_chars`/`body_chars` are the
-    actual numbers, `suggestion` is a stable hint code.
-    """
-    return {
-        "reason": "body_too_large",
-        "limit_chars": limit,
-        "body_chars": body_chars,
-        "suggestion": "sidecar_markdown_or_trim",
-        "message": (
-            f"Turn body exceeds {limit:,} chars. "
-            "Agent-bus convention: short briefing + sidecar markdown reference. "
-            "Write long content to notes/system/threads/<thread>-<subject>.md "
-            "and reference it in a brief body."
-        ),
-    }
 
 
 def create_app(*, db_path: str | None = None) -> FastAPI:
@@ -93,7 +72,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
             return JSONResponse(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 content={
-                    "detail": _body_too_large_envelope(
+                    "detail": body_too_large_envelope(
                         limit=limit, body_chars=body_chars
                     )
                 },

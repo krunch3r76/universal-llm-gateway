@@ -30,6 +30,7 @@ from ..turns_models import (
     TurnStatus,
     TurnStatusUpdate,
     TurnUpdate,
+    turn_body_limit_error,
 )
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -67,6 +68,14 @@ def _turn_from_row(r: dict[str, Any]) -> Turn:
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
     turn.thread = normalize_thread_id(turn.thread)
+    if error_detail := turn_body_limit_error(
+        turn.body,
+        allow_long_body=turn.allow_long_body,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=error_detail,
+        )
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
         turn_id, ts, turn_number = insert_turn(

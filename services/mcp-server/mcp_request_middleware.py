@@ -13,17 +13,19 @@ both log lines and event payloads, enabling per-tool observability.
 from __future__ import annotations
 
 import json
-import logging
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
 from request_profile import bind_request
 from starlette.requests import Request
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+_SUSPECTED_TIMEOUT_MIN_DURATION_S = 25.0
+_SUSPECTED_TIMEOUT_MAX_RESPONSE_BYTES = 100
 
 
 def _extract_jsonrpc_id(body: bytes) -> Any:
@@ -129,6 +131,19 @@ def _extract_request_tool_context(
     return context
 
 
+def _is_suspected_fs_timeout(
+    tool_name: str,
+    duration_s: float,
+    response_bytes: int,
+) -> bool:
+    """Return True for provider-side MCP cutoffs that otherwise look successful."""
+    return (
+        tool_name == "fs"
+        and duration_s >= _SUSPECTED_TIMEOUT_MIN_DURATION_S
+        and 0 < response_bytes <= _SUSPECTED_TIMEOUT_MAX_RESPONSE_BYTES
+    )
+
+
 class McpRequestEventsMiddleware:
     """Emit ``mcp.request.*`` signals only for authenticated ``/mcp`` HTTP traffic."""
 
@@ -149,9 +164,13 @@ class McpRequestEventsMiddleware:
         method = request.method
         auth_mode = str(scope.get("auth_mode", "unknown"))
         profile = str(scope.get("mcp_profile", "default"))
+        caller_identity = str(scope.get("mcp_caller_identity", ""))
+        oauth_client_id = str(scope.get("oauth_client_id", ""))
         t0 = monotonic_now()
         mcp_method = ""
         tool_name = ""
+        tool_args: dict[str, Any] = {}
+        request_tool_context: dict[str, Any] = {}
         jsonrpc_id: Any = None
         correlation_hdr = (
             request.headers.get("x-cloudproxy-correlation-id", "") or ""
@@ -239,6 +258,8 @@ class McpRequestEventsMiddleware:
             tool_name=tool_name or None,
             jsonrpc_id=jsonrpc_id,
             cloudproxy_correlation_id=correlation_hdr or None,
+            caller_identity=caller_identity or None,
+            oauth_client_id=oauth_client_id or None,
             **request_tool_context,
         ):
             try:
@@ -310,6 +331,16 @@ class McpRequestEventsMiddleware:
                 if tool_name:
                     tdone["tool_name"] = tool_name
                 record("mcp.transport.request.completed", **tdone)
+                if _is_suspected_fs_timeout(tool_name, duration, response_bytes):
+                    record(
+                        "fs.timeout.suspected",
+                        tool_name=tool_name,
+                        duration_s=round(duration, 3),
+                        response_bytes=response_bytes,
+                        client_ip=client_ip,
+                        auth_mode=auth_mode,
+                        mcp_method=mcp_method,
+                    )
                 if tool_name:
                     logger.info(
                         "MCP tool done: %s (%.1fs, %dB)",
