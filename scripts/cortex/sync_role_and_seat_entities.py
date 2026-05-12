@@ -72,16 +72,19 @@ def _role_execution_attributes(
     """Execution-contract fields merged into Cortex ``role:`` attributes."""
     inline = derive_inline_only(profile)
     required_tools: list[str] = [] if inline else ["cortex", "fs", "agent_bus"]
-    verification: list[str] = []
+    verification: list[dict[str, str]] = []
     if role_name == "reviewer":
-        verification = ["skill:named-entity-verification-gate"]
-    return {
+        verification = [
+            {"skill": "skill:named-entity-verification-gate", "hook": "admit"}
+        ]
+    attrs: dict[str, object] = {
         "purpose": role.description,
         "required_tools": required_tools,
         "mcp_required": not inline,
         "verification": verification,
         "failure_mode": {
             "on_tool_unavailable": "fail_closed",
+            "on_model_unavailable": "escalate_to_operator",
             "on_uncertainty": "escalate_to_operator",
             "on_contract_violation": "reject_dispatch",
         },
@@ -89,7 +92,12 @@ def _role_execution_attributes(
             "markdown_response",
             "optional_cortex_assertions_with_evidence_uris",
         ],
+        # Explicit nulls clear stale role-level constraints from prior syncs.
+        # Roles are model-agnostic; profile constraints belong to concrete seats.
+        "capability_tier": None,
+        "required_model_substring": None,
     }
+    return attrs
 
 
 def build_role_entities() -> dict[str, dict[str, object]]:

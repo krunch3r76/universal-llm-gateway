@@ -54,7 +54,9 @@ async def test_permissive_persona_accepts_anything(
 
 
 @pytest.mark.asyncio
-async def test_strict_persona_rejects_model(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_explicit_model_override_can_fill_any_role(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
     ) -> HydrationBundle:
@@ -76,9 +78,9 @@ async def test_strict_persona_rejects_model(monkeypatch: pytest.MonkeyPatch) -> 
         role="skeptic",
         model="openai/gpt-5.4",
     )
-    with pytest.raises(FrontierEndpointError) as exc:
-        await build_dispatch_body(req)
-    assert exc.value.field == "model"
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["model"] == "openai/gpt-5.4"
+    assert body["pipeline_options"]["mcp"] is True
 
 
 # test_strict_persona_rejects_tools removed — tools field retired per

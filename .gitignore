@@ -129,6 +129,8 @@ README_REVISED.md
 !notes/system/
 !notes/system/specs/
 !notes/system/specs/*.md
+!notes/system/verifications/
+!notes/system/verifications/*.md
 !notes/system/threads/
 !notes/system/threads/role-schema-migration-seed.md
 

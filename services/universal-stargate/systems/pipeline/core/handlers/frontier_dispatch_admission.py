@@ -3,10 +3,9 @@
 Kept in a sibling module to hold frontier_dispatch.py under the file-size
 ceiling.  Five responsibilities:
 
-1. ``check_agent_model_consistency`` — pre-hydration guard that rejects
-   dispatches where the caller-supplied model's provider conflicts with the
-   agent's identity-bound provider family (e.g. ``agent='orion'`` +
-   ``model='anthropic/claude-sonnet-4-6'``).
+1. ``check_agent_model_consistency`` — pre-hydration guard for concrete
+   family/platform seats. Functional roles are model-agnostic; explicit model
+   overrides may fill any role.
 
 2. ``check_boot_provider_compatibility`` — pre-hydration guard that rejects
    xAI multi-agent model dispatches with ``boot_mode='team'`` and
@@ -31,8 +30,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from agent_seat.profiles import load_roles
 from agent_seat.registry import (
     check_agent_model_requirement,
+    normalize_agent_slug,
     resolve_agent_model_requirement,
     resolve_agent_provider,
     resolve_agent_valid_family,
@@ -80,16 +81,17 @@ def check_agent_model_consistency(
     execution_id: str,
     publish: Callable[[object], None],
 ) -> None:
-    """Reject dispatches where model.provider conflicts with agent family,
-    or where the model fails the agent's variant requirement.
+    """Reject concrete-seat/model conflicts; never provider-lock roles.
 
-    ∀ agent ∈ registry: model.provider MUST equal agent.expected_provider.
-    ∀ agent ∈ _AGENT_MODEL_REQUIREMENTS: model MUST satisfy the variant
-    constraint (e.g. oppie MUST use an xAI multi-agent model).
-    Unknown agents (not in registry) are not checked. Emits
-    ``pipeline.frontier.dispatch.mismatch`` and raises
-    ``AgentModelMismatchError`` on either violation.
+    Functional roles (``reviewer``, ``skeptic``, etc.) are model-agnostic:
+    any model can assume any role when explicitly requested. The default
+    role assignment is only a convention for omitted ``model``. Concrete
+    family/platform seats (for example ``grok-api-multi``) still enforce
+    their provider and variant requirements.
     """
+    if normalize_agent_slug(agent) in load_roles():
+        return
+
     expected = resolve_agent_provider(agent)
     if expected is None:
         return
@@ -135,7 +137,8 @@ def check_agent_model_consistency(
 # client-side MCP function tools at the API level. Non-multi-agent xAI models
 # (e.g. grok-4.3, grok-4.20-reasoning variants) support standard function
 # calling and must NOT be gated. The "multi-agent" substring is the canonical
-# signal — it matches the model_requirement="multi-agent" on the skeptic role/grok-api-multi profile.
+# signal — it matches model_requirement="multi-agent" on the grok-api-multi
+# concrete seat profile.
 _XAI_MULTI_AGENT_SUBSTRING: str = "multi-agent"
 
 

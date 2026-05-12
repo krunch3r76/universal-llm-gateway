@@ -75,10 +75,12 @@ def normalize_agent_slug(slug: str) -> str:
 
 
 def resolve_agent_provider(role_or_seat: str) -> str | None:
-    """Return the expected provider for a role or seat slug, or None if unknown.
+    """Return the default provider for a role or expected provider for a seat.
 
-    role slugs → look up via load_roles, then load_profiles by (family, platform).
-    seat slugs ({family}-{platform}) → look up directly via load_profiles.
+    role slugs → look up their default assignment via load_roles, then
+    load_profiles by (family, platform). This is a default, not a provider lock:
+    explicit model overrides may fill any functional role. Seat slugs
+    ({family}-{platform}) remain concrete provider-bound dispatch targets.
     Normalizes case/variants first.
     """
     canonical = normalize_agent_slug(role_or_seat)
@@ -145,9 +147,11 @@ def resolve_agent_valid_family(role_or_seat: str) -> list[str]:
 
 
 def resolve_agent_model_requirement(role_or_seat: str) -> str | None:
-    """Return the required model-variant substring for a role or seat, or None.
+    """Return the default seat's variant substring for a role or concrete seat.
 
-    Normalizes case/variants first.
+    For roles this is descriptive of the default assignment only; admission
+    enforcement skips functional role slugs because any model may assume any
+    role. Concrete seats still enforce this requirement.
     """
     canonical = normalize_agent_slug(role_or_seat)
     role = load_roles().get(canonical)
@@ -164,13 +168,14 @@ def resolve_agent_model_requirement(role_or_seat: str) -> str | None:
 
 
 def check_agent_model_requirement(role_or_seat: str, model: str) -> str | None:
-    """Return a violation description if model fails the role/seat's variant
+    """Return a violation description if model fails a seat's variant
     requirement, or None if satisfied (or no requirement exists).
 
-    ∀ role/seat ∈ profiles with model_requirement: model MUST contain the
-    required substring. skeptic (grok-api-multi) specifically MUST use an
-    xAI multi-agent variant — non-multi-agent xAI models reject client-side
-    tools at the API level.
+    This helper still resolves role defaults for diagnostics, but admission
+    enforcement skips functional roles. Concrete seats with
+    ``model_requirement`` (currently ``grok-api-multi``) must contain the
+    required substring because non-multi-agent xAI models have different
+    client-side tool behavior.
 
     Normalizes slug first.
     """

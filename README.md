@@ -192,9 +192,10 @@ If you are an agent encountering this repo for the first time:
 
 1. **Boot**: `cortex_boot(agent="your_agent")` — returns session state, life context, continuation, and operational context
 2. **Tool reference**: `docs/tool-reference.md` — all MCP tool signatures, sandbox routing, dispatch catalog
-3. **Cortex orientation**: `.cursor/rules/cortex-orientation.mdc` — access patterns, confidence taxonomy, agent responsibilities
-4. **Feature registry**: `docs/cursor/cortex-registry.md` — belief revision primitives and operational extensions, classification guide
-5. **Boot sequence**: `notes/system/shared/boot-sequence.md` (cortex sandbox) — boot flow and on-demand modules
+3. **Cursor orientation**: `.cursor/commands/cortex-boot.md` — loads the Cortex/agent-bus/team-collaboration rule stack before calling `cortex_boot`
+4. **Cortex skills**: `agent_skill` entities surfaced by boot; read full skill docs from `agent-skills/<NAME>.md` in the Cortex sandbox
+5. **Feature registry**: `docs/cursor/cortex-registry.md` — belief revision primitives and operational extensions, classification guide
+6. **Boot sequence**: `notes/system/shared/boot-sequence.md` (cortex sandbox) — boot flow and on-demand modules
 
 ## Project Structure
 

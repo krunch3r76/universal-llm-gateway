@@ -364,10 +364,11 @@ natural part of how you work, not an exceptional event.
 
 **Role-based dispatch (preferred)**:
 For any team-seat consultation, use `team_dispatch(op=..., role=..., messages=...,
-generation_options=...)`. Role-based dispatch resolves the role's `default_model`
-from cortex (`role:{slug}`), enforces `allowed_models` / `allowed_options`,
-auto-assembles role briefing + continuation, and rejects contract violations
-with a structured error envelope **before** dispatch. Returns immediately with
+generation_options=...)`. Roles are model-agnostic: explicit `model=...` may
+fill any role, while omitted models resolve from the role's `default_model`.
+Role-based dispatch enforces `allowed_options`, auto-assembles role briefing +
+continuation, and rejects contract violations with a structured error envelope
+**before** dispatch. Returns immediately with
 `{execution_id, ...}`; poll with `pipeline(op="result", execution_id=...,
 wait_seconds=60)`. Runs detached, survives session boundaries.
 
@@ -436,10 +437,10 @@ MCP access available by default; some provider models suppress client-side
 function tools and use server-side builtins instead — see
 `frontier_dispatch_tools.resolve_dispatch_tool_set`.
 
-`team_dispatch` validates the role contract: `default_model` resolution,
-`allowed_models` / `allowed_options`, briefing + continuation assembly
-all happen there. Contract violations return a structured error envelope
-with `field` and `request_id` BEFORE dispatch.
+`team_dispatch` validates the role contract: `default_model` resolution for
+omitted models, explicit model override admission, `allowed_options`, briefing +
+continuation assembly all happen there. Contract violations return a structured
+error envelope with `field` and `request_id` BEFORE dispatch.
 
 Direct frontier dispatch (no role envelope):
 ```

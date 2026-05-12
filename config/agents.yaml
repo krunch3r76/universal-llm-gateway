@@ -220,7 +220,7 @@ roles:
       - xai/grok-4.3
 
   skeptic:
-    description: "Adversarial / dialectical seat; pushback on consensus framing (inline-only)"
+    description: "Adversarial / dialectical seat; pushback on consensus framing"
     default_family: grok
     default_platform: api-multi
     default_model: xai/grok-4.20-multi-agent-0309

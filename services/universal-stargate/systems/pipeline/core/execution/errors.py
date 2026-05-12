@@ -319,9 +319,11 @@ class UnknownPipelineOptionsError(PipelineError):
 
 @dataclass
 class AgentModelMismatchError(PipelineError):
-    """Raised when the caller-supplied model's provider conflicts with the
-    agent's identity-bound provider family, or when the model fails the
-    agent's variant requirement (e.g. oppie requires a multi-agent xAI model).
+    """Raised when a concrete seat conflicts with the caller-supplied model.
+
+    Functional roles are model-agnostic. This error is for concrete
+    family/platform seats whose provider or variant constraint cannot be
+    satisfied (for example ``grok-api-multi`` with a non-multi-agent model).
 
     Replaces the bare ``ValueError`` that ``check_agent_model_consistency``
     used to raise so ``_normalize_pipeline_exception`` can extract a
@@ -346,9 +348,9 @@ class AgentModelMismatchError(PipelineError):
                 f"Non-conforming models may reject client-side tools at the API level."
             )
         return (
-            f"Agent {self.agent!r} expects provider {self.expected_provider!r}; "
+            f"Seat {self.agent!r} expects provider {self.expected_provider!r}; "
             f"model {self.model!r} resolves to {self.provider!r}. "
-            f"Use a {self.expected_provider!r} model for {self.agent!r} dispatches."
+            f"Use a {self.expected_provider!r} model for this seat."
         )
 
     def to_dict(self) -> dict:

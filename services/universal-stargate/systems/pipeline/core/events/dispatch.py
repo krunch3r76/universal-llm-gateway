@@ -772,9 +772,9 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
     Two structurally distinct failure modes share this signal, distinguished
     by ``mismatch_kind``:
 
-    - ``"provider"``: model's provider does not match the agent's
-      identity-bound provider family (e.g. oppie + anthropic model).
-      Suggests a typo or wrong model family.
+    - ``"provider"``: model's provider does not match a concrete
+      family/platform seat (e.g. ``grok-api-multi`` + anthropic model).
+      Functional roles are model-agnostic and do not emit this mismatch.
     - ``"variant"``: provider matches but the model fails the agent's
       variant requirement (e.g. oppie + non-multi-agent xAI model).
       Suggests a stale model pin or missing beta-gate access.
@@ -784,7 +784,7 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
 
     Payload:
         execution_id:  Pipeline execution UUID
-        agent:         Agent slug that was specified (``orion``, ``oppie``, etc.)
+        agent:         Seat slug that was specified (for example ``grok-api-multi``)
         requested_model: Model string the caller supplied
         valid_family:  Allowed model identifiers for this agent
         mismatch_kind: ``"provider"`` | ``"variant"``
@@ -864,7 +864,7 @@ def PipelineFrontierDispatchToolSuppressed(  # noqa: N802
     """Emitted when agent-tier demotion forces the tool surface to empty.
 
     Primary trigger: ``capability_tier == "inline-only"`` on the dispatched
-    agent's Cortex entity (``ai_agent:{slug}.attributes.capability_tier``).
+    role's Cortex entity (``role:{slug}.attributes.capability_tier``).
     This gate is orthogonal to the provider-derived xAI multi-agent suppression,
     which coerces ``tools=[]`` silently without emitting this event.
 

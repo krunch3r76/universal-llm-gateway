@@ -61,12 +61,56 @@ def test_r2_voice_embodiment_in_description_rejects() -> None:
     assert any(v.field_path == "description" for v in violations)
 
 
+def test_r2_speak_as_operator_behalf_passes() -> None:
+    """A non-persona ``speak as`` use is not enough to reject a payload."""
+    payload = {
+        "id": "role:relay",
+        "name": "Relay",
+        "attributes": {
+            "purpose": (
+                "Relays operator-approved statements that may speak as the "
+                "operator on the operator's behalf."
+            ),
+        },
+    }
+    warnings = lint_role_payload(payload)
+    assert warnings == []
+
+
+def test_r2_speak_as_voice_rejects() -> None:
+    """Persona-shaped ``speak as`` phrases remain rejected."""
+    payload = {
+        "id": "role:advocate",
+        "name": "Advocate",
+        "attributes": {
+            "purpose": "This role must speak as the voice of the user's conscience.",
+        },
+    }
+    with pytest.raises(RoleLintError) as excinfo:
+        lint_role_payload(payload)
+    violations = excinfo.value.violations
+    assert any(v.rule_class == "R2" for v in violations)
+
+
 def test_r3_first_person_identity_rejects() -> None:
     """Positive case T4 — 'I am the conscience of' triggers R3."""
     payload = {
         "id": "role:music-maker",
         "name": "Music Maker",
         "attributes": {"purpose": "I am the conscience of the team."},
+    }
+    with pytest.raises(RoleLintError) as excinfo:
+        lint_role_payload(payload)
+    violations = excinfo.value.violations
+    assert any(v.rule_class == "R3" for v in violations)
+
+
+def test_r3_retired_mind_metaphor_rejects() -> None:
+    """Retired Web Claude / Cursor Claude descriptions used ``the mind that``."""
+    payload = {
+        "id": "role:advisor",
+        "name": "Advisor",
+        "description": "Strategic advisor in the team — the mind that keeps the whole picture.",
     }
     with pytest.raises(RoleLintError) as excinfo:
         lint_role_payload(payload)

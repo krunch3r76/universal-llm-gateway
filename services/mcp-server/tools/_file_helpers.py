@@ -14,15 +14,38 @@ FILES_ROOT = Path("/data/files")
 # Extensions whose content is binary and must not be decoded as UTF-8 text.
 # When binary=False is requested for one of these, read_file_result auto-routes
 # to binary mode and sets auto_binary=True in the result so callers can detect it.
-BINARY_EXTENSIONS: frozenset[str] = frozenset({
-    # Images
-    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
-    ".tiff", ".tif", ".heic", ".heif",
-    # Video / audio
-    ".mp3", ".mp4", ".mov", ".avi", ".mkv",
-    # Archives
-    ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".whl",
-})
+BINARY_EXTENSIONS: frozenset[str] = frozenset(
+    {
+        # Images
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".heic",
+        ".heif",
+        # Video / audio
+        ".mp3",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".mkv",
+        # Archives
+        ".zip",
+        ".tar",
+        ".gz",
+        ".tgz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".whl",
+    }
+)
+
 
 def _is_binary_by_magic(path: Path) -> bool:
     """Return True when magic bytes identify *path* as a binary format.
@@ -64,10 +87,34 @@ def _read_odt(path: Path) -> str:
 
 
 def _read_pdf(path: Path) -> str:
-    """Reads the content of a PDF file and returns it as markdown."""
+    """Reads the content of a PDF file and returns it as markdown.
+
+    pymupdf4llm ≥ 1.27 enables OCR by default via `use_ocr=True`, causing
+    indefinite hangs on scanned/image-only PDFs.  Pass `use_ocr=False` to keep
+    extraction fast; absorbed as **kwargs in older versions (≤ 0.3.x) so the
+    call is safe across versions.  Fall back to direct fitz plain-text
+    extraction when pymupdf4llm returns an empty result (e.g. when the layout
+    engine produces no output for certain PDF structures).
+    """
     import pymupdf4llm  # type: ignore[import-untyped]
 
-    return pymupdf4llm.to_markdown(str(path))
+    text = pymupdf4llm.to_markdown(str(path), use_ocr=False)
+
+    # pymupdf4llm >= 1.27 with layout engine can produce only markdown-syntax
+    # scaffolding (e.g. "## \n\n## \n\n") with no alphanumeric content — not
+    # detected as empty by .strip() alone.  Count alnum chars as the signal.
+    if sum(1 for c in text if c.isalnum()) >= 50:
+        return text
+
+    # Fallback: direct fitz extraction for PDFs where pymupdf4llm returns empty.
+    import pymupdf  # type: ignore[import-untyped]
+
+    doc = pymupdf.open(str(path))
+    try:
+        pages = [page.get_text("text") for page in doc]
+    finally:
+        doc.close()
+    return "\n\n".join(pages)
 
 
 def _read_html(path: Path) -> str:
@@ -239,10 +286,12 @@ def read_file_result(
 
     # Auto-route binary files — returning binary-as-text corrupts MCP wire payloads.
     # Fast path: known extension (zero I/O). Fallback: magic-byte probe (261 bytes).
+    # ∀ converted formats (PDF, DOCX, …): skip magic probe — dedicated readers exist
+    # and filetype would wrongly route them to base64, losing text extraction.
     if suffix in BINARY_EXTENSIONS:
         auto_result = build_binary_read_result(src)
         auto_result["auto_binary"] = True
-    elif _is_binary_by_magic(src):
+    elif suffix not in _FORMAT_READERS and _is_binary_by_magic(src):
         record("mcp.fs.binary.detect.magic.match", path=str(src))
         auto_result = build_binary_read_result(src)
         auto_result["auto_binary"] = True
@@ -254,7 +303,7 @@ def read_file_result(
             auto_result["_next"] = (
                 f'For text extraction: dispatch(tool="document_ocr", '
                 f'arguments=\'{{"path": "{path}"}}\').'
-                f" For visual inspection: view_image(path=\"{path}\")."
+                f' For visual inspection: view_image(path="{path}").'
             )
         return auto_result
     content = extract_text_content(src)
@@ -277,11 +326,11 @@ def read_file_result(
             rel_path = str(Path(path))
             result["_next"] = (
                 f"This PDF has no text layer (scanned or image-only). "
-                f"Use dispatch(tool=\"document_ocr\", "
-                f"arguments='{{\"path\": \"{rel_path}\"}}') "
+                f'Use dispatch(tool="document_ocr", '
+                f'arguments=\'{{"path": "{rel_path}"}}\') '
                 f"for vision-based OCR, or "
-                f"dispatch(tool=\"ingest_document\", "
-                f"arguments='{{\"path\": \"{rel_path}\"}}') "
+                f'dispatch(tool="ingest_document", '
+                f'arguments=\'{{"path": "{rel_path}"}}\') '
                 f"to OCR and persist as a reusable markdown sidecar."
             )
     return result

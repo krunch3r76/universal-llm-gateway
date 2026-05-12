@@ -174,11 +174,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         ``role`` selects a functional team seat from the roster (Phase 7 of the
         agent-naming cleanup arc). Available roles: lead, reviewer, gatherer,
-        synthesizer, artisan, skeptic, investigator. Each role carries a default
-        (family, platform, model) and optional allowed_models / model_requirement
-        via the ``role:{slug}`` Cortex entity. Legacy persona names are accepted
-        via the alias table (oppie → skeptic, forge → artisan, orion → gatherer,
-        bard → synthesizer, api_claude → reviewer).
+        synthesizer, artisan, skeptic, investigator. Roles are model-agnostic:
+        any explicit model may assume any role. Each role carries only a default
+        (family, platform, model) used when ``model`` is omitted. Legacy persona
+        names are accepted via the alias table (oppie → skeptic, forge →
+        artisan, orion → gatherer, bard → synthesizer, api_claude → reviewer).
 
         Two ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
@@ -189,13 +189,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           is required. ``subject`` is optional (auto-derived from last message
           if absent).
 
-        Tool surface (no caller knob — derived from role's default CapabilityProfile):
-        - ``skeptic`` (grok-api-multi) — **no MCP tool access** (inline-only).
-          xAI multi-agent rejects client-side function tools; substrate must
-          be inlined into ``messages``.
-        - ``artisan`` (grok-api) — supports tool calling via xAI Responses API.
-        - All other roles (reviewer, gatherer, synthesizer, etc.) — full MCP
-          catalog via the in-process tool loop / remote-MCP.
+        Tool surface (no caller knob — derived from the effective model):
+        - xAI multi-agent models — no client-side MCP tools.
+        - Anthropic models — remote MCP when enabled by the dispatcher.
+        - Other MCP-capable providers — in-process tool loop.
 
         Callers that need explicit no-role one-shot dispatch should use
         ``frontier_dispatch(mcp=False, ...)``.

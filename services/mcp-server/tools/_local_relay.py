@@ -17,6 +17,9 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 logger = logging.getLogger(__name__)
 
 _REQUEST_TIMEOUT = 30.0
+_ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
+    ("email-bridge", "POST", "/ingest"): 120.0,
+}
 
 _SERVICES: dict[str, dict[str, str]] = {
     "journal-bridge": {
@@ -34,6 +37,11 @@ _SERVICES: dict[str, dict[str, str]] = {
         "url": f"unix://{os.environ.get('EMAIL_BRIDGE_SOCK', '/tmp/universal-protocol/email-bridge.sock')}",
     },
 }
+
+
+def _resolve_timeout(service: str, method: str, path: str) -> float:
+    """Return the client budget for a local relay route."""
+    return _ROUTE_TIMEOUTS.get((service, method.upper(), path), _REQUEST_TIMEOUT)
 
 
 def relay(
@@ -65,6 +73,7 @@ def relay(
         }
 
     service_url = svc_config["url"]
+    request_timeout = _resolve_timeout(service, method, path)
 
     token_env = svc_config.get("token_env", "")
     bearer = token or (os.environ.get(token_env, "") if token_env else "")
@@ -85,6 +94,7 @@ def relay(
             "path": path,
             "error": error,
             "duration_s": round(duration, 3),
+            "timeout_s": request_timeout,
             **({"status": status} if status is not None else {}),
             **({"detail": detail} if detail else {}),
         }
@@ -96,10 +106,11 @@ def relay(
         service=service,
         method=method,
         path=path,
+        timeout_s=request_timeout,
     )
 
     try:
-        with make_sync_client(service_url, timeout=_REQUEST_TIMEOUT) as client:
+        with make_sync_client(service_url, timeout=request_timeout) as client:
             response = client.request(
                 method,
                 path,
@@ -162,6 +173,7 @@ def relay(
                 path=path,
                 status=response.status_code,
                 duration_s=round(duration, 3),
+                timeout_s=request_timeout,
             )
             return parsed
 

@@ -1,6 +1,7 @@
 # Role entity — self-concept lint (R1–R4)
 
 **Normative source**: [`libs/role_lint/__init__.py`](../../../libs/role_lint/__init__.py)
+**Observed vocabulary**: [role-lint-wordlist.md](./role-lint-wordlist.md)
 
 ## Purpose
 
@@ -22,8 +23,8 @@ Rejects identity-coded prose on `role:{slug}` Cortex entities so execution contr
 ## Rule classes
 
 - **R1** — second-person identity assertion (`you are`, `your role is`, …).
-- **R2** — voice / embodiment construction (`speak as`, `embodies the perspective of`, …).
-- **R3** — metaphor-as-identity (`I am the`, `The aperture —`, …).
+- **R2** — voice / embodiment construction (`speak as the voice`, `embodies the perspective of`, `identity-bound`, …).
+- **R3** — metaphor-as-identity (`I am the`, `The aperture —`, `the mind that`, …).
 - **R4** — weak collective signal (`our team`, …) — **warning** only; does not fail `lint_role_payload`.
 
 ## Enforcement points
@@ -34,3 +35,7 @@ Rejects identity-coded prose on `role:{slug}` Cortex entities so execution contr
 ## Tests
 
 [`libs/role_lint/test_role_lint.py`](../../../libs/role_lint/test_role_lint.py)
+
+## Preflight receipt
+
+`notes/system/verifications/role-lint-preflight-2026-05-12.md` records the first retired-corpus preflight after the web-seat review on `agent-bus:953`.

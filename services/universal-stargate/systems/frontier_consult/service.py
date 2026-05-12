@@ -152,8 +152,11 @@ def _enforce_model(
     agent: str | None,
     model: str,
     meta: AgentMeta,
+    explicit_model: bool,
     event_publisher: EventPublisher | None,
 ) -> None:
+    if explicit_model:
+        return
     if not meta.allowed_models:
         return
     if model in meta.allowed_models:
@@ -270,6 +273,7 @@ async def build_dispatch_body(
         agent=req.role,
         model=effective_model,
         meta=meta,
+        explicit_model=req.model is not None,
         event_publisher=event_publisher,
     )
     if _is_chat_completions_only(effective_model):
@@ -312,15 +316,13 @@ async def build_dispatch_body(
         meta=meta,
         event_publisher=event_publisher,
     )
-    # Tools field retired from the public dispatch surface. Tool surface is now
-    # contract-derived per dispatch surface:
-    # - team_dispatch (req.role is set, no caller mcp knob): xAI roles
-    #   (role:oppie, role:forge) get mcp=False — multi-agent variants reject
-    #   client-side function tools at the API layer; non-multi-agent xAI
-    #   reasoning models are inline-substrate by team-seat contract. All other
-    #   team roles (role:orion, role:bard, role:api-claude) get mcp=True.
-    # - frontier_dispatch (no req.role): caller's mcp knob is honored;
-    #   defaults to False at the wire (one-shot reasoning).
+    # Tools field retired from the public dispatch surface. For team_dispatch,
+    # tool availability is derived from the effective model, not from the role:
+    # roles are model-agnostic and any model may assume any role. xAI models get
+    # mcp=False because multi-agent variants reject client-side tools; other
+    # providers use the tool loop / remote MCP path.
+    # frontier_dispatch (no req.role) honors the caller's mcp knob and defaults
+    # to False at the wire (one-shot reasoning).
     if req.role is not None:
         mcp_enabled = not effective_model.startswith("xai/")
     else:

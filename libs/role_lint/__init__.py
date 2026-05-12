@@ -46,14 +46,16 @@ _R1_SECOND_PERSON: tuple[str, ...] = (
 # R2: voice / embodiment construction — canonical persona-prompt vocabulary.
 _R2_VOICE_EMBODIMENT: tuple[str, ...] = (
     r"\bspeak with the voice of\b",
-    r"\bspeak as\b",
+    r"\bspeak as (?:the|a) (?:voice|perspective|conscience|persona|"
+    r"skeptic|reviewer|advocate)\b",
     r"\bembod(?:y|ies|ied|ying) (?:the perspective|the voice|the stance) of\b",
     r"\bthink like\b",
     r"\binhabit(?:s|ed|ing)? (?:the|a) (?:perspective|persona|stance|register)\b",
     r"\bchannel\b.{0,30}\b(perspective|voice|register)\b",
+    r"\bidentity[- ]bound\b",
 )
 
-# R3: metaphor-as-identity — the bard "the aperture / music makers" pattern.
+# R3: metaphor-as-identity — observed in retired ai_agent:/prompt:*-birth corpus.
 # Two regex variants per archetype: with "of" (legitimate hit) and bare
 # article+archetype (catches the em-dash form "The aperture — ...").
 _R3_METAPHOR_IDENTITY: tuple[str, ...] = (
@@ -61,6 +63,7 @@ _R3_METAPHOR_IDENTITY: tuple[str, ...] = (
     r"\bthe (aperture|conscience|critic|maker|guardian|keeper|"
     r"shepherd|architect|skeptic) of\b",
     r"\b[Tt]he (aperture|conscience)\b(?!\s+of\s+\w)",
+    r"\bthe mind (?:that|whose)\b",
     r"\bone of the (music makers|stewards|keepers|architects|voices)\b",
     r"\bmy (perspective|voice|stance|register|nature) is\b",
 )

@@ -204,7 +204,7 @@ async def resolve_dispatch_tool_set(
                 continuation_id=bundle.continuation_id,
             )
         )
-        # Agent-tier suppression: ai_agent:{slug}.attributes.capability_tier
+        # Role-tier suppression: role:{slug}.attributes.capability_tier
         # may be set to "inline-only" to revoke the tool surface for an agent
         # regardless of provider/model. Orthogonal to the provider-derived
         # xai-multi-agent suppression below — that gate is keyed on the model

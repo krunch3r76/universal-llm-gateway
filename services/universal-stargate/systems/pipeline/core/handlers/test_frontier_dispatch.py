@@ -789,8 +789,27 @@ def test_reject_unknown_runtime_options_passes_on_accepted_keys(
     handler._reject_unknown_runtime_options(step, context)
 
 
-def test_check_agent_model_consistency_rejects_mismatch() -> None:
-    """agent/model provider mismatch raises AgentModelMismatchError."""
+def test_check_agent_model_consistency_allows_role_provider_override() -> None:
+    """Functional roles are model-agnostic; explicit models may cross providers."""
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        check_agent_model_consistency,
+    )
+
+    published: list[Any] = []
+
+    check_agent_model_consistency(
+        agent="reviewer",
+        model="openai/gpt-5.5",
+        provider="openai",
+        execution_id="exec-test-0001",
+        publish=published.append,
+    )
+
+    assert published == []
+
+
+def test_check_agent_model_consistency_rejects_concrete_seat_mismatch() -> None:
+    """Concrete family/platform seats remain provider-bound."""
     from systems.pipeline.core.execution.errors import AgentModelMismatchError
     from systems.pipeline.core.handlers.frontier_dispatch_admission import (
         check_agent_model_consistency,
@@ -800,7 +819,7 @@ def test_check_agent_model_consistency_rejects_mismatch() -> None:
 
     with pytest.raises(AgentModelMismatchError) as exc_info:
         check_agent_model_consistency(
-            agent="skeptic",
+            agent="grok-api-multi",
             model="anthropic/claude-sonnet-4-6",
             provider="anthropic",
             execution_id="exec-test-0001",
@@ -808,14 +827,14 @@ def test_check_agent_model_consistency_rejects_mismatch() -> None:
         )
 
     err = exc_info.value
-    assert err.agent == "skeptic"
+    assert err.agent == "grok-api-multi"
     assert err.provider == "anthropic"
     assert err.expected_provider == "xai"
     assert err.required_variant is None
     assert err.to_dict()["code"] == "agent_model_mismatch"
     assert len(published) == 1
     assert published[0].signal == "pipeline.frontier.dispatch.mismatch"
-    assert published[0].payload["agent"] == "skeptic"
+    assert published[0].payload["agent"] == "grok-api-multi"
     assert published[0].payload["requested_model"] == "anthropic/claude-sonnet-4-6"
     assert published[0].payload["mismatch_kind"] == "provider"
 
@@ -839,8 +858,31 @@ def test_check_agent_model_consistency_accepts_valid_family() -> None:
     assert published == []
 
 
-def test_check_agent_model_consistency_rejects_non_multi_agent_for_skeptic() -> None:
-    """Skeptic with a non-multi-agent xAI model raises AgentModelMismatchError."""
+def test_check_agent_model_consistency_allows_non_multi_agent_for_skeptic_role() -> (
+    None
+):
+    """Skeptic is a functional role; multi-agent is only the default seat."""
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        check_agent_model_consistency,
+    )
+
+    published: list[Any] = []
+
+    check_agent_model_consistency(
+        agent="skeptic",
+        model="anthropic/claude-sonnet-4-6",
+        provider="anthropic",
+        execution_id="exec-test-0002",
+        publish=published.append,
+    )
+
+    assert published == []
+
+
+def test_check_agent_model_consistency_rejects_non_multi_agent_for_concrete_seat() -> (
+    None
+):
+    """grok-api-multi still requires a multi-agent xAI model."""
     from systems.pipeline.core.execution.errors import AgentModelMismatchError
     from systems.pipeline.core.handlers.frontier_dispatch_admission import (
         check_agent_model_consistency,
@@ -850,7 +892,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_skeptic() -> 
 
     with pytest.raises(AgentModelMismatchError) as exc_info:
         check_agent_model_consistency(
-            agent="skeptic",
+            agent="grok-api-multi",
             model="xai/grok-4-fast-reasoning",
             provider="xai",
             execution_id="exec-test-0002",
@@ -858,7 +900,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_skeptic() -> 
         )
 
     err = exc_info.value
-    assert err.agent == "skeptic"
+    assert err.agent == "grok-api-multi"
     assert err.model == "xai/grok-4-fast-reasoning"
     assert err.expected_provider == "xai"
     assert err.required_variant == "multi-agent"
@@ -1007,7 +1049,7 @@ async def test_skeptic_injects_xai_builtin_tools_by_default(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Skeptic with no caller provider_options gets all three built-in tools injected."""
+    """Skeptic gets all three built-in tools when options are omitted."""
     captured = _make_skeptic_fixtures(monkeypatch)
 
     await handler.execute(_FakeStep(), _make_skeptic_context())

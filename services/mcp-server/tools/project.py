@@ -352,13 +352,14 @@ def register_project_tools(mcp: FastMCP) -> None:
 
         result = read_file_result(path, root=_PROJECT_ROOT, binary=binary)
         result["path"] = path
-        if binary:
+        auto_binary = bool(result.get("auto_binary"))
+        if binary or auto_binary:
             logger.info(
-                "read_project_file: %s (%d bytes, binary)", path, result["bytes"]
+                "read_project_file: %s (%d bytes, binary)", path, result.get("bytes", 0)
             )
         else:
             logger.info(
-                "read_project_file: %s (%d chars)", path, len(result["content"])
+                "read_project_file: %s (%d chars)", path, len(result.get("content", ""))
             )
         return result
 
