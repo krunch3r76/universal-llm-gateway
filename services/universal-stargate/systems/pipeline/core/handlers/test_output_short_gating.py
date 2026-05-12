@@ -74,7 +74,7 @@ def test_d6_output_short_suppressed_for_to_thread() -> None:
     hints = emit_post_loop_observability(
         context=context,
         publish=_null_publish,
-        agent="orion",
+        agent="gatherer",
         boot_level="team",
         model="openai/gpt-5.4",
         result=result,
@@ -95,7 +95,7 @@ def test_d6_suppression_holds_for_zero_tokens() -> None:
     hints = emit_post_loop_observability(
         context=context,
         publish=_null_publish,
-        agent="orion",
+        agent="gatherer",
         boot_level="team",
         model="openai/gpt-5.4",
         result=result,
@@ -131,7 +131,7 @@ def test_d7_output_short_fires_for_generate_short_content() -> None:
     hints = emit_post_loop_observability(
         context=context,
         publish=_capture_publish,
-        agent="orion",
+        agent="gatherer",
         boot_level="team",
         model="openai/gpt-5.4",
         result=result,

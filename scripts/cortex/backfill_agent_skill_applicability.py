@@ -55,7 +55,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:lawyer-stance",
         "agent_skill:legal-opinion-corpus-ingestion",
         "agent_skill:markdown-navigation",
-        "agent_skill:orion-feedback-discipline",
+        "agent_skill:gatherer-plan-discipline",
         "agent_skill:pre-deploy-gate-discipline",
         "agent_skill:session-close-audit",
         "agent_skill:thirdparty-api-mirror",
@@ -80,7 +80,7 @@ PARTITION: dict[str, list[str]] = {
 # Multi-agent assignments. Wins over the bucket-derived value above. Use this
 # for any skill whose applicability isn't a single agent or universal — e.g.
 # `["web", "cursor"]` for legal corpus tooling that cursor occasionally pulls
-# but orion/forge don't need.
+# but gatherer/artisan don't need.
 OVERRIDES: dict[str, list[str]] = {
     # "agent_skill:legal-opinion-corpus-ingestion": ["web", "cursor"],
     "agent_skill:xai-mcp-calling-shape": ["web-grok", "superheavy"],

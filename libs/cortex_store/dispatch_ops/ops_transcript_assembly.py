@@ -103,7 +103,8 @@ def _op_assemble_transcript(
         agent: agent slug for the H1 line (cosmetic; session_close validates the
             session_id pattern, not this field)
         assistant_label: heading label for assistant blocks; defaults to
-            "Assistant". Pass e.g. "(Cursor) Claude" to match persona sign-off.
+            "Assistant". Pass e.g. "Assistant" or the agent's display name
+            for the transcript heading.
 
     Returns:
         {"transcript_md": str, "turn_count": int, "byte_count": int}

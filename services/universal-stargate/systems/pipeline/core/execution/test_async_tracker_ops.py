@@ -14,12 +14,12 @@ async def test_register_records_caller_agent() -> None:
         execution_id="e1",
         pipeline="frontier-dispatch",
         started_at="2026-04-19T00:00:00Z",
-        caller_agent="orion",
+        caller_agent="gatherer",
     )
-    assert record.caller_agent == "orion"
+    assert record.caller_agent == "gatherer"
     tracked = tracker.get("e1")
     assert tracked is not None
-    assert tracked.caller_agent == "orion"
+    assert tracked.caller_agent == "gatherer"
 
 
 def test_tracker_stats_shape() -> None:

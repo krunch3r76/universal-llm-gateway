@@ -63,7 +63,7 @@ def test_m1_team_generate_returns_404() -> None:
 
     resp = client.post(
         "/api/v1/team/generate",
-        json={"role": "orion", "messages": [{"role": "user", "content": "x"}]},
+        json={"role": "gatherer", "messages": [{"role": "user", "content": "x"}]},
     )
     assert resp.status_code == 404, (
         f"Expected 404 for retired /team/generate, got {resp.status_code}"

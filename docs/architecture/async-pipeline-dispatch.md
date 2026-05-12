@@ -308,7 +308,7 @@ Pipeline caller shape:
   "pipeline_id": "frontier-dispatch",
   "pipeline_options": {
     "model": "openai/gpt-5.4",
-    "agent": "orion",
+    "agent": "gatherer",
     "max_tool_turns": 10,
     "generation_parameters": {"reasoning_effort": "high"}
   },
@@ -324,7 +324,7 @@ MCP callers typically reach this via `team_generate` for persona consults or
 
 ```python
 team_generate(
-    agent="orion",
+    agent="gatherer",
     messages=[{"role": "user", "content": "..."}],
     reasoning_effort="high",
     caller_agent="cursor",
@@ -336,7 +336,7 @@ team_generate(
 
 | Mode | Trigger | Behavior |
 |---|---|---|
-| Team-seat | `pipeline_options.agent ∈ {orion, oppie, bard, api_claude}` | Cortex hydration + birth prompt + curated team toolset (`cortex`, `rag`, `agent_bus`) injected for the call when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
+| Team-seat | `pipeline_options.agent ∈ {gatherer, skeptic, synthesizer, reviewer}` | Cortex hydration + birth prompt + curated team toolset (`cortex`, `rag`, `agent_bus`) injected for the call when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
 | Persona-free | `pipeline_options.agent` omitted | Raw native call. No hydration event. Optional read toolset (`cortex`, `rag`) via `pipeline_options.mcp` (default `true`). |
 
 Provider selection is derived from the model id prefix: `openai/*` → OpenAI
@@ -387,12 +387,6 @@ Event signals emitted per dispatch (all `scope: node`):
 All five carry `provider`; the four non-hydrated signals carry
 `agent: str | None` so persona-free dispatches remain attributable.
 
-### Identity source
-
-Persona mode references `agent-identity/{agent}-birth.md` in the Cortex
-data layer (mounted to `$AGENT_IDENTITY_DIR`). Birth prompts remain the
-single source of truth, shared across host and container processes.
-
 ### YAML layout
 
 ```
@@ -402,8 +396,8 @@ pipelines.local/
 ```
 
 Pipelines are auto-discovered at Stargate startup. `prompts.yaml` is not
-needed: the handler loads birth prompts from the identity directory
-directly when persona mode is active.
+needed: the handler builds its system prompt from the caller-supplied
+`agent` field directly.
 
 ### Shared library surface
 

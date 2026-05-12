@@ -135,7 +135,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         Prefer over whole-file context/cortex/workspaces for long structured docs.
         Use workspaces sandbox for tmp/ files (debrief log, phase docs, handoff docs).
 
-        PDF, DOCX, ODT, and EML files are auto-converted to markdown for
+        PDF, DOCX, ODT, EML, and HTML files are auto-converted to markdown for
         read ops (list_sections, read_section, to_dict). Write ops
         (replace/append/delete/from_dict) are text-only — converted formats
         are rejected.

@@ -10,9 +10,10 @@ API ``type: "mcp"``) bypass this entirely — the provider connects back to
 the MCP server and runs its own tool loop.
 
 System-prompt boot directive: when the first system message matches
-``cortex_boot(agent="<name>")``, the executor pre-calls the tool and
-replaces the system message with the briefing card so the model starts
-with full operational context rather than an opaque instruction.
+``cortex_boot(family="<family>", platform="<platform>")``, the executor
+pre-calls the tool and replaces the system message with the briefing
+card so the model starts with full operational context rather than an
+opaque instruction.
 """
 
 from __future__ import annotations
@@ -225,11 +226,12 @@ class McpToolExecutor:
     async def _resolve_boot_directive(self, messages: list[dict[str, Any]]) -> None:
         """Pre-execute ``cortex_boot(agent="...")`` if it appears in the system prompt.
 
-        When OpenWebUI (or any client) includes ``cortex_boot(agent="oppie")``
-        in the system message, the model can't reliably interpret it as a tool
-        call instruction.  Instead we execute it server-side and replace the
+        When OpenWebUI (or any client) includes
+        ``cortex_boot(family="grok", platform="api-multi")`` in the system
+        message, the model can't reliably interpret it as a tool call
+        instruction.  Instead we execute it server-side and replace the
         directive with the briefing card inline, preserving any surrounding
-        system prompt content (e.g. a birth/seed prompt).
+        system prompt content.
         """
         if not messages:
             return

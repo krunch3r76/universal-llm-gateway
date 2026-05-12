@@ -37,6 +37,7 @@ def _fn(
         "function": {"name": name, "description": desc, "parameters": schema},
     }
 
+
 CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
     "cortex",
     "Cortex knowledge system — unified dispatch tool for the full Cortex "

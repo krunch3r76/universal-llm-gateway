@@ -36,7 +36,7 @@ async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None
         {
             "/session-journals": [
                 {
-                    "agent": "orion",
+                    "agent": "gatherer",
                     "summary": "last session was productive",
                     "timestamp": "2026-04-19T12:00:00Z",
                     "open_items": ["verify X", "ship Y"],
@@ -62,14 +62,14 @@ async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(_hyd, "_cortex_get", cortex_fake)
     monkeypatch.setattr(_hyd, "_bus_get", bus_fake)
 
-    bundle = await hydrate_agent("orion")
+    bundle = await hydrate_agent("gatherer")
     assert isinstance(bundle, HydrationBundle)
     assert bundle.continuation_id is None
     assert bundle.continuation_md is None
 
     # Briefing card contains key sections.
     card = bundle.briefing_card_md
-    assert "Boot Briefing — orion" in card
+    assert "Boot Briefing — gatherer" in card
     assert "Deadlines" in card and "Filing" in card
     assert "Agent Bus" in card
     assert "Review Queue" in card
@@ -96,9 +96,9 @@ async def test_hydrate_agent_tolerates_endpoint_errors(
     monkeypatch.setattr(_hyd, "_cortex_get", error_everywhere)
     monkeypatch.setattr(_hyd, "_bus_get", error_everywhere)
 
-    bundle = await hydrate_agent("oppie")
+    bundle = await hydrate_agent("skeptic")
     # Briefing still renders, just with empty sections.
-    assert "Boot Briefing — oppie" in bundle.briefing_card_md
+    assert "Boot Briefing — skeptic" in bundle.briefing_card_md
     assert bundle.section_counts["todos"] == 0
     assert bundle.section_counts["deadlines"] == 0
 

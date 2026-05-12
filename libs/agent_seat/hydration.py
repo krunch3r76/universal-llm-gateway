@@ -16,10 +16,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urlencode
-from zoneinfo import ZoneInfo
 
 from transport_utils import (
     DEFAULT_AGENT_BUS_URL,
@@ -27,98 +25,71 @@ from transport_utils import (
     make_async_client,
 )
 
+from ._hydration_render import (
+    PROFILES as _PROFILES,
+)
+from ._hydration_render import (
+    _as_optional_str_list,
+    _as_str_list,
+    _render_briefing,
+    _safe_list,
+)
+from .profiles import family_anchor, get_role, load_roles, role_anchor
 from .registry import normalize_agent_slug
-
-_LA = ZoneInfo("America/Los_Angeles")
 
 logger = logging.getLogger(__name__)
 
 _FETCH_TIMEOUT = 20.0
 
-# Boot profiles for dispatched-agent hydration. Mirrors _BOOT_PROFILES in
-# cortex_named_tools.py but scoped to what the dispatched-agent briefing needs
-# (no cursor-specific knobs).
-#
-# ``default`` — full briefing for full-context dispatches
-# ``light``   — lightweight briefing for team_dispatch / frontier_dispatch(agent=...)
-#               soft boot. Drops deadlines + review-queue fetches (latency win
-#               beyond token reduction — the include_* gates in hydrate_agent
-#               below short-circuit the fetches entirely, not just rendering).
-#               self_reflections_limit kept at 3 as a floor — they encode the
-#               persona's "how I work as me" memory and drive consult quality
-#               more than any other section. Do not strip below 3.
-_DEFAULT_PROFILE: dict[str, Any] = {
-    "include_deadlines": True,
-    "include_review_queue": True,
-    "session_limit": 3,
-    "self_reflections_limit": 5,
-}
 
-_LIGHT_PROFILE: dict[str, Any] = {
-    "include_deadlines": False,
-    "include_review_queue": False,
-    "session_limit": 1,
-    "self_reflections_limit": 3,
-}
+def _normalize_slug_to_anchors(
+    agent_or_role: str, role: str | None = None
+) -> list[str]:
+    """Return ordered list of Cortex memory anchor entity IDs for a hydration request.
 
-_PROFILES: dict[str, dict[str, Any]] = {
-    "default": _DEFAULT_PROFILE,
-    "light": _LIGHT_PROFILE,
-}
+    Always loads the family anchor; optionally loads the role anchor if a role
+    is explicitly supplied or the slug itself is a role name.
 
-_KNOWN_CAPABILITY_TIERS: frozenset[str] = frozenset({"inline-only"})
-
-_SELF_ENTITY: dict[str, str] = {
-    "oppie": "role:oppie",
-    "orion": "role:orion",
-    "web": "role:web-claude",
-    "bard": "role:bard",
-    "api_claude": "role:api-claude",
-    "cursor": "role:cursor-claude",
-    "forge": "role:forge",
-    "cursor_orion": "role:cursor_orion",
-    # cursor_grok intentionally absent — registry alias chain routes
-    # cursor_forge → forge → role:forge. Legacy cursor_grok dispatches
-    # fail at the build_dispatch_body admission gate (no default_model in
-    # _AGENT_DEFAULTS), so they never reach hydration.
-}
-
-
-def _normalize_slug_to_entity(agent: str) -> str:
-    """Map runtime agent slug → cortex ``role:{...}`` entity id.
-
-    Phase 5 of the agent-naming cleanup arc moved dispatch-target metadata from
-    ``ai_agent:{slug}`` (persona+contract conflated) to ``role:{slug}``
-    (execution contract only; persona prose lives in the birth-prompt file
-    referenced by ``persona_seed_ref``). The hydration path resolves to the
-    role entity for both dispatch metadata fetches and self-reflection lookups.
-
-    Uses registry.normalize_agent_slug (case-insensitive, supports Oppie/Oppia,
-    cursor_orion, cursor_grok, forge, etc.) before lookup in _SELF_ENTITY.
-    Falls back to ``role:{canonical}`` for unknown slugs.
+    Returns: [family_anchor(family)] + optional [role_anchor(role)]
     """
-    canonical = normalize_agent_slug(agent)
-    return _SELF_ENTITY.get(canonical, f"role:{canonical}")
+    canonical = normalize_agent_slug(agent_or_role)
+    anchors: list[str] = []
+
+    if canonical in load_roles():
+        # Caller passed a role slug directly (team_dispatch path)
+        role_profile = get_role(canonical)
+        anchors.append(family_anchor(role_profile.default_family))
+        anchors.append(role_anchor(canonical))
+        return anchors
+
+    # Caller passed a seat slug ({family}-{platform})
+    parts = canonical.split("-", 1)
+    if len(parts) == 2 and parts[0] in {"claude", "gpt", "grok", "gemini"}:
+        anchors.append(family_anchor(parts[0]))
+    elif parts[0] in {"claude", "gpt", "grok", "gemini"}:
+        # Single-word family slug (shouldn't normally occur, but handle gracefully)
+        anchors.append(family_anchor(parts[0]))
+    else:
+        # Unknown slug — fall back to family:claude for the cursor seat default
+        anchors.append(family_anchor("claude"))
+
+    if role is not None:
+        anchors.append(role_anchor(role))
+    return anchors
 
 
 @dataclass(slots=True)
 class AgentMeta:
-    """Execution contract loaded from ``role:{slug}.attributes``.
+    """Execution contract loaded from Cortex family-anchor entity attributes.
 
-    Phase 5 migrated this from ``ai_agent:{slug}.attributes`` — see
-    ``notes/system/specs/role-schema.md`` for the full role: schema. The
-    dataclass kept its historical name (``AgentMeta``) to limit blast radius;
-    semantically it is the role's execution contract.
+    Carries the dispatch-time overrides that a Cortex operator can set on a
+    per-family basis: default model, allowed models, capability tier, and
+    optional role restrictions.
 
-    Tools field retired (todo:retire-tools-allowlist-as-caller-concern); tool
-    surface is provider-derived and universal. No per-persona allowlist.
-
-    ``capability_tier`` is a separate, agent-level dispatch-surface gate. When
-    set to ``"inline-only"`` the dispatch handler coerces the tool surface to
-    empty regardless of provider/model — used to demote agents to
-    inline-substrate-only operation (no MCP, no client tools, no Cortex
-    quickref). Reinstatement is a single entity-attribute update, no code
-    change.
+    ``capability_tier`` is an agent-level dispatch-surface gate. When set to
+    ``"inline-only"`` the dispatch handler coerces the tool surface to empty
+    regardless of provider/model — no MCP, no client tools, no Cortex quickref.
+    Reinstatement is a single entity-attribute update, no code change.
     """
 
     frontier_kind: str | None = None
@@ -185,32 +156,6 @@ async def _bus_get(path: str) -> Any:
         return {"error": f"agent-bus {path} invalid JSON"}
 
 
-def _safe_list(raw: Any, key: str = "items") -> list[Any]:
-    """Extract a list from an API response; returns [] on error or wrong shape."""
-    if isinstance(raw, list):
-        return raw
-    if isinstance(raw, dict):
-        if "error" in raw:
-            return []
-        val = raw.get(key, [])
-        return val if isinstance(val, list) else []
-    return []
-
-
-def _as_str_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in value if isinstance(item, str)]
-
-
-def _as_optional_str_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if not isinstance(value, list):
-        return None
-    return [str(item) for item in value if isinstance(item, str)]
-
-
 def _parse_agent_meta(entity: Any) -> AgentMeta:
     if not isinstance(entity, dict):
         return AgentMeta()
@@ -220,14 +165,10 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
     frontier_kind_raw = attributes.get("frontier_kind")
     default_model_raw = attributes.get("default_model")
     capability_tier_raw = attributes.get("capability_tier")
-    if (
-        capability_tier_raw is not None
-        and str(capability_tier_raw) not in _KNOWN_CAPABILITY_TIERS
-    ):
+    if capability_tier_raw is not None and str(capability_tier_raw) != "inline-only":
         logger.warning(
-            "agent_seat: unrecognized capability_tier %r — treating as None (known: %s)",
+            "agent_seat: unrecognized capability_tier %r — treating as None",
             capability_tier_raw,
-            sorted(_KNOWN_CAPABILITY_TIERS),
         )
         capability_tier_raw = None
     return AgentMeta(
@@ -246,12 +187,13 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
 
 
 async def _fetch_agent_meta(agent: str) -> AgentMeta:
-    """Fetch and parse the persona attributes for *agent* from cortex.
+    """Fetch and parse execution-contract attributes for *agent* from Cortex.
 
-    Returns a default ``AgentMeta()`` on any fetch or parse error so the
-    caller is never blocked by a missing or malformed entity.
+    Reads the primary family anchor entity (family:{family}). Falls back to
+    AgentMeta() on any fetch or parse error so the caller is never blocked.
     """
-    entity_id = _normalize_slug_to_entity(agent)
+    anchors = _normalize_slug_to_anchors(agent)
+    entity_id = anchors[0] if anchors else "family:claude"
     raw = await _cortex_get(f"/entities/{quote(entity_id, safe=':')}")
     return _parse_agent_meta(raw)
 
@@ -287,107 +229,6 @@ async def _resolve_continuation(
         f"**Summary**: {summary}\n" if summary else ""
     )
     return md, entity_key
-
-
-def _render_briefing(
-    agent: str,
-    *,
-    sessions: list[dict[str, Any]],
-    deadlines: list[dict[str, Any]],
-    todos: list[dict[str, Any]],
-    unread_count: int,
-    unread_threads: list[dict[str, Any]],
-    self_reflections: list[dict[str, Any]],
-    review_total: int,
-    skills: list[dict[str, Any]],
-    inline_only: bool = False,
-) -> str:
-    """Render the compact briefing card for the dispatched agent.
-
-    Intentionally simpler than MCP's ``render_briefing_card`` — the pipeline
-    handler does not need the full MCP UI affordances (manifest hints,
-    fetch-hint code snippets) because the agent has the team toolset wired
-    directly. Keeps hydration self-contained.
-    """
-    today = datetime.now(UTC).astimezone(_LA)
-    parts: list[str] = [
-        f"# Boot Briefing — {agent} — {today.strftime('%Y-%m-%dT%H:%M:%S%z')}",
-    ]
-
-    if skills:
-        if inline_only:
-            # No tool loop — suppress the fs(...) read instruction so the model
-            # is not given a false affordance. Skills are listed by name only;
-            # trigger descriptors still help the persona decide what it would
-            # ask the dispatching agent to fetch.
-            parts.append(
-                "\n## Agent Skills "
-                "(reference only — no tool loop this invocation; "
-                "request the body from the dispatching agent if needed)",
-            )
-        else:
-            parts.append(
-                "\n## Agent Skills "
-                "(read on trigger match — "
-                "`fs(sandbox='cortex', op='read', "
-                "path='agent-skills/<NAME>.md')`)",
-            )
-        for s in skills:
-            slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
-            trigger = (s.get("description") or "").strip()
-            parts.append(f"- **{slug}** — {trigger}")
-
-    if deadlines:
-        parts.append(f"\n## Deadlines ({len(deadlines)})")
-        for d in deadlines[:10]:
-            dl = d.get("deadline_date", "?")
-            name = d.get("deadline_name", "?")
-            matter = d.get("matter_name", "")
-            parts.append(f"- **{dl}** — {name}" + (f" ({matter})" if matter else ""))
-
-    if unread_count > 0:
-        slugs = ", ".join(t.get("slug", t.get("id", "?")) for t in unread_threads[:10])
-        parts.append(f"\n## Agent Bus — {unread_count} unread")
-        if slugs:
-            parts.append(f"Threads with unread: {slugs}")
-
-    if review_total > 0:
-        parts.append(f"\n## Review Queue — {review_total} item(s)")
-
-    if sessions:
-        last = sessions[0]
-        parts.append(
-            f"\n## Last Session — {last.get('agent', '?')} "
-            f"({last.get('timestamp', '?')})",
-        )
-        summary = (last.get("summary") or "")[:300]
-        if summary:
-            parts.append(summary)
-        open_items = last.get("open_items") or []
-        if isinstance(open_items, list) and open_items:
-            parts.append(f"**Open items** ({len(open_items)}):")
-            for item in open_items[:5]:
-                parts.append(f"- {item}")
-            if len(open_items) > 5:
-                parts.append(f"- ...{len(open_items) - 5} more")
-
-    if todos:
-        parts.append(f"\n## Todos — {len(todos)} open")
-        for t in todos[:10]:
-            tid = t.get("id", "?")
-            priority = t.get("priority", "")
-            p_tag = f" [{priority}]" if priority else ""
-            title = t.get("title") or t.get("name", "")
-            parts.append(f"- `{tid}`{p_tag} {title}")
-
-    if self_reflections:
-        parts.append(f"\n## Your Notes ({len(self_reflections)})")
-        for a in self_reflections[:5]:
-            claim = (a.get("claim") or "")[:200]
-            if claim:
-                parts.append(f"- {claim}")
-
-    return "\n".join(parts)
 
 
 async def hydrate_agent(
@@ -436,11 +277,15 @@ async def hydrate_agent(
             _cortex_get("/staging?status=pending&limit=5"),
         )
 
-    self_entity = _SELF_ENTITY.get(normalized_agent)
-    if self_entity:
+    memory_anchors = _normalize_slug_to_anchors(normalized_agent)
+    if memory_anchors:
+        # Fetch self-reflections from the primary anchor (family anchor).
+        # Multiple anchors (e.g. family + role) are fetched sequentially in
+        # _render_briefing via the merged result; here we fetch the first
+        # (family) anchor which carries the most persistent self-knowledge.
         refl_qs = urlencode(
             {
-                "entity_id": self_entity,
+                "entity_id": memory_anchors[0],
                 "superseded": "false",
                 "limit": profile_dict["self_reflections_limit"],
             },
@@ -475,13 +320,12 @@ async def hydrate_agent(
         t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0
     ]
 
-    from .prompts import derive_inline_only
-
     effective_model = model if model is not None else agent_meta.default_model
-    inline_only = derive_inline_only(
-        capability_tier=agent_meta.capability_tier,
-        frontier_kind=agent_meta.frontier_kind,
-        model=effective_model,
+    # Inline-only gate: capability_tier override OR xAI multi-agent (rejects client-side tools)
+    inline_only = agent_meta.capability_tier == "inline-only" or (
+        agent_meta.frontier_kind == "xai"
+        and effective_model is not None
+        and "multi-agent" in effective_model
     )
 
     briefing = _render_briefing(

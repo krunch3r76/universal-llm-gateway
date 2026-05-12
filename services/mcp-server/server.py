@@ -367,8 +367,8 @@ def _build_server() -> FastMCP:
           write_binary   (path, content)                  — write base64-encoded binary (cortex sandbox only)
 
         Markdown section ops (for large docs):
-          md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML via auto-converted markdown)
-          md_read    (path, section)           — read one section (also works on PDF/DOCX/ODT/EML via auto-converted markdown)
+          md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)
+          md_read    (path, section)           — read one section (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)
           md_replace (path, section, content)  — replace section (text files only)
           md_append  (path, section, content)  — append to section (text files only)
           md_delete  (path, section)           — delete section (text files only)

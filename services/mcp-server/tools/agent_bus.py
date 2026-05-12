@@ -572,8 +572,8 @@ def _post_dispatch(
         missing.append("body (str)")
     if not from_agent:
         missing.append(
-            "from_agent (str, REQUIRED — no default; name the persona authoring "
-            'this turn, e.g. "cursor", "claude-web", "forge", "orion")'
+            "from_agent (str, REQUIRED — no default; name the seat authoring "
+            'this turn, e.g. "cursor", "claude-web", "gpt-cursor", "claude-api")'
         )
     if missing:
         return {
@@ -626,8 +626,8 @@ def _reply_dispatch(
         missing.append("after_turn (int >= 0; 0 skips the unread-concurrency check)")
     if not from_agent:
         missing.append(
-            "from_agent (str, REQUIRED — no default; name the persona authoring "
-            'this turn, e.g. "cursor", "claude-web", "forge", "orion")'
+            "from_agent (str, REQUIRED — no default; name the seat authoring "
+            'this turn, e.g. "cursor", "claude-web", "gpt-cursor", "claude-api")'
         )
     if missing:
         return {
@@ -819,14 +819,27 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         tool: operation name (see table below)
         arguments: JSON-encoded object string (e.g. '{"thread": "111"}')
 
+        Body convention — SIDECAR-DRIVEN (read before posting):
+          Turn bodies MUST be short briefings (target < 2 KB; server enforces a
+          hard char limit). Long content — reviews, specs, analysis, handoffs —
+          goes in a sidecar markdown file written BEFORE the post/reply call:
+            fs(sandbox="workspaces", op="write",
+               path="notes/system/threads/<thread>-<subject>.md",
+               content="...")
+          The turn body then references it concisely:
+            "Review complete. Full findings: notes/system/threads/949-review.md"
+          Posting an oversized body returns 413. The sidecar pattern is not a
+          workaround for the limit — it IS the intended usage model. Brief body
+          + durable sidecar file is always preferred over an inline wall of text.
+
         Operations:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
           fetch_unread  (to?, thread?, mark_read?, compact?)                        — fetch ALL unread turns for a recipient or thread; no count cap; at least one of to/thread required
           fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored); last caps context-only fetches (default 10)
           get           (thread, turn_number)                           — get one specific turn
-          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the persona authoring the turn (e.g. "cursor", "claude-web", "forge", "orion"); there is no default.
-          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the persona authoring the turn; there is no default.
+          post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.
+          reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?) — reply to a thread; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)

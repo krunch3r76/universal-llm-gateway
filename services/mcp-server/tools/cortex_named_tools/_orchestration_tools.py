@@ -13,13 +13,31 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_KNOWN_FAMILIES = frozenset({"claude", "gpt", "grok", "gemini"})
+
+
+def _parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
+    """Parse a '{family}-{platform}' slug into (family, platform).
+
+    Returns (None, None) when the slug doesn't match a known family prefix.
+    Used only by boot_inspect's diff_with parameter.
+    """
+    if not slug:
+        return None, None
+    parts = slug.split("-", 1)
+    if len(parts) == 2 and parts[0] in _KNOWN_FAMILIES:
+        return parts[0], parts[1]
+    return None, None
+
 
 def register_orchestration_tools(mcp: FastMCP) -> None:
     """Register boot and session-close tools on *mcp*."""
 
     @mcp.tool(title="Cortex Boot")
     def cortex_boot(
-        agent: str = "cursor",
+        family: str | None = None,
+        platform: str | None = None,
+        role: str | None = None,
         transcript_id: str = "",
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
@@ -38,7 +56,13 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
-          agent         — agent profile: cursor, web, api, api_claude, oppie, orion, subagent (default: "cursor")
+          family        — model family: claude / gpt / grok / gemini (default: claude)
+          platform      — platform surface: cursor / api / web (default: cursor)
+          role          — optional functional team seat: lead / reviewer / gatherer /
+                          synthesizer / artisan / skeptic / investigator.
+                          Role does NOT change the seat slug — it annotates the session
+                          and scopes the role memory anchor. The session_id is always
+                          {family}-{platform}-YYYY-MM-DD-HHMM regardless of role.
           transcript_id — if provided, loads continuation context for that transcript.
                           The transcript entity must already exist in Cortex, which means
                           the session it references must have already closed. When a
@@ -54,11 +78,18 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           sections_available     — manifest of deeper-pull sections with fetch hints
           operational_context_ref — path to operational context file (read on demand)
         """
-        return run_cortex_boot(agent=agent, transcript_id=transcript_id)
+        return run_cortex_boot(
+            family=family,
+            platform=platform,
+            role=role,
+            transcript_id=transcript_id,
+        )
 
     @mcp.tool(title="Boot Inspect")
     def boot_inspect(
-        agent: str = "cursor",
+        family: str | None = None,
+        platform: str | None = None,
+        role: str | None = None,
         transcript_id: str = "",
         diff_with: str = "",
     ) -> dict[str, Any]:
@@ -70,20 +101,27 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         profile diffs without mutating boot state.
 
         Args:
-          agent         — primary agent profile to inspect
+          family        — model family: claude / gpt / grok / gemini
+          platform      — platform surface: cursor / api / web
+          role          — optional functional team seat
           transcript_id — optional continuation transcript context for primary
-          diff_with     — optional secondary agent profile to diff against
+          diff_with     — optional secondary seat slug ({family}-{platform}, e.g.
+                          "claude-web", "grok-api") to diff against primary
         """
         primary = run_cortex_boot(
-            agent=agent,
+            family=family,
+            platform=platform,
+            role=role,
             transcript_id=transcript_id,
             mode=BootMode.INSPECT,
         )
         if not diff_with:
             return primary
 
+        diff_family, diff_platform = _parse_seat_slug(diff_with)
         secondary = run_cortex_boot(
-            agent=diff_with,
+            family=diff_family,
+            platform=diff_platform,
             transcript_id="",
             mode=BootMode.INSPECT,
         )

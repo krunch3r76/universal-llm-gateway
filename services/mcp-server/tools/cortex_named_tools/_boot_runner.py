@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from agent_seat.profiles import get_profile, resolve_seat
 from mcp_events import record
 
 from .._boot_helpers import render_briefing_card, render_operational_context
 from ._boot_audit_dump import write_audit_dump
 from ._boot_data_fetch import _build_futures_spec, _extract_boot_results
 from ._boot_manifest import FetchRecorder, InjectedArtifact, serialize_manifest
-from ._boot_profiles import _BOOT_PROFILES
 from ._boot_summarize import _build_review_top, _build_unread_threads
 from ._boot_transcript import _resolve_transcript
 
@@ -104,17 +104,32 @@ def _build_artifacts(
 
 
 def run_cortex_boot(
-    agent: str = "cursor",
+    family: str | None = None,
+    platform: str | None = None,
+    role: str | None = None,
     transcript_id: str = "",
     mode: BootMode = BootMode.LIVE,
 ) -> dict[str, Any]:
-    """Build a persona-scoped Cortex boot briefing for internal callers and MCP.
+    """Build a Cortex boot briefing for internal callers and MCP.
+
+    Args:
+        family       — model family: claude / gpt / grok / gemini (default: claude)
+        platform     — platform surface: cursor / api / web (default: cursor)
+        role         — optional functional team seat: lead / reviewer / gatherer /
+                       synthesizer / artisan / skeptic / investigator
+        transcript_id — if provided, loads continuation context for that transcript
+        mode         — LIVE (default) writes op-context to disk; INSPECT is side-effect-free
 
     Returns a slim briefing card (~5-10KB) with a section manifest pointing to
-    existing MCP tools for deeper pulls. Heavy data (full sessions, assertions,
-    gated entities, legal contacts, file contents) is NOT inlined — agents pull
-    on demand via the manifest hints.
+    existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
     """
+    # Resolve (family, platform); defaults to (claude, cursor) when both are None.
+    resolved_family, resolved_platform = resolve_seat(family=family, platform=platform)
+    profile = get_profile(resolved_family, resolved_platform)
+
+    # Seat slug for session IDs, op_ctx paths, and events — new {family}-{platform} format.
+    seat_slug = f"{resolved_family}-{resolved_platform}"
+
     transcript_continuation = _resolve_transcript(transcript_id)
     _tc_warning: str | None = None
     if transcript_continuation and "error" in transcript_continuation:
@@ -132,14 +147,33 @@ def run_cortex_boot(
 
     t_boot = datetime.now(UTC)
     session_id = (
-        f"{agent}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
+        f"{seat_slug}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
         if mode == BootMode.LIVE
-        else f"inspect-{agent}-{t_boot.strftime('%Y-%m-%d-%H%M%S')}"
+        else f"inspect-{seat_slug}-{t_boot.strftime('%Y-%m-%d-%H%M%S')}"
     )
-    profile = _BOOT_PROFILES.get(agent, _BOOT_PROFILES["cursor"])
+    # Build a profile dict compatible with _build_futures_spec / _extract_boot_results.
+    # These helpers still expect a dict with specific keys; map from CapabilityProfile.
+    profile_dict: dict[str, Any] = {
+        "include_deadlines": profile.include_deadlines,
+        "include_review_queue": profile.include_review_queue,
+        "session_limit": profile.session_limit,
+        "self_reflections_limit": profile.self_reflections_limit,
+        "session_agent_filter": None,
+    }
+    # Family anchor replaces the old self_entity_id (persona role entity).
+    # The boot data fetch uses this to scope self-reflection assertions.
+    from agent_seat.profiles import family_anchor, role_anchor
+
+    self_entity_id = family_anchor(resolved_family)
+    if role is not None:
+        # When a role is supplied, also scope reflections to the role anchor.
+        # For now we use the family anchor as primary; role anchor is available
+        # for future expansion. Record both in the profile dict.
+        profile_dict["role_entity_id"] = role_anchor(role)
+    profile_dict["self_entity_id"] = self_entity_id
 
     recorder = FetchRecorder()
-    futures_spec = _build_futures_spec(agent, profile, recorder)
+    futures_spec = _build_futures_spec(seat_slug, profile_dict, recorder)
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
         future_to_key = {f: k for k, f in submitted.items()}
@@ -147,11 +181,18 @@ def run_cortex_boot(
         for future in as_completed(submitted.values()):
             raw[future_to_key[future]] = future.result()
 
-    extracted = _extract_boot_results(agent, raw, profile)
+    extracted = _extract_boot_results(seat_slug, raw, profile_dict)
 
-    op_ctx_path = f"notes/system/shared/operational-context-{agent}.md"
+    op_ctx_path = f"notes/system/shared/operational-context-{seat_slug}.md"
+    if role is not None:
+        op_ctx_path = (
+            f"notes/system/shared/operational-context-{seat_slug}-role-{role}.md"
+        )
     ops_context = render_operational_context(
-        agent=agent,
+        agent=seat_slug,
+        family=resolved_family,
+        platform=resolved_platform,
+        role=role,
         unread_count=len(extracted["unread_turns"]),
         review_total=extracted["review_total"],
     )
@@ -159,7 +200,7 @@ def run_cortex_boot(
     if mode == BootMode.LIVE:
         try:
             _OPS_CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
-            (_OPS_CONTEXT_DIR / f"operational-context-{agent}.md").write_text(
+            (_OPS_CONTEXT_DIR / f"operational-context-{seat_slug}.md").write_text(
                 ops_context
             )
             op_ctx_written = True
@@ -184,7 +225,7 @@ def run_cortex_boot(
 
     card, manifest = render_briefing_card(
         deadlines=extracted["deadlines"]
-        if profile.get("include_deadlines", True)
+        if profile_dict.get("include_deadlines", True)
         else None,
         unread_count=len(extracted["unread_turns"]),
         unread_threads=unread_threads,
@@ -207,7 +248,7 @@ def run_cortex_boot(
         # not the briefing renders it.
         expired_unresolved=None,
         transcript_continuation=tc_summary,
-        reflective_entries=extracted["rj_entries"] or None,
+        reflective_entries=extracted["rj_entries"],
         reflective_total=extracted["rj_total"],
         recent_mentions=extracted["recent_mentions"] or None,
         skills=extracted["skills"] or None,
@@ -217,7 +258,7 @@ def run_cortex_boot(
     )
 
     artifacts = _build_artifacts(
-        agent=agent,
+        agent=seat_slug,
         card=card,
         ops_context=ops_context,
         manifest=manifest,
@@ -230,7 +271,7 @@ def run_cortex_boot(
     if mode == BootMode.LIVE:
         audit_dump_path = write_audit_dump(
             session_id=session_id,
-            agent=agent,
+            agent=seat_slug,
             boot_time=t_boot,
             card=card,
             ops_context=ops_context,
@@ -239,15 +280,15 @@ def run_cortex_boot(
         )
 
         logger.info(
-            "cortex_boot: agent=%s card_size=%d manifest_sections=%d",
-            agent,
+            "cortex_boot: seat=%s card_size=%d manifest_sections=%d",
+            seat_slug,
             len(card),
             len(manifest),
         )
-        record("mcp.cortex.boot", agent=agent)
+        record("mcp.cortex.boot", agent=seat_slug)
         record(
             "mcp.cortex.boot.manifest.assembled",
-            agent=agent,
+            agent=seat_slug,
             artifact_count=len(artifacts),
             total_bytes=sum(a.bytes for a in artifacts if a.bytes >= 0),
         )
@@ -259,12 +300,6 @@ def run_cortex_boot(
         "local_time": t_boot.astimezone(_LA).strftime("%Y-%m-%dT%H:%M:%S%z"),
         "briefing_card": card,
         "sections_available": manifest,
-        # Inline emission is retired — the operational_context artifact
-        # ships ~22 KB of mostly-static protocol prose that LIVE mode
-        # already writes to disk. INSPECT callers `fs read` the path
-        # directly, identical to LIVE callers. Field preserved (None) so
-        # legacy consumers don't NPE on missing key.
-        "operational_context_inline": None,
         # Path is now the contract for both modes. LIVE writes the file;
         # INSPECT reads what LIVE wrote (or accepts a 404 if no LIVE boot
         # for this agent has run yet — acceptable degradation, the content

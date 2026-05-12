@@ -47,7 +47,7 @@ def _make_record(**overrides: Any) -> PipelineExecutionRecord:
         "error": None,
         "result_delivery": {
             "bus_thread": "626",
-            "bus_from_agent": "orion",
+            "bus_from_agent": "gatherer",
             "bus_to_agent": "cursor",
             "bus_subject": "dispatch done",
         },
@@ -128,7 +128,7 @@ def test_envelope_is_brief_pointer() -> None:
         ),
         result_delivery={
             "bus_thread": "626",
-            "bus_from_agent": "orion",
+            "bus_from_agent": "gatherer",
             "bus_to_agent": "cursor",
         },
     )
@@ -188,7 +188,7 @@ async def test_ephemeral_closes_thread_on_2xx(monkeypatch: pytest.MonkeyPatch) -
     record = _make_record(
         result_delivery={
             "bus_thread": "626",
-            "bus_from_agent": "orion",
+            "bus_from_agent": "gatherer",
             "bus_to_agent": "cursor",
             "bus_subject": "done",
             "bus_lifecycle": "ephemeral",
@@ -222,7 +222,7 @@ async def test_ephemeral_skips_close_on_delivery_failure(
     record = _make_record(
         result_delivery={
             "bus_thread": "626",
-            "bus_from_agent": "orion",
+            "bus_from_agent": "gatherer",
             "bus_to_agent": "cursor",
             "bus_lifecycle": "ephemeral",
         }
@@ -254,7 +254,7 @@ async def test_ephemeral_close_failure_emits_close_failed_event(
     record = _make_record(
         result_delivery={
             "bus_thread": "626",
-            "bus_from_agent": "orion",
+            "bus_from_agent": "gatherer",
             "bus_to_agent": "cursor",
             "bus_lifecycle": "ephemeral",
         }

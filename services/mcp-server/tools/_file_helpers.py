@@ -70,6 +70,27 @@ def _read_pdf(path: Path) -> str:
     return pymupdf4llm.to_markdown(str(path))
 
 
+def _read_html(path: Path) -> str:
+    """Convert an HTML file to markdown prose using html2text.
+
+    Preserves structural text while stripping tags. Does not synthesize
+    headings from class-based markup (e.g. <strong class='heading-2'>) —
+    the full body is emitted as a single prose preamble which md_read can
+    access via section="" (preamble). body_width=0 disables line-wrapping.
+    """
+    import html2text
+
+    h = html2text.HTML2Text()
+    h.body_width = 0
+    h.ignore_images = True
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        return h.handle(raw)
+    except Exception as exc:
+        record("mcp.fs.html.parse.failed", path=str(path), error=str(exc))
+        raise
+
+
 def _read_eml(path: Path) -> str:
     """Reads the content of an EML file, extracting headers, body, and attachment content.
 
@@ -142,6 +163,8 @@ def _read_eml(path: Path) -> str:
 
 _FORMAT_READERS: dict[str, object] = {
     ".docx": _read_docx,
+    ".html": _read_html,
+    ".htm": _read_html,
     ".odt": _read_odt,
     ".eml": _read_eml,
     ".pdf": _read_pdf,
@@ -153,7 +176,8 @@ def extract_text_content(path: Path) -> str:
 
     Falls back to plain UTF-8 read for unrecognized suffixes.  PDF is converted
     to markdown via ``pymupdf4llm``; DOCX/ODT produce plain paragraphs; EML
-    extracts headers + body + PDF attachments.
+    extracts headers + body + PDF attachments; HTML is converted to markdown
+    prose via ``html2text``.
     """
     reader = _FORMAT_READERS.get(path.suffix.lower(), _read_plain)
     return reader(path)  # type: ignore[operator]

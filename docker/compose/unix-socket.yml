@@ -55,11 +55,6 @@ services:
       # Configuration overrides
       # Note: Gateway configuration is now in stargate_config.yaml (no separate gateways.yaml)
 
-      # Agent identity (birth prompts) — lives in Cortex data layer, not repo.
-      # Read-only mount so the pipeline prompt loader can resolve
-      # system_prompt_from entries at registry build time.
-      - ${AGENT_IDENTITY_DIR:-/mnt/torus/mcp-data/files/agent-identity}:/app/agent-identity:ro
-
       # User-specific pipelines and handlers
       - ${HOME}/.local/share/universal-stargate:/root/.local/share/universal-stargate:ro
 
@@ -111,10 +106,6 @@ services:
 
       # Stargate configuration
       - STARGATE_CONFIG=/app/services/universal-stargate/config/stargate_config.docker.yaml
-
-      # Agent identity base (required by pipeline prompt loader when a
-      # prompts.yaml entry uses system_prompt_from). Bind-mounted above.
-      - AGENT_IDENTITY_DIR=/app/agent-identity
 
       # Debug event socket (enable with DEBUG_EVENT_SOCKET=/sockets/events.sock)
       - DEBUG_EVENT_SOCKET=${DEBUG_EVENT_SOCKET:-}

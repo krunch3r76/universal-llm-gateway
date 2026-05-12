@@ -40,13 +40,13 @@ async def test_permissive_persona_accepts_anything(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "hello"}],
-        role="orion",
+        role="gatherer",
         generation_options={"max_tokens": 12, "temperature": 0.2},
     )
     body = await build_dispatch_body(req)
     options = body["pipeline_options"]
     assert body["model"] == "frontier-dispatch"
-    assert options["agent"] == "orion"
+    assert options["agent"] == "gatherer"
     assert options["model"] == "openai/gpt-5.4-mini"
     assert "tools" not in options
     assert options["mcp"] is True
@@ -73,7 +73,7 @@ async def test_strict_persona_rejects_model(monkeypatch: pytest.MonkeyPatch) -> 
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="oppie",
+        role="skeptic",
         model="openai/gpt-5.4",
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -114,7 +114,7 @@ async def test_team_dispatch_xai_agent_auto_suppresses_mcp(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="oppie",
+        role="skeptic",
     )
     body = await build_dispatch_body(req)
     assert body["pipeline_options"]["mcp"] is False
@@ -144,7 +144,7 @@ async def test_team_dispatch_non_xai_agent_enables_mcp(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="orion",
+        role="gatherer",
     )
     body = await build_dispatch_body(req)
     assert body["pipeline_options"]["mcp"] is True
@@ -172,7 +172,7 @@ async def test_strict_persona_rejects_generation_options_keys(
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="orion",
+        role="gatherer",
         generation_options={"temperature": 0.3},
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -200,10 +200,10 @@ async def test_default_model_used_when_omitted(monkeypatch: pytest.MonkeyPatch) 
 
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
-        role="orion",
+        role="gatherer",
     )
     body = await build_dispatch_body(req)
-    assert body["pipeline_options"]["agent"] == "orion"
+    assert body["pipeline_options"]["agent"] == "gatherer"
     assert body["pipeline_options"]["model"] == "openai/gpt-5.4-mini"
 
 

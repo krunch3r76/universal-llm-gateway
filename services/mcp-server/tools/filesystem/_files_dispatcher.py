@@ -46,6 +46,9 @@ def register_files_tool(mcp: FastMCP) -> None:
         (with sandbox="cortex") which provides section-level read/write/delete
         without ingesting the entire file.
 
+        Text-format conversion: PDF, DOCX, ODT, EML, and HTML files are
+        automatically converted to readable text/markdown in `read` mode — no
+        `binary=True` needed. HTML returns stripped markdown prose via html2text.
         Image files, archives, and other binary formats auto-route to base64
         even without `binary=True` — reading a `.png`, `.jpg`, or archive returns
         `{content_base64, auto_binary: true}` rather than corrupted text. Pass

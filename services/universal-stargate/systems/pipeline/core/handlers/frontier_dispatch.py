@@ -25,14 +25,14 @@ YAML shape::
 Caller::
 
     # Public surface (preferred):
-    team_dispatch(op="generate", role="orion", model="openai/gpt-5.4",
+    team_dispatch(op="generate", role="gatherer", model="openai/gpt-5.4",
                   messages=[{"role": "user", "content": "..."}])
     frontier_dispatch(op="generate", model="openai/gpt-5.4",
                       messages=[{"role": "user", "content": "..."}])
 
     # Raw escape hatch (advanced — bypasses role admission):
     pipeline(op="async", pipeline_id="frontier-dispatch",
-             pipeline_options={"model": "openai/gpt-5.4", "role": "orion"},
+             pipeline_options={"model": "openai/gpt-5.4", "role": "gatherer"},
              messages=[{"role": "user", "content": "..."}])
 """
 

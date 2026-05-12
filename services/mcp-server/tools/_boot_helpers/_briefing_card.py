@@ -3,103 +3,26 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ._briefing_card_render import (
+    _PREVIEW_MAX_CHARS,
+    _deadline_line,
+    _filter_recent_self_reflections,
+    _truncate_at_sentence,
+)
 from ._manifest import _build_manifest
 from ._time import _relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
 
-# Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
-# the truncator prefers the last sentence boundary at-or-before the cap so the
-# preview doesn't chop mid-sentence ("If I sit with —" was the canonical bug).
-_PREVIEW_MAX_CHARS = 200
-# Self-reflection recency cap. Older notes drift out of the boot card — agents
-# can re-fetch via /assertions if they're chasing a specific historical claim.
-_SELF_REFLECTION_MAX_AGE_DAYS = 14
-
-
-def _truncate_at_sentence(text: str, max_chars: int) -> str:
-    """Truncate `text` at the last sentence boundary at-or-before `max_chars`.
-
-    Sentence boundaries: '. ', '! ', '? ', or terminal '.'/'!'/'?' at the cap.
-    Falls back to a hard-cut + ellipsis when no boundary is found in the
-    second half of the window — short fragments stay intact, long unbroken
-    prose still gets a clean visual cutoff.
-    """
-    if not text:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    window = text[:max_chars]
-    # Search for sentence terminators in the back half of the window so a
-    # period in the first 20 chars doesn't truncate aggressively.
-    cutoff_floor = max_chars // 2
-    best = -1
-    for marker in (". ", "! ", "? "):
-        idx = window.rfind(marker)
-        if idx >= cutoff_floor and idx + len(marker) > best:
-            best = idx + len(marker.rstrip())
-    if best > 0:
-        return text[:best].rstrip()
-    return window.rstrip() + "…"
-
-
-def _filter_recent_self_reflections(
-    self_reflections: list[dict[str, Any]],
-    now: datetime,
-    *,
-    max_age_days: int = _SELF_REFLECTION_MAX_AGE_DAYS,
-) -> list[dict[str, Any]]:
-    """Drop self-reflections older than `max_age_days` based on created_at.
-
-    The fetcher already orders DESC by created_at; this is a recency cap on
-    top of the fixed limit (default 5). When the agent has fewer than 5
-    recent reflections, the section degrades naturally — no padding with
-    stale entries.
-    """
-    if not self_reflections:
-        return []
-    threshold = now - timedelta(days=max_age_days)
-    fresh: list[dict[str, Any]] = []
-    for a in self_reflections:
-        created = a.get("created_at") or a.get("observed_at") or ""
-        if not created:
-            # No timestamp — keep it; better to render than silently drop.
-            fresh.append(a)
-            continue
-        try:
-            ts = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=UTC)
-        except ValueError:
-            fresh.append(a)
-            continue
-        if ts >= threshold:
-            fresh.append(a)
-    return fresh
-
-
-def _deadline_line(d: dict[str, Any], today: datetime) -> str:
-    """Render a single deadline as a compact markdown line."""
-    dl_date = d.get("deadline_date", "")
-    remaining = ""
-    if dl_date:
-        try:
-            dl = datetime.strptime(dl_date[:10], "%Y-%m-%d").date()
-            delta = (dl - today.date()).days
-            if delta >= 0:
-                remaining = f" ({delta}d)"
-            else:
-                remaining = f" (**{abs(delta)}d OVERDUE**)"
-        except ValueError:
-            pass
-    return (
-        f"- **{dl_date}**{remaining} — "
-        f"{d.get('deadline_name', '')} ({d.get('matter_name', '')})"
-    )
+# Hard byte ceiling for last-session summary. The truncator seeks the last
+# sentence boundary in the back half of the window — avoids the mid-word cut
+# that primed confabulation in the canonical claude-web-lead-2026-05-12 boot.
+_LAST_SESSION_SUMMARY_MAX = 300
+_LAST_SESSION_RECOVERY = "cortex(tool='journal_read', arguments='{\"limit\": 1}')"
 
 
 def render_briefing_card(
@@ -233,10 +156,18 @@ def render_briefing_card(
             parts.append(f"- **{name}**{tag} — {a.get('claim', '')[:120]}")
 
     if unread_count > 0:
-        thread_slugs = ", ".join(
-            t.get("slug", t.get("id", "?")) for t in (unread_threads or [])
-        )
-        parts.append(f"\n## Agent Bus — {unread_count} unread")
+        _uthreads = unread_threads or []
+        thread_slugs = ", ".join(t.get("slug", t.get("id", "?")) for t in _uthreads)
+        _thread_count = len(_uthreads)
+        # Show both metrics when they differ (turns vs threads) — header/body
+        # mismatch caused confabulation in boot audit claude-web-lead-2026-05-12.
+        if _thread_count and _thread_count != unread_count:
+            _count_label = (
+                f"{_thread_count} thread(s) with unread ({unread_count} turn(s))"
+            )
+        else:
+            _count_label = f"{unread_count} unread"
+        parts.append(f"\n## Agent Bus — {_count_label}")
         if thread_slugs:
             parts.append(f"Threads with unread: {thread_slugs}")
 
@@ -264,7 +195,16 @@ def render_briefing_card(
         # they MUST NOT auto-surface on subsequent boots (per assertion 8384,
         # session web-2026-05-04-1057). The boot card surfaces only the
         # last-session summary; absence of a handoff is not a gap.
-        parts.append(last_session.get("summary", "No summary.")[:300])
+        _summary_raw = last_session.get("summary", "No summary.")
+        _summary_cut = _truncate_at_sentence(_summary_raw, _LAST_SESSION_SUMMARY_MAX)
+        if len(_summary_raw) > len(_summary_cut):
+            parts.append(
+                f"{_summary_cut} "
+                f"[+{len(_summary_raw) - len(_summary_cut)} chars truncated — "
+                f"`{_LAST_SESSION_RECOVERY}` for full]"
+            )
+        else:
+            parts.append(_summary_cut)
         if chain:
             parts.append("")
             parts.append("**Continuity**")
@@ -287,7 +227,10 @@ def render_briefing_card(
             for item in open_items[:5]:
                 parts.append(f"- {item}")
             if len(open_items) > 5:
-                parts.append(f"- *…{len(open_items) - 5} more*")
+                parts.append(
+                    f"- *…{len(open_items) - 5} more — "
+                    f"`{_LAST_SESSION_RECOVERY}` for full list*"
+                )
 
     if plan_phases or in_flight_todos:
         parts.append("\n## Recent Work")
@@ -321,17 +264,22 @@ def render_briefing_card(
             f"\n## Recent Mentions — trailing {recent_mentions_window_days}d "
             f"({len(recent_mentions)})"
         )
+        # ∀ entity listed: retrieve before making claims — name alone primes
+        # inference without grounding (boot audit claude-web-lead-2026-05-12).
         parts.append(
-            "*Entities with new assertions or newly created — recognize these names*"
+            "*Entities with new assertions or newly created — "
+            "retrieve before making claims*"
         )
         for m in recent_mentions[:10]:
             name = m.get("entity_name", m.get("entity_id", "?"))
             etype = m.get("entity_type", "?")
+            entity_id = m.get("entity_id", "")
             cnt = m.get("inserted_count", 0)
             last_mentioned = m.get("last_mentioned_at")
             rel = _relative_time(last_mentioned, now) if last_mentioned else "?"
             cnt_tag = f", {cnt} new" if cnt else ", new entity"
-            parts.append(f"- **{name}** ({etype}) — {rel}{cnt_tag}")
+            id_tag = f" `{entity_id}`" if entity_id else ""
+            parts.append(f"- **{name}**{id_tag} ({etype}) — {rel}{cnt_tag}")
 
     if self_reflections:
         recent_reflections = _filter_recent_self_reflections(self_reflections, now)
@@ -358,20 +306,31 @@ def render_briefing_card(
                 )
                 parts.append(f"- {session_tag}{claim_preview}")
 
-    if reflective_entries:
-        parts.append(f"\n## Reflective Journal ({reflective_total} total)")
-        for e in reflective_entries[:5]:
-            kind = e.get("kind", "entry")
-            kind_tag = f" [{kind}]" if kind != "entry" else ""
-            register = e.get("register", "?")
-            entry_preview = _truncate_at_sentence(
-                e.get("entry") or "", _PREVIEW_MAX_CHARS
-            )
-            parts.append(f"- *{register}*{kind_tag}: {entry_preview}")
-        if reflective_total > 5:
+    if reflective_entries is not None:
+        if reflective_entries:
+            parts.append(f"\n## Reflective Journal ({reflective_total} total)")
+            for e in reflective_entries[:5]:
+                kind = e.get("kind", "entry")
+                kind_tag = f" [{kind}]" if kind != "entry" else ""
+                register = e.get("register", "?")
+                entry_preview = _truncate_at_sentence(
+                    e.get("entry") or "", _PREVIEW_MAX_CHARS
+                )
+                parts.append(f"- *{register}*{kind_tag}: {entry_preview}")
+            if reflective_total > 5:
+                parts.append(
+                    f"- *…{reflective_total - 5} more — "
+                    "`cortex(tool='rj_list', arguments='{\"limit\": 20}')`*"
+                )
+        else:
+            # ∃! case: fetch ran but returned 0 rows for this agent slug.
+            # Fresh seats are common during naming-cleanup phases — surface
+            # rather than hiding so agents don't read silence as "nothing to
+            # report" (boot audit claude-web-lead-2026-05-12).
             parts.append(
-                f"- *…{reflective_total - 5} more — "
-                "`cortex(tool='rj_list', arguments='{\"limit\": 20}')`*"
+                "\n## Reflective Journal\n"
+                "No prior reflective journal for this agent slug — fresh seat. "
+                "`cortex(tool='rj_list', arguments='{\"limit\": 5}')` to confirm."
             )
 
     card = "\n".join(parts)

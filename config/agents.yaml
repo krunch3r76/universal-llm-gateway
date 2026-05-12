@@ -1,0 +1,234 @@
+# config/agents.yaml — agent capability and role configuration
+#
+# Single source of truth for CapabilityProfile (family × platform cells)
+# and RoleProfile (functional team roles). Loaded at runtime by
+# libs/agent_seat/profiles.py via load_profiles() and load_roles().
+#
+# Profile keys: "<family>/<platform>"
+# Profile fields map 1:1 to CapabilityProfile dataclass fields.
+# Optional fields omitted here use their dataclass defaults:
+#   allowed_models: []  model_requirement: null  capability_tier: null
+#   dispatchable: true  session_limit: 3  self_reflections_limit: 5
+
+profiles:
+
+  claude/cursor:
+    provider: anthropic
+    default_model: anthropic/claude-sonnet-4-6
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda:
+      - session-close-pointer-cursor
+      - session-close-markdown-audit
+      - session-close-transcript
+    allowed_models:
+      - anthropic/claude-sonnet-4-6
+      - anthropic/claude-opus-4-7
+
+  claude/api:
+    provider: anthropic
+    default_model: anthropic/claude-sonnet-4-6
+    tool_surface: mcp
+    delivery: auto
+    include_deadlines: true
+    include_review_queue: false
+    confirm_and_proceed: true
+    addenda: []
+    allowed_models:
+      - anthropic/claude-sonnet-4-6
+      - anthropic/claude-opus-4
+      - anthropic/claude-opus-4-7
+      - anthropic/claude-3-5-sonnet
+
+  claude/web:
+    provider: anthropic
+    default_model: null
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    dispatchable: false
+    addenda:
+      - session-close-pointer-web
+      - session-close-markdown-audit
+      - session-close-transcript
+
+  gpt/cursor:
+    provider: openai
+    default_model: openai/gpt-5.4
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda:
+      - session-close-pointer-cursor
+      - session-close-markdown-audit
+      - session-close-transcript
+
+  gpt/api:
+    provider: openai
+    default_model: openai/gpt-5.4
+    tool_surface: mcp
+    delivery: auto
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda: []
+    allowed_models:
+      - openai/gpt-5.4
+      - openai/gpt-5.4-mini
+      - openai/o4-mini
+      - openai/o3
+
+  grok/cursor:
+    provider: xai
+    default_model: xai/grok-4.20-0309-reasoning
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda:
+      - session-close-pointer-cursor
+      - session-close-markdown-audit
+      - session-close-transcript
+    allowed_models:
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.3
+
+  grok/api:
+    provider: xai
+    default_model: xai/grok-4.20-0309-reasoning
+    tool_surface: mcp
+    delivery: auto
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda: []
+    allowed_models:
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.3
+
+  grok/api-multi:
+    provider: xai
+    default_model: xai/grok-4.20-multi-agent-0309
+    tool_surface: inline-only
+    delivery: auto
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda: []
+    allowed_models:
+      - xai/grok-4.20-multi-agent-0309
+    model_requirement: multi-agent
+    capability_tier: inline-only
+
+  grok/web:
+    provider: xai
+    default_model: null
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    dispatchable: false
+    addenda:
+      - grok-web-tool-surface
+      - session-close-pointer-web-generic
+      - session-close-markdown-audit
+      - session-close-transcript
+
+  gemini/api:
+    provider: google
+    default_model: google/gemini-2.5-flash
+    tool_surface: mcp
+    delivery: auto
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda: []
+    allowed_models:
+      - google/gemini-2.5-pro
+      - google/gemini-2.5-flash
+      - google/gemini-3-flash-preview
+      - google/gemini-3.1-pro-preview
+
+  subagent/subagent:
+    provider: anthropic
+    default_model: null
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: false
+    include_review_queue: false
+    confirm_and_proceed: false
+    dispatchable: false
+    addenda:
+      - session-close-pointer-subagent
+
+
+roles:
+
+  lead:
+    description: "Strategic advisor; senior architectural review; cross-session direction"
+    default_family: claude
+    default_platform: web
+    default_model: null
+
+  reviewer:
+    description: "API-side code review, multi-subsystem audit, diff review"
+    default_family: claude
+    default_platform: api
+    default_model: anthropic/claude-sonnet-4-6
+    allowed_models:
+      - anthropic/claude-sonnet-4-6
+      - anthropic/claude-opus-4-7
+
+  gatherer:
+    description: "Context gathering, structured extraction, broad research"
+    default_family: gpt
+    default_platform: api
+    default_model: openai/gpt-5.4
+    allowed_models:
+      - openai/gpt-5.4
+      - openai/gpt-5.4-mini
+      - openai/o4-mini
+      - openai/o3
+
+  synthesizer:
+    description: "Generalist analysis, multimodal, broad-knowledge synthesis"
+    default_family: gemini
+    default_platform: api
+    default_model: google/gemini-2.5-flash
+    allowed_models:
+      - google/gemini-2.5-pro
+      - google/gemini-2.5-flash
+      - google/gemini-3-flash-preview
+      - google/gemini-3.1-pro-preview
+
+  artisan:
+    description: "Inline reasoning specialist; structured execution at frontier-grade reasoning"
+    default_family: grok
+    default_platform: api
+    default_model: xai/grok-4.20-0309-reasoning
+    allowed_models:
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.3
+
+  skeptic:
+    description: "Adversarial / dialectical seat; pushback on consensus framing (inline-only)"
+    default_family: grok
+    default_platform: api-multi
+    default_model: xai/grok-4.20-multi-agent-0309
+    allowed_models:
+      - xai/grok-4.20-multi-agent-0309
+
+  investigator:
+    description: "Deep manual research; heavy thinking on operator-driven web sessions"
+    default_family: grok
+    default_platform: web
+    default_model: null

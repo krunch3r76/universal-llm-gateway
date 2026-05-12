@@ -42,12 +42,22 @@ from agent_seat.native_loop import (
     NativeToolCall,
     run_native_tool_loop,
 )
+from agent_seat.profiles import (
+    CapabilityProfile,
+    RoleProfile,
+    derive_inline_only,
+    family_anchor,
+    get_profile,
+    get_role,
+    load_profiles,
+    load_roles,
+    resolve_seat,
+    role_anchor,
+)
 from agent_seat.prompts import (
     CORTEX_TOOL_QUICKREF,
     assemble_system_prompt,
     build_subagent_preamble,
-    derive_inline_only,
-    load_birth_prompt,
 )
 from agent_seat.registry import normalize_agent_slug
 from agent_seat.tools import (
@@ -60,12 +70,14 @@ from agent_seat.tools import (
 
 __all__ = [
     "BRAVE_SEARCH_TOOL_DEFINITION",
+    "CapabilityProfile",
     "CORTEX_TOOL_QUICKREF",
     "HydrationBundle",
     "AgentMeta",
     "NATIVE_PATHS",
     "NativeLoopResult",
     "NativeToolCall",
+    "RoleProfile",
     "TEAM_TOOL_DEFINITIONS",
     "TOOL_DEFINITIONS",
     "TOOL_REGISTRY",
@@ -73,11 +85,17 @@ __all__ = [
     "build_subagent_preamble",
     "derive_inline_only",
     "execute_tool",
+    "family_anchor",
     "get_mcp_tool_definitions",
+    "get_profile",
+    "get_role",
     "hydrate_agent",
-    "load_birth_prompt",
+    "load_profiles",
+    "load_roles",
     "normalize_agent_slug",
+    "resolve_seat",
     "resolve_tool_definitions",
+    "role_anchor",
     "run_native_tool_loop",
     "resolve_tools",
 ]

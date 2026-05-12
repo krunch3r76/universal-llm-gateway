@@ -119,7 +119,7 @@ def _transcript(summary: str) -> str:
 def _payload(
     *,
     session_id: str,
-    agent: str = "orion",
+    agent: str = "gatherer",
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
 ) -> dict[str, Any]:

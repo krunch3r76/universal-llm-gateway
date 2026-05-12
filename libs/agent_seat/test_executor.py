@@ -146,7 +146,7 @@ async def test_execute_cortex_dispatch_assert_forwards(
         "entity_id": "decision:x",
         "claim": "hello",
         "confidence": "believed",
-        "agent": "oppie",
+        "agent": "skeptic",
     }
     await execute_tool(
         "cortex",

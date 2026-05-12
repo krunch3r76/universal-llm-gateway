@@ -8,9 +8,6 @@ Part of the pipeline registry package.
 
 from __future__ import annotations
 
-import os
-from functools import lru_cache
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Never
 
 from universal_logging import get_logger
@@ -22,63 +19,6 @@ if TYPE_CHECKING:
     from .core import PipelineRegistry
 
 logger = get_logger(__name__)
-
-
-def _agent_identity_base() -> Path:
-    """
-    Resolve the canonical agent-identity directory.
-
-    The base is read from $AGENT_IDENTITY_DIR. Identity material lives in the
-    Cortex data layer (not in the source repo), so there is no safe cwd-based
-    default — the env var must be set explicitly by the deployment:
-
-    - host process: `.env.local` sets AGENT_IDENTITY_DIR to the host Cortex
-      data path (e.g., /mnt/torus/mcp-data/files/agent-identity)
-    - container: compose bind-mounts the same path into /app/agent-identity
-      and sets AGENT_IDENTITY_DIR=/app/agent-identity
-
-    Raises ValueError if unset, so a missing configuration fails loudly at
-    pipeline registration rather than silently pointing at a wrong directory.
-    """
-    override = os.environ.get("AGENT_IDENTITY_DIR")
-    if not override:
-        raise ValueError(
-            "AGENT_IDENTITY_DIR is not set. system_prompt_from requires a "
-            "configured agent-identity base (Cortex data layer path). Set "
-            "AGENT_IDENTITY_DIR in the process environment or compose file."
-        )
-    return Path(override).resolve()
-
-
-def _resolve_agent_identity_path(path_str: str) -> Path:
-    """
-    Resolve a ``system_prompt_from`` value to an absolute path under
-    AGENT_IDENTITY_DIR.
-
-    Accepts either repo-root-relative ("agent-identity/orion-birth.md")
-    or base-relative ("orion-birth.md") forms and confines the result
-    to the base to prevent ``..`` traversal.
-    """
-    base = _agent_identity_base()
-    normalized = path_str
-    if normalized.startswith("agent-identity/"):
-        normalized = normalized[len("agent-identity/") :]
-    candidate = (base / normalized).resolve()
-    try:
-        candidate.relative_to(base)
-    except ValueError as e:
-        raise ValueError(
-            f"system_prompt_from path '{path_str}' escapes AGENT_IDENTITY_DIR ({base})"
-        ) from e
-    if not candidate.is_file():
-        raise ValueError(f"system_prompt_from '{path_str}' not found at {candidate}")
-    return candidate
-
-
-@lru_cache(maxsize=32)
-def _read_agent_identity_file(resolved_path: str) -> str:
-    """Read a resolved agent-identity file; cached by absolute path string."""
-    return Path(resolved_path).read_text(encoding="utf-8")
 
 
 class PipelineAccessor:
@@ -277,15 +217,6 @@ class PipelineAccessor:
             )
 
         system_prompt_value = obj.get("system_prompt")
-        system_prompt_from = obj.get("system_prompt_from")
-        if system_prompt_value is not None and system_prompt_from is not None:
-            raise ValueError(
-                f"Prompt '{prompt_ref}' has both 'system_prompt' and "
-                f"'system_prompt_from'. Use exactly one."
-            )
-        if system_prompt_from is not None:
-            resolved = _resolve_agent_identity_path(system_prompt_from)
-            system_prompt_value = _read_agent_identity_file(str(resolved))
 
         prompt_name = prompt_ref.split(".")[-1]
         return PromptConfig(

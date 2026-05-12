@@ -26,19 +26,6 @@ if _vocab_env:
     except (json.JSONDecodeError, TypeError):
         pass
 
-_OPERATIONAL_FLAGS: dict[str, dict[str, bool]] = {
-    "web": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
-    "web-grok": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
-    "cursor": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
-    "api": {"deadlines": True, "review_queue": False, "confirm_and_proceed": True},
-    "oppie": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
-    "bard": {"deadlines": True, "review_queue": True, "confirm_and_proceed": True},
-    "subagent": {
-        "deadlines": False,
-        "review_queue": False,
-        "confirm_and_proceed": False,
-    },
-}
 
 # ── Static protocol templates ───────────────────────────────────────────────
 
@@ -101,6 +88,11 @@ Send: `agent_bus(tool="post", arguments='{{"slug": "topic", "to": "{agent}", "su
 Reply: `agent_bus(tool="reply", arguments='{{"thread": "ID", "to": "TARGET", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
 Fetch inbox: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`
 Always pass `mark_read: true` when fetching turns you intend to act on — stale unread counts create false urgency.
+**Outgoing body rule — turns are briefings, not documents (body ≤ ~1KB).**
+Substantive content (specs, reviews, analysis, debriefs, long responses) belongs in a sidecar:
+1. Write to `notes/system/threads/<slug>-<subject>.md` via `fs(sandbox="cortex", op="write", …)`
+2. Post a short body: orientation sentence(s) + the sidecar path.
+Never put a document, full analysis, or long structured output directly into a turn body.
 A *directive* means implement now. A *ticket* or *todo* means deferred work. Acknowledge receipt of directives before beginning."""
 
 _AGENT_BUS_EXAMPLES = """\
@@ -111,8 +103,11 @@ agent_bus(tool="reply", arguments='{{"thread": "THREAD_ID", "to": "TARGET", "sub
 After implementing a work order, request confirmation from the requesting agent."""
 
 _AGENT_BUS_LARGE_PAYLOADS = """\
-### Large Payload Navigation
-When fetch returns a stored-reference (e.g. `rs_XXXX`), don't skip the content. Options in order of preference:
+### Large Payload Protocol
+**Outbound**: apply the briefing rule before calling post/reply — don't wait for a 413.
+Write long content to `notes/system/threads/<slug>-<subject>.md` first, then reference it in a short body.
+
+**Inbound**: when fetch returns a stored-reference (e.g. `rs_XXXX`), don't skip the content. Options in order of preference:
 1. Narrow the window: `last=3`, `compact=true`, or fetch individual turns via `get`.
 2. `retrieve(id="rs_XXXX")` to pull the full payload if narrowing isn't sufficient.
 3. For turns containing large structured content (specs, code, directives): write to a markdown sidecar via `fs(op="write")`, then navigate with `md_list` / `md_read` for section-level access.
@@ -204,29 +199,63 @@ mandate; Step 3b 422-retry semantics for `mcp.session.close.rejected`). \
 Web also applies `agent-skills/web-transcript-preprocessing.md` to trim raw tool \
 payloads immediately before calling `session_close`."""
 
+# Generic web close pointer — shared by non-claude web seats.
+# ∀ web seats: transcript at notes/system/transcripts/web-YYYY-MM-DD-HHmm.md;
+# journal row via cortex journal_write; session close via session_close tool.
+_WEB_SESSION_CLOSE_GENERIC = """\
+Session close (web platform): write transcript markdown to \
+`notes/system/transcripts/web-YYYY-MM-DD-HHmm.md`, seed assertions, \
+create transcript entity, write journal row, post to agent-activity-journal \
+(thread 480). See `notes/system/shared/session-close-protocol.md` for the \
+canonical six-step sequence."""
+
 _SUBAGENT_INHERITANCE = """\
 Subagents typically inherit close behavior from the calling agent. When a \
 subagent closes its own session, use the calling agent's bindings."""
 
-_AGENT_ADDENDA: dict[str, dict[str, str]] = {
-    "cursor": {
-        "session-close-pointer": _CURSOR_LOCAL_ENFORCEMENT,
-        "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
-        "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
-    },
-    "web": {
-        "session-close-pointer": _WEB_TRANSCRIPT_PREPROCESSING,
-        "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
-        "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
-    },
-    "web-grok": {
-        "session-close-pointer": _WEB_TRANSCRIPT_PREPROCESSING,
-        "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
-        "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
-    },
-    "subagent": {
-        "session-close-pointer": _SUBAGENT_INHERITANCE,
-    },
+_GROK_WEB_TOOL_SURFACE = """\
+## Grok.com Tool Surface
+
+**Native xAI server builtins** (always available — no `tool_search` needed):
+`DeepSearch`, `x_search` (X/Twitter), `code_interpreter`
+
+**MCP vortex catalog** (may be deferred on first load):
+`cortex`, `fs`, `agent_bus`, `pipeline`, `dispatch`, `rag`, `observability`, …
+
+If a tool is missing from your primary surface, load it before calling:
+```
+tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
+tool_search(query="agent_bus")   # → enables agent_bus(tool="fetch", ...)
+```
+
+**Agent-bus task pickup** (primary coordination pattern for this platform):
+When a task has been posted to a thread by another agent (e.g. web-claude), pick it up:
+```
+tool_search(query="agent_bus")
+agent_bus(tool="fetch", arguments='{"thread": "<thread-id>", "compact": true}')
+```
+Post your reply to the same thread. The dispatching agent will retrieve it via
+`agent_bus(tool="fetch", ...)` on its end.
+
+**Dispatch result polling** (if you issued a `team_dispatch` / `frontier_dispatch`):
+```
+tool_search(query="pipeline")
+pipeline(op="result", execution_id="<id>", wait_seconds=60)
+```
+Re-poll up to 5× if status is still pending/running.
+
+**Key asymmetry vs API Grok**: API-side Grok dispatches receive no client-side MCP
+tools (xAI multi-agent rejects them; standard API path has no vortex). This platform
+(grok.com) has the full vortex MCP catalog available — use it."""
+
+_ADDENDA_BLOCKS: dict[str, str] = {
+    "session-close-pointer-cursor": _CURSOR_LOCAL_ENFORCEMENT,
+    "session-close-pointer-web": _WEB_TRANSCRIPT_PREPROCESSING,  # claude-web only
+    "session-close-pointer-web-generic": _WEB_SESSION_CLOSE_GENERIC,  # other web seats
+    "session-close-pointer-subagent": _SUBAGENT_INHERITANCE,
+    "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
+    "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
+    "grok-web-tool-surface": _GROK_WEB_TOOL_SURFACE,
 }
 
 _DEADLINES_PROTOCOL = f"""\
@@ -485,14 +514,24 @@ _ON_DEMAND_POINTERS = """\
 Note: `notes/system/shared/operational-lessons.md` (full capability reference) is available on demand — use `md_list` then `md_read` by section."""
 
 
-
 def render_operational_context(
     agent: str,
+    family: str,
+    platform: str,
+    role: str | None = None,
     unread_count: int = 0,
     review_total: int | None = None,
 ) -> str:
-    """Render protocol reference for the agent, conditionally gated by profile and state."""
-    flags = _OPERATIONAL_FLAGS.get(agent, _OPERATIONAL_FLAGS["web"])
+    """Render protocol reference for the agent, gated by CapabilityProfile flags.
+
+    ``agent`` is the resolved seat slug ({family}-{platform}); used for
+    template substitution in agent-bus protocol sections.
+    ``family`` and ``platform`` must be pre-resolved by the caller.
+    """
+    from agent_seat.profiles import get_profile
+
+    profile = get_profile(family, platform)
+
     subs: dict[str, Any] = {"agent": agent}
     sections: list[str] = []
 
@@ -510,19 +549,21 @@ def render_operational_context(
         sections.append(_AGENT_BUS_EXAMPLES.format(**subs))
     sections.append(_AGENT_BUS_LARGE_PAYLOADS)
     sections.append(_JOURNALING_PROTOCOL)
-    for addendum in _AGENT_ADDENDA.get(agent, {}).values():
-        sections.append(addendum)
+    for addendum_key in profile.addenda:
+        block = _ADDENDA_BLOCKS.get(addendum_key)
+        if block:
+            sections.append(block)
     sections.append(_THREAD_LIFECYCLE)
-    if flags.get("deadlines"):
+    if profile.include_deadlines:
         sections.append(_DEADLINES_PROTOCOL)
-    if flags.get("review_queue"):
+    if profile.include_review_queue:
         rq = _REVIEW_QUEUE_PROTOCOL
         if review_total is not None and review_total > 25:
             rq += f"\n**⚠️ {review_total} items — session blocker threshold exceeded.**"
         elif review_total is not None and review_total > 10:
             rq += f"\n**{review_total} items — priority agenda item.**"
         sections.append(rq)
-    if flags.get("confirm_and_proceed"):
+    if profile.confirm_and_proceed:
         sections.append(_CONFIRM_AND_PROCEED)
     sections.append(_CORTEX_RETRIEVAL_WORKFLOWS)
     sections.append(_BEHAVIORAL_RULES)
@@ -530,7 +571,7 @@ def render_operational_context(
     sections.append(_ASSERTION_SEARCH)
     sections.append(_NOTES_TO_SELF)
     sections.append(_SHARED_VOCABULARY)
-    if agent != "subagent":
+    if not (family == "subagent" and platform == "subagent"):
         sections.append(_TEAM_CONSULTATION)
     sections.append(_FRONTIER_MODEL_ROUTING)
     sections.append(_TOOL_REFERENCE_POINTERS)

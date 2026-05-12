@@ -177,7 +177,7 @@ async def test_handler_team_mode_fires_hydrated_event(
 
     step = _FakeStep()
     context = _make_context(
-        options={"model": "xai/grok-4.20-multi-agent-0309", "role": "oppie"},
+        options={"model": "xai/grok-4.20-multi-agent-0309", "role": "skeptic"},
     )
 
     out = await handler.execute(step, context)
@@ -185,8 +185,8 @@ async def test_handler_team_mode_fires_hydrated_event(
     signals = [e.signal for e in published_events]
     assert "pipeline.frontier.dispatch.hydrated" in signals
     assert "pipeline.frontier.dispatch.completed" in signals
-    assert out.system_prompt.endswith("SYSTEM[oppie]")
-    assert out.json["hydration"]["agent"] == "oppie"
+    assert out.system_prompt.endswith("SYSTEM[skeptic]")
+    assert out.json["hydration"]["agent"] == "skeptic"
     assert out.json["provider"] == "xai"
 
 
@@ -372,7 +372,7 @@ def test_tool_event_translation_produces_frontier_signals(
     published_events: list[Any],
 ) -> None:
     context = _make_context(options={})
-    cb = handler._build_on_tool_event(context, agent="orion")
+    cb = handler._build_on_tool_event(context, agent="gatherer")
 
     cb(
         "pipeline.frontier.dispatch.tool.called",
@@ -533,7 +533,7 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
     monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
-    context = _make_context(options={"model": "openai/gpt-5.4", "role": "orion"})
+    context = _make_context(options={"model": "openai/gpt-5.4", "role": "gatherer"})
     await handler.execute(step, context)
 
     assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
@@ -632,7 +632,7 @@ async def test_handler_rejects_raw_agent_plus_endpoint_tools(
     context = _make_context(
         options={
             "model": "openai/gpt-5.4",
-            "role": "orion",
+            "role": "gatherer",
             "tools": ["web_search"],
         }
     )
@@ -674,8 +674,8 @@ async def test_handler_endpoint_agent_plus_tools_preserves_persona_metadata(
     context = _make_context(
         options={
             "model": "openai/gpt-5.4",
-            "role": "orion",
-            "system": "SYSTEM[orion]",
+            "role": "gatherer",
+            "system": "SYSTEM[gatherer]",
             "tools": ["web_search"],
             "_endpoint_request_id": "frontier-req-1",
         }
@@ -687,10 +687,10 @@ async def test_handler_endpoint_agent_plus_tools_preserves_persona_metadata(
     assert "pipeline.frontier.dispatch.hydrated" not in signals
     assert "pipeline.frontier.dispatch.completed" in signals
     assert out.json["hydration"] == {
-        "agent": "orion",
+        "agent": "gatherer",
         "tool_resolution": "endpoint-supplied",
     }
-    assert out.system_prompt.endswith("SYSTEM[orion]")
+    assert out.system_prompt.endswith("SYSTEM[gatherer]")
     assert [t["function"]["name"] for t in captured["tools"]] == ["web_search"]
 
 
@@ -747,10 +747,10 @@ def test_resolve_agent_uses_options_then_domain_field() -> None:
     """
     from .frontier_dispatch_request import resolve_agent
 
-    step_with_domain = _FakeStep(domain_fields={"role": "bard"})
-    assert resolve_agent({}, step_with_domain) == "bard"
+    step_with_domain = _FakeStep(domain_fields={"role": "synthesizer"})
+    assert resolve_agent({}, step_with_domain) == "synthesizer"
     assert resolve_agent({"role": "web"}, step_with_domain) == "web"
-    assert resolve_agent({"role": ""}, step_with_domain) == "bard"
+    assert resolve_agent({"role": ""}, step_with_domain) == "synthesizer"
     assert resolve_agent({}, _FakeStep()) is None
 
 
@@ -800,7 +800,7 @@ def test_check_agent_model_consistency_rejects_mismatch() -> None:
 
     with pytest.raises(AgentModelMismatchError) as exc_info:
         check_agent_model_consistency(
-            agent="oppie",
+            agent="skeptic",
             model="anthropic/claude-sonnet-4-6",
             provider="anthropic",
             execution_id="exec-test-0001",
@@ -808,14 +808,14 @@ def test_check_agent_model_consistency_rejects_mismatch() -> None:
         )
 
     err = exc_info.value
-    assert err.agent == "oppie"
+    assert err.agent == "skeptic"
     assert err.provider == "anthropic"
     assert err.expected_provider == "xai"
     assert err.required_variant is None
     assert err.to_dict()["code"] == "agent_model_mismatch"
     assert len(published) == 1
     assert published[0].signal == "pipeline.frontier.dispatch.mismatch"
-    assert published[0].payload["agent"] == "oppie"
+    assert published[0].payload["agent"] == "skeptic"
     assert published[0].payload["requested_model"] == "anthropic/claude-sonnet-4-6"
     assert published[0].payload["mismatch_kind"] == "provider"
 
@@ -829,7 +829,7 @@ def test_check_agent_model_consistency_accepts_valid_family() -> None:
     published: list[Any] = []
 
     check_agent_model_consistency(
-        agent="oppie",
+        agent="skeptic",
         model="xai/grok-4.20-multi-agent-0309",
         provider="xai",
         execution_id="exec-test-0001",
@@ -839,8 +839,8 @@ def test_check_agent_model_consistency_accepts_valid_family() -> None:
     assert published == []
 
 
-def test_check_agent_model_consistency_rejects_non_multi_agent_for_oppie() -> None:
-    """Oppie with a non-multi-agent xAI model raises AgentModelMismatchError."""
+def test_check_agent_model_consistency_rejects_non_multi_agent_for_skeptic() -> None:
+    """Skeptic with a non-multi-agent xAI model raises AgentModelMismatchError."""
     from systems.pipeline.core.execution.errors import AgentModelMismatchError
     from systems.pipeline.core.handlers.frontier_dispatch_admission import (
         check_agent_model_consistency,
@@ -850,7 +850,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_oppie() -> No
 
     with pytest.raises(AgentModelMismatchError) as exc_info:
         check_agent_model_consistency(
-            agent="oppie",
+            agent="skeptic",
             model="xai/grok-4-fast-reasoning",
             provider="xai",
             execution_id="exec-test-0002",
@@ -858,7 +858,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_oppie() -> No
         )
 
     err = exc_info.value
-    assert err.agent == "oppie"
+    assert err.agent == "skeptic"
     assert err.model == "xai/grok-4-fast-reasoning"
     assert err.expected_provider == "xai"
     assert err.required_variant == "multi-agent"
@@ -890,9 +890,9 @@ def test_check_agent_model_consistency_passes_unknown_agent() -> None:
 @pytest.mark.parametrize(
     "agent,model,provider",
     [
-        ("orion", "openai/gpt-5.4", "openai"),
-        ("bard", "google/gemini-2.5-pro", "google"),
-        ("api_claude", "anthropic/claude-sonnet-4-6", "anthropic"),
+        ("gatherer", "openai/gpt-5.4", "openai"),
+        ("synthesizer", "google/gemini-2.5-pro", "google"),
+        ("reviewer", "anthropic/claude-sonnet-4-6", "anthropic"),
     ],
 )
 def test_check_agent_model_consistency_accepts_agents_without_variant_requirement(
@@ -918,19 +918,19 @@ def test_check_agent_model_consistency_accepts_agents_without_variant_requiremen
     assert published == []
 
 
-@pytest.mark.parametrize("agent", ["oppie"])
+@pytest.mark.parametrize("agent", ["skeptic"])
 def test_registry_default_model_satisfies_own_requirement(agent: str) -> None:
-    """_AGENT_DEFAULTS[agent] must satisfy _AGENT_MODEL_REQUIREMENTS[agent].
+    """Default model for skeptic must satisfy the 'multi-agent' variant requirement.
 
-    Regression guard: the original bug was _AGENT_DEFAULTS['oppie'] pointing at
-    a non-multi-agent model while the requirement mandated 'multi-agent'.
+    Regression guard: the original bug was 'oppie' pointing at a non-multi-agent
+    model while the requirement mandated 'multi-agent'.
     """
-    from agent_seat.registry import _AGENT_DEFAULTS, check_agent_model_requirement
+    from agent_seat.registry import check_agent_model_requirement, resolve_agent_model
 
-    default = _AGENT_DEFAULTS[agent]
+    default = resolve_agent_model(agent)
     violation = check_agent_model_requirement(agent, default)
     assert violation is None, (
-        f"_AGENT_DEFAULTS[{agent!r}] = {default!r} violates its own "
+        f"default model for {agent!r} ({default!r}) violates its own "
         f"requirement: {violation}"
     )
 
@@ -943,7 +943,7 @@ async def test_handler_persona_free_accepts_multi_agent_model(
 ) -> None:
     """agent=None + multi-agent model is accepted — the invariant is one-way.
 
-    oppie binds to multi-agent; multi-agent does not bind the caller to oppie.
+    skeptic binds to multi-agent; multi-agent does not bind the caller to skeptic.
     Locks the asymmetry: persona-free dispatches with xai/grok-4.20-multi-agent-0309
     must not trigger the admission gate.
     """
@@ -966,21 +966,21 @@ async def test_handler_persona_free_accepts_multi_agent_model(
 
 
 # ---------------------------------------------------------------------------
-# XAI server-side built-in tool injection (Oppie persona)
+# XAI server-side built-in tool injection (Skeptic / xAI multi-agent)
 # ---------------------------------------------------------------------------
 
 
-def _make_oppie_context(**extra_opts: Any) -> SimpleNamespace:
+def _make_skeptic_context(**extra_opts: Any) -> SimpleNamespace:
     return _make_context(
         options={
             "model": "xai/grok-4.20-multi-agent-0309",
-            "role": "oppie",
+            "role": "skeptic",
             **extra_opts,
         }
     )
 
 
-def _make_oppie_fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _make_skeptic_fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """Patch hydrate_agent / assemble_system_prompt / run_native_tool_loop."""
     captured: dict[str, Any] = {}
 
@@ -1003,14 +1003,14 @@ def _make_oppie_fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_oppie_injects_xai_builtin_tools_by_default(
+async def test_skeptic_injects_xai_builtin_tools_by_default(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Oppie with no caller provider_options gets all three built-in tools injected."""
-    captured = _make_oppie_fixtures(monkeypatch)
+    """Skeptic with no caller provider_options gets all three built-in tools injected."""
+    captured = _make_skeptic_fixtures(monkeypatch)
 
-    await handler.execute(_FakeStep(), _make_oppie_context())
+    await handler.execute(_FakeStep(), _make_skeptic_context())
 
     po = captured["req"].provider_options
     assert po is not None
@@ -1019,14 +1019,14 @@ async def test_oppie_injects_xai_builtin_tools_by_default(
 
 
 @pytest.mark.asyncio
-async def test_oppie_caller_provider_options_tools_overrides_default(
+async def test_skeptic_caller_provider_options_tools_overrides_default(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Caller-supplied provider_options.xai.tools takes precedence over the default."""
-    captured = _make_oppie_fixtures(monkeypatch)
+    captured = _make_skeptic_fixtures(monkeypatch)
 
-    context = _make_oppie_context(
+    context = _make_skeptic_context(
         generation_parameters={
             "provider_options": {"xai": {"tools": [{"type": "x_search"}]}}
         }
@@ -1038,14 +1038,14 @@ async def test_oppie_caller_provider_options_tools_overrides_default(
 
 
 @pytest.mark.asyncio
-async def test_oppie_caller_empty_provider_options_tools_suppresses_injection(
+async def test_skeptic_caller_empty_provider_options_tools_suppresses_injection(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Caller provider_options.xai.tools=[] suppresses all server-side tools."""
-    captured = _make_oppie_fixtures(monkeypatch)
+    captured = _make_skeptic_fixtures(monkeypatch)
 
-    context = _make_oppie_context(
+    context = _make_skeptic_context(
         generation_parameters={"provider_options": {"xai": {"tools": []}}}
     )
     await handler.execute(_FakeStep(), context)
@@ -1055,14 +1055,14 @@ async def test_oppie_caller_empty_provider_options_tools_suppresses_injection(
 
 
 @pytest.mark.asyncio
-async def test_oppie_mcp_false_suppresses_xai_builtin_injection(
+async def test_skeptic_mcp_false_suppresses_xai_builtin_injection(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """mcp=False is the unified 'no tools' signal — suppresses xAI injection."""
-    captured = _make_oppie_fixtures(monkeypatch)
+    captured = _make_skeptic_fixtures(monkeypatch)
 
-    await handler.execute(_FakeStep(), _make_oppie_context(mcp=False))
+    await handler.execute(_FakeStep(), _make_skeptic_context(mcp=False))
 
     po = captured["req"].provider_options
     # provider_options may be None or lack xai.tools — injection must NOT have fired
@@ -1071,7 +1071,7 @@ async def test_oppie_mcp_false_suppresses_xai_builtin_injection(
 
 
 @pytest.mark.asyncio
-async def test_oppie_explicit_tools_via_frontier_dispatch_suppresses_injection(
+async def test_skeptic_explicit_tools_via_frontier_dispatch_suppresses_injection(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1092,9 +1092,9 @@ async def test_oppie_explicit_tools_via_frontier_dispatch_suppresses_injection(
     monkeypatch.setattr(fd_mod, "resolve_tool_definitions", fake_resolve)
     monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
 
-    context = _make_oppie_context(
+    context = _make_skeptic_context(
         tools=[],
-        _endpoint_request_id="frontier-req-oppie-1",
+        _endpoint_request_id="frontier-req-skeptic-1",
     )
     await handler.execute(_FakeStep(), context)
 
@@ -1115,7 +1115,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     monkeypatch: pytest.MonkeyPatch,
     published_events: list[Any],
 ) -> None:
-    """Forge runs ``xai/grok-4.20-0309-reasoning`` (NOT a multi-agent model),
+    """Artisan runs ``xai/grok-4.20-0309-reasoning`` (NOT a multi-agent model),
     so the existing provider-derived suppression does not catch it. With
     ``capability_tier=inline-only`` set on the entity, the agent-tier check
     must coerce ``tools=[]`` and emit ``tool.suppressed`` with reason
@@ -1146,7 +1146,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
 
     context = _make_context(
-        options={"model": "xai/grok-4.20-0309-reasoning", "role": "forge"},
+        options={"model": "xai/grok-4.20-0309-reasoning", "role": "artisan"},
     )
     await handler.execute(_FakeStep(), context)
 
@@ -1157,7 +1157,7 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
     ]
     assert len(suppressed) == 1
     assert suppressed[0].payload["reason"] == "capability_tier_inline_only"
-    assert suppressed[0].payload["agent"] == "forge"
+    assert suppressed[0].payload["agent"] == "artisan"
     assert captured["req"].tools is None  # tools=[] flows downstream as None
     assert captured["include_quickref"] is False
 
@@ -1211,7 +1211,7 @@ async def test_default_capability_tier_does_not_suppress(
     context = _make_context(
         options={
             "model": "anthropic/claude-sonnet-4-6",
-            "role": "api_claude",
+            "role": "reviewer",
             "remote_mcp": False,
         },
     )

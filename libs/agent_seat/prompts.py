@@ -1,69 +1,18 @@
 """Agent-seat system prompt assembly.
 
-Builds the stacked system prompt from the dispatched agent's birth prompt
-(``$AGENT_IDENTITY_DIR/{agent}-birth.md``), a subagent preamble, and the
-optional hydration briefing card. Mirrors the ``_frontier_boot.assemble_boot_context``
-logic so the pipeline handler and MCP ``frontier_dispatch`` present the
-same persona to the model.
-
-The birth-prompt resolution path matches Stargate's ``_resolve_agent_identity_path``
-in ``services/universal-stargate/systems/pipeline/registry/access.py`` —
-env var required, no silent fallback.
+Assembles the stacked system prompt: preamble + briefing [+ continuation]
+[+ extra]. The preamble sets epistemic posture and Cortex contribution
+guidance; the briefing card (from hydrate_agent) orients the dispatched
+agent to the team's current state.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-from functools import lru_cache
-from pathlib import Path
-
-from .registry import normalize_agent_slug
 
 logger = logging.getLogger(__name__)
 
 _BOOT_SEPARATOR = "\n\n---\n\n"
-
-
-def derive_inline_only(
-    *,
-    capability_tier: str | None,
-    frontier_kind: str | None,
-    model: str | None,
-) -> bool:
-    """Decide whether this dispatch should suppress all MCP tool affordances.
-
-    Two cases produce inline-only operation today:
-
-    - ``capability_tier == "inline-only"`` — the agent entity is explicitly
-      demoted to inline-substrate-only operation. Permanent until the attribute
-      is unset in Cortex.
-    - xAI multi-agent models — xAI rejects OpenAI-style function tools on
-      multi-agent engines, and server-side built-ins (``web_search``,
-      ``x_search``, ``code_interpreter``) do not include Cortex / fs /
-      agent_bus. So Oppie and Forge today have no path to call Cortex from
-      inside a dispatch. When xAI multi-agent enables client-side tools, this
-      branch goes away and the personas gain full Cortex familiarity without
-      any other prompt changes.
-
-    ``remote_mcp`` (Anthropic native MCP) is NOT inline-only — those dispatches
-    have server-side access to the full MCP toolset and the quickref is useful.
-    """
-    if capability_tier == "inline-only":
-        return True
-    if frontier_kind == "xai" and model and "multi-agent" in model:
-        return True
-    return False
-
-_BIRTH_PROMPT_FILENAMES: dict[str, str] = {
-    "oppie": "oppie-birth.md",
-    "orion": "orion-birth.md",
-    "api_claude": "api-claude-birth.md",
-    "web": "web-claude-birth.md",
-    "cursor": "cursor-claude-birth.md",
-    "bard": "bard-birth.md",
-    "forge": "forge-birth.md",
-}
 
 
 CORTEX_TOOL_QUICKREF = """\
@@ -82,56 +31,6 @@ Format invariant: `arguments` is ALWAYS a JSON string — never a bare object.
 
 Non-existent tools (do not call): search_assertions, search_entities, get_entity
 Wrong field names: `entity_id` (not `slug`), `query` (not `q`)"""
-
-
-def _agent_identity_base() -> Path:
-    """Resolve ``$AGENT_IDENTITY_DIR`` or raise with a clear error.
-
-    Matches ``pipeline/registry/access._agent_identity_base``: identity material
-    lives in the Cortex data layer, not the repo. The env var must be set by
-    the deployment — no cwd-based fallback.
-    """
-    override = os.environ.get("AGENT_IDENTITY_DIR")
-    if not override:
-        raise ValueError(
-            "AGENT_IDENTITY_DIR is not set. agent_seat requires a configured "
-            "agent-identity base (Cortex data layer path). Set "
-            "AGENT_IDENTITY_DIR in the process environment or compose file."
-        )
-    return Path(override).resolve()
-
-
-@lru_cache(maxsize=16)
-def _read_identity_file(resolved_path: str) -> str:
-    return Path(resolved_path).read_text(encoding="utf-8")
-
-
-def load_birth_prompt(agent: str) -> str:
-    """Load the dispatched agent's birth prompt. Raises if missing.
-
-    Normalizes slug first via registry.normalize_agent_slug (handles Oppie,
-    Oppia, case, variants) so persona references work. Unlike the MCP
-    frontier_boot variant, this fails loud.
-    """
-    canonical = normalize_agent_slug(agent)
-    filename = _BIRTH_PROMPT_FILENAMES.get(canonical)
-    if not filename:
-        known = ", ".join(sorted(_BIRTH_PROMPT_FILENAMES))
-        raise ValueError(
-            f"Unknown agent {agent!r} (normalized: {canonical!r}). "
-            f"Known agents with birth prompts: {known}"
-        )
-    base = _agent_identity_base()
-    candidate = (base / filename).resolve()
-    try:
-        candidate.relative_to(base)
-    except ValueError as exc:
-        raise ValueError(
-            f"agent identity path for {agent!r} escapes AGENT_IDENTITY_DIR ({base})"
-        ) from exc
-    if not candidate.is_file():
-        raise FileNotFoundError(f"birth prompt for {agent!r} not found at {candidate}")
-    return _read_identity_file(str(candidate)).strip()
 
 
 _PREAMBLE_HEADER = """\
@@ -230,7 +129,11 @@ def assemble_system_prompt(
     include_cortex_quickref: bool = True,
     inline_only: bool = False,
 ) -> str:
-    """Assemble the stacked system prompt: birth + preamble + briefing [+ continuation] [+ extra].
+    """Assemble the stacked system prompt: preamble + briefing [+ continuation] [+ extra].
+
+    Birth-prompt loading was retired in Phase 7 (files absent from
+    $AGENT_IDENTITY_DIR; loader was failing on every dispatch role call).
+    The stack is now preamble-first.
 
     - ``briefing_card_md``: output of ``hydrate_agent().briefing_card_md``. When
       provided, the dispatched agent sees their own session briefing.
@@ -243,11 +146,9 @@ def assemble_system_prompt(
       The briefing card should also have been rendered with ``inline_only=True``
       so the skills header does not instruct fs(...) reads.
 
-    Order: birth → preamble → briefing → continuation → extra. Caller-provided
-    content sits last so it doesn't interrupt identity priming.
+    Order: preamble → briefing → continuation → extra.
     """
     parts: list[str] = [
-        load_birth_prompt(agent),
         build_subagent_preamble(
             agent,
             include_cortex_quickref=include_cortex_quickref,

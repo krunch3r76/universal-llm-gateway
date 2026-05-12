@@ -30,7 +30,7 @@ class _FakeContext:
 def _wrapped_frontier_exhaustion() -> PipelineExecutionError:
     cause = FrontierDispatchExhaustedError(
         execution_id="exec-123",
-        agent="orion",
+        agent="gatherer",
         model="openai/gpt-5.4",
         provider="openai",
         turns_used=4,

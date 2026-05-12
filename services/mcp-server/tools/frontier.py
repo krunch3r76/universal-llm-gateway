@@ -3,9 +3,12 @@
 Two tools, two contracts:
 
 - ``team_dispatch(op=..., role=..., messages=..., ...)`` is the role-required
-  door for team-seat consults (oppie, orion, bard, api_claude, forge).
-  ``role`` selects a ``role:{slug}`` execution contract (Phase 5 of the
-  agent-naming cleanup arc; see ``notes/system/specs/role-schema.md``).
+  door for team-seat consults. ``role`` selects a functional seat from the
+  roster: lead / reviewer / gatherer / synthesizer / artisan / skeptic /
+  investigator. Each resolves its own default (family, platform, model) via
+  ``role:{slug}`` execution contract in Cortex. Legacy persona names (oppie →
+  skeptic, forge → artisan, orion → gatherer, bard → synthesizer) are accepted
+  via normalize_agent_slug alias table (Phase 7 of the agent-naming cleanup arc).
   Op enum: "generate" (returns content via tracker) or "to_thread"
   (dispatches with reply landing on ``thread``).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is the persona-free
@@ -169,12 +172,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Role-aware team-seat dispatch with explicit op discrimination.
 
-        ``role`` selects a ``role:{slug}`` execution contract — see
-        ``notes/system/specs/role-schema.md``. Phase 5 of the agent-naming
-        cleanup arc replaced the legacy ``agent=`` parameter; the role
-        contract carries allowed_models / default_model / mcp_required /
-        capability_tier and the persona prose lives in the file referenced
-        by ``role:{slug}.persona_seed_ref``.
+        ``role`` selects a functional team seat from the roster (Phase 7 of the
+        agent-naming cleanup arc). Available roles: lead, reviewer, gatherer,
+        synthesizer, artisan, skeptic, investigator. Each role carries a default
+        (family, platform, model) and optional allowed_models / model_requirement
+        via the ``role:{slug}`` Cortex entity. Legacy persona names are accepted
+        via the alias table (oppie → skeptic, forge → artisan, orion → gatherer,
+        bard → synthesizer, api_claude → reviewer).
 
         Two ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
@@ -185,15 +189,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           is required. ``subject`` is optional (auto-derived from last message
           if absent).
 
-        Tool surface (no caller knob — derived from role's frontier_kind +
-        capability_tier):
-        - xAI roles with ``capability_tier=inline-only`` (``oppie``) — **no
-          MCP tool access**. The underlying xAI Responses path rejects
-          client-side function tools on multi-agent variants; substrate must
+        Tool surface (no caller knob — derived from role's default CapabilityProfile):
+        - ``skeptic`` (grok-api-multi) — **no MCP tool access** (inline-only).
+          xAI multi-agent rejects client-side function tools; substrate must
           be inlined into ``messages``.
-        - xAI reasoning-variant roles (``forge``) — supports tool calling but
-          inline-substrate dispatch is the team-seat default.
-        - All other roles (``orion``, ``bard``, ``api_claude``) — full MCP
+        - ``artisan`` (grok-api) — supports tool calling via xAI Responses API.
+        - All other roles (reviewer, gatherer, synthesizer, etc.) — full MCP
           catalog via the in-process tool loop / remote-MCP.
 
         Callers that need explicit no-role one-shot dispatch should use

@@ -1,7 +1,7 @@
 models:
   # Used by plan_split / plan_refactor to analyze structure, decide whether a
   # clean split is feasible, and produce the restructuring instructions.
-  # Orion (gpt-5.5) with two-phase discipline: read-only plan pass → human
+  # Gatherer role (gpt-5.5) with two-phase discipline: read-only plan pass → human
   # approval → execute. The approval gate compensates for navigation ambiguity
   # on un-baselined territory; Claude-family bootstrap restriction lifted.
   # See .cursor/rules/orion-feedback-discipline_ws.mdc.

@@ -135,7 +135,7 @@ def check_agent_model_consistency(
 # client-side MCP function tools at the API level. Non-multi-agent xAI models
 # (e.g. grok-4.3, grok-4.20-reasoning variants) support standard function
 # calling and must NOT be gated. The "multi-agent" substring is the canonical
-# signal — it matches _AGENT_MODEL_REQUIREMENTS["oppie"] in registry.py.
+# signal — it matches the model_requirement="multi-agent" on the skeptic role/grok-api-multi profile.
 _XAI_MULTI_AGENT_SUBSTRING: str = "multi-agent"
 
 

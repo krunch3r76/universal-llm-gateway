@@ -76,7 +76,8 @@ def _build_futures_spec(
     # projection (id, title, priority, domain) instead of the full description /
     # source_uri payload that the renderer drops.
     todo_qs_parts: dict[str, Any] = {"limit": 15, "compact": "true"}
-    if agent == "web":
+    _seat_parts = agent.split("-", 1)
+    if len(_seat_parts) == 2 and _seat_parts[1] == "web":
         todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
     # read-only: fetch todo index for briefing card prioritization
     futures_spec["todos"] = (cx, "GET", f"/boot-todos?{urlencode(todo_qs_parts)}")
@@ -93,7 +94,16 @@ def _build_futures_spec(
     )
     futures_spec["temporal"] = (cx, "GET", f"/boot-temporal?{temporal_qs}")
 
-    rj_agent = {"cursor": "cursor-claude", "web": "web-claude"}.get(agent, agent)
+    # Phase 7: the reflective journal agent key is now the family slug
+    # derived from the seat slug ({family}-{platform} → family part).
+    # Falls back to the full seat slug for unknown formats.
+    _parts = agent.split("-", 1)
+    rj_agent = (
+        _parts[0]
+        if len(_parts) == 2
+        and _parts[0] in {"claude", "gpt", "grok", "gemini", "subagent"}
+        else agent
+    )
     # read-only: fetch reflective journal entries for agent continuity
     futures_spec["reflective_journal"] = (
         cx,
@@ -186,7 +196,11 @@ def _extract_boot_results(
         else []
     )
 
-    if agent == "web":
+    # Web seats (claude-web, grok-web) get a domain-filtered todo list —
+    # operator-facing role; infra/pipeline noise is irrelevant.
+    _agent_parts = agent.split("-", 1)
+    _agent_platform = _agent_parts[1] if len(_agent_parts) == 2 else ""
+    if _agent_platform == "web":
         _web_domain_exclude = {"infra", "rag", "pipeline", "mcp", "model_id"}
         todos = [t for t in todos if t.get("domain") not in _web_domain_exclude]
 
@@ -212,7 +226,9 @@ def _extract_boot_results(
 
     return {
         "sessions": sessions,
-        "continuity": raw.get("continuity") if isinstance(raw.get("continuity"), dict) else {},
+        "continuity": raw.get("continuity")
+        if isinstance(raw.get("continuity"), dict)
+        else {},
         "deadlines": deadlines,
         "threads": threads,
         "unread_turns": unread_turns,
