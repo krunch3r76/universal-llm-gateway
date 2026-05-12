@@ -230,7 +230,7 @@ async def frontier_dispatch(
       ``pipeline(op="result", execution_id=…)`` for content.
     - ``op="to_thread"``: admits dispatch; model's reply lands on ``thread``.
 
-    Use ``team_dispatch`` for persona-aware dispatch with agent seat assignment.
+    Use ``team_dispatch`` for role-envelope dispatch with team-seat assignment.
     """
     req = FrontierGenerateRequest(**_normalize_op_body(body))
     return await _dispatch(req, response)

@@ -31,7 +31,8 @@ import httpx
 
 sys.path.insert(0, "libs/")
 
-from agent_seat.profiles import get_profile, load_roles
+from agent_seat.profiles import derive_inline_only, get_profile, load_roles
+from role_lint import RoleLintError, lint_role_payload
 
 _CORTEX_BASE = "http+unix://%2Ftmp%2Funiversal-protocol%2Fcortex-api.sock"
 _HEADERS = {"Content-Type": "application/json"}
@@ -53,10 +54,11 @@ _PERSONA_ENTITIES_TO_RETIRE = [
 
 def build_family_entities() -> dict[str, dict[str, object]]:
     """Generate family:* entity payloads (memory anchors only — no dispatch metadata)."""
+    display = {"gpt": "GPT", "claude": "Claude", "grok": "Grok", "gemini": "Gemini"}
     return {
         f"family:{family}": {
             "type": "model_family",
-            "name": family.title(),
+            "name": display.get(family, family.title()),
             "description": f"Memory anchor for the {family} model family.",
             "attributes": {},
         }
@@ -64,22 +66,51 @@ def build_family_entities() -> dict[str, dict[str, object]]:
     }
 
 
+def _role_execution_attributes(
+    role_name: str, role: object, profile: object
+) -> dict[str, object]:
+    """Execution-contract fields merged into Cortex ``role:`` attributes."""
+    inline = derive_inline_only(profile)
+    required_tools: list[str] = [] if inline else ["cortex", "fs", "agent_bus"]
+    verification: list[str] = []
+    if role_name == "reviewer":
+        verification = ["skill:named-entity-verification-gate"]
+    return {
+        "purpose": role.description,
+        "required_tools": required_tools,
+        "mcp_required": not inline,
+        "verification": verification,
+        "failure_mode": {
+            "on_tool_unavailable": "fail_closed",
+            "on_uncertainty": "escalate_to_operator",
+            "on_contract_violation": "reject_dispatch",
+        },
+        "output_schema": [
+            "markdown_response",
+            "optional_cortex_assertions_with_evidence_uris",
+        ],
+    }
+
+
 def build_role_entities() -> dict[str, dict[str, object]]:
     """Generate role:* entity payloads from load_roles()."""
     out = {}
     for role_name, role in load_roles().items():
-        provider = get_profile(role.default_family, role.default_platform).provider
+        profile = get_profile(role.default_family, role.default_platform)
+        provider = profile.provider
+        attrs: dict[str, object] = {
+            "default_family": role.default_family,
+            "default_platform": role.default_platform,
+            "default_model": role.default_model,
+            "allowed_models": list(role.allowed_models),
+            "frontier_kind": provider,
+        }
+        attrs.update(_role_execution_attributes(role_name, role, profile))
         out[f"role:{role_name}"] = {
             "type": "role",
             "name": role_name.title(),
             "description": role.description,
-            "attributes": {
-                "default_family": role.default_family,
-                "default_platform": role.default_platform,
-                "default_model": role.default_model,
-                "allowed_models": list(role.allowed_models),
-                "frontier_kind": provider,
-            },
+            "attributes": attrs,
         }
     return out
 
@@ -102,7 +133,9 @@ def _cx_request(method: str, path: str, body: dict | None = None) -> tuple[int, 
     try:
         return resp.status_code, resp.json()
     except Exception:
-        return resp.status_code, {"error": f"HTTP {resp.status_code}: {resp.text[:300]}"}
+        return resp.status_code, {
+            "error": f"HTTP {resp.status_code}: {resp.text[:300]}"
+        }
 
 
 def upsert_entity(entity_id: str, payload: dict[str, object], dry_run: bool) -> None:
@@ -111,6 +144,20 @@ def upsert_entity(entity_id: str, payload: dict[str, object], dry_run: bool) -> 
         print(f"[dry-run] upsert {entity_id}:")
         print(json.dumps(payload, indent=2))
         return
+
+    if payload.get("type") == "role":
+        lint_payload = {
+            "id": entity_id,
+            "type": "role",
+            "name": str(payload.get("name") or ""),
+            "description": str(payload.get("description") or ""),
+            "attributes": dict(payload.get("attributes") or {}),
+        }
+        try:
+            lint_role_payload(lint_payload)
+        except RoleLintError as exc:
+            print(f"  ERROR role lint {entity_id}: {exc}")
+            raise
 
     # Try GET first — if 200, patch; if 404, create.
     get_status, existing = _cx_request("GET", f"/entities/{entity_id}")
@@ -129,7 +176,9 @@ def upsert_entity(entity_id: str, payload: dict[str, object], dry_run: bool) -> 
             for k, v in payload.items()
             if k in ("name", "description", "attributes")
         }
-        patch_status, result = _cx_request("PATCH", f"/entities/{entity_id}", update_body)
+        patch_status, result = _cx_request(
+            "PATCH", f"/entities/{entity_id}", update_body
+        )
         if patch_status in (200, 201) or "id" in result:
             print(f"  updated {entity_id}")
         else:

@@ -41,6 +41,49 @@ from .workflow_state import (
 logger = logging.getLogger("cortex-api.entity_crud")
 
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
+
+
+def _enforce_role_entity_lint(
+    *,
+    entity_id: str,
+    entity_type: str,
+    name: str,
+    description: str | None,
+    attributes: object,
+) -> None:
+    """Reject role entities whose free-text fields fail self-concept lint (R1–R3)."""
+    if entity_type != "role":
+        return
+    from role_lint import RoleLintError, lint_role_payload
+
+    attrs = attributes if isinstance(attributes, dict) else {}
+    payload: dict[str, object] = {
+        "id": entity_id,
+        "type": entity_type,
+        "name": name,
+        "description": description or "",
+        "attributes": attrs,
+    }
+    try:
+        lint_role_payload(payload)
+    except RoleLintError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "role_lint_rejected",
+                "message": str(exc),
+                "violations": [
+                    {
+                        "field_path": v.field_path,
+                        "rule_class": v.rule_class,
+                        "matched_fragment": v.matched_fragment,
+                    }
+                    for v in exc.violations
+                ],
+            },
+        ) from exc
+
+
 ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
 JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
@@ -212,22 +255,42 @@ def update_entity_impl(
     entity_id: str,
     updates: dict[str, object],
 ) -> dict[str, object]:
-    existing = query(
-        conn,
-        "SELECT id, type, workflow_state FROM entities WHERE id = ?",
-        (entity_id,),
-    )
-    if not existing:
+    full_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    if not full_rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Entity not found: {entity_id}",
         )
+    prior = decode_row(full_rows[0], ENTITY_JSON_FIELDS)
+    prior_workflow_state = prior.get("workflow_state")
 
-    prior_workflow_state = existing[0]["workflow_state"]
+    merged: dict[str, object] = dict(prior)
+    for field, value in updates.items():
+        if value is None:
+            continue
+        if field == "attributes" and isinstance(value, dict):
+            base_attrs = dict(merged.get("attributes") or {})
+            base_attrs.update(value)
+            merged["attributes"] = base_attrs
+        else:
+            merged[field] = value
+
+    if str(prior.get("type")) == "role":
+        _enforce_role_entity_lint(
+            entity_id=str(merged["id"]),
+            entity_type=str(merged["type"]),
+            name=str(merged.get("name") or ""),
+            description=(
+                str(merged["description"])
+                if merged.get("description") is not None
+                else None
+            ),
+            attributes=merged.get("attributes"),
+        )
 
     if "workflow_state" in updates and updates["workflow_state"] is not None:
         validate_workflow_state(
-            conn, existing[0]["type"], str(updates["workflow_state"])
+            conn, str(prior["type"]), str(updates["workflow_state"])
         )
 
     sets: list[str] = []
@@ -255,7 +318,7 @@ def update_entity_impl(
         emit_todo_closure_gap_if_needed(
             conn,
             entity_id=entity_id,
-            entity_type=str(existing[0]["type"]),
+            entity_type=str(prior["type"]),
             new_workflow_state=new_workflow_state,
             prior_workflow_state=(
                 str(prior_workflow_state) if prior_workflow_state is not None else None
@@ -291,6 +354,15 @@ def create_entity_impl(
 ) -> dict[str, object]:
     body = EntityCreate.model_validate(payload)
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if body.type == "role":
+        _enforce_role_entity_lint(
+            entity_id=body.id,
+            entity_type=body.type,
+            name=body.name,
+            description=body.description,
+            attributes=dict(body.attributes or {}),
+        )
 
     workflow_state = body.workflow_state
     if workflow_state is not None:

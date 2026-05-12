@@ -11,8 +11,8 @@ Two tools, two contracts:
   via normalize_agent_slug alias table (Phase 7 of the agent-naming cleanup arc).
   Op enum: "generate" (returns content via tracker) or "to_thread"
   (dispatches with reply landing on ``thread``).
-- ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is the persona-free
-  raw engine call. Same op enum.
+- ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is direct frontier
+  dispatch (no role envelope). Same op enum.
 
 Both are thin async-by-default relays: forward to Stargate, return the dispatch
 envelope (execution_id, pipeline, started_at, status) immediately.
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Relay only handles admission (persona enforcement at Stargate + forward).
+# Relay only handles admission (role contract + model admission at Stargate).
 # Long-poll blocking is the caller's responsibility via pipeline(op="result").
 _RELAY_TIMEOUT = 20.0
 
@@ -273,7 +273,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         thread: str | None = None,
         subject: str | None = None,
     ) -> dict[str, Any]:
-        """Persona-free raw native-frontier dispatch with explicit op discrimination.
+        """Direct native-frontier dispatch (no role envelope) with explicit op discrimination.
 
         Two ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
@@ -283,14 +283,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``thread`` is required.
 
         ``mcp`` defaults to ``False`` (one-shot reasoning; no tool loop) — the
-        canonical use of persona-free dispatch is inline-substrate single-shot
+        canonical use of direct frontier dispatch is inline-substrate single-shot
         calls. Pass ``mcp=True`` to enable the full MCP catalog tool loop.
 
         ``transcript_id`` — caller's session ID for provenance attribution only.
         Recorded in the execution record; never forwarded to the dispatched model.
         A forward-reference to an in-progress session is fine.
 
-        Use ``team_dispatch`` for persona-aware dispatch with agent seat assignment.
+        Use ``team_dispatch`` for role-envelope dispatch with team-seat assignment.
         """
         body: dict[str, Any] = {
             "op": op,

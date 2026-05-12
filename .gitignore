@@ -125,6 +125,12 @@ README_REVISED.md
 !services/rag/README.md
 !services/universal_cloud_proxy/README.md
 !services/mcp-server/README.md
+!notes/
+!notes/system/
+!notes/system/specs/
+!notes/system/specs/*.md
+!notes/system/threads/
+!notes/system/threads/role-schema-migration-seed.md
 
 # Internal architecture/proposal notes
 **/proposals/
