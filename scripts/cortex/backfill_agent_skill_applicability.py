@@ -54,6 +54,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:enrichment-quality-discipline",
         "agent_skill:entity-creation-discipline",
         "agent_skill:financial-reasoning",
+        "agent_skill:grok-web-dispatch",
         "agent_skill:image-video-generation",
         "agent_skill:jupiter-browser-via-mcp",
         "agent_skill:lawyer-stance",
@@ -77,6 +78,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:hei-application-discipline",
         "agent_skill:tax",
         "agent_skill:w2-ingestion",
+        "agent_skill:xai-mcp-calling-shape",
     ],
     "cursor": [
         "agent_skill:ulg-architecture",
@@ -85,7 +87,14 @@ PARTITION: dict[str, list[str]] = {
 
 
 # Multi-agent assignments. Wins over the bucket-derived value above.
-OVERRIDES: dict[str, list[str]] = {}
+OVERRIDES: dict[str, list[str]] = {
+    "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "cursor-claude"],
+    "agent_skill:xai-mcp-calling-shape": [
+        "grok-web",
+        "claude-web",
+        "cursor-claude",
+    ],
+}
 
 
 class _UDSConnection:

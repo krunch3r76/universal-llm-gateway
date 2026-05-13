@@ -26,10 +26,10 @@ Works with `libs/llm_adapters` for provider-native request/response translation.
 ## `libs/cortex_store`
 
 Embeddable Cortex store library. Backing store for the Cortex knowledge graph.
-Used by the `cortex_api` service. Subpackages include `dispatch_ops/` (including
-bulk entity and relationship writes), `entity_aliases.py`, HTTP `routes/`
-(ingest, resolve), optional `ingest_chunker/` for chunked ingest, and
-`type_schemas.py` for typed payloads.
+Used by the `cortex_api` service. Subpackages include `dispatch_ops/`
+(including bulk entity / relationship writes and modular audit detectors),
+`entity_aliases.py`, HTTP `routes/` (assertions, ingest, resolve), optional
+`ingest_chunker/` for chunked ingest, and `type_schemas.py` for typed payloads.
 
 ---
 
