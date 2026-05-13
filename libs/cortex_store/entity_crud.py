@@ -20,7 +20,8 @@ from fastapi import HTTPException, status
 
 from .action_hints import detect_expired_unresolved
 from .compaction import apply_compaction_filter
-from .db import cortex_conn, decode_row, execute, json_encode, query
+from .db import cortex_conn, decode_row, json_encode, query
+from .entity_aliases import sync_entity_aliases
 from .models import (
     AssertionItem,
     CompactionProjection,
@@ -32,6 +33,7 @@ from .models import (
 )
 from .routes.assertions import _ASSERTION_COLS
 from .routes.edges import _EDGE_COLS
+from .type_schemas import validate_required_attributes
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -254,6 +256,7 @@ def update_entity_impl(
     *,
     entity_id: str,
     updates: dict[str, object],
+    commit: bool = True,
 ) -> dict[str, object]:
     full_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not full_rows:
@@ -311,7 +314,16 @@ def update_entity_impl(
     sets.append("updated_at = ?")
     params.append(now)
     params.append(entity_id)
-    execute(conn, f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
+    conn.execute(f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
+
+    if "aliases" in updates:
+        aliases = updates["aliases"]
+        sync_entity_aliases(
+            conn,
+            entity_id=entity_id,
+            entity_type=str(prior["type"]),
+            aliases=aliases if isinstance(aliases, list) else None,
+        )
 
     new_workflow_state = updates.get("workflow_state")
     if isinstance(new_workflow_state, str):
@@ -324,6 +336,8 @@ def update_entity_impl(
                 str(prior_workflow_state) if prior_workflow_state is not None else None
             ),
         )
+    if commit:
+        conn.commit()
 
     rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     assertion_rows = query(
@@ -350,7 +364,7 @@ def update_entity_impl(
 
 
 def create_entity_impl(
-    conn: sqlite3.Connection, payload: dict[str, object]
+    conn: sqlite3.Connection, payload: dict[str, object], commit: bool = True
 ) -> dict[str, object]:
     body = EntityCreate.model_validate(payload)
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -363,6 +377,8 @@ def create_entity_impl(
             description=body.description,
             attributes=dict(body.attributes or {}),
         )
+
+    validate_required_attributes(conn, body.type, body.attributes)
 
     workflow_state = body.workflow_state
     if workflow_state is not None:
@@ -397,7 +413,14 @@ def create_entity_impl(
             now,
         ),
     )
-    conn.commit()
+    sync_entity_aliases(
+        conn,
+        entity_id=body.id,
+        entity_type=body.type,
+        aliases=body.aliases,
+    )
+    if commit:
+        conn.commit()
     rows = query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
     if not rows:
         logger.error("Entity create succeeded but no row returned for id=%s", body.id)

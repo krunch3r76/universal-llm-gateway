@@ -20,6 +20,10 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "→ relationship_create (wire edges to related entities) "
         "→ entity_get (verify full graph)"
     ),
+    "entities_bulk_upsert": (
+        "next: relationships_bulk_upsert to wire graph links in one atomic call; "
+        "entity_get on representative IDs to verify"
+    ),
     "assert": (
         "next: relationship_create if this claim connects two entities; "
         "entity_get to verify the assertion appears on the entity. "
@@ -33,6 +37,10 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "next: entity_get on source_id or target_id to verify the full graph "
         "(entity + assertions + relationships). Pass include_edges=true to also "
         "see reasoning edges. Tip: pass session_id and agent for provenance."
+    ),
+    "relationships_bulk_upsert": (
+        "next: entity_get on representative source/target IDs to verify links; "
+        "check resolved_aliases in items when aliases were used"
     ),
     "entity_update": "next: entity_get to confirm the updated state is reflected",
     "supersede": (
@@ -85,7 +93,8 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "tip: to create typed structural links, use relationship_create with "
         "session_id + agent for provenance. Available types: supplement_to, "
         "filed_against, respondent_in, evidence_for, recipient_of, issued_by, "
-        "owns, references, parent_of/child_of, sibling_of, related_to, and more."
+        "depends_on, blocked_by, owns, references, parent_of/child_of, "
+        "sibling_of, related_to, and more."
     ),
     "relationship_delete": (
         "next: relationship_create if recreating with the correct direction or type; "
@@ -120,8 +129,14 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "entity_search": "search",
     "assert_entity": "assert",
     "create_entity": "entity_create",
+    "entity_upsert": "entities_bulk_upsert",
+    "bulk_create_entities": "entities_bulk_upsert",
+    "bulk_upsert_entities": "entities_bulk_upsert",
     "update_entity": "entity_update",
     "create_relationship": "relationship_create",
+    "relationship_upsert": "relationships_bulk_upsert",
+    "bulk_create_relationships": "relationships_bulk_upsert",
+    "bulk_upsert_relationships": "relationships_bulk_upsert",
     "list_relationships": "relationships",
     "get_relationships": "relationships",
     "delete_relationship": "relationship_delete",

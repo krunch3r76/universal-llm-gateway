@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from ..assertion_quality import validate_assertion
 from ..claim_hash import compute_claim_hash
 from ..db import cortex_conn, decode_row, json_encode, query
+from ..ingest_chunker import chunk_for_authority
 from ..models import (
     AssertFromChunkRequest,
     AssertFromChunkResponse,
@@ -38,40 +39,12 @@ _DATE_RE = re.compile(
     re.IGNORECASE,
 )
 
-_PARA_SPLIT = re.compile(r"\n{2,}")
-_MAX_CHUNK_TOKENS = 800
 _APPROX_CHARS_PER_TOKEN = 4
 
 
 def _extract_dates(text: str) -> list[str]:
     """Extract date strings from text using regex patterns."""
     return [g.strip() for groups in _DATE_RE.findall(text) for g in groups if g]
-
-
-def _chunk_content(text: str) -> list[str]:
-    """Split text into paragraph-boundary chunks respecting token limits."""
-    paragraphs = _PARA_SPLIT.split(text.strip())
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
-
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-        para_tokens = len(para) // _APPROX_CHARS_PER_TOKEN
-        if current and (current_len + para_tokens) > _MAX_CHUNK_TOKENS:
-            chunks.append("\n\n".join(current))
-            current = [para]
-            current_len = para_tokens
-        else:
-            current.append(para)
-            current_len += para_tokens
-
-    if current:
-        chunks.append("\n\n".join(current))
-
-    return chunks if chunks else [text]
 
 
 @router.post(
@@ -85,17 +58,19 @@ def ingest_document(body: IngestDocumentRequest) -> IngestDocumentResponse:
     Returns chunk list ready for assert_from_chunk(). Each chunk carries
     extracted dates that can be used to set valid_from on assertions.
     """
-    raw_chunks = _chunk_content(body.content)
+    raw_chunks = chunk_for_authority(body.content, body.authority_class)
 
     conn = cortex_conn()
     try:
         results: list[ChunkResult] = []
-        for idx, chunk_text in enumerate(raw_chunks):
+        for idx, chunk in enumerate(raw_chunks):
+            chunk_text = chunk.text
             token_count = len(chunk_text) // _APPROX_CHARS_PER_TOKEN
             cur = conn.execute(
                 "INSERT INTO chunks "
-                "(content, source_uri, source_date, observer, chunk_index, token_count) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(content, source_uri, source_date, observer, chunk_index, "
+                " token_count, pinpoint) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     chunk_text,
                     body.source_uri,
@@ -103,6 +78,7 @@ def ingest_document(body: IngestDocumentRequest) -> IngestDocumentResponse:
                     body.observer,
                     idx,
                     token_count,
+                    chunk.pinpoint,
                 ),
             )
             chunk_id = cur.lastrowid
@@ -117,6 +93,7 @@ def ingest_document(body: IngestDocumentRequest) -> IngestDocumentResponse:
                     snippet=snippet,
                     extracted_dates=dates,
                     token_count=token_count,
+                    pinpoint=chunk.pinpoint,
                 )
             )
         conn.commit()

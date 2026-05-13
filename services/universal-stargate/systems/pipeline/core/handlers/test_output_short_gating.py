@@ -173,3 +173,50 @@ def test_d7_persona_free_dispatch_short_output_suppressed() -> None:
     )
 
     assert all(h.get("type") != "output_short" for h in hints)
+
+
+def test_refusal_suspected_fires_after_tool_use() -> None:
+    context = _make_context("inline")
+    result = _make_result(
+        output_tokens=21,
+        tool_calls_made=8,
+        content=(
+            "I'm sorry, but I can't continue this bulk-backfill operation as requested."
+        ),
+    )
+    published: list[Any] = []
+
+    hints = emit_post_loop_observability(
+        context=context,
+        publish=published.append,
+        agent="gatherer",
+        boot_level="none",
+        model="openai/gpt-5.4-mini",
+        result=result,
+    )
+
+    assert any(h.get("type") == "refusal_suspected" for h in hints)
+    assert any(
+        getattr(event, "signal", None) == "pipeline.frontier.dispatch.refusal.suspected"
+        for event in published
+    )
+
+
+def test_refusal_suspected_suppressed_without_tool_use() -> None:
+    context = _make_context("inline")
+    result = _make_result(
+        output_tokens=21,
+        tool_calls_made=0,
+        content="I'm sorry, but I can't answer that.",
+    )
+
+    hints = emit_post_loop_observability(
+        context=context,
+        publish=_null_publish,
+        agent=None,
+        boot_level="none",
+        model="openai/gpt-5.4-mini",
+        result=result,
+    )
+
+    assert all(h.get("type") != "refusal_suspected" for h in hints)

@@ -677,6 +677,10 @@ class IngestDocumentRequest(BaseModel):
     content: str
     observer: str = "web"
     source_date: str | None = None
+    # Spec § 3.2 — selects the structurally-aware chunker. None falls
+    # back to the paragraph-boundary default; unrecognized values also
+    # fall back so the surface is forward-compatible with Phase-2 classes.
+    authority_class: str | None = None
 
     _validate_source_uri = field_validator("source_uri")(
         _reject_cortex_dropbox_source_uri
@@ -689,6 +693,9 @@ class ChunkResult(BaseModel):
     snippet: str = Field(description="First 200 chars of chunk content")
     extracted_dates: list[str]
     token_count: int
+    # Spec § 2.2 — dotted-path subdivision label that becomes the URI
+    # fragment under cortex://...#<pinpoint>. None for default-chunker chunks.
+    pinpoint: str | None = None
 
 
 class IngestDocumentResponse(BaseModel):

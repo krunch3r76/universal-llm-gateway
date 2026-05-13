@@ -44,6 +44,32 @@ def is_independent(provenance: Provenance, evaluator_model_id: str) -> bool:
 
     Returns:
         True if evaluator != originator
+
+    Caller contract — granularity (Phase 1 audit per
+    docs/architecture/entity-backed-claim-provenance.md § 5.2 / § 9.1
+    item 9, audit performed 2026-05-12):
+
+      Both ``provenance.originator_model_id`` and ``evaluator_model_id``
+      MUST be passed at family/version granularity (e.g.
+      ``openai/gpt-5.5``, ``google/gemini-2.5-pro``,
+      ``anthropic/claude-opus-4-7``) or finer (local-worker aliases
+      like ``phi4``). Seat or session decorators
+      (``claude-cursor``, ``gpt-5.5-session-abc``) MUST NOT be baked
+      into the comparison string — same model on different seats does
+      NOT satisfy independence (see § 10.5).
+
+      Audit verdict: PASS. All in-tree producers
+      (``services/universal-stargate/systems/pipeline/core/handlers/{generate,
+      protocol}.py``, ``pipelines/consensus/v*/handlers/answer.py``)
+      pass ``resolved_config["model_id"]`` — the pipeline-resolved
+      model alias, which is family/version-level for cloud models and
+      worker-alias-level (finer) for local models. No seat/session
+      strings reach this comparison in production.
+
+      v2 hardening (deferred, non-blocking): introduce
+      ``normalize_model_identity()`` to strip any future seat/session
+      decorators and make the contract explicit instead of relying on
+      caller discipline.
     """
     return provenance.originator_model_id != evaluator_model_id
 

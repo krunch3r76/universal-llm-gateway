@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from fastapi import HTTPException
+
+from ..db import cortex_conn
+from ..entity_aliases import resolve_entity_reference
 from ..routes.relationships import (
     _create_relationship_impl,
     _delete_relationship_impl,
@@ -40,6 +44,7 @@ def _op_relationship_create(
     source_uri: str | None = None,
     session_id: str | None = None,
     agent: str | None = None,
+    resolve_aliases: bool = True,
     **_: object,
 ) -> dict[str, Any]:
     for field, val in [
@@ -49,9 +54,24 @@ def _op_relationship_create(
     ]:
         if not val:
             return {"error": f"{field} is required"}
+    resolved_aliases: list[dict[str, str]] = []
+    try:
+        with cortex_conn() as conn:
+            resolved_source = resolve_entity_reference(
+                conn, source_id, resolve_aliases=resolve_aliases, label="source"
+            )
+            resolved_target = resolve_entity_reference(
+                conn, target_id, resolve_aliases=resolve_aliases, label="target"
+            )
+    except HTTPException as exc:
+        return {"error": exc.detail, "status_code": exc.status_code}
+    for resolved in [resolved_source.resolved_alias, resolved_target.resolved_alias]:
+        if resolved:
+            resolved_aliases.append(resolved)
+
     body: dict[str, Any] = {
-        "source_id": source_id,
-        "target_id": target_id,
+        "source_id": resolved_source.entity_id,
+        "target_id": resolved_target.entity_id,
         "type_id": type_id,
     }
     for key, val in [
@@ -68,17 +88,19 @@ def _op_relationship_create(
         if val is not None:
             body[key] = val
     result = _create_relationship_impl(body)
+    if resolved_aliases and "error" not in result:
+        result["resolved_aliases"] = resolved_aliases
     if "error" not in result:
         logger.info(
             "cortex relationship_create: %s -[%s]-> %s",
-            source_id,
+            resolved_source.entity_id,
             type_id,
-            target_id,
+            resolved_target.entity_id,
         )
         record(
             "mcp.cortex.relationship.created",
-            source_id=source_id,
-            target_id=target_id,
+            source_id=resolved_source.entity_id,
+            target_id=resolved_target.entity_id,
             type_id=type_id,
         )
     return result

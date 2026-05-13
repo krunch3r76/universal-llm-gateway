@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cortex Agent Skills Report</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f1419;
+      --panel: #151c24;
+      --panel-2: #1b2430;
+      --text: #e6edf3;
+      --muted: #9aa7b2;
+      --border: #2b3644;
+      --accent: #7aa2f7;
+      --ok: #8fd694;
+      --warn: #f0c674;
+      --bad: #ff8a8a;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7f8fa;
+        --panel: #ffffff;
+        --panel-2: #f0f3f7;
+        --text: #1f2933;
+        --muted: #5f6b7a;
+        --border: #d9e0e8;
+        --accent: #2457c5;
+        --ok: #16794c;
+        --warn: #8a5a00;
+        --bad: #a22f2f;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+    h1, h2, h3 { line-height: 1.2; margin: 0; }
+    h1 { font-size: 32px; letter-spacing: -0.02em; }
+    h2 { margin-top: 34px; font-size: 22px; }
+    h3 { margin-top: 18px; font-size: 17px; }
+    p { margin: 10px 0 0; color: var(--muted); }
+    code {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+    .summary, .families {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 24px;
+    }
+    .families { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    .stat, .note, section, .family-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    .stat, .note, .family-card { padding: 16px 18px; }
+    .stat strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1;
+      color: var(--accent);
+    }
+    .stat span, .small { display: block; margin-top: 8px; color: var(--muted); font-size: 13px; }
+    .note { margin-top: 18px; }
+    .note strong { color: var(--text); }
+    section { margin-top: 18px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { padding: 12px 14px; vertical-align: top; border-top: 1px solid var(--border); text-align: left; }
+    thead th {
+      border-top: 0;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    tbody tr:hover { background: color-mix(in srgb, var(--panel-2) 45%, transparent); }
+    ul { margin: 10px 0 0; padding-left: 20px; color: var(--muted); }
+    li + li { margin-top: 5px; }
+    .skill { font-weight: 700; color: var(--text); }
+    .path {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .badge {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin: 0 4px 4px 0;
+      font-size: 12px;
+      white-space: nowrap;
+      background: var(--panel-2);
+    }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .section-pad { padding: 18px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    @media (max-width: 1100px) {
+      .summary, .families { grid-template-columns: 1fr 1fr; }
+      table { table-layout: auto; }
+    }
+    @media (max-width: 680px) {
+      .summary, .families { grid-template-columns: 1fr; }
+      th, td { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Cortex Agent Skills Report</h1>
+      <p>Inventory focused on shared skills in <code>cortex://agent-skills</code>, not local Cursor-only <code>SKILL.md</code> files. Source evidence: <code>cortex(tool="entities", type="agent_skill")</code>, <code>cortex://agent-skills/README.md</code>, and the Cortex filesystem listing.</p>
+      <div class="summary">
+        <div class="stat"><strong>51</strong><span>Registered <code>agent_skill:</code> entities observed</span></div>
+        <div class="stat"><strong>39</strong><span>Active registered skills surfaced by Cortex boot filters</span></div>
+        <div class="stat"><strong>36</strong><span>Universal/default skills shared by Cortex-booting models</span></div>
+        <div class="stat"><strong>12</strong><span>Deprecated registered skills preserved for history</span></div>
+      </div>
+      <div class="note">
+        <strong>Applicability rule:</strong>
+        <code>applicable_agents=["*"]</code> or a missing applicability attribute is treated as universal/default in the Cortex boot manifest. Explicit lists are shown as scoped. "Family" below means the operational domain or model/seat family that triggers the skill, not the model family that authored it.
+      </div>
+      <div class="note">
+        <strong>Correction from the prior report:</strong>
+        <code>email-bridge-mailbox</code> is present and active at <code>cortex://agent-skills/email-bridge-mailbox.md</code>. The earlier HTML missed it because it inventoried local advertised skills before the Cortex skill corpus.
+      </div>
+    </header>
+
+    <h2>Operational Families</h2>
+    <div class="families">
+      <div class="family-card"><h3>Cortex Mechanics</h3><p class="small">Boot, close, entity graph, provenance, assertions, session-close audit.</p></div>
+      <div class="family-card"><h3>Evidence and Docs</h3><p class="small">OCR, DOCX, markdown navigation, document lifecycle, evidence review, corpus cross-reference.</p></div>
+      <div class="family-card"><h3>Legal and Tax</h3><p class="small">Lawyer stance, legal corpus ingestion, named-entity gates, BOE/Chase/HEI/tax/W-2 skills.</p></div>
+      <div class="family-card"><h3>MCP and Tools</h3><p class="small">Email bridge, Jupiter browser, image/video generation, third-party API mirrors, agent bus.</p></div>
+      <div class="family-card"><h3>Trading and Risk</h3><p class="small">Crypto research, Claudeburst ops, financial reasoning, pre-deploy gates.</p></div>
+    </div>
+
+    <h2>Universal Cortex-Boot Skills</h2>
+    <section>
+      <table>
+        <thead><tr><th style="width: 23%;">Skill</th><th style="width: 17%;">Family</th><th>Trigger</th><th style="width: 20%;">Applicability and Source</th></tr></thead>
+        <tbody>
+          <tr><td><span class="skill">architecture-invariants</span><span class="path">agent_skill:architecture-invariants</span></td><td><span class="badge">Architecture</span></td><td>Any API change, deletion, new module, signal/event change, transport choice, model-ID handling, or architectural decision.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/architecture-invariants.md</span></td></tr>
+          <tr><td><span class="skill">boot-execution-discipline</span><span class="path">agent_skill:boot-execution-discipline</span></td><td><span class="badge">Cortex</span><span class="badge">Provenance</span></td><td>Cortex boot, continue-from-transcript, interrupted-write recovery, or boot-facing artifact update.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/boot-execution-discipline.md</span></td></tr>
+          <tr><td><span class="skill">boe19p-appeal-discipline</span><span class="path">agent_skill:boe19p-appeal-discipline</span></td><td><span class="badge">Legal</span><span class="badge">Case</span></td><td>BOE-19-P, Santa Clara assessment appeal, APN 424-20-043, Prop 19 transfer, parent-child exclusion, supplemental or escape assessment task.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/boe19p-appeal-discipline.md</span></td></tr>
+          <tr><td><span class="skill">case-evidence-retrieval</span><span class="path">agent_skill:case-evidence-retrieval</span></td><td><span class="badge">Evidence</span><span class="badge">Case</span></td><td>Any "where does the artifact for case X live?" question.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/case-evidence-retrieval.md</span></td></tr>
+          <tr><td><span class="skill">chase-escrow-discipline</span><span class="path">agent_skill:chase-escrow-discipline</span></td><td><span class="badge">Finance</span><span class="badge">Legal</span><span class="badge">Case</span></td><td>Chase mortgage, Flintridge property tax, escrow, BYV, Prop 19, SII, Reg X, Chase escalation, supplemental tax, or escape assessment task.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/chase-escrow-discipline.md</span></td></tr>
+          <tr><td><span class="skill">chase-escrow-statement-ingestion</span><span class="path">agent_skill:chase-escrow-statement-ingestion</span></td><td><span class="badge">Document Ingestion</span><span class="badge">Finance</span></td><td>Chase annual escrow analysis PDFs, which use a distinct schema from monthly mortgage statements.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/chase-escrow-statement-ingestion.md</span></td></tr>
+          <tr><td><span class="skill">claudeburst-shadow-ops</span><span class="path">agent_skill:claudeburst-shadow-ops</span></td><td><span class="badge">Trading</span><span class="badge">Ops</span></td><td>Claudeburst trading bots, shadow-order operations, REST/MCP ops, or SSH failover.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/claudeburst-shadow-ops.md</span></td></tr>
+          <tr><td><span class="skill">corpus-cross-reference-discipline</span><span class="path">agent_skill:corpus-cross-reference-discipline</span></td><td><span class="badge">Evidence</span><span class="badge">Corpus</span></td><td>Every new evidence intake into a live case/matter corpus: email, document, screenshot, SMS, voicemail, transcript event, or counterparty message.</td><td><span class="badge ok">default universal</span><span class="path">agent-skills/corpus-cross-reference-discipline.md</span></td></tr>
+          <tr><td><span class="skill">cortex-entity-restructure</span><span class="path">agent_skill:cortex-entity-restructure</span></td><td><span class="badge">Cortex</span><span class="badge">Graph</span></td><td>Cortex entity restructure, graph cleanup, entity split, assertion migration, supersession pass, or child node creation.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/cortex-entity-restructure.md</span></td></tr>
+          <tr><td><span class="skill">cortex-orientation</span><span class="path">agent_skill:cortex-orientation</span></td><td><span class="badge">Cortex</span></td><td>Before any Cortex call, on session boot, or before session close.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/cortex-orientation.md</span></td></tr>
+          <tr><td><span class="skill">cortex-v24-implementation-arc</span><span class="path">agent_skill:cortex-v24-implementation-arc</span></td><td><span class="badge">Cortex</span><span class="badge">Implementation</span></td><td>Any Cortex v2.4 implementation slice: planning, dispatch, PR review, scoping, or deferred-phase reasoning.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/cortex-v24-implementation-arc.md</span></td></tr>
+          <tr><td><span class="skill">crypto-trading-research</span><span class="path">agent_skill:crypto-trading-research</span></td><td><span class="badge">Trading</span><span class="badge">Research</span></td><td>Crypto price, funding, squeeze, liquidation, or market-state questions for liquid perps or major coins.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/crypto-trading-research.md</span></td></tr>
+          <tr><td><span class="skill">document-lifecycle-tracking</span><span class="path">agent_skill:document-lifecycle-tracking</span></td><td><span class="badge">Documents</span><span class="badge">Case</span></td><td>Document creation, archival, ephemeral-vs-living classification, artifact index updates, or "where did this rendered PDF go?" questions.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/document-lifecycle-tracking.md</span></td></tr>
+          <tr><td><span class="skill">document-ocr</span><span class="path">agent_skill:document-ocr</span></td><td><span class="badge">OCR</span><span class="badge">Documents</span></td><td>Any PDF/image text extraction or OCR need.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/document-ocr.md</span></td></tr>
+          <tr><td><span class="skill">docx-ingestion</span><span class="path">agent_skill:docx-ingestion</span></td><td><span class="badge">Document Ingestion</span></td><td>Any <code>.docx</code> file: MCP ingest path, RAG indexing semantics, or Cortex ingest differences.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/docx_ingestion.md</span></td></tr>
+          <tr><td><span class="skill">email-bridge-mailbox</span><span class="path">agent_skill:email-bridge-mailbox</span></td><td><span class="badge">MCP</span><span class="badge">Email Bridge</span></td><td>Any email/MCP/mailbox task, especially Sent, folder-scoped search, ingesting email, or a missing folder diagnosis.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/email-bridge-mailbox.md</span></td></tr>
+          <tr><td><span class="skill">engagement-stance</span><span class="path">agent_skill:engagement-stance</span></td><td><span class="badge">Interaction</span></td><td>Sharp or rhetorical user challenge, halt directive, procedural challenge, model-identity jab, or compound contradiction.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/engagement-stance.md</span></td></tr>
+          <tr><td><span class="skill">enrichment-quality-discipline</span><span class="path">agent_skill:enrichment-quality-discipline</span></td><td><span class="badge">Cortex</span><span class="badge">Session Close</span></td><td>Post-close sparse-entity enrichment during session-close Step 3c.</td><td><span class="badge ok">default universal</span><span class="path">agent-skills/enrichment-quality-discipline.md</span></td></tr>
+          <tr><td><span class="skill">entity-creation-discipline</span><span class="path">agent_skill:entity-creation-discipline</span></td><td><span class="badge">Cortex</span><span class="badge">Evidence</span></td><td>Any <code>entity_create</code> where the description makes a typed claim about a source artifact being mailed, scanned, official, signed, verified, original, etc.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/entity-creation-discipline.md</span></td></tr>
+          <tr><td><span class="skill">evidence-review-discipline</span><span class="path">agent_skill:evidence-review-discipline</span></td><td><span class="badge">Evidence</span><span class="badge">Skeptic Pass</span></td><td>Before writing an assertion derived from visual evidence, email/SMS threads, PDFs, or interpreted documents that goes beyond literal transcription.</td><td><span class="badge ok">default universal</span><span class="path">agent-skills/evidence-review-discipline.md</span></td></tr>
+          <tr><td><span class="skill">financial-reasoning</span><span class="path">agent_skill:financial-reasoning</span></td><td><span class="badge">Finance</span></td><td>Money questions: balances, allocations, returns, fees, portfolio sizing, suitability framing, or multi-step arithmetic.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/financial-reasoning.md</span></td></tr>
+          <tr><td><span class="skill">hei-application-discipline</span><span class="path">agent_skill:hei-application-discipline</span></td><td><span class="badge">Finance</span><span class="badge">Case</span></td><td>HEI, Hometap, Splitero, Point, home equity investment, optimal servicer, Rafael Pires, Clearedge, or Flintridge equity task.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/hei-application-discipline.md</span></td></tr>
+          <tr><td><span class="skill">image-video-generation</span><span class="path">agent_skill:image-video-generation</span></td><td><span class="badge">Media</span><span class="badge">MCP</span></td><td>Image generation, video creation, HEIC-to-video, <code>grok_imagine</code>, <code>openai_imagine</code>, or <code>llm_generate</code>.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/image-video-generation.md</span></td></tr>
+          <tr><td><span class="skill">jupiter-browser-via-mcp</span><span class="path">agent_skill:jupiter-browser-via-mcp</span></td><td><span class="badge">Browser</span><span class="badge">MCP</span></td><td>Authenticated browser downloads, Scribd, paywalled PDFs, Cloudflare-protected sites, or Playwright/CDP sessions.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/jupiter-browser-via-mcp.md</span></td></tr>
+          <tr><td><span class="skill">lawyer-stance</span><span class="path">agent_skill:lawyer-stance</span></td><td><span class="badge">Legal</span></td><td>Legal questions, citations, statute interpretation, regulatory framing, IRAC/CREAC drafting, complaints, appeals, or legal-corpus retrieval.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/lawyer-stance.md</span></td></tr>
+          <tr><td><span class="skill">legal-opinion-corpus-ingestion</span><span class="path">agent_skill:legal-opinion-corpus-ingestion</span></td><td><span class="badge">Legal</span><span class="badge">RAG</span></td><td>Ingest published court opinions or statutes, build a legal corpus, verify citations, or process a tiered case list.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/legal-opinion-corpus-ingestion.md</span></td></tr>
+          <tr><td><span class="skill">markdown-navigation</span><span class="path">agent_skill:markdown-navigation</span></td><td><span class="badge">Documents</span><span class="badge">Navigation</span></td><td>Any markdown/PDF/DOCX file over roughly 5k characters.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/markdown-navigation.md</span></td></tr>
+          <tr><td><span class="skill">named-entity-verification-gate</span><span class="path">agent_skill:named-entity-verification-gate</span></td><td><span class="badge">Verification</span><span class="badge">External Artifacts</span></td><td>Any artifact bound for an external counterparty: legal filing, regulatory/tax submission, formal correspondence, inquiry response, subpoena response, or audit response.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/named-entity-verification-gate.md</span></td></tr>
+          <tr><td><span class="skill">no-silent-inference</span><span class="path">agent_skill:no-silent-inference</span></td><td><span class="badge">Factual Drafting</span></td><td>Any factual drafting, timeline, report, complaint, incident summary, or case-summary task.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/no-silent-inference.md</span></td></tr>
+          <tr><td><span class="skill">pre-deploy-gate-discipline</span><span class="path">agent_skill:pre-deploy-gate-discipline</span></td><td><span class="badge">Live Systems</span><span class="badge">Risk</span></td><td>Any recommendation that changes a live system moving money, altering order flow, or shifting risk exposure.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/pre-deploy-gate-discipline.md</span></td></tr>
+          <tr><td><span class="skill">review-protocol-mandatory-chronology-verification</span><span class="path">agent_skill:review-protocol-mandatory-chronology-verification</span></td><td><span class="badge">Review</span><span class="badge">Chronology</span></td><td>Any critique, review, or audit of a document containing a timeline, sequence of events, incident chronology, cross-referenced events, or claimed linkages.</td><td><span class="badge ok">default universal</span><span class="path">agent-skills/review-protocol-mandatory-chronology-verification.md</span></td></tr>
+          <tr><td><span class="skill">session-close</span><span class="path">agent_skill:session-close</span></td><td><span class="badge">Session Protocol</span><span class="badge">Cortex</span></td><td>Any session close, transcript write, or <code>session_close</code> call from Web or Cursor.</td><td><span class="badge ok">default universal</span><span class="path">agent-skills/session-close.md</span></td></tr>
+          <tr><td><span class="skill">session-close-audit</span><span class="path">agent_skill:session-close-audit</span></td><td><span class="badge">Session Protocol</span><span class="badge">Audit</span></td><td>Any <code>session_close</code> call, before invoking the close operation.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/session-close-audit.md</span></td></tr>
+          <tr><td><span class="skill">tax</span><span class="path">agent_skill:tax</span></td><td><span class="badge">Tax</span></td><td>Tax preparation, deduction analysis, TurboTax workflow, W-2/1099/K-1 intake, IRS/FTB retrieval, or tax planning.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/tax.md</span></td></tr>
+          <tr><td><span class="skill">thirdparty-api-mirror</span><span class="path">agent_skill:thirdparty-api-mirror</span></td><td><span class="badge">API Docs</span><span class="badge">RAG</span></td><td>Mirror or refresh vendor API docs such as xAI, OpenAI, Anthropic, Lighter, MCP, or Coinbase Advanced.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/thirdparty-api-mirror.md</span></td></tr>
+          <tr><td><span class="skill">w2-ingestion</span><span class="path">agent_skill:w2-ingestion</span></td><td><span class="badge">Tax</span><span class="badge">Document Ingestion</span></td><td>W-2 tax document ingestion, OCR, vision fallback, and Cortex assertion gotchas for OCR-derived claims.</td><td><span class="badge ok">universal</span><span class="path">agent-skills/w2-ingestion.md</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <h2>Active Scoped Skills</h2>
+    <section>
+      <table>
+        <thead><tr><th style="width: 22%;">Skill</th><th style="width: 18%;">Family</th><th>Trigger</th><th style="width: 26%;">Explicit Applicability</th></tr></thead>
+        <tbody>
+          <tr><td><span class="skill">agent-bus-discipline</span><span class="path">agent_skill:agent-bus-discipline</span></td><td><span class="badge">Agent Bus</span><span class="badge">MCP</span></td><td>Any <code>agent_bus</code> operation: new thread vs reply decision, pre-flight turn probing, large-payload navigation, sidecar body pattern, or thread lifecycle.</td><td><span class="badge ok">all named seats</span><span class="path">claude-web, claude-cursor, grok-web, superheavy, gpt-cursor, gpt-api</span><span class="path">agent-skills/agent-bus-discipline.md</span></td></tr>
+          <tr><td><span class="skill">grok-web-dispatch</span><span class="path">agent_skill:grok-web-dispatch</span></td><td><span class="badge">Grok</span><span class="badge">Dispatch</span></td><td>Before dispatching a task to a Grok web seat on grok.com, especially Heavy or Expert.</td><td><span class="badge warn">scoped</span><span class="path">grok-web, claude-web, cursor-claude</span><span class="path">agent-skills/grok-web-dispatch.md</span></td></tr>
+          <tr><td><span class="skill">ulg-architecture</span><span class="path">agent_skill:ulg-architecture</span></td><td><span class="badge">ULG Repo</span><span class="badge">Cursor</span></td><td>Any work in <code>workspaces://universal-llm-gateway/</code> before service operations, route changes, rebuild commands, or model-lifecycle decisions.</td><td><span class="badge warn">cursor only</span><span class="path">agent-skills/ulg-architecture.md</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <h2>Coverage and Drift Notes</h2>
+    <section>
+      <div class="section-pad">
+        <ul>
+          <li><strong>Email bridge is active:</strong> <code>agent_skill:email-bridge-mailbox</code> is universal and sourced from <code>agent-skills/email-bridge-mailbox.md</code>. It covers mailbox-scoped reads for known folders like Sent and the ingest-then-archive workflow.</li>
+          <li><strong>README index gaps:</strong> active entities observed in Cortex but not listed in the current README index: <code>agent-bus-discipline</code>, <code>evidence-review-discipline</code>, and <code>grok-web-dispatch</code>.</li>
+          <li><strong>Source URI gaps:</strong> <code>evidence-review-discipline</code> and <code>ulg-architecture</code> have active source files in <code>cortex://agent-skills</code> but their entity <code>source_uri</code> field was not populated in the full entity read.</li>
+          <li><strong>Unregistered source file:</strong> <code>agent-skills/web-transcript-preprocessing.md</code> exists in the Cortex filesystem listing but no matching <code>agent_skill:</code> entity appeared in the registered entity inventory.</li>
+          <li><strong>Potential stale retirement note:</strong> the README's "Recently retired" section says <code>grok-web-dispatch</code> was retired, but the Cortex entity currently reports <code>status="confirmed"</code>.</li>
+        </ul>
+      </div>
+    </section>
+
+    <h2>Deprecated Registered Skills</h2>
+    <section>
+      <table>
+        <thead><tr><th style="width: 28%;">Skill</th><th>Current meaning</th><th style="width: 28%;">Successor or note</th></tr></thead>
+        <tbody>
+          <tr><td><span class="skill">document-critique-timeline-discipline</span></td><td>Duplicate timeline/linkage review discipline.</td><td><code>review-protocol-mandatory-chronology-verification</code></td></tr>
+          <tr><td><span class="skill">document-critique-timeline-integrity</span></td><td>Duplicate timeline/linkage review discipline.</td><td><code>review-protocol-mandatory-chronology-verification</code></td></tr>
+          <tr><td><span class="skill">document-review-timeline-linkage-audit</span></td><td>Duplicate timeline/linkage review discipline.</td><td><code>review-protocol-mandatory-chronology-verification</code></td></tr>
+          <tr><td><span class="skill">frontier-consult-offload</span></td><td>Deprecated frontier/offload consult flow.</td><td>Use advisor/Plan-mode/self-execution consultation discipline.</td></tr>
+          <tr><td><span class="skill">frontier-dispatch</span></td><td>Deprecated dispatch to retired orion/oppie/bard/web-claude surfaces.</td><td>No direct successor; use current advisor or agent-bus discipline as applicable.</td></tr>
+          <tr><td><span class="skill">grok-heavy-dispatch</span></td><td>Deprecated alias for Grok web dispatch.</td><td><code>grok-web-dispatch</code>, though see drift note above.</td></tr>
+          <tr><td><span class="skill">orion-cortex-boot-execution-discipline</span></td><td>Orion-specific boot discipline renamed and universalized.</td><td><code>boot-execution-discipline</code></td></tr>
+          <tr><td><span class="skill">orion-feedback-discipline</span></td><td>Deprecated Orion two-phase feedback/dispatch discipline.</td><td>Always-applied advisor-timing discipline.</td></tr>
+          <tr><td><span class="skill">orion-post-close-enrichment</span></td><td>Orion-specific post-close enrichment wrapper retired.</td><td><code>enrichment-quality-discipline</code></td></tr>
+          <tr><td><span class="skill">session-end</span></td><td>Cursor-specific session end skill merged into common close protocol.</td><td><code>session-close</code></td></tr>
+          <tr><td><span class="skill">web-session-close</span></td><td>Web-specific close skill merged into common close protocol.</td><td><code>session-close</code></td></tr>
+          <tr><td><span class="skill">xai-mcp-calling-shape</span></td><td>Deprecated web-grok/superheavy MCP wire-shape skill.</td><td>Retired with those surfaces.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <h2>Local Cursor Skills Excluded</h2>
+    <section>
+      <div class="section-pad">
+        <p>The earlier report mixed Cortex skills with local Cursor skill files such as <code>~/.cursor/skills-cursor/canvas/SKILL.md</code> and workspace skills under <code>.cursor/skills/</code>. Those are useful locally, but they are not the shared <code>cortex://agent-skills</code> corpus that all Cortex-booting agents see.</p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

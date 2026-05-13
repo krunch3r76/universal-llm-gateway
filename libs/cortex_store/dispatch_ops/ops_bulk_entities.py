@@ -1,0 +1,175 @@
+"""Bulk entity upsert dispatch op."""
+
+from __future__ import annotations
+
+import sqlite3
+from typing import Any
+
+from fastapi import HTTPException, status
+
+from ..db import cortex_conn, decode_row, query
+from ..entity_crud import (
+    ENTITY_JSON_FIELDS,
+    create_entity_impl,
+    update_entity_impl,
+)
+from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, record
+
+_IF_EXISTS = frozenset({"fail", "update", "skip"})
+
+
+def _error_response(
+    exc: HTTPException,
+    *,
+    op: str,
+    failed_index: int,
+) -> dict[str, Any]:
+    return {
+        "error": exc.detail if isinstance(exc.detail, str) else exc.detail,
+        "status_code": exc.status_code,
+        "operation": op,
+        "failed_index": failed_index,
+        "rolled_back": True,
+    }
+
+
+def _validate_if_exists(value: object) -> str:
+    if value not in _IF_EXISTS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"if_exists must be one of {sorted(_IF_EXISTS)}, got {value!r}",
+        )
+    return str(value)
+
+
+def _entity_updates_changed(
+    existing: dict[str, Any],
+    updates: dict[str, object],
+) -> bool:
+    for key, value in updates.items():
+        if key == "attributes" and isinstance(value, dict):
+            merged = dict(existing.get("attributes") or {})
+            merged.update(value)
+            if merged != (existing.get("attributes") or {}):
+                return True
+        elif existing.get(key) != value:
+            return True
+    return False
+
+
+def _entity_payload(item: dict[str, Any]) -> dict[str, Any]:
+    required = {
+        "id": item.get("id"),
+        "type": item.get("type"),
+        "name": item.get("name"),
+    }
+    for field, value in required.items():
+        if not value:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, f"{field} is required"
+            )
+    if item.get("status") is not None and item["status"] not in _VALID_STATUS:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Invalid status {item['status']!r}. Must be one of: {sorted(_VALID_STATUS)}",
+        )
+
+    payload = {key: value for key, value in item.items() if key != "if_exists"}
+    if payload.get("source_uri") is not None and payload.get("content_hash") is None:
+        content_hash = _compute_content_hash(str(payload["source_uri"]))
+        if content_hash is not None:
+            payload["content_hash"] = content_hash
+    return payload
+
+
+def _bulk_upsert_entity(
+    conn: sqlite3.Connection,
+    item: dict[str, Any],
+    *,
+    if_exists: str,
+) -> dict[str, Any]:
+    payload = _entity_payload(item)
+    entity_id = str(payload["id"])
+    existing_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    if not existing_rows:
+        create_entity_impl(conn, payload, commit=False)
+        return {"id": entity_id, "action": "created"}
+
+    existing = decode_row(existing_rows[0], ENTITY_JSON_FIELDS)
+    if str(existing["type"]) != str(payload["type"]):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "detail": f"Entity {entity_id} already exists with a different type",
+                "existing_type": existing["type"],
+                "requested_type": payload["type"],
+            },
+        )
+    if if_exists == "fail":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {
+                "detail": f"Entity already exists: {entity_id}",
+                "existing_entity_id": entity_id,
+            },
+        )
+    if if_exists == "skip":
+        return {"id": entity_id, "action": "skipped", "reason": "exists"}
+
+    updates = {key: value for key, value in payload.items() if key in _ENTITY_MUTABLE}
+    if not updates or not _entity_updates_changed(existing, updates):
+        return {"id": entity_id, "action": "skipped", "reason": "unchanged"}
+    if isinstance(updates.get("attributes"), dict):
+        merged_attrs = dict(existing.get("attributes") or {})
+        merged_attrs.update(updates["attributes"])
+        updates["attributes"] = merged_attrs
+    update_entity_impl(conn, entity_id=entity_id, updates=updates, commit=False)
+    return {"id": entity_id, "action": "updated"}
+
+
+def _op_entities_bulk_upsert(
+    entities: list[dict[str, Any]] | None = None,
+    if_exists: str = "fail",
+    **_: object,
+) -> dict[str, Any]:
+    if not isinstance(entities, list) or not entities:
+        return {"error": "entities must be a non-empty list"}
+    default_if_exists = _validate_if_exists(if_exists)
+    items: list[dict[str, Any]] = []
+    with cortex_conn() as conn:
+        for index, item in enumerate(entities):
+            if not isinstance(item, dict):
+                conn.rollback()
+                return {
+                    "error": "each entity must be an object",
+                    "operation": "entities_bulk_upsert",
+                    "failed_index": index,
+                    "rolled_back": True,
+                }
+            try:
+                item_if_exists = _validate_if_exists(
+                    item.get("if_exists", default_if_exists)
+                )
+                items.append(_bulk_upsert_entity(conn, item, if_exists=item_if_exists))
+            except HTTPException as exc:
+                conn.rollback()
+                return _error_response(
+                    exc, op="entities_bulk_upsert", failed_index=index
+                )
+            except sqlite3.IntegrityError as exc:
+                conn.rollback()
+                return {
+                    "error": str(exc),
+                    "operation": "entities_bulk_upsert",
+                    "failed_index": index,
+                    "rolled_back": True,
+                }
+        conn.commit()
+    record("mcp.cortex.entities.bulk_upserted", count=len(items))
+    return {
+        "items": items,
+        "created": sum(1 for item in items if item["action"] == "created"),
+        "updated": sum(1 for item in items if item["action"] == "updated"),
+        "skipped": sum(1 for item in items if item["action"] == "skipped"),
+        "rolled_back": False,
+    }

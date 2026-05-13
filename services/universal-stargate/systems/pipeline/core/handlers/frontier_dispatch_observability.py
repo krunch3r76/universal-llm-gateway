@@ -34,6 +34,7 @@ from ..events.dispatch import (
     PipelineFrontierDispatchOutputShort,
     PipelineFrontierDispatchTerminationShadow,
 )
+from ..events.refusal import PipelineFrontierDispatchRefusalSuspected
 
 if TYPE_CHECKING:
     from agent_seat.native_loop import NativeLoopResult
@@ -42,6 +43,17 @@ if TYPE_CHECKING:
 
 # Module-level detector — stateless, safe to share across dispatches.
 _TERMINATION_DETECTOR = TerminationShadowDetector()
+_REFUSAL_OUTPUT_TOKEN_THRESHOLD = 80
+_REFUSAL_MARKERS = (
+    "i can't continue",
+    "i cannot continue",
+    "can't continue this",
+    "cannot continue this",
+    "can't comply",
+    "cannot comply",
+    "i'm sorry",
+    "i am sorry",
+)
 
 
 def emit_post_loop_observability(
@@ -87,6 +99,22 @@ def emit_post_loop_observability(
     )
     if short_hint is not None:
         anomaly_hints.append(short_hint)
+    refusal_hint = (
+        _emit_refusal_suspected(
+            publish=publish,
+            execution_id=context.execution_id,
+            agent=agent,
+            model=model,
+            provider=result.provider,
+            output_tokens=output_tokens,
+            tool_calls_made=result.tool_calls_made,
+            content=result.content,
+        )
+        if output_contract == "inline"
+        else None
+    )
+    if refusal_hint is not None:
+        anomaly_hints.append(refusal_hint)
     _emit_termination_shadow(
         publish=publish,
         execution_id=context.execution_id,
@@ -101,6 +129,54 @@ def emit_post_loop_observability(
         content=result.content,
     )
     return anomaly_hints
+
+
+def _emit_refusal_suspected(
+    *,
+    publish: Any,
+    execution_id: str,
+    agent: str | None,
+    model: str,
+    provider: str,
+    output_tokens: int,
+    tool_calls_made: int,
+    content: str | None,
+) -> dict[str, Any] | None:
+    """Emit refusal.suspected when short inline content refuses after tool use."""
+    text = (content or "").strip()
+    lowered = text.lower()
+    if output_tokens >= _REFUSAL_OUTPUT_TOKEN_THRESHOLD:
+        return None
+    if tool_calls_made <= 0:
+        return None
+    if not any(marker in lowered for marker in _REFUSAL_MARKERS):
+        return None
+
+    preview = text[:240]
+    reason = (
+        "frontier dispatch produced a short refusal-shaped answer after "
+        "making tool calls"
+    )
+    publish(
+        PipelineFrontierDispatchRefusalSuspected(
+            agent=agent,
+            execution_id=execution_id,
+            model=model,
+            provider=provider,
+            output_tokens=output_tokens,
+            tool_calls_made=tool_calls_made,
+            content_preview=preview,
+            reason=reason,
+        )
+    )
+    return {
+        "type": "refusal_suspected",
+        "output_tokens": output_tokens,
+        "tool_calls_made": tool_calls_made,
+        "provider": provider,
+        "reason": reason,
+        "suggestion": "retry with a higher-capability model or reduce the write loop",
+    }
 
 
 def _emit_output_short(

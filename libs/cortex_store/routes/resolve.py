@@ -1,12 +1,16 @@
-"""Cortex URI resolution — cortex://TYPE/SLUG[?r=N][&a=ARTIFACT]
+"""Cortex URI resolution — cortex://TYPE/SLUG[?r=N][&a=ARTIFACT][#PINPOINT].
 
-Resolves cortex:// URIs to entity + optional assertion data.
-Additive endpoint — does not modify any existing routes.
+Resolves cortex:// URIs to entity + optional assertion + optional chunk data.
+Additive endpoint — does not modify any existing routes. The ``#PINPOINT``
+fragment extension is spec § 2.2 of
+docs/architecture/entity-backed-claim-provenance.md and reads from the
+``chunks.pinpoint`` column added by migration 037.
 """
 
 from __future__ import annotations
 
 import logging
+import sqlite3
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -37,7 +41,12 @@ def parse_cortex_uri(uri: str) -> dict:
       cortex://TYPE/SLUG
       cortex://TYPE/SLUG?r=N
       cortex://TYPE/SLUG?r=N&a=ARTIFACT
+      cortex://TYPE/SLUG#PINPOINT          (spec § 2.2 fragment extension)
       cortex://assertion/ID
+
+    The ``pinpoint`` field is a free-form label (e.g. ``f-1-B`` for
+    statute (f)(1)(B)) — its meaning is defined by the source's chunk
+    manifest, not by this parser.
     """
     parsed = urlparse(uri)
     if parsed.scheme != "cortex":
@@ -52,6 +61,7 @@ def parse_cortex_uri(uri: str) -> dict:
     params = parse_qs(parsed.query)
     revision = int(params["r"][0]) if "r" in params else None
     artifact = params["a"][0] if "a" in params else None
+    pinpoint = parsed.fragment or None
 
     return {
         "type": entity_type,
@@ -59,7 +69,35 @@ def parse_cortex_uri(uri: str) -> dict:
         "entity_id": f"{entity_type}:{slug}",
         "revision": revision,
         "artifact": artifact,
+        "pinpoint": pinpoint,
     }
+
+
+def _resolve_pinpoint_chunk(
+    conn: sqlite3.Connection, *, entity_id: str, pinpoint: str
+) -> dict | None:
+    """Look up the chunk whose (source_uri = cortex://entity_id, pinpoint).
+
+    Returns the chunk row as a dict, or ``None`` if no chunk matches —
+    callers surface this as ``pinpoint_unresolved`` per spec § 2.2.
+
+    The lookup keys on the canonical ``cortex://<entity_id>`` form. If
+    callers wrote chunks using an alternative ``source_uri`` (e.g. a
+    workspace path), pinpoint resolution will not find them — Phase 2
+    seeding standardizes on the cortex:// form.
+    """
+    canonical_uri = f"cortex://{entity_id.replace(':', '/', 1)}"
+    rows = query(
+        conn,
+        "SELECT id, content, source_uri, source_date, observer, "
+        "       chunk_index, token_count, pinpoint "
+        "FROM chunks "
+        "WHERE source_uri = ? AND pinpoint = ?",
+        (canonical_uri, pinpoint),
+    )
+    if not rows:
+        return None
+    return dict(rows[0])
 
 
 @router.get("")
@@ -126,6 +164,23 @@ def resolve_cortex_uri(
             "uri": uri,
             "entity": dict(entity_rows[0]),
         }
+
+        # Spec § 2.2 — fragment resolves to chunk in source's chunk manifest.
+        # Pinpoint resolution is independent of tag/revision; both can be
+        # present (entity + tagged-assertion + chunk all returned together).
+        if parsed["pinpoint"] is not None:
+            chunk = _resolve_pinpoint_chunk(
+                conn,
+                entity_id=entity_id,
+                pinpoint=parsed["pinpoint"],
+            )
+            result["pinpoint"] = parsed["pinpoint"]
+            if chunk is None:
+                result["pinpoint_status"] = "pinpoint_unresolved"
+            else:
+                result["chunk"] = chunk
+                result["verbatim"] = chunk.get("content")
+                result["pinpoint_status"] = "resolved"
 
         # Tag-based resolution takes precedence over revision pinning
         if tag is not None:

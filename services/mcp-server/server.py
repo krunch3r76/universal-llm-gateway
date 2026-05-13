@@ -46,6 +46,7 @@ from tools.cortex_named_tools import register_cortex_named_tools
 from tools.document_ocr import register_document_ocr_tools
 from tools.events import register_event_tools
 from tools.filesystem import register_filesystem_tools
+from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._paths import _FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
@@ -313,6 +314,7 @@ def _build_server() -> FastMCP:
         paths: list[str] | None = None,
         content: str = "",
         target: str = "",
+        target_sandbox: str = "",
         line: int = 0,
         section: str = "",
         all_occurrences: bool = False,
@@ -363,7 +365,8 @@ def _build_server() -> FastMCP:
           delete         (path)                           — delete file
           search         (path, content)                  — regex search (workspaces sandbox only)
           move           (path, target)                   — rename/relocate file
-          copy           (path, target)                   — copy file (both sandboxes)
+          copy           (path, target, target_sandbox?)  — copy file; when target_sandbox
+                           differs from sandbox, copy server-side between sandboxes
           write_binary   (path, content)                  — write base64-encoded binary (cortex sandbox only)
 
         Markdown section ops (for large docs):
@@ -382,6 +385,13 @@ def _build_server() -> FastMCP:
             return {
                 "error": f"sandbox must be 'cortex' or 'workspaces', got {sandbox!r}"
             }
+        if target_sandbox and target_sandbox not in valid_sandboxes:
+            return {
+                "error": (
+                    "target_sandbox must be 'cortex' or 'workspaces', "
+                    f"got {target_sandbox!r}"
+                )
+            }
 
         if op.startswith("md_"):
             md_fn = overflow_registry.get("markdown")
@@ -394,6 +404,20 @@ def _build_server() -> FastMCP:
             return md_fn(
                 op=md_op, path=path, sandbox=sandbox, section=section, content=content
             )
+
+        if op == "copy" and target_sandbox and target_sandbox != sandbox:
+            if not path:
+                return {"error": "'path' is required for copy"}
+            if not target:
+                return {"error": "'target' is required for copy"}
+            result = copy_between_sandboxes_impl(
+                sandbox,
+                path,
+                target_sandbox,
+                target,
+            )
+            result["_next"] = _FS_WORKFLOW_HINTS["copy"]
+            return result
 
         if sandbox == "workspaces":
             if op == "read":
