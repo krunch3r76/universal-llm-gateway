@@ -2340,6 +2340,60 @@ scripts/query-events --sql "
   ORDER BY seq DESC"
 ```
 
+
+
+### MCP Maintenance (Drain) Signals
+
+Emitted by `services/mcp-server/middleware/drain.py` during graceful restart. Track the drain lifecycle so observability can correlate `manage(action="sync_restart", service="mcp")` calls with the request rejection window and confirm that the drain completes within the configured timeout.
+
+All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `mcp.maintenance.drain.started` | `reason` (str — `signal:<NAME>` e.g. `signal:SIGTERM`), `timeout_s` (float — uvicorn `timeout_graceful_shutdown`), `in_flight` (int — count of admitted requests at drain begin) | Drain flag flipped; new `tools/call` requests will receive `-32099 server_restarting` with `Retry-After: 30`. In-flight requests run to completion under the graceful-shutdown budget. |
+| `mcp.maintenance.drain.completed` | `timed_out` (bool — true iff requests were still in flight when uvicorn exited, indicating graceful-shutdown timeout fired), `in_flight_at_timeout` (int) | Drain finished. `timed_out=true` is the signal that `_GRACEFUL_SHUTDOWN_TIMEOUT_S` is too short for current workload. |
+| `mcp.maintenance.request.rejected` | `mcp_method` (str — JSON-RPC method, `""` if unparseable), `tool_name` (str — for tools/call), `jsonrpc_id` (any — request id from body, may be null), `retry_after_s` (int — Retry-After header value) | One request was rejected with the restart error envelope. Emitted for every `POST /mcp` during drain. |
+
+**Wire shape — restart error envelope** (also returned by proxies after exhausting retries):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": <jsonrpc_id>,
+  "error": {
+    "code": -32099,
+    "message": "MCP server is restarting; retry in 30s",
+    "data": {
+      "reason": "server_restarting",
+      "retry_after_s": 30
+    }
+  }
+}
+```
+
+HTTP status `503`. Headers `Retry-After: 30` and `Connection: close`. Clients should retry with backoff; the canonical proxies (`scripts/mcp-stdio-proxy.py`, `services/universal_cloud_proxy/mcp_executor.py`) retry on this envelope AND on connection-class errors during the brief container-down window between `docker stop` and `up --force-recreate`.
+
+**Query example** — restart-cycle observability (drain start → server.started elapsed):
+
+```bash
+scripts/query-events --sql "
+  WITH drains AS (
+    SELECT seq, ts_unix_ms AS t_drain, json_extract(payload,'\$.in_flight') AS in_flight
+    FROM events WHERE signal='mcp.maintenance.drain.started'
+  ),
+  starteds AS (
+    SELECT seq, ts_unix_ms AS t_started
+    FROM events WHERE signal='mcp.oauth.server.started'
+  )
+  SELECT d.t_drain, d.in_flight, (
+    SELECT MIN(s.t_started) FROM starteds s WHERE s.t_started > d.t_drain
+  ) AS t_started_next,
+  (SELECT MIN(s.t_started) FROM starteds s WHERE s.t_started > d.t_drain) - d.t_drain AS cycle_ms
+  FROM drains d ORDER BY d.t_drain DESC LIMIT 10"
+```
+
+The `cycle_ms` distribution is the calibration target for `_RESTART_RETRY_DELAYS_S` in the stdio and cloud proxies. The two retry delays SHOULD sum to at least the 95th percentile of `cycle_ms`.
+
 ## MCP Stdio Proxy Signals
 
 Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits `mcp.transport.*`
@@ -2354,6 +2408,8 @@ signals (`transport=stdio`). Supersedes legacy `proxy.*` names.
 | `mcp.transport.request.failed` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type` | Request relay failed |
 | `mcp.transport.request.timedout` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `watchdog_s` | Watchdog timeout fired |
 | `mcp.transport.heartbeat.forwarded` | `transport`, `msg_id`, `mcp_method`, `count` | SSE heartbeat forwarded as progress |
+| `mcp.transport.response.large` | `transport`, `msg_id`, `mcp_method`, `response_bytes`, `threshold_bytes` | Response exceeded large-payload threshold |
+| `mcp.transport.proxy.restart.detected` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type`, `attempt` | Proxy observed MCP restart (503 with `server_restarting` payload, or connection-class error); will retry per `_RESTART_RETRY_DELAYS_S` |
 
 ### OAuth Signals
 

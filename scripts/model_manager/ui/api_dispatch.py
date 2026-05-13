@@ -239,9 +239,12 @@ async def _sync_restart(ctl: ServiceController, service: str) -> str:
         start_msg = await _start(ctl, service)
         msg = f"{stop_msg}\n{start_msg}"
 
-    if service in _BOOT_RENDER_DIFF_SERVICES and not (
-        service == "mcp" and "status: rebuild_scheduled" in msg
-    ):
+    # Skip boot-render-diff when the mcp recreate was deferred to a background
+    # task — the new container isn't healthy yet and the diff would query a
+    # transitional state. Use the controller's typed flag rather than parsing
+    # the message body.
+    skip_diff = service == "mcp" and ctl.mcp_rebuild_scheduled
+    if service in _BOOT_RENDER_DIFF_SERVICES and not skip_diff:
         diff_msg = await _run_boot_render_diff()
         if diff_msg:
             msg = f"{msg}\n\n{diff_msg}"

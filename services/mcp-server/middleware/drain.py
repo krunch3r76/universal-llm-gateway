@@ -168,7 +168,17 @@ class DrainMiddleware:
 
         path = str(scope.get("path", ""))
         method = str(scope.get("method", ""))
-        if _DRAINING.is_set():
+
+        # Atomic check-and-admit: under the lock either reject (drain mode) or
+        # increment the in-flight counter. Prevents the TOCTOU window where a
+        # request slips past the drain check and then increments _IN_FLIGHT.
+        with _STATE_LOCK:
+            draining = _DRAINING.is_set()
+            if not draining:
+                global _IN_FLIGHT
+                _IN_FLIGHT += 1
+
+        if draining:
             if path == "/health":
                 await _send_json(send, status=200, payload={"status": "draining"})
                 return
@@ -176,35 +186,30 @@ class DrainMiddleware:
             if path == "/mcp" and method == "POST":
                 body = await _read_body(receive)
                 jsonrpc_id, mcp_method, tool_name = _parse_jsonrpc_request(body)
-                if mcp_method == "tools/call":
-                    record(
-                        "mcp.maintenance.request.rejected",
-                        mcp_method=mcp_method,
-                        tool_name=tool_name,
-                        jsonrpc_id=jsonrpc_id,
-                        retry_after_s=RETRY_AFTER_S,
-                    )
-                    await _send_json(
-                        send,
-                        status=503,
-                        payload=restart_error_payload(jsonrpc_id),
-                        retry_after=True,
-                    )
-                    return
+                record(
+                    "mcp.maintenance.request.rejected",
+                    mcp_method=mcp_method,
+                    tool_name=tool_name,
+                    jsonrpc_id=jsonrpc_id,
+                    retry_after_s=RETRY_AFTER_S,
+                )
                 await _send_json(
                     send,
-                    status=200,
-                    payload={
-                        "jsonrpc": "2.0",
-                        "id": jsonrpc_id,
-                        "result": {"status": "draining"},
-                    },
+                    status=503,
+                    payload=restart_error_payload(jsonrpc_id),
+                    retry_after=True,
                 )
                 return
 
-        with _STATE_LOCK:
-            global _IN_FLIGHT
-            _IN_FLIGHT += 1
+            # Non-/mcp, non-/health request during drain — close politely.
+            await _send_json(
+                send,
+                status=503,
+                payload=restart_error_payload(None),
+                retry_after=True,
+            )
+            return
+
         try:
             await self._app(scope, receive, send)
         finally:

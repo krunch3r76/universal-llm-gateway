@@ -108,6 +108,7 @@ def _op_ingest_document(
     content: str | None = None,
     observer: str = "cursor",
     source_date: str | None = None,
+    authority_class: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     if not source_uri:
@@ -121,6 +122,8 @@ def _op_ingest_document(
     }
     if source_date is not None:
         body["source_date"] = source_date
+    if authority_class is not None:
+        body["authority_class"] = authority_class
     result = _ingest_document_impl(body)
     if "error" not in result:
         chunk_count = result.get("chunk_count", 0)

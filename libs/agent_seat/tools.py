@@ -68,7 +68,7 @@ CORTEX_TOOL_DEFINITION: dict[str, Any] = _fn(
     "  relationships (entity_id?, type_id?, limit?)\n"
     "  relationship_create (source_id, target_id, type_id, ...)\n"
     "  stats ()  surface_forms (entity_id?, mention?, mention_type?, limit?)\n"
-    "  ingest_document (source_uri, content, observer?, source_date?)\n"
+    "  ingest_document (source_uri, content, observer?, source_date?, authority_class?)\n"
     "  assert_from_chunk (chunk_id, entity_id, claim, confidence, evidence, ...)\n"
     "  friction (service, category, note, suggestion?, agent?)\n"
     "  rj_write (agent, register, entry, kind?, ...)\n"

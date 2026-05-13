@@ -135,3 +135,120 @@ async def test_execute_tool_retries_remote_protocol_restart(
 
     assert result == "ok"
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_retries_on_503_restart_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """503 with restart payload triggers retry; second attempt succeeds."""
+    calls = 0
+    monkeypatch.setattr(mcp_executor_module, "_RESTART_RETRY_DELAYS_S", (0.0,))
+
+    restart_body = (
+        '{"jsonrpc":"2.0","id":1,'
+        '"error":{"code":-32099,"message":"MCP server is restarting; retry in 30s",'
+        '"data":{"reason":"server_restarting","retry_after_s":30}}}'
+    )
+
+    class _FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            json: dict[str, object],
+            headers: dict[str, str],
+            timeout: float,
+        ) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            req = httpx.Request("POST", "https://mcp.example.com/mcp")
+            if calls == 1:
+                return httpx.Response(503, request=req, text=restart_body)
+            return httpx.Response(
+                200,
+                request=req,
+                text=(
+                    '{"jsonrpc":"2.0","id":1,"result":{"content":'
+                    '[{"type":"text","text":"ok"}]}}'
+                ),
+            )
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp", auth_token="tok")
+    executor._client = _FakeClient()  # type: ignore[assignment]
+
+    result = await executor.execute_tool("fs", {"op": "list"})
+
+    assert result == "ok"
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_does_not_retry_generic_503() -> None:
+    """503 without restart payload is a real error and must NOT trigger retry."""
+    calls = 0
+
+    class _FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            json: dict[str, object],
+            headers: dict[str, str],
+            timeout: float,
+        ) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(
+                503,
+                request=httpx.Request("POST", "https://mcp.example.com/mcp"),
+                text='{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"capacity exceeded"}}',
+            )
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp", auth_token="tok")
+    executor._client = _FakeClient()  # type: ignore[assignment]
+
+    result = await executor.execute_tool("fs", {"op": "list"})
+
+    # Single attempt, generic 503 surfaces as Tool execution failed (raised by raise_for_status).
+    assert calls == 1
+    assert "Tool execution failed" in result or "restart" not in result
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_retries_on_connect_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ConnectError during the container-down window must trigger retry."""
+    calls = 0
+    monkeypatch.setattr(mcp_executor_module, "_RESTART_RETRY_DELAYS_S", (0.0,))
+
+    class _FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            json: dict[str, object],
+            headers: dict[str, str],
+            timeout: float,
+        ) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise httpx.ConnectError("connection refused")
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", "https://mcp.example.com/mcp"),
+                text=(
+                    '{"jsonrpc":"2.0","id":1,"result":{"content":'
+                    '[{"type":"text","text":"ok"}]}}'
+                ),
+            )
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp", auth_token="tok")
+    executor._client = _FakeClient()  # type: ignore[assignment]
+
+    result = await executor.execute_tool("fs", {"op": "list"})
+
+    assert result == "ok"
+    assert calls == 2

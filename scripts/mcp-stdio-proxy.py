@@ -223,11 +223,29 @@ def _text_is_restart_error(text: str) -> bool:
 
 
 def _is_restart_disconnect(exc: Exception) -> bool:
-    if isinstance(exc, (http.client.RemoteDisconnected, ConnectionResetError)):
+    if isinstance(
+        exc,
+        (
+            http.client.RemoteDisconnected,
+            ConnectionResetError,
+            ConnectionRefusedError,
+            ConnectionAbortedError,
+        ),
+    ):
         return True
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
-        return isinstance(reason, (http.client.RemoteDisconnected, ConnectionResetError))
+        return isinstance(
+            reason,
+            (
+                http.client.RemoteDisconnected,
+                ConnectionResetError,
+                ConnectionRefusedError,
+                ConnectionAbortedError,
+                socket.gaierror,
+                TimeoutError,
+            ),
+        )
     return False
 
 

@@ -104,10 +104,24 @@ class ServiceController:
         self._sidecar = SidecarController(workspace_root)
         self._build_process: asyncio.subprocess.Process | None = None
         self._mcp_recreate_tasks: set[asyncio.Task[str]] = set()
+        # Structured signal for dispatchers: True when the most recent rebuild_mcp
+        # call deferred the container recreate (so the boot-render-diff smoke gate
+        # must skip until the new container is healthy). Avoids substring-matching
+        # against the user-facing rebuild_mcp return string in api_dispatch.
+        self._last_mcp_rebuild_scheduled: bool = False
 
     @property
     def service_state(self) -> ServiceState:
         return self._service_state
+
+    @property
+    def mcp_rebuild_scheduled(self) -> bool:
+        """True iff the most recent rebuild_mcp call deferred the container recreate.
+
+        Reset to False at the start of each rebuild_mcp call, then set to True
+        only if the build succeeded and the recreate task was scheduled.
+        """
+        return self._last_mcp_rebuild_scheduled
 
     def check_model_path_ownership(self) -> str | None:
         """Return warning if MODEL_PATH is root-owned, None if OK.
@@ -568,7 +582,11 @@ class ServiceController:
         Default is a cached rebuild that refreshes only source layers — fast
         enough for the sync+restart workflow.  Pass ``no_cache=True`` for a
         full fresh build (pulls base images, rebuilds all layers).
+
+        Side effect: sets ``self._last_mcp_rebuild_scheduled`` so the dispatch
+        layer can branch on a typed flag rather than parsing the return string.
         """
+        self._last_mcp_rebuild_scheduled = False
         base = self._mcp_compose_args()
         if base is None:
             return "Compose file not found: docker/compose/mcp-server.yml"
@@ -590,6 +608,7 @@ class ServiceController:
             )
 
         self._schedule_mcp_recreate()
+        self._last_mcp_rebuild_scheduled = True
         return (
             "MCP rebuild scheduled.\n"
             "status: rebuild_scheduled\n"

@@ -136,7 +136,7 @@ def _response_is_restart_error(resp: httpx.Response) -> bool:
         payload = resp.json()
     except json.JSONDecodeError:
         payload = _parse_sse_json(resp.text)
-    return _payload_is_restart_error(payload) or resp.status_code == 503
+    return _payload_is_restart_error(payload)
 
 
 def _mcp_schema_to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
@@ -263,7 +263,12 @@ class McpToolExecutor:
                     if isinstance(b, dict) and b.get("type") == "text"
                 ]
                 return "\n".join(parts) if parts else json.dumps(result)
-            except httpx.RemoteProtocolError as exc:
+            except (
+                httpx.RemoteProtocolError,
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadError,
+            ) as exc:
                 if attempt_index < len(_RESTART_RETRY_DELAYS_S):
                     delay_s = _RESTART_RETRY_DELAYS_S[attempt_index]
                     logger.info(

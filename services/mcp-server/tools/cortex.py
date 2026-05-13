@@ -64,7 +64,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           tag_list          (entity_id)                                — list tags for entity
           tag_resolve       (tag_name, entity_id)                      — resolve tag to assertion
           impact            (entity_id, depth?)                        — transitive impact BFS
-          ingest_document   (source_uri, content, observer?, source_date?) — chunk and ingest a document
+          ingest_document   (source_uri, content, observer?, source_date?, authority_class?) — chunk and ingest a document
           assert_from_chunk (chunk_id, entity_id, claim, confidence, evidence, ...) — write assertion linked to a chunk
           friction          (service, category, note, suggestion?, agent?) — log tool/schema/boot friction
           observe           (claim, entity_id?, agent?) — lightweight observation

@@ -27,7 +27,12 @@ from fastmcp import FastMCP
 from mcp_events import record
 from mcp_request_middleware import McpRequestEventsMiddleware
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
-from middleware.drain import DrainMiddleware, begin_drain, complete_drain
+from middleware.drain import (
+    DrainMiddleware,
+    begin_drain,
+    complete_drain,
+    in_flight_count,
+)
 from oauth_config import OAuthServerConfig, load_oauth_config
 from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
@@ -72,6 +77,7 @@ from tools.web import register_web_tools
 if TYPE_CHECKING:
     from asyncio.transports import BaseTransport
     from collections.abc import Callable
+    from types import FrameType
 
 logger = logging.getLogger(__name__)
 
@@ -838,18 +844,11 @@ def main() -> None:
     config.http_protocol_class = KeepaliveProtocol
     class DrainAwareServer(uvicorn.Server):
         @override
-        def handle_exit(
-            self,
-            sig: int | None = None,
-            frame: Any | None = None,
-        ) -> None:
-            if sig is None:
-                signal_name = "unknown"
-            else:
-                try:
-                    signal_name = signal.Signals(sig).name
-                except ValueError:
-                    signal_name = str(sig)
+        def handle_exit(self, sig: int, frame: FrameType | None) -> None:
+            try:
+                signal_name = signal.Signals(sig).name
+            except ValueError:
+                signal_name = str(sig)
             begin_drain(
                 reason=f"signal:{signal_name}",
                 timeout_s=_GRACEFUL_SHUTDOWN_TIMEOUT_S,
@@ -860,7 +859,11 @@ def main() -> None:
     try:
         server.run()
     finally:
-        complete_drain(timed_out=False)
+        # If uvicorn's graceful_shutdown timed out, requests that were in-flight at
+        # SIGTERM are still counted because their finally blocks never ran — uvicorn
+        # cancelled them. A non-zero count at exit is the proxy for "drain timed out".
+        timed_out = in_flight_count() > 0
+        complete_drain(timed_out=timed_out)
 
 
 if __name__ == "__main__":
