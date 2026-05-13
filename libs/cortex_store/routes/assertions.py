@@ -12,7 +12,11 @@ from pydantic import ValidationError
 from .. import embeddings as cortex_embeddings
 from .. import vector_store
 from ..action_hints import detect_expired_unresolved
-from ..assertion_quality import DERIVATION_TYPE_TAXONOMY, validate_assertion
+from ..assertion_quality import (
+    DERIVATION_TYPE_TAXONOMY,
+    check_confirmed_validatability,
+    validate_assertion,
+)
 from ..belief_guard import (
     analyze_assertion_impact,
     guard_assertion_write,
@@ -725,6 +729,14 @@ def create_assertion(
     v2.4 enforcement: hard rejects return 422 with specific diagnostics.
     Warnings route the assertion to staging (review_status='staged').
     Quality score is computed and stored on every new assertion.
+
+    Auditor-validatability (Checks 1–3): when confidence='confirmed', advisory
+    warnings are appended to validation_warnings if evidence_uris is absent,
+    derivation_type is inference, or the claim lacks an embedded verbatim quote
+    for verbatim-expected derivation types. These do NOT block the write.
+    Pass acknowledge_audit_gaps=['no_evidence_uris'|'inference_confirmed'|'no_verbatim']
+    to suppress individual checks with documented intent.
+    See agent_skill:auditor-validatable-confidence.
     """
     if body.confidence not in _VALID_CONFIDENCE:
         raise HTTPException(
@@ -760,6 +772,18 @@ def create_assertion(
             validation.quality_score,
             body.entity_id,
         )
+
+    auditor_warnings = check_confirmed_validatability(
+        confidence=body.confidence,
+        evidence_uris=body.evidence_uris,
+        derivation_type=body.derivation_type,
+        claim=body.claim,
+        acknowledge_audit_gaps=body.acknowledge_audit_gaps,
+    )
+    if auditor_warnings:
+        if validation_warnings is None:
+            validation_warnings = []
+        validation_warnings.extend(auditor_warnings)
 
     claim_hash = compute_claim_hash(body.entity_id, body.claim)
 
@@ -1099,7 +1123,18 @@ def update_assertion(
     "/supersede", response_model=SupersedeResponse, status_code=status.HTTP_201_CREATED
 )
 def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
-    """Atomic supersession — close old assertion and create replacement in one transaction."""
+    """Atomic supersession — close old assertion and create replacement in one transaction.
+
+    Fix-path (a)+(b): the new assertion inherits all structured fields from the
+    superseded assertion for any field not explicitly present in the caller's
+    payload (detected via model_fields_set).  Callers that want to intentionally
+    drop a field must pass it as explicit null in their JSON payload.
+
+    Auditor-validatability (Checks 1–3): same advisory warnings as create_assertion
+    are appended to the response's validation_warnings field when confidence='confirmed'.
+    Pass acknowledge_audit_gaps=['no_evidence_uris'|'inference_confirmed'|'no_verbatim']
+    to suppress individual checks. See agent_skill:auditor-validatable-confidence.
+    """
     import datetime as dt
 
     if body.confidence not in _VALID_CONFIDENCE:
@@ -1112,14 +1147,41 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
 
     conn = cortex_conn()
     try:
+        # Fetch old assertion with full field projection — needed for carryover.
         old_rows = query(
-            conn, "SELECT id FROM assertions WHERE id = ?", (body.old_assertion_id,)
+            conn,
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE id = ?",
+            (body.old_assertion_id,),
         )
         if not old_rows:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Old assertion not found: {body.old_assertion_id}",
             )
+
+        # Carryover resolution: fields absent from the caller's payload are
+        # inherited from the superseded assertion so that a simple claim-rewrite
+        # never silently downgrades evidence_uris / derivation_type / valid_from
+        # or any other structured field.
+        old_data = decode_row(old_rows[0], _JSON_FIELDS)
+        specified = body.model_fields_set
+
+        def _resolve(field: str, default: object = None) -> object:
+            # ∀ field ∈ specified: use body value (explicit override or explicit null-drop).
+            # ∀ field ∉ specified: inherit from predecessor (no-silent-drop guarantee).
+            return (
+                getattr(body, field)
+                if field in specified
+                else old_data.get(field, default)
+            )
+
+        eff_evidence_uris: list[str] | None = _resolve("evidence_uris")  # type: ignore[assignment]
+        eff_derivation_type: str = _resolve("derivation_type") or "inference"  # type: ignore[assignment]
+        eff_valid_from: str | None = _resolve("valid_from")  # type: ignore[assignment]
+        eff_reasoning_summary: str | None = _resolve("reasoning_summary")  # type: ignore[assignment]
+        eff_seeded_by: str | None = _resolve("seeded_by")  # type: ignore[assignment]
+        eff_chunk_id: int | None = _resolve("chunk_id")  # type: ignore[assignment]
+        eff_confidence_score: float | None = _resolve("confidence_score")  # type: ignore[assignment]
 
         entities = query(
             conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
@@ -1151,7 +1213,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
 
         entrenchment = compute_entrenchment(
             confidence=body.confidence,
-            derivation_type=body.derivation_type or "inference",
+            derivation_type=eff_derivation_type,
             observed_at=now,
             created_at=None,
             entity_id=body.entity_id,
@@ -1162,18 +1224,23 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             cur = conn.execute(
                 "INSERT INTO assertions ("
                 "  entity_id, claim, confidence, evidence, evidence_uris,"
-                "  derivation_type, observed_at, valid_from, entrenchment_score"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  derivation_type, observed_at, valid_from, entrenchment_score,"
+                "  reasoning_summary, seeded_by, chunk_id, confidence_score"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
                     body.confidence,
                     body.evidence,
-                    json_encode(body.evidence_uris),
-                    body.derivation_type or "inference",
+                    json_encode(eff_evidence_uris),
+                    eff_derivation_type,
                     now,
-                    body.valid_from,
+                    eff_valid_from,
                     entrenchment,
+                    eff_reasoning_summary,
+                    eff_seeded_by,
+                    eff_chunk_id,
+                    eff_confidence_score,
                 ),
             )
             new_id = cur.lastrowid
@@ -1230,7 +1297,7 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             "claim": body.claim,
             "entity_id": body.entity_id,
             "confidence": body.confidence,
-            "derivation_type": body.derivation_type or "inference",
+            "derivation_type": eff_derivation_type,
             "entrenchment_score": entrenchment,
             "observed_at": now,
             "prospective_summary": None,
@@ -1238,10 +1305,19 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         },
     )
 
+    auditor_warnings = check_confirmed_validatability(
+        confidence=body.confidence,
+        evidence_uris=eff_evidence_uris,
+        derivation_type=eff_derivation_type,
+        claim=body.claim,
+        acknowledge_audit_gaps=body.acknowledge_audit_gaps,
+    )
+
     return SupersedeResponse(
         old=AssertionItem(**decode_row(old_result[0], _JSON_FIELDS)),
         new=AssertionItem(**decode_row(new_result[0], _JSON_FIELDS)),
         impact_warning=impact_warning,
+        validation_warnings=auditor_warnings or None,
     )
 
 

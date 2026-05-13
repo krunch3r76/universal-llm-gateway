@@ -118,6 +118,7 @@ def _op_assert(
     artifact_storage: str | None = None,
     force: bool = False,
     supersedes_id: int | None = None,
+    acknowledge_audit_gaps: list[str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {
@@ -166,6 +167,8 @@ def _op_assert(
         body["force"] = True
     if supersedes_id is not None:
         body["supersedes_id"] = supersedes_id
+    if acknowledge_audit_gaps is not None:
+        body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
     if derivation_type is None or confidence_score is None:
         logger.warning(
             "cortex assert: missing derivation_type=%s or confidence_score=%s — "
@@ -180,10 +183,23 @@ def _op_assert(
             "mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence
         )
         if result.get("validation_warnings"):
-            result["_next"] = (
-                "assertion routed to staging — add reasoning_summary or chunk_id "
-                "to graduate to committed (see F1 in cortex-assertion-triage spec)"
-            )
+            warnings = result["validation_warnings"]
+            auditor_fields = {"evidence_uris", "derivation_type", "claim"}
+            has_staging = any(w.get("field") not in auditor_fields for w in warnings)
+            has_auditor = any("auditor" in w.get("message", "") for w in warnings)
+            hints = []
+            if has_staging:
+                hints.append(
+                    "assertion routed to staging — add reasoning_summary or chunk_id "
+                    "to graduate to committed (see F1 in cortex-assertion-triage spec)"
+                )
+            if has_auditor:
+                hints.append(
+                    "auditor-validatability warnings present — review and fix or pass "
+                    "acknowledge_audit_gaps=[...] to suppress (see agent_skill:auditor-validatable-confidence)"
+                )
+            if hints:
+                result["_next"] = "; ".join(hints)
     return result
 
 
@@ -352,8 +368,13 @@ def _op_supersede(
     evidence_uris: list[str] | None = None,
     valid_from: str | None = None,
     derivation_type: str | None = None,
+    reasoning_summary: str | None = None,
+    seeded_by: str | None = None,
+    chunk_id: int | None = None,
+    confidence_score: float | None = None,
     session_id: str | None = None,
     agent: str | None = None,
+    acknowledge_audit_gaps: list[str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     for field, val in [
@@ -376,13 +397,23 @@ def _op_supersede(
         "session_id": session_id,
         "agent": agent,
     }
+    # Only include optional fields when explicitly provided — absent fields are
+    # inherited from the superseded assertion at the route layer (model_fields_set
+    # carryover).  This keeps the "simple rephrase" case ergonomic while allowing
+    # callers to override or intentionally null-drop structured provenance fields.
     for key, val in [
         ("evidence_uris", evidence_uris),
         ("valid_from", valid_from),
         ("derivation_type", derivation_type),
+        ("reasoning_summary", reasoning_summary),
+        ("seeded_by", seeded_by),
+        ("chunk_id", chunk_id),
+        ("confidence_score", confidence_score),
     ]:
         if val is not None:
             body[key] = val
+    if acknowledge_audit_gaps is not None:
+        body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
     result = _supersede_assertion_impl(body)
     if "error" not in result:
         new_id = result.get("new", {}).get("id")
@@ -392,6 +423,12 @@ def _op_supersede(
             old_id=old_assertion_id,
             new_id=new_id,
         )
+        if result.get("validation_warnings"):
+            result["_next"] = (
+                "auditor-validatability warnings present on superseded assertion — "
+                "review and fix or pass acknowledge_audit_gaps=[...] to suppress "
+                "(see agent_skill:auditor-validatable-confidence)"
+            )
     return result
 
 

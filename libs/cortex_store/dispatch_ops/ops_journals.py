@@ -447,6 +447,21 @@ def _op_session_close(
     dry_run: bool = False,
     **_: object,
 ) -> dict[str, Any]:
+    """Atomic session close — write transcript, DB row, and run audit gate.
+
+    Audit gate (session_close): runs the graph-only detector suite scoped to
+    entity_ids (or full graph if none). Two auditor-validatability detectors
+    (Checks 4–5) are included in the gate at warning severity:
+
+    - confirmed_entity_no_assertions: entities at status:confirmed with zero
+      confirmed assertions — auditor cannot validate confirmed status.
+    - confirmed_attribute_no_assertion: confirmed entities with typed attributes
+      that have no backing confirmed assertion.
+
+    These are advisory (warning severity, never blocking in WARN mode).
+    Response includes `_warning.audit_findings` when any findings are present.
+    See agent_skill:auditor-validatable-confidence for full discipline.
+    """
     validation_error = _validate_session_close_payload(
         session_id=session_id,
         agent=agent,

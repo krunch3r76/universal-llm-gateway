@@ -32,6 +32,11 @@ _PRE_CLOSE_GATE_KINDS = [
     "document_not_wired_to_case",
     "case_attribute_skill_dangling",
     "marker_nesting_violation",
+    # Auditor-validatability gaps (Checks 4–5). Scoped to session entity_ids
+    # when provided — prevents full-graph scan on every close. Warning severity
+    # only; never critical, never blocking in WARN mode.
+    "confirmed_entity_no_assertions",
+    "confirmed_attribute_no_assertion",
 ]
 
 

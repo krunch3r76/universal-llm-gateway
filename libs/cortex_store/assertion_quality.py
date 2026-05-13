@@ -206,3 +206,104 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
         result.route_to_staging = True
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Auditor-validatability warnings (Checks 1–3)
+# ---------------------------------------------------------------------------
+
+# ∀ quoted string ≥15 chars: any of standard quote styles counts as verbatim
+_VERBATIM_RE = re.compile(
+    r'"[^"]{14,}"|\'[^\']{14,}\'|"[^"]{14,}"|«[^»]{14,}»|\u2018[^\u2019]{14,}\u2019'
+)
+
+# derivation types where we expect verbatim source text in the claim
+_VERBATIM_EXPECTED_TYPES = frozenset(
+    {"direct_observation", "quotation", "agent_observation"}
+)
+
+_AUDITOR_SKILL_REF = (
+    "See agent_skill:auditor-validatable-confidence for full discipline."
+)
+
+
+def check_confirmed_validatability(
+    confidence: str,
+    evidence_uris: list[str] | None,
+    derivation_type: str | None,
+    claim: str,
+    acknowledge_audit_gaps: list[str] | None = None,
+) -> list[dict[str, str]]:
+    """Advisory auditor-validatability checks for confidence='confirmed' assertions.
+
+    Symmetric to the existing chunk_id sourced-but-unchunked warning — same
+    response surface (validation_warnings), advisory only, never rejects.
+    Returns [] when confidence is not 'confirmed' or all checks pass.
+
+    acknowledge_audit_gaps: pass one or more of ['no_evidence_uris',
+    'inference_confirmed', 'no_verbatim'] to suppress the corresponding check
+    when the agent has documented intent (e.g. structural claim, already
+    confirmed by other means). Suppression is explicit — never silent.
+
+    Operationalises Kaywan's auditor-validatability principle (assertion 9715
+    on document:entity-backed-claim-provenance-v1): whatever entity you
+    designate confirmed, an independent auditor (LLM) should be able to
+    validate it from the entity card alone.
+    """
+    if confidence != "confirmed":
+        return []
+
+    ack = set(acknowledge_audit_gaps or [])
+    warnings: list[dict[str, str]] = []
+
+    # Check 1 — confirmed + no evidence_uris
+    if not evidence_uris and "no_evidence_uris" not in ack:
+        warnings.append(
+            {
+                "field": "evidence_uris",
+                "message": (
+                    "confidence:confirmed assertion has no evidence_uris — auditor cannot "
+                    "independently verify; add a URI or downgrade to believed. "
+                    "Pass acknowledge_audit_gaps=['no_evidence_uris'] to suppress. "
+                    + _AUDITOR_SKILL_REF
+                ),
+            }
+        )
+
+    # Check 2 — confirmed + inference derivation_type
+    if derivation_type == "inference" and "inference_confirmed" not in ack:
+        warnings.append(
+            {
+                "field": "derivation_type",
+                "message": (
+                    "confidence:confirmed with derivation_type:inference is unusual — "
+                    "inference typically supports believed/suspected. If this is "
+                    "direct_observation or agent_observation, fix derivation_type. "
+                    "If genuinely inferential, downgrade confidence to believed. "
+                    "Pass acknowledge_audit_gaps=['inference_confirmed'] to suppress. "
+                    + _AUDITOR_SKILL_REF
+                ),
+            }
+        )
+
+    # Check 3 — confirmed + verbatim-expected type + evidence present + no quoted string
+    if (
+        derivation_type in _VERBATIM_EXPECTED_TYPES
+        and evidence_uris
+        and "no_verbatim" not in ack
+        and not _VERBATIM_RE.search(claim)
+    ):
+        warnings.append(
+            {
+                "field": "claim",
+                "message": (
+                    "confidence:confirmed claim has no embedded verbatim quote ≥15 chars; "
+                    "auditor needs the literal source text to verify against evidence_uris. "
+                    "Embed the quote in quote marks, or downgrade, or pass "
+                    "acknowledge_audit_gaps=['no_verbatim'] for structural claims. "
+                    + _AUDITOR_SKILL_REF
+                ),
+            }
+        )
+
+    return warnings

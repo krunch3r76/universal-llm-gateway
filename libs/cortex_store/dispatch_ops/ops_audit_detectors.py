@@ -32,6 +32,10 @@ GRAPH_ONLY_KINDS = {
     "case_attribute_skill_dangling",
     "marker_nesting_violation",
     "prior_session_id_omitted",
+    # Auditor-validatability gaps (Checks 4–5) — fire at session_close for
+    # entities touched in the session. Advisory, never blocking.
+    "confirmed_entity_no_assertions",
+    "confirmed_attribute_no_assertion",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -64,6 +68,9 @@ SEVERITY = {
     "markdown_section_drift": "warning",
     "marker_nesting_violation": "warning",
     "prior_session_id_omitted": "warning",
+    # Auditor-validatability gaps — warning severity (advisory, never critical)
+    "confirmed_entity_no_assertions": "warning",
+    "confirmed_attribute_no_assertion": "warning",
     "case_marker_absent": "info",
 }
 
@@ -426,6 +433,123 @@ def detect_markdown_section_drift(
     return []
 
 
+# --- Auditor-validatability detectors (Checks 4–5, session_close audit-gate) ---
+#
+# Operationalise Kaywan's principle (assertion 9715 on
+# document:entity-backed-claim-provenance-v1): whatever entity you designate
+# confirmed, an independent auditor (LLM) should be able to validate it from
+# the entity card alone. These run at session_close time scoped to the session's
+# entity_ids — not on every entity_create (too early; assertions are written
+# after the entity in typical session flow).
+
+
+def detect_confirmed_entity_no_assertions(
+    conn, subject: str | None = None
+) -> list[dict[str, Any]]:
+    """Entities at status='confirmed' with zero confirmed-confidence assertions.
+
+    Check 4: an auditor reading the entity card cannot validate confirmed status
+    when there are no confirmed assertions supporting it.
+    """
+    sql = """
+        SELECT id, type, name FROM entities
+        WHERE status = 'confirmed'
+        AND type NOT IN ('todo', 'assertion')
+        AND NOT EXISTS (
+            SELECT 1 FROM assertions
+            WHERE entity_id = entities.id
+              AND confidence = 'confirmed'
+              AND superseded_by IS NULL
+        )
+    """
+    params: tuple = ()
+    if subject:
+        sql += " AND id = ?"
+        params = (subject,)
+    rows = query(conn, sql, params)
+    return [
+        _finding(
+            "confirmed_entity_no_assertions",
+            r["id"],
+            f"{r['type']} '{r['name']}' is at status:confirmed but has zero assertions "
+            f"at confidence:confirmed — auditor cannot validate confirmed status from entity "
+            f"card alone. Seed a confirmed assertion citing the source. "
+            f"See agent_skill:auditor-validatable-confidence.",
+        )
+        for r in rows
+    ]
+
+
+def detect_confirmed_attribute_no_assertion(
+    conn, subject: str | None = None
+) -> list[dict[str, Any]]:
+    """Confirmed entities with typed attributes that have no backing confirmed assertion.
+
+    Check 5 (heuristic): for each attribute key/value on a confirmed entity, at
+    least one confirmed assertion on that entity should reference the attribute
+    (by key phrase or value substring). Auditors seeing a bare attribute value
+    with no supporting assertion cannot verify it.
+
+    Match heuristic: assertion claim contains the attribute key (underscore→space
+    normalised) or the attribute value as a substring (≥4 chars to avoid noise).
+    """
+    import json
+
+    sql = """
+        SELECT id, type, name, attributes FROM entities
+        WHERE status = 'confirmed'
+        AND attributes IS NOT NULL
+        AND type NOT IN ('todo', 'assertion')
+    """
+    params: tuple = ()
+    if subject:
+        sql += " AND id = ?"
+        params = (subject,)
+    rows = query(conn, sql, params)
+    findings = []
+
+    for r in rows:
+        attrs_raw = r.get("attributes")
+        if not attrs_raw:
+            continue
+        try:
+            attrs = json.loads(attrs_raw) if isinstance(attrs_raw, str) else attrs_raw
+        except Exception:
+            continue
+        if not isinstance(attrs, dict) or not attrs:
+            continue
+
+        # Fetch all confirmed, non-superseded assertion claims for this entity.
+        assertion_rows = query(
+            conn,
+            "SELECT claim FROM assertions "
+            "WHERE entity_id = ? AND confidence = 'confirmed' AND superseded_by IS NULL",
+            (r["id"],),
+        )
+        all_claims = " ".join(ar["claim"] or "" for ar in assertion_rows).lower()
+
+        for attr_key, attr_val in attrs.items():
+            key_normalised = attr_key.replace("_", " ").lower()
+            val_str = str(attr_val).lower() if attr_val is not None else ""
+            referenced = key_normalised in all_claims or attr_key.lower() in all_claims
+            if not referenced and len(val_str) >= 4:
+                referenced = val_str in all_claims
+            if not referenced:
+                findings.append(
+                    _finding(
+                        "confirmed_attribute_no_assertion",
+                        f"{r['id']}:{attr_key}",
+                        f"Entity {r['id']} is at status:confirmed with typed attribute "
+                        f"{attr_key}={attr_val!r} but no confirmed assertion appears to "
+                        f"reference it — auditor sees an unsupported attribute. Seed a "
+                        f"confirmed assertion citing the source for this attribute. "
+                        f"See agent_skill:auditor-validatable-confidence.",
+                    )
+                )
+
+    return findings
+
+
 def detect_case_marker_absent(conn, subject: str | None = None) -> list[dict[str, Any]]:
     """Case markdown files missing the CORTEX_GENERATED marker block (info-level)."""
     sql = "SELECT id, source_uri FROM entities WHERE type = 'case' AND source_uri IS NOT NULL"
@@ -501,6 +625,8 @@ def get_all_detectors() -> dict[str, Any]:
         "case_attribute_skill_dangling": detect_case_attribute_skill_dangling,
         "marker_nesting_violation": detect_marker_nesting_violation,
         "prior_session_id_omitted": detect_prior_session_id_omitted,
+        "confirmed_entity_no_assertions": detect_confirmed_entity_no_assertions,
+        "confirmed_attribute_no_assertion": detect_confirmed_attribute_no_assertion,
         "entity_source_uri_unresolved": detect_entity_source_uri_unresolved,
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
         "unregistered_document_in_markdown": detect_unregistered_document_in_markdown,
