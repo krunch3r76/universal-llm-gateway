@@ -303,15 +303,21 @@ def test_check4_superseded_confirmed_assertion_still_warns(tmp_path: Path) -> No
     old_id = _insert_assertion(
         conn, "legal_source:test-4d", "Old confirmed fact.", confidence="confirmed"
     )
-    # Supersede the only confirmed assertion.
-    _insert_assertion(
+    # The successor: a `believed` assertion (also non-confirmed for Check 4).
+    new_id = _insert_assertion(
         conn,
         "legal_source:test-4d",
         "New fact.",
         confidence="believed",
         superseded_by=None,
     )
-    conn.execute("UPDATE assertions SET superseded_by = 99 WHERE id = ?", (old_id,))
+    # Point the old assertion's `superseded_by` at the real successor row id —
+    # not a sentinel — so the data shape is coherent and the test verifies the
+    # detector's intent (the only confirmed assertion is closed, so the entity
+    # has zero *active* confirmed assertions and must warn).
+    conn.execute(
+        "UPDATE assertions SET superseded_by = ? WHERE id = ?", (new_id, old_id)
+    )
     conn.commit()
     findings = detect_confirmed_entity_no_assertions(
         conn, subject="legal_source:test-4d"
@@ -411,3 +417,148 @@ def test_check5_provisional_entity_not_flagged(tmp_path: Path) -> None:
         conn, subject="legal_source:test-5e"
     )
     assert not findings, "provisional entity should not be flagged by Check 5"
+
+
+# ---------------------------------------------------------------------------
+# Regressions added 2026-05-13 by claude-web in review of master @ 3ac9a0fc
+# Cover: verbatim threshold off-by-one, Unicode curly-double-quote support,
+# category-field presence on auditor warnings, and Check 5 word-boundary
+# tightening (false-negative regression for short common keys).
+# ---------------------------------------------------------------------------
+
+
+def test_check3_fourteen_char_quoted_span_does_not_satisfy_threshold() -> None:
+    # 14 chars inside the quotes — spec says ≥15, so this must still warn.
+    claim = 'The footer reads: "fourteen_chars" (14 chars).'
+    w = check_confirmed_validatability(
+        confidence="confirmed",
+        derivation_type="direct_observation",
+        claim=claim,
+        evidence_uris=["https://example.org"],
+    )
+    assert _w(w, "claim"), "14-char quoted span must not satisfy ≥15 threshold"
+
+
+def test_check3_fifteen_char_quoted_span_does_satisfy_threshold() -> None:
+    # Exactly 15 chars inside the quotes — at the threshold; must NOT warn.
+    claim = 'The footer reads: "fifteen___chars" (15 chars).'
+    w = check_confirmed_validatability(
+        confidence="confirmed",
+        derivation_type="direct_observation",
+        claim=claim,
+        evidence_uris=["https://example.org"],
+    )
+    assert not _w(w, "claim"), "15-char quoted span must satisfy ≥15 threshold"
+
+
+def test_check3_curly_double_quotes_are_recognised() -> None:
+    # U+201C / U+201D — typographic double quotes common in copy-pasted PDF and
+    # leginfo footers. Regression for the duplicate-alternative bug where the
+    # curly-double-quote pair was byte-identical to ASCII straight quotes.
+    claim = (
+        "The leginfo footer reads: \u201cAmended by Stats. 2024, "
+        "Ch. 922, Sec. 7.\u201d (verbatim)."
+    )
+    w = check_confirmed_validatability(
+        confidence="confirmed",
+        derivation_type="direct_observation",
+        claim=claim,
+        evidence_uris=["https://example.org"],
+    )
+    assert not _w(w, "claim"), "curly-double-quoted verbatim must satisfy threshold"
+
+
+def test_check3_curly_single_quotes_are_recognised() -> None:
+    # U+2018 / U+2019 — Unicode curly single quotes. Already covered by the
+    # original implementation; pinned here so the regex shape can't regress.
+    claim = (
+        "The footer reads: \u2018Amended by Stats. 2024, Ch. 922, "
+        "Sec. 7.\u2019 (verbatim)."
+    )
+    w = check_confirmed_validatability(
+        confidence="confirmed",
+        derivation_type="direct_observation",
+        claim=claim,
+        evidence_uris=["https://example.org"],
+    )
+    assert not _w(w, "claim"), "curly-single-quoted verbatim must satisfy threshold"
+
+
+def test_check3_guillemets_are_recognised() -> None:
+    # « … » — French guillemets. Pinned for the same reason.
+    claim = (
+        "The footer reads: «Amended by Stats. 2024, Ch. 922, "
+        "Sec. 7.» (verbatim)."
+    )
+    w = check_confirmed_validatability(
+        confidence="confirmed",
+        derivation_type="direct_observation",
+        claim=claim,
+        evidence_uris=["https://example.org"],
+    )
+    assert not _w(w, "claim"), "guillemets-quoted verbatim must satisfy threshold"
+
+
+def test_auditor_warnings_carry_category_field() -> None:
+    # Every emitted auditor warning must carry category='auditor' so the
+    # downstream _next-hint logic in ops_assertions._op_assert can discriminate
+    # staging from auditor warnings structurally (not by message-substring).
+    w = check_confirmed_validatability(
+        confidence="confirmed",
+        evidence_uris=None,
+        derivation_type="inference",
+        claim="No quoted source text.",
+    )
+    assert w, "expected at least one warning to fire"
+    assert all(
+        entry.get("category") == "auditor" for entry in w
+    ), f"all auditor warnings must carry category='auditor'; got {w!r}"
+
+
+def test_check5_short_key_substring_no_longer_false_suppresses(tmp_path: Path) -> None:
+    # Regression for the loose key-match heuristic: a confirmed entity with
+    # attribute `date=2099-12-31` and an assertion whose claim only mentions
+    # "candidate" (which contains the substring "date") MUST still warn —
+    # the original heuristic would have suppressed via `attr_key in all_claims`.
+    conn = _make_conn(tmp_path)
+    _insert_entity(
+        conn,
+        "legal_source:test-5f",
+        status="confirmed",
+        attributes={"date": "2099-12-31"},
+    )
+    _insert_assertion(
+        conn,
+        "legal_source:test-5f",
+        "We considered the candidate framework for this section.",
+        confidence="confirmed",
+    )
+    findings = detect_confirmed_attribute_no_assertion(
+        conn, subject="legal_source:test-5f"
+    )
+    assert any(
+        f["kind"] == "confirmed_attribute_no_assertion" and "date" in f["subject"]
+        for f in findings
+    ), "word-boundary scan must not treat `candidate` as a reference to attribute `date`"
+
+
+def test_check5_short_key_actual_reference_still_clean(tmp_path: Path) -> None:
+    # Counterpart: when the assertion genuinely references the key as a word,
+    # the warning must not fire.
+    conn = _make_conn(tmp_path)
+    _insert_entity(
+        conn,
+        "legal_source:test-5g",
+        status="confirmed",
+        attributes={"date": "2099-12-31"},
+    )
+    _insert_assertion(
+        conn,
+        "legal_source:test-5g",
+        "The date for this section is 2099-12-31.",
+        confidence="confirmed",
+    )
+    findings = detect_confirmed_attribute_no_assertion(
+        conn, subject="legal_source:test-5g"
+    )
+    assert not findings, "genuine word-boundary reference must clear Check 5"

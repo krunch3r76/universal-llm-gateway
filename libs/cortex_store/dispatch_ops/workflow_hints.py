@@ -25,8 +25,9 @@ _WORKFLOW_HINTS: dict[str, str] = {
     "assert": (
         "next: relationship_create if this claim connects two entities; "
         "entity_get to verify the assertion appears on the entity. "
-        "If validation_warnings present, assertion was routed to staged — "
-        "add reasoning_summary or chunk_id to graduate."
+        "If validation_warnings present, the handler sets a per-call _next "
+        "hint identifying which warning categories fired (staging vs auditor) "
+        "and what to do."
     ),
     "assert_from_chunk": (
         "next: relationship_create if connecting entities; entity_get to verify"

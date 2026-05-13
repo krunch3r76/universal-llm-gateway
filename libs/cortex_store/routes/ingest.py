@@ -195,7 +195,8 @@ def assert_from_chunk(body: AssertFromChunkRequest) -> AssertFromChunkResponse:
         if validation.route_to_staging:
             review_status = "staged"
             validation_warnings = [
-                {"field": d.field, "message": d.message} for d in validation.warnings
+                {"field": d.field, "category": d.category, "message": d.message}
+                for d in validation.warnings
             ]
 
         entities = query(

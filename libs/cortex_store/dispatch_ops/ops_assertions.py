@@ -184,9 +184,14 @@ def _op_assert(
         )
         if result.get("validation_warnings"):
             warnings = result["validation_warnings"]
-            auditor_fields = {"evidence_uris", "derivation_type", "claim"}
-            has_staging = any(w.get("field") not in auditor_fields for w in warnings)
-            has_auditor = any("auditor" in w.get("message", "") for w in warnings)
+            # category field on each warning is the canonical discriminator.
+            # Legacy warnings (pre-category field) default to staging via the
+            # ValidationDiagnostic dataclass default; raw dicts that omit
+            # category are treated as staging here too for safety.
+            has_staging = any(
+                w.get("category", "staging") == "staging" for w in warnings
+            )
+            has_auditor = any(w.get("category") == "auditor" for w in warnings)
             hints = []
             if has_staging:
                 hints.append(

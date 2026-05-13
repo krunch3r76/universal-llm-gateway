@@ -71,6 +71,11 @@ DERIVATION_TYPE_TAXONOMY: dict[str, dict[str, object]] = {
 class ValidationDiagnostic:
     field: str
     message: str
+    # Discriminator for the downstream `_next` hint logic — staging vs auditor
+    # warnings should produce different hints. Default "staging" preserves the
+    # historical category of every diagnostic this module emitted before the
+    # auditor-validatability checks landed.
+    category: str = "staging"
 
 
 @dataclass
@@ -212,9 +217,17 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
 # Auditor-validatability warnings (Checks 1–3)
 # ---------------------------------------------------------------------------
 
-# ∀ quoted string ≥15 chars: any of standard quote styles counts as verbatim
+# ∀ quoted string ≥15 chars: any of standard quote styles counts as verbatim.
+# Five alternatives: ASCII double, ASCII single, Unicode curly double
+# (U+201C/U+201D), French guillemets, Unicode curly single (U+2018/U+2019).
+# {15,} matches the spec threshold literally — a 14-char quoted span should
+# not satisfy the auditor's verbatim requirement.
 _VERBATIM_RE = re.compile(
-    r'"[^"]{14,}"|\'[^\']{14,}\'|"[^"]{14,}"|«[^»]{14,}»|\u2018[^\u2019]{14,}\u2019'
+    r'"[^"]{15,}"'
+    r'|\'[^\']{15,}\''
+    r'|\u201c[^\u201d]{15,}\u201d'
+    r'|«[^»]{15,}»'
+    r'|\u2018[^\u2019]{15,}\u2019'
 )
 
 # derivation types where we expect verbatim source text in the claim
@@ -261,6 +274,7 @@ def check_confirmed_validatability(
         warnings.append(
             {
                 "field": "evidence_uris",
+                "category": "auditor",
                 "message": (
                     "confidence:confirmed assertion has no evidence_uris — auditor cannot "
                     "independently verify; add a URI or downgrade to believed. "
@@ -275,6 +289,7 @@ def check_confirmed_validatability(
         warnings.append(
             {
                 "field": "derivation_type",
+                "category": "auditor",
                 "message": (
                     "confidence:confirmed with derivation_type:inference is unusual — "
                     "inference typically supports believed/suspected. If this is "
@@ -296,6 +311,7 @@ def check_confirmed_validatability(
         warnings.append(
             {
                 "field": "claim",
+                "category": "auditor",
                 "message": (
                     "confidence:confirmed claim has no embedded verbatim quote ≥15 chars; "
                     "auditor needs the literal source text to verify against evidence_uris. "

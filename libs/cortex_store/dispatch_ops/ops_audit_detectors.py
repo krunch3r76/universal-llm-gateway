@@ -52,6 +52,11 @@ INFO_KINDS = {"case_marker_absent"}
 
 ALL_KINDS = GRAPH_ONLY_KINDS | FS_TOUCHING_KINDS | INFO_KINDS
 
+# Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by
+# detect_confirmed_attribute_no_assertion to gate substring matching on values
+# (free-text values are skipped — too noisy for substring detection).
+_IDENT_SHAPED_VALUE_RE = re.compile(r"^[\w\-.:/]+$")
+
 SEVERITY = {
     "dangling_attribute_reference": "critical",
     "dangling_relationship_target": "critical",
@@ -490,8 +495,13 @@ def detect_confirmed_attribute_no_assertion(
     (by key phrase or value substring). Auditors seeing a bare attribute value
     with no supporting assertion cannot verify it.
 
-    Match heuristic: assertion claim contains the attribute key (underscore→space
-    normalised) or the attribute value as a substring (≥4 chars to avoid noise).
+    Match heuristic: assertion claim contains the attribute key as a *whole word*
+    (underscore→space normalised) — `\\bdate\\b`, not `candidate`. For values,
+    substring match is only attempted when the value is identifier-shaped
+    (alphanumerics + ``-._:/``) AND ≥4 chars — avoids matching free-text values
+    or single tokens that incidentally co-occur. Heuristic; false positives are
+    accepted; the tighter boundary scan removes the common false-negative
+    suppressions (`date` in `candidate`, `type` in `prototype`, …).
     """
     import json
 
@@ -531,9 +541,21 @@ def detect_confirmed_attribute_no_assertion(
         for attr_key, attr_val in attrs.items():
             key_normalised = attr_key.replace("_", " ").lower()
             val_str = str(attr_val).lower() if attr_val is not None else ""
-            referenced = key_normalised in all_claims or attr_key.lower() in all_claims
-            if not referenced and len(val_str) >= 4:
-                referenced = val_str in all_claims
+
+            key_pattern = re.compile(
+                r"\b" + re.escape(key_normalised) + r"\b"
+            )
+            raw_key_pattern = re.compile(r"\b" + re.escape(attr_key.lower()) + r"\b")
+            referenced = bool(
+                key_pattern.search(all_claims) or raw_key_pattern.search(all_claims)
+            )
+            if (
+                not referenced
+                and len(val_str) >= 4
+                and _IDENT_SHAPED_VALUE_RE.match(val_str)
+            ):
+                val_pattern = re.compile(r"\b" + re.escape(val_str) + r"\b")
+                referenced = bool(val_pattern.search(all_claims))
             if not referenced:
                 findings.append(
                     _finding(

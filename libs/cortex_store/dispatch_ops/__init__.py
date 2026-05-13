@@ -177,8 +177,11 @@ def execute_op(tool: str, arguments: object) -> Any:
     if "error" in result:
         result["_hint"] = _FRICTION_HINT
         return result
+    # Handler-set _next takes precedence — it carries per-call detail
+    # (which warning categories fired, which suggestion is most relevant).
+    # Static workflow hints apply only when the handler didn't write one.
     hint = _WORKFLOW_HINTS.get(tool)
-    if hint:
+    if hint and "_next" not in result:
         result["_next"] = hint
     if tool == "entity_get" and result.get("intent") != "card":
         # Card v0 (§6.3) has its own bounded shape (top_k_assertions /

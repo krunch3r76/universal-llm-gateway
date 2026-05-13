@@ -765,7 +765,8 @@ def create_assertion(
     if validation.route_to_staging:
         review_status = "staged"
         validation_warnings = [
-            {"field": d.field, "message": d.message} for d in validation.warnings
+            {"field": d.field, "category": d.category, "message": d.message}
+            for d in validation.warnings
         ]
         logger.info(
             "Assertion routed to staging (quality_score=%.2f): %s",
