@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import socket
 import sys
 import time
@@ -26,6 +27,7 @@ from fastmcp import FastMCP
 from mcp_events import record
 from mcp_request_middleware import McpRequestEventsMiddleware
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
+from middleware.drain import DrainMiddleware, begin_drain, complete_drain
 from oauth_config import OAuthServerConfig, load_oauth_config
 from oauth_routes import build_oauth_routes
 from oauth_service import OAuthService
@@ -81,6 +83,7 @@ _PORT = 443
 _TCP_KEEPIDLE = 10
 _TCP_KEEPINTVL = 10
 _TCP_KEEPCNT = 3
+_GRACEFUL_SHUTDOWN_TIMEOUT_S = 25
 
 
 def _env_truthy(name: str, default: bool) -> bool:
@@ -788,7 +791,9 @@ def main() -> None:
         )
 
     # Middleware composition order (outermost first):
-    # EdgeTelemetry → AuthMiddleware → McpRequestEventsMiddleware → AcceptNormalize → GZip → asgi_app
+    # Drain → EdgeTelemetry → AuthMiddleware → McpRequestEventsMiddleware → AcceptNormalize → GZip → asgi_app
+    # Drain rejects new tool calls during shutdown before they enter the
+    # authenticated tool path, while already-admitted requests keep running.
     # EdgeTelemetry observes every HTTP request before any auth or routing
     # decisions, so traffic that AuthMiddleware short-circuits (/health,
     # CORS preflights) and traffic from external probes still produces an
@@ -803,10 +808,11 @@ def main() -> None:
         oauth_service=oauth_service,
     )
     observed_app = EdgeTelemetryMiddleware(protected_app)
+    drain_app = DrainMiddleware(observed_app)
 
     logger.info("Starting MCP server on %s:%d", _HOST, _PORT)
     config = uvicorn.Config(
-        observed_app,
+        drain_app,
         host=_HOST,
         port=_PORT,
         ssl_certfile=_CERT_FILE,
@@ -814,6 +820,7 @@ def main() -> None:
         log_level="info",
         access_log=False,
         timeout_keep_alive=1800,
+        timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_TIMEOUT_S,
     )
     config.load()
 
@@ -829,8 +836,31 @@ def main() -> None:
             super().connection_made(transport)
 
     config.http_protocol_class = KeepaliveProtocol
-    server = uvicorn.Server(config)
-    server.run()
+    class DrainAwareServer(uvicorn.Server):
+        @override
+        def handle_exit(
+            self,
+            sig: int | None = None,
+            frame: Any | None = None,
+        ) -> None:
+            if sig is None:
+                signal_name = "unknown"
+            else:
+                try:
+                    signal_name = signal.Signals(sig).name
+                except ValueError:
+                    signal_name = str(sig)
+            begin_drain(
+                reason=f"signal:{signal_name}",
+                timeout_s=_GRACEFUL_SHUTDOWN_TIMEOUT_S,
+            )
+            super().handle_exit(sig, frame)
+
+    server = DrainAwareServer(config)
+    try:
+        server.run()
+    finally:
+        complete_drain(timed_out=False)
 
 
 if __name__ == "__main__":

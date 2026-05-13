@@ -65,6 +65,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASELINE_DIR = REPO_ROOT / "tmp" / "boot-baselines"
 DEFAULT_AGENTS = ("cursor", "web")
 
+# Families recognised by the seat model.  Used to distinguish
+# '{family}-{platform}' slugs (e.g. "claude-cursor") from bare platform slugs
+# (e.g. "cursor", "web").
+_KNOWN_FAMILIES = frozenset({"claude", "gpt", "grok", "gemini"})
+
 
 def _import_boot_runner() -> Any:
     """Late-bind the MCP server's boot runner.
@@ -161,12 +166,33 @@ def _write_baseline(agent: str, manifest_text: str) -> None:
     _baseline_path(agent).write_text(manifest_text)
 
 
+def _parse_agent_slug(agent: str) -> tuple[str | None, str | None]:
+    """Resolve an agent slug to (family, platform) for run_cortex_boot().
+
+    Accepts two forms:
+      '{family}-{platform}'  e.g. "claude-cursor" → ("claude", "cursor")
+      bare platform slug     e.g. "cursor", "web" → (None, slug)
+
+    Bare slugs pass family=None so resolve_seat() fills in the default ("claude").
+    """
+    parts = agent.split("-", 1)
+    if len(parts) == 2 and parts[0] in _KNOWN_FAMILIES:
+        return parts[0], parts[1]
+    return None, agent
+
+
 def _render_manifest(agent: str) -> dict[str, Any]:
     run_cortex_boot, boot_mode = _import_boot_runner()
+    family, platform = _parse_agent_slug(agent)
     # Silence INFO-level httpx fetch chatter — the manifest is enough.
     logging.disable(logging.WARNING)
     try:
-        result = run_cortex_boot(agent=agent, transcript_id="", mode=boot_mode.INSPECT)
+        result = run_cortex_boot(
+            family=family,
+            platform=platform,
+            transcript_id="",
+            mode=boot_mode.INSPECT,
+        )
     finally:
         logging.disable(logging.NOTSET)
     return _canonical_manifest(agent, result)

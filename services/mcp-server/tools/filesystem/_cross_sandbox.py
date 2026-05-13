@@ -7,12 +7,39 @@ import shutil
 from pathlib import Path
 
 from mcp_events import record
+from universal_logging import get_logger
 
 from ._paths import _SANDBOX_ROOT
 
+logger = get_logger(__name__)
+
+
+def _resolve_project_root() -> Path:
+    """Resolve the workspaces sandbox root, logging a loud error on default fallback.
+
+    The default ``/data/project`` must match the host bind mount that exposes
+    the workspaces tree to the MCP container; if it diverges,
+    ``copy_between_sandboxes_impl`` will write/read outside the expected
+    sandbox boundary. Per ``[quality:defaults]`` (architecture-invariants.md):
+    every default that is not explicitly user-configured emits an
+    ERROR-level signal so the silent-default footgun is observable.
+    """
+    configured = os.environ.get("PROJECT_ROOT")
+    if configured:
+        return Path(configured)
+    fallback = Path("/data/project")
+    logger.error(
+        "PROJECT_ROOT is unset — falling back to %s for cross-sandbox copy. "
+        "Set PROJECT_ROOT explicitly to the host workspaces bind mount or "
+        "cross-sandbox copies will resolve outside the workspaces sandbox.",
+        fallback,
+    )
+    return fallback
+
+
 _SANDBOX_ROOTS: dict[str, Path] = {
     "cortex": _SANDBOX_ROOT,
-    "workspaces": Path(os.environ.get("PROJECT_ROOT", "/data/project")),
+    "workspaces": _resolve_project_root(),
 }
 
 

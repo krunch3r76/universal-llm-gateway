@@ -42,6 +42,7 @@ Example fallback config in `.cursor/mcp.json`:
 from __future__ import annotations
 
 import datetime
+import http.client
 import json
 import os
 import queue
@@ -76,6 +77,10 @@ _MAX_INFLIGHT = int(os.environ.get("MCP_PROXY_MAX_INFLIGHT", "8"))
 _LARGE_RESPONSE_BYTES = int(
     os.environ.get("MCP_PROXY_LARGE_RESPONSE_BYTES", str(32 * 1024))
 )
+_RESTART_ERROR_CODE = -32099
+_RESTART_ERROR_REASON = "server_restarting"
+_RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
+_RESTART_RETRY_DELAYS_S = (5.0, 15.0)
 
 # Event service UDS — bind-mounted from host into Docker at same path.
 _EVENTS_SOCK = os.environ.get(
@@ -173,6 +178,59 @@ _events: _EventEmitter | _NullEmitter = (
 )
 
 
+class _RestartingError(RuntimeError):
+    """Retryable MCP restart condition."""
+
+    def __init__(self) -> None:
+        super().__init__(_RESTART_ERROR_MESSAGE)
+
+
+def _restart_error_response(msg_id: object | None) -> dict[str, object]:
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "error": {
+            "code": _RESTART_ERROR_CODE,
+            "message": _RESTART_ERROR_MESSAGE,
+            "data": {
+                "reason": _RESTART_ERROR_REASON,
+                "retry_after_s": 30,
+            },
+        },
+    }
+
+
+def _payload_is_restart_error(payload: object) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+    data = error.get("data")
+    return (
+        error.get("code") == _RESTART_ERROR_CODE
+        and isinstance(data, dict)
+        and data.get("reason") == _RESTART_ERROR_REASON
+    )
+
+
+def _text_is_restart_error(text: str) -> bool:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return _payload_is_restart_error(payload)
+
+
+def _is_restart_disconnect(exc: Exception) -> bool:
+    if isinstance(exc, (http.client.RemoteDisconnected, ConnectionResetError)):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        return isinstance(reason, (http.client.RemoteDisconnected, ConnectionResetError))
+    return False
+
+
 # ── YAML / token helpers ─────────────────────────────────────────────
 
 
@@ -250,12 +308,36 @@ def _emit_proxy_error(
             flush=True,
         )
         return
+    if isinstance(exc, _RestartingError):
+        _write_stdout(json.dumps(_restart_error_response(msg_id)) + "\n")
+        return
     _write_stdout(
         json.dumps(
             {
                 "jsonrpc": "2.0",
                 "id": msg_id,
                 "error": {"code": -32603, "message": str(exc)},
+            }
+        )
+        + "\n"
+    )
+
+
+def _emit_restart_progress(msg_id: object, attempt: int, delay_s: float) -> None:
+    """Emit a progress notification for restart retry backoff."""
+    _write_stdout(
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/progress",
+                "params": {
+                    "progressToken": msg_id,
+                    "progress": attempt,
+                    "message": (
+                        "MCP server restarting; "
+                        f"retrying in {delay_s:.0f}s"
+                    ),
+                },
             }
         )
         + "\n"
@@ -349,6 +431,12 @@ def _post_worker(
 
             result_queue.put((_RESULT, data_payload or ""))
 
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 503 and _text_is_restart_error(text):
+            result_queue.put((_ERROR, _RestartingError()))
+            return
+        result_queue.put((_ERROR, exc))
     except Exception as exc:
         result_queue.put((_ERROR, exc))
 
@@ -420,80 +508,128 @@ def _post_with_watchdog(
     msg_id: object | None,
     mcp_method: str | None = None,
 ) -> str | None:
-    """Run _post_worker in a thread with watchdog timeout and heartbeat forwarding."""
-    rq: queue.Queue[_QueueItem] = queue.Queue()
-    worker = threading.Thread(
-        target=_post_worker,
-        kwargs={"body": body, "token": token, "result_queue": rq},
-        daemon=True,
-    )
+    """Run _post_worker with watchdog, heartbeat forwarding, and restart retries."""
     t0 = time.monotonic()
-    worker.start()
+    for attempt_index in range(len(_RESTART_RETRY_DELAYS_S) + 1):
+        rq: queue.Queue[_QueueItem] = queue.Queue()
+        worker = threading.Thread(
+            target=_post_worker,
+            kwargs={"body": body, "token": token, "result_queue": rq},
+            daemon=True,
+        )
+        worker.start()
+        deadline = time.monotonic() + _WATCHDOG_TIMEOUT
+        should_retry = False
 
-    deadline = time.monotonic() + _WATCHDOG_TIMEOUT
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            duration = time.monotonic() - t0
-            _events.emit(
-                "mcp.transport.request.timedout",
-                transport="stdio",
-                msg_id=msg_id,
-                mcp_method=mcp_method,
-                duration_s=round(duration, 3),
-                watchdog_s=_WATCHDOG_TIMEOUT,
-            )
-            raise TimeoutError(f"MCP request timed out after {_WATCHDOG_TIMEOUT}s")
-        try:
-            kind, value = rq.get(timeout=min(_POLL_INTERVAL, remaining))
-        except queue.Empty:
-            continue
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                duration = time.monotonic() - t0
+                _events.emit(
+                    "mcp.transport.request.timedout",
+                    transport="stdio",
+                    msg_id=msg_id,
+                    mcp_method=mcp_method,
+                    duration_s=round(duration, 3),
+                    watchdog_s=_WATCHDOG_TIMEOUT,
+                    attempt=attempt_index + 1,
+                )
+                raise TimeoutError(f"MCP request timed out after {_WATCHDOG_TIMEOUT}s")
+            try:
+                kind, value = rq.get(timeout=min(_POLL_INTERVAL, remaining))
+            except queue.Empty:
+                continue
 
-        if kind == _HEARTBEAT:
-            if msg_id is not None:
-                _emit_progress(msg_id, value)
-            _events.emit(
-                "mcp.transport.heartbeat.forwarded",
-                transport="stdio",
-                msg_id=msg_id,
-                mcp_method=mcp_method,
-                count=value,
-            )
-            deadline = time.monotonic() + _WATCHDOG_TIMEOUT
-            continue
-        if kind == "stream_opened":
-            _events.emit(
-                "mcp.transport.stream.opened",
-                transport="stdio",
-                msg_id=msg_id,
-                mcp_method=mcp_method,
-                http_status=value,
-            )
-            continue
-        elif kind == _RESULT:
-            duration = time.monotonic() - t0
-            _events.emit(
-                "mcp.transport.request.completed",
-                transport="stdio",
-                msg_id=msg_id,
-                mcp_method=mcp_method,
-                duration_s=round(duration, 3),
-            )
-            return value
-        elif kind == _ERROR:
-            duration = time.monotonic() - t0
-            _events.emit(
-                "mcp.transport.request.failed",
-                transport="stdio",
-                msg_id=msg_id,
-                mcp_method=mcp_method,
-                duration_s=round(duration, 3),
-                error=str(value),
-                error_type=type(value).__name__,
-            )
-            if isinstance(value, Exception):
+            if kind == _HEARTBEAT:
+                if msg_id is not None:
+                    _emit_progress(msg_id, value)
+                _events.emit(
+                    "mcp.transport.heartbeat.forwarded",
+                    transport="stdio",
+                    msg_id=msg_id,
+                    mcp_method=mcp_method,
+                    count=value,
+                    attempt=attempt_index + 1,
+                )
+                deadline = time.monotonic() + _WATCHDOG_TIMEOUT
+                continue
+            if kind == "stream_opened":
+                _events.emit(
+                    "mcp.transport.stream.opened",
+                    transport="stdio",
+                    msg_id=msg_id,
+                    mcp_method=mcp_method,
+                    http_status=value,
+                    attempt=attempt_index + 1,
+                )
+                continue
+            if kind == _RESULT:
+                duration = time.monotonic() - t0
+                _events.emit(
+                    "mcp.transport.request.completed",
+                    transport="stdio",
+                    msg_id=msg_id,
+                    mcp_method=mcp_method,
+                    duration_s=round(duration, 3),
+                    attempts=attempt_index + 1,
+                )
+                return value
+            if kind == _ERROR:
+                if not isinstance(value, Exception):
+                    raise RuntimeError(
+                        f"Unexpected error payload from worker: {value!r}"
+                    )
+                if isinstance(value, _RestartingError) or _is_restart_disconnect(value):
+                    duration = time.monotonic() - t0
+                    _events.emit(
+                        "mcp.transport.proxy.restart.detected",
+                        transport="stdio",
+                        msg_id=msg_id,
+                        mcp_method=mcp_method,
+                        duration_s=round(duration, 3),
+                        error=str(value),
+                        error_type=type(value).__name__,
+                        attempt=attempt_index + 1,
+                    )
+                    if attempt_index < len(_RESTART_RETRY_DELAYS_S):
+                        delay_s = _RESTART_RETRY_DELAYS_S[attempt_index]
+                        if msg_id is not None:
+                            _emit_restart_progress(
+                                msg_id,
+                                attempt=attempt_index + 1,
+                                delay_s=delay_s,
+                            )
+                        time.sleep(delay_s)
+                        should_retry = True
+                        break
+                    _events.emit(
+                        "mcp.transport.request.failed",
+                        transport="stdio",
+                        msg_id=msg_id,
+                        mcp_method=mcp_method,
+                        duration_s=round(duration, 3),
+                        error=_RESTART_ERROR_MESSAGE,
+                        error_type=_RestartingError.__name__,
+                        attempts=attempt_index + 1,
+                    )
+                    raise _RestartingError()
+                duration = time.monotonic() - t0
+                _events.emit(
+                    "mcp.transport.request.failed",
+                    transport="stdio",
+                    msg_id=msg_id,
+                    mcp_method=mcp_method,
+                    duration_s=round(duration, 3),
+                    error=str(value),
+                    error_type=type(value).__name__,
+                    attempts=attempt_index + 1,
+                )
                 raise value
-            raise RuntimeError(f"Unexpected error payload from worker: {value!r}")
+
+        if should_retry:
+            continue
+
+    raise _RestartingError()
 
 
 # ── Main: stdin reader (always draining) ─────────────────────────────

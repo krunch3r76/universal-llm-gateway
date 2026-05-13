@@ -101,6 +101,25 @@ def decode_row(
     return decoded
 
 
+def table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    """True when *table* exists in the connected SQLite database.
+
+    Common pattern for graceful-degradation: app code that reads from a
+    table introduced by a migration may run against a pre-migration
+    database (test sandboxes, fresh installs). Callers can check
+    ``table_exists`` and skip the read when the table is absent.
+
+    Migrations should NOT import this helper — keep migration files
+    self-contained for replay safety (a future refactor of this helper
+    must not retroactively change how an old migration behaved).
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
 # ---------------------------------------------------------------------------
 # Migration runner
 # ---------------------------------------------------------------------------

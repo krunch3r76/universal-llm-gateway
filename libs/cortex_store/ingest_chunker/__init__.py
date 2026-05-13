@@ -10,21 +10,26 @@ Phase 2 entities arrive.
 
 The default chunker (paragraph-boundary token-bounded splitter) preserves
 the pre-spec ``ingest_document`` behavior for callers that omit
-``authority_class``.
+``authority_class``. When ``authority_class`` is provided but no chunker
+is registered for it, the dispatch falls back to the default chunker
+*and logs at INFO level* so the divergence is auditable — callers that
+specified an unrecognized class should see the fallback in the
+ingestion logs rather than silently receiving a paragraph-boundary
+chunking.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
 
 from .chunk_spec import ChunkSpec
 from .default import chunk_default
 from .subdivision_tree import chunk_subdivision_tree
 
-_Chunker = Callable[[str], list[ChunkSpec]]
+logger = logging.getLogger("cortex-api.ingest_chunker")
 
-
-_CHUNKER_BY_AUTHORITY_CLASS: dict[str, _Chunker] = {
+# Authority class → chunker function (Callable[[str], list[ChunkSpec]]).
+_CHUNKER_BY_AUTHORITY_CLASS = {
     "statute": chunk_subdivision_tree,
     "regulation": chunk_subdivision_tree,
     "probate_code": chunk_subdivision_tree,
@@ -36,16 +41,24 @@ def chunk_for_authority(
 ) -> list[ChunkSpec]:
     """Chunk *text* using the chunker registered for *authority_class*.
 
-    When *authority_class* is None or has no registered chunker, falls back
-    to the default paragraph-boundary chunker. Phase 1 ships only the
-    subdivision-tree chunker; other classes (`agency_letter`, `publication`,
-    `annotation`, `treatise`, `model_rule`, `case-law`) fall through to the
-    default until their per-class chunker is added in Phase 2.
+    When *authority_class* is None, falls back to the default
+    paragraph-boundary chunker silently (the caller didn't ask for a
+    structured chunker). When *authority_class* is specified but has no
+    registered chunker, logs an INFO-level fallback notice so the
+    divergence is auditable. Phase 1 ships only the subdivision-tree
+    chunker; other classes (`agency_letter`, `publication`, `annotation`,
+    `treatise`, `model_rule`, `case-law`) fall through to the default
+    until their per-class chunker is added in Phase 2.
     """
     if authority_class is None:
         return chunk_default(text)
     chunker = _CHUNKER_BY_AUTHORITY_CLASS.get(authority_class)
     if chunker is None:
+        logger.info(
+            "ingest_chunker: authority_class=%r has no registered chunker; "
+            "using default paragraph-boundary chunker",
+            authority_class,
+        )
         return chunk_default(text)
     return chunker(text)
 

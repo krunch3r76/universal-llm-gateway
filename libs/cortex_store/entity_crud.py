@@ -15,24 +15,23 @@ from __future__ import annotations
 import datetime
 import logging
 import sqlite3
+from collections.abc import Callable
 
 from fastapi import HTTPException, status
 
-from .action_hints import detect_expired_unresolved
-from .compaction import apply_compaction_filter
 from .db import cortex_conn, decode_row, json_encode, query
 from .entity_aliases import sync_entity_aliases
+from .entity_exhibit_lint import (
+    enforce_exhibit_belongs_to,
+    insert_exhibit_belongs_to_relationship,
+)
 from .models import (
     AssertionItem,
-    CompactionProjection,
-    EdgeItem,
     EntityCreate,
     EntityDetail,
     EntitySummary,
-    RelationshipItem,
 )
 from .routes.assertions import _ASSERTION_COLS
-from .routes.edges import _EDGE_COLS
 from .type_schemas import validate_required_attributes
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
@@ -89,22 +88,6 @@ def _enforce_role_entity_lint(
 ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
 JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
-_RELATIONSHIP_SELECT = """
-    r.id, r.from_entity AS source_id, r.to_entity AS target_id,
-    r.type AS type_id, rt.description AS type_name,
-    se.name AS source_name, te.name AS target_name,
-    r.role, r.strength, r.evidence, r.chunk_id,
-    r.valid_from, r.valid_until, r.source_uri,
-    r.session_id, r.agent, r.created_at
-"""
-
-_RELATIONSHIP_FROM = """
-    FROM relationships r
-    JOIN relationship_types rt ON rt.type = r.type
-    LEFT JOIN entities se ON se.id = r.from_entity
-    LEFT JOIN entities te ON te.id = r.to_entity
-"""
-
 
 def list_entities_impl(
     conn: sqlite3.Connection,
@@ -146,118 +129,25 @@ def list_entities_impl(
     return {"items": [EntitySummary(**row).model_dump() for row in rows]}
 
 
-def get_entity_impl(
-    conn: sqlite3.Connection,
-    *,
-    entity_id: str,
-    include_edges: bool = False,
-    edge_limit: int = 20,
-    source: str = "agent",
-    agent: str = "web",
-    session_id: str | None = None,
-    include_compaction_pointers: bool = False,
-) -> dict[str, object]:
-    entities = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
-    if not entities:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Entity not found: {entity_id}",
-        )
-    entity = entities[0]
-
-    assertion_rows = query(
-        conn,
-        f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
-        "ORDER BY created_at DESC",
-        (entity_id,),
-    )
-
-    rel_rows = query(
-        conn,
-        f"SELECT {_RELATIONSHIP_SELECT} {_RELATIONSHIP_FROM} "
-        "WHERE (r.from_entity = ? OR r.to_entity = ?) AND r.active = 1 "
-        "ORDER BY r.created_at DESC",
-        (entity_id, entity_id),
-    )
-
-    edge_rows: list[dict] = []
-    if include_edges:
-        edge_rows = query(
-            conn,
-            f"SELECT {_EDGE_COLS} FROM session_edges "
-            "WHERE (from_node = ? OR to_node = ?) "
-            "AND valid_until IS NULL "
-            "ORDER BY created_at DESC LIMIT ?",
-            (entity_id, entity_id, edge_limit),
-        )
-
-    if source != "boot":
-        try:
-            conn.execute(
-                "INSERT INTO entity_access_log "
-                "(entity_id, agent, operation, source, session_id) "
-                "VALUES (?, ?, 'entity_get', ?, ?)",
-                (entity_id, agent, source, session_id),
-            )
-            conn.commit()
-        except Exception:
-            logger.warning("Access log insert failed for %s", entity_id)
-
-    assertions: list[AssertionItem] = []
-    for row in assertion_rows:
-        try:
-            assertions.append(AssertionItem(**decode_row(row, ASSERTION_JSON_FIELDS)))
-        except Exception:
-            logger.error(
-                "Skipping assertion %s for entity %s — deserialization failed",
-                row.get("id"),
-                entity_id,
-                exc_info=True,
-            )
-
-    # §6.10 compaction-aware projection (Tier 0 — deterministic, no model)
-    compaction_projection: CompactionProjection | None = None
-    raw_dicts = [a.model_dump(mode="json") for a in assertions]
-    archives_to_children: list[str] | None = None
-    try:
-        arc_rows = query(
-            conn,
-            "SELECT to_entity FROM relationships "
-            "WHERE from_entity = ? AND type = 'archives_to' AND active = 1",
-            (entity_id,),
-        )
-        archives_to_children = [r["to_entity"] for r in arc_rows]
-    except Exception:
-        logger.warning("archives_to lookup failed for %s", entity_id)
-    projected_dicts, proj_meta = apply_compaction_filter(
-        raw_dicts,
-        include_compaction_pointers=include_compaction_pointers,
-        archives_to_children=archives_to_children,
-    )
-    if proj_meta is not None:
-        assertions = [AssertionItem(**d) for d in projected_dicts]
-        compaction_projection = CompactionProjection(**proj_meta)
-
-    relationships = [RelationshipItem(**row) for row in rel_rows]
-    edges = [EdgeItem(**row) for row in edge_rows]
-    hints = detect_expired_unresolved([a.model_dump() for a in assertions])
-    return EntityDetail(
-        **decode_row(entity, ENTITY_JSON_FIELDS),
-        assertions=assertions,
-        relationships=relationships,
-        reasoning_edges=edges,
-        action_hints=hints or None,
-        compaction_projection=compaction_projection,
-    ).model_dump(mode="json")
-
-
 def update_entity_impl(
     conn: sqlite3.Connection,
     *,
     entity_id: str,
     updates: dict[str, object],
     commit: bool = True,
+    post_commit_emits: list[Callable[[], None]] | None = None,
 ) -> dict[str, object]:
+    """Update an entity in place.
+
+    Event emission for workflow_state transitions is deferred until after
+    commit so that a rolled-back transaction does not leave a false signal
+    on the bus. When ``commit=True`` (default), the emit fires inline after
+    ``conn.commit()``. When ``commit=False``, the caller MUST pass
+    ``post_commit_emits`` (a list to receive deferred callbacks); the caller
+    is then responsible for invoking each callback AFTER its own commit.
+    If ``commit=False`` and ``post_commit_emits`` is None, the workflow
+    closure-gap signal is dropped silently rather than fired pre-commit.
+    """
     full_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not full_rows:
         raise HTTPException(
@@ -326,18 +216,40 @@ def update_entity_impl(
         )
 
     new_workflow_state = updates.get("workflow_state")
+    closure_gap_emit: Callable[[], None] | None = None
     if isinstance(new_workflow_state, str):
-        emit_todo_closure_gap_if_needed(
-            conn,
-            entity_id=entity_id,
-            entity_type=str(prior["type"]),
-            new_workflow_state=new_workflow_state,
-            prior_workflow_state=(
-                str(prior_workflow_state) if prior_workflow_state is not None else None
-            ),
+        # Snapshot the predicate inputs while the transaction is still open.
+        # The emit fires AFTER commit so a rolled-back transaction does not
+        # leave a false cortex.todo.closure.gap signal on the bus.
+        _entity_type_snap = str(prior["type"])
+        _new_ws_snap = new_workflow_state
+        _prior_ws_snap = (
+            str(prior_workflow_state) if prior_workflow_state is not None else None
         )
+
+        def _deferred_emit(
+            _conn: sqlite3.Connection = conn,
+            _eid: str = entity_id,
+            _et: str = _entity_type_snap,
+            _new: str = _new_ws_snap,
+            _prior: str | None = _prior_ws_snap,
+        ) -> None:
+            emit_todo_closure_gap_if_needed(
+                _conn,
+                entity_id=_eid,
+                entity_type=_et,
+                new_workflow_state=_new,
+                prior_workflow_state=_prior,
+            )
+
+        closure_gap_emit = _deferred_emit
+
     if commit:
         conn.commit()
+        if closure_gap_emit is not None:
+            closure_gap_emit()
+    elif closure_gap_emit is not None and post_commit_emits is not None:
+        post_commit_emits.append(closure_gap_emit)
 
     rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     assertion_rows = query(
@@ -380,6 +292,16 @@ def create_entity_impl(
 
     validate_required_attributes(conn, body.type, body.attributes)
 
+    # Spec § 1.3 — exhibit entities require a `belongs_to (case:<slug>)`
+    # relationship at write time. The hook validates the ID grammar and
+    # the parent case's existence BEFORE the entity INSERT so a missing
+    # case rejects the whole transaction.
+    exhibit_parent_case_id = enforce_exhibit_belongs_to(
+        conn,
+        entity_id=body.id,
+        entity_type=body.type,
+    )
+
     workflow_state = body.workflow_state
     if workflow_state is not None:
         validate_workflow_state(conn, body.type, workflow_state)
@@ -419,6 +341,15 @@ def create_entity_impl(
         entity_type=body.type,
         aliases=body.aliases,
     )
+    # Spec § 1.3 — auto-create the exhibit→case `belongs_to` row inside
+    # the same transaction. enforce_exhibit_belongs_to above already
+    # confirmed the parent case exists; this insert is the side-effect.
+    if exhibit_parent_case_id is not None:
+        insert_exhibit_belongs_to_relationship(
+            conn,
+            exhibit_id=body.id,
+            case_id=exhibit_parent_case_id,
+        )
     if commit:
         conn.commit()
     rows = query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))

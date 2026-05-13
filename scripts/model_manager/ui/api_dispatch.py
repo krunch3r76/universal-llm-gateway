@@ -239,7 +239,9 @@ async def _sync_restart(ctl: ServiceController, service: str) -> str:
         start_msg = await _start(ctl, service)
         msg = f"{stop_msg}\n{start_msg}"
 
-    if service in _BOOT_RENDER_DIFF_SERVICES:
+    if service in _BOOT_RENDER_DIFF_SERVICES and not (
+        service == "mcp" and "status: rebuild_scheduled" in msg
+    ):
         diff_msg = await _run_boot_render_diff()
         if diff_msg:
             msg = f"{msg}\n\n{diff_msg}"

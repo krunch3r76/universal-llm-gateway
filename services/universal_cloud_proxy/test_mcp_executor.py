@@ -3,6 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from services.universal_cloud_proxy import mcp_executor as mcp_executor_module
 from services.universal_cloud_proxy.mcp_executor import (
     McpToolExecutor,
     _compat_dispatch_tool_defs,
@@ -76,7 +77,10 @@ async def test_execute_tool_routes_hidden_web_fetch_via_dispatch() -> None:
             return httpx.Response(
                 200,
                 request=httpx.Request("POST", "https://mcp.example.com/mcp"),
-                text='{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}]}}',
+                text=(
+                    '{"jsonrpc":"2.0","id":1,"result":{"content":'
+                    '[{"type":"text","text":"ok"}]}}'
+                ),
             )
 
     executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp", auth_token="tok")
@@ -93,3 +97,41 @@ async def test_execute_tool_routes_hidden_web_fetch_via_dispatch() -> None:
         "tool": "web_fetch",
         "arguments": {"url": "https://example.com"},
     }
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_retries_remote_protocol_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+    monkeypatch.setattr(mcp_executor_module, "_RESTART_RETRY_DELAYS_S", (0.0,))
+
+    class _FakeClient:
+        async def post(
+            self,
+            _url: str,
+            *,
+            json: dict[str, object],
+            headers: dict[str, str],
+            timeout: float,
+        ) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise httpx.RemoteProtocolError("server closed connection")
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", "https://mcp.example.com/mcp"),
+                text=(
+                    '{"jsonrpc":"2.0","id":1,"result":{"content":'
+                    '[{"type":"text","text":"ok"}]}}'
+                ),
+            )
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp", auth_token="tok")
+    executor._client = _FakeClient()  # type: ignore[assignment]
+
+    result = await executor.execute_tool("fs", {"op": "list"})
+
+    assert result == "ok"
+    assert calls == 2

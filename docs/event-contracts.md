@@ -1804,6 +1804,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.frontier.dispatch.started` | `execution_id`, `agent` (nullable), `model`, `provider`, `boot_level`, `remote_mcp`, `op` | Fires once per `frontier_dispatch_v1` execution, after hydration (if persona) and before the native call. `boot_level` is internal observability vocabulary derived from agent presence, not a caller-facing parameter. `op` ∈ {`generate`, `to_thread`, ``}. Sole dispatch-entry signal on the MCP surface as of Phase 4 (node-scoped) |
 | `pipeline.frontier.dispatch.output.short` | `agent` (nullable), `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview` | Team/full `frontier_dispatch_v1` dispatch returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. Emission is detector-gated on `boot_level ∈ {team, full}`; persona-free dispatches pass `boot_level='none'` and are filtered. Replaces the deprecated `mcp.frontier.output.short` signal as of Task-7 Phase 1 (node-scoped) |
 | `pipeline.frontier.dispatch.termination.shadow` | `agent` (nullable), `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `generate_id`, `detector` ({`mode`, `version`, `provider`, `adapter`}), `reason`, `confidence`, `evidence` (list of {`kind`, `score`, `excerpt`}), `suggested_next_action`, `trace_visibility` | Advisory post-`pipeline.frontier.dispatch.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion) in the model's reasoning trace. v1 scope: provider=`google` + team-seat dispatch + thought summaries available. `.shadow` topic suffix marks v1 as NOT production-consumable during the calibration window — orchestrators MUST filter on suffix, not on a shadow boolean. Never replaces `.completed`, never fires on `.exhausted`. Replaces the deprecated `mcp.frontier.thought.termination.shadow` signal as of Task-7 Phase 1 (node-scoped) |
+| `pipeline.frontier.dispatch.refusal.suspected` | `agent` (nullable), `execution_id`, `model`, `provider`, `output_tokens`, `tool_calls_made`, `content_preview` (≤240 chars), `reason` | Post-loop heuristic fires when an inline-contract dispatch returns a short refusal-shaped completion after the model already made tool calls — gated on `output_tokens < 80` AND `tool_calls_made > 0` AND a refusal-marker hit on the lowercase content ("i can't continue", "cannot comply", "i'm sorry", etc.). Distinct from `.output.short` (broad short-output heuristic) and `.termination.shadow` (provider=google thought-trace pattern). Emitted alongside `pipeline.frontier.dispatch.completed`; consumers should retry on a higher-capability model or shorten the write loop. Not gated on `boot_level` — refusal detection runs on persona-free dispatches too. (node-scoped) |
 | `pipeline.execution.timed.out` | `pipeline_id`, `execution_id`, `timeout_seconds`, `incomplete_steps` | emitted before timeout failure raise |
 | `pipeline.deadlock.detected` | `pipeline_id`, `execution_id`, `incomplete_steps`, `pending_task_count` | emitted before deadlock failure raise |
 | `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
@@ -2187,6 +2188,18 @@ unnecessary — each operation succeeds or fails atomically.
 
 All signals: `role="observation"`, `scope="global"`.
 
+
+
+### Cortex Bulk Write Signals
+
+Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_entities.py` and `ops_bulk_relationships.py` via the `record()` shim. Bulk writes are atomic at the transaction boundary — either every item in the batch persists, or none do. All signals: `role="observation"`, `scope="global"`.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.cortex.entities.bulk.upserted` | `count` | Entities bulk-upsert transaction committed. `count` is the total number of items in the batch (sum of `created` + `updated` + `skipped`). Fired AFTER `conn.commit()` so consumers do not see false signals on a rolled-back batch. |
+| `mcp.cortex.relationships.bulk.upserted` | `count` | Relationships bulk-upsert transaction committed. Same post-commit ordering guarantee as the entities counterpart. |
+| `mcp.cortex.bulk.rolled.back` | `op`, `failed_index`, `reason` | A bulk dispatch op rolled back the transaction at item `failed_index` and returned a structured error to the caller. `op` ∈ {`entities_bulk_upsert`, `relationships_bulk_upsert`}. `reason` ∈ {`item_not_object`, `http_exception`, `integrity_error`}. `status_code` is also present on `http_exception` rollbacks. Symmetric counterpart to the post-commit `*.bulk.upserted` event — emit-and-return on the rollback path keeps the failure observable on the event bus, not just in the caller's response body. |
+| `mcp.cortex.dispatch.arguments.invalid` | `tool`, `error` | Cortex dispatch handler rejected the `arguments` string because JSON parsing failed. Replaces the prior bare `logger.warning` carve-out; the dispatch response carries `_CORTEX_FORMAT_HINT` so callers see the structural error, while consumers see this signal on the bus for population-level monitoring. |
 
 ### Email Bridge Ingest Signals
 

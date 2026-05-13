@@ -8,11 +8,9 @@ dispatch responses by the /dispatch router.
 from __future__ import annotations
 
 import json as _json
-import logging
 from typing import Any
 
-logger = logging.getLogger("cortex-api.dispatch_ops")
-
+from ._shared import record
 
 _WORKFLOW_HINTS: dict[str, str] = {
     "entity_create": (
@@ -149,7 +147,6 @@ _CORTEX_HALLUCINATED_TOOLS: dict[str, str] = {
     "traverse": "edge_traverse",
     "list_edge_types": "edge_types",
     "get_edge_types": "edge_types",
-    "assertion_get": "assertions",
 }
 
 
@@ -165,7 +162,11 @@ def _parse_cortex_arguments(arguments: object, tool: str) -> dict[str, Any] | No
         try:
             result = _json.loads(arguments)
         except _json.JSONDecodeError as exc:
-            logger.warning("cortex %r: arguments JSON parse failed: %s", tool, exc)
+            record(
+                "mcp.cortex.dispatch.arguments.invalid",
+                tool=tool,
+                error=str(exc),
+            )
             return None
         if not isinstance(result, dict):
             return None

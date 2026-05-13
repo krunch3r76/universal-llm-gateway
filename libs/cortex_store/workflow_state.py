@@ -20,10 +20,26 @@ from .dispatch_ops._shared import record
 logger = logging.getLogger("cortex-api.workflow_state")
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    rows = query(
+        conn,
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    )
+    return bool(rows)
+
+
 def workflow_schema(
     conn: sqlite3.Connection, entity_type: str
 ) -> dict[str, object] | None:
-    """Fetch the workflow schema for *entity_type* if registered, else None."""
+    """Fetch the workflow schema for *entity_type* if registered, else None.
+
+    Returns None when the ``workflow_schemas`` registry table is absent —
+    mirrors the graceful-degradation pattern in ``type_schemas`` so test
+    fixtures and pre-migration databases stay usable.
+    """
+    if not _table_exists(conn, "workflow_schemas"):
+        return None
     rows = query(
         conn,
         "SELECT enum_values, initial_state, terminal_states "

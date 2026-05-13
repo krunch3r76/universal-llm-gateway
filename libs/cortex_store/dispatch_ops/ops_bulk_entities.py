@@ -8,12 +8,19 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..db import cortex_conn, decode_row, query
-from ..entity_crud import (
-    ENTITY_JSON_FIELDS,
-    create_entity_impl,
-    update_entity_impl,
-)
 from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, record
+
+
+def _entity_crud():
+    # Lazy import — entity_crud transitively imports this package via
+    # workflow_state → dispatch_ops/_shared, so resolving these symbols
+    # at module import time deadlocks. Defer until first call.
+    from ..entity_crud import (
+        ENTITY_JSON_FIELDS,
+        create_entity_impl,
+        update_entity_impl,
+    )
+    return ENTITY_JSON_FIELDS, create_entity_impl, update_entity_impl
 
 _IF_EXISTS = frozenset({"fail", "update", "skip"})
 
@@ -25,7 +32,7 @@ def _error_response(
     failed_index: int,
 ) -> dict[str, Any]:
     return {
-        "error": exc.detail if isinstance(exc.detail, str) else exc.detail,
+        "error": exc.detail,
         "status_code": exc.status_code,
         "operation": op,
         "failed_index": failed_index,
@@ -87,7 +94,9 @@ def _bulk_upsert_entity(
     item: dict[str, Any],
     *,
     if_exists: str,
+    post_commit_emits: list[Any] | None = None,
 ) -> dict[str, Any]:
+    ENTITY_JSON_FIELDS, create_entity_impl, update_entity_impl = _entity_crud()  # noqa: N806
     payload = _entity_payload(item)
     entity_id = str(payload["id"])
     existing_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
@@ -123,7 +132,13 @@ def _bulk_upsert_entity(
         merged_attrs = dict(existing.get("attributes") or {})
         merged_attrs.update(updates["attributes"])
         updates["attributes"] = merged_attrs
-    update_entity_impl(conn, entity_id=entity_id, updates=updates, commit=False)
+    update_entity_impl(
+        conn,
+        entity_id=entity_id,
+        updates=updates,
+        commit=False,
+        post_commit_emits=post_commit_emits,
+    )
     return {"id": entity_id, "action": "updated"}
 
 
@@ -136,10 +151,17 @@ def _op_entities_bulk_upsert(
         return {"error": "entities must be a non-empty list"}
     default_if_exists = _validate_if_exists(if_exists)
     items: list[dict[str, Any]] = []
+    post_commit_emits: list[Any] = []
     with cortex_conn() as conn:
         for index, item in enumerate(entities):
             if not isinstance(item, dict):
                 conn.rollback()
+                record(
+                    "mcp.cortex.bulk.rolled.back",
+                    op="entities_bulk_upsert",
+                    failed_index=index,
+                    reason="item_not_object",
+                )
                 return {
                     "error": "each entity must be an object",
                     "operation": "entities_bulk_upsert",
@@ -150,14 +172,34 @@ def _op_entities_bulk_upsert(
                 item_if_exists = _validate_if_exists(
                     item.get("if_exists", default_if_exists)
                 )
-                items.append(_bulk_upsert_entity(conn, item, if_exists=item_if_exists))
+                items.append(
+                    _bulk_upsert_entity(
+                        conn,
+                        item,
+                        if_exists=item_if_exists,
+                        post_commit_emits=post_commit_emits,
+                    )
+                )
             except HTTPException as exc:
                 conn.rollback()
+                record(
+                    "mcp.cortex.bulk.rolled.back",
+                    op="entities_bulk_upsert",
+                    failed_index=index,
+                    reason="http_exception",
+                    status_code=exc.status_code,
+                )
                 return _error_response(
                     exc, op="entities_bulk_upsert", failed_index=index
                 )
             except sqlite3.IntegrityError as exc:
                 conn.rollback()
+                record(
+                    "mcp.cortex.bulk.rolled.back",
+                    op="entities_bulk_upsert",
+                    failed_index=index,
+                    reason="integrity_error",
+                )
                 return {
                     "error": str(exc),
                     "operation": "entities_bulk_upsert",
@@ -165,7 +207,12 @@ def _op_entities_bulk_upsert(
                     "rolled_back": True,
                 }
         conn.commit()
-    record("mcp.cortex.entities.bulk_upserted", count=len(items))
+    # Post-commit emits: workflow_state transitions captured during the loop
+    # fire here, after the SQL transaction has actually persisted, so a
+    # rolled-back batch does not leave false cortex.todo.closure.gap signals.
+    for emit in post_commit_emits:
+        emit()
+    record("mcp.cortex.entities.bulk.upserted", count=len(items))
     return {
         "items": items,
         "created": sum(1 for item in items if item["action"] == "created"),

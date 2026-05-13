@@ -58,6 +58,7 @@ _CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
 _GATEWAY_CRASH_DETECT_S = 5.0
 _MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
+_MCP_STOP_GRACE_S = 30
 _BUILD_LOG_POLL_INTERVAL_S = 0.25
 _DEFAULT_STARGATE_SHUTDOWN_GRACE_S = 20.0
 _STARGATE_SHUTDOWN_BUFFER_S = 2.0
@@ -102,6 +103,7 @@ class ServiceController:
         self._service_state = ServiceState(workspace_root)
         self._sidecar = SidecarController(workspace_root)
         self._build_process: asyncio.subprocess.Process | None = None
+        self._mcp_recreate_tasks: set[asyncio.Task[str]] = set()
 
     @property
     def service_state(self) -> ServiceState:
@@ -482,22 +484,36 @@ class ServiceController:
         return args, compose_path
 
     async def start_mcp(self) -> str:
-        """Start MCP server container via docker compose."""
+        """Start MCP server container via docker compose with a graceful drain."""
         base = self._mcp_compose_args()
         if base is None:
             return "Compose file not found: docker/compose/mcp-server.yml"
         args, _ = base
         env = build_mcp_env(self._root)
 
-        # Example of refactored call (actual implementation would need a helper)
-        # return await self._run_docker_compose_command(
-        #     compose_path=compose_path,
-        #     command="up",
-        #     args=["-d", "--force-recreate"],
-        #     env=env,
-        #     success_msg="MCP server started.",
-        #     failure_msg="Failed to start MCP server"
-        # )
+        stop = await asyncio.create_subprocess_exec(
+            *args,
+            "stop",
+            "-t",
+            str(_MCP_STOP_GRACE_S),
+            "mcp-server",
+            env=env,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stop_output = await stop.communicate()
+        stop_text = stop_output[0].decode(errors="replace") if stop_output[0] else ""
+        if stop.returncode != 0:
+            logger.error(
+                "Failed to gracefully stop MCP server (exit %d):\n%s",
+                stop.returncode,
+                stop_text,
+            )
+            return (
+                f"Failed to gracefully stop MCP server (exit {stop.returncode}).\n"
+                f"{stop_text}"
+            )
 
         result = await asyncio.create_subprocess_exec(
             *args,
@@ -512,7 +528,10 @@ class ServiceController:
         output = await result.communicate()
         text = output[0].decode(errors="replace") if output[0] else ""
         if result.returncode == 0:
-            return f"MCP server started.\n{text}"
+            details = "\n".join(
+                part for part in (stop_text.strip(), text.strip()) if part
+            )
+            return f"MCP server started.\n{details}"
         logger.error(
             "Failed to start MCP server (exit %d):\n%s", result.returncode, text
         )
@@ -544,7 +563,7 @@ class ServiceController:
         return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
 
     async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
-        """Rebuild MCP server image from source and restart.
+        """Rebuild MCP server image and schedule the container recreate.
 
         Default is a cached rebuild that refreshes only source layers — fast
         enough for the sync+restart workflow.  Pass ``no_cache=True`` for a
@@ -564,15 +583,44 @@ class ServiceController:
         build_failed = build_code != 0
         if build_failed:
             logger.error("MCP rebuild failed (exit %d):\n%s", build_code, build_text)
-        start_text = await self.start_mcp()
-        if build_failed:
             return (
-                f"MCP build failed (exit {build_code}) — "
-                f"restarted with existing image.\n{start_text}"
+                f"MCP build failed (exit {build_code}); "
+                "container recreate was not scheduled.\n"
+                f"{build_text}"
             )
+
+        self._schedule_mcp_recreate()
+        return (
+            "MCP rebuild scheduled.\n"
+            "status: rebuild_scheduled\n"
+            "image_built: true\n"
+            "container_recreate: background\n"
+            "next_step: manage(action='wait_healthy', service='mcp', timeout=120)"
+        )
+
+    def _schedule_mcp_recreate(self) -> None:
+        task = asyncio.create_task(
+            self._recreate_mcp_container(),
+            name="mcp-recreate-after-build",
+        )
+        self._mcp_recreate_tasks.add(task)
+        task.add_done_callback(self._log_mcp_recreate_result)
+
+    def _log_mcp_recreate_result(self, task: asyncio.Task[str]) -> None:
+        self._mcp_recreate_tasks.discard(task)
+        try:
+            message = task.result()
+        except asyncio.CancelledError:
+            logger.warning("Background MCP recreate task was cancelled")
+        except Exception:
+            logger.exception("Background MCP recreate task failed")
+        else:
+            logger.info("Background MCP recreate task completed:\n%s", message)
+
+    async def _recreate_mcp_container(self) -> str:
+        start_text = await self.start_mcp()
         if not start_text.startswith("MCP server started."):
             return start_text
-
         health_error = await self._wait_mcp_healthy(timeout=_MCP_HEALTH_WAIT_TIMEOUT_S)
         if health_error is not None:
             return f"{start_text}\nWARNING: {health_error}"

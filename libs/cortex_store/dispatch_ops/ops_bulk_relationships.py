@@ -11,7 +11,9 @@ from fastapi import HTTPException, status
 from ..db import cortex_conn, query
 from ..entity_aliases import resolve_entity_reference
 from ..models import RelationshipCreate, RelationshipItem
-from ..routes.relationships import _FROM, _SELECT, SYMMETRIC_REL_TYPES
+from ..relationship_sql import FROM_CLAUSE as _FROM
+from ..relationship_sql import SELECT_COLUMNS as _SELECT
+from ..relationship_sql import SYMMETRIC_REL_TYPES
 from ._shared import record
 from .ops_bulk_entities import _error_response, _validate_if_exists
 
@@ -225,6 +227,12 @@ def _op_relationships_bulk_upsert(
         for index, item in enumerate(relationships):
             if not isinstance(item, dict):
                 conn.rollback()
+                record(
+                    "mcp.cortex.bulk.rolled.back",
+                    op="relationships_bulk_upsert",
+                    failed_index=index,
+                    reason="item_not_object",
+                )
                 return {
                     "error": "each relationship must be an object",
                     "operation": "relationships_bulk_upsert",
@@ -247,11 +255,24 @@ def _op_relationships_bulk_upsert(
                 )
             except HTTPException as exc:
                 conn.rollback()
+                record(
+                    "mcp.cortex.bulk.rolled.back",
+                    op="relationships_bulk_upsert",
+                    failed_index=index,
+                    reason="http_exception",
+                    status_code=exc.status_code,
+                )
                 return _error_response(
                     exc, op="relationships_bulk_upsert", failed_index=index
                 )
             except sqlite3.IntegrityError as exc:
                 conn.rollback()
+                record(
+                    "mcp.cortex.bulk.rolled.back",
+                    op="relationships_bulk_upsert",
+                    failed_index=index,
+                    reason="integrity_error",
+                )
                 return {
                     "error": str(exc),
                     "operation": "relationships_bulk_upsert",
@@ -259,7 +280,7 @@ def _op_relationships_bulk_upsert(
                     "rolled_back": True,
                 }
         conn.commit()
-    record("mcp.cortex.relationships.bulk_upserted", count=len(items))
+    record("mcp.cortex.relationships.bulk.upserted", count=len(items))
     return {
         "items": items,
         "created": sum(1 for item in items if item["action"] == "created"),

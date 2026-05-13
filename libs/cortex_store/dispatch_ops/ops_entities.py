@@ -8,17 +8,32 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from ..card import CARD_INTENTS_DEFERRED as _CARD_INTENTS_DEFERRED
+from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
 from ..db import cortex_conn
-from ..routes.entities import (
-    _CARD_INTENTS_DEFERRED,
-    _CARD_TOP_K_DEFAULT,
-    _create_entity_impl,
-    _get_entity_card_impl,
-    _get_entity_impl,
-    _list_entities_impl,
-    _update_entity_impl,
-)
 from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, record
+
+
+def _impls() -> tuple:
+    # Lazy import — routes/entities → entity_crud → workflow_state →
+    # dispatch_ops/_shared cycles back to this package at import time.
+    # Resolving impl symbols on first call keeps the module import side
+    # of the cycle cold so direct importers of entity_crud (tests, scripts)
+    # don't hit a partially-initialized module.
+    from ..routes.entities import (
+        _create_entity_impl,
+        _get_entity_card_impl,
+        _get_entity_impl,
+        _list_entities_impl,
+        _update_entity_impl,
+    )
+    return (
+        _create_entity_impl,
+        _get_entity_card_impl,
+        _get_entity_impl,
+        _list_entities_impl,
+        _update_entity_impl,
+    )
 
 logger = logging.getLogger("cortex-api.dispatch_ops.entities")
 
@@ -29,6 +44,7 @@ def _op_entities(
     limit: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
+    _, _, _, _list_entities_impl, _ = _impls()
     with cortex_conn() as conn:
         return _list_entities_impl(
             conn, entity_type=type, workflow_state=workflow_state, limit=limit or 50
@@ -66,6 +82,7 @@ def _op_entity_get(
         }
     if intent == "card" and (not isinstance(top_k, int) or top_k < 1 or top_k > 50):
         return {"error": "top_k must be int in [1, 50]"}
+    _, _get_entity_card_impl, _get_entity_impl, _, _ = _impls()
     with cortex_conn() as conn:
         if intent == "card":
             return _get_entity_card_impl(
@@ -121,6 +138,7 @@ def _op_entity_create(
         **({} if source_uri is None else {"source_uri": source_uri}),
         **({} if content_hash is None else {"content_hash": content_hash}),
     }
+    _create_entity_impl, _, _get_entity_impl, _, _ = _impls()
     try:
         with cortex_conn() as conn:
             result = _create_entity_impl(conn, payload)
@@ -179,6 +197,7 @@ def _op_entity_update(
             updates["content_hash"] = computed
     if not updates:
         return {"error": "No fields to update"}
+    _, _, _, _, _update_entity_impl = _impls()
     with cortex_conn() as conn:
         result = _update_entity_impl(conn, entity_id=entity_id, updates=updates)
     if "error" not in result:

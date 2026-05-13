@@ -20,10 +20,10 @@ from ..card import (
 from ..db import cortex_conn
 from ..entity_crud import (
     create_entity_impl,
-    get_entity_impl,
     list_entities_impl,
     update_entity_impl,
 )
+from ..entity_read import get_entity_impl
 from ..models import (
     EntityCreate,
     EntityDetail,

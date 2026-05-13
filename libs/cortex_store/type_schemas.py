@@ -22,7 +22,7 @@ import sqlite3
 
 from fastapi import HTTPException, status
 
-from .db import query
+from .db import query, table_exists
 
 logger = logging.getLogger("cortex-api.type_schemas")
 
@@ -30,7 +30,17 @@ logger = logging.getLogger("cortex-api.type_schemas")
 def type_attribute_schema(
     conn: sqlite3.Connection, entity_type: str
 ) -> dict[str, object] | None:
-    """Fetch the attribute schema for *entity_type* if registered, else None."""
+    """Fetch the attribute schema for *entity_type* if registered, else None.
+
+    Returns None either when no row exists for *entity_type* OR when the
+    ``type_attribute_schemas`` table itself is absent. The latter happens
+    in test sandboxes that pre-date migration 037 and in production
+    instances where migrations have not yet been applied — graceful
+    degradation matches the existing ``workflow_state.workflow_schema``
+    contract: types not registered accept any attributes (free-form).
+    """
+    if not table_exists(conn, "type_attribute_schemas"):
+        return None
     rows = query(
         conn,
         "SELECT required_keys, optional_keys, enum_constraints, notes "

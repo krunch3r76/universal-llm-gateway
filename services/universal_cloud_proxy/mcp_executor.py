@@ -18,6 +18,7 @@ opaque instruction.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -34,6 +35,10 @@ _MAX_TOOL_CALL_TIMEOUT = 20 * 60.0
 _MAX_LOOP_TIMEOUT = 300.0
 _DEFAULT_MAX_ITERATIONS = 10
 _JSONRPC_VERSION = "2.0"
+_RESTART_ERROR_CODE = -32099
+_RESTART_ERROR_REASON = "server_restarting"
+_RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
+_RESTART_RETRY_DELAYS_S = (5.0, 15.0)
 
 _BOOT_DIRECTIVE_RE = re.compile(
     r"""cortex_boot\(\s*agent\s*=\s*["'](\w+)["']\s*\)""",
@@ -97,6 +102,41 @@ def _parse_sse_json(text: str) -> dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError:
         return {}
+
+
+def _restart_error_payload() -> dict[str, Any]:
+    return {
+        "error": {
+            "code": _RESTART_ERROR_CODE,
+            "message": _RESTART_ERROR_MESSAGE,
+            "data": {
+                "reason": _RESTART_ERROR_REASON,
+                "retry_after_s": 30,
+            },
+        }
+    }
+
+
+def _payload_is_restart_error(payload: dict[str, Any]) -> bool:
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return False
+    data = error.get("data")
+    return (
+        error.get("code") == _RESTART_ERROR_CODE
+        and isinstance(data, dict)
+        and data.get("reason") == _RESTART_ERROR_REASON
+    )
+
+
+def _response_is_restart_error(resp: httpx.Response) -> bool:
+    if resp.status_code != 503:
+        return False
+    try:
+        payload = resp.json()
+    except json.JSONDecodeError:
+        payload = _parse_sse_json(resp.text)
+    return _payload_is_restart_error(payload) or resp.status_code == 503
 
 
 def _mcp_schema_to_openai_tool(tool: dict[str, Any]) -> dict[str, Any]:
@@ -199,29 +239,50 @@ class McpToolExecutor:
         if name in self._dispatch_compat_names:
             target_name = "dispatch"
             target_arguments = {"tool": name, "arguments": arguments}
-        try:
-            resp = await self._client.post(
-                self._mcp_url,
-                json=_jsonrpc_request(
-                    "tools/call",
-                    {"name": target_name, "arguments": target_arguments},
-                ),
-                headers=self._headers(),
-                timeout=_MAX_TOOL_CALL_TIMEOUT,
-            )
-            resp.raise_for_status()
-            body = _parse_sse_json(resp.text)
-            result = body.get("result", {})
-            content_blocks = result.get("content", [])
-            parts = [
-                str(b.get("text", ""))
-                for b in content_blocks
-                if isinstance(b, dict) and b.get("type") == "text"
-            ]
-            return "\n".join(parts) if parts else json.dumps(result)
-        except Exception as exc:
-            logger.error("McpToolExecutor tool %s failed: %s", name, exc)
-            return json.dumps({"error": f"Tool execution failed: {exc}"})
+        request_body = _jsonrpc_request(
+            "tools/call",
+            {"name": target_name, "arguments": target_arguments},
+        )
+        for attempt_index in range(len(_RESTART_RETRY_DELAYS_S) + 1):
+            try:
+                resp = await self._client.post(
+                    self._mcp_url,
+                    json=request_body,
+                    headers=self._headers(),
+                    timeout=_MAX_TOOL_CALL_TIMEOUT,
+                )
+                if _response_is_restart_error(resp):
+                    raise httpx.RemoteProtocolError(_RESTART_ERROR_MESSAGE)
+                resp.raise_for_status()
+                body = _parse_sse_json(resp.text)
+                result = body.get("result", {})
+                content_blocks = result.get("content", [])
+                parts = [
+                    str(b.get("text", ""))
+                    for b in content_blocks
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ]
+                return "\n".join(parts) if parts else json.dumps(result)
+            except httpx.RemoteProtocolError as exc:
+                if attempt_index < len(_RESTART_RETRY_DELAYS_S):
+                    delay_s = _RESTART_RETRY_DELAYS_S[attempt_index]
+                    logger.info(
+                        "McpToolExecutor tool %s saw MCP restart; retrying in %.0fs",
+                        name,
+                        delay_s,
+                    )
+                    await asyncio.sleep(delay_s)
+                    continue
+                logger.error(
+                    "McpToolExecutor tool %s failed during restart: %s",
+                    name,
+                    exc,
+                )
+                return json.dumps(_restart_error_payload())
+            except Exception as exc:
+                logger.error("McpToolExecutor tool %s failed: %s", name, exc)
+                return json.dumps({"error": f"Tool execution failed: {exc}"})
+        return json.dumps(_restart_error_payload())
 
     async def _resolve_boot_directive(self, messages: list[dict[str, Any]]) -> None:
         """Pre-execute ``cortex_boot(agent="...")`` if it appears in the system prompt.

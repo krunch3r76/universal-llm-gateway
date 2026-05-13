@@ -1,4 +1,11 @@
-"""Compatibility re-exports for bulk Cortex dispatch ops."""
+"""Public façade for bulk Cortex dispatch ops.
+
+Re-exports the entity and relationship bulk upsert handlers from their
+implementation siblings so callers (the dispatch registry, tests, and any
+future intra-package users) have a single import path. The split into
+``ops_bulk_entities.py`` and ``ops_bulk_relationships.py`` exists to keep
+each implementation file under the new-file SLOC cap.
+"""
 
 from __future__ import annotations
 

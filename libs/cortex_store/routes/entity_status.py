@@ -15,10 +15,6 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from ..db import cortex_conn, decode_row, json_decode, query
 from ..entity_crud import (
-    _RELATIONSHIP_FROM,
-    _RELATIONSHIP_SELECT,
-)
-from ..entity_crud import (
     ENTITY_JSON_FIELDS as _ENTITY_JSON_FIELDS,
 )
 from ..models import AssertionItem, RelationshipItem
@@ -27,6 +23,8 @@ from ..observability_bridge import (
     match_threads,
     query_agent_bus_threads,
 )
+from ..relationship_sql import FROM_CLAUSE as _RELATIONSHIP_FROM
+from ..relationship_sql import SELECT_COLUMNS as _RELATIONSHIP_SELECT
 from ..status_models import (
     EntityStatusResponse,
     FreshnessInfo,

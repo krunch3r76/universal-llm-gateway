@@ -17,27 +17,10 @@ from ..models import (
     RelationshipList,
     RelationshipUpdate,
 )
-
-SYMMETRIC_REL_TYPES: frozenset[str] = frozenset({"related_to", "co-occurs_with"})
+from ..relationship_sql import FROM_CLAUSE, SELECT_COLUMNS, SYMMETRIC_REL_TYPES
 
 logger = logging.getLogger("cortex-api.relationships")
 router = APIRouter(prefix="/relationships", tags=["relationships"])
-
-_SELECT = """
-    r.id, r.from_entity AS source_id, r.to_entity AS target_id,
-    r.type AS type_id, rt.description AS type_name,
-    se.name AS source_name, te.name AS target_name,
-    r.role, r.strength, r.evidence, r.chunk_id,
-    r.valid_from, r.valid_until, r.source_uri,
-    r.session_id, r.agent, r.created_at
-"""
-
-_FROM = """
-    FROM relationships r
-    JOIN relationship_types rt ON rt.type = r.type
-    LEFT JOIN entities se ON se.id = r.from_entity
-    LEFT JOIN entities te ON te.id = r.to_entity
-"""
 
 
 @router.get("", response_model=RelationshipList)
@@ -58,7 +41,7 @@ def list_relationships(
         params.append(type_id)
 
     where = f" WHERE {' AND '.join(clauses)}"
-    sql = f"SELECT {_SELECT} {_FROM}{where} ORDER BY r.created_at DESC LIMIT ?"
+    sql = f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE}{where} ORDER BY r.created_at DESC LIMIT ?"
     params.append(limit)
 
     with cortex_conn() as conn:
@@ -136,14 +119,14 @@ def create_relationship(
             was_new = True
             rows = query(
                 conn,
-                f"SELECT {_SELECT} {_FROM} WHERE r.id = ?",
+                f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} WHERE r.id = ?",
                 (cur.lastrowid,),
             )
         except sqlite3.IntegrityError:
             was_new = False
             rows = query(
                 conn,
-                f"SELECT {_SELECT} {_FROM} "
+                f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} "
                 "WHERE r.from_entity = ? AND r.to_entity = ? AND r.type = ? AND r.active = 1",
                 (from_entity, to_entity, body.type_id),
             )
@@ -243,7 +226,7 @@ def update_relationship(
         conn.commit()
         updated = query(
             conn,
-            f"SELECT {_SELECT} {_FROM} WHERE r.id = ?",
+            f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE} WHERE r.id = ?",
             (relationship_id,),
         )
     if not updated:

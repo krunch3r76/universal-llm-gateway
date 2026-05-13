@@ -14,7 +14,7 @@ from cortex_store._intent_card_test_fixtures import (
     make_conn,
 )
 from cortex_store.card import get_entity_card
-from cortex_store.entity_crud import get_entity_impl
+from cortex_store.entity_read import get_entity_impl
 
 
 def test_card_fetch_plan_row_volume_smaller_than_full() -> None:
