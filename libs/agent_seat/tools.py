@@ -127,6 +127,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 _AGENT_BUS_TOOL_DEFINITION: dict[str, Any] = _fn(
     "agent_bus",
     "Inter-agent message bus — threads, turns, read/reply coordination.\n\n"
+    "Body convention: keep post/reply bodies brief. Long handoffs, specs, "
+    "reviews, and analysis must be written first as Cortex sidecars under "
+    "notes/system/threads/... via fs(sandbox='cortex'), then referenced as "
+    "cortex:notes/system/threads/<file>. Workspace packets are mirrors, not "
+    "the primary bus artifact.\n\n"
     "Operations:\n"
     "  fetch   (thread, last?, compact?, mark_read?) — get turns\n"
     "  reply   (thread, to, subject, body, after_turn, from_agent?) — reply\n"

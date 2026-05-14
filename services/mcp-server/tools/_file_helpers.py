@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import mimetypes
+import os
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -12,7 +13,20 @@ from typing import Any
 from mcp_events import monotonic_now, record
 
 FILES_ROOT = Path("/data/files")
-PDF_READ_TIMEOUT_S = 20.0
+PDF_READ_TIMEOUT_S = 25.0  # 5s headroom before the observed ~30s remote-disconnect window (cortex 9119; agent-bus:962)
+PDF_LAYOUT_MAX_BYTES = int(
+    os.getenv("MCP_PDF_LAYOUT_MAX_BYTES", str(2 * 1024 * 1024))
+)
+# 2 MB heuristic — observed timeouts (cortex friction 9742) spanned 1–3 MB
+# PDFs; threshold sits at mid-range. Tune via env if sub-2-MB timeouts surface.
+
+# Method tags for PDF extraction route reporting. Used by read_file_result to
+# expose the actual route to consumers per [universal:rest] projection-fidelity.
+PDF_METHOD_LAYOUT = "pymupdf4llm"
+PDF_METHOD_SIDECAR = "sidecar_markdown"
+PDF_METHOD_PLAINTEXT_GATED = "pymupdf_plaintext_size_gated"
+PDF_METHOD_PLAINTEXT_TIMEOUT = "pymupdf_plaintext_timeout_fallback"
+PDF_METHOD_PLAINTEXT_EMPTY = "pymupdf_plaintext_empty_result"
 
 # Extensions whose content is binary and must not be decoded as UTF-8 text.
 # When binary=False is requested for one of these, read_file_result auto-routes
@@ -89,8 +103,30 @@ def _read_odt(path: Path) -> str:
     return "\n".join(teletype.extractText(node) for node in doc.getElementsByType(P))
 
 
-def _extract_pdf_markdown(path: Path) -> str:
-    """Run PDF extraction without timeout handling."""
+def _extract_pdf_plaintext(path: Path) -> str:
+    """Fast plain-text extraction via pymupdf without layout analysis.
+
+    Completes in well under 1s on any PDF that pymupdf can open. Used as the
+    timeout fallback and size-gate path when pymupdf4llm layout analysis is
+    not viable within the provider deadline.
+    """
+    import pymupdf  # type: ignore[import-untyped]
+
+    doc = pymupdf.open(str(path))
+    try:
+        return "\n\n".join(page.get_text("text") for page in doc)
+    finally:
+        doc.close()
+
+
+def _extract_pdf_markdown(path: Path) -> tuple[str, str]:
+    """Run PDF extraction without timeout handling.
+
+    Returns ``(text, method)`` where ``method`` is one of:
+      - ``PDF_METHOD_LAYOUT`` — pymupdf4llm produced usable markdown.
+      - ``PDF_METHOD_PLAINTEXT_EMPTY`` — pymupdf4llm returned only scaffolding
+        (e.g. ``"## \n\n## \n\n"``); fell back to plaintext extraction.
+    """
     import pymupdf4llm  # type: ignore[import-untyped]
 
     text = pymupdf4llm.to_markdown(str(path), use_ocr=False)
@@ -99,51 +135,116 @@ def _extract_pdf_markdown(path: Path) -> str:
     # scaffolding (e.g. "## \n\n## \n\n") with no alphanumeric content — not
     # detected as empty by .strip() alone.  Count alnum chars as the signal.
     if sum(1 for c in text if c.isalnum()) >= 50:
-        return text
+        return text, PDF_METHOD_LAYOUT
 
+    record(
+        "mcp.tool.pdf.read.plaintext",
+        cause="empty_result_fallback",
+        path=str(path),
+    )
     # Fallback: direct fitz extraction for PDFs where pymupdf4llm returns empty.
-    import pymupdf  # type: ignore[import-untyped]
-
-    doc = pymupdf.open(str(path))
-    try:
-        pages = [page.get_text("text") for page in doc]
-    finally:
-        doc.close()
-    return "\n\n".join(pages)
+    return _extract_pdf_plaintext(path), PDF_METHOD_PLAINTEXT_EMPTY
 
 
-def _read_pdf(path: Path, timeout_s: float = PDF_READ_TIMEOUT_S) -> str:
-    """Reads the content of a PDF file and returns it as markdown.
+def _read_pdf(path: Path, timeout_s: float = PDF_READ_TIMEOUT_S) -> tuple[str, str]:
+    """Read a PDF and return ``(text, method)`` where ``method`` names the route taken.
 
-    pymupdf4llm ≥ 1.27 enables OCR by default via `use_ocr=True`, causing
-    indefinite hangs on scanned/image-only PDFs.  Pass `use_ocr=False` to keep
-    extraction fast; absorbed as **kwargs in older versions (≤ 0.3.x) so the
+    pymupdf4llm ≥ 1.27 enables OCR by default via ``use_ocr=True``, causing
+    indefinite hangs on scanned/image-only PDFs.  Pass ``use_ocr=False`` to keep
+    extraction fast; absorbed as ``**kwargs`` in older versions (≤ 0.3.x) so the
     call is safe across versions.  Fall back to direct fitz plain-text
     extraction when pymupdf4llm returns an empty result.
 
-    The extractor runs behind a hard wall-clock timeout so remote MCP clients
-    receive a visible failure before provider-side 30s deadlines cut the stream.
+    The extractor runs behind a wall-clock timeout so remote MCP clients
+    receive a visible failure before the observed ~30s remote-disconnect
+    window cuts the stream.
+
+    Heavy PDFs (> ``PDF_LAYOUT_MAX_BYTES``) bypass pymupdf4llm entirely —
+    layout analysis on 1–3 MB rich-layout PDFs routinely exceeds the timeout
+    budget.  On a layout-pass timeout the plain-text fallback is attempted
+    before raising, so clients always receive content when pymupdf can open
+    the file.
+
+    Timeout semantics — ``future.result(timeout=...)`` returns control to
+    the caller in ``timeout_s``, but Python cannot interrupt a running native
+    call inside ``pymupdf4llm.to_markdown(...)``.  The layout-extraction
+    thread continues in the background until pymupdf4llm completes; its
+    result is then discarded.  During this window the plaintext fallback
+    (< 1s on any pymupdf-openable PDF) shares CPU/memory with the still-
+    running layout pass.  Bounded by the per-call executor — no long-term
+    leak — but the docstring's promise is "timely return to caller", not
+    "extraction cancelled".
+
+    Engine boundary — the plaintext fallback uses pymupdf's lower-level
+    ``page.get_text("text")``, the same C engine as pymupdf4llm with the
+    layout pass disabled.  If pymupdf itself hangs (encrypted streams,
+    malformed xref), the fallback inherits the hang.  Cortex friction 9742
+    suggested an independent engine (pdfplumber/pdftotext); deferred to a
+    separate change — escalate if a hang on a pymupdf-openable PDF appears
+    in ``mcp.tool.pdf.read.timeout`` with no following ``.plaintext`` event.
+
+    Method tags returned:
+      - ``PDF_METHOD_PLAINTEXT_GATED`` — size-gate; pymupdf4llm skipped.
+      - ``PDF_METHOD_LAYOUT`` — pymupdf4llm produced usable markdown.
+      - ``PDF_METHOD_PLAINTEXT_EMPTY`` — pymupdf4llm returned scaffolding;
+        plaintext fallback succeeded inside ``_extract_pdf_markdown``.
+      - ``PDF_METHOD_PLAINTEXT_TIMEOUT`` — pymupdf4llm exceeded ``timeout_s``;
+        plaintext fallback succeeded.
     """
+    # ∀ file_size > PDF_LAYOUT_MAX_BYTES: layout analysis is not viable within
+    # the provider deadline; go straight to plain-text.
+    file_size = path.stat().st_size
+    if file_size > PDF_LAYOUT_MAX_BYTES:
+        record(
+            "mcp.tool.pdf.read.plaintext",
+            cause="gated",
+            path=str(path),
+            size_bytes=file_size,
+            threshold_bytes=PDF_LAYOUT_MAX_BYTES,
+        )
+        return _extract_pdf_plaintext(path), PDF_METHOD_PLAINTEXT_GATED
+
     t0 = monotonic_now()
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mcp-pdf-read")
     future = executor.submit(_extract_pdf_markdown, path)
     try:
         return future.result(timeout=timeout_s)
-    except FutureTimeoutError as exc:
+    except FutureTimeoutError:
         elapsed = monotonic_now() - t0
+        # Advisory only — Python cannot interrupt a running pymupdf4llm thread.
+        # Documented in the docstring; the thread completes in the background.
         future.cancel()
         record(
-            "mcp.tool.file.read.timeout",
+            "mcp.tool.pdf.read.timeout",
             path=str(path),
             extension=path.suffix.lower(),
             elapsed_s=round(elapsed, 3),
             timeout_s=timeout_s,
+            fallback="plaintext",
         )
-        raise TimeoutError(
-            f"PDF extraction exceeded {timeout_s:.0f}s for {path.name}"
-        ) from exc
+        # Retry with layout-free extraction — completes in <1s on any openable PDF.
+        try:
+            text = _extract_pdf_plaintext(path)
+            record(
+                "mcp.tool.pdf.read.plaintext",
+                cause="timeout_fallback",
+                path=str(path),
+                elapsed_layout_s=round(elapsed, 3),
+            )
+            return text, PDF_METHOD_PLAINTEXT_TIMEOUT
+        except Exception as fallback_exc:
+            raise TimeoutError(
+                f"PDF extraction exceeded {timeout_s:.0f}s for {path.name}; "
+                f"plain-text fallback also failed: {fallback_exc}"
+            ) from fallback_exc
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _read_pdf_text(path: Path) -> str:
+    """Adapter for ``_FORMAT_READERS`` — returns text only, discards method tag."""
+    text, _method = _read_pdf(path)
+    return text
 
 
 def _read_html(path: Path) -> str:
@@ -252,7 +353,7 @@ _FORMAT_READERS: dict[str, object] = {
     ".htm": _read_html,
     ".odt": _read_odt,
     ".eml": _read_eml,
-    ".pdf": _read_pdf,
+    ".pdf": _read_pdf_text,
 }
 
 
@@ -330,7 +431,7 @@ def read_file_result(
         auto_result = build_binary_read_result(src)
         auto_result["auto_binary"] = True
     elif suffix not in _FORMAT_READERS and _is_binary_by_magic(src):
-        record("mcp.fs.binary.detect.magic.match", path=str(src))
+        record("mcp.fs.binary.magic.match", path=str(src))
         auto_result = build_binary_read_result(src)
         auto_result["auto_binary"] = True
     else:
@@ -354,27 +455,49 @@ def read_file_result(
             ),
             None,
         )
-    content = (
-        sidecar_path.read_text(encoding="utf-8", errors="replace")
-        if sidecar_path
-        else extract_text_content(src)
-    )
+
+    if suffix == ".pdf" and sidecar_path is None:
+        # Direct call for method-tag visibility. The PDF reader returns
+        # (text, method) so consumers can distinguish layout, plaintext-gated,
+        # plaintext-timeout-fallback, and plaintext-empty-result routes.
+        content, pdf_method = _read_pdf(src)
+    elif sidecar_path is not None:
+        content = sidecar_path.read_text(encoding="utf-8", errors="replace")
+        pdf_method = PDF_METHOD_SIDECAR
+    else:
+        content = extract_text_content(src)
+        pdf_method = ""  # non-PDF — unused below
+
     result: dict[str, Any] = {"content": content, "path": str(src)}
     if suffix == ".pdf":
         content_stripped = content.strip()
         is_empty = len(content_stripped) < 50
-        result["extraction_method"] = (
-            "sidecar_markdown" if sidecar_path else "pymupdf4llm"
-        )
+        result["extraction_method"] = pdf_method
         if sidecar_path:
             result["sidecar_path"] = str(sidecar_path)
-        advisory_prefix = (
-            "Read from pre-extracted markdown sidecar. "
-            if sidecar_path
-            else "Extracted with pymupdf4llm (prose-oriented). "
-        )
+        if pdf_method == PDF_METHOD_SIDECAR:
+            advisory_prefix = "Read from pre-extracted markdown sidecar. "
+        elif pdf_method == PDF_METHOD_LAYOUT:
+            advisory_prefix = "Extracted with pymupdf4llm (prose-oriented). "
+        elif pdf_method == PDF_METHOD_PLAINTEXT_GATED:
+            advisory_prefix = (
+                "Extracted with pymupdf plaintext — file exceeded "
+                f"{PDF_LAYOUT_MAX_BYTES} bytes, layout pass skipped. "
+            )
+        elif pdf_method == PDF_METHOD_PLAINTEXT_TIMEOUT:
+            advisory_prefix = (
+                "Extracted with pymupdf plaintext — pymupdf4llm layout pass "
+                f"exceeded {PDF_READ_TIMEOUT_S:.0f}s, fallback used. "
+            )
+        elif pdf_method == PDF_METHOD_PLAINTEXT_EMPTY:
+            advisory_prefix = (
+                "Extracted with pymupdf plaintext — pymupdf4llm returned "
+                "empty/scaffolding output, fallback used. "
+            )
+        else:
+            advisory_prefix = "Extracted from PDF. "
         result["extraction"] = {
-            "method": "sidecar_markdown" if sidecar_path else "pymupdf4llm",
+            "method": pdf_method,
             "kind": "prose_oriented",
             "advisory": advisory_prefix
             + (

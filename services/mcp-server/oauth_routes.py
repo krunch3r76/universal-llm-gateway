@@ -43,7 +43,7 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
             return JSONResponse(registration, status_code=201)
         except OAuthError as exc:
             record(
-                "mcp.oauth.dynamic_client.rejected",
+                "mcp.oauth.dynamic.client.rejected",
                 reason=exc.error,
                 description=exc.description,
             )
@@ -52,7 +52,7 @@ def build_oauth_routes(oauth_service: OAuthService) -> list[Route]:
                 status_code=400,
             )
         except ValueError:
-            record("mcp.oauth.dynamic_client.rejected", reason="invalid_json")
+            record("mcp.oauth.dynamic.client.rejected", reason="invalid_json")
             return JSONResponse(
                 {
                     "error": "invalid_client_metadata",

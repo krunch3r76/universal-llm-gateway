@@ -50,8 +50,9 @@ def _structured_body_too_large(
         "error": (
             f"{op}: turn body exceeds limit "
             f"({body_chars:,} chars, limit {limit:,}). "
-            "Agent-bus convention: short briefing + sidecar markdown reference. "
-            "Write long content to notes/system/threads/<thread>-<subject>.md "
+            "Agent-bus convention: short briefing + Cortex sidecar markdown "
+            "reference. Write long content with fs(sandbox='cortex', op='write') "
+            "to notes/system/threads/<thread>-<subject>.md "
             "and reference it in a brief body. If inline long-form delivery is "
             "required for this recipient, retry with allow_long_body=true."
         ),
@@ -171,11 +172,7 @@ def _reply_impl(
         return {"error": f"agent-bus error: {result['error']}"}
 
     turn_number = result.get("turn_number") or result.get("id")
-    # If turn_number is still None, it indicates a problem, consider raising or logging an error more prominently.
-    # For now, default to 1 if it's expected to be a positive integer.
-    effective_turn_number = (
-        turn_number if turn_number is not None else 1
-    )  # Or handle as an error if 1 is not a safe default
+    effective_turn_number = turn_number if turn_number is not None else 1
     logger.info(
         "agent_bus reply: thread=%s to=%s turn=%s", thread, to, effective_turn_number
     )
@@ -276,8 +273,6 @@ def _resolve_turn_id(
     if isinstance(result, dict) and "error" in result:
         return None, {"error": f"agent-bus error: {result['error']}"}
     if isinstance(result, dict) and "id" in result:
-        # Consider adding a check if result["id"] is actually an int or can be safely cast.
-        # For now, assuming it's safe based on API contract.
         return int(result["id"]), None
     return None, {"error": f"Turn {turn_number} not found in thread {thread}"}
 
@@ -734,8 +729,6 @@ def _update_thread_dispatch(
         thread = str(thread)
     if not thread:
         return {"error": "update_thread requires: thread (str)"}
-    # If an empty string status is not allowed, add explicit validation here.
-    # For now, assuming empty string should be treated as None for status updates.
     effective_status = status if (status and status != "open") else None
     return _update_thread_impl(
         thread=thread,
@@ -798,7 +791,7 @@ def _mark_read_dispatch(
     if isinstance(result, dict) and "error" in result:
         return result
     logger.info("agent_bus mark_read: thread=%s turn=%d", thread, turn_number)
-    record("mcp.agentbus.turn.marked_read", thread=thread, turn_number=turn_number)
+    record("mcp.agentbus.turn.mark.read", thread=thread, turn_number=turn_number)
     return {"status": "ok", "thread": thread, "turn_number": turn_number}
 
 
@@ -835,12 +828,15 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
         Body convention — SIDECAR-DRIVEN (read before posting):
           Turn bodies MUST be short briefings (target < 2 KB; server enforces a
           hard char limit). Long content — reviews, specs, analysis, handoffs —
-          goes in a sidecar markdown file written BEFORE the post/reply call:
-            fs(sandbox="workspaces", op="write",
+          goes in a Cortex sidecar markdown file written BEFORE the post/reply
+          call. Cortex is the canonical persistence surface for bus sidecars:
+            fs(sandbox="cortex", op="write",
                path="notes/system/threads/<thread>-<subject>.md",
                content="...")
           The turn body then references it concisely:
-            "Review complete. Full findings: notes/system/threads/949-review.md"
+            "Review complete. Full findings: cortex:notes/system/threads/949-review.md"
+          Workspace files (for example tmp/reviews packets) may be mirrors, but
+          agent_bus messages should point first to the Cortex sidecar.
           Posting an oversized body returns 413. The sidecar pattern is not a
           workaround for the limit — it IS the intended usage model. Brief body
           + durable sidecar file is always preferred over an inline wall of text.
@@ -882,7 +878,8 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from_agent": "cursor"}')
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true}')
-          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\\n...", "from_agent": "cursor", "tags": ["project:ulg", "type:bug"]}')
+          fs(sandbox="cortex", op="write", path="notes/system/threads/review-bug-details.md", content="...")
+          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from_agent": "cursor", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')
           agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')

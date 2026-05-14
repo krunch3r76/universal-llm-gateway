@@ -1,6 +1,7 @@
 # Cortex Provenance Substrate — Architecture Spec v1
 
-**Status:** draft (session `claude-web-2026-05-13-1806`, continuing from `claude-web-2026-05-13-1728`)
+**Status:** draft (session `claude-web-2026-05-13-1806`, continuing from `claude-web-2026-05-13-1728`; v1.2 revision continuing from audit session `claude-web-2026-05-13-1921`)
+**Version:** v1.2
 **Audience:** Cortex agents (all seats, all platforms); spec readers without Cortex internals
 **Scope:** Universal write-time provenance discipline for the Cortex epistemic substrate
 **Companion artifacts:**
@@ -8,15 +9,22 @@
 - `artifact:epistemic-substrate-paper-draft` — public-narrative research paper (Memory + Provenance + Consensus)
 - `artifact:goose-grant-packet-v3` — Goose AAIF grant application narrative
 
+**Changelog:**
+- v1.2 — Adds Appendix A subsection "Lineage and belief-revision lineages," clarifying Cortex's relationship to provenance semirings, Datalog / TMS lineage models, CRDT-based knowledge graphs, bitemporal property graphs, and AGM / Hansson belief-revision substrates. Descriptive related work; no normative protocol changes. Triggered by the Q6 finding in the SuperHeavy substrate-review audit (`notes/system/threads/979-grok-superheavy-substrate-review-AUDIT.md`).
+- v1.1 — Post-initial-draft refinements ahead of SuperHeavy review dispatch.
+- v1.0 — Initial draft (session `claude-web-2026-05-13-1806`).
+
 ---
 
 ## Abstract
 
-This spec defines the universal write-time discipline that produces the **provenance pillar** of the Cortex epistemic substrate. Every assertion written into the graph carries (a) a confidence label drawn from a four-level ladder, (b) a derivation-type drawn from a fixed taxonomy with per-type co-requirements, (c) an evidence string and an `evidence_uris` list, and (d) an audit gate that an independent LLM auditor — with no access to the originating session's context — can run against the entity card alone to validate the confidence label. Independence between the originator of a claim and any verifier of that claim is enforced at family/version granularity. Supersession is governed by AGM expansion / contraction / revision semantics with a field-preservation contract. Gaps between drafted artifacts and the entities they reference are surfaced as graph artifacts by a universal gap detector.
+This spec defines the universal write-time discipline that produces the **provenance pillar** of the Cortex epistemic substrate. Every assertion written into the graph carries (a) a confidence label drawn from a four-level ladder, (b) a derivation-type drawn from a fixed taxonomy with per-type co-requirements, (c) an evidence string and an `evidence_uris` list, (d) an audit gate that an independent LLM auditor — with no access to the originating session's context — can run against the entity card alone to validate the confidence label, AND (e) a forward-looking projection (`prospective_summary` + `events_json`) generated at write time that makes the supersession chain a feedback corpus for future agent runs, not merely an audit trail. Independence between the originator of a claim and any verifier of that claim is enforced at family/version granularity. Supersession is governed by AGM expansion / contraction / revision semantics with a field-preservation contract. Gaps between drafted artifacts and the entities they reference are surfaced as graph artifacts by a universal gap detector covering both backward-evidence and forward-projection dimensions.
 
-The spec is the architecture-layer formalization of the provenance pillar developed in the substrate paper. Where the consensus pipeline gates **inter-model** verification on `originator_model_id != evaluator_model_id`, this spec generalizes the originator slot from "another model" to **any primary-source authority entity** — so the same independence gate, the same gap-detection primitive, and the same lineage tracking carry over to legal briefs, scientific papers, regulatory filings, medical charts, and any other domain where claims chain back to verifiable authorities. The brief-domain spec `document:entity-backed-claim-provenance-v1` is the first instantiation; this spec is the parent.
+The spec is the architecture-layer formalization of the provenance pillar developed in the substrate paper (`artifact:epistemic-substrate-paper-draft`, drafted in `transcript:web-2026-05-13-0438`). Where the consensus pipeline gates **inter-model** verification on `originator_model_id != evaluator_model_id`, this spec generalizes the originator slot from "another model" to **any primary-source authority entity** — so the same independence gate, the same gap-detection primitive, and the same lineage tracking carry over to legal briefs, scientific papers, regulatory filings, medical charts, and any other domain where claims chain back to verifiable authorities. The brief-domain spec `document:entity-backed-claim-provenance-v1` is the first instantiation; this spec is the parent.
 
-The load-bearing public claim: **structural impossibility of un-grounded `confirmed` claims by construction.** The *Mata v. Avianca* and *Park v. Kim* hallucinated-citation failure modes — and the closer-to-home single-source verbatim confabulation by SuperHeavy on BOE Annotation 625.0036 (session `web-2026-05-13-0239`) — become not "rarer with better RAG" but architecturally inaccessible. The graph refuses to consider an assertion `confirmed` if its evidence path does not satisfy the auditor-validatability gate, and refuses to count two evidence sources as independent corroboration if they share family/version model identity.
+**Provenance is dual.** The *backward-looking* dimension traces every claim to its origin (evidence_uris, derivation_type, supersession chain) and produces the auditor-validatability and cross-model independence guarantees. The *forward-looking* dimension projects future relevance and event structure (`prospective_summary`, `events_json`) and produces the substrate's claim to be a *learning substrate* — the supersede chain isn't just an audit trail, it's a feedback corpus that recalibrates future agent confidence without requiring a hosted training pipeline. Kumiho's LoCoMo-Plus benchmark established the forward primitive as load-bearing: accuracy from 61.6% (similarity-only) to 93.3% (prospective-indexed) on long-horizon recall (`service:cortex` assertion 1516).
+
+The load-bearing public claim: **structural impossibility of un-grounded `confirmed` claims by construction.** The *Mata v. Avianca* and *Park v. Kim* hallucinated-citation failure modes — and the closer-to-home single-source verbatim confabulation by SuperHeavy on BOE Annotation 625.0036 (session `web-2026-05-13-0239`) — become not "rarer with better RAG" but architecturally inaccessible. The graph refuses to consider an assertion `confirmed` if its evidence path does not satisfy the auditor-validatability gate, refuses to count two evidence sources as independent corroboration if they share family/version model identity, and flags forward-projection gaps that would degrade future-retrieval quality.
 
 ---
 
@@ -26,9 +34,11 @@ The architectural thesis (assertion 9149 on `project:universal-llm-gateway`) is 
 
 This spec sits in the substrate stack:
 
-- **Memory pillar** — `spec:cortex-v2.4` defines the read model: entities, assertions, relationships, edges, projection-aware fetch, AGM-compliant supersession at the storage layer.
-- **Provenance pillar** — THIS SPEC defines the write-time discipline: confidence ladder semantics, derivation-type co-requirements, evidence contracts, auditor-validatability gate, cross-model independence gate, supersession field-preservation contract, universal gap-detection.
+- **Memory pillar** — `spec:cortex-v2.4` defines the read model: entities, assertions, relationships, edges, projection-aware fetch, AGM-compliant supersession at the storage layer. `document:cortex-v3-spec` extends the assertion row with four forward-looking columns (`prospective_summary`, `events_json`, `artifact_uri`, `artifact_storage`) that the write discipline below treats as first-class primitives.
+- **Provenance pillar** — THIS SPEC defines the write-time discipline: confidence ladder semantics, derivation-type co-requirements, evidence contracts, auditor-validatability gate, cross-model independence gate, supersession field-preservation contract, universal gap-detection, AND the forward-looking provenance primitives.
 - **Consensus pillar** — pipeline architecture in `libs/provenance/` and the dispatch layer enforce inter-model independence at evaluation time. The consensus pipeline is one consumer of the provenance contract this spec defines.
+
+**Provenance is dual: backward-looking AND forward-looking.** The backward-looking dimension is what most discussions of "provenance" mean — every claim traces back to its origin via `evidence_uris`, `derivation_type`, and the supersession chain. The §5 auditor-validatability gate and §6 cross-model independence gate enforce backward-looking discipline. The forward-looking dimension is what makes the substrate also a *feedback corpus for future agent runs* (per `artifact:epistemic-substrate-paper-draft` §3.1, asserted in `transcript:web-2026-05-13-0438`): every assertion carries, at write time, a `prospective_summary` projecting which future scenarios make the claim relevant, plus `events_json` projecting causal/temporal continuations. The Kumiho LoCoMo-Plus benchmark established the forward primitive's load-bearing role: accuracy from 61.6% → 93.3% with prospective indexing (`service:cortex` assertion 1516; `document:cortex-v3-spec`). The forward-looking primitives are NOT optional decoration — they bridge the cue-trigger semantic gap that pure-similarity retrieval misses, and they are the structural basis for the substrate's claim to be a *learning substrate*, not merely an *audit substrate*.
 
 The spec is written for a public-artifact target: terminology is defined inline, no Cortex internals are assumed, naming is stable enough to be lifted into a paper without retrofitting. Where the spec references an existing Cortex assertion or session by ID, the reference is a durable cortex:// citation that resolves to a persisted record, not a transient log line.
 
@@ -56,6 +66,8 @@ An **entity** is a typed, named node in the graph with a stable URI. Each entity
 
 An **assertion** is a typed claim about an entity, written into the graph as a row with structured provenance. Each assertion carries:
 
+**Backward-looking provenance fields (origin + traceback):**
+
 - `entity_id` — the entity the claim is about.
 - `claim` — the claim text. For `confidence: confirmed` derived from a source, the claim text MUST embed the literal verbatim quote in quote marks (see §5.2).
 - `confidence` — one of `hypothesized` | `suspected` | `believed` | `confirmed` (§2).
@@ -64,9 +76,20 @@ An **assertion** is a typed claim about an entity, written into the graph as a r
 - `evidence_uris` — list of stable, fetchable URIs pointing at the source(s) (§4).
 - `chunk_id` — required for `derivation_type` in {`quotation`, `compression`} (§3.2).
 - `seeded_by` — model identity of the originator (`family/version` granularity, §6.2).
+
+**Temporal provenance fields:**
+
 - `observed_at` — ISO timestamp; auto-fills to `now()` if absent.
 - `valid_from`, `valid_until` — temporal validity window. `valid_from` REQUIRED when claim contains a date pattern unless `derivation_type` is an observation type.
 - `superseded_by` — assertion ID that supersedes this one (set atomically by `supersede`; see §7).
+
+**Forward-looking provenance fields (future relevance + downstream reasoning), per `document:cortex-v3-spec` and §4.7 below:**
+
+- `prospective_summary` — LLM-generated forward-relevance projection. Auto-generated at write time, structured as prose describing which future scenarios make the claim retrievable / relevant. Bridges the cue-trigger semantic gap that pure-similarity retrieval misses (Kumiho LoCoMo-Plus benchmark: 61.6% → 93.3% with this enrichment; `service:cortex` assertion 1516).
+- `events_json` — structured event extraction, serialized as a JSON array of `{event, consequence, temporal}` triples. Asserts the causal/temporal structure the claim implies, for downstream reasoning over the supersede chain and for substrate-level event indexing. `null` when the claim is a static fact rather than a temporally-located event.
+- `artifact_uri`, `artifact_storage` — assertion-bound artifact persistence. When an assertion is associated with a generated artifact (a brief draft, a screenshot, a CSV, a session transcript), `artifact_uri` is the canonical URI and `artifact_storage` ∈ {`inline`, `external`, `cortex_sandbox`, `workspaces`} specifies the storage discipline. Default `inline` for assertions whose content fits in the claim text; `external`/`cortex_sandbox`/`workspaces` for larger artifacts.
+
+The forward-looking fields ARE substrate primitives, not optional metadata. The §5 auditor-validatability gate applies to the backward-looking fields; the §8 gap detector covers BOTH backward and forward dimensions (see §8.2 finding kinds `missing_prospective_summary` and `events_json_invalid`).
 
 ### 1.3 Relationship
 
@@ -251,6 +274,57 @@ For derived claims, the `lineage` attribute (OpenLineage-compatible serializatio
 In v1, lineage is reserved as an optional attribute pattern for chunk-derived assertions and consensus-pipeline outputs; full lineage instrumentation is in `service:cortex` and the consensus pipeline. v2 will formalize the serialization (see §11).
 
 ---
+
+
+### 4.7 Forward-looking provenance — `prospective_summary` and `events_json`
+
+The forward-looking provenance fields are the substrate's structural mechanism for treating the supersede chain as both an audit trail AND a feedback corpus for future agent runs. The framing is established in `artifact:epistemic-substrate-paper-draft` §3.1 (Memory pillar): *"The supersession chain is the structural heart... This record has two functions: audit trail for the human operator, and feedback corpus for future agent runs. The pattern of superseded hypotheses on similar tasks recalibrates confidence before the agent commits to a new claim, without requiring a hosted training pipeline."* The forward-looking primitives operationalize the second function.
+
+#### 4.7.1 `prospective_summary` — semantics and contract
+
+`prospective_summary` is an LLM-generated prose projection, written at the same time as the assertion, of which future scenarios make the claim relevant. It is NOT a paraphrase of the claim. It answers a different question: *"When will a future agent need this?"* — naming the context, the trigger, the kind of query for which this fact, retrieved by similarity alone, would have been missed.
+
+Contract:
+
+- **Generated at write time.** The cortex write surface generates `prospective_summary` automatically when an assertion is written. The LLM call producing it has access to the claim text, evidence, derivation_type, and the entity's existing assertion set.
+- **Auto-regenerated on supersede.** When a `supersede` revises the claim, the new row's `prospective_summary` is regenerated for the revised claim (the old row's `prospective_summary` is preserved per §7.3 field-preservation; superseded rows carry their original projection).
+- **NOT subject to the §5 verbatim-embedding requirement.** prospective_summary is a meta-claim about future relevance, not a load-bearing factual claim about the world. R2 (verbatim quote) does not apply.
+- **Subject to the §8 gap detector.** A `confidence: confirmed` assertion with `prospective_summary: null` is flagged by §8.2 finding kind `missing_prospective_summary` (severity: low — non-blocking but reduces future-retrieval quality).
+- **Bridges the cue-trigger semantic gap.** Pure-similarity retrieval misses the case where the user's future query uses different vocabulary than the original claim — e.g., the claim says "Cal. R&T § 63.1" and a future query asks "parent-child exclusion." `prospective_summary` is the column the substrate retrieves against for cue-trigger matching, alongside the claim text.
+
+The empirical foundation: Kumiho's LoCoMo-Plus benchmark established that prospective indexing eliminates the >6-month accuracy cliff in similarity-only retrieval, with accuracy rising from 61.6% (similarity-only baseline) to 93.3% (prospective-indexed) on long-horizon recall tasks (Kumiho paper §15.3; `service:cortex` assertion 1516; `document:cortex-v3-spec`).
+
+#### 4.7.2 `events_json` — semantics and contract
+
+`events_json` is a structured serialization of the causal/temporal events the claim implies, as a JSON array of `{event, consequence, temporal}` triples. It is `null` for claims that are static facts (definitions, type assertions, attribute values without temporal structure) and populated for claims that record happenings (an email arriving; a status change; a deadline closing).
+
+Contract:
+
+- **Generated at write time** alongside `prospective_summary`, by the same LLM call.
+- **Each triple is atomic and decontextualized.** The triple `{event, consequence, temporal}` must be readable in isolation by a future agent traversing the substrate. Multi-event claims produce multiple triples.
+- **`temporal` field can be ISO timestamp, named-date, or `null`** (when the claim's structure is causal but not anchored to a specific time).
+- **Subject to §8 gap detector.** An assertion whose claim text describes a temporally-located event but has `events_json: null` is flagged by §8.2 finding kind `events_json_invalid` (severity: medium). An assertion whose `events_json` contains a triple inconsistent with the claim text (event doesn't match; consequence contradicts; temporal off by more than the validity window) is also flagged.
+
+#### 4.7.3 `artifact_uri` / `artifact_storage` — artifact persistence
+
+When an assertion is associated with a generated artifact larger than the claim text can carry (a session transcript, a brief draft, a screenshot, a CSV, a PDF), `artifact_uri` is the canonical URI and `artifact_storage` ∈ {`inline`, `external`, `cortex_sandbox`, `workspaces`} specifies the storage discipline. The decision matrix:
+
+| Storage | When to use |
+|---|---|
+| `inline` | Claim content fits in the `claim` text; no separate artifact exists. (Default.) |
+| `external` | Artifact lives at a public URL (e.g., a published paper at a DOI); URI is the public address. |
+| `cortex_sandbox` | Artifact lives at a path under `/data/files/` (cortex sandbox); URI is `cortex://...` |
+| `workspaces` | Artifact lives at a path under workspaces (`/mnt/torus/projects/`); URI is `workspaces:...` |
+
+`artifact_uri` is treated as a `evidence_uris`-class URI for the §5 R3 requirement: an auditor verifying the assertion can fetch the artifact to validate the claim.
+
+#### 4.7.4 Relationship to the consensus pipeline
+
+The forward-looking primitives feed the consensus pipeline directly. When a verifier model is dispatched to corroborate or contradict a claim, the verifier receives the prospective_summary alongside the claim text — surfacing which future scenarios the originator thought the claim would matter for. A `contradicts` reasoning edge from the verifier can target either the claim itself OR the prospective_summary's projection (e.g., "this claim is correct as stated but the prospective_summary mis-predicts the future relevance — the actual scope is narrower"). The substrate distinguishes these two contradiction modes at the edge layer.
+
+#### 4.7.5 Origin
+
+The forward-looking primitives derive from Kumiho's graph-native cognitive memory architecture (LoCoMo-Plus accuracy benchmark §15.3) and were deployed to Cortex in v3.0 migration 019 (`document:cortex-v3-spec` assertion 1517, four new columns added 2026-04-05). The three-pillar epistemic substrate framing (Memory + Provenance + Consensus) developed in session `web-2026-05-13-0438` (`artifact:epistemic-substrate-paper-draft`) made forward-looking provenance load-bearing for the public-artifact narrative: the substrate is a *learning substrate*, not merely an *audit substrate*.
 
 ## § 5. Auditor-validatability gate
 
@@ -454,14 +528,19 @@ The atomic supersede MUST preserve all provenance fields from the superseded ass
 | `evidence_uris` | **MUST be preserved if not explicitly revised** | Yes |
 | `chunk_id` | **MUST be preserved for quotation/compression unless source changes** | Yes |
 | `seeded_by` | Update to current agent | (Implicit — supersede records the new originator) |
+| `session_id` | Update to current session (the supersede event has its own session) | (Implicit — supersede records the new session) |
 | `valid_from` | **MUST be preserved if not explicitly revised** | Yes, when validity window changes |
 | `valid_until` | Set by the supersede (the old assertion's window closes) | — |
 | `observed_at` | Set to now() on the new row | — |
-| `reasoning_summary` | Revisable | Yes, often to name the gap the prior row failed |
+| `reasoning_summary` | Revisable, often to name the gap the prior row failed | Yes |
+| `lineage` | **MUST be preserved if not explicitly revised** (the supersede inherits the predecessor's lineage and extends it; the new row's lineage references the superseded row as an input) | Yes, when the derivation chain genuinely changes (not just the conclusion) |
+| `prospective_summary` | **AUTO-REGENERATED on supersede** (the new claim has different future-relevance projection); the superseded row's `prospective_summary` is preserved on its own row for audit | Yes (implicit — regeneration is automatic) |
+| `events_json` | **AUTO-REGENERATED on supersede** (if the new claim's event structure differs); preserved on the superseded row | Yes |
+| `artifact_uri` / `artifact_storage` | **MUST be preserved if not explicitly revised** (the artifact may still be the canonical referent even when the claim text is revised) | Yes, when the artifact is replaced |
 
-The canonical violation: the cortex `supersede` MCP tool's thin signature regression (`todo:cortex-supersede-thin-signature-field-loss`, fixed 2026-05-13T17:26Z). The thin-signature wrapper accepted only (`old`, `entity_id`, `claim`, `confidence`, `evidence`, `session_id`, `agent`) and silently dropped `evidence_uris`, `derivation_type`, `valid_from`, `chunk_id` on the new row. The result: an assertion superseded into `confidence: confirmed` whose new row had `evidence_uris: null` and `derivation_type` defaulted, failing R3 and R4 of §5.1.
+The canonical violation: the cortex `supersede` MCP tool's thin signature regression (`todo:cortex-supersede-thin-signature-field-loss`, fixed 2026-05-13T17:26Z). The thin-signature wrapper accepted only (`old`, `entity_id`, `claim`, `confidence`, `evidence`, `session_id`, `agent`) and silently dropped `evidence_uris`, `derivation_type`, `valid_from`, `chunk_id` on the new row. The result: an assertion superseded into `confidence: confirmed` whose new row had `evidence_uris: null` and `derivation_type` defaulted, failing R3 and R4 of §5.1. The same regression would have silently dropped `prospective_summary` and `events_json` on the new row had they been part of the legacy thin signature.
 
-The fix at the API surface: `supersede` accepts the full assertion field set and explicitly preserves any field the caller does not revise. Callers who want to revise a subset pass only the subset; preservation is automatic.
+The fix at the API surface: `supersede` accepts the full assertion field set and explicitly preserves any field the caller does not revise. Callers who want to revise a subset pass only the subset; preservation is automatic. The forward-looking primitives (`prospective_summary`, `events_json`) are the special case where preservation behavior diverges from the other fields: they auto-regenerate by default because the future-relevance projection is a function of the (now revised) claim, not of the predecessor's claim. The legacy projection is preserved on the superseded row for audit; the current row carries a fresh projection.
 
 ### 7.4 Audit trail
 
@@ -506,9 +585,9 @@ It returns a list of `GapFinding` records, each with:
 - `severity` — `critical` | `high` | `medium` | `low` from §8.3 ordering.
 - `evidence` — the structured rationale for the finding (what was expected; what was found; pointers to remediating action).
 
-### 8.2 The nine finding kinds
+### 8.2 The eleven finding kinds
 
-The detector classifies gaps along two axes: **claim-layer** (artifact-to-graph) and **seed-data-layer** (entity-to-evidence). The nine kinds:
+The detector classifies gaps along three axes: **claim-layer** (artifact-to-graph), **seed-data-layer** (entity-to-backward-evidence), and **forward-provenance-layer** (assertion-to-forward-projection). The eleven kinds:
 
 **Claim-layer (artifact references the graph):**
 
@@ -518,12 +597,17 @@ The detector classifies gaps along two axes: **claim-layer** (artifact-to-graph)
 4. `contradicted_claim` — token resolves and assertions exist, but a `contradicts` reasoning edge from an independent verifier flags the specific claim. **Severity: critical.**
 5. `verbatim_check_failed` — token's quotation in the artifact does not match the chunk_id-bound assertion's claim text (after §4.3 normalization). **Severity: high.**
 
-**Seed-data-layer (entity references evidence):**
+**Seed-data-layer (entity references backward evidence):**
 
 6. `missing_attribute_backing` — entity at `status: confirmed` has a typed attribute with no backing assertion (§5.1 R1). **Severity: high.**
 7. `missing_evidence_uri` — assertion at `confidence: confirmed` has `evidence_uris: null` or empty (§5.1 R3). **Severity: high.**
 8. `derivation_type_mismatch` — assertion's `derivation_type` does not match the prose in `evidence` (§5.1 R4). **Severity: medium.**
 9. `description_unbacked_claim` — entity's description makes a factual claim with no backing assertion (§5.1 R5). **Severity: medium.**
+
+**Forward-provenance-layer (assertion-to-forward-projection):**
+
+10. `missing_prospective_summary` — assertion at `confidence: confirmed` has `prospective_summary: null` (§4.7.1). **Severity: low** — the claim is verifiable backward but unindexed for future cue-trigger retrieval; not blocking but degrades future-recall quality. The cortex write surface auto-generates `prospective_summary` by default, so this finding flags either (a) pre-v3 assertions not backfilled, or (b) write-time auto-generation failures.
+11. `events_json_invalid` — assertion's `events_json` is either (a) `null` when the claim text describes a temporally-located event, or (b) populated but with a triple inconsistent with the claim text (event doesn't match; consequence contradicts the claim; temporal off by more than the assertion's `valid_from`/`valid_until` window). **Severity: medium** — invalid event structure compromises downstream causal-reasoning over the supersede chain.
 
 ### 8.3 Severity ordering
 
@@ -673,7 +757,7 @@ This section catalogs the domains this universal spec instantiates, with pointer
 - Specifies the migration & rollout phases (schema registration → Bibliographic Index seeding → exhibit seeding → backfill → verification → publish gate).
 - Names `case:boe19p-flintridge-appeal-2026` as the v1 conformance corpus.
 
-Per the restructure of 2026-05-13T17:58Z (session `claude-web-2026-05-13-1728`), the brief-spec's §9.2.5 amendment (which originated the auditor-validatability principle) is to be demoted to a thin pointer citing this spec's §5 + §6 after this spec lands. The brief-spec then becomes a pure domain instantiation, with cross-domain discipline carried by this spec.
+Per the restructure of 2026-05-13T17:58Z (session `claude-web-2026-05-13-1728`), the brief-spec's § 9.2.5 amendment (which originated the auditor-validatability principle) was hoisted to this spec's § 5 + § 6 rather than being instantiated domain-locally. The brief-spec's § 9.2.5 is now a thin pointer to this spec's § 5 + § 6 (landed v1.2). The brief-spec is therefore a pure domain instantiation, with cross-domain discipline carried by this spec.
 
 ### 10.2 Scientific papers (v2 scope)
 
@@ -759,13 +843,23 @@ The brief-spec §10.8 names jurisdiction-as-attribute on `case-law:` (federal ci
 
 ---
 
+
+
+### 11.11 `prospective_summary` regeneration triggers
+
+The §7.3 field-preservation contract specifies that `prospective_summary` auto-regenerates on supersede when the new claim differs from the predecessor. v2 will formalize WHEN regeneration is triggered for non-supersede write events: e.g., when an assertion's `evidence` is updated but the claim text is unchanged; when a new corroborating reasoning edge lands; when the entity's surrounding assertion set grows enough that the forward-relevance projection meaningfully shifts. Currently regeneration happens only at supersede; v2 may add a `regenerate_prospective_summary` operation for explicit triggers.
+
+### 11.12 `events_json` schema versioning
+
+The `events_json` schema currently serializes as a JSON array of `{event, consequence, temporal}` triples (per §4.7.2). v2 will formalize the schema with a version field and enumerate additional optional fields: `actors` (entity IDs of the agents/principals involved); `preconditions` (causal antecedents); `confidence_per_event` (granular confidence on each triple when the overall assertion's confidence is aggregate). Schema versioning enables backward-compatible evolution without invalidating the existing event corpus.
+
 ## Appendix A — Prior art
 
 The spec extends and adapts the following prior-art corpus. Each entry names the standard or architecture, what it contributes to the substrate, and what this spec adds.
 
 **Standards:**
 
-- `temporal-provenance/w3c-prov-dm.html`, `w3c-prov-o.html`, `w3c-prov-n.html`, `w3c-prov-constraints.html` — **W3C PROV** is the prior-art standard for provenance. PROV provides Entity / Activity / Agent primitives; this spec adapts to a knowledge-graph-native setting with `derivation_type` co-requirements and `is_independent`-gated cross-source verification. The substrate's §1 primitives align with PROV's data model; the §7 supersession discipline aligns with PROV's invalidation semantics; this spec's contributions are the §5 auditor-validatability gate and the §6 family/version independence gate, which PROV does not specify.
+- `temporal-provenance/w3c-prov-dm.html`, `w3c-prov-o.html`, `w3c-prov-n.html`, `w3c-prov-constraints.html` — **W3C PROV** is the prior-art standard for provenance. PROV provides Entity / Activity / Agent primitives; this spec adapts to a knowledge-graph-native setting with `derivation_type` co-requirements and `is_independent`-gated cross-source verification. The substrate's §1 primitives align with PROV's data model; the §7 supersession discipline aligns with PROV's invalidation semantics; this spec's contributions are the §5 auditor-validatability gate, the §6 family/version independence gate, and the §4.7 forward-looking primitives, which PROV does not specify.
 
 - `temporal-provenance/openlineage-object-model.html` — **OpenLineage** is the lineage-tracking model for data pipelines. This spec's §4.6 `lineage` attribute serializes the same shape (RunEvent / Dataset / Job), with the §11.6 v2 work aligning the serialization formally.
 
@@ -775,14 +869,37 @@ The spec extends and adapts the following prior-art corpus. Each entry names the
   - The §6 cross-model independence gate (PaperTrail evidence is sourced; this spec gates the agent generating the evidence).
   - The §5 auditor-validatability requirement (PaperTrail does not specify a verbatim-embedding contract; this spec does).
   - The §7 AGM-compliant supersession (PaperTrail is a static record; this spec is a temporally-evolving substrate).
+  - The §4.7 forward-looking primitives (PaperTrail has no future-relevance projection; this spec's `prospective_summary` and `events_json` make the substrate a learning corpus).
 
 - `temporal-provenance/trove-fine-grained-text-provenance.pdf` — **TROVE** is the text-provenance precursor at sub-document granularity. TROVE's derivation taxonomy (`quotation` / `compression` / `inference` / `other`) is the prior art for Cortex's `derivation_type` field (per `service:cortex` assertion 101). This spec's §3 taxonomy extends TROVE with the observation types (`direct_observation`, `agent_observation`, `user_statement`) required to handle agent-tool-mediated evidence and direct user input, plus `commitment` for performative claims and `stated`/`other` as escape hatches.
 
 - `belief-consistency/graphcheck-kg-powered-fact-checking.pdf` — **GraphCheck** is the KG-based fact-checking baseline. This spec extends with the §6 cross-model independence gate and the §5 auditor-validatability gate; GraphCheck's fact-checking is post-hoc, this spec's discipline is write-time.
 
+**Forward-looking provenance (new in this spec, derived from):**
+
+- **Kumiho — graph-native cognitive memory with prospective indexing.** Kumiho's LoCoMo-Plus benchmark (Kumiho paper §15.3, agent-bus thread 435 directive recorded as `service:cortex` assertion 1516) established that prospective indexing eliminates the >6-month accuracy cliff in similarity-only retrieval, with accuracy from 61.6% baseline to 93.3% with prospective_summary + event extraction. This spec's §4.7 makes `prospective_summary` and `events_json` first-class assertion fields with write-time generation contract and §8 gap-detection coverage. Cortex independently converged on the graph-native memory framing; Kumiho retroactively validated (per `document:cortex-v3-spec` assertion 1675).
+
+- **`document:cortex-v3-spec`** — the Cortex v3.0 architecture spec deployed in migration 019 (2026-04-05) adding the four forward-looking columns (`prospective_summary`, `events_json`, `artifact_uri`, `artifact_storage`) to the assertion row. v3 is the read-model layer; this spec is the write-time discipline layer that treats v3's columns as load-bearing substrate primitives rather than optional metadata.
+
+- **`artifact:epistemic-substrate-paper-draft`** (drafted in `transcript:web-2026-05-13-0438`) — the three-pillar substrate framing (Memory + Provenance + Consensus) that made forward-looking provenance load-bearing for the public-artifact narrative. §3.1 Memory pillar: *"This record has two functions: audit trail for the human operator, and feedback corpus for future agent runs."* The forward-looking primitives are the structural implementation of the second function.
+
 **Belief-revision theory:**
 
 - **AGM belief revision (Alchourrón–Gärdenfors–Makinson 1985)** — the foundational theory for expansion / contraction / revision of belief sets. The substrate's `service:cortex` assertion 1854 records the AGM-compliance commitment (Kaywan directive 2026-04-08). This spec's §7 operationalizes AGM via atomic supersede + field-preservation contract.
+
+**Lineage and belief-revision lineages:**
+
+Several adjacent research traditions specify lineage, annotation, or belief-revision substrates this spec relates to without subsuming. Each entry is descriptive related work — useful for orienting Cortex's choices within a wider literature, not a normative authority for any single Cortex mechanism.
+
+- **Provenance semirings (Green, Karvounarakis, Tannen, PODS 2007 and successors)** — an annotation-algebra approach to query-time provenance over relational data: semiring-valued annotations propagate through query evaluation to compute fine-grained "how" and "why" provenance for each derived tuple. The substrate's `derivation_type` field (§3.1) is a coarser, categorical analog at the assertion layer; where semirings carry composable algebraic structure ranging over arbitrary lineages, `derivation_type` partitions evidence paths into a fixed taxonomy whose co-requirements are enforced at write time. The trade-off is intentional: Cortex prioritizes auditor-readability of a discrete categorical signal over algebraic compositionality. The two approaches are complementary at different layers of the stack.
+
+- **Datalog-style data lineage and truth maintenance systems** — Datalog's deductive-database semantics produce derivation trees that trace each derived fact back to its base-fact dependencies. Doyle-style truth maintenance systems (TMS, JTMS, ATMS) layer doxastic justifications on top, supporting non-monotonic retraction when assumptions are withdrawn. The substrate's confidence ladder (§2) and supersession discipline (§7) share the TMS commitment to traceable belief change: every `confirmed` assertion records the evidence path that produced it, and every supersede preserves the predecessor row so the chain remains queryable. Cortex differs in granularity (assertion-level rather than literal-level) and in scope (mixed-mode evidence including LLM-mediated tool outputs, not just deductive consequences over a closed base).
+
+- **CRDT-based knowledge graphs (Yjs, Automerge as exemplars)** — conflict-free replicated data type frameworks produce knowledge-graph variants where concurrent writes from distributed agents merge deterministically without central coordination, via operation-based or state-based CRDT semantics over the graph's deltas. The substrate currently centralizes write coordination through the cortex write surface and relies on the §7 AGM-style atomic supersede to handle revision. The CRDT-KG tradition is the architectural alternative for a multi-agent Cortex deployment where the coordination point becomes a bottleneck; convergence guarantees would shift from "atomic supersede succeeds-or-fails together" to "all replicas converge to the same revision graph eventually." v2 may revisit the trade-off if multi-region or fully-peer-to-peer deployment surfaces the bottleneck.
+
+- **Bitemporal property graphs (Rost et al. 2021)** — extend the property graph model with two independent time dimensions per vertex, edge, and property: valid-time (the application-world period during which the fact holds in the real world) and transaction-time (the database-world period during which the fact was recorded in the store). Each is represented as a time-period τ over the relevant time domain (`Ω_val`, `Ω_tx`). The substrate's temporal field set — `observed_at` for the transaction-time anchor, `valid_from` / `valid_until` for the valid-time window, plus the supersede chain as the implicit transaction history — is the assertion-layer analog of TPGM⁺'s edge-and-property bitemporal attributes (§4.5, §7.3). Cortex maintains both dimensions per assertion row rather than per property within a row; the trade-off favors per-claim audit granularity over per-attribute storage compactness.
+
+- **Belief-revision lineages — AGM (Alchourrón–Gärdenfors–Makinson 1985) and Hansson belief-base operations (1999)** — AGM specifies expansion / contraction / revision as set-theoretic operations over closed belief sets satisfying the basic postulates; Hansson's belief-base framework relocates the same operations to finite, non-closed belief bases, producing operational change histories that can be traced row by row. The substrate's §7 atomic supersede operationalizes the Hansson-base reading: revisions land as new rows; the predecessor's `superseded_by` field anchors the lineage; the chain remains queryable for time-aware reasoning. Cortex extends the AGM lineage tradition with two additions classical AGM does not specify but the multi-agent LLM setting requires: explicit confidence labels per row (§2), and the §6 cross-model independence gate on verifiers of `confirmed` claims. Kumiho (cited above under Forward-looking provenance) sits in this same lineage tradition; it is the closest sibling architecture proving AGM-postulate satisfaction on a graph-native belief base.
 
 **Model-confidence calibration:**
 
@@ -799,7 +916,7 @@ The spec extends and adapts the following prior-art corpus. Each entry names the
 
 **Prior-art search session:**
 
-The above corpus was traced via `rag(scope=research)` in session `web-2026-05-12-2204` during the brief-spec's reconciliation pass. The same corpus grounds this universal spec.
+The above corpus was traced via `rag(scope=research)` in session `web-2026-05-12-2204` during the brief-spec's reconciliation pass. The same corpus grounds this universal spec, with the forward-looking provenance additions traced in session `claude-web-2026-05-13-1806` from `document:cortex-v3-spec`, `service:cortex` assertion 1516, and `artifact:epistemic-substrate-paper-draft`.
 
 ---
 
@@ -824,7 +941,7 @@ Track the spec's progression from draft to promoted public artifact. Each item i
 - [ ] **Independent reviewer dispatch (#2 + #3).** `openai/gpt-5.5` and `google/gemini-3-pro` or equivalent at family/version-independent classification. Three-reviewer pattern matches the brief-spec's review shape (Appendix B).
 - [ ] **Apply review feedback.** Reconciliation edits; supersede assertions on the spec entity where reviewers contradicted or refined the draft.
 - [ ] **Cross-reference into grant artifacts.** Add §X reference in `artifact:goose-grant-packet-v3` narrative and §Y reference in `artifact:epistemic-substrate-paper-draft` citing this spec as the architecture-layer formalization of the provenance pillar.
-- [ ] **Brief-spec §9.2.5 demotion.** Replace the brief-spec's §9.2.5 amendment body with a thin pointer to this spec's §5 + §6. Closes `todo:provenance-spec-9-2-5-amendment` on the brief-implementation child.
+- [x] **Brief-spec § 9.2.5 thin pointer.** New § 9.2.5 inserted in `entity-backed-claim-provenance.md` between § 9.2 and § 9.3; three-sentence pointer routes seed-data verification at this phase to substrate § 5 + § 6 and `agent_skill:auditor-validatability-confidence` (landed v1.2). Closes `todo:provenance-spec-9-2-5-amendment` on the brief-implementation child.
 - [ ] **Cortex entity update.** Mark `todo:cortex-provenance-substrate-spec` workflow_state from `in_progress` to `done` once all three master-close criteria are satisfied: (a) draft merged to workspaces canonical path, (b) brief-spec §9.2.5 demoted, (c) cross-references landed in grant artifacts.
 - [ ] **`source_uri` and content_hash on the spec entity.** `entity_update(entity_id='document:cortex-provenance-substrate-v1', source_uri='workspaces:universal-llm-gateway/docs/architecture/cortex-provenance-substrate-v1.md')` to anchor the entity at the file and auto-recompute the content hash.
 - [ ] **Promotion assertion on the spec entity.** Write a `confidence: confirmed` assertion on `document:cortex-provenance-substrate-v1` recording the promotion event (analogous to brief-spec assertion 9240).

@@ -627,6 +627,10 @@ After the close-pass enrichment, the detector's `unverified_entity` finding clea
 
 The pattern across phases: **expansion at Phase 2 (entity creation), enrichment at close (structural assertions), citation work at Phase 4 (claim assertions on synthesis entities), verification at Phase 5 (corroborates edges).**
 
+### 9.2.5 Auditor-validatability discipline applies at this phase
+
+Seed-data verification during § 9.2 (Bibliographic Index seeding) and § 9.3 (Exhibit seeding) is governed by the universal auditor-validatability discipline specified in `cortex-provenance-substrate-v1.md` § 5 (confirmed-confidence operational requirements) and § 6 (cross-model independence gate). Every `legal_source:`, `case-law:`, or `exhibit:` entity promoted to `status='confirmed'` MUST be validatable by an independent LLM auditor from the entity card alone — attributes + assertions + relationships — without access to the originating session's context; operational details (verbatim-quotation requirement, source URI grounding, derivation-type co-requirements, family/version independence granularity) live in the universal spec. See also `agent_skill:auditor-validatable-confidence` for the per-write checklist.
+
 ### 9.3 Phase 3 — Exhibit seeding (one session)
 
 Seed the brief's referenced exhibits (Exhibits 2, 3, 5, 7, etc.) as `exhibit:` entities with `belongs_to` relationships to `case:boe19p-flintridge-appeal-2026`. Existing scanned artifacts already exist at `notes/legal/property-tax/dispatch/archived/`.

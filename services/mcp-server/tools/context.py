@@ -375,7 +375,7 @@ def register_context_tools(mcp: FastMCP) -> None:
         try:
             target = _safe_tasks_path(path)
         except ValueError as exc:
-            record("mcp.tool.context.file.write.failed", path=path, reason="path_error")
+            record("mcp.tool.context.write.failed", path=path, reason="path_error")
             return {"error": str(exc)}
 
         target.parent.mkdir(parents=True, exist_ok=True)

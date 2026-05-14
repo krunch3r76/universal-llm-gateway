@@ -299,7 +299,7 @@ def _build_server() -> FastMCP:
         logger.exception(
             "Failed to initialize response size guard — proceeding without it"
         )
-        record("mcp.response.guard.init_failed", error="see server logs")
+        record("mcp.response.guard.init.failed", error="see server logs")
 
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
 
