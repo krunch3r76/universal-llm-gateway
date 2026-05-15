@@ -325,6 +325,11 @@ def _op_assertion_get(assertion_id: int | None = None, **_: object) -> dict[str,
     return AssertionItem(**decode_row(rows[0], _JSON_FIELDS)).model_dump(mode="json")
 
 
+_UNSET: Any = object()
+"""Sentinel for nullable fields where None is a meaningful clearing value
+distinct from "argument absent". See _op_assertion_update.predicate_form."""
+
+
 def _op_assertion_update(
     assertion_id: int | None = None,
     superseded_by: int | None = None,
@@ -335,7 +340,7 @@ def _op_assertion_update(
     reviewer: str | None = None,
     reviewed_at: str | None = None,
     review_notes: str | None = None,
-    predicate_form: str | None = None,
+    predicate_form: Any = _UNSET,
     **_: object,
 ) -> dict[str, Any]:
     if assertion_id is None:
@@ -351,17 +356,21 @@ def _op_assertion_update(
             ("reviewer", reviewer),
             ("reviewed_at", reviewed_at),
             ("review_notes", review_notes),
-            ("predicate_form", predicate_form),
         ]
         if val is not None
     }
+    # predicate_form: sentinel-default lets clear-to-null pass through.
+    # When the agent sends {"predicate_form": null}, json-decode gives
+    # predicate_form=None, distinct from "key omitted" (predicate_form=_UNSET).
+    if predicate_form is not _UNSET:
+        body["predicate_form"] = predicate_form  # may be None to clear
     if not body:
         return {"error": "No fields to update"}
     result = _update_assertion_impl(assertion_id, body)
     if "error" not in result:
         logger.info("cortex assertion_update: %d", assertion_id)
         record_kwargs: dict[str, Any] = {"assertion_id": assertion_id}
-        if predicate_form is not None:
+        if predicate_form is not _UNSET:
             record_kwargs["predicate_form_new"] = predicate_form
         record("mcp.cortex.assertion.updated", **record_kwargs)
     return result

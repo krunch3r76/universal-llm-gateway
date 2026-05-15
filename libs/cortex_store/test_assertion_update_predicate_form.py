@@ -197,3 +197,77 @@ def test_predicate_form_too_long_rejected(monkeypatch: pytest.MonkeyPatch) -> No
         _update_assertion_impl(aid, {"predicate_form": "x" * 2001})
 
     assert exc_info.value.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Dispatch-op path coverage — exercises _op_assertion_update directly so the
+# sentinel-default for predicate_form (and the resulting "absent vs explicit
+# null" distinction at the dispatch boundary) is regression-tested.
+# Without these the route-level clearing logic is structurally unreachable
+# from the MCP surface, which is the only surface agents actually use.
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_op_clear_via_explicit_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
+
+    conn = _make_conn()
+    _patch(monkeypatch, conn)
+    aid = _insert_assertion(conn, predicate_form="to-be-cleared")
+
+    result = _op_assertion_update(assertion_id=aid, predicate_form=None)
+
+    assert "error" not in result, result
+    assert result["predicate_form"] is None
+    assert _get_predicate_form(conn, aid) is None
+
+
+def test_dispatch_op_set_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
+
+    conn = _make_conn()
+    _patch(monkeypatch, conn)
+    aid = _insert_assertion(conn, predicate_form=None)
+
+    result = _op_assertion_update(assertion_id=aid, predicate_form="X is-a Y")
+
+    assert "error" not in result, result
+    assert result["predicate_form"] == "X is-a Y"
+    assert _get_predicate_form(conn, aid) == "X is-a Y"
+
+
+def test_dispatch_op_predicate_form_absent_preserves_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting predicate_form from kwargs (sentinel default) MUST NOT touch
+    the column, even when other fields are being updated."""
+    from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
+
+    conn = _make_conn()
+    _patch(monkeypatch, conn)
+    aid = _insert_assertion(conn, predicate_form="preserved")
+
+    result = _op_assertion_update(assertion_id=aid, review_status="staged")
+
+    assert "error" not in result, result
+    assert result["predicate_form"] == "preserved"
+    assert _get_predicate_form(conn, aid) == "preserved"
+
+
+def test_dispatch_op_only_predicate_form_clear_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dispatch call with predicate_form=None as the sole field MUST NOT
+    return 'No fields to update' — clearing is a real update."""
+    from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
+
+    conn = _make_conn()
+    _patch(monkeypatch, conn)
+    aid = _insert_assertion(conn, predicate_form="value")
+
+    result = _op_assertion_update(assertion_id=aid, predicate_form=None)
+
+    assert "error" not in result, result
+    assert _get_predicate_form(conn, aid) is None

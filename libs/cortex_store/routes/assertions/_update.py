@@ -122,12 +122,12 @@ def update_assertion(
         sets: list[str] = []
         params: list[object] = []
         for col, val in update_map.items():
-            # Non-nullable fields: skip when None (absent from request).
-            # predicate_form: allow explicit null to clear the column.
-            is_clearing = col == "predicate_form" and predicate_form_explicitly_set
-            if val is not None or is_clearing:
-                sets.append(f"{col} = ?")
-                params.append(val)
+            # update_map already enforces inclusion semantics:
+            # - non-predicate-form cols are added only when val is not None
+            # - predicate_form is added iff predicate_form_explicitly_set
+            # so every entry in update_map should land in SET.
+            sets.append(f"{col} = ?")
+            params.append(val)
 
         if not sets:
             raise HTTPException(
