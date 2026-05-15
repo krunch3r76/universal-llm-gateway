@@ -167,8 +167,9 @@ def list_edges(
             ph = ",".join("?" for _ in excluded)
             clauses.append(f"edge_type NOT IN ({ph})")
             params.extend(excluded)
-    if since_hours is not None:
-        clauses.append(f"created_at >= datetime('now', '-{since_hours} hours')")
+    if since_hours is not None and isinstance(since_hours, int):
+        clauses.append("created_at >= datetime('now', ? || ' hours')")
+        params.append(f"-{since_hours}")
     if not include_retired:
         clauses.append("valid_until IS NULL")
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""

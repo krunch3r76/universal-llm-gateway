@@ -48,6 +48,7 @@ def render_briefing_card(
     skills_unpartitioned_count: int = 0,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
+    dropbox_files: list[str] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -98,6 +99,16 @@ def render_briefing_card(
                 f"via COALESCE). Audit: `scripts/cortex/"
                 f"backfill_agent_skill_applicability.py --audit`."
             )
+
+    if dropbox_files:
+        n = len(dropbox_files)
+        parts.append(f"\n## ⚠ Dropbox Pending ({n} file(s))")
+        for f in dropbox_files:
+            parts.append(f"  {f}")
+        parts.append(
+            "→ Read agent-skills/document-lifecycle-tracking.md before handling"
+            " — dropbox ingest required."
+        )
 
     if deadlines is not None:
         # Drop rows without a real deadline date — they carry no urgency signal.

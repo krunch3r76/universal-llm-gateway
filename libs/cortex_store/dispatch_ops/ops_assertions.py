@@ -360,7 +360,10 @@ def _op_assertion_update(
     result = _update_assertion_impl(assertion_id, body)
     if "error" not in result:
         logger.info("cortex assertion_update: %d", assertion_id)
-        record("mcp.cortex.assertion.updated", assertion_id=assertion_id)
+        record_kwargs: dict[str, Any] = {"assertion_id": assertion_id}
+        if predicate_form is not None:
+            record_kwargs["predicate_form_new"] = predicate_form
+        record("mcp.cortex.assertion.updated", **record_kwargs)
     return result
 
 

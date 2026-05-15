@@ -73,6 +73,13 @@ _DROPBOX_READ_HINT = (
     "(3) seed cortex assertions with source_uri pointing to the permanent path"
 )
 
+_DROPBOX_COPY_WARNING = (
+    "dropbox/ is temporary staging — use op='move' to clear the source. "
+    "Copying leaves the original in staging; the assertion API will reject "
+    "evidence_uris pointing to dropbox paths (HTTP 422). "
+    "See agent-skills/document-lifecycle-tracking.md § Dropbox Ingest Protocol."
+)
+
 
 def _normalize_files_reference(path: str) -> str:
     """Accept either a relative sandbox path or a `files://` URI."""

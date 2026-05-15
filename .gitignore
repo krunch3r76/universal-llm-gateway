@@ -82,6 +82,11 @@ proposals/
 models/
 !config/models/
 !services/_universal-llm-gateway/src/routers/**/models/
+# Pydantic schema modules under libs/cortex_store/models/ are source, not weights
+!libs/cortex_store/models/
+!libs/cortex_store/models/**
+# Negation above re-includes bytecode; keep it untracked
+libs/cortex_store/models/**/__pycache__/
 summaries/
 
 .git/

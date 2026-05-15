@@ -14,6 +14,7 @@ from agent_seat.profiles import get_profile, resolve_seat
 from mcp_events import record
 
 from .._boot_helpers import render_briefing_card, render_operational_context
+from ..filesystem._ops_text import list_files_impl as _list_files
 from ._boot_audit_dump import write_audit_dump
 from ._boot_data_fetch import _build_futures_spec, _extract_boot_results
 from ._boot_manifest import FetchRecorder, InjectedArtifact, serialize_manifest
@@ -223,6 +224,8 @@ def run_cortex_boot(
     unread_threads = _build_unread_threads(extracted["threads"])
     review_top = _build_review_top(extracted["staging_items"])
 
+    dropbox_files: list[str] = _list_files("dropbox/").get("files", [])
+
     card, manifest = render_briefing_card(
         deadlines=extracted["deadlines"]
         if profile_dict.get("include_deadlines", True)
@@ -255,6 +258,7 @@ def run_cortex_boot(
         skills_unpartitioned_count=extracted.get("skills_unpartitioned_count", 0),
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
+        dropbox_files=dropbox_files or None,
     )
 
     artifacts = _build_artifacts(

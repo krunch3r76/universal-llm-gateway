@@ -14,7 +14,7 @@ from ._ops_text import (
     read_files_batch_impl,
     write_file_impl,
 )
-from ._paths import _DROPBOX_READ_HINT, _FS_WORKFLOW_HINTS
+from ._paths import _DROPBOX_COPY_WARNING, _DROPBOX_READ_HINT, _FS_WORKFLOW_HINTS
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -178,6 +178,8 @@ def register_files_tool(mcp: FastMCP) -> None:
                 raise ValueError("'target' is required for copy")
             result = copy_file_impl(path, target)
             result["_next"] = _FS_WORKFLOW_HINTS["copy"]
+            if path.startswith("dropbox/"):
+                result["_warning"] = _DROPBOX_COPY_WARNING
             return result
         if op == "delete":
             if not path:
@@ -190,4 +192,3 @@ def register_files_tool(mcp: FastMCP) -> None:
             "Use: read, read_multi, write, write_binary, append_binary, "
             "append, prepend, replace, insert_at_line, list, move, copy, delete"
         )
-

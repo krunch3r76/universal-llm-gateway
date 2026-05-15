@@ -17,6 +17,7 @@ from ._shared import (
     _VALID_CONFIDENCE,
     _VALID_REVIEW_STATUS,
     _payload_validation_exception,
+    logger,
     router,
 )
 
@@ -28,7 +29,9 @@ def update_assertion(
     """Update assertion metadata — supersession, confidence, review status."""
     with cortex_conn() as conn:
         existing = query(
-            conn, "SELECT id FROM assertions WHERE id = ?", (assertion_id,)
+            conn,
+            "SELECT id, predicate_form FROM assertions WHERE id = ?",
+            (assertion_id,),
         )
         if not existing:
             raise HTTPException(
@@ -71,7 +74,12 @@ def update_assertion(
                 f"Must be one of {sorted(_VALID_CONFIDENCE)}",
             )
 
+        old_predicate_form = existing[0].get("predicate_form")
+
         update_map: dict[str, object] = {}
+        # predicate_form_explicitly_set: True when the caller explicitly
+        # included predicate_form in the request (even as null = clearing intent).
+        predicate_form_explicitly_set = False
         if isinstance(body, dict):
             for k in (
                 "superseded_by",
@@ -84,28 +92,40 @@ def update_assertion(
                 "review_notes",
                 "resolution_status",
                 "fulfillment_assertion_id",
-                "predicate_form",
             ):
                 if k in body and body[k] is not None:
                     update_map[k] = body[k]
+            # predicate_form: explicit null in dict → clear the field
+            if "predicate_form" in body:
+                update_map["predicate_form"] = body["predicate_form"]
+                predicate_form_explicitly_set = True
         else:
-            update_map = {
-                "superseded_by": body.superseded_by,
-                "valid_until": body.valid_until,
-                "confidence": body.confidence,
-                "confidence_score": body.confidence_score,
-                "review_status": body.review_status,
-                "reviewer": body.reviewer,
-                "reviewed_at": body.reviewed_at,
-                "review_notes": body.review_notes,
-                "resolution_status": body.resolution_status,
-                "fulfillment_assertion_id": body.fulfillment_assertion_id,
-                "predicate_form": body.predicate_form,
-            }
+            for k in (
+                "superseded_by",
+                "valid_until",
+                "confidence",
+                "confidence_score",
+                "review_status",
+                "reviewer",
+                "reviewed_at",
+                "review_notes",
+                "resolution_status",
+                "fulfillment_assertion_id",
+            ):
+                val = getattr(body, k)
+                if val is not None:
+                    update_map[k] = val
+            # predicate_form: use model_fields_set to detect explicit null (clearing)
+            if "predicate_form" in body.model_fields_set:
+                update_map["predicate_form"] = body.predicate_form
+                predicate_form_explicitly_set = True
         sets: list[str] = []
         params: list[object] = []
         for col, val in update_map.items():
-            if val is not None:
+            # Non-nullable fields: skip when None (absent from request).
+            # predicate_form: allow explicit null to clear the column.
+            is_clearing = col == "predicate_form" and predicate_form_explicitly_set
+            if val is not None or is_clearing:
                 sets.append(f"{col} = ?")
                 params.append(val)
 
@@ -125,6 +145,19 @@ def update_assertion(
                 f"UPDATE assertions SET {', '.join(sets)} WHERE id = ?", tuple(params)
             )
             conn.commit()
+
+        if predicate_form_explicitly_set:
+            new_predicate_form = (
+                body.get("predicate_form")
+                if isinstance(body, dict)
+                else body.predicate_form
+            )
+            logger.info(
+                "cortex assertion_update predicate_form delta: id=%d old=%r new=%r",
+                assertion_id,
+                old_predicate_form,
+                new_predicate_form,
+            )
 
         rows = query(
             conn,
