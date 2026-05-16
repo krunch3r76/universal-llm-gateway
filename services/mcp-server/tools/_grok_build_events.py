@@ -163,3 +163,227 @@ def emit_grok_build_dispatch_timeout(**kwargs: object) -> None:
 
 def emit_grok_build_dispatch_rejected(**kwargs: object) -> None:
     _emit(GrokBuildDispatchRejected(**kwargs))  # type: ignore[arg-type]
+
+
+@event_factory
+def GrokBuildCreateCalled(  # noqa: N802
+    dispatch_id: str,
+    name: str,
+    branch: str,
+    source_repo: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.create.called",
+        payload={
+            "dispatch_id": dispatch_id,
+            "name": name,
+            "branch": branch,
+            "source_repo": source_repo,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildCreateCompleted(  # noqa: N802
+    dispatch_id: str,
+    duration_s: float,
+    exit_code: int,
+    name: str,
+    branch: str,
+    source_repo: str,
+    worktree_path: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.create.completed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "duration_s": duration_s,
+            "exit_code": exit_code,
+            "name": name,
+            "branch": branch,
+            "source_repo": source_repo,
+            "worktree_path": worktree_path,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildCreateFailed(  # noqa: N802
+    dispatch_id: str,
+    duration_s: float,
+    exit_code: int | None,
+    error: str,
+    name: str,
+    branch: str,
+    source_repo: str,
+    worktree_path: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.create.failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "duration_s": duration_s,
+            "exit_code": exit_code,
+            "error": error,
+            "name": name,
+            "branch": branch,
+            "source_repo": source_repo,
+            "worktree_path": worktree_path,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildCreateRejected(  # noqa: N802
+    dispatch_id: str,
+    reason_code: str,
+    reason: str,
+    name: str = "",
+    branch: str = "",
+    source_repo: str = "",
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.create.rejected",
+        payload={
+            "dispatch_id": dispatch_id,
+            "reason_code": reason_code,
+            "reason": reason,
+            "name": name,
+            "branch": branch,
+            "source_repo": source_repo,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildRemoveCalled(  # noqa: N802
+    dispatch_id: str,
+    name: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.remove.called",
+        payload={"dispatch_id": dispatch_id, "name": name},
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildRemoveCompleted(  # noqa: N802
+    dispatch_id: str,
+    duration_s: float,
+    exit_code: int,
+    name: str,
+    worktree_path: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.remove.completed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "duration_s": duration_s,
+            "exit_code": exit_code,
+            "name": name,
+            "worktree_path": worktree_path,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildRemoveFailed(  # noqa: N802
+    dispatch_id: str,
+    duration_s: float,
+    exit_code: int | None,
+    error: str,
+    name: str,
+    worktree_path: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.remove.failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "duration_s": duration_s,
+            "exit_code": exit_code,
+            "error": error,
+            "name": name,
+            "worktree_path": worktree_path,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildRemoveRejected(  # noqa: N802
+    dispatch_id: str,
+    reason_code: str,
+    reason: str,
+    name: str = "",
+    worktree_path: str = "",
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.remove.rejected",
+        payload={
+            "dispatch_id": dispatch_id,
+            "reason_code": reason_code,
+            "reason": reason,
+            "name": name,
+            "worktree_path": worktree_path,
+        },
+        scope="global",
+    )
+
+
+def emit_grok_build_create_called(**kwargs: object) -> None:
+    _emit(GrokBuildCreateCalled(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_create_completed(**kwargs: object) -> None:
+    _emit(GrokBuildCreateCompleted(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_create_failed(**kwargs: object) -> None:
+    _emit(GrokBuildCreateFailed(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_create_rejected(**kwargs: object) -> None:
+    _emit(GrokBuildCreateRejected(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_remove_called(**kwargs: object) -> None:
+    _emit(GrokBuildRemoveCalled(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_remove_completed(**kwargs: object) -> None:
+    _emit(GrokBuildRemoveCompleted(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_remove_failed(**kwargs: object) -> None:
+    _emit(GrokBuildRemoveFailed(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_remove_rejected(**kwargs: object) -> None:
+    _emit(GrokBuildRemoveRejected(**kwargs))  # type: ignore[arg-type]
+
+
+@event_factory
+def GrokBuildRegistryRecovered(  # noqa: N802
+    entries_recovered: int,
+    entries_pruned: int,
+    schema_version: int,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.registry.recovered",
+        payload={
+            "entries_recovered": entries_recovered,
+            "entries_pruned": entries_pruned,
+            "schema_version": schema_version,
+        },
+        scope="global",
+    )
+
+
+def emit_grok_build_registry_recovered(**kwargs: object) -> None:
+    _emit(GrokBuildRegistryRecovered(**kwargs))  # type: ignore[arg-type]

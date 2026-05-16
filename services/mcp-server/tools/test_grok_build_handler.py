@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tools import grok_build as grok_build_mod
+from tools import _grok_build_dispatch as dispatch_mod
 from tools._grok_build_runner import run_dispatch
 from tools._grok_build_test_support import (
     PROMPT,
@@ -31,7 +31,7 @@ async def test_read_only_happy_path(
     install_capture_post_state(monkeypatch, status_post="", diff_stat="")
     install_subprocess_exec(monkeypatch)
     run_mock = AsyncMock(wraps=run_dispatch)
-    monkeypatch.setattr(grok_build_mod, "run_dispatch", run_mock)
+    monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
     out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
 
@@ -76,7 +76,7 @@ async def test_edit_working_tree_dirty_rejection(
     install_grok_path(monkeypatch)
     install_subprocess_run(monkeypatch, cwd=cwd, status_pre=" M dirty.txt\n")
     run_mock = AsyncMock()
-    monkeypatch.setattr(grok_build_mod, "run_dispatch", run_mock)
+    monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
     out = await grok_build("dispatch", cwd, PROMPT, mode="edit")
 
@@ -296,7 +296,7 @@ async def test_unknown_op(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_mock = AsyncMock()
-    monkeypatch.setattr(grok_build_mod, "run_dispatch", run_mock)
+    monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
     out = await grok_build("worktree", admission, PROMPT)  # type: ignore[arg-type]
 
@@ -317,7 +317,7 @@ async def test_sidecar_unavailable_rejects(
     blocked.mkdir.side_effect = PermissionError("denied")
     monkeypatch.setattr("tools._grok_build_validator._SIDECAR_DIR", blocked)
     run_mock = AsyncMock()
-    monkeypatch.setattr(grok_build_mod, "run_dispatch", run_mock)
+    monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
     out = await grok_build("dispatch", admission, PROMPT)
 
@@ -325,6 +325,56 @@ async def test_sidecar_unavailable_rejects(
     assert any(p.get("reason_code") == "sidecar_unavailable" for _, p in event_log)
     blocked.mkdir.assert_called_once()
     run_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_conflict_rejects_second_concurrent_call(
+    admission: str,
+    event_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dispatch into a cwd that is already in flight rejects without
+    spawning grok. Pre-populating the registry simulates the in-flight
+    condition; verifies validator passes → registry rejects → no runner
+    call.
+    """
+    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+
+    _reset_for_tests()
+    # Pre-populate the registry as if a concurrent dispatch were already running.
+    assert await try_acquire_cwd(admission) is True
+
+    run_mock = AsyncMock()
+    monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
+
+    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+
+    assert out["status"] == "rejected"
+    assert out["metadata"]["reason_code"] == "dispatch_conflict"
+    assert "already in flight" in out["metadata"]["reason"]
+    rejected = next(p for s, p in event_log if s.endswith(".rejected"))
+    assert rejected["reason_code"] == "dispatch_conflict"
+    assert rejected["cwd"] == admission
+    run_mock.assert_not_awaited()
+    _reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_releases_cwd_after_completion(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Successful dispatch must release the cwd so a subsequent dispatch
+    into the same cwd succeeds (i.e. release_cwd ran in the finally)."""
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(monkeypatch)
+
+    out1 = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out2 = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+
+    assert out1["status"] == "completed"
+    assert out2["status"] == "completed"
+    assert out2["metadata"]["reason_code"] != "dispatch_conflict"
 
 
 @pytest.mark.asyncio

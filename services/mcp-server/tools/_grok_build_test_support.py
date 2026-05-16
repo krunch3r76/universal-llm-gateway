@@ -14,11 +14,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools._grok_build_registry import _reset_for_tests as _reset_registry
 from tools._grok_build_runner import RunnerSpec
 from tools._grok_build_validator import _grok_models_ok, _resolve_grok_path
 
 GROK_BIN = "/usr/bin/grok"
 PROMPT = "do the thing"
+
+
+@pytest.fixture(autouse=True)
+def _clear_in_flight_registry() -> None:
+    """Reset the in-flight cwd registry between tests so residual state from a
+    failed-mid-dispatch test doesn't poison dispatch_conflict assertions in
+    later tests."""
+    _reset_registry()
 
 
 @pytest.fixture
