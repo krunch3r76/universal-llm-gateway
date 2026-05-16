@@ -74,10 +74,12 @@ def validate_dispatch(
             timeout=10,
             check=True,
         )
-    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+    except subprocess.CalledProcessError:
         return _reject(
             "not_a_git_repo", f"cwd is not inside a git working tree: {cwd!r}"
         )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return _reject("git_unreachable", f"git invocation failed for {cwd!r}: {exc}")
 
     try:
         status_proc = subprocess.run(
@@ -87,8 +89,8 @@ def validate_dispatch(
             timeout=10,
             check=True,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return _reject("not_a_git_repo", f"git status failed: {exc}")
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired) as exc:
+        return _reject("git_unreachable", f"git status failed for {cwd!r}: {exc}")
 
     git_status_pre = status_proc.stdout
     if git_status_pre.strip():

@@ -67,3 +67,84 @@ def test_sidecar_directory_creation(
 
     vr2 = validate_dispatch("dispatch", cwd, "read_only", None, False, "json")
     assert vr2.ok
+
+
+def test_cwd_missing(monkeypatch: pytest.MonkeyPatch, sidecar_root: Path) -> None:
+    install_grok_path(monkeypatch)
+
+    vr = validate_dispatch(
+        "dispatch", "/nonexistent/path/does/not/exist", "read_only", None, False, "json"
+    )
+
+    assert vr.reason_code == "cwd_missing"
+
+
+def test_git_unreachable_rev_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sidecar_root: Path
+) -> None:
+    """rev-parse raising OSError / TimeoutExpired routes to git_unreachable,
+    distinct from a clean CalledProcessError exit which routes to not_a_git_repo.
+    """
+    import subprocess as _sp
+
+    cwd = str(tmp_path / "exists")
+    (tmp_path / "exists").mkdir()
+    install_grok_path(monkeypatch)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        if cmd[0:2] == ["git", "-C"] and cmd[3] == "rev-parse":
+            raise OSError("git binary missing")
+        raise AssertionError(f"unexpected subprocess.run: {cmd!r}")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    vr = validate_dispatch("dispatch", cwd, "read_only", None, False, "json")
+
+    assert vr.reason_code == "git_unreachable"
+    assert "git invocation failed" in vr.reason
+
+
+def test_git_unreachable_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sidecar_root: Path
+) -> None:
+    """status --porcelain raising TimeoutExpired routes to git_unreachable."""
+    import subprocess as _sp
+
+    cwd = str(tmp_path / "exists2")
+    (tmp_path / "exists2").mkdir()
+    install_grok_path(monkeypatch)
+
+    def fake_run(cmd: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        if cmd[0:2] == ["git", "-C"] and cmd[3] == "rev-parse":
+            return _sp.CompletedProcess(cmd, 0, stdout=".git\n", stderr="")
+        if cmd[0:2] == ["git", "-C"] and cmd[3:5] == ["status", "--porcelain"]:
+            raise _sp.TimeoutExpired(cmd, 10)
+        raise AssertionError(f"unexpected subprocess.run: {cmd!r}")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    vr = validate_dispatch("dispatch", cwd, "read_only", None, False, "json")
+
+    assert vr.reason_code == "git_unreachable"
+    assert "git status failed" in vr.reason
+
+
+def test_bad_output_format(admission: str, sidecar_root: Path) -> None:
+    vr = validate_dispatch("dispatch", admission, "read_only", None, False, "yaml")
+    assert vr.reason_code == "bad_output_format"
+
+
+def test_grok_models_oserror_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_grok_models_ok returns False when grok binary raises OSError, not just
+    on non-zero exit. Covers the (OSError, TimeoutExpired) except branch."""
+    import subprocess as _sp
+
+    from tools._grok_build_test_support import clear_validator_caches
+    from tools._grok_build_validator import _grok_models_ok
+
+    clear_validator_caches()
+
+    def fake_run(cmd: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        raise OSError("grok binary missing")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+    assert _grok_models_ok() is False
+    clear_validator_caches()

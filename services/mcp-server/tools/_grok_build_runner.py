@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import os
 import signal
 import subprocess
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 STDOUT_MAX = 64 * 1024
 STDERR_MAX = 16 * 1024
-_SIDECAR_DIR = "/tmp/logs/grok-build"
+_SIDECAR_DIR = Path("/tmp/logs/grok-build")
 
 _READ_ONLY_PREFIX = (
     "MODE: read_only. The operator has invoked you in advisory mode. "
@@ -60,6 +60,8 @@ class RunnerResult:
     truncated: bool
     git_status_post: str
     git_diff_stat: str
+    audit_incomplete: bool = False
+    sidecar_gaps: int = 0
     error: str = ""
 
 
@@ -105,31 +107,50 @@ def _truncate_tail(data: bytes, limit: int) -> tuple[str, bool]:
     return data.decode(errors="replace"), truncated
 
 
-async def _capture_post_state(cwd: str) -> tuple[str, str]:
+async def _capture_post_state(cwd: str) -> tuple[str, str, bool]:
+    """Capture post-dispatch git state.
+
+    Returns (status_porcelain, diff_stat, audit_incomplete). audit_incomplete
+    is True when a git invocation failed (timeout, non-zero exit, OS error) —
+    callers MUST treat a True flag as "do not trust the verdict for this
+    dispatch", distinct from a clean repo (status="") which is a TRUE clean
+    signal.
+    """
     loop = asyncio.get_running_loop()
 
-    def _do_capture() -> tuple[str, str]:
-        status = subprocess.run(
-            ["git", "-C", cwd, "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout
-        diff = ""
-        if status.strip():
-            diff = subprocess.run(
-                ["git", "-C", cwd, "diff", "--stat"],
+    def _do_capture() -> tuple[str, str, bool]:
+        try:
+            status_proc = subprocess.run(
+                ["git", "-C", cwd, "status", "--porcelain"],
                 capture_output=True,
                 text=True,
                 timeout=5,
-            ).stdout
-        return status, diff
+                check=True,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+            return "", "", True
+        status = status_proc.stdout
+        diff = ""
+        if status.strip():
+            try:
+                diff_proc = subprocess.run(
+                    ["git", "-C", cwd, "diff", "--stat"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=True,
+                )
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+                # status read succeeded; diff failed — treat verdict as suspect.
+                return status, "", True
+            diff = diff_proc.stdout
+        return status, diff, False
 
     return await loop.run_in_executor(None, _do_capture)
 
 
 def _sidecar_path(dispatch_id: str) -> str:
-    return f"{_SIDECAR_DIR}/{dispatch_id}.ndjson"
+    return str(_SIDECAR_DIR / f"{dispatch_id}.ndjson")
 
 
 def _append_sidecar(path: str, record: dict[str, object]) -> None:
@@ -138,11 +159,24 @@ def _append_sidecar(path: str, record: dict[str, object]) -> None:
         fh.write(line)
 
 
+def _try_append_sidecar(path: str, record: dict[str, object], gaps: list[int]) -> None:
+    """Append to sidecar; on OSError, increment the shared gaps counter.
+
+    The counter is propagated to the terminal RunnerResult so audit consumers
+    can detect partial sidecars (vs silently swallowing OSError).
+    """
+    try:
+        _append_sidecar(path, record)
+    except OSError:
+        gaps[0] += 1
+
+
 async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
     """Spawn grok, capture output, sidecar, and post-invocation git state."""
     t0 = time.monotonic()
     argv = _build_argv(spec)
     sidecar = _sidecar_path(spec.dispatch_id)
+    gaps: list[int] = [0]
 
     try:
         _append_sidecar(
@@ -166,6 +200,8 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             truncated=False,
             git_status_post="",
             git_diff_stat="",
+            audit_incomplete=True,
+            sidecar_gaps=0,
             error=f"sidecar_write_failed: {exc}",
         )
 
@@ -188,21 +224,26 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except (ProcessLookupError, TimeoutError):
-            with contextlib.suppress(ProcessLookupError):
+            try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        git_status_post, git_diff_stat = await _capture_post_state(spec.cwd)
+            except ProcessLookupError:
+                pass
+        git_status_post, git_diff_stat, audit_incomplete = await _capture_post_state(
+            spec.cwd
+        )
         duration_s = time.monotonic() - t0
-        with contextlib.suppress(OSError):
-            _append_sidecar(
-                sidecar,
-                {
-                    "phase": "exit",
-                    "ts": int(time.time() * 1000),
-                    "exit_code": None,
-                    "git_status_post": git_status_post,
-                    "git_diff_stat": git_diff_stat,
-                },
-            )
+        _try_append_sidecar(
+            sidecar,
+            {
+                "phase": "exit",
+                "ts": int(time.time() * 1000),
+                "exit_code": None,
+                "git_status_post": git_status_post,
+                "git_diff_stat": git_diff_stat,
+                "audit_incomplete": audit_incomplete,
+            },
+            gaps,
+        )
         return RunnerResult(
             status="timeout",
             stdout="",
@@ -213,56 +254,61 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             truncated=False,
             git_status_post=git_status_post,
             git_diff_stat=git_diff_stat,
+            audit_incomplete=audit_incomplete,
+            sidecar_gaps=gaps[0],
         )
 
     if spec.output_format == "streaming-json":
         for line in stdout_b.splitlines():
-            with contextlib.suppress(OSError):
-                _append_sidecar(
-                    sidecar,
-                    {
-                        "phase": "stdout_chunk",
-                        "ts": int(time.time() * 1000),
-                        "data": line.decode(errors="replace"),
-                    },
-                )
-    else:
-        with contextlib.suppress(OSError):
-            _append_sidecar(
+            _try_append_sidecar(
                 sidecar,
                 {
                     "phase": "stdout_chunk",
                     "ts": int(time.time() * 1000),
-                    "data": stdout_b.decode(errors="replace"),
+                    "data": line.decode(errors="replace"),
                 },
+                gaps,
             )
+    else:
+        _try_append_sidecar(
+            sidecar,
+            {
+                "phase": "stdout_chunk",
+                "ts": int(time.time() * 1000),
+                "data": stdout_b.decode(errors="replace"),
+            },
+            gaps,
+        )
 
-    with contextlib.suppress(OSError):
-        if stderr_b:
-            _append_sidecar(
-                sidecar,
-                {
-                    "phase": "stderr_chunk",
-                    "ts": int(time.time() * 1000),
-                    "data": stderr_b.decode(errors="replace"),
-                },
-            )
+    if stderr_b:
+        _try_append_sidecar(
+            sidecar,
+            {
+                "phase": "stderr_chunk",
+                "ts": int(time.time() * 1000),
+                "data": stderr_b.decode(errors="replace"),
+            },
+            gaps,
+        )
 
-    git_status_post, git_diff_stat = await _capture_post_state(spec.cwd)
+    git_status_post, git_diff_stat, audit_incomplete = await _capture_post_state(
+        spec.cwd
+    )
     exit_code = proc.returncode
     duration_s = time.monotonic() - t0
 
-    with contextlib.suppress(OSError):
-        _append_sidecar(
-            sidecar,
-            {
-                "phase": "exit",
-                "ts": int(time.time() * 1000),
-                "exit_code": exit_code,
-                "git_status_post": git_status_post,
-                "git_diff_stat": git_diff_stat,
-            },
-        )
+    _try_append_sidecar(
+        sidecar,
+        {
+            "phase": "exit",
+            "ts": int(time.time() * 1000),
+            "exit_code": exit_code,
+            "git_status_post": git_status_post,
+            "git_diff_stat": git_diff_stat,
+            "audit_incomplete": audit_incomplete,
+        },
+        gaps,
+    )
 
     stdout, truncated = _truncate_tail(stdout_b, STDOUT_MAX)
     stderr, _ = _truncate_tail(stderr_b, STDERR_MAX)
@@ -277,4 +323,6 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
         truncated=truncated,
         git_status_post=git_status_post,
         git_diff_stat=git_diff_stat,
+        audit_incomplete=audit_incomplete,
+        sidecar_gaps=gaps[0],
     )

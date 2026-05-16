@@ -39,6 +39,8 @@ def GrokBuildDispatchCompleted(  # noqa: N802
     git_status_post: str,
     git_diff_stat: str,
     read_only_violation: bool,
+    audit_incomplete: bool = False,
+    sidecar_gaps: int = 0,
 ) -> Event:
     return Event(
         signal="mcp.grok.build.dispatch.completed",
@@ -51,6 +53,8 @@ def GrokBuildDispatchCompleted(  # noqa: N802
             "git_status_post": git_status_post,
             "git_diff_stat": git_diff_stat,
             "read_only_violation": read_only_violation,
+            "audit_incomplete": audit_incomplete,
+            "sidecar_gaps": sidecar_gaps,
         },
         scope="global",
     )
@@ -66,6 +70,8 @@ def GrokBuildDispatchFailed(  # noqa: N802
     git_status_post: str,
     git_diff_stat: str,
     read_only_violation: bool,
+    audit_incomplete: bool = False,
+    sidecar_gaps: int = 0,
 ) -> Event:
     return Event(
         signal="mcp.grok.build.dispatch.failed",
@@ -78,6 +84,8 @@ def GrokBuildDispatchFailed(  # noqa: N802
             "git_status_post": git_status_post,
             "git_diff_stat": git_diff_stat,
             "read_only_violation": read_only_violation,
+            "audit_incomplete": audit_incomplete,
+            "sidecar_gaps": sidecar_gaps,
         },
         scope="global",
     )
@@ -91,6 +99,8 @@ def GrokBuildDispatchTimeout(  # noqa: N802
     git_status_post: str,
     git_diff_stat: str,
     read_only_violation: bool,
+    audit_incomplete: bool = False,
+    sidecar_gaps: int = 0,
 ) -> Event:
     return Event(
         signal="mcp.grok.build.dispatch.timeout",
@@ -101,6 +111,8 @@ def GrokBuildDispatchTimeout(  # noqa: N802
             "git_status_post": git_status_post,
             "git_diff_stat": git_diff_stat,
             "read_only_violation": read_only_violation,
+            "audit_incomplete": audit_incomplete,
+            "sidecar_gaps": sidecar_gaps,
         },
         scope="global",
     )
@@ -111,6 +123,10 @@ def GrokBuildDispatchRejected(  # noqa: N802
     dispatch_id: str,
     reason_code: str,
     reason: str,
+    mode: str = "",
+    op: str = "",
+    cwd: str = "",
+    model: str = "",
 ) -> Event:
     return Event(
         signal="mcp.grok.build.dispatch.rejected",
@@ -118,6 +134,10 @@ def GrokBuildDispatchRejected(  # noqa: N802
             "dispatch_id": dispatch_id,
             "reason_code": reason_code,
             "reason": reason,
+            "mode": mode,
+            "op": op,
+            "cwd": cwd,
+            "model": model,
         },
         scope="global",
     )

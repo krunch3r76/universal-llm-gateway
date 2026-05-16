@@ -2393,6 +2393,83 @@ scripts/query-events --sql "
 
 The `cycle_ms` distribution is the calibration target for `_RESTART_RETRY_DELAYS_S` in the stdio and cloud proxies. The two retry delays SHOULD sum to at least the 95th percentile of `cycle_ms`.
 
+### Grok Build Dispatch Signals
+
+Emitted by `services/mcp-server/tools/_grok_build_events.py` (factories) and `tools/grok_build.py` (handler) via the `record()` shim. Wrap the headless `grok` CLI dispatch lifecycle for `tools/grok_build.py` — the Option D intent-labeled + audited read-only model: the substrate does not enforce `read_only` at runtime (cortex assertion 10144), so post-hoc git-state audit IS the enforcement contract. See plan `workspaces://universal-llm-gateway/tmp/prompts/grok-build-dispatch-phase1.plan.md` §5.4 / §5.5.
+
+All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `mcp.grok.build.dispatch.called` | `dispatch_id` (str — uuid4), `mode` (str — `read_only` \| `edit`), `op` (str — `dispatch`), `session_id` (str — caller-chosen or `""`), `model` (str — explicit `--model` or `""`), `git_status_pre` (str — auto-fill default `""`; populated downstream when the called-event ordering moves post-admission) | Handler entered. Emitted BEFORE validation so `mcp.grok.build.dispatch.rejected` can be joined to a `.called` event by `dispatch_id` for correlation on admission-rejection paths. |
+| `mcp.grok.build.dispatch.completed` | `dispatch_id`, `duration_s` (float), `exit_code` (int), `truncated` (bool — stdout/stderr exceeded STDOUT_MAX/STDERR_MAX and was tail-truncated), `git_status_pre` (str — porcelain at admission, always empty per §5.3 check #4), `git_status_post` (str — porcelain after dispatch), `git_diff_stat` (str — `git diff --stat` after dispatch when porcelain non-empty), `read_only_violation` (bool), `audit_incomplete` (bool — git invocation in `_capture_post_state` failed; the verdict is not trustworthy), `sidecar_gaps` (int — count of `_append_sidecar` calls that raised OSError during chunk or exit writes; non-zero indicates a partial sidecar) | Dispatch completed with `exit_code == 0`. |
+| `mcp.grok.build.dispatch.failed` | Same as `.completed`, plus `error` (str — `runner.error` or stderr tail, truncated to 200 chars) instead of `truncated` | Dispatch completed with `exit_code != 0` OR sidecar `started`-write failed before subprocess spawn (in the latter case `audit_incomplete=true`). |
+| `mcp.grok.build.dispatch.timeout` | `dispatch_id`, `timeout_seconds` (int — configured cap), `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation`, `audit_incomplete`, `sidecar_gaps` | Subprocess hung past `timeout_seconds`; runner sent SIGTERM, waited 5s, then SIGKILL via `os.killpg`. Post-state captured after kill. |
+| `mcp.grok.build.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum, see below), `reason` (str — human-readable detail), `mode`, `op`, `cwd` (str — admission target), `model` | Validator rejected admission. No subprocess spawned. The correlation fields (`mode`/`op`/`cwd`/`model`) travel on the rejected event itself so admission-phase joins do not require a `.called` lookup — satisfies `[universal:events]` §Admission-phase payload contract. |
+
+`reason_code` enum on `.rejected`:
+
+| Reason code | Triggered when |
+|---|---|
+| `unknown_op` | `op` not in `{"dispatch"}` |
+| `cwd_missing` | `cwd` empty, not absolute, or not an existing directory |
+| `not_a_git_repo` | `git rev-parse --git-dir` exited non-zero on `cwd` (cwd exists but is not inside a git working tree) |
+| `git_unreachable` | `git rev-parse` or `git status` raised `OSError` or timed out (git binary missing, cwd vanished mid-call, process hung) — distinct from `not_a_git_repo`, which is a deterministic non-zero exit on a present binary |
+| `working_tree_dirty` | `git status --porcelain` returned non-empty output (§5.3 check #4: admission requires a clean tree so post-state divergence has clean semantics) |
+| `session_conflict` | Both `session_id` and `continue_recent` set; mutually exclusive |
+| `bad_output_format` | `output_format` not in `{"json", "streaming-json"}` |
+| `grok_not_in_path` | `shutil.which("grok")` returned None |
+| `missing_grok_auth` | `grok models` preflight exited non-zero (SuperGrok Heavy session expired; operator runs `grok login`) |
+| `sidecar_unavailable` | `mkdir(/tmp/logs/grok-build, parents=True, exist_ok=True)` raised `PermissionError` or `OSError`; fail-closed at admission so the runner never writes outside the intended sidecar directory |
+
+`read_only_violation` semantics: `True` iff `mode == "read_only"` AND `(git_diff_stat.strip() OR git_status_post.strip())`. Validator (§5.3 check #4) enforces clean pre-state, so any non-empty post-state porcelain is divergence; reading `git_status_post` alone is sufficient and catches all YX-coded changes — staged (`M `, `A `, `D `), unstaged (` M`, ` D`), and untracked (`??`). `git_diff_stat` is OR'd for defense in depth on `audit_incomplete=True` paths.
+
+`audit_incomplete` semantics: `True` iff a git invocation in `_capture_post_state` failed (`subprocess.CalledProcessError`, `TimeoutExpired`, or `OSError`). Subscribers MUST treat `audit_incomplete=true` as "do not trust this dispatch's `read_only_violation` verdict" — distinct from a clean repo (`git_status_post=""`, `audit_incomplete=false`), which is a TRUE clean signal.
+
+**Query examples**:
+
+```bash
+# All read-only violations in last 24h (excluding audit-incomplete dispatches)
+scripts/query-events --sql "
+  SELECT ts_unix_ms,
+         json_extract(payload,'\$.dispatch_id') AS dispatch_id,
+         json_extract(payload,'\$.git_status_post') AS post,
+         json_extract(payload,'\$.git_diff_stat') AS diff
+  FROM events
+  WHERE signal LIKE 'mcp.grok.build.dispatch.%'
+    AND json_extract(payload,'\$.read_only_violation') = 1
+    AND COALESCE(json_extract(payload,'\$.audit_incomplete'), 0) = 0
+    AND ts_unix_ms > (unixepoch()-86400)*1000
+  ORDER BY ts_unix_ms DESC"
+
+# Dispatches where the audit itself failed — verdict not trustworthy
+scripts/query-events --sql "
+  SELECT ts_unix_ms, signal, json_extract(payload,'\$.dispatch_id') AS dispatch_id
+  FROM events
+  WHERE signal LIKE 'mcp.grok.build.dispatch.%'
+    AND json_extract(payload,'\$.audit_incomplete') = 1
+  ORDER BY ts_unix_ms DESC LIMIT 50"
+
+# Sidecar gap rate — partial NDJSON sidecars (chunk or exit writes failed)
+scripts/query-events --sql "
+  SELECT signal,
+         COUNT(*) AS n,
+         SUM(CAST(json_extract(payload,'\$.sidecar_gaps') AS INT)) AS total_gaps
+  FROM events
+  WHERE signal LIKE 'mcp.grok.build.dispatch.%'
+    AND COALESCE(json_extract(payload,'\$.sidecar_gaps'), 0) > 0
+    AND ts_unix_ms > (unixepoch()-86400)*1000
+  GROUP BY signal"
+
+# Admission rejection histogram by reason
+scripts/query-events --sql "
+  SELECT json_extract(payload,'\$.reason_code') AS reason, COUNT(*) AS n
+  FROM events
+  WHERE signal = 'mcp.grok.build.dispatch.rejected'
+    AND ts_unix_ms > (unixepoch()-86400)*1000
+  GROUP BY reason ORDER BY n DESC"
+```
+
 ## MCP Stdio Proxy Signals
 
 Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits `mcp.transport.*`

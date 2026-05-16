@@ -1,4 +1,4 @@
-"""§5.11 handler integration tests (#1–#6, #15, #21–#22, #24)."""
+"""§5.11 handler integration tests (#1–#6, #15, #21–#22, #24, +#25 staged, +#26 audit_incomplete)."""
 
 from __future__ import annotations
 
@@ -37,6 +37,8 @@ async def test_read_only_happy_path(
 
     assert out["status"] == "completed"
     assert out["metadata"]["read_only_violation"] is False
+    assert out["metadata"]["audit_incomplete"] is False
+    assert out["metadata"]["sidecar_gaps"] == 0
     signals = [s for s, _ in event_log]
     assert "mcp.grok.build.dispatch.called" in signals
     assert "mcp.grok.build.dispatch.completed" in signals
@@ -80,6 +82,13 @@ async def test_working_tree_dirty_rejection(
 
     assert out["status"] == "rejected"
     assert any(p.get("reason_code") == "working_tree_dirty" for _, p in event_log)
+    rejected = next(p for s, p in event_log if s.endswith(".rejected"))
+    # Rejected event must carry correlation fields (per architecture-invariants
+    # admission-phase payload contract; here mode/op/cwd/model travel on the
+    # rejected event itself instead of joining via .called → dispatch_id).
+    assert rejected["cwd"] == cwd
+    assert rejected["mode"] == "read_only"
+    assert rejected["op"] == "dispatch"
     run_mock.assert_not_awaited()
 
 
@@ -113,6 +122,55 @@ async def test_read_only_untracked_violation(
     out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
 
     assert out["metadata"]["read_only_violation"] is True
+
+
+@pytest.mark.asyncio
+async def test_read_only_staged_modification_violation(
+    admission: str,
+    event_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Audit must catch staged-only mutations.
+
+    Porcelain ``M  tracked.txt`` (capital M in col 1, space in col 2 = staged
+    modification) with empty ``git diff --stat`` (working tree == index after
+    a hypothetical mid-dispatch ``git add``) is invisible to a predicate that
+    only checks diff_stat + ``??`` untracked lines. The corrected predicate
+    catches it via the full porcelain string.
+    """
+    install_capture_post_state(
+        monkeypatch, status_post="M  tracked.txt\n", diff_stat=""
+    )
+    install_subprocess_exec(monkeypatch)
+
+    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+
+    assert out["metadata"]["read_only_violation"] is True
+    completed = next(p for s, p in event_log if s.endswith(".completed"))
+    assert completed["read_only_violation"] is True
+
+
+@pytest.mark.asyncio
+async def test_audit_incomplete_propagated(
+    admission: str,
+    event_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken post-state read must surface as audit_incomplete, distinct
+    from a clean repo. Filters must be able to distinguish 'verified clean'
+    from 'audit failed, verdict unknown'.
+    """
+    install_capture_post_state(
+        monkeypatch, status_post="", diff_stat="", audit_incomplete=True
+    )
+    install_subprocess_exec(monkeypatch)
+
+    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+
+    assert out["status"] == "completed"
+    assert out["metadata"]["audit_incomplete"] is True
+    completed = next(p for s, p in event_log if s.endswith(".completed"))
+    assert completed["audit_incomplete"] is True
 
 
 @pytest.mark.asyncio
@@ -233,3 +291,29 @@ async def test_sidecar_unavailable_rejects(
     assert any(p.get("reason_code") == "sidecar_unavailable" for _, p in event_log)
     blocked.mkdir.assert_called_once()
     run_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_status_emits_failed_event(
+    admission: str,
+    event_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-zero exit_code produces status=failed and fires the .failed event
+    factory + emit wrapper. The error field is the stderr tail truncated to
+    200 chars.
+    """
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(
+        monkeypatch,
+        FakeProc(stdout=b"", stderr=b"grok crashed: traceback line\n", returncode=2),
+    )
+
+    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+
+    assert out["status"] == "failed"
+    assert out["exit_code"] == 2
+    failed = next(p for s, p in event_log if s.endswith(".failed"))
+    assert failed["exit_code"] == 2
+    assert "grok crashed" in failed["error"]
+    assert len(failed["error"]) <= 200

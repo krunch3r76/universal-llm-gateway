@@ -36,7 +36,7 @@ def event_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]
 def sidecar_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "grok-build"
     monkeypatch.setattr("tools._grok_build_validator._SIDECAR_DIR", root)
-    monkeypatch.setattr("tools._grok_build_runner._SIDECAR_DIR", str(root))
+    monkeypatch.setattr("tools._grok_build_runner._SIDECAR_DIR", root)
     return root
 
 
@@ -159,9 +159,10 @@ def install_capture_post_state(
     *,
     status_post: str,
     diff_stat: str,
+    audit_incomplete: bool = False,
 ) -> None:
-    async def _fake_capture(_cwd: str) -> tuple[str, str]:
-        return status_post, diff_stat
+    async def _fake_capture(_cwd: str) -> tuple[str, str, bool]:
+        return status_post, diff_stat, audit_incomplete
 
     monkeypatch.setattr(
         "tools._grok_build_runner._capture_post_state",
