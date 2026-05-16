@@ -81,6 +81,8 @@ async def test_edit_working_tree_dirty_rejection(
     out = await grok_build("dispatch", cwd, PROMPT, mode="edit")
 
     assert out["status"] == "rejected"
+    assert out["metadata"]["reason_code"] == "working_tree_dirty"
+    assert out["metadata"]["reason"]
     assert any(p.get("reason_code") == "working_tree_dirty" for _, p in event_log)
     rejected = next(p for s, p in event_log if s.endswith(".rejected"))
     # Rejected event must carry correlation fields (per architecture-invariants

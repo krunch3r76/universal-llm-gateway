@@ -65,6 +65,8 @@ def _metadata_base(
         "audit_incomplete": False,
         "sidecar_gaps": 0,
         "result_delivery_pending": None,
+        "reason_code": "",
+        "reason": "",
     }
 
 
@@ -74,7 +76,11 @@ def _envelope_rejected(
     cwd: str,
     session_id: str | None,
     model: str | None,
+    reason_code: str,
+    reason: str,
 ) -> dict[str, Any]:
+    meta = _metadata_base(mode, cwd, session_id, model)
+    meta.update(reason_code=reason_code, reason=reason)
     return {
         "dispatch_id": dispatch_id,
         "status": "rejected",
@@ -83,7 +89,7 @@ def _envelope_rejected(
         "exit_code": None,
         "duration_s": 0.0,
         "sidecar_path": None,
-        "metadata": _metadata_base(mode, cwd, session_id, model),
+        "metadata": meta,
     }
 
 
@@ -171,7 +177,9 @@ async def grok_build(
             cwd=cwd,
             model=model or "",
         )
-        return _envelope_rejected(dispatch_id, mode, cwd, session_id, model)
+        return _envelope_rejected(
+            dispatch_id, mode, cwd, session_id, model, vr.reason_code, vr.reason
+        )
 
     spec = RunnerSpec(
         dispatch_id=dispatch_id,
