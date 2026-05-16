@@ -62,6 +62,7 @@ from .frontier_dispatch_admission import (
     prepend_dispatch_context,
     reject_unknown_runtime_options,
     resolve_remote_mcp,
+    validate_frontier_dispatch_step,
 )
 from .frontier_dispatch_observability import emit_post_loop_observability
 from .frontier_dispatch_request import (
@@ -341,6 +342,7 @@ class FrontierDispatchHandler(BaseHandler):
                     execution_id=context.execution_id,
                     agent=agent,
                     model=model,
+                    model_entity_id=model_entity_id,
                     reason=str(exc),
                 ),
             )
@@ -518,7 +520,4 @@ class FrontierDispatchHandler(BaseHandler):
         return output
 
     def validate(self, step: StepConfig) -> list[str]:
-        errors: list[str] = []
-        if step.type != "frontier_dispatch_v1":
-            errors.append(f"Step '{step.id}': expected type frontier_dispatch_v1")
-        return errors
+        return validate_frontier_dispatch_step(step)

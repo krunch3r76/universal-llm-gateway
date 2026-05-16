@@ -63,6 +63,7 @@ from .events.step import (
 from .execution import DAGExecutor
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
 from .execution.map_reduce.map_executor.events import ProxyProtocol
+from .execution.outcome import PipelineExecutionOutcome, extract_model_entity_id
 from .fragments import get_fragment_loader
 from .handlers import PipelineContext, StepOutput
 from .prompts import get_prompt_builder
@@ -110,39 +111,6 @@ class PreparedPipelineExecution:
     dag_executor: DAGExecutor
     recorder: EventRecorder
     start_monotonic: float = field(default=0.0)
-
-
-@dataclass(slots=True, kw_only=True)
-class PipelineExecutionOutcome:
-    """Structured terminal outcome of a successful pipeline execution.
-
-    Decouples DAG results from FastAPI ``Response`` so async tracker writes
-    and sync response construction consume the same canonical data without
-    one path having to re-parse ``Response.body`` produced by the other.
-    """
-
-    execution_id: str
-    content: str
-    model: str
-    usage: dict[str, Any] | None
-    duration_s: float
-    step_outputs: dict[str, str]
-    backtranslation: dict[str, Any] | None
-    execution_order: list[str]
-    # Reasoning trace (when any step produced one). Shape preserved from
-    # upstream — structured blocks or a flat string. Consumers can stringify;
-    # they cannot un-flatten.
-    reasoning: Any = None
-    # Canonical Cortex model entity id for the terminal model, when the
-    # terminal step exposes one. Kept separate from ``model`` so async pollers
-    # retain the historical model field semantics.
-    model_entity_id: str | None = None
-    # Structured anomaly/advisory hints extracted from the terminal output
-    # step's ``StepOutput.json["hints"]`` (e.g. ``output_short`` from
-    # frontier dispatch). Threaded into ``PipelineExecutionResult.hints`` so
-    # async pollers and bus subscribers can triage silent failures without
-    # consulting the event service. ``None`` when no hints were produced.
-    hints: list[dict[str, Any]] | None = None
 
 
 def _normalize_pipeline_exception(
@@ -703,7 +671,7 @@ class PipelineExecutor:
         hints = self._extract_output_hints(
             pipeline, pipeline_context, prepared.output_aliases
         )
-        model_entity_id = self._extract_model_entity_id(
+        model_entity_id = extract_model_entity_id(
             pipeline_context,
             list(dag_executor.execution_order),
         )
@@ -749,22 +717,6 @@ class PipelineExecutor:
             outcome.backtranslation,
             execution_order=outcome.execution_order,
         )
-
-    def _extract_model_entity_id(
-        self,
-        pipeline_context: PipelineContext,
-        execution_order: list[str],
-    ) -> str | None:
-        """Return the terminal Cortex model entity id when a step exposes one."""
-        for step_id in reversed(execution_order):
-            out = pipeline_context.outputs.get(step_id)
-            if not isinstance(out, StepOutput):
-                continue
-            if isinstance(out.json, dict):
-                entity_id = out.json.get("model_entity_id")
-                if isinstance(entity_id, str) and entity_id:
-                    return entity_id
-        return None
 
     async def execute(self, context: _PipelineRequestContextProtocol) -> Response:
         """

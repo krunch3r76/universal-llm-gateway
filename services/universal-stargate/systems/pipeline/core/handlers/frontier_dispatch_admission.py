@@ -280,3 +280,11 @@ def resolve_remote_mcp(
             reason=reason,
         )
     return True
+
+
+def validate_frontier_dispatch_step(step: StepConfig) -> list[str]:
+    """Validate a frontier_dispatch_v1 step configuration."""
+    errors: list[str] = []
+    if step.type != "frontier_dispatch_v1":
+        errors.append(f"Step '{step.id}': expected type frontier_dispatch_v1")
+    return errors

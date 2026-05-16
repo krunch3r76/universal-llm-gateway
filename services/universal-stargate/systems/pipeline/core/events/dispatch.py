@@ -429,6 +429,7 @@ def PipelineFrontierDispatchRemoteMcpMisconfigured(  # noqa: N802
     execution_id: str,
     agent: str | None,
     model: str,
+    model_entity_id: str,
     reason: str,
 ) -> Event:
     """Emitted when remote-MCP env resolution fails at build time.
@@ -438,10 +439,17 @@ def PipelineFrontierDispatchRemoteMcpMisconfigured(  # noqa: N802
     ``MCP_AUTH_TOKEN`` in the Stargate container env) from an upstream
     provider or tool-loop error by looking for this signal first.
 
+    ``model_entity_id`` is included so post-hoc correlators can recover
+    the canonical Cortex ``model:<slug>`` directly from this event when
+    ``.started`` is absent — the misconfigured branch can race ahead of
+    ``.started`` (env resolution failing during admission), leaving
+    ``execution_id`` without an outcome event to join against.
+
     Payload:
         execution_id: Pipeline execution UUID
         agent: Persona identity if set, else ``None``
         model: Raw model string as supplied by the caller
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         reason: Human-readable ``RuntimeError`` message from ``resolve_mcp_env``
     """
     return Event(
@@ -450,6 +458,7 @@ def PipelineFrontierDispatchRemoteMcpMisconfigured(  # noqa: N802
             "execution_id": execution_id,
             "agent": agent,
             "model": model,
+            "model_entity_id": model_entity_id,
             "reason": reason,
         },
         scope="node",
