@@ -71,8 +71,9 @@ docs/vision/
 .pyre/
 
 prompts/
-tests/
+tests/*
 !libs/inference_djinn/scripts/tests/
+!tests/predicate_form/
 templates/
 !config/templates/
 .cursorignore
