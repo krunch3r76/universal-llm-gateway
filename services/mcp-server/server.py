@@ -42,6 +42,7 @@ from response_size_guard import register_response_guard
 from schema_compact import patch_fastmcp_tool_serialization
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
+from tool_error_enricher import register_tool_error_enricher
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
@@ -319,6 +320,7 @@ def _build_server() -> FastMCP:
         """Health check — confirms the MCP server is reachable."""
         return {"status": "ok"}
 
+    register_tool_error_enricher(mcp)
     try:
         register_response_guard(mcp)
     except Exception:
