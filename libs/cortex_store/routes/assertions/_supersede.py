@@ -48,6 +48,13 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
     payload (detected via model_fields_set).  Callers that want to intentionally
     drop a field must pass it as explicit null in their JSON payload.
 
+    Idempotency guard: when the target old_assertion_id's superseded_by is
+    already non-null, the call returns 409 Conflict — the new INSERT is
+    rolled back; the lineage pointer is preserved. Pass force=true to widen
+    the SQL CAS and overwrite a known-existing supersedence chain. See
+    decision:cortex-api-write-serialization / assertion 9956 for the
+    WRITE_LOCK-vs-SQL-CAS doctrine and friction 9824 for the C1 trigger.
+
     Auditor-validatability (Checks 1–3): same advisory warnings as create_assertion
     are appended to the response's validation_warnings field when confidence='confirmed'.
     Pass acknowledge_audit_gaps=['no_evidence_uris'|'inference_confirmed'|'no_verbatim']
@@ -191,9 +198,18 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                     "SELECT superseded_by FROM assertions WHERE id = ?",
                     (body.old_assertion_id,),
                 )
-                existing = (
-                    conflict_rows[0].get("superseded_by") if conflict_rows else None
-                )
+                # Empty conflict_rows ⇒ target was deleted between the
+                # pre-WRITE_LOCK 404 check and the CAS UPDATE. Surface 404,
+                # not 409 — force=true would not recover a vanished row.
+                if not conflict_rows:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=(
+                            f"Assertion {body.old_assertion_id} no longer "
+                            f"exists (deleted concurrently)"
+                        ),
+                    )
+                existing = conflict_rows[0].get("superseded_by")
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(

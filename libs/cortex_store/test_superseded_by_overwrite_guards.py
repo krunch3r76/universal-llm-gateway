@@ -14,6 +14,19 @@ Contract:
     NULL → HTTP 409 (unless force=True).
   - force=True bypasses both guards (escape hatch for known-intentional
     chain rewrites).
+  - rejected supersede rolls back the just-INSERTed replacement row so no
+    orphan rows accumulate from repeated rejections.
+
+Concurrency: these tests sequence both writers via Python control flow on
+a single in-memory connection. The cross-thread / cross-process atomicity
+of the CAS (`WHERE id = ? AND superseded_by IS NULL` is a single-statement
+SQLite operation, TOCTOU-free) is codified in
+decision:cortex-api-write-serialization / assertion 9956 but not exercised
+empirically here. The "another writer just won" shape is simulated by
+pre-setting `superseded_by` before the call under test (which is what
+`test_supersede_rejects_when_already_superseded` and
+`test_update_rejects_overwrite_when_already_superseded` do); a true racing
+test would require a file-backed DB and threading.
 """
 
 from __future__ import annotations
@@ -249,6 +262,7 @@ def test_supersede_rejects_when_already_superseded(
     target = _insert(conn, superseded_by=successor)
 
     body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target}
+    pre_count = conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
     with pytest.raises(HTTPException) as exc:
         _supersede_assertion_impl(body)
 
@@ -257,6 +271,12 @@ def test_supersede_rejects_when_already_superseded(
         "SELECT superseded_by FROM assertions WHERE id = ?", (target,)
     ).fetchone()
     assert row["superseded_by"] == successor  # unchanged
+    # Rejected supersede MUST roll back the new INSERT — otherwise repeated
+    # rejections accumulate orphan replacement rows with no chain edge into
+    # them. A regression that drops the rollback (e.g. an inadvertent
+    # autocommit toggle) would leave post_count > pre_count.
+    post_count = conn.execute("SELECT COUNT(*) FROM assertions").fetchone()[0]
+    assert post_count == pre_count
 
 
 def test_supersede_allows_overwrite_with_force(

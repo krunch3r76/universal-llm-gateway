@@ -26,7 +26,15 @@ from ._shared import (
 def update_assertion(
     assertion_id: int, body: AssertionUpdate | dict[str, Any]
 ) -> AssertionItem:
-    """Update assertion metadata — supersession, confidence, review status."""
+    """Update assertion metadata — supersession, confidence, review status.
+
+    Idempotency guard on superseded_by: when superseded_by is being set and
+    the target row's superseded_by is already non-null, the PATCH returns
+    409 Conflict; the lineage pointer is preserved. Pass force=true to
+    widen the SQL CAS and overwrite a known-existing supersedence chain.
+    See decision:cortex-api-write-serialization / assertion 9956 for the
+    WRITE_LOCK-vs-SQL-CAS doctrine and friction 9825 for the C1 trigger.
+    """
     with cortex_conn() as conn:
         existing = query(
             conn,
@@ -164,9 +172,18 @@ def update_assertion(
                     "SELECT superseded_by FROM assertions WHERE id = ?",
                     (assertion_id,),
                 )
-                existing_superseded_by = (
-                    conflict_rows[0].get("superseded_by") if conflict_rows else None
-                )
+                # Empty conflict_rows ⇒ row was deleted between the
+                # pre-WRITE_LOCK 404 check and the CAS UPDATE. Surface 404,
+                # not 409 — force=true would not recover a vanished row.
+                if not conflict_rows:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=(
+                            f"Assertion {assertion_id} no longer exists "
+                            f"(deleted concurrently)"
+                        ),
+                    )
+                existing_superseded_by = conflict_rows[0].get("superseded_by")
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=(
