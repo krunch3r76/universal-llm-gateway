@@ -159,21 +159,29 @@ class GoogleAdapter:
         if req.thinking:
             level_raw = req.thinking.get("level") or req.thinking.get("effort")
             if level_raw:
-                level = level_raw.upper()
+                level = level_raw.strip().lower()
                 # includeThoughts=True surfaces thought-summary parts in the
                 # response so parse_frontier_response can populate `thinking`
                 # — without it, reasoning is invisible for post-hoc triage.
                 if model_lower.startswith("gemini-3"):
-                    gen_config["thinkingConfig"] = {
-                        "thinkingLevel": level,
-                        "includeThoughts": True,
-                    }
+                    # Gemini 3 thinkingLevel: minimal | low | medium | high
+                    # (lowercase per docs/thirdparty/google-api/upstream/
+                    # thinking.md). 3.1 Pro does not support `minimal`; emit
+                    # anyway — the API rejects with a documented error and
+                    # the caller sees provider-native diagnostics.
+                    if level in {"minimal", "low", "medium", "high"}:
+                        gen_config["thinkingConfig"] = {
+                            "thinkingLevel": level,
+                            "includeThoughts": True,
+                        }
                 elif model_lower.startswith("gemini-2.5"):
                     # Gemini 2.5 rejects thinkingLevel; it requires an
                     # integer thinkingBudget. 1024/8192/24576 lie inside
                     # every 2.5 variant's valid range (pro 128-32768,
-                    # flash 0-24576, flash-lite 512-24576).
-                    budget_map = {"LOW": 1024, "MEDIUM": 8192, "HIGH": 24576}
+                    # flash 0-24576, flash-lite 512-24576). Extended
+                    # values (none/minimal/xhigh/max) have no documented
+                    # 2.5 mapping — fall through to the model default.
+                    budget_map = {"low": 1024, "medium": 8192, "high": 24576}
                     budget = budget_map.get(level)
                     if budget is not None:
                         gen_config["thinkingConfig"] = {

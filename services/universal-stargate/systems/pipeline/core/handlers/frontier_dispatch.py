@@ -137,6 +137,11 @@ class FrontierDispatchHandler(BaseHandler):
         opts = context.options
         agent = resolve_agent(opts, step)
         model = await resolve_model(opts, step, context, agent=agent)
+        # Raw pipeline-op dispatches (the escape hatch documented in this
+        # file's module docstring) bypass build_dispatch_body, so
+        # model_entity_id may not be pre-populated in pipeline_options.
+        # Recompute the canonical id from the resolved model in that case;
+        # admission-path dispatches always pre-populate via service.py.
         model_entity_id = str(
             opts.get("model_entity_id") or canonical_model_entity_id(model)
         )

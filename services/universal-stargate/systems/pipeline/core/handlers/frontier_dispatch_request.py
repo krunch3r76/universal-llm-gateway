@@ -3,7 +3,11 @@
 Extracted from ``frontier_dispatch.py`` to keep that module under the SLOC
 ceiling.  Contains:
 
-- ``_REASONING_EFFORT_BUDGET_TOKENS`` — provider-native thinking budget map.
+- ``_VALID_REASONING_EFFORTS`` — accepted effort vocabulary (union of
+  documented provider surfaces; provider gating lives in the adapters).
+- ``_REASONING_EFFORT_BUDGET_TOKENS`` — legacy Anthropic budget-mode map.
+- ``_ANTHROPIC_ADAPTIVE_MODELS`` — Anthropic models that take adaptive
+  thinking (per docs/thirdparty/claude-api/upstream/adaptive-thinking.md).
 - ``translate_reasoning_effort`` — maps ``reasoning_effort`` to provider-native
   thinking dict.
 - ``resolve_model`` / ``resolve_agent`` / ``resolve_user_prompt`` /
@@ -26,26 +30,55 @@ if TYPE_CHECKING:
 # Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
 # knob on ``frontier_dispatch`` / ``/api/v1/frontier/dispatch``.
 #
-# - Anthropic: model-specific thinking config. Opus 4.7 only accepts adaptive
-#   thinking; older/manual-only models still receive budget_tokens.
-# - OpenAI / xAI / OpenRouter: lowercase string consumed by the Responses
-#   API as ``reasoning.effort``. grok-4 strips it adapter-side (built-in
-#   reasoning, no effort control) — observable via INFO log.
-# - Google: uppercase string; the adapter normalizes via ``.upper()`` and
-#   maps to ``thinkingBudget`` (2.5) or ``thinkingLevel`` (3.x).
+# - Anthropic adaptive-capable models (Mythos Preview, Opus 4.7, Opus 4.6,
+#   Sonnet 4.6) get ``{"type": "adaptive"}``; effort is surfaced separately
+#   via ``req.effort`` → ``output_config.effort`` in the adapter. Per
+#   adaptive-thinking.md, manual ``{type: enabled, budget_tokens}`` is
+#   deprecated on the 4.6 family and rejected on Opus 4.7.
+# - Legacy budget-mode Anthropic models (Sonnet 3.7, Sonnet 4.5, Opus 4.5,
+#   etc.) take ``{"type": "enabled", "budget_tokens": N}`` with N drawn from
+#   the budget-tokens map. Extended-vocabulary efforts (none/minimal/xhigh/
+#   max) have no documented budget mapping and skip thinking on legacy.
+# - OpenAI / xAI / OpenRouter / Google: lowercase effort string consumed by
+#   the adapter (Responses API ``reasoning.effort`` for OpenAI/xAI; Gemini
+#   ``thinkingLevel``/``thinkingBudget`` translation for Google). Provider
+#   gating (grok-4 built-in reasoning, gpt-4o non-reasoning, etc.) lives in
+#   the adapter layer, not here.
+
+_VALID_REASONING_EFFORTS: frozenset[str] = frozenset(
+    # Union of documented provider vocabularies across the four upstream
+    # mirrors. Provider-specific support is enforced at the adapter layer.
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
+
 _REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
+    # Used only by the legacy Anthropic budget-mode branch. Adaptive-capable
+    # models surface effort via ``output_config.effort`` separately; this
+    # map is intentionally narrow to the documented budget-mode vocabulary.
     "low": 2048,
     "medium": 8192,
     "high": 24000,
 }
 
+_ANTHROPIC_ADAPTIVE_MODELS: tuple[str, ...] = (
+    # Per docs/thirdparty/claude-api/upstream/adaptive-thinking.md. Mythos
+    # Preview defaults to adaptive whenever ``thinking`` is unset; Opus 4.7
+    # accepts only adaptive (manual budget-tokens returns 400); Opus 4.6
+    # and Sonnet 4.6 accept either, but ``enabled+budget_tokens`` is
+    # deprecated on those models.
+    "claude-mythos-preview",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+)
+
 
 def _anthropic_uses_adaptive_thinking(model: str | None) -> bool:
-    """Return true when Anthropic rejects manual budget-token thinking."""
+    """Return true when Anthropic prefers (or requires) adaptive thinking."""
     if not model:
         return False
     normalized = model.lower()
-    return "claude-opus-4-7" in normalized
+    return any(m in normalized for m in _ANTHROPIC_ADAPTIVE_MODELS)
 
 
 def translate_reasoning_effort(
@@ -53,17 +86,22 @@ def translate_reasoning_effort(
 ) -> dict[str, Any] | None:
     """Map ``reasoning_effort`` to a provider-native ``thinking`` dict."""
     normalized = effort.strip().lower()
-    if normalized not in _REASONING_EFFORT_BUDGET_TOKENS:
+    if normalized not in _VALID_REASONING_EFFORTS:
         raise ValueError(
-            f"reasoning_effort={effort!r} must be one of: low, medium, high"
+            f"reasoning_effort={effort!r} must be one of: "
+            f"{', '.join(sorted(_VALID_REASONING_EFFORTS))}"
         )
     if provider == "anthropic":
         if _anthropic_uses_adaptive_thinking(model):
             return {"type": "adaptive"}
-        budget = _REASONING_EFFORT_BUDGET_TOKENS[normalized]
+        budget = _REASONING_EFFORT_BUDGET_TOKENS.get(normalized)
+        if budget is None:
+            # Extended-vocabulary efforts (none/minimal/xhigh/max) have no
+            # documented budget-mode mapping on legacy Anthropic models.
+            # Skip thinking config; caller's raw effort still flows via
+            # req.effort but the adapter has nothing to surface.
+            return None
         return {"type": "enabled", "budget_tokens": budget}
-    if provider == "google":
-        return {"effort": normalized.upper()}
     return {"effort": normalized}
 
 

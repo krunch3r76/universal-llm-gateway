@@ -287,6 +287,21 @@ class ModelId:
         """True if this model is served by a cloud API provider."""
         return self.backend_type == "cloud_api"
 
+    @property
+    def entity_id(self) -> str:
+        """Cortex model entity id (``model:<slug>``) for this identifier.
+
+        Convenience accessor delegating to
+        ``model_id.entity.canonical_model_entity_id``. Use this when a
+        caller has a ``ModelId`` in hand and needs the Cortex id without
+        knowing the free-function exists.
+        """
+        # Lazy import: entity.py imports ModelId, so the symmetric import
+        # at module top-level would be circular.
+        from .entity import canonical_model_entity_id
+
+        return canonical_model_entity_id(self)
+
     def matches(self, other: ModelId | str) -> bool:
         """
         Check if two model identifiers resolve to the same normalized key

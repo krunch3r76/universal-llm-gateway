@@ -94,7 +94,9 @@ Providers: Anthropic, OpenAI, OpenRouter, Google.
 Shared Model ID parsing and normalisation library. Parse once at API
 boundaries, pass `ModelId` objects internally. Key properties:
 `.routing_key` (gateway API calls), `.normalized` (dict keys),
-`.catalog_lookup_id` (config lookup), `.synthetic_id` (wire serialisation).
+`.catalog_lookup_id` (config lookup), `.synthetic_id` (wire serialisation),
+`.entity_id` (Cortex `model:<slug>`; same value as `canonical_model_entity_id()`
+on a parsed instance).
 `str(model_id)` returns `.original` — display only, not for equality checks.
 `canonical_model_entity_id()` maps a resolved model string to a stable entity
 identifier for frontier dispatch completion payloads.

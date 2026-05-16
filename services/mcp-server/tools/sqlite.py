@@ -327,10 +327,14 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="SQLite: Execute (Write)")
     def sqlite_execute(
         sql: str,
-        db: str = "default",
+        db: str = "",
         params: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute a write statement against a SQLite database."""
+        """Execute a write statement against a SQLite database.
+
+        Writes require an explicit ``db`` name; an omitted/empty value is
+        rejected so misrouted writes never silently land in the wrong DB.
+        """
         normalized_db = _normalize_write_db_name(db)
         if normalized_db is None:
             return {

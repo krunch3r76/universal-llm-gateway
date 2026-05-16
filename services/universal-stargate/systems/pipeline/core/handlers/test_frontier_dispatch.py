@@ -770,6 +770,148 @@ async def test_handler_anthropic_legacy_reasoning_effort_keeps_budget_tokens(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "model",
+    [
+        "anthropic/claude-opus-4-7",
+        "anthropic/claude-opus-4-6",
+        "anthropic/claude-sonnet-4-6",
+        "anthropic/claude-mythos-preview",
+    ],
+)
+async def test_handler_anthropic_adaptive_family_uses_adaptive_thinking(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+) -> None:
+    """Adaptive thinking applies to the documented Anthropic adaptive set:
+    Mythos Preview, Opus 4.7, Opus 4.6, Sonnet 4.6 (per
+    docs/thirdparty/claude-api/upstream/adaptive-thinking.md). Effort flows
+    via req.effort → output_config.effort for all four."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": model,
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": "high"},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    req = captured["req"]
+    assert req.thinking == {"type": "adaptive"}
+    assert req.effort == "high"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", ["none", "minimal", "xhigh", "max"])
+async def test_handler_extended_reasoning_effort_vocabulary_accepted(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    effort: str,
+) -> None:
+    """Extended vocabulary (none/minimal/xhigh/max) is admitted per the
+    documented provider effort surfaces (OpenAI, Anthropic adaptive,
+    Gemini 3). On Opus 4.7 (adaptive-capable) the value flows to
+    req.effort → output_config.effort; the handler must not ValueError."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "anthropic/claude-opus-4-7",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": effort},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    req = captured["req"]
+    assert req.thinking == {"type": "adaptive"}
+    assert req.effort == effort
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", ["none", "minimal", "xhigh", "max"])
+async def test_handler_anthropic_legacy_skips_thinking_for_extended_effort(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    effort: str,
+) -> None:
+    """Legacy budget-mode Anthropic has no documented mapping for extended
+    effort values; the handler must skip the thinking config rather than
+    fake a budget. The raw effort still rides on req.effort."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "anthropic/claude-opus-4-5",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": effort},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    req = captured["req"]
+    assert req.thinking is None
+    assert req.effort == effort
+
+
+@pytest.mark.asyncio
+async def test_handler_google_effort_is_lowercase(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Google receives effort as lowercase. The adapter parses
+    thinkingLevel (Gemini 3) or thinkingBudget (Gemini 2.5) from this; the
+    Gemini docs document lowercase enum values."""
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="google")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "google/gemini-3-flash-preview",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": "low"},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    assert captured["req"].thinking == {"effort": "low"}
+
+
+@pytest.mark.asyncio
 async def test_handler_surfaces_canonical_model_entity_id(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,

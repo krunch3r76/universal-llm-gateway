@@ -99,3 +99,28 @@ def test_sqlite_execute_empty_db_requires_explicit_target(
     )
 
     assert "requires an explicit db name" in result["error"]
+def test_sqlite_execute_omitted_db_requires_explicit_target(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Omitting the ``db`` argument must also be rejected — the default is
+    intentionally empty so misrouted writes never land in the wrong DB."""
+    cortex_db = tmp_path / "cortex.db"
+    _create_db(cortex_db)
+    monkeypatch.setattr(
+        sqlite_tools,
+        "_CONFIG",
+        {
+            "databases": {"cortex": str(cortex_db)},
+            "max_rows": 100,
+            "allow_destructive": False,
+        },
+    )
+    recorder = _ToolRecorder()
+
+    sqlite_tools.register_sqlite_tools(recorder)  # type: ignore[arg-type]
+    result = recorder.registered["sqlite_execute"](
+        "INSERT INTO facts (value) VALUES (?)",
+        params=["nope"],
+    )
+
+    assert "requires an explicit db name" in result["error"]
