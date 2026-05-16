@@ -161,11 +161,46 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
             )
             new_id = cur.lastrowid
 
-            conn.execute(
-                "UPDATE assertions SET valid_until = ?, superseded_by = ?, updated_at = ? "
-                "WHERE id = ?",
-                (now, new_id, now, body.old_assertion_id),
+            # Atomic compare-and-swap on superseded_by: by tightening the
+            # WHERE clause to require `superseded_by IS NULL`, two
+            # concurrent supersede passes against the same old_assertion_id
+            # cannot both succeed — the second update finds 0 rows and we
+            # rollback the just-inserted replacement, preventing the silent
+            # lineage clobber that produced the C1 corruption. The
+            # `force=True` escape hatch widens the WHERE to permit
+            # known-intentional chain rewrites. See
+            # todo:cortex-superseded-by-overwrite-guards / friction 9824.
+            update_where = "WHERE id = ?"
+            update_params: tuple[object, ...] = (
+                now,
+                new_id,
+                now,
+                body.old_assertion_id,
             )
+            if not body.force:
+                update_where += " AND superseded_by IS NULL"
+            update_cur = conn.execute(
+                "UPDATE assertions SET valid_until = ?, superseded_by = ?, updated_at = ? "
+                + update_where,
+                update_params,
+            )
+            if update_cur.rowcount == 0:
+                conn.rollback()
+                conflict_rows = query(
+                    conn,
+                    "SELECT superseded_by FROM assertions WHERE id = ?",
+                    (body.old_assertion_id,),
+                )
+                existing = (
+                    conflict_rows[0].get("superseded_by") if conflict_rows else None
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Assertion {body.old_assertion_id} is already superseded "
+                        f"by {existing}; pass force=true to override"
+                    ),
+                )
             conn.execute(
                 "INSERT INTO session_edges ("
                 "  session_id, agent, from_node, to_node, edge_type, strength, edge_source, context"

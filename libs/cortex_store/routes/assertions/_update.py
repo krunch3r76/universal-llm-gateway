@@ -42,9 +42,11 @@ def update_assertion(
         if isinstance(body, dict):
             superseded_by = body.get("superseded_by")
             review_status = body.get("review_status")
+            force = bool(body.get("force", False))
         else:
             superseded_by = body.superseded_by
             review_status = body.review_status
+            force = bool(getattr(body, "force", False))
         if superseded_by is not None:
             target = query(
                 conn, "SELECT id FROM assertions WHERE id = ?", (superseded_by,)
@@ -140,10 +142,38 @@ def update_assertion(
         params.append(now)
         params.append(assertion_id)
 
+        # Atomic compare-and-swap when setting superseded_by: by tightening
+        # the WHERE clause to require `superseded_by IS NULL`, two
+        # concurrent writers cannot both clobber the lineage pointer — the
+        # second update finds 0 rows and we surface a 409. The
+        # `force=True` escape hatch widens the WHERE to permit
+        # known-intentional chain rewrites. See
+        # todo:cortex-superseded-by-overwrite-guards / friction 9825.
+        where_clause = "WHERE id = ?"
+        if superseded_by is not None and not force:
+            where_clause += " AND superseded_by IS NULL"
+
         with WRITE_LOCK:
-            conn.execute(
-                f"UPDATE assertions SET {', '.join(sets)} WHERE id = ?", tuple(params)
+            cur = conn.execute(
+                f"UPDATE assertions SET {', '.join(sets)} {where_clause}",
+                tuple(params),
             )
+            if cur.rowcount == 0 and superseded_by is not None and not force:
+                conflict_rows = query(
+                    conn,
+                    "SELECT superseded_by FROM assertions WHERE id = ?",
+                    (assertion_id,),
+                )
+                existing_superseded_by = (
+                    conflict_rows[0].get("superseded_by") if conflict_rows else None
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        f"Assertion {assertion_id} is already superseded by "
+                        f"{existing_superseded_by}; pass force=true to override"
+                    ),
+                )
             conn.commit()
 
         if predicate_form_explicitly_set:

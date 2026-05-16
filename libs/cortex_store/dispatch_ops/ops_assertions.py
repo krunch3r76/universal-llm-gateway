@@ -341,6 +341,7 @@ def _op_assertion_update(
     reviewed_at: str | None = None,
     review_notes: str | None = None,
     predicate_form: Any = _UNSET,
+    force: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if assertion_id is None:
@@ -366,6 +367,8 @@ def _op_assertion_update(
         body["predicate_form"] = predicate_form  # may be None to clear
     if not body:
         return {"error": "No fields to update"}
+    if force:
+        body["force"] = True
     result = _update_assertion_impl(assertion_id, body)
     if "error" not in result:
         logger.info("cortex assertion_update: %d", assertion_id)
@@ -392,6 +395,7 @@ def _op_supersede(
     session_id: str | None = None,
     agent: str | None = None,
     acknowledge_audit_gaps: list[str] | None = None,
+    force: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     for field, val in [
@@ -431,6 +435,8 @@ def _op_supersede(
             body[key] = val
     if acknowledge_audit_gaps is not None:
         body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
+    if force:
+        body["force"] = True
     result = _supersede_assertion_impl(body)
     if "error" not in result:
         new_id = result.get("new", {}).get("id")

@@ -137,6 +137,12 @@ class AssertionUpdate(BaseModel):
     # pipelines/predicate_extract/ after fire-and-forget dispatch from the
     # assertion-create write hook. Explicit null in PATCH body clears the field.
     predicate_form: str | None = None
+    # Idempotency guard for superseded_by writes. When the target row already
+    # has a non-null superseded_by, the PATCH is rejected with 409 Conflict
+    # unless force=True is set. Prevents silent lineage clobber from
+    # concurrent or duplicated supersession passes. See todo:
+    # cortex-superseded-by-overwrite-guards / friction 9824, 9825.
+    force: bool = False
 
     @field_validator("predicate_form")
     @classmethod
@@ -169,6 +175,12 @@ class SupersedeRequest(BaseModel):
     confidence_score: float | None = None
     session_id: str
     agent: str
+    # Idempotency guard for the old assertion's superseded_by field. When the
+    # target old assertion already has a non-null superseded_by, the supersede
+    # call is rejected with 409 Conflict unless force=True is set. Prevents
+    # silent lineage clobber from concurrent or duplicated supersession
+    # passes. See todo:cortex-superseded-by-overwrite-guards / friction 9824.
+    force: bool = False
     # Auditor-validatability opt-outs (same semantics as AssertionCreate).
     acknowledge_audit_gaps: list[str] | None = Field(
         None,
