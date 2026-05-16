@@ -57,6 +57,7 @@ from ..events.dispatch import (
 from ..execution.errors import EmptyCompletionError, FrontierDispatchExhaustedError
 from .builtin import BaseHandler
 from .frontier_dispatch_admission import (
+    build_runtime_context_block,
     check_agent_model_consistency,
     check_boot_provider_compatibility,
     prepend_dispatch_context,
@@ -152,6 +153,7 @@ class FrontierDispatchHandler(BaseHandler):
             check_agent_model_consistency(
                 agent=agent,
                 model=model,
+                model_entity_id=model_entity_id,
                 provider=provider,
                 execution_id=context.execution_id,
                 publish=publish,
@@ -163,6 +165,7 @@ class FrontierDispatchHandler(BaseHandler):
             context=context,
             provider=provider,
             model=model,
+            model_entity_id=model_entity_id,
             agent=agent,
             mcp_enabled=mcp_enabled,
             publish=publish,
@@ -263,22 +266,13 @@ class FrontierDispatchHandler(BaseHandler):
 
         if bool(step.get_domain_field("inject_runtime_context")):
             effort_str = gen_params.get("reasoning_effort") or "default"
-            runtime_block = (
-                "\n\n## Active Runtime Context\n\n"
-                f"- pipeline_id: {context.pipeline.id}\n"
-                f"- model: {model} (resolved at dispatch time)\n"
-                f"- reasoning_effort: {effort_str}\n"
-                f"- boot_profile: {boot_profile}\n"
-                f"- tool_loop_budget: {max_turns} turns\n"
-                "\n"
-                "This block is injected by the dispatch handler and reflects "
-                "ground truth for *this* turn. Your persona briefing may name "
-                'a different "default model" — when in doubt, this block is '
-                "authoritative for the current call. The operator may switch "
-                "you to a different tier (mini / high / team-leader) between "
-                "turns; expect this block to change accordingly.\n"
+            system = (system or "") + build_runtime_context_block(
+                pipeline_id=context.pipeline.id,
+                model=model,
+                reasoning_effort=effort_str,
+                boot_profile=boot_profile,
+                max_turns=max_turns,
             )
-            system = (system or "") + runtime_block
 
         thinking = gen_params.get("thinking")
         wire_messages = resolve_messages(step, context, user_prompt=user_prompt)

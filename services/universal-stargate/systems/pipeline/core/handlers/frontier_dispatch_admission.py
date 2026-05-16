@@ -1,7 +1,7 @@
 """Admission checks and context injection for frontier_dispatch_v1.
 
 Kept in a sibling module to hold frontier_dispatch.py under the file-size
-ceiling.  Five responsibilities:
+ceiling.  Seven responsibilities:
 
 1. ``check_agent_model_consistency`` — pre-hydration guard for concrete
    family/platform seats. Functional roles are model-agnostic; explicit model
@@ -23,6 +23,14 @@ ceiling.  Five responsibilities:
 5. ``resolve_remote_mcp`` — validates and resolves the ``remote_mcp`` option
    against provider support and the ``mcp`` gate; raises
    ``RemoteMcpUnsupportedError`` on violation.
+
+6. ``validate_frontier_dispatch_step`` — config-time validation that a step's
+   ``type`` is ``frontier_dispatch_v1``; returns a list of error strings for
+   the step-config validator.
+
+7. ``build_runtime_context_block`` — renders the Active Runtime Context
+   markdown block that the handler optionally appends to ``system`` when
+   ``step.inject_runtime_context`` is set.
 """
 
 from __future__ import annotations
@@ -77,6 +85,7 @@ def check_agent_model_consistency(
     *,
     agent: str,
     model: str,
+    model_entity_id: str,
     provider: str,
     execution_id: str,
     publish: Callable[[object], None],
@@ -88,6 +97,13 @@ def check_agent_model_consistency(
     role assignment is only a convention for omitted ``model``. Concrete
     family/platform seats (for example ``grok-api-multi``) still enforce
     their provider and variant requirements.
+
+    ``model_entity_id`` is included on the published Mismatch event so post-hoc
+    correlators can recover the canonical Cortex ``model:<slug>`` directly —
+    Mismatch fires during admission and ``.started`` is never emitted on the
+    rejection path, leaving ``execution_id`` without an outcome event to join
+    against. Mirrors the recovery shape used on
+    ``pipeline.frontier.dispatch.remotemcp.misconfigured``.
     """
     if normalize_agent_slug(agent) in load_roles():
         return
@@ -102,6 +118,7 @@ def check_agent_model_consistency(
                 execution_id=execution_id,
                 agent=agent,
                 requested_model=model,
+                model_entity_id=model_entity_id,
                 valid_family=valid_family,
                 mismatch_kind="provider",
             ),
@@ -120,6 +137,7 @@ def check_agent_model_consistency(
                 execution_id=execution_id,
                 agent=agent,
                 requested_model=model,
+                model_entity_id=model_entity_id,
                 valid_family=valid_family,
                 mismatch_kind="variant",
             ),
@@ -169,8 +187,6 @@ def check_boot_provider_compatibility(
     - ``agent is None`` — persona-free dispatch
     - ``not mcp_enabled`` — caller already suppressed
     - not xAI multi-agent model
-
-    The BootProviderMismatchError remains for genuine unresolvable misconfigs.
     """
     if isinstance(opt_tools, list) or agent is None or not mcp_enabled:
         return
@@ -229,6 +245,7 @@ def resolve_remote_mcp(
     context: PipelineContext,
     provider: str,
     model: str,
+    model_entity_id: str,
     agent: str | None,
     mcp_enabled: bool,
     publish: Callable[[object], None],
@@ -241,6 +258,13 @@ def resolve_remote_mcp(
     in ``_REMOTE_MCP_PROVIDERS`` (anthropic-only). Violations emit
     ``pipeline.frontier.dispatch.remotemcp.unsupported`` and raise
     ``RemoteMcpUnsupportedError`` before hydration.
+
+    ``model_entity_id`` is included on the published Unsupported event so
+    post-hoc correlators can recover the canonical Cortex ``model:<slug>``
+    directly — Unsupported fires during admission and ``.started`` is never
+    emitted on the rejection path, leaving ``execution_id`` without an outcome
+    event to join against. Mirrors the recovery shape used on
+    ``pipeline.frontier.dispatch.remotemcp.misconfigured``.
     """
     supports = provider in _REMOTE_MCP_PROVIDERS
     raw = opts.get("remote_mcp")
@@ -266,6 +290,7 @@ def resolve_remote_mcp(
                 execution_id=context.execution_id,
                 agent=agent,
                 model=model,
+                model_entity_id=model_entity_id,
                 provider=provider,
                 requested=requested,
                 reason=reason,
@@ -288,3 +313,35 @@ def validate_frontier_dispatch_step(step: StepConfig) -> list[str]:
     if step.type != "frontier_dispatch_v1":
         errors.append(f"Step '{step.id}': expected type frontier_dispatch_v1")
     return errors
+
+
+def build_runtime_context_block(
+    *,
+    pipeline_id: str,
+    model: str,
+    reasoning_effort: str,
+    boot_profile: str,
+    max_turns: int,
+) -> str:
+    """Render the Active Runtime Context markdown block for system-prompt injection.
+
+    Called when ``step.inject_runtime_context`` is set. The block names the
+    pipeline, the resolved model, the effective reasoning effort, the boot
+    profile, and the tool-loop budget — ground truth for *this* turn that
+    overrides any "default model" the persona briefing may name.
+    """
+    return (
+        "\n\n## Active Runtime Context\n\n"
+        f"- pipeline_id: {pipeline_id}\n"
+        f"- model: {model} (resolved at dispatch time)\n"
+        f"- reasoning_effort: {reasoning_effort}\n"
+        f"- boot_profile: {boot_profile}\n"
+        f"- tool_loop_budget: {max_turns} turns\n"
+        "\n"
+        "This block is injected by the dispatch handler and reflects "
+        "ground truth for *this* turn. Your persona briefing may name "
+        'a different "default model" — when in doubt, this block is '
+        "authoritative for the current call. The operator may switch "
+        "you to a different tier (mini / high / team-leader) between "
+        "turns; expect this block to change accordingly.\n"
+    )

@@ -470,6 +470,7 @@ def PipelineFrontierDispatchRemoteMcpUnsupported(  # noqa: N802
     execution_id: str,
     agent: str | None,
     model: str,
+    model_entity_id: str,
     provider: str,
     requested: bool,
     reason: str,
@@ -483,10 +484,19 @@ def PipelineFrontierDispatchRemoteMcpUnsupported(  # noqa: N802
     cannot fulfil) from ``remotemcp.misconfigured`` (env resolution failure)
     and from upstream provider errors.
 
+    ``model_entity_id`` is included so post-hoc correlators can recover
+    the canonical Cortex ``model:<slug>`` directly from this event when
+    ``.started`` is absent — the unsupported branch fires during admission
+    when the handler rejects an incompatible ``remote_mcp`` request,
+    leaving ``execution_id`` without an outcome event to join against.
+    Mirrors the recovery shape used on
+    ``pipeline.frontier.dispatch.remotemcp.misconfigured``.
+
     Payload:
         execution_id: Pipeline execution UUID
         agent: Persona identity if set, else ``None``
         model: Raw model string as supplied by the caller
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
         requested: Value the caller asked for (True or False)
         reason: Human-readable explanation of the capability violation
@@ -497,6 +507,7 @@ def PipelineFrontierDispatchRemoteMcpUnsupported(  # noqa: N802
             "execution_id": execution_id,
             "agent": agent,
             "model": model,
+            "model_entity_id": model_entity_id,
             "provider": provider,
             "requested": requested,
             "reason": reason,
@@ -734,57 +745,11 @@ def PipelineFrontierDispatchTerminationShadow(  # noqa: N802
 
 
 @event_factory
-def PipelineFrontierDispatchBootMismatch(  # noqa: N802
-    execution_id: str,
-    agent: str,
-    provider: str,
-    boot_mode: str,
-    reason: str,
-) -> Event:
-    """Emitted when the step handler rejects a (provider, boot_mode) pair that
-    would cause a silent runtime tool-surface contract violation.
-
-    Structural case: ``provider='xai'`` + ``boot_mode='team'`` (agent set,
-    ``mcp_enabled=True``) — xAI multi-agent models reject client-side function
-    tools; ``resolve_dispatch_tool_set`` would silently return ``tools=[]``
-    while the caller expected a tool-capable dispatch.
-
-    This is a contract-enforcement gate fired before hydration. The prompt
-    layer (``build_subagent_preamble`` + ``CORTEX_TOOL_QUICKREF``) is not
-    affected by this check — prompt-layer suppression is a separate follow-up.
-
-    Precedes the terminal ``pipeline_execution_failed`` carrying
-    ``code=boot_provider_mismatch``.
-
-    Payload:
-        execution_id: Pipeline execution UUID
-        agent: Agent slug (e.g. ``oppie``, ``orion``)
-        provider: Effective provider (``xai``, ``openai``, etc.)
-        boot_mode: Internal handler-derived dispatch tier that caused the
-            violation (``team`` for persona dispatches). NOT a caller-supplied
-            value; derived at the handler from agent presence. The public MCP
-            surface has no ``boot`` parameter — see ``team_dispatch`` /
-            ``frontier_dispatch``.
-        reason: Human-readable explanation including fix guidance
-    """
-    return Event(
-        signal="pipeline.frontier.dispatch.boot.mismatch",
-        payload={
-            "execution_id": execution_id,
-            "agent": agent,
-            "provider": provider,
-            "boot_mode": boot_mode,
-            "reason": reason,
-        },
-        scope="node",
-    )
-
-
-@event_factory
 def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
     execution_id: str,
     agent: str,
     requested_model: str,
+    model_entity_id: str,
     valid_family: list[str],
     mismatch_kind: str,
 ) -> Event:
@@ -803,12 +768,21 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
     Precedes the terminal ``pipeline_execution_failed``. Distinguishes agent
     misconfiguration from MCP misconfiguration or upstream provider errors.
 
+    ``model_entity_id`` is included so post-hoc correlators can recover
+    the canonical Cortex ``model:<slug>`` directly from this event when
+    ``.started`` is absent — the mismatch branch fires during admission
+    when the handler rejects an incompatible agent + model combination,
+    leaving ``execution_id`` without an outcome event to join against.
+    Mirrors the recovery shape used on
+    ``pipeline.frontier.dispatch.remotemcp.misconfigured``.
+
     Payload:
-        execution_id:  Pipeline execution UUID
-        agent:         Seat slug that was specified (for example ``grok-api-multi``)
+        execution_id:    Pipeline execution UUID
+        agent:           Seat slug that was specified (for example ``grok-api-multi``)
         requested_model: Model string the caller supplied
-        valid_family:  Allowed model identifiers for this agent
-        mismatch_kind: ``"provider"`` | ``"variant"``
+        model_entity_id: Canonical Cortex model entity id for the requested model
+        valid_family:    Allowed model identifiers for this agent
+        mismatch_kind:   ``"provider"`` | ``"variant"``
     """
     return Event(
         signal="pipeline.frontier.dispatch.mismatch",
@@ -816,6 +790,7 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
             "execution_id": execution_id,
             "agent": agent,
             "requested_model": requested_model,
+            "model_entity_id": model_entity_id,
             "valid_family": valid_family,
             "mismatch_kind": mismatch_kind,
         },

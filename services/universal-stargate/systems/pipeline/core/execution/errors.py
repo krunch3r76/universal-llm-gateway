@@ -367,43 +367,6 @@ class AgentModelMismatchError(PipelineError):
 
 
 @dataclass
-class BootProviderMismatchError(PipelineError):
-    """Raised for genuine (boot_mode, provider) misconfigurations that infra
-    cannot silently coerce. Primary case (xAI multi-agent + mcp=True) now uses
-    silent ``PipelineFrontierDispatchToolSuppressed`` + coercion per
-    todo:retire-tools-allowlist-as-caller-concern; this error kept for other
-    unresolvable mismatches.
-
-    Note: prompt-layer CORTEX_TOOL_QUICKREF suppression now handled in
-    resolve_dispatch_tool_set via include_cortex_quickref param based on
-    effective tools/mcp.
-    """
-
-    agent: str
-    provider: str
-    boot_mode: str
-    reason: str
-
-    def __str__(self) -> str:
-        return (
-            f"Agent {self.agent!r} (provider={self.provider!r}, "
-            f"boot={self.boot_mode!r}) advertises a client-side MCP tool "
-            f"surface the provider cannot execute: {self.reason}"
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            "error_type": "BootProviderMismatchError",
-            "code": "boot_provider_mismatch",
-            "retryable": self.retryable,
-            "agent": self.agent,
-            "provider": self.provider,
-            "boot_mode": self.boot_mode,
-            "reason": self.reason,
-        }
-
-
-@dataclass
 class EmptyCompletionError(PipelineError):
     """Raised when ``frontier_dispatch_v1`` returns ``content=""`` on the
     non-exhausted branch — silent successful-looking completion with no body.
