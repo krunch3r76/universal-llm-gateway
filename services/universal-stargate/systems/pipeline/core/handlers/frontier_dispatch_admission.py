@@ -1,4 +1,4 @@
-"""Admission checks and context injection for frontier_dispatch_v1.
+"""Admission, context injection, and prompt-block construction for frontier_dispatch_v1.
 
 Kept in a sibling module to hold frontier_dispatch.py under the file-size
 ceiling.  Seven responsibilities:
