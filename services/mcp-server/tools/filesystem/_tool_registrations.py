@@ -99,7 +99,9 @@ def register_individual_tools(mcp: FastMCP) -> None:
             FileNotFoundError: If the image file does not exist.
             ValueError: If the path is not a file, is outside the sandbox, or has an unsupported format.
         """
-        return view_image_impl(path, max_dimension=max_dimension, quality=quality, mode=mode)
+        return view_image_impl(
+            path, max_dimension=max_dimension, quality=quality, mode=mode
+        )
 
     @mcp.tool(title="Edit File")
     def edit_file(
@@ -136,7 +138,14 @@ def register_individual_tools(mcp: FastMCP) -> None:
             {"status": "edited: <op>", "path": "..."}
             For replace: includes "replacements_made".
         """
-        return edit_file_impl(path, operation, content, line=line, target=target, all_occurrences=all_occurrences)
+        return edit_file_impl(
+            path,
+            operation,
+            content,
+            line=line,
+            target=target,
+            all_occurrences=all_occurrences,
+        )
 
     @mcp.tool(title="Move File")
     def move_file(source: str, destination: str) -> dict[str, str]:
@@ -235,4 +244,3 @@ def register_individual_tools(mcp: FastMCP) -> None:
             {"files": ["<relative paths>", ...]}
         """
         return list_files_impl(directory)
-

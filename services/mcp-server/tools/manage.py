@@ -304,8 +304,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (
             timeout + _WAIT_HEALTHY_BUFFER
-            if action
-            in {"wait_healthy", "start", "restart", "sync_restart", "rebuild"}
+            if action in {"wait_healthy", "start", "restart", "sync_restart", "rebuild"}
             else _DEFAULT_TIMEOUT
         )
 

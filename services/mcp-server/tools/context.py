@@ -35,9 +35,26 @@ logger = logging.getLogger(__name__)
 
 _TASKS_ROOT = Path(os.environ.get("TASKS_ROOT", "/data/tasks"))
 _EDITABLE_SUFFIXES = {
-    ".md", ".txt", ".py", ".yaml", ".yml", ".json", ".toml",
-    ".csv", ".sh", ".bash", ".js", ".ts", ".html", ".css",
-    ".xml", ".ini", ".cfg", ".conf", ".env", ".log",
+    ".md",
+    ".txt",
+    ".py",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".toml",
+    ".csv",
+    ".sh",
+    ".bash",
+    ".js",
+    ".ts",
+    ".html",
+    ".css",
+    ".xml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".env",
+    ".log",
 }
 _TASKS_READ_ONLY = os.environ.get("TASKS_READ_ONLY", "false").strip().lower() in {
     "1",
@@ -332,7 +349,7 @@ def register_context_tools(mcp: FastMCP) -> None:
                 result["_next"] = (
                     f'For text extraction: dispatch(tool="document_ocr", '
                     f'arguments=\'{{"path": "{path}"}}\').'
-                    f" For visual inspection: view_image(path=\"{path}\")."
+                    f' For visual inspection: view_image(path="{path}").'
                 )
             logger.info(
                 "read_context_file: %s (%d bytes, auto_binary)", path, result["bytes"]

@@ -27,9 +27,7 @@ def _create_db(path: Path) -> None:
         conn.execute("INSERT INTO facts (value) VALUES ('ok')")
 
 
-def test_sql_empty_db_uses_cortex_default(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_sql_empty_db_uses_cortex_default(tmp_path: Path, monkeypatch: Any) -> None:
     cortex_db = tmp_path / "cortex.db"
     default_db = tmp_path / "default.db"
     _create_db(cortex_db)
@@ -54,9 +52,7 @@ def test_sql_empty_db_uses_cortex_default(
     assert result == {"columns": ["value"], "rows": [["ok"]], "count": 1}
 
 
-def test_unknown_db_error_names_cortex(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_unknown_db_error_names_cortex(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setattr(
         sqlite_tools,
         "_CONFIG",
@@ -99,6 +95,8 @@ def test_sqlite_execute_empty_db_requires_explicit_target(
     )
 
     assert "requires an explicit db name" in result["error"]
+
+
 def test_sqlite_execute_omitted_db_requires_explicit_target(
     tmp_path: Path, monkeypatch: Any
 ) -> None:

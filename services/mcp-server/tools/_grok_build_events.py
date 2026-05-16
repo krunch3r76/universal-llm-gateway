@@ -171,6 +171,8 @@ def GrokBuildCreateCalled(  # noqa: N802
     name: str,
     branch: str,
     source_repo: str,
+    create_branch: bool = False,
+    start_point: str = "",
 ) -> Event:
     return Event(
         signal="mcp.grok.build.create.called",
@@ -179,6 +181,8 @@ def GrokBuildCreateCalled(  # noqa: N802
             "name": name,
             "branch": branch,
             "source_repo": source_repo,
+            "create_branch": create_branch,
+            "start_point": start_point,
         },
         scope="global",
     )
@@ -193,6 +197,8 @@ def GrokBuildCreateCompleted(  # noqa: N802
     branch: str,
     source_repo: str,
     worktree_path: str,
+    create_branch: bool = False,
+    start_point: str = "",
 ) -> Event:
     return Event(
         signal="mcp.grok.build.create.completed",
@@ -204,6 +210,8 @@ def GrokBuildCreateCompleted(  # noqa: N802
             "branch": branch,
             "source_repo": source_repo,
             "worktree_path": worktree_path,
+            "create_branch": create_branch,
+            "start_point": start_point,
         },
         scope="global",
     )
@@ -219,6 +227,8 @@ def GrokBuildCreateFailed(  # noqa: N802
     branch: str,
     source_repo: str,
     worktree_path: str,
+    create_branch: bool = False,
+    start_point: str = "",
 ) -> Event:
     return Event(
         signal="mcp.grok.build.create.failed",
@@ -231,6 +241,8 @@ def GrokBuildCreateFailed(  # noqa: N802
             "branch": branch,
             "source_repo": source_repo,
             "worktree_path": worktree_path,
+            "create_branch": create_branch,
+            "start_point": start_point,
         },
         scope="global",
     )
@@ -244,6 +256,8 @@ def GrokBuildCreateRejected(  # noqa: N802
     name: str = "",
     branch: str = "",
     source_repo: str = "",
+    create_branch: bool = False,
+    start_point: str = "",
 ) -> Event:
     return Event(
         signal="mcp.grok.build.create.rejected",
@@ -254,6 +268,8 @@ def GrokBuildCreateRejected(  # noqa: N802
             "name": name,
             "branch": branch,
             "source_repo": source_repo,
+            "create_branch": create_branch,
+            "start_point": start_point,
         },
         scope="global",
     )
@@ -366,6 +382,68 @@ def emit_grok_build_remove_failed(**kwargs: object) -> None:
 
 def emit_grok_build_remove_rejected(**kwargs: object) -> None:
     _emit(GrokBuildRemoveRejected(**kwargs))  # type: ignore[arg-type]
+
+
+@event_factory
+def GrokBuildListCalled(  # noqa: N802
+    dispatch_id: str,
+    worktree_root: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.list.called",
+        payload={"dispatch_id": dispatch_id, "worktree_root": worktree_root},
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildListCompleted(  # noqa: N802
+    dispatch_id: str,
+    duration_s: float,
+    worktree_root: str,
+    count: int,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.list.completed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "duration_s": duration_s,
+            "worktree_root": worktree_root,
+            "count": count,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildListFailed(  # noqa: N802
+    dispatch_id: str,
+    duration_s: float,
+    error: str,
+    worktree_root: str,
+) -> Event:
+    return Event(
+        signal="mcp.grok.build.list.failed",
+        payload={
+            "dispatch_id": dispatch_id,
+            "duration_s": duration_s,
+            "error": error,
+            "worktree_root": worktree_root,
+        },
+        scope="global",
+    )
+
+
+def emit_grok_build_list_called(**kwargs: object) -> None:
+    _emit(GrokBuildListCalled(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_list_completed(**kwargs: object) -> None:
+    _emit(GrokBuildListCompleted(**kwargs))  # type: ignore[arg-type]
+
+
+def emit_grok_build_list_failed(**kwargs: object) -> None:
+    _emit(GrokBuildListFailed(**kwargs))  # type: ignore[arg-type]
 
 
 @event_factory

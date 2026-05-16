@@ -19,6 +19,7 @@ from tools._grok_build_dispatch import dispatch_op
 from tools._grok_build_envelope import _envelope_rejected
 from tools._grok_build_events import emit_grok_build_dispatch_rejected
 from tools._grok_build_worktree import worktree_create_op
+from tools._grok_build_worktree_list import worktree_list_op
 from tools._grok_build_worktree_remove import worktree_remove_op
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
 
 
 async def grok_build(
-    op: Literal["dispatch", "worktree_create", "worktree_remove"],
+    op: Literal["dispatch", "worktree_create", "worktree_remove", "worktree_list"],
     cwd: str = "",
     prompt: str = "",
     *,
@@ -40,13 +41,17 @@ async def grok_build(
     name: str = "",
     branch: str = "",
     source_repo: str = "",
+    create_branch: bool = False,
+    start_point: str = "",
 ) -> dict[str, Any]:
     """Dispatch grok_build op to the matching handler.
 
     ``op="dispatch"`` takes (cwd, prompt) positionally plus all dispatch
-    kwargs; ``op="worktree_create"`` takes (name, branch, source_repo);
-    ``op="worktree_remove"`` takes (name). The signature unions all params
-    so the MCP schema exposes one tool with op-conditional fields.
+    kwargs; ``op="worktree_create"`` takes (name, branch, source_repo) and
+    optionally ``create_branch`` + ``start_point`` to mirror
+    ``git worktree add -b``; ``op="worktree_remove"`` takes (name). The
+    signature unions all params so the MCP schema exposes one tool with
+    op-conditional fields.
     """
     if op == "dispatch":
         return await dispatch_op(
@@ -62,10 +67,16 @@ async def grok_build(
         )
     if op == "worktree_create":
         return await worktree_create_op(
-            name=name, branch=branch, source_repo=source_repo
+            name=name,
+            branch=branch,
+            source_repo=source_repo,
+            create_branch=create_branch,
+            start_point=start_point,
         )
     if op == "worktree_remove":
         return await worktree_remove_op(name=name)
+    if op == "worktree_list":
+        return await worktree_list_op()
     dispatch_id = str(uuid.uuid4())
     reason = f"unsupported op: {op!r}"
     emit_grok_build_dispatch_rejected(

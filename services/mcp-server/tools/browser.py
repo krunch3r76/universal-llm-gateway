@@ -32,9 +32,7 @@ logger = logging.getLogger(__name__)
 
 _PROFILE_DIR = Path("/data/firefox_profile")
 _MAX_TEXT_LENGTH = 25_000
-_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
-)
+_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
 
 
 class BrowserSession:
@@ -96,7 +94,9 @@ class BrowserSession:
                 try:
                     tmp_file.unlink(missing_ok=True)
                 except OSError:
-                    logger.warning("Failed to remove temporary cookie file %s", tmp_file)
+                    logger.warning(
+                        "Failed to remove temporary cookie file %s", tmp_file
+                    )
 
         return cookies
 
@@ -326,7 +326,11 @@ def register_browser_tools(mcp: FastMCP) -> None:
         try:
             png_bytes = await page.screenshot(full_page=True)
             _record_action_result("screenshot", "success")
-            return ImageContent(type="image", data=base64.b64encode(png_bytes).decode(), mimeType="image/png")
+            return ImageContent(
+                type="image",
+                data=base64.b64encode(png_bytes).decode(),
+                mimeType="image/png",
+            )
         except Exception as e:
             logger.exception("browser_screenshot failed")
             _record_action_result("screenshot", "failed", error=str(e))
@@ -387,7 +391,9 @@ def register_browser_tools(mcp: FastMCP) -> None:
             name = c.get("name")
             value = c.get("value")
             domain = c.get("domain")
-            if not (name and isinstance(name, str) and isinstance(value, str) and domain):
+            if not (
+                name and isinstance(name, str) and isinstance(value, str) and domain
+            ):
                 skipped += 1
                 continue
             cookie: dict[str, object] = {
@@ -415,7 +421,9 @@ def register_browser_tools(mcp: FastMCP) -> None:
 
         try:
             await _session.context.add_cookies(cleaned)
-            record("mcp.browser.cookies.loaded", count=len(cleaned), source="manual_import")
+            record(
+                "mcp.browser.cookies.loaded", count=len(cleaned), source="manual_import"
+            )
             _record_action_result("load_cookies", "success", count=len(cleaned))
             return {
                 "status": "success",

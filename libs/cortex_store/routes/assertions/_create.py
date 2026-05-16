@@ -35,6 +35,8 @@ from ._shared import (
     _JSON_FIELDS,
     _VALID_CONFIDENCE,
     _embed_assertion_background,
+    _flag_predicate_normalize_review,
+    _normalize_predicate_form_for_write,
     _payload_validation_exception,
     logger,
     router,
@@ -164,6 +166,19 @@ def create_assertion(
             conn=conn,
         )
 
+        # v1.3 Q5: normalize caller-seeded predicate_form before INSERT.
+        # Runs outside WRITE_LOCK — normalize reads entities.id via DBEntityResolver
+        # (no writes). canonical_form is what gets stored; normalize_result drives
+        # the requires_human_review flag path inside the lock.
+        predicate_form_to_store: str | None = None
+        normalize_result: dict | None = None
+        if body.predicate_form is not None:
+            predicate_form_to_store, normalize_result = (
+                _normalize_predicate_form_for_write(
+                    body.entity_id, body.predicate_form, body.claim, conn
+                )
+            )
+
         near_dup_warning: NearDuplicateWarning | None = None
 
         with WRITE_LOCK:
@@ -174,8 +189,8 @@ def create_assertion(
                 "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
                 "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
                 "  prospective_summary, events_json, artifact_uri, artifact_storage,"
-                "  entrenchment_score"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  entrenchment_score, predicate_form"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -202,6 +217,7 @@ def create_assertion(
                     body.artifact_uri,
                     body.artifact_storage,
                     entrenchment,
+                    predicate_form_to_store,
                 ),
             )
 
@@ -257,6 +273,11 @@ def create_assertion(
                         contradiction.contradicting_entity,
                         contradiction.edge_id,
                     )
+
+                # Q5.2=(c): predicate normalize flagged requires_human_review —
+                # append note alongside any existing review state.
+                if normalize_result and normalize_result.get("requires_human_review"):
+                    _flag_predicate_normalize_review(conn, new_id, normalize_result)
 
             conn.commit()
 

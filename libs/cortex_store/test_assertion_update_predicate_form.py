@@ -67,6 +67,12 @@ def _make_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(_ASSERTIONS_DDL)
+    # Phase B Q5.4 always-re-normalize calls DBEntityResolver(conn) which
+    # reads `entities`; the table must exist even when these tests don't
+    # exercise Class 2 entity rewriting.
+    conn.executescript(
+        "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL);"
+    )
     return conn
 
 
@@ -110,10 +116,11 @@ def test_predicate_form_null_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form=None)
 
-    result = _update_assertion_impl(aid, {"predicate_form": "X is-a Y"})
+    # Already-canonical input — Q5.4 always-re-normalize must be idempotent.
+    result = _update_assertion_impl(aid, {"predicate_form": "role(x, y, z)"})
 
-    assert result["predicate_form"] == "X is-a Y"
-    assert _get_predicate_form(conn, aid) == "X is-a Y"
+    assert result["predicate_form"] == "role(x, y, z)"
+    assert _get_predicate_form(conn, aid) == "role(x, y, z)"
 
 
 # ---------------------------------------------------------------------------
@@ -124,12 +131,12 @@ def test_predicate_form_null_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_predicate_form_value_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = _make_conn()
     _patch(monkeypatch, conn)
-    aid = _insert_assertion(conn, predicate_form="old_predicate")
+    aid = _insert_assertion(conn, predicate_form="role(old, x, y)")
 
-    result = _update_assertion_impl(aid, {"predicate_form": "new_predicate"})
+    result = _update_assertion_impl(aid, {"predicate_form": "role(new, x, y)"})
 
-    assert result["predicate_form"] == "new_predicate"
-    assert _get_predicate_form(conn, aid) == "new_predicate"
+    assert result["predicate_form"] == "role(new, x, y)"
+    assert _get_predicate_form(conn, aid) == "role(new, x, y)"
 
 
 # ---------------------------------------------------------------------------
@@ -142,9 +149,9 @@ def test_predicate_form_clear_via_explicit_null(
 ) -> None:
     conn = _make_conn()
     _patch(monkeypatch, conn)
-    aid = _insert_assertion(conn, predicate_form="to-be-cleared")
+    aid = _insert_assertion(conn, predicate_form="role(to_be_cleared, x, y)")
 
-    # Explicit null in dict → clearing intent
+    # Explicit null in dict → clearing intent (no normalize fires for null)
     result = _update_assertion_impl(aid, {"predicate_form": None})
 
     assert result["predicate_form"] is None
@@ -159,12 +166,12 @@ def test_predicate_form_clear_via_explicit_null(
 def test_predicate_form_untouched_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = _make_conn()
     _patch(monkeypatch, conn)
-    aid = _insert_assertion(conn, predicate_form="preserved")
+    aid = _insert_assertion(conn, predicate_form="role(preserved, x, y)")
 
     result = _update_assertion_impl(aid, {"review_status": "staged"})
 
-    assert result["predicate_form"] == "preserved"
-    assert _get_predicate_form(conn, aid) == "preserved"
+    assert result["predicate_form"] == "role(preserved, x, y)"
+    assert _get_predicate_form(conn, aid) == "role(preserved, x, y)"
 
 
 # ---------------------------------------------------------------------------
@@ -231,11 +238,11 @@ def test_dispatch_op_set_value(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form=None)
 
-    result = _op_assertion_update(assertion_id=aid, predicate_form="X is-a Y")
+    result = _op_assertion_update(assertion_id=aid, predicate_form="role(x, y, z)")
 
     assert "error" not in result, result
-    assert result["predicate_form"] == "X is-a Y"
-    assert _get_predicate_form(conn, aid) == "X is-a Y"
+    assert result["predicate_form"] == "role(x, y, z)"
+    assert _get_predicate_form(conn, aid) == "role(x, y, z)"
 
 
 def test_dispatch_op_predicate_form_absent_preserves_value(
@@ -247,13 +254,13 @@ def test_dispatch_op_predicate_form_absent_preserves_value(
 
     conn = _make_conn()
     _patch(monkeypatch, conn)
-    aid = _insert_assertion(conn, predicate_form="preserved")
+    aid = _insert_assertion(conn, predicate_form="role(preserved, x, y)")
 
     result = _op_assertion_update(assertion_id=aid, review_status="staged")
 
     assert "error" not in result, result
-    assert result["predicate_form"] == "preserved"
-    assert _get_predicate_form(conn, aid) == "preserved"
+    assert result["predicate_form"] == "role(preserved, x, y)"
+    assert _get_predicate_form(conn, aid) == "role(preserved, x, y)"
 
 
 def test_dispatch_op_only_predicate_form_clear_succeeds(
@@ -265,7 +272,7 @@ def test_dispatch_op_only_predicate_form_clear_succeeds(
 
     conn = _make_conn()
     _patch(monkeypatch, conn)
-    aid = _insert_assertion(conn, predicate_form="value")
+    aid = _insert_assertion(conn, predicate_form="role(value, x, y)")
 
     result = _op_assertion_update(assertion_id=aid, predicate_form=None)
 

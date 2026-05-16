@@ -38,6 +38,7 @@ from .classes import (
 )
 from .entity_resolve import (
     CortexEntityResolver,
+    DBEntityResolver,
     EntityResolver,
     StaticEntityResolver,
 )
@@ -128,6 +129,7 @@ def normalize_predicate_domain(
 
 __all__ = [
     "CortexEntityResolver",
+    "DBEntityResolver",
     "EntityResolver",
     "Predicate",
     "PredicateParseError",

@@ -46,9 +46,7 @@ def write_file_impl(path: str, content: str) -> dict[str, str]:
         logger.exception("write_file: OS error writing %s", dest)
         raise
 
-    record(
-        "mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content)
-    )
+    record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
     logger.debug("write_file: wrote %s (%d chars)", dest, len(content))
     return {"status": "written", "path": str(dest)}
 
@@ -148,9 +146,7 @@ def edit_file_impl(
         return result
     except (FileNotFoundError, ValueError) as exc:
         reason = (
-            "not_found"
-            if isinstance(exc, FileNotFoundError)
-            else "validation_error"
+            "not_found" if isinstance(exc, FileNotFoundError) else "validation_error"
         )
         record(
             "mcp.tool.file.edit_failed",

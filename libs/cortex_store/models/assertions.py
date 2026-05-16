@@ -76,6 +76,12 @@ class AssertionCreate(BaseModel):
             "See agent_skill:auditor-validatable-confidence."
         ),
     )
+    # v1.3 Q5: optional caller seed — when provided, the route handler
+    # normalizes via normalize_predicate_domain() before INSERT and stores
+    # the canonical_form. When absent, the field stays NULL on INSERT and
+    # the async predicate-extract pipeline populates it later. Additive —
+    # existing callers are unaffected (None default, no BC shim).
+    predicate_form: str | None = None
 
     _validate_artifact_uri = field_validator("artifact_uri")(
         reject_cortex_dropbox_source_uri
@@ -83,6 +89,18 @@ class AssertionCreate(BaseModel):
     _validate_evidence_uris = field_validator("evidence_uris")(
         reject_cortex_dropbox_uri_list
     )
+
+    @field_validator("predicate_form")
+    @classmethod
+    def _validate_predicate_form(cls, v: str | None) -> str | None:
+        if v is not None:
+            if not v.strip():
+                raise ValueError(
+                    "predicate_form must be a non-empty string when provided"
+                )
+            if len(v) > 2000:
+                raise ValueError("predicate_form must not exceed 2000 characters")
+        return v
 
 
 class AssertionItem(BaseModel):

@@ -13,6 +13,7 @@ the library has zero hard dependency on the cortex HTTP surface.
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Protocol
 
 import httpx
@@ -115,4 +116,43 @@ class CortexEntityResolver:
                     continue
                 if resp.status_code == 200:
                     return candidate
+        return None
+
+
+class DBEntityResolver:
+    """In-process entity resolver for use inside the cortex-api routes.
+
+    Mirrors CortexEntityResolver's resolution semantics via direct SQLite
+    reads instead of HTTP roundtrips, eliminating the loopback cost when
+    normalize_predicate_domain() runs inside the API process itself.
+
+    Resolution strategy: tries each known type prefix in ``_DEFAULT_TYPE_PREFIXES``
+    order, returning the first ``<type>:<slug>`` string that matches
+    ``entities.id`` exactly. No alias lookup — identical semantics to the
+    HTTP resolver's GET-by-ID path.
+
+    Per Q5.3 decision (b): this resolver is for in-process use only.
+    External callers (agents, pipelines) continue to use CortexEntityResolver.
+
+    ∀ DBEntityResolver(conn): conn must be a live sqlite3.Connection whose
+    ``entities`` table is accessible. The connection is not owned here — the
+    caller is responsible for its lifecycle.
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        type_prefixes: tuple[str, ...] = _DEFAULT_TYPE_PREFIXES,
+    ) -> None:
+        self._conn = conn
+        self._type_prefixes = type_prefixes
+
+    def resolve_slug(self, slug: str) -> str | None:
+        for prefix in self._type_prefixes:
+            candidate = f"{prefix}:{slug}"
+            row = self._conn.execute(
+                "SELECT id FROM entities WHERE id = ?", (candidate,)
+            ).fetchone()
+            if row:
+                return candidate
         return None

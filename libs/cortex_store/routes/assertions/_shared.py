@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 import threading
 
 from fastapi import APIRouter, HTTPException, status
@@ -142,6 +143,72 @@ _ASSERTION_COLS = (
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}
 
 
+def _normalize_predicate_form_for_write(
+    entity_id: str,
+    predicate_form: str,
+    claim: str,
+    conn: sqlite3.Connection,
+) -> tuple[str, dict]:
+    """Normalize a write-bound predicate_form via in-process DBEntityResolver.
+
+    Returns ``(canonical_form, result_dict)``. ``canonical_form`` is the
+    value to store; ``result_dict`` carries the full normalize output
+    (domain_key, canonical_form, classes_applied, requires_human_review)
+    for event-emission downstream.
+
+    Per Q5.3 decision (b): uses DBEntityResolver for entity resolution inside
+    the cortex-api process — no HTTP loopback to self. Per Q5.4 decision (a):
+    every non-null predicate_form write is re-normalized here, including those
+    already in canonical form; idempotency under re-normalize is an acceptance
+    invariant for Phase D.
+
+    Malformed input (PredicateParseError) is surfaced as HTTP 422 — the same
+    shape used for pydantic validation failures elsewhere in the route
+    package — so the cortex-api never 500s on garbage predicate_form values
+    written by upstream callers (e.g. the Stargate `predicate-extract` LLM
+    writeback path, whose output occasionally fails to parse).
+    """
+    from predicate_form import normalize_predicate_domain
+    from predicate_form.entity_resolve import DBEntityResolver
+    from predicate_form.parser import PredicateParseError
+
+    try:
+        result = normalize_predicate_domain(
+            entity_id,
+            predicate_form,
+            claim_text=claim,
+            resolver=DBEntityResolver(conn),
+        )
+    except PredicateParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "predicate_form_unparseable",
+                "message": str(exc),
+                "predicate_form": predicate_form,
+            },
+        ) from exc
+    return result["canonical_form"], result
+
+
+def _flag_predicate_normalize_review(
+    conn: sqlite3.Connection, assertion_id: int, normalize_result: dict
+) -> None:
+    """Append a 'predicate normalize: requires_human_review' note and flag the row.
+
+    Called inside WRITE_LOCK when normalize_result["requires_human_review"] is True.
+    Uses CASE WHEN to preserve any existing review_notes.
+    """
+    _note = "predicate normalize: requires_human_review"
+    conn.execute(
+        "UPDATE assertions SET review_status = 'flagged', "
+        "review_notes = CASE WHEN review_notes IS NOT NULL "
+        "THEN review_notes || '; ' || ? ELSE ? END "
+        "WHERE id = ?",
+        (_note, _note, assertion_id),
+    )
+
+
 def _payload_validation_exception(exc: ValidationError) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -165,6 +232,8 @@ __all__ = [
     "_VALID_REVIEW_STATUS",
     "_embed_assertion_background",
     "_log_search_access",
+    "_flag_predicate_normalize_review",
+    "_normalize_predicate_form_for_write",
     "_payload_validation_exception",
     "logger",
     "router",

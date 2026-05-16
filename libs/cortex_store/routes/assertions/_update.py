@@ -16,6 +16,8 @@ from ._shared import (
     _JSON_FIELDS,
     _VALID_CONFIDENCE,
     _VALID_REVIEW_STATUS,
+    _flag_predicate_normalize_review,
+    _normalize_predicate_form_for_write,
     _payload_validation_exception,
     logger,
     router,
@@ -38,7 +40,7 @@ def update_assertion(
     with cortex_conn() as conn:
         existing = query(
             conn,
-            "SELECT id, predicate_form FROM assertions WHERE id = ?",
+            "SELECT id, entity_id, claim, predicate_form FROM assertions WHERE id = ?",
             (assertion_id,),
         )
         if not existing:
@@ -129,6 +131,24 @@ def update_assertion(
             if "predicate_form" in body.model_fields_set:
                 update_map["predicate_form"] = body.predicate_form
                 predicate_form_explicitly_set = True
+        # v1.3 Q5: normalize predicate_form before UPDATE.
+        # Q5.4 always-re-normalize — runs even when value looks canonical.
+        # Outside WRITE_LOCK (DBEntityResolver reads entities.id, no writes).
+        normalize_result: dict | None = None
+        if (
+            predicate_form_explicitly_set
+            and update_map.get("predicate_form") is not None
+        ):
+            entity_id_for_norm = str(existing[0].get("entity_id") or "")
+            claim_for_norm = str(existing[0].get("claim") or "")
+            canonical, normalize_result = _normalize_predicate_form_for_write(
+                entity_id_for_norm,
+                update_map["predicate_form"],
+                claim_for_norm,
+                conn,
+            )
+            update_map["predicate_form"] = canonical
+
         sets: list[str] = []
         params: list[object] = []
         for col, val in update_map.items():
@@ -191,6 +211,10 @@ def update_assertion(
                         f"{existing_superseded_by}; pass force=true to override"
                     ),
                 )
+
+            # Q5.2=(c): flag if normalize found review-worthy form.
+            if normalize_result and normalize_result.get("requires_human_review"):
+                _flag_predicate_normalize_review(conn, assertion_id, normalize_result)
             conn.commit()
 
         if predicate_form_explicitly_set:

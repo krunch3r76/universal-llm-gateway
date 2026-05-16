@@ -59,9 +59,7 @@ def _structured_body_too_large(
         "reason": "body_too_large",
         "limit_chars": limit,
         "body_chars": body_chars,
-        "suggestion": detail.get(
-            "suggestion", "sidecar_markdown_or_allow_long_body"
-        ),
+        "suggestion": detail.get("suggestion", "sidecar_markdown_or_allow_long_body"),
     }
 
 

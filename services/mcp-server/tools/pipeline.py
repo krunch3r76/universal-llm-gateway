@@ -53,7 +53,12 @@ def _fetch_pipelines_metadata() -> dict[str, Any]:
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError:
-        logger.warning("Failed to fetch pipelines metadata from %s/%s", _STARGATE_URL, url, exc_info=True)
+        logger.warning(
+            "Failed to fetch pipelines metadata from %s/%s",
+            _STARGATE_URL,
+            url,
+            exc_info=True,
+        )
         raise
 
 

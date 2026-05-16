@@ -14,9 +14,7 @@ from mcp_events import monotonic_now, record
 
 FILES_ROOT = Path("/data/files")
 PDF_READ_TIMEOUT_S = 25.0  # 5s headroom before the observed ~30s remote-disconnect window (cortex 9119; agent-bus:962)
-PDF_LAYOUT_MAX_BYTES = int(
-    os.getenv("MCP_PDF_LAYOUT_MAX_BYTES", str(2 * 1024 * 1024))
-)
+PDF_LAYOUT_MAX_BYTES = int(os.getenv("MCP_PDF_LAYOUT_MAX_BYTES", str(2 * 1024 * 1024)))
 # 2 MB heuristic — observed timeouts (cortex friction 9742) spanned 1–3 MB
 # PDFs; threshold sits at mid-range. Tune via env if sub-2-MB timeouts surface.
 
