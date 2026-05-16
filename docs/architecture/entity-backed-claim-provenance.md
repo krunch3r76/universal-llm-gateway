@@ -629,7 +629,7 @@ The pattern across phases: **expansion at Phase 2 (entity creation), enrichment 
 
 ### 9.2.5 Auditor-validatability discipline applies at this phase
 
-Seed-data verification during § 9.2 (Bibliographic Index seeding) and § 9.3 (Exhibit seeding) is governed by the universal auditor-validatability discipline specified in `cortex-provenance-substrate-v1.md` § 5 (confirmed-confidence operational requirements) and § 6 (cross-model independence gate). Every `legal_source:`, `case-law:`, or `exhibit:` entity promoted to `status='confirmed'` MUST be validatable by an independent LLM auditor from the entity card alone — attributes + assertions + relationships — without access to the originating session's context; operational details (verbatim-quotation requirement, source URI grounding, derivation-type co-requirements, family/version independence granularity) live in the universal spec. See also `agent_skill:auditor-validatable-confidence` for the per-write checklist.
+Seed-data verification during § 9.2 (Bibliographic Index seeding) and § 9.3 (Exhibit seeding) is governed by the universal auditor-validatability gate (§ 5) and cross-model independence gate (§ 6) of `cortex://notes/system/threads/979-superheavy-upload-bundle/cortex-provenance-substrate-v1.md` (canonical workspace path forthcoming). Every `legal_source:`, `case-law:`, or `exhibit:` entity promoted to `status='confirmed'` must be validatable by an independent LLM auditor from the entity card alone — attributes + assertions + relationships — without access to the originating session's context. Operational detail lives in the substrate specification.
 
 ### 9.3 Phase 3 — Exhibit seeding (one session)
 
