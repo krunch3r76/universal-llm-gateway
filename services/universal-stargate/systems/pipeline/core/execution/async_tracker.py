@@ -81,6 +81,7 @@ class PipelineExecutionResult:
 
     content: str
     model: str
+    model_entity_id: str | None = None
     usage: dict[str, Any] | None = None
     duration_s: float = 0.0
     # Reasoning trace from reasoning-capable models (OpenAI GPT-5.x, o-series,
@@ -150,6 +151,7 @@ class PipelineExecutionRecord:
             result_payload = {
                 "content": self.result.content,
                 "model": self.result.model,
+                "model_entity_id": self.result.model_entity_id,
                 "usage": self.result.usage,
                 "duration_s": self.result.duration_s,
                 "reasoning": self.result.reasoning,
@@ -546,6 +548,7 @@ class PipelineExecutionTracker:
         *,
         content: str,
         model: str,
+        model_entity_id: str | None = None,
         usage: dict[str, Any] | None,
         duration_s: float,
         reasoning: Any = None,
@@ -565,6 +568,7 @@ class PipelineExecutionTracker:
         record.result = PipelineExecutionResult(
             content=content,
             model=model,
+            model_entity_id=model_entity_id,
             usage=usage,
             duration_s=duration_s,
             reasoning=reasoning,

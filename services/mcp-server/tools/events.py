@@ -149,7 +149,10 @@ def register_event_tools(mcp: FastMCP) -> None:
           request-trace        (request_id)          — all events for a request
           request-lifecycle    (request_id)          — snapshot phases for a request
           request-summary      ()                    — aggregate request stats
-          pipeline-trace       (execution_id)        — step-by-step execution trace
+          pipeline-trace       (execution_id)        — step-by-step execution trace;
+                                                       empty traces include
+                                                       pipeline_trace_not_found or
+                                                       pipeline_trace_aged_out
           compare-runs         (run_a, run_b)        — side-by-side metrics
           federation-health    ()                    — latest relay telemetry
           provider-health      (provider?)           — frontier generate health per provider

@@ -348,6 +348,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
     prompt_tokens: int,
     completion_tokens: int,
     provider: str,
+    model_entity_id: str = "",
     op: str = "",
     finish_reason: str | None = None,
     block_reason: str | None = None,
@@ -360,6 +361,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
         tool_calls_made: Total tool invocations across all turns
         reasoning_present: Whether the model surfaced reasoning trace text
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
         finish_reason: Provider-native finish reason from the final response
             (``stop`` | ``tool_calls`` | ``length`` | ``end_turn`` | None).
@@ -379,6 +381,7 @@ def PipelineFrontierDispatchCompleted(  # noqa: N802
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "provider": provider,
+            "model_entity_id": model_entity_id,
             "op": op,
             "finish_reason": finish_reason,
             "block_reason": block_reason,
@@ -392,6 +395,7 @@ def PipelineFrontierDispatchRemoteMcpEnabled(  # noqa: N802
     execution_id: str,
     agent: str | None,
     model: str,
+    model_entity_id: str,
     provider: str,
 ) -> Event:
     """Emitted once per ``frontier_dispatch_v1`` execution with ``remote_mcp=True``.
@@ -404,6 +408,7 @@ def PipelineFrontierDispatchRemoteMcpEnabled(  # noqa: N802
         execution_id: Pipeline execution UUID
         agent: Persona identity if set, else ``None`` for persona-free
         model: Raw model string as supplied by the caller
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         provider: Effective provider (``anthropic``, ``openai``, ``xai``)
     """
     return Event(
@@ -412,6 +417,7 @@ def PipelineFrontierDispatchRemoteMcpEnabled(  # noqa: N802
             "execution_id": execution_id,
             "agent": agent,
             "model": model,
+            "model_entity_id": model_entity_id,
             "provider": provider,
         },
         scope="node",
@@ -495,6 +501,7 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
     execution_id: str,
     agent: str | None,
     model: str,
+    model_entity_id: str,
     provider: str,
     boot_level: str,
     remote_mcp: bool,
@@ -512,6 +519,7 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
         execution_id: Pipeline execution UUID
         agent: Persona identity if set, else ``None`` for persona-free dispatches
         model: Raw model string as supplied by the caller
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
         boot_level: Internal observability vocabulary derived from agent
             presence at dispatch: ``team`` (persona dispatch) or ``none``
@@ -527,6 +535,7 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
             "execution_id": execution_id,
             "agent": agent,
             "model": model,
+            "model_entity_id": model_entity_id,
             "provider": provider,
             "boot_level": boot_level,
             "remote_mcp": remote_mcp,
@@ -541,6 +550,7 @@ def PipelineFrontierDispatchEmptyCompletion(  # noqa: N802
     execution_id: str,
     agent: str | None,
     model: str,
+    model_entity_id: str,
     provider: str,
     turns_used: int,
     tool_calls_made: int,
@@ -564,6 +574,7 @@ def PipelineFrontierDispatchEmptyCompletion(  # noqa: N802
         execution_id: Pipeline execution UUID
         agent: Persona identity if set, else ``None``
         model: Raw model string as supplied by the caller
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         provider: Effective provider (``anthropic``, ``openai``, ``xai``, ``google``)
         turns_used: Number of tool-call/response cycles before terminal
         tool_calls_made: Total tool invocations across all turns
@@ -576,6 +587,7 @@ def PipelineFrontierDispatchEmptyCompletion(  # noqa: N802
             "execution_id": execution_id,
             "agent": agent,
             "model": model,
+            "model_entity_id": model_entity_id,
             "provider": provider,
             "turns_used": turns_used,
             "tool_calls_made": tool_calls_made,
@@ -809,6 +821,7 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
     turns_used: int,
     tool_calls_made: int,
     provider: str,
+    model_entity_id: str = "",
     op: str = "",
     finish_reason: str | None = None,
     block_reason: str | None = None,
@@ -831,6 +844,7 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
 
     Payload:
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
+        model_entity_id: Canonical Cortex model entity id for the admitted model
         finish_reason: Provider-native finish reason on the final response.
         block_reason: Provider-native block reason, if any.
         enforcement: ``client`` | ``provider`` — which side stopped the loop.
@@ -843,6 +857,7 @@ def PipelineFrontierDispatchExhausted(  # noqa: N802
             "turns_used": turns_used,
             "tool_calls_made": tool_calls_made,
             "provider": provider,
+            "model_entity_id": model_entity_id,
             "op": op,
             "finish_reason": finish_reason,
             "block_reason": block_reason,

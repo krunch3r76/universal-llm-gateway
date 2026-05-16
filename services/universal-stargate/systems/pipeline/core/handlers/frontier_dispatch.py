@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from agent_seat.native_loop import NativeLoopResult, run_native_tool_loop
 from llm_adapters import FrontierRequest, effective_provider_for_model
 from llm_adapters._mcp_entry import RemoteMcpEnvMissingError
-from model_id import ModelId
+from model_id import ModelId, canonical_model_entity_id
 
 from ..events.dispatch import (
     PipelineFrontierDispatchCompleted,
@@ -119,6 +119,7 @@ class FrontierDispatchHandler(BaseHandler):
             "max_tool_turns",
             "system",
             "generation_parameters",
+            "model_entity_id",
             "_endpoint_request_id",
             # dispatch-surface-split Phase 1: consumed by output_short gate (Phase 3)
             "output_contract",
@@ -136,6 +137,9 @@ class FrontierDispatchHandler(BaseHandler):
         opts = context.options
         agent = resolve_agent(opts, step)
         model = await resolve_model(opts, step, context, agent=agent)
+        model_entity_id = str(
+            opts.get("model_entity_id") or canonical_model_entity_id(model)
+        )
         provider = effective_provider_for_model(ModelId.parse(model).provider)
         publish = lambda event: self._publish_bus_event(context, event)  # noqa: E731
         if agent is not None:
@@ -197,6 +201,7 @@ class FrontierDispatchHandler(BaseHandler):
                     execution_id=context.execution_id,
                     agent=agent,
                     model=model,
+                    model_entity_id=model_entity_id,
                     provider=provider,
                 )
             )
@@ -221,7 +226,11 @@ class FrontierDispatchHandler(BaseHandler):
             and effort_raw
             and not gen_params.get("thinking")
         ):
-            translated = translate_reasoning_effort(effort_raw, provider)
+            translated = translate_reasoning_effort(
+                effort_raw,
+                provider,
+                model=model,
+            )
             if translated is not None:
                 gen_params["thinking"] = translated
 
@@ -298,6 +307,7 @@ class FrontierDispatchHandler(BaseHandler):
                 execution_id=context.execution_id,
                 agent=agent,
                 model=model,
+                model_entity_id=model_entity_id,
                 provider=provider,
                 boot_level="team" if agent else "none",
                 remote_mcp=remote_mcp,
@@ -349,6 +359,7 @@ class FrontierDispatchHandler(BaseHandler):
                     turns_used=result.turns_used,
                     tool_calls_made=result.tool_calls_made,
                     provider=result.provider,
+                    model_entity_id=model_entity_id,
                     op=opts.get("op", ""),
                     finish_reason=finish_reason,
                     block_reason=block_reason,
@@ -380,6 +391,7 @@ class FrontierDispatchHandler(BaseHandler):
                     prompt_tokens=result.usage.get("input_tokens", 0),
                     completion_tokens=result.usage.get("output_tokens", 0),
                     provider=result.provider,
+                    model_entity_id=model_entity_id,
                     op=opts.get("op", ""),
                     finish_reason=finish_reason,
                     block_reason=block_reason,
@@ -410,6 +422,7 @@ class FrontierDispatchHandler(BaseHandler):
                             turns_used=result.turns_used,
                             tool_calls_made=result.tool_calls_made,
                             provider=result.provider,
+                            model_entity_id=model_entity_id,
                             op=opts.get("op", ""),
                             finish_reason=finish_reason,
                             block_reason=block_reason,
@@ -424,6 +437,7 @@ class FrontierDispatchHandler(BaseHandler):
                             execution_id=context.execution_id,
                             agent=agent,
                             model=model,
+                            model_entity_id=model_entity_id,
                             provider=result.provider,
                             turns_used=result.turns_used,
                             tool_calls_made=result.tool_calls_made,
@@ -487,6 +501,7 @@ class FrontierDispatchHandler(BaseHandler):
             "exhausted": result.exhausted,
             "cancelled": result.cancelled,
             "provider": result.provider,
+            "model_entity_id": model_entity_id,
             "finish_reason": finish_reason,
             "block_reason": block_reason,
             "exhaustion_summary": exhaustion_summary,

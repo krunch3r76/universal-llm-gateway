@@ -7,6 +7,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from .dispatch_journal import fetch_dispatch_journal_summary
 from .operation_parameters import (
     _coerce_limit,
     _coerce_since_ts,
@@ -25,6 +26,24 @@ _STARTUP_SIGNALS: tuple[str, ...] = (
 )
 
 
+async def _event_store_floor(store: EventStore) -> dict[str, Any]:
+    rows = await store.query(
+        "SELECT seq, ts_unix_ms, timestamp FROM events ORDER BY ts_unix_ms ASC, seq ASC LIMIT 1",
+        (),
+        limit=1,
+    )
+    count_rows = await store.query("SELECT COUNT(*) AS count FROM events", (), limit=1)
+    count = int(count_rows[0].get("count") or 0) if count_rows else 0
+    if not rows:
+        return {"event_count": count, "floor_ts_unix_ms": None, "floor_timestamp": None}
+    row = rows[0]
+    return {
+        "event_count": count,
+        "floor_ts_unix_ms": row.get("ts_unix_ms"),
+        "floor_timestamp": row.get("timestamp"),
+    }
+
+
 async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     execution_id = params.get("execution_id") or ""
     if not execution_id:
@@ -36,6 +55,47 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
         (execution_id, limit),
     )
     rows.reverse()
+    if not rows:
+        retention = await _event_store_floor(store)
+        cold_record = fetch_dispatch_journal_summary(execution_id)
+        if cold_record is not None:
+            return {
+                "execution_id": execution_id,
+                "steps": [],
+                "event_count": 0,
+                "limit": limit,
+                "total_tokens_in": 0,
+                "total_tokens_out": 0,
+                "total_tokens": 0,
+                "error": {
+                    "code": "pipeline_trace_aged_out",
+                    "message": (
+                        "No warm events remain for this execution_id, but the "
+                        "dispatch journal confirms the execution existed. "
+                        "Reproduce with telemetry coverage for a full trace."
+                    ),
+                },
+                "retention": retention,
+                "cold_record": cold_record,
+            }
+        return {
+            "execution_id": execution_id,
+            "steps": [],
+            "event_count": 0,
+            "limit": limit,
+            "total_tokens_in": 0,
+            "total_tokens_out": 0,
+            "total_tokens": 0,
+            "error": {
+                "code": "pipeline_trace_not_found",
+                "message": (
+                    "No events or dispatch-journal record found for this execution_id. "
+                    "If the execution predates the retention floor, the trace may have "
+                    "aged out before investigation."
+                ),
+            },
+            "retention": retention,
+        }
 
     steps: list[dict[str, Any]] = []
     total_tokens_in = 0
@@ -62,6 +122,10 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
         }
         if "model_id" in payload:
             step_info["model"] = payload["model_id"]
+        elif "model" in payload:
+            step_info["model"] = payload["model"]
+        if "model_entity_id" in payload:
+            step_info["model_entity_id"] = payload["model_entity_id"]
         if "duration_ms" in payload:
             step_info["duration_ms"] = payload["duration_ms"]
         if "tokens_in" in payload:

@@ -711,6 +711,93 @@ async def test_handler_rejects_unknown_reasoning_effort(
         await handler.execute(step, context)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+async def test_handler_anthropic_opus47_reasoning_effort_uses_adaptive_thinking(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    effort: str,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "anthropic/claude-opus-4-7",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": effort},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    req = captured["req"]
+    assert req.thinking == {"type": "adaptive"}
+    assert req.effort == effort
+
+
+@pytest.mark.asyncio
+async def test_handler_anthropic_legacy_reasoning_effort_keeps_budget_tokens(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="anthropic")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "anthropic/claude-opus-4-5",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": "medium"},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    assert captured["req"].thinking == {"type": "enabled", "budget_tokens": 8192}
+
+
+@pytest.mark.asyncio
+async def test_handler_surfaces_canonical_model_entity_id(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+    published_events: list[Any],
+) -> None:
+    async def fake_loop(**_kwargs: Any) -> _FakeLoopResult:
+        return _FakeLoopResult(provider="google")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "google/gemini-3.1-pro-preview",
+            "mcp": False,
+        }
+    )
+
+    out = await handler.execute(step, context)
+
+    assert out.json["model_entity_id"] == "model:gemini-3.1-pro-preview"
+    started = next(
+        e for e in published_events if e.signal == "pipeline.frontier.dispatch.started"
+    )
+    assert started.payload["model"] == "google/gemini-3.1-pro-preview"
+    assert started.payload["model_entity_id"] == "model:gemini-3.1-pro-preview"
+
+
 def test_resolve_remote_mcp_defaults_by_provider() -> None:
     h = FrontierDispatchHandler()
     step = _FakeStep()

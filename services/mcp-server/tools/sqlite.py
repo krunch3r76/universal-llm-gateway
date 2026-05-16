@@ -12,7 +12,6 @@ Safety:
 
 from __future__ import annotations
 
-import logging
 import os
 import re
 import sqlite3
@@ -21,11 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 from mcp_events import monotonic_now, record
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _CONFIG_PATH = Path(os.getenv("SQLITE_CONFIG_PATH", "/data/sqlite-config.yaml"))
 _DEFAULT_MAX_ROWS = 100
@@ -36,6 +36,7 @@ _DESTRUCTIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SELECT_PATTERN = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
+_CANONICAL_CORTEX_DB = "cortex"
 
 _SEED_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS mcp_tools (
@@ -135,6 +136,29 @@ def _resolve_db_path(db_name: str) -> Path | None:
     return Path(os.path.expanduser(raw_path))
 
 
+def _normalize_read_db_name(db: str) -> str:
+    """Treat omitted/empty read database names as the agent-facing Cortex DB."""
+    clean = db.strip()
+    return clean or _CANONICAL_CORTEX_DB
+
+
+def _normalize_write_db_name(db: str) -> str | None:
+    """Require explicit DB names for writes; empty write targets are unsafe."""
+    clean = db.strip()
+    return clean or None
+
+
+def _unknown_db_error(db: str) -> dict[str, str]:
+    configured = ", ".join(sorted(str(name) for name in _CONFIG["databases"])) or "none"
+    return {
+        "error": (
+            f"Unknown database {db!r}. For Cortex assertions/entities queries, "
+            f"use db='{_CANONICAL_CORTEX_DB}'. Configured databases: {configured}. "
+            "Use sqlite_list_databases for paths and descriptions."
+        )
+    }
+
+
 def _seed_default_db(db_path: Path) -> None:
     """Create seed tables in the default database if it doesn't exist yet."""
     if db_path.exists():
@@ -183,18 +207,14 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="SQLite: Schema")
     def sqlite_schema(
-        db: str = "default",
+        db: str = _CANONICAL_CORTEX_DB,
         table: str | None = None,
     ) -> dict[str, Any]:
-        """Introspect database schema — list tables and their columns."""
+        """Introspect schema. Use db='cortex' for assertions/entities tables."""
+        db = _normalize_read_db_name(db)
         db_path = _resolve_db_path(db)
         if db_path is None:
-            return {
-                "error": (
-                    f"Unknown database {db!r}. "
-                    "Use sqlite_list_databases to see available databases."
-                )
-            }
+            return _unknown_db_error(db)
         if not db_path.exists():
             return {"error": f"Database file does not exist: {db!r}"}
 
@@ -259,18 +279,14 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="SQL Query (Read-Only)")
     def sql(
         sql: str,
-        db: str = "default",
+        db: str = _CANONICAL_CORTEX_DB,
         params: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute a read-only SELECT query against a SQLite database."""
+        """Execute read-only SELECT. Defaults to db='cortex' for Cortex queries."""
+        db = _normalize_read_db_name(db)
         db_path = _resolve_db_path(db)
         if db_path is None:
-            return {
-                "error": (
-                    f"Unknown database {db!r}. "
-                    "Use sqlite_list_databases to see available databases."
-                )
-            }
+            return _unknown_db_error(db)
         if not db_path.exists():
             return {"error": f"Database file does not exist: {db!r}"}
         if not _SELECT_PATTERN.match(sql):
@@ -315,14 +331,19 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         params: list[Any] | None = None,
     ) -> dict[str, Any]:
         """Execute a write statement against a SQLite database."""
-        db_path = _resolve_db_path(db)
-        if db_path is None:
+        normalized_db = _normalize_write_db_name(db)
+        if normalized_db is None:
             return {
                 "error": (
-                    f"Unknown database {db!r}. "
-                    "Use sqlite_list_databases to see available databases."
+                    "sqlite_execute requires an explicit db name for writes. "
+                    "Use db='cortex' only when you intentionally want to mutate "
+                    "the Cortex database."
                 )
             }
+        db = normalized_db
+        db_path = _resolve_db_path(db)
+        if db_path is None:
+            return _unknown_db_error(db)
         if not db_path.exists():
             return {"error": f"Database file does not exist: {db!r}"}
         if _SELECT_PATTERN.match(sql):

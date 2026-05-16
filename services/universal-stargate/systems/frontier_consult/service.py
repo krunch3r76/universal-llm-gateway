@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 import httpx
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
+from model_id import canonical_model_entity_id
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from .events import (
@@ -267,6 +268,7 @@ async def build_dispatch_body(
             field="model",
             reason="`model` is required when role has no default_model",
         )
+    model_entity_id = canonical_model_entity_id(effective_model)
 
     _enforce_model(
         request_id=request_id,
@@ -330,6 +332,7 @@ async def build_dispatch_body(
 
     pipeline_options: dict[str, Any] = {
         "model": effective_model,
+        "model_entity_id": model_entity_id,
         "system": system_assembled,
         "generation_parameters": generation_options,
         "mcp": mcp_enabled,

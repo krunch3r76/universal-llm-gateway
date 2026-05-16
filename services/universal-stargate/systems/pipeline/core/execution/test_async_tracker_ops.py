@@ -38,3 +38,25 @@ def test_tracker_stats_shape() -> None:
     )
     assert running == 1
     assert completed == 1
+
+
+def test_complete_execution_serializes_model_entity_id_separately() -> None:
+    tracker = PipelineExecutionTracker()
+    tracker.register_execution(
+        execution_id="e1",
+        pipeline="frontier-dispatch",
+        started_at="t0",
+    )
+
+    tracker.complete_execution(
+        "e1",
+        content="ok",
+        model="frontier-dispatch",
+        model_entity_id="model:gemini-2.5-pro",
+        usage=None,
+        duration_s=1.0,
+    )
+
+    payload = tracker.get("e1").to_dict()  # type: ignore[union-attr]
+    assert payload["result"]["model"] == "frontier-dispatch"
+    assert payload["result"]["model_entity_id"] == "model:gemini-2.5-pro"

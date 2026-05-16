@@ -26,8 +26,8 @@ if TYPE_CHECKING:
 # Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
 # knob on ``frontier_dispatch`` / ``/api/v1/frontier/dispatch``.
 #
-# - Anthropic: ``budget_tokens`` (max_tokens auto-bumped by the adapter).
-#   Numbers parallel Google's 2.5 budget map for predictable behavior.
+# - Anthropic: model-specific thinking config. Opus 4.7 only accepts adaptive
+#   thinking; older/manual-only models still receive budget_tokens.
 # - OpenAI / xAI / OpenRouter: lowercase string consumed by the Responses
 #   API as ``reasoning.effort``. grok-4 strips it adapter-side (built-in
 #   reasoning, no effort control) — observable via INFO log.
@@ -40,7 +40,17 @@ _REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
 }
 
 
-def translate_reasoning_effort(effort: str, provider: str) -> dict[str, Any] | None:
+def _anthropic_uses_adaptive_thinking(model: str | None) -> bool:
+    """Return true when Anthropic rejects manual budget-token thinking."""
+    if not model:
+        return False
+    normalized = model.lower()
+    return "claude-opus-4-7" in normalized
+
+
+def translate_reasoning_effort(
+    effort: str, provider: str, *, model: str | None = None
+) -> dict[str, Any] | None:
     """Map ``reasoning_effort`` to a provider-native ``thinking`` dict."""
     normalized = effort.strip().lower()
     if normalized not in _REASONING_EFFORT_BUDGET_TOKENS:
@@ -48,6 +58,8 @@ def translate_reasoning_effort(effort: str, provider: str) -> dict[str, Any] | N
             f"reasoning_effort={effort!r} must be one of: low, medium, high"
         )
     if provider == "anthropic":
+        if _anthropic_uses_adaptive_thinking(model):
+            return {"type": "adaptive"}
         budget = _REASONING_EFFORT_BUDGET_TOKENS[normalized]
         return {"type": "enabled", "budget_tokens": budget}
     if provider == "google":

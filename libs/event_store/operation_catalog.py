@@ -96,7 +96,10 @@ _register(
 _register(
     OperationDef(
         name="pipeline-trace",
-        description="Step-by-step trace for a pipeline execution",
+        description=(
+            "Step-by-step trace for a pipeline execution; returns "
+            "pipeline_trace_aged_out when only the dispatch journal remains"
+        ),
         params={
             "execution_id": {"type": "string", "required": True},
             "limit": {"type": "int", "default": 200},

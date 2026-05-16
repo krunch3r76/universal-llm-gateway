@@ -13,6 +13,7 @@ Examples:
     >>> m.normalized        # "hermes-16384" (strips -hybrid, keeps -cpu)
 """
 
+from .entity import canonical_model_entity_id, canonical_model_slug
 from .model_id import ModelId, get_compute_type, parse_model_id
 from .validation import validate_model_id, validate_model_id_strict
 
@@ -20,6 +21,8 @@ __all__ = [
     "ModelId",
     "parse_model_id",
     "get_compute_type",
+    "canonical_model_slug",
+    "canonical_model_entity_id",
     "validate_model_id",
     "validate_model_id_strict",
 ]

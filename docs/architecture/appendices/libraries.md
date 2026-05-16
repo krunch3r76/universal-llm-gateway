@@ -47,6 +47,9 @@ pipeline (`/overhaul` command). No runtime service dependency.
 Embeddable Event Service library. Can run standalone
 (`python -m event_store serve`). Backing store and query layer for the Event
 Service. Used by the `event_service` systemd service.
+`operations_trace` uses `dispatch_journal` helpers to read cold
+`pipeline-dispatch.db` summaries when warm SQLite rows no longer cover an
+`execution_id` (aged-out pipeline traces).
 
 ---
 
@@ -93,6 +96,8 @@ boundaries, pass `ModelId` objects internally. Key properties:
 `.routing_key` (gateway API calls), `.normalized` (dict keys),
 `.catalog_lookup_id` (config lookup), `.synthetic_id` (wire serialisation).
 `str(model_id)` returns `.original` — display only, not for equality checks.
+`canonical_model_entity_id()` maps a resolved model string to a stable entity
+identifier for frontier dispatch completion payloads.
 
 See workspace rule `modelid.mdc` for the full invariant set.
 
