@@ -26,6 +26,36 @@ from ._shared import (
 from .ops_entities import _op_entities
 
 
+def _emit_predicate_form_normalize_events(
+    *, assertion_id: int | None, normalize_payload: dict[str, Any] | None
+) -> None:
+    """Emit mcp.cortex.predicate.* signals from a route's normalize envelope.
+
+    Sibling-family parity (Q5.5 / dispatch packet): every cortex-api write that
+    surfaces ``predicate_form_normalize`` on its response fires
+    ``mcp.cortex.predicate.normalized`` here; ``requires_human_review`` adds a
+    parallel ``mcp.cortex.predicate.review.required`` signal. Routes stay
+    HTTP-only — emission lives at the dispatcher contract layer alongside the
+    existing ``mcp.cortex.assertion.*`` family.
+    """
+    if not normalize_payload:
+        return
+    common: dict[str, Any] = {
+        "assertion_id": assertion_id,
+        "predicate_form_in": normalize_payload.get("predicate_form_in"),
+        "canonical_form": normalize_payload.get("canonical_form"),
+        "classes_applied": normalize_payload.get("classes_applied") or [],
+        "normalized": bool(normalize_payload.get("normalized")),
+    }
+    record(
+        "mcp.cortex.predicate.normalized",
+        requires_human_review=bool(normalize_payload.get("requires_human_review")),
+        **common,
+    )
+    if normalize_payload.get("requires_human_review"):
+        record("mcp.cortex.predicate.review.required", **common)
+
+
 def _op_friction_close(
     assertion_id: int | None = None, resolution_kind: str | None = None, **_: object
 ) -> dict[str, Any]:
@@ -181,6 +211,10 @@ def _op_assert(
         logger.info("cortex assert: %s — %s (%s)", entity_id, claim[:60], confidence)
         record(
             "mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence
+        )
+        _emit_predicate_form_normalize_events(
+            assertion_id=(result.get("item") or {}).get("id"),
+            normalize_payload=result.get("predicate_form_normalize"),
         )
         if result.get("validation_warnings"):
             warnings = result["validation_warnings"]
@@ -376,6 +410,10 @@ def _op_assertion_update(
         if predicate_form is not _UNSET:
             record_kwargs["predicate_form_new"] = predicate_form
         record("mcp.cortex.assertion.updated", **record_kwargs)
+        _emit_predicate_form_normalize_events(
+            assertion_id=assertion_id,
+            normalize_payload=result.get("predicate_form_normalize"),
+        )
     return result
 
 

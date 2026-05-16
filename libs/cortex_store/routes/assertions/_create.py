@@ -34,6 +34,7 @@ from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
     _VALID_CONFIDENCE,
+    _build_predicate_form_normalize,
     _embed_assertion_background,
     _flag_predicate_normalize_review,
     _normalize_predicate_form_for_write,
@@ -337,12 +338,19 @@ def create_assertion(
             },
         )
 
+    predicate_form_normalize_out = None
+    if normalize_result is not None and body.predicate_form is not None:
+        predicate_form_normalize_out = _build_predicate_form_normalize(
+            body.predicate_form, normalize_result
+        )
+
     return AssertionCreateResponse(
         was_new=was_new,
         item=item,
         near_duplicate_warning=near_dup_warning,
         validation_warnings=validation_warnings,
         contradiction_warnings=contradiction_warnings_out,
+        predicate_form_normalize=predicate_form_normalize_out,
     )
 
 

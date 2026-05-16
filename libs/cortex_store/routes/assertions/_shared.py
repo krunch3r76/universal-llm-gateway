@@ -25,7 +25,7 @@ from pydantic import ValidationError
 from ... import embeddings as cortex_embeddings
 from ... import vector_store
 from ...db import WRITE_LOCK, cortex_conn
-from ...models import AssertionItem
+from ...models import AssertionItem, PredicateFormNormalize
 from ...projection_guard import assert_projection_covers_required
 
 logger = logging.getLogger("cortex-api.assertions")
@@ -191,6 +191,29 @@ def _normalize_predicate_form_for_write(
     return result["canonical_form"], result
 
 
+def _build_predicate_form_normalize(
+    predicate_form_in: str, normalize_result: dict
+) -> PredicateFormNormalize:
+    """Project a normalize_result dict into the response-envelope model.
+
+    Surface contract for the MCP dispatcher event-emission layer (Option A,
+    Q5.5 deferral): ``classes_applied`` non-empty ⟺ ``normalized=True``
+    (canonical form differs from the input or at least one normalization
+    class fired). Per the dispatch packet, the dispatcher fires
+    ``mcp.cortex.predicate.normalized`` on every write that touches this
+    helper, and ``mcp.cortex.predicate.review.required`` when
+    ``requires_human_review`` is True.
+    """
+    classes_applied = list(normalize_result.get("classes_applied") or [])
+    return PredicateFormNormalize(
+        predicate_form_in=predicate_form_in,
+        canonical_form=normalize_result["canonical_form"],
+        classes_applied=classes_applied,
+        normalized=bool(classes_applied),
+        requires_human_review=bool(normalize_result.get("requires_human_review")),
+    )
+
+
 def _flag_predicate_normalize_review(
     conn: sqlite3.Connection, assertion_id: int, normalize_result: dict
 ) -> None:
@@ -230,6 +253,7 @@ __all__ = [
     "_SESSION_TAG_RE",
     "_VALID_CONFIDENCE",
     "_VALID_REVIEW_STATUS",
+    "_build_predicate_form_normalize",
     "_embed_assertion_background",
     "_log_search_access",
     "_flag_predicate_normalize_review",

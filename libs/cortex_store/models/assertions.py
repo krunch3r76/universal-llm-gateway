@@ -251,12 +251,48 @@ class ActionHint(BaseModel):
     action: str
 
 
+class PredicateFormNormalize(BaseModel):
+    """Result of v1.3 predicate_form normalize-on-write.
+
+    Surfaced on assertion create/update responses when the caller seeded a
+    ``predicate_form`` and the route ran ``normalize_predicate_domain`` over it.
+    The MCP dispatcher layer reads this field and emits
+    ``mcp.cortex.predicate.normalized`` (always) and
+    ``mcp.cortex.predicate.review.required`` (when ``requires_human_review`` is
+    True). cortex-api itself stays HTTP-only — no ``mcp_events`` dep — so the
+    emission surface lives at the dispatcher contract layer, matching the
+    sibling-family invariant for ``mcp.cortex.assertion.*`` signals (per
+    assertion 10259 / Q5.5 deferral, dispatch packet
+    ``cortex://notes/system/threads/cortex-api-event-emission-surface-dispatch.md``).
+    """
+
+    predicate_form_in: str
+    canonical_form: str
+    classes_applied: list[int] = Field(default_factory=list)
+    normalized: bool
+    requires_human_review: bool
+
+
 class AssertionCreateResponse(BaseModel):
     was_new: bool
     item: AssertionItem
     near_duplicate_warning: NearDuplicateWarning | None = None
     validation_warnings: list[dict[str, str]] | None = None
     contradiction_warnings: list[ContradictionConflict] | None = None
+    predicate_form_normalize: PredicateFormNormalize | None = None
+
+
+class AssertionUpdateResponse(BaseModel):
+    """Envelope for PATCH /assertions/{id}.
+
+    Wraps ``item`` (the post-update row) with optional
+    ``predicate_form_normalize`` so the MCP dispatcher layer can emit
+    ``mcp.cortex.predicate.normalized`` / ``.review.required`` without
+    a new dep into cortex-api routes. See ``PredicateFormNormalize``.
+    """
+
+    item: AssertionItem
+    predicate_form_normalize: PredicateFormNormalize | None = None
 
 
 class CompactionProjection(BaseModel):

@@ -10,12 +10,13 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from ...db import WRITE_LOCK, cortex_conn, decode_row, query
-from ...models import AssertionItem, AssertionUpdate
+from ...models import AssertionItem, AssertionUpdate, AssertionUpdateResponse
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
     _VALID_CONFIDENCE,
     _VALID_REVIEW_STATUS,
+    _build_predicate_form_normalize,
     _flag_predicate_normalize_review,
     _normalize_predicate_form_for_write,
     _payload_validation_exception,
@@ -24,10 +25,10 @@ from ._shared import (
 )
 
 
-@router.patch("/{assertion_id}", response_model=AssertionItem)
+@router.patch("/{assertion_id}", response_model=AssertionUpdateResponse)
 def update_assertion(
     assertion_id: int, body: AssertionUpdate | dict[str, Any]
-) -> AssertionItem:
+) -> AssertionUpdateResponse:
     """Update assertion metadata — supersession, confidence, review status.
 
     Idempotency guard on superseded_by: when superseded_by is being set and
@@ -135,15 +136,17 @@ def update_assertion(
         # Q5.4 always-re-normalize — runs even when value looks canonical.
         # Outside WRITE_LOCK (DBEntityResolver reads entities.id, no writes).
         normalize_result: dict | None = None
+        predicate_form_in_for_event: str | None = None
         if (
             predicate_form_explicitly_set
             and update_map.get("predicate_form") is not None
         ):
             entity_id_for_norm = str(existing[0].get("entity_id") or "")
             claim_for_norm = str(existing[0].get("claim") or "")
+            predicate_form_in_for_event = str(update_map["predicate_form"])
             canonical, normalize_result = _normalize_predicate_form_for_write(
                 entity_id_for_norm,
-                update_map["predicate_form"],
+                predicate_form_in_for_event,
                 claim_for_norm,
                 conn,
             )
@@ -236,7 +239,15 @@ def update_assertion(
             (assertion_id,),
         )
 
-    return AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+    item = AssertionItem(**decode_row(rows[0], _JSON_FIELDS))
+    predicate_form_normalize_out = None
+    if normalize_result is not None and predicate_form_in_for_event is not None:
+        predicate_form_normalize_out = _build_predicate_form_normalize(
+            predicate_form_in_for_event, normalize_result
+        )
+    return AssertionUpdateResponse(
+        item=item, predicate_form_normalize=predicate_form_normalize_out
+    )
 
 
 def _update_assertion_impl(
@@ -247,7 +258,17 @@ def _update_assertion_impl(
     except ValidationError as exc:
         raise _payload_validation_exception(exc) from exc
     result = update_assertion(assertion_id, body)
-    return result.model_dump(mode="json")
+    # Flatten envelope at the impl boundary: dispatch_ops and existing
+    # consumers read flat AssertionItem fields (id, claim, superseded_by,
+    # …). The HTTP route exposes the envelope; the impl preserves the
+    # flat shape with an additive sibling key. Q5.5 / dispatch packet
+    # `cortex://notes/system/threads/cortex-api-event-emission-surface-dispatch.md`.
+    item_dump = result.item.model_dump(mode="json")
+    if result.predicate_form_normalize is not None:
+        item_dump["predicate_form_normalize"] = (
+            result.predicate_form_normalize.model_dump(mode="json")
+        )
+    return item_dump
 
 
 __all__ = ["_update_assertion_impl", "update_assertion"]
