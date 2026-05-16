@@ -57,6 +57,7 @@ from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._paths import _FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
+from tools.grok_build import register_grok_build_tools
 from tools.ingest_document import register_ingest_document_tools
 from tools.llm import register_llm_tools
 from tools.manage import register_manage_tools
@@ -275,6 +276,7 @@ def _build_server() -> FastMCP:
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_frontier_tools(mcp)
+    register_grok_build_tools(mcp)
     register_quality_tools(mcp)
     register_agent_bus_tools(mcp)
     register_agent_consult_tools(mcp)
