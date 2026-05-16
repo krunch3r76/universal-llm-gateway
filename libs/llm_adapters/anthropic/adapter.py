@@ -241,7 +241,6 @@ class AnthropicAdapter:
         content_parts: list[str] = []
         thinking_parts: list[str] = []
         thinking_blocks: list[dict[str, Any]] = []
-        thinking_tokens = 0
         tool_calls: list[dict[str, Any]] = []
         server_tool_calls: list[dict[str, Any]] = []
 
@@ -272,6 +271,21 @@ class AnthropicAdapter:
             }:
                 server_tool_calls.append(block)
 
+        # Anthropic's `usage` block per the Messages API reference
+        # (https://docs.anthropic.com/en/api/messages) contains exactly:
+        # input_tokens, output_tokens, cache_creation_input_tokens,
+        # cache_read_input_tokens. There is no separate `thinking_tokens`
+        # field — thinking is included inside `output_tokens` and "is counted
+        # towards your max_tokens limit" per the extended-thinking doc
+        # (https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking).
+        # The streaming SSE `message_delta.usage` payload also follows this
+        # shape; see the documented examples at
+        # https://docs.anthropic.com/en/api/messages-streaming
+        # We therefore report `reasoning_tokens=None` (OpenAI-convention field
+        # absent for this provider). Anthropic's thinking cost is fully
+        # accounted for inside `output_tokens` — do NOT treat None as zero
+        # cost. To detect whether thinking occurred, inspect the structured
+        # `thinking` field below rather than `usage.reasoning_tokens`.
         u = response_data.get("usage") or {}
         usage: dict[str, Any] = {
             "input_tokens": int(u.get("input_tokens") or 0),
@@ -282,14 +296,15 @@ class AnthropicAdapter:
 
         thinking: dict[str, Any] | None = None
         if thinking_blocks:
-            thinking_tokens = int(u.get("thinking_tokens") or 0)
             thinking = {
                 "text": "".join(thinking_parts) or None,
                 "encrypted_content": None,
-                "tokens": thinking_tokens,
+                # Anthropic does not report a thinking-token count separately
+                # from output_tokens (see comment above). None = "not reported
+                # by this provider", not "zero".
+                "tokens": None,
                 "blocks": thinking_blocks,
             }
-            usage["reasoning_tokens"] = thinking_tokens
 
         return {
             "content": "".join(content_parts),

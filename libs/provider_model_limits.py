@@ -5,7 +5,17 @@ from __future__ import annotations
 from typing import Final
 
 # Ordered most-specific first so dated snapshots win before family aliases.
+# Anthropic doc reference (output_tokens ceilings, per-model):
+#   https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking
+#   "Claude Mythos Preview, Claude Opus 4.7, and Claude Opus 4.6 support up to
+#    128k output tokens. Claude Sonnet 4.6 and Claude Haiku 4.5 support up to
+#    64k." Without an explicit entry the substring loop falls through to the
+#   coarser family marker (e.g. "claude-opus-4" → 32k) and silently caps
+#   output at 1/4 of the model's real ceiling — see assertions on
+#   todo:investigate-anthropic-api-failure-modes-2026-05-16.
 _ANTHROPIC_MAX_OUTPUT_TOKENS: tuple[tuple[str, int], ...] = (
+    ("claude-opus-4-7", 128000),
+    ("claude-opus-4.7", 128000),
     ("claude-opus-4-6", 128000),
     ("claude-opus-4.6", 128000),
     ("claude-sonnet-4-6", 64000),
