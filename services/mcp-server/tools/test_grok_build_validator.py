@@ -127,6 +127,47 @@ def test_git_unreachable_status(
     assert "git status failed" in vr.reason
 
 
+def test_edit_working_tree_dirty_rejection(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, sidecar_root: Path
+) -> None:
+    """Edit-mode dispatches still reject on a dirty working tree —
+    edit needs a clean baseline to produce a meaningful diff."""
+    cwd = str(git_repo)
+    install_grok_path(monkeypatch)
+    install_subprocess_run(monkeypatch, cwd=cwd, status_pre=" M tracked.txt\n")
+
+    vr = validate_dispatch("dispatch", cwd, "edit", None, False, "json")
+
+    assert vr.ok is False
+    assert vr.reason_code == "working_tree_dirty"
+
+
+def test_read_only_dirty_tree_admitted(
+    git_repo: Path, monkeypatch: pytest.MonkeyPatch, sidecar_root: Path
+) -> None:
+    """Read-only dispatches admit any tree state; dirty_admission=True
+    flags the verdict as audit-indeterminate for the handler."""
+    cwd = str(git_repo)
+    install_grok_path(monkeypatch)
+    install_subprocess_run(monkeypatch, cwd=cwd, status_pre=" M tracked.txt\n")
+
+    vr = validate_dispatch("dispatch", cwd, "read_only", None, False, "json")
+
+    assert vr.ok is True
+    assert vr.dirty_admission is True
+    assert vr.git_status_pre == " M tracked.txt\n"
+
+
+def test_read_only_clean_tree_no_dirty_admission(
+    admission: str, sidecar_root: Path
+) -> None:
+    """Clean-tree read_only admission leaves dirty_admission=False."""
+    vr = validate_dispatch("dispatch", admission, "read_only", None, False, "json")
+
+    assert vr.ok is True
+    assert vr.dirty_admission is False
+
+
 def test_bad_output_format(admission: str, sidecar_root: Path) -> None:
     vr = validate_dispatch("dispatch", admission, "read_only", None, False, "yaml")
     assert vr.reason_code == "bad_output_format"
@@ -147,4 +188,45 @@ def test_grok_models_oserror_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(_sp, "run", fake_run)
     assert _grok_models_ok() is False
+    clear_validator_caches()
+
+
+def test_grok_models_caches_only_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_grok_models_ok caches only True returns; a transient False return is
+    NOT cached, so a subsequent successful call re-runs the subprocess and
+    returns True without requiring an MCP restart.
+
+    Regression for the cold-start lru_cache poisoning pattern: with
+    ``lru_cache(maxsize=1)`` the first call's False would have been cached
+    indefinitely, blocking every dispatch with ``missing_grok_auth`` until
+    MCP restarted. See docs/agent-guides/grok-build-dispatch.md §3.4 / §7.2.
+    """
+    import subprocess as _sp
+
+    from tools._grok_build_test_support import clear_validator_caches
+    from tools._grok_build_validator import _grok_models_ok
+
+    clear_validator_caches()
+
+    call_count = {"n": 0}
+
+    def fake_run(cmd: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
+        call_count["n"] += 1
+        # First call simulates the cold-start transient (non-zero exit).
+        # Subsequent calls succeed.
+        rc = 1 if call_count["n"] == 1 else 0
+        return _sp.CompletedProcess(cmd, rc, stdout="" if rc else "ok\n", stderr="")
+
+    monkeypatch.setattr(_sp, "run", fake_run)
+
+    # First call: transient False. Must NOT be cached.
+    assert _grok_models_ok() is False
+    assert call_count["n"] == 1
+    # Second call: re-runs subprocess and gets a clean True.
+    assert _grok_models_ok() is True
+    assert call_count["n"] == 2
+    # Third call: uses the cached True. Subprocess MUST NOT be re-invoked.
+    assert _grok_models_ok() is True
+    assert call_count["n"] == 2
+
     clear_validator_caches()

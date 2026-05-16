@@ -67,7 +67,7 @@ async def test_edit_mode_happy_path(
 
 
 @pytest.mark.asyncio
-async def test_working_tree_dirty_rejection(
+async def test_edit_working_tree_dirty_rejection(
     git_repo: object,
     event_log: list[tuple[str, dict[str, Any]]],
     monkeypatch: pytest.MonkeyPatch,
@@ -78,7 +78,7 @@ async def test_working_tree_dirty_rejection(
     run_mock = AsyncMock()
     monkeypatch.setattr(grok_build_mod, "run_dispatch", run_mock)
 
-    out = await grok_build("dispatch", cwd, PROMPT)
+    out = await grok_build("dispatch", cwd, PROMPT, mode="edit")
 
     assert out["status"] == "rejected"
     assert any(p.get("reason_code") == "working_tree_dirty" for _, p in event_log)
@@ -87,9 +87,41 @@ async def test_working_tree_dirty_rejection(
     # admission-phase payload contract; here mode/op/cwd/model travel on the
     # rejected event itself instead of joining via .called → dispatch_id).
     assert rejected["cwd"] == cwd
-    assert rejected["mode"] == "read_only"
+    assert rejected["mode"] == "edit"
     assert rejected["op"] == "dispatch"
     run_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_read_only_dirty_admission_sets_audit_incomplete(
+    git_repo: object,
+    event_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+    sidecar_root: object,
+) -> None:
+    """read_only admits a dirty tree; audit_incomplete=True, violation suppressed.
+
+    Post-state mock returns a non-empty porcelain (the same dirty file plus
+    whatever grok may have done). Without the dirty_admission gate, this
+    would flag read_only_violation=True; the gate forces audit_incomplete
+    and clears the violation flag because the verdict is indeterminate.
+    """
+    cwd = str(git_repo)
+    install_grok_path(monkeypatch)
+    install_subprocess_run(monkeypatch, cwd=cwd, status_pre=" M dirty.txt\n")
+    install_capture_post_state(
+        monkeypatch, status_post=" M dirty.txt\n", diff_stat=" dirty.txt | 1 +\n"
+    )
+    install_subprocess_exec(monkeypatch)
+
+    out = await grok_build("dispatch", cwd, PROMPT, mode="read_only")
+
+    assert out["status"] == "completed"
+    assert out["metadata"]["audit_incomplete"] is True
+    assert out["metadata"]["read_only_violation"] is False
+    completed = next(p for s, p in event_log if s.endswith(".completed"))
+    assert completed["audit_incomplete"] is True
+    assert completed["read_only_violation"] is False
 
 
 @pytest.mark.asyncio

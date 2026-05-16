@@ -47,6 +47,7 @@ class RunnerSpec:
     timeout_seconds: int
     grok_path: str
     git_status_pre: str
+    dirty_admission: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,7 @@ class RunnerResult:
     audit_incomplete: bool = False
     sidecar_gaps: int = 0
     error: str = ""
+    dirty_admission: bool = False
 
 
 def _build_env() -> dict[str, str]:
@@ -203,6 +205,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             audit_incomplete=True,
             sidecar_gaps=0,
             error=f"sidecar_write_failed: {exc}",
+            dirty_admission=spec.dirty_admission,
         )
 
     proc = await asyncio.create_subprocess_exec(
@@ -256,6 +259,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             git_diff_stat=git_diff_stat,
             audit_incomplete=audit_incomplete,
             sidecar_gaps=gaps[0],
+            dirty_admission=spec.dirty_admission,
         )
 
     if spec.output_format == "streaming-json":
@@ -325,4 +329,5 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
         git_diff_stat=git_diff_stat,
         audit_incomplete=audit_incomplete,
         sidecar_gaps=gaps[0],
+        dirty_admission=spec.dirty_admission,
     )

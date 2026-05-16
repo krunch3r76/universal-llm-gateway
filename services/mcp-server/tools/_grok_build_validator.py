@@ -24,6 +24,7 @@ class ValidationResult:
     permission_mode: str = ""
     grok_path: str = ""
     git_status_pre: str = ""
+    dirty_admission: bool = False
 
 
 @functools.lru_cache(maxsize=1)
@@ -31,8 +32,21 @@ def _resolve_grok_path() -> str | None:
     return shutil.which("grok")
 
 
-@functools.lru_cache(maxsize=1)
+_grok_models_cached: bool = False
+
+
 def _grok_models_ok() -> bool:
+    """Verify grok auth via ``grok models``. Caches only True returns.
+
+    A False result is NOT cached — the next call re-runs the subprocess check.
+    This avoids the lru_cache cold-start poisoning pattern where a single early
+    False (e.g. from the first-call transient on a fresh container process)
+    would block all dispatches until MCP restarts. See
+    docs/agent-guides/grok-build-dispatch.md §3.4 and §7.2.
+    """
+    global _grok_models_cached
+    if _grok_models_cached:
+        return True
     try:
         proc = subprocess.run(
             ["grok", "models"],
@@ -42,7 +56,26 @@ def _grok_models_ok() -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return proc.returncode == 0
+    if proc.returncode == 0:
+        _grok_models_cached = True
+        return True
+    return False
+
+
+def _grok_models_cache_clear() -> None:
+    """Clear the cached True state.
+
+    Compatibility shim for callers using ``_grok_models_ok.cache_clear()`` —
+    mirrors the ``functools.lru_cache`` attribute name so test fixtures and
+    ops procedures continue to work after the cache-only-True refactor.
+    """
+    global _grok_models_cached
+    _grok_models_cached = False
+
+
+# Python functions are objects; attach cache_clear as an attribute so existing
+# callers (test fixtures via ``clear_validator_caches``) keep working.
+_grok_models_ok.cache_clear = _grok_models_cache_clear  # type: ignore[attr-defined]
 
 
 def _reject(reason_code: str, reason: str) -> ValidationResult:
@@ -93,10 +126,14 @@ def validate_dispatch(
         return _reject("git_unreachable", f"git status failed for {cwd!r}: {exc}")
 
     git_status_pre = status_proc.stdout
-    if git_status_pre.strip():
+    dirty = bool(git_status_pre.strip())
+    # mode-split: edit needs a clean baseline to produce a meaningful diff;
+    # read_only is a scan and admits any tree state with audit_incomplete.
+    if dirty and mode == "edit":
         return _reject(
             "working_tree_dirty",
-            "working tree must be clean at admission",
+            "working tree must be clean at admission for edit mode — "
+            "stash or commit in-flight changes",
         )
 
     if session_id is not None and continue_recent:
@@ -133,4 +170,5 @@ def validate_dispatch(
         permission_mode=_PERMISSION_BY_MODE[mode],
         grok_path=grok_path,
         git_status_pre=git_status_pre,
+        dirty_admission=dirty,
     )

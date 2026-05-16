@@ -97,6 +97,7 @@ def _envelope_result(
     git_status_pre: str,
     rr: RunnerResult,
     read_only_violation: bool,
+    audit_incomplete: bool,
 ) -> dict[str, Any]:
     meta = _metadata_base(
         mode,
@@ -111,7 +112,7 @@ def _envelope_result(
         git_status_post=rr.git_status_post,
         git_diff_stat=rr.git_diff_stat,
         read_only_violation=read_only_violation,
-        audit_incomplete=rr.audit_incomplete,
+        audit_incomplete=audit_incomplete,
         sidecar_gaps=rr.sidecar_gaps,
     )
     return {
@@ -186,16 +187,27 @@ async def grok_build(
         timeout_seconds=timeout_seconds,
         grok_path=vr.grok_path,
         git_status_pre=vr.git_status_pre,
+        dirty_admission=vr.dirty_admission,
     )
     rr = await run_dispatch(spec)
     duration_s = time.monotonic() - t0
-    violation = _read_only_violation(mode, rr.git_diff_stat, rr.git_status_post)
+    # When read_only admitted a dirty tree, the porcelain delta is
+    # indeterminate (can't separate grok's writes from pre-existing). Mark
+    # audit_incomplete and suppress the violation flag — caller reads
+    # audit_incomplete to know the verdict is unreliable.
+    audit_incomplete = rr.audit_incomplete or (
+        spec.mode == "read_only" and rr.dirty_admission
+    )
+    if audit_incomplete:
+        violation = False
+    else:
+        violation = _read_only_violation(mode, rr.git_diff_stat, rr.git_status_post)
     audit = {
         "git_status_pre": spec.git_status_pre,
         "git_status_post": rr.git_status_post,
         "git_diff_stat": rr.git_diff_stat,
         "read_only_violation": violation,
-        "audit_incomplete": rr.audit_incomplete,
+        "audit_incomplete": audit_incomplete,
         "sidecar_gaps": rr.sidecar_gaps,
     }
 
@@ -231,6 +243,7 @@ async def grok_build(
         spec.git_status_pre,
         rr,
         violation,
+        audit_incomplete,
     )
 
 

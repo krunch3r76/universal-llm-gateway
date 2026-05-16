@@ -42,6 +42,12 @@ services:
       - ~/.rag/store:/data/rag-store:ro
       - ~/.cortex:/data/cortex:rw
       - ~/.gateway:/home/mcp/.gateway:ro
+      # grok CLI — bind-mount host binary into container PATH
+      - ${GROK_BIN_PATH:-/home/io/.local/bin/grok}:/usr/local/bin/grok:ro
+      # grok auth + session state (rw: grok writes session UUIDs to ~/.grok/sessions/)
+      - ${GROK_AUTH_DIR:-/home/io/.grok}:/home/mcp/.grok:rw
+      # torus projects — grok_build cwd access (rw required for edit-mode dispatches)
+      - /mnt/torus/projects:/mnt/torus/projects:rw
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
       - PROJECT_ROOT=/data/project
@@ -86,6 +92,9 @@ services:
       - CORTEX_DEFAULT_USER_ENTITY=${CORTEX_DEFAULT_USER_ENTITY:-}
       - CORTEX_OWNER_NAME=${CORTEX_OWNER_NAME:-the user}
       - CORTEX_DEPLOYMENT_VOCABULARY=${CORTEX_DEPLOYMENT_VOCABULARY:-}
+      # grok CLI paths (defaults match standard xAI CLI install location)
+      - GROK_BIN_PATH=${GROK_BIN_PATH:-}
+      - GROK_AUTH_DIR=${GROK_AUTH_DIR:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     deploy:
