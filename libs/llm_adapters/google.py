@@ -142,11 +142,18 @@ class GoogleAdapter:
         model_lower = req.model.lower()
         if req.max_tokens is not None:
             gen_config["maxOutputTokens"] = req.max_tokens
-        elif model_lower.startswith(("gemini-2.5", "gemini-3")):
-            # 2.5 thinkingBudget and 3.x thinkingLevel consume generation
-            # cycles; a low maxOutputTokens starves the final answer while
-            # the thought quota spends. Default high when caller declines.
-            gen_config["maxOutputTokens"] = 32768
+        else:
+            # Kludge default: max_tokens is a ceiling not a target — reasoning
+            # models don't size to fit it (they generate what the task
+            # requires and may overshoot/undershoot, ignoring the limit as a
+            # soft target). Default high to avoid silent low caps that
+            # truncate mid-thinking-burn. 131072 = 128k, matches Anthropic
+            # Opus 4.7's documented streaming max output ceiling; chosen as
+            # the highest documented streaming ceiling across the frontier
+            # providers we use. If a smaller-variant model (e.g. Gemini
+            # Flash-Lite) rejects this, that's a LOUD signal to add a
+            # per-model entry per todo:universal-max-tokens-model-ceiling-default.
+            gen_config["maxOutputTokens"] = 131072
         if req.temperature is not None:
             gen_config["temperature"] = req.temperature
         if req.top_p is not None:

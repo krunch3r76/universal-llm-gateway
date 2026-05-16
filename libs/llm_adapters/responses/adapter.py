@@ -117,6 +117,7 @@ class ResponsesAPIAdapter:
             "store": False,
         }
         responses_min_output_tokens = 16384
+        responses_default_output_tokens = 131072
         if req.max_tokens is not None:
             effective = max(req.max_tokens, responses_min_output_tokens)
             if effective != req.max_tokens:
@@ -127,6 +128,18 @@ class ResponsesAPIAdapter:
                     req.model,
                 )
             body["max_output_tokens"] = effective
+        else:
+            # Kludge default: max_tokens is a ceiling not a target — reasoning
+            # models don't size to fit it (they generate what the task
+            # requires and may overshoot/undershoot, ignoring the limit as a
+            # soft target). Default high to avoid silent low caps. 131072 =
+            # 128k, anchored to Anthropic Opus 4.7's documented streaming
+            # max output ceiling; chosen as the highest documented streaming
+            # ceiling across the frontier providers we use. If a
+            # smaller-variant model rejects this, that's a LOUD signal to
+            # add a per-model entry per
+            # todo:universal-max-tokens-model-ceiling-default.
+            body["max_output_tokens"] = responses_default_output_tokens
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.top_p is not None:
