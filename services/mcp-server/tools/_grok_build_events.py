@@ -13,7 +13,6 @@ def GrokBuildDispatchCalled(  # noqa: N802
     op: str,
     session_id: str = "",
     model: str = "",
-    git_status_pre: str = "",
 ) -> Event:
     return Event(
         signal="mcp.grok.build.dispatch.called",
@@ -23,7 +22,6 @@ def GrokBuildDispatchCalled(  # noqa: N802
             "op": op,
             "session_id": session_id,
             "model": model,
-            "git_status_pre": git_status_pre,
         },
         scope="global",
     )
