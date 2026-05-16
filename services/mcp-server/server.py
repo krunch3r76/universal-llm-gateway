@@ -93,6 +93,28 @@ _TCP_KEEPCNT = 3
 _GRACEFUL_SHUTDOWN_TIMEOUT_S = 25
 
 
+def _tool_error_envelope(
+    tool: str, op: str | None, exc: BaseException
+) -> dict[str, Any]:
+    # ⟹ never let an exception cross the MCP boundary opaquely; Anthropic's
+    # client wraps unhandled exceptions as the generic "Error occurred during
+    # tool execution" envelope, stripping all diagnostic content.
+    message = str(exc) or type(exc).__name__
+    record(
+        "mcp.tool.error",
+        tool=tool,
+        op=op or "",
+        error=message,
+        error_type=type(exc).__name__,
+    )
+    return {
+        "error": message,
+        "error_type": type(exc).__name__,
+        "tool": tool,
+        "op": op,
+    }
+
+
 def _env_truthy(name: str, default: bool) -> bool:
     """Return True if env var is set to a truthy value ('1', 'true', 'yes', 'on'), else default.
 
@@ -188,6 +210,8 @@ _PRIMARY_TOOLS: set[str] = {
     "email",
     "claudeburst",
     "bot_supervisor",
+    # Grok CLI dispatch
+    "grok_build",
 }
 
 
@@ -390,6 +414,38 @@ def _build_server() -> FastMCP:
         use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /
         ``md_append`` / ``md_delete``.
         """
+        try:
+            return _fs_impl(
+                op,
+                sandbox,
+                path,
+                paths,
+                content,
+                target,
+                target_sandbox,
+                line,
+                section,
+                all_occurrences,
+                include_untracked,
+                binary,
+            )
+        except Exception as exc:
+            return _tool_error_envelope("fs", op, exc)
+
+    def _fs_impl(
+        op: str,
+        sandbox: str,
+        path: str,
+        paths: list[str] | None,
+        content: str,
+        target: str,
+        target_sandbox: str,
+        line: int,
+        section: str,
+        all_occurrences: bool,
+        include_untracked: bool,
+        binary: bool,
+    ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
         if sandbox not in valid_sandboxes:
@@ -447,6 +503,16 @@ def _build_server() -> FastMCP:
                     return {"error": "list_project_files tool not available"}
                 return fn(path, include_untracked=include_untracked)
             if op == "search":
+                if not content:
+                    return {
+                        "error": (
+                            "'content' is required for search and holds the "
+                            "regex query string. Example: fs(op='search', "
+                            "sandbox='workspaces', "
+                            "path='universal-llm-gateway', "
+                            "content='Error occurred')"
+                        )
+                    }
                 fn = overflow_registry.get("search_project_files")
                 if fn is None:
                     return {"error": "search_project_files tool not available"}
@@ -601,8 +667,8 @@ def _build_server() -> FastMCP:
                 result = await result
             return result
         except Exception as exc:
-            err = str(exc)
-            raise
+            err = str(exc) or type(exc).__name__
+            return _tool_error_envelope("rag", op, exc)
         finally:
             toolprogress_end(t_prog, prog_timer, "rag", error=err, op=op)
 
@@ -629,10 +695,15 @@ def _build_server() -> FastMCP:
 
         fn = overflow_registry.get(tool)
         if fn is None:
-            raise ValueError(
-                f"Unknown dispatch tool: {tool!r}. "
-                f"Available: {sorted(overflow_registry)}"
-            )
+            return {
+                "tool": tool,
+                "result": {
+                    "error": (
+                        f"Unknown dispatch tool: {tool!r}. "
+                        f"Available: {sorted(overflow_registry)}"
+                    )
+                },
+            }
         parsed = _parse_dispatch_arguments(arguments)
         if parsed is None:
             return {
@@ -650,9 +721,12 @@ def _build_server() -> FastMCP:
             profile=profile,
             tool=tool,
         )
-        result = fn(**parsed)
-        if asyncio.iscoroutine(result):
-            result = await result
+        try:
+            result = fn(**parsed)
+            if asyncio.iscoroutine(result):
+                result = await result
+        except Exception as exc:
+            return {"tool": tool, "result": _tool_error_envelope(tool, None, exc)}
         record("mcp.tool.dispatch.success", tool=tool)
         if hasattr(result, "model_dump"):
             return result
@@ -844,6 +918,7 @@ def main() -> None:
             super().connection_made(transport)
 
     config.http_protocol_class = KeepaliveProtocol
+
     class DrainAwareServer(uvicorn.Server):
         @override
         def handle_exit(self, sig: int, frame: FrameType | None) -> None:
