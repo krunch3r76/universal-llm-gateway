@@ -352,6 +352,28 @@ class ResponsesAPIAdapter:
                 }
             )
 
+    def strip_tools(self, body: dict[str, Any]) -> None:
+        """Remove tool inventory from the body for a no-tools synthesis turn.
+
+        Drops ``tools`` and ``tool_choice`` so the next Responses API call
+        carries no tool inventory. Prior ``function_call`` / ``function_call_output``
+        items already in ``body["input"]`` are preserved so the model can
+        summarize from what it learned.
+        """
+        body.pop("tools", None)
+        body.pop("tool_choice", None)
+
+    def append_exhaustion_advisory(self, body: dict[str, Any], text: str) -> None:
+        """Append a system continuation in ``body["input"]`` with the advisory.
+
+        Responses API accepts late-injected ``system`` messages in ``input``;
+        placing the advisory as a system message keeps it distinct from the
+        prior tool-call/output sequence and signals it as out-of-band
+        instruction rather than user-authored content.
+        """
+        input_list = body.setdefault("input", [])
+        input_list.append({"role": "system", "content": text})
+
     def extract_text(self, response_data: dict[str, Any]) -> str:
         ot = response_data.get("output_text")
         if isinstance(ot, str) and ot.strip():

@@ -119,6 +119,38 @@ class FrontierAdapter(Protocol):
         """
         ...
 
+    def strip_tools(self, body: dict[str, Any]) -> None:
+        """Mutate body in place to remove the tool inventory (no further tools available).
+
+        Used by ``native_loop``'s synthesis round after tool-loop exhaustion: the
+        model has spent its tool budget, but we want to give it one final
+        no-tools turn to summarize from already-loaded context (rather than
+        terminal-failing with empty content). This removes the ``tools``
+        inventory and any tool-choice forcing; the conversation history
+        (assistant tool_use blocks + user tool_results) is preserved so the
+        model can summarize what it learned.
+
+        Provider-shape map:
+          - Anthropic: clears ``body["tools"]`` and ``body["tool_choice"]``
+          - Responses (OpenAI/xAI): same keys
+          - Google: clears ``body["tools"]`` and ``body["toolConfig"]``
+        """
+        ...
+
+    def append_exhaustion_advisory(self, body: dict[str, Any], text: str) -> None:
+        """Mutate body in place to append a final exhaustion advisory message.
+
+        Used by ``native_loop``'s synthesis round (paired with ``strip_tools``)
+        to tell the model that its tool-call budget is exhausted and it must
+        now produce a final answer from the context it has already gathered.
+
+        Provider-shape map:
+          - Anthropic: appends ``{"role": "user", "content": text}`` to ``messages``
+          - Responses (OpenAI/xAI): appends ``{"role": "system", "content": text}`` to ``input``
+          - Google: appends ``{"role": "user", "parts": [{"text": text}]}`` to ``contents``
+        """
+        ...
+
 
 class LLMAdapter(Protocol):
     """Build upstream HTTP request and parse provider-native JSON responses."""

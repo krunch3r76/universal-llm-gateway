@@ -1,17 +1,21 @@
 """Session-journal and atomic session-close Pydantic models.
 
-Session-close request shape: ``transcript_md`` is GONE.  The server now
-derives the verbatim layer from ``transcript_jsonl_path`` (a Cursor
-agent-transcripts JSONL under ``CURSOR_AGENT_TRANSCRIPTS_ROOT``) and
-appends the agent-composed ``session_summary_md`` structural layer.  The
-response carries ``content_hash`` so the agent can quote it as
+Session-close request shape: **either-of** ``{transcript_jsonl_path,
+transcript_md}`` is required.  Cursor agents pass
+``transcript_jsonl_path`` (a Cursor agent-transcripts JSONL under
+``CURSOR_AGENT_TRANSCRIPTS_ROOT``); the server reads it and derives the
+verbatim layer.  Web agents (no JSONL on disk) pass ``transcript_md``
+directly and the server uses it verbatim.  Either way the agent-composed
+``session_summary_md`` structural layer is appended.  If both are
+supplied, ``transcript_jsonl_path`` wins (cursor path is canonical;
+web would not legitimately pass both).
+
+Response carries ``content_hash`` so the agent can quote it as
 provenance evidence per `provenance-discipline.mdc` rule 1 (response-
 payload completion contract) without re-reading the file.
 
-No backward-compat shim — the prior ``transcript_md`` field is removed
-outright.  All consumers (MCP dispatch, `libs/agent_seat/tools.py`
-descriptor, rule files, openapi.yaml) are updated in Phase 2 / Phase 4 /
-Phase 5 of session-close-server-side-transcript.
+See agent-bus thread 1026 for the either-of rationale (decision:
+session-close-either-of-validator).
 """
 
 from __future__ import annotations
@@ -81,7 +85,8 @@ class SessionCloseRequest(BaseModel):
 
     session_id: str
     agent: str
-    transcript_jsonl_path: str
+    transcript_jsonl_path: str | None = None
+    transcript_md: str | None = None
     session_summary_md: str
     summary: str
     domains: list[str] | None = None

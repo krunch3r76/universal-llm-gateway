@@ -38,6 +38,7 @@ _REJECT_REASONS = frozenset(
         "session.already_closed",
         "transcript_jsonl.invalid",
         "session_summary.invalid",
+        "transcript_source.missing",
     }
 )
 
@@ -100,6 +101,7 @@ def _validate_session_close_args(
     transcript_jsonl_path: str | None,
     session_summary_md: str | None,
     summary: str | None,
+    transcript_md: str | None = None,
     emit_rejected: bool = True,
 ) -> dict[str, Any] | None:
     """Lightweight arg-presence + session_id pattern + summary length gate.
@@ -110,24 +112,34 @@ def _validate_session_close_args(
     atomic boundary stays in one place.  ``emit_rejected=False``
     suppresses ``mcp.session.close.rejected`` for preflight/dry_run
     probing.
+
+    The verbatim source is an **either-of** constraint:
+    ``{transcript_jsonl_path, transcript_md}`` — at least one MUST be
+    present.  Cursor passes the path; web passes the markdown directly.
     """
     required = {
         "session_id": session_id,
         "agent": agent,
-        "transcript_jsonl_path": transcript_jsonl_path,
         "session_summary_md": session_summary_md,
         "summary": summary,
     }
     for field, val in required.items():
         if not val:
             return {"error": f"{field} is required"}
-    assert (
-        session_id
-        and agent
-        and transcript_jsonl_path
-        and session_summary_md
-        and summary
-    )
+    if not transcript_jsonl_path and not transcript_md:
+        detail = (
+            "either transcript_jsonl_path (cursor) or transcript_md (web) "
+            "is required — neither was supplied"
+        )
+        if emit_rejected and session_id and agent:
+            _emit_rejected(
+                "transcript_source.missing",
+                session_id=session_id,
+                agent=agent,
+                detail=detail,
+            )
+        return {"error": detail, "reason": "transcript_source.missing"}
+    assert session_id and agent and session_summary_md and summary
 
     def _reject(reason: str, detail: str) -> dict[str, Any]:
         if emit_rejected:

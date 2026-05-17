@@ -306,7 +306,12 @@ components:
 
     SessionCloseRequest:
       type: object
-      required: [session_id, agent, transcript_jsonl_path, session_summary_md, summary]
+      required: [session_id, agent, session_summary_md, summary]
+      description: >
+        Either-of constraint: at least one of transcript_jsonl_path (cursor)
+        or transcript_md (web) MUST be supplied. If both are present,
+        transcript_jsonl_path wins (cursor canonical path). Missing both
+        returns 422 transcript_source.missing.
       properties:
         session_id:
           type: string
@@ -314,12 +319,22 @@ components:
         agent: { type: string }
         transcript_jsonl_path:
           type: string
+          nullable: true
           description: >
-            Absolute path under CURSOR_AGENT_TRANSCRIPTS_ROOT (default
-            ~/.cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts),
+            Cursor path: absolute path under CURSOR_AGENT_TRANSCRIPTS_ROOT
+            (default ~/.cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts),
             or relative to that root. The server reads the Cursor agent-transcripts
             JSONL at this path and assembles the verbatim layer. Paths outside the
             sandbox return 422 transcript_jsonl.invalid.
+        transcript_md:
+          type: string
+          nullable: true
+          description: >
+            Web path: caller-supplied verbatim markdown used directly as the
+            verbatim layer (no JSONL read). Required when transcript_jsonl_path
+            is not supplied. Web preprocessor emits "## Turn N" headings per
+            agent_skill:web-transcript-preprocessing.md; turn_count is derived
+            from those.
         session_summary_md:
           type: string
           description: >

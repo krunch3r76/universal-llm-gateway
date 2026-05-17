@@ -270,6 +270,7 @@ def _op_session_close_preflight(
     session_id: str | None = None,
     agent: str | None = None,
     transcript_jsonl_path: str | None = None,
+    transcript_md: str | None = None,
     session_summary_md: str | None = None,
     summary: str | None = None,
     entity_ids: list[str] | None = None,
@@ -288,37 +289,39 @@ def _op_session_close_preflight(
         session_id=session_id,
         agent=agent,
         transcript_jsonl_path=transcript_jsonl_path,
+        transcript_md=transcript_md,
         session_summary_md=session_summary_md,
         summary=summary,
         emit_rejected=False,
     )
     if arg_error is not None:
         return {"ok": False, **arg_error}
-    assert (
-        session_id
-        and agent
-        and transcript_jsonl_path
-        and session_summary_md
-        and summary
-    )
+    assert session_id and agent and session_summary_md and summary
 
-    try:
-        resolved = resolve_jsonl_path(transcript_jsonl_path)
-        verbatim_md, turn_count = assemble_verbatim_md(
-            jsonl_path=resolved, session_id=session_id
+    if transcript_jsonl_path:
+        try:
+            resolved = resolve_jsonl_path(transcript_jsonl_path)
+            verbatim_md, turn_count = assemble_verbatim_md(
+                jsonl_path=resolved, session_id=session_id
+            )
+        except TranscriptPathError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "reason": "transcript_jsonl.invalid",
+            }
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "error": f"JSONL parse error: {exc}",
+                "reason": "transcript_jsonl.invalid",
+            }
+    else:
+        assert transcript_md is not None
+        verbatim_md = transcript_md
+        turn_count = sum(
+            1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
         )
-    except TranscriptPathError as exc:
-        return {
-            "ok": False,
-            "error": str(exc),
-            "reason": "transcript_jsonl.invalid",
-        }
-    except ValueError as exc:
-        return {
-            "ok": False,
-            "error": f"JSONL parse error: {exc}",
-            "reason": "transcript_jsonl.invalid",
-        }
 
     composed = compose_full_transcript(verbatim_md, session_summary_md)
 
@@ -351,6 +354,7 @@ def _op_session_close(
     session_id: str | None = None,
     agent: str | None = None,
     transcript_jsonl_path: str | None = None,
+    transcript_md: str | None = None,
     session_summary_md: str | None = None,
     summary: str | None = None,
     domains: list[str] | None = None,
@@ -384,6 +388,7 @@ def _op_session_close(
         session_id=session_id,
         agent=agent,
         transcript_jsonl_path=transcript_jsonl_path,
+        transcript_md=transcript_md,
         session_summary_md=session_summary_md,
         summary=summary,
         emit_rejected=not dry_run,
@@ -392,13 +397,7 @@ def _op_session_close(
         if dry_run:
             return {"dry_run": True, "would_fail": True, **arg_error}
         return {k: v for k, v in arg_error.items() if k != "reason"}
-    assert (
-        session_id
-        and agent
-        and transcript_jsonl_path
-        and session_summary_md
-        and summary
-    )
+    assert session_id and agent and session_summary_md and summary
 
     audit_outcome = _safe_run_audit(
         session_id=session_id,
@@ -412,27 +411,34 @@ def _op_session_close(
         return audit_outcome
 
     if dry_run:
-        try:
-            resolved = resolve_jsonl_path(transcript_jsonl_path)
-            verbatim_md, turn_count = assemble_verbatim_md(
-                jsonl_path=resolved,
-                session_id=session_id,
-                assistant_label=assistant_label,
+        if transcript_jsonl_path:
+            try:
+                resolved = resolve_jsonl_path(transcript_jsonl_path)
+                verbatim_md, turn_count = assemble_verbatim_md(
+                    jsonl_path=resolved,
+                    session_id=session_id,
+                    assistant_label=assistant_label,
+                )
+            except TranscriptPathError as exc:
+                return {
+                    "dry_run": True,
+                    "would_fail": True,
+                    "error": str(exc),
+                    "reason": "transcript_jsonl.invalid",
+                }
+            except ValueError as exc:
+                return {
+                    "dry_run": True,
+                    "would_fail": True,
+                    "error": f"JSONL parse error: {exc}",
+                    "reason": "transcript_jsonl.invalid",
+                }
+        else:
+            assert transcript_md is not None
+            verbatim_md = transcript_md
+            turn_count = sum(
+                1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
             )
-        except TranscriptPathError as exc:
-            return {
-                "dry_run": True,
-                "would_fail": True,
-                "error": str(exc),
-                "reason": "transcript_jsonl.invalid",
-            }
-        except ValueError as exc:
-            return {
-                "dry_run": True,
-                "would_fail": True,
-                "error": f"JSONL parse error: {exc}",
-                "reason": "transcript_jsonl.invalid",
-            }
         composed = compose_full_transcript(verbatim_md, session_summary_md)
         guard_error = _check_transcript_hollow_guards(composed)
         if guard_error is not None:
@@ -452,11 +458,12 @@ def _op_session_close(
     body: dict[str, Any] = {
         "session_id": session_id,
         "agent": agent,
-        "transcript_jsonl_path": transcript_jsonl_path,
         "session_summary_md": session_summary_md,
         "summary": summary,
     }
     for key, val in [
+        ("transcript_jsonl_path", transcript_jsonl_path),
+        ("transcript_md", transcript_md),
         ("domains", domains),
         ("decisions", decisions),
         ("open_items", open_items),

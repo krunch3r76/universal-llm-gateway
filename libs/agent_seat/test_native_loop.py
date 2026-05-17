@@ -343,3 +343,474 @@ async def test_native_loop_malformed_tool_args(
     )
     assert result.content == "done"
     assert captured == [("cortex", {})]
+
+
+# ---------------------------------------------------------------------------
+# Synthesis-round tests — exhaustion recovery via append_tool_round +
+# strip_tools + append_exhaustion_advisory. See decision:cortex-tool-loop-
+# exhaustion-synthesis-round and agent-bus thread 1015 for the architecture.
+# ---------------------------------------------------------------------------
+
+
+def _anthropic_repeated_section_miss_round(call_id: str) -> dict[str, Any]:
+    """Anthropic ``tool_use`` round that targets the same fs.md_read miss
+    pattern used by ``test_native_loop_stops_on_repeated_section_miss`` to
+    trip ``ToolFrictionTracker.should_stop`` on the second occurrence.
+    """
+    return _anthropic_tool_use(
+        "fs",
+        {
+            "op": "md_read",
+            "path": "docs/example.md",
+            "section": "Missing Section",
+        },
+        call_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_synthesis_round_fires_after_friction_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When friction halts the loop, the synthesis round should:
+    1. Append the pending tool round so the model sees what just happened
+    2. Strip the tool inventory
+    3. Append the exhaustion advisory
+    4. Send one more request (NOT counted against max_turns)
+    5. Use the synth content as the final result, with synthesized=True
+    """
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"error": "Section not found: Missing Section"})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    # Two repeated misses trip friction.should_stop. Then the synth round
+    # is fired with NO tools available — the model produces final text.
+    send = _FakeSend(
+        [
+            _anthropic_repeated_section_miss_round("t1"),
+            _anthropic_repeated_section_miss_round("t2"),
+            _anthropic_terminal("Could not find the section; here is what I can say from context."),
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "find the missing section"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "fs", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+
+    assert result.exhausted is True
+    assert result.synthesized is True
+    assert result.content.startswith("Could not find the section")
+    assert result.turns_used == 2  # synth round does NOT count
+    assert result.tool_calls_made == 2
+
+    # The synth request body must NOT carry a tools inventory and MUST
+    # carry the exhaustion advisory.
+    synth_call_body = send.calls[-1][1]
+    assert "tools" not in synth_call_body or synth_call_body["tools"] == []
+    assert "tool_choice" not in synth_call_body
+    last_msg = synth_call_body["messages"][-1]
+    assert last_msg["role"] == "user"
+    assert isinstance(last_msg["content"], str)
+    assert "Tool budget exhausted" in last_msg["content"]
+
+
+@pytest.mark.asyncio
+async def test_synthesis_round_fires_after_max_turns_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When max_turns runs out, the synthesis round should still fire and
+    NOT need to append a pending round (the loop's last iteration already
+    called append_tool_round before the for-else clause).
+    """
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    # Three turns of fresh tool calls (distinct args avoid friction halt),
+    # then the synth round produces final text.
+    send = _FakeSend(
+        [
+            _anthropic_tool_use("cortex", {"tool": "entities", "n": i}, f"t{i}")
+            for i in range(3)
+        ]
+        + [_anthropic_terminal("here is the partial summary I could assemble.")]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "look around"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "cortex", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=3,
+    )
+
+    assert result.exhausted is True
+    assert result.synthesized is True
+    assert result.content.startswith("here is the partial summary")
+    assert result.turns_used == 3
+    assert result.tool_calls_made == 3
+
+    # Synth body has the advisory, no tools.
+    synth_call_body = send.calls[-1][1]
+    assert "tools" not in synth_call_body or synth_call_body["tools"] == []
+    last_msg = synth_call_body["messages"][-1]
+    assert "Tool budget exhausted" in last_msg["content"]
+
+
+@pytest.mark.asyncio
+async def test_synthesis_round_empty_content_keeps_exhausted_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the synth round returns empty content, we fall back to the prior
+    exhausted-empty behavior — exhausted stays True, content="",
+    synthesized stays False (we never replaced result with the synth).
+    """
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"error": "Section not found: Missing Section"})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    empty_terminal = {
+        "id": "msg_synth",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-4-6",
+        "content": [],  # empty — no text block
+        "usage": {"input_tokens": 1, "output_tokens": 0},
+        "stop_reason": "end_turn",
+    }
+
+    send = _FakeSend(
+        [
+            _anthropic_repeated_section_miss_round("t1"),
+            _anthropic_repeated_section_miss_round("t2"),
+            empty_terminal,
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "find it"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "fs", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+
+    assert result.exhausted is True
+    assert result.synthesized is False
+    assert result.content == ""
+    assert result.tool_calls_made == 2
+
+
+@pytest.mark.asyncio
+async def test_synthesis_round_skipped_when_adapter_lacks_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the resolved adapter is missing one of the synthesis hooks, the
+    loop must still terminate cleanly with the prior exhausted-empty
+    behavior. (Defensive — should not happen with the current cloud
+    adapter set, but new/test adapters might omit the hooks.)
+    """
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"error": "Section not found: Missing Section"})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    # Patch the adapter resolver to return an object missing strip_tools.
+    real_resolve = _nl_mod.resolve_llm_adapter
+
+    class _AdapterWithoutSynth:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def build_frontier_request(self, req: Any) -> Any:
+            return self._inner.build_frontier_request(req)
+
+        def parse_frontier_response(self, raw: Any) -> Any:
+            return self._inner.parse_frontier_response(raw)
+
+        def append_tool_round(
+            self, body: Any, raw: Any, tool_results: Any
+        ) -> None:
+            self._inner.append_tool_round(body, raw, tool_results)
+
+    def fake_resolve(provider: Any) -> Any:
+        real = real_resolve(provider)
+        return _AdapterWithoutSynth(real) if real is not None else None
+
+    monkeypatch.setattr(_nl_mod, "resolve_llm_adapter", fake_resolve)
+
+    send = _FakeSend(
+        [
+            _anthropic_repeated_section_miss_round("t1"),
+            _anthropic_repeated_section_miss_round("t2"),
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "find it"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "fs", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+
+    assert result.exhausted is True
+    assert result.synthesized is False
+    assert result.content == ""
+    # Only the two tool-call turns were sent; no synth attempt.
+    assert len(send.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_synthesis_round_does_not_fire_on_clean_termination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the loop terminates because the model produced terminal content
+    (no exhaustion), the synth round must NOT fire — synthesized stays
+    False and only the in-loop turns are sent.
+    """
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    send = _FakeSend(
+        [
+            _anthropic_tool_use("cortex", {"tool": "entities"}, "t1"),
+            _anthropic_terminal("done"),
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "look"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "cortex", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+
+    assert result.exhausted is False
+    assert result.synthesized is False
+    assert result.content == "done"
+    assert len(send.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_synthesis_round_swallows_send_native_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the synth round's send_native call raises, we fall back to the
+    prior exhausted-empty behavior. The whole loop must NOT bubble the
+    synth-only failure to the caller.
+    """
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"error": "Section not found: Missing Section"})
+
+    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+
+    class _RaisingSend:
+        def __init__(self, tool_responses: list[dict[str, Any]]) -> None:
+            self._responses = list(tool_responses)
+            self.calls: list[tuple[str, dict[str, Any]]] = []
+
+        async def __call__(
+            self, path: str, json_body: dict[str, Any]
+        ) -> dict[str, Any]:
+            self.calls.append((path, json_body))
+            if not self._responses:
+                raise RuntimeError("synth round network failure")
+            return self._responses.pop(0)
+
+    send = _RaisingSend(
+        [
+            _anthropic_repeated_section_miss_round("t1"),
+            _anthropic_repeated_section_miss_round("t2"),
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "find it"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "fs", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=5,
+    )
+
+    assert result.exhausted is True
+    assert result.synthesized is False
+    assert result.content == ""
+    # Two tool turns + one failed synth attempt.
+    assert len(send.calls) == 3
+
+
+def test_all_frontier_adapters_implement_synthesis_hooks() -> None:
+    """Lock the FrontierAdapter Protocol contract: every cloud adapter the
+    native loop dispatches to has ``strip_tools`` and ``append_exhaustion_advisory``
+    methods, so the synthesis round fires across providers uniformly. The
+    behavioral verification of the synth round itself runs through the
+    Anthropic adapter via the test_synthesis_round_* tests above; this is a
+    cheap structural guard that catches a future adapter being added without
+    the synthesis hooks.
+    """
+    from llm_adapters.anthropic import AnthropicAdapter
+    from llm_adapters.google import GoogleAdapter
+    from llm_adapters.responses import ResponsesAPIAdapter
+
+    adapters = [
+        AnthropicAdapter(api_key="x"),
+        ResponsesAPIAdapter(
+            api_key="x", base_url="https://example.test", vendor="openai"
+        ),
+        ResponsesAPIAdapter(
+            api_key="x", base_url="https://example.test", vendor="xai"
+        ),
+        GoogleAdapter(api_key="x"),
+    ]
+    for a in adapters:
+        for method in (
+            "build_frontier_request",
+            "parse_frontier_response",
+            "append_tool_round",
+            "strip_tools",
+            "append_exhaustion_advisory",
+        ):
+            assert hasattr(a, method), f"{type(a).__name__} missing {method}"
+            assert callable(getattr(a, method))
+
+
+def test_anthropic_strip_tools_and_advisory_shape() -> None:
+    """Tight adapter-level shape check for the Anthropic synth hooks."""
+    from llm_adapters.anthropic import AnthropicAdapter
+
+    adapter = AnthropicAdapter(api_key="x")
+    body = {
+        "model": "claude-sonnet-4-6",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"name": "x", "description": "x", "input_schema": {}}],
+        "tool_choice": "auto",
+    }
+    adapter.strip_tools(body)
+    assert "tools" not in body
+    assert "tool_choice" not in body
+    adapter.append_exhaustion_advisory(body, "synthesize now")
+    assert body["messages"][-1] == {"role": "user", "content": "synthesize now"}
+
+
+def test_responses_strip_tools_and_advisory_shape() -> None:
+    """Tight adapter-level shape check for the Responses (OpenAI/xAI) synth hooks."""
+    from llm_adapters.responses import ResponsesAPIAdapter
+
+    adapter = ResponsesAPIAdapter(
+        api_key="x", base_url="https://example.test", vendor="openai"
+    )
+    body = {
+        "model": "gpt-5.5",
+        "input": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "name": "x", "parameters": {}}],
+        "tool_choice": "auto",
+    }
+    adapter.strip_tools(body)
+    assert "tools" not in body
+    assert "tool_choice" not in body
+    adapter.append_exhaustion_advisory(body, "synthesize now")
+    assert body["input"][-1] == {"role": "system", "content": "synthesize now"}
+
+
+def test_google_strip_tools_and_advisory_shape() -> None:
+    """Tight adapter-level shape check for the Google synth hooks."""
+    from llm_adapters.google import GoogleAdapter
+
+    adapter = GoogleAdapter(api_key="x")
+    body = {
+        "model": "gemini-3-pro",
+        "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+        "tools": [{"functionDeclarations": [{"name": "x"}]}],
+        "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+    }
+    adapter.strip_tools(body)
+    assert "tools" not in body
+    assert "toolConfig" not in body
+    adapter.append_exhaustion_advisory(body, "synthesize now")
+    assert body["contents"][-1] == {
+        "role": "user",
+        "parts": [{"text": "synthesize now"}],
+    }
