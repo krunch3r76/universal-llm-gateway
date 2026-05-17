@@ -128,10 +128,30 @@ def select(
         return current
 
     if strategy == "set_aggregation":
-        # Phase 1.0a: explicit raise per dispatch; 1.0b will implement has_member traversal
-        raise SelectionError(
-            "set_aggregation traversal is Phase 1.0b; synthesis is Phase 1.5"
+        set_entity_id = params.get("set_entity_id") or params.get("set_id")
+        if not set_entity_id or not set_entity_id.startswith("set:"):
+            raise SelectionError(f"set_aggregation requires set: entity_id, got: {set_entity_id!r}")
+
+        # Phase 1.0b: traverse has_member edges, return member assertions.
+        # Phase 1.5 will add aggregate-claim synthesis on top of this.
+        from ..relationship_sql import fetch_relationships
+        member_relationships = fetch_relationships(
+            source_id=set_entity_id,
+            type_id="has_member",
         )
+        member_entity_ids = {r["target_id"] for r in member_relationships}
+
+        # Filter items to those belonging to member entities, dedupe by id
+        out: list[dict[str, Any]] = []
+        seen: set[Any] = set()
+        for item in items:
+            if item.get("entity_id") in member_entity_ids and item.get("id") not in seen:
+                out.append(item)
+                seen.add(item.get("id"))
+
+        for it in out:
+            it.setdefault("_selection", {})["mode"] = f"set_aggregation:{set_entity_id}"
+        return out
 
     return list(items)
 

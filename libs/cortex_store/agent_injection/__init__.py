@@ -25,9 +25,15 @@ from .templates import (
     render_d3,
     render_d4,
 )
+from .validator_output import (
+    BRIEF_DOMAINS,
+    Finding,
+    OutputValidationResult,
+    validate_output,
+)
 from .validator_preflight import ValidationResult, preflight_validate
 
-__version__ = "phase-1.0a"
+__version__ = "phase-1.0b"
 
 __all__ = [
     "__version__",
@@ -39,4 +45,9 @@ __all__ = [
     "compute_d2_content_hash",
     "select", "STRATEGIES",
     "preflight_validate", "ValidationResult",
+    # output validation (1.0b)
+    "validate_output",
+    "OutputValidationResult",
+    "Finding",
+    "BRIEF_DOMAINS",
 ]

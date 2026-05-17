@@ -10,6 +10,10 @@ into for ``_FROM``/``_SELECT``.
 
 from __future__ import annotations
 
+from typing import Any
+
+from ..db import cortex_conn, query
+
 SYMMETRIC_REL_TYPES: frozenset[str] = frozenset({"related_to", "co-occurs_with"})
 
 
@@ -29,3 +33,28 @@ FROM_CLAUSE = """
     LEFT JOIN entities se ON se.id = r.from_entity
     LEFT JOIN entities te ON te.id = r.to_entity
 """
+
+def fetch_relationships(
+    source_id: str | None = None,
+    type_id: str | None = None,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Fetch active relationships (optionally filtered by from_entity=source_id and type).
+
+    Canonical helper for relationship traversal (e.g. set_aggregation has_member in 1.0b).
+    Mirrors list_relationships WHERE logic but returns raw decoded rows for internal use.
+    """
+    clauses: list[str] = ["r.active = 1"]
+    params: list[Any] = []
+    if source_id:
+        clauses.append("r.from_entity = ?")
+        params.append(source_id)
+    if type_id:
+        clauses.append("r.type = ?")
+        params.append(type_id)
+    where = f" WHERE {' AND '.join(clauses)}"
+    sql = f"SELECT {SELECT_COLUMNS} {FROM_CLAUSE}{where} ORDER BY r.created_at DESC LIMIT ?"
+    params.append(limit)
+    with cortex_conn() as conn:
+        rows = query(conn, sql, tuple(params))
+    return rows

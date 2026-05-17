@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from ..errors import SelectionError
@@ -76,11 +78,23 @@ def test_composite_chain():
     assert "composite:2" in out[0]["_selection"]["mode"]
 
 
-def test_set_aggregation_raises_phase_1_0b():
+def test_set_aggregation_traverses_has_member():
+    """Phase 1.0b: set_aggregation now traverses has_member (no raise; synthesis is 1.5)."""
     items = _fixture_items()
-    with pytest.raises(SelectionError) as exc:
-        select(items, "set_aggregation", set_entity_id="set:foo")
-    assert "Phase 1.0b" in str(exc.value)
+    # items have entity_id e:1, e:2, e:3; only e:1 members should be selected
+    fake_rels = [
+        {"source_id": "set:foo", "target_id": "e:1", "type_id": "has_member"},
+        {"source_id": "set:foo", "target_id": "e:2", "type_id": "has_member"},
+    ]
+    with patch("cortex_store.relationship_sql.fetch_relationships", return_value=fake_rels) as mock_fetch:
+        out = select(items, "set_aggregation", set_entity_id="set:foo")
+    # only items whose entity_id in {e:1,e:2} and deduped
+    assert [o["id"] for o in out] == [1, 2, 3]  # 1 and 3 share e:1, 2 is e:2
+    assert mock_fetch.called
+    assert mock_fetch.call_args.kwargs["source_id"] == "set:foo"
+    assert mock_fetch.call_args.kwargs["type_id"] == "has_member"
+    for it in out:
+        assert it["_selection"]["mode"] == "set_aggregation:set:foo"
 
 
 def test_unknown_strategy_raises():
