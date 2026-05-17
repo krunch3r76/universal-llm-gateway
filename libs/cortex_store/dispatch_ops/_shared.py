@@ -7,14 +7,15 @@ FastAPI routes and dispatch handlers share one source of truth.
 from __future__ import annotations
 
 import hashlib
-import logging
 import os
 import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("cortex-api.dispatch_ops")
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 _CORTEX_FILES_ROOT_ENV = os.environ.get("CORTEX_FILES_ROOT")
@@ -68,13 +69,16 @@ _FRICTION_CATEGORIES = frozenset(
 
 try:
     from mcp_events import record as _record
-except Exception:  # pragma: no cover - import-path dependent
-    _record = None
+except Exception:  # pragma: no cover - mcp_events only available in mcp-server context
+    try:
+        from cortex_store.event_publisher import record as _record
+    except Exception:
+        _record = None  # type: ignore[assignment]
 
 
 def record(signal: str, **payload: Any) -> None:
     if _record is None:
-        logger.debug("mcp_events unavailable; skipping event %s", signal)
+        logger.debug("event publisher unavailable; skipping event %s", signal)
         return
     _record(signal, **payload)
 

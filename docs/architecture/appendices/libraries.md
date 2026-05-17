@@ -28,7 +28,9 @@ Works with `libs/llm_adapters` for provider-native request/response translation.
 Embeddable Cortex store library. Backing store for the Cortex knowledge graph.
 Used by the `cortex_api` service. Subpackages include `dispatch_ops/`
 (including bulk entity / relationship writes and modular audit detectors),
-`models/` (Pydantic request/response shapes shared by routes and dispatch),
+`event_publisher.py` (standalone UDS publisher for cortex-api lifecycle signals
+when `mcp_events` is unavailable), `models/` (Pydantic request/response shapes
+shared by routes and dispatch),
 `entity_aliases.py`, HTTP `routes/` (assertions, ingest, resolve), optional
 `ingest_chunker/` for chunked ingest, and `type_schemas.py` for typed payloads.
 

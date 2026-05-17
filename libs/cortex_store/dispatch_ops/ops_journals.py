@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import HTTPException
+from universal_logging import get_logger
 
 from ..db import cortex_conn, execute, json_encode, query
 from ..routes.assertions import _create_assertion_impl
@@ -30,7 +30,7 @@ from ._shared import _FILES_ROOT, _SESSION_ID_RE, _derive_session_id_local, reco
 from .ops_audit_detectors import run_detectors
 from .ops_review_gate import _run_session_audit_or_block
 
-logger = logging.getLogger("cortex-api.dispatch_ops.journals")
+logger = get_logger(__name__)
 
 _ACTION_LOG_RE = re.compile(
     r"^I (then |also )?(read|posted|dispatched|pulled|ran|wrote|called)",
@@ -311,9 +311,7 @@ def _validate_session_close_args(
 
     def _reject(reason: str, detail: str) -> dict[str, Any]:
         if emit_rejected:
-            _emit_rejected(
-                reason, session_id=session_id, agent=agent, detail=detail
-            )
+            _emit_rejected(reason, session_id=session_id, agent=agent, detail=detail)
         return {"error": detail, "reason": reason}
 
     if not _SESSION_ID_RE.match(session_id):
@@ -366,6 +364,42 @@ def _safe_run_audit(
                 "message": str(exc),
             }
         }
+
+
+def _check_transcript_hollow_guards(composed: str) -> dict[str, Any] | None:
+    """Return a rejection payload when composed transcript fails a hard guard.
+
+    ∀ guards: exact thresholds mirrored from routes/session_journals.py close_session.
+    ∀ return None: all guards pass.
+    """
+    if len(composed) < 200:
+        return {
+            "reason": "transcript.missing_structure",
+            "error": (
+                f"composed transcript is {len(composed)} chars "
+                "(< 200) — JSONL may be empty or session_summary_md too thin."
+            ),
+            "hollow": True,
+        }
+    if "## Turn" not in composed and "## Session Summary" not in composed:
+        return {
+            "reason": "transcript.missing_structure",
+            "error": (
+                "composed transcript missing structural headings — "
+                "'## Turn' blocks and '## Session Summary' both absent."
+            ),
+            "hollow": True,
+        }
+    if len(_USER_VOICE_RE.findall(composed)) == 0:
+        return {
+            "reason": "transcript.hollow",
+            "error": (
+                "composed transcript has zero User-voice blocks — "
+                "JSONL contained no user messages."
+            ),
+            "hollow": True,
+        }
+    return None
 
 
 def _op_session_close_preflight(
@@ -423,6 +457,10 @@ def _op_session_close_preflight(
         }
 
     composed = compose_full_transcript(verbatim_md, session_summary_md)
+
+    guard_error = _check_transcript_hollow_guards(composed)
+    if guard_error is not None:
+        return {"ok": False, **guard_error}
 
     audit_outcome = _safe_run_audit(
         session_id=session_id,
@@ -532,6 +570,9 @@ def _op_session_close(
                 "reason": "transcript_jsonl.invalid",
             }
         composed = compose_full_transcript(verbatim_md, session_summary_md)
+        guard_error = _check_transcript_hollow_guards(composed)
+        if guard_error is not None:
+            return {"dry_run": True, "would_fail": True, **guard_error}
         structural_warnings = _validate_transcript_structure(
             composed, summary_len=len(summary)
         )
