@@ -5,7 +5,8 @@ Provides concurrent I/O, correlation matching, and message queuing for transport
 """
 
 from .interfaces import MessagePumpInterface, MessageReader, MessageWriter
-from .pump import MessagePump, default_get_correlation_id
+from .message_identification import default_get_correlation_id
+from .pump import MessagePump
 
 __all__ = [
     "MessagePump",
