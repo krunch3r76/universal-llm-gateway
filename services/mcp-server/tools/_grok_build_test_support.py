@@ -44,6 +44,7 @@ def event_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]
 @pytest.fixture
 def sidecar_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "grok-build"
+    monkeypatch.setattr("tools._grok_build_fetch_result._SIDECAR_DIR", root)
     monkeypatch.setattr("tools._grok_build_validator._SIDECAR_DIR", root)
     monkeypatch.setattr("tools._grok_build_runner._SIDECAR_DIR", root)
     return root

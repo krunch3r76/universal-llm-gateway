@@ -188,7 +188,15 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
                 "ts": int(time.time() * 1000),
                 "argv": argv,
                 "env_keys": sorted(_build_env()),
+                "cwd": spec.cwd,
+                "mode": spec.mode,
+                "permission_mode": spec.permission_mode,
+                "model": spec.model,
+                "session_id": spec.session_id,
+                "continue_recent": spec.continue_recent,
+                "output_format": spec.output_format,
                 "git_status_pre": spec.git_status_pre,
+                "dirty_admission": spec.dirty_admission,
             },
         )
     except OSError as exc:
@@ -240,10 +248,13 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             {
                 "phase": "exit",
                 "ts": int(time.time() * 1000),
+                "status": "timeout",
                 "exit_code": None,
+                "duration_s": duration_s,
                 "git_status_post": git_status_post,
                 "git_diff_stat": git_diff_stat,
                 "audit_incomplete": audit_incomplete,
+                "sidecar_gaps": gaps[0],
             },
             gaps,
         )
@@ -300,23 +311,26 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
     )
     exit_code = proc.returncode
     duration_s = time.monotonic() - t0
+    status: Literal["completed", "failed"] = "completed" if exit_code == 0 else "failed"
 
     _try_append_sidecar(
         sidecar,
         {
             "phase": "exit",
             "ts": int(time.time() * 1000),
+            "status": status,
             "exit_code": exit_code,
+            "duration_s": duration_s,
             "git_status_post": git_status_post,
             "git_diff_stat": git_diff_stat,
             "audit_incomplete": audit_incomplete,
+            "sidecar_gaps": gaps[0],
         },
         gaps,
     )
 
     stdout, truncated = _truncate_tail(stdout_b, STDOUT_MAX)
     stderr, _ = _truncate_tail(stderr_b, STDERR_MAX)
-    status: Literal["completed", "failed"] = "completed" if exit_code == 0 else "failed"
     return RunnerResult(
         status=status,
         stdout=stdout,

@@ -124,9 +124,16 @@ async def test_sidecar_records_git_audit_fields(
     lines = sidecar_lines(sidecar_root, "audit-sidecar-id")
     started = next(r for r in lines if r["phase"] == "started")
     exit_line = next(r for r in lines if r["phase"] == "exit")
+    assert started["cwd"] == admission
+    assert started["mode"] == "read_only"
+    assert started["permission_mode"] == "plan"
+    assert started["output_format"] == "json"
     assert started["git_status_pre"] == pre
+    assert started["dirty_admission"] is False
+    assert exit_line["status"] == "completed"
     assert exit_line["git_status_post"] == post
     assert exit_line["git_diff_stat"] == diff
+    assert exit_line["sidecar_gaps"] == 0
 
 
 def test_env_allow_list(monkeypatch: pytest.MonkeyPatch) -> None:
