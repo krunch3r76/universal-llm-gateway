@@ -73,6 +73,41 @@ _ANTHROPIC_ADAPTIVE_MODELS: tuple[str, ...] = (
 )
 
 
+# Models for which ``reasoning_effort="high"`` is the implicit default when
+# the caller does not specify one. Provider defaults underserve these models
+# in measured comparisons — most concretely, ``xai/grok-4.3`` at provider
+# default produced a Phase 1 modularization plan with 4 dedup items vs gpt-5.5
+# @ high's 9 items (cortex thread 1024, 2026-05-17); the same dispatch re-run
+# at ``reasoning_effort="high"`` reached parity in 3× less time and 5× fewer
+# tokens. Centralized here so every *_dispatch path (frontier_dispatch,
+# team_dispatch, the raw pipeline escape hatch) inherits the default
+# uniformly.
+#
+# Caller-supplied ``reasoning_effort`` (including the empty-string convention
+# from the MCP tool wrapper) is treated identically to the existing
+# translation gate: only an absent or empty value triggers the model default.
+# Explicit values always win.
+_DEFAULT_HIGH_EFFORT_MODELS: frozenset[str] = frozenset(
+    {
+        "xai/grok-4.3",
+    }
+)
+
+
+def resolve_default_reasoning_effort(model: str | None) -> str | None:
+    """Return the implicit default ``reasoning_effort`` for ``model``, or None.
+
+    Used by ``frontier_dispatch_v1`` to apply a model-specific default when
+    the caller has not supplied one. Returning ``None`` means no default
+    applies and the existing provider-native default takes over.
+    """
+    if not model:
+        return None
+    if model in _DEFAULT_HIGH_EFFORT_MODELS:
+        return "high"
+    return None
+
+
 def _anthropic_uses_adaptive_thinking(model: str | None) -> bool:
     """Return true when Anthropic prefers (or requires) adaptive thinking."""
     if not model:

@@ -68,6 +68,7 @@ from .frontier_dispatch_admission import (
 from .frontier_dispatch_observability import emit_post_loop_observability
 from .frontier_dispatch_request import (
     resolve_agent,
+    resolve_default_reasoning_effort,
     resolve_messages,
     resolve_model,
     resolve_system_prompt,
@@ -222,6 +223,19 @@ class FrontierDispatchHandler(BaseHandler):
             gen_params: dict[str, Any] = {**step_params, **opt_params}
         else:
             gen_params = step_params
+
+        # Apply model-specific default ``reasoning_effort`` when the caller
+        # did not supply one. Centralized in ``resolve_default_reasoning_effort``
+        # so every dispatch path inherits the default uniformly. Treats both
+        # missing and empty-string values as "unset" (the MCP wrapper passes
+        # ``reasoning_effort or ""``, mirroring the existing translation gate
+        # below). Explicit caller value — including non-default values like
+        # ``"medium"`` — always wins.
+        existing_effort = gen_params.get("reasoning_effort")
+        if not (isinstance(existing_effort, str) and existing_effort):
+            default_effort = resolve_default_reasoning_effort(model)
+            if default_effort is not None:
+                gen_params["reasoning_effort"] = default_effort
 
         # Translate convenience ``reasoning_effort`` to a provider-native
         # ``thinking`` config when the caller did not supply ``thinking``

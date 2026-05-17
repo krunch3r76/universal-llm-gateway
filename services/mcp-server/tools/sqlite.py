@@ -5,7 +5,8 @@ Config path: SQLITE_CONFIG_PATH env var (default /data/sqlite-config.yaml).
 Database files: stored under configured paths (typically /data/databases/).
 
 Safety:
-  - sql: SELECT-only, parameterized, row-limited
+  - sql: read-only (SELECT / WITH / EXPLAIN / VALUES — leading comments
+    stripped before the prefix check), parameterized, row-limited
   - sqlite_execute: blocks DROP/PRAGMA unless allow_destructive is set
   - All value bindings use SQLite parameterization
 """
@@ -36,7 +37,58 @@ _DESTRUCTIVE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SELECT_PATTERN = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
+# Broader read-only prefix check used by the ``sql`` tool. After stripping
+# leading whitespace and comments, the statement must begin with one of:
+#   SELECT  — canonical read
+#   WITH    — CTE; in standard usage wraps a SELECT, though SQLite also
+#             accepts ``WITH ... INSERT/UPDATE/DELETE`` (a theoretical
+#             CTE-wrapped mutation bypass that this regex alone cannot
+#             detect — proper defense-in-depth is opening the sqlite3
+#             connection in read-only URI mode (``file:<path>?mode=ro``).
+#             Queued as a follow-up; LLM-generated CTE-wrapped writes
+#             are vanishingly rare in practice.
+#   EXPLAIN — returns query plan / VDBE bytecode, never executes the
+#             underlying statement, so ``EXPLAIN INSERT ...`` is safe.
+#   VALUES  — row-literal expression, no side effects.
+_READ_STATEMENT_PATTERN = re.compile(
+    r"^\s*(?:SELECT|WITH|EXPLAIN|VALUES)\b",
+    re.IGNORECASE,
+)
+# Strip one leading SQL comment (``-- line`` or ``/* block */``) along with
+# any preceding whitespace. SQL block comments do not nest. Applied
+# repeatedly so a chain of leading comments is fully consumed before the
+# statement-prefix check runs.
+_LEADING_COMMENT_PATTERN = re.compile(
+    r"^\s*(?:--[^\n]*(?:\n|\Z)|/\*.*?\*/)",
+    re.DOTALL,
+)
 _CANONICAL_CORTEX_DB = "cortex"
+
+
+def _strip_leading_comments(sql: str) -> str:
+    """Strip leading whitespace + SQL comments from *sql*.
+
+    Returns the residual statement with any leading ``-- line`` or
+    ``/* block */`` comments removed, so the read-only prefix check sees
+    the actual first keyword.
+    """
+    previous: str | None = None
+    current = sql
+    while previous != current:
+        previous = current
+        current = _LEADING_COMMENT_PATTERN.sub("", current, count=1)
+    return current
+
+
+def _is_read_only_sql(sql: str) -> bool:
+    """Return ``True`` iff *sql* begins with a read-only statement keyword,
+    ignoring leading whitespace and SQL comments.
+
+    Accepted prefixes: ``SELECT``, ``WITH``, ``EXPLAIN``, ``VALUES``. See
+    ``_READ_STATEMENT_PATTERN`` for the trade-off notes on each.
+    """
+    return bool(_READ_STATEMENT_PATTERN.match(_strip_leading_comments(sql)))
+
 
 _SEED_SCHEMA = """\
 CREATE TABLE IF NOT EXISTS mcp_tools (
@@ -282,18 +334,24 @@ def register_sqlite_tools(mcp: FastMCP) -> None:
         db: str = _CANONICAL_CORTEX_DB,
         params: list[Any] | None = None,
     ) -> dict[str, Any]:
-        """Execute read-only SELECT. Defaults to db='cortex' for Cortex queries."""
+        """Execute a read-only query. Defaults to db='cortex' for Cortex queries.
+
+        Accepted statement forms (after stripping leading SQL comments):
+        ``SELECT``, ``WITH ... SELECT`` (CTE), ``EXPLAIN ...``, ``VALUES ...``.
+        Use ``sqlite_execute`` for writes.
+        """
         db = _normalize_read_db_name(db)
         db_path = _resolve_db_path(db)
         if db_path is None:
             return _unknown_db_error(db)
         if not db_path.exists():
             return {"error": f"Database file does not exist: {db!r}"}
-        if not _SELECT_PATTERN.match(sql):
+        if not _is_read_only_sql(sql):
             return {
                 "error": (
-                    "Only SELECT statements are allowed in sql. "
-                    "Use sqlite_execute for writes."
+                    "Only read-only statements (SELECT, WITH, EXPLAIN, VALUES) "
+                    "are allowed in sql. Leading SQL comments (-- line, /* block */) "
+                    "are stripped before the check. Use sqlite_execute for writes."
                 )
             }
 

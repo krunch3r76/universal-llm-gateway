@@ -912,6 +912,152 @@ async def test_handler_google_effort_is_lowercase(
 
 
 @pytest.mark.asyncio
+async def test_handler_grok43_defaults_to_high_reasoning_effort(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``xai/grok-4.3`` with no caller-supplied ``reasoning_effort`` must
+    default to ``high`` — measured plan-quality gap closes at high effort
+    (cortex thread 1024, 2026-05-17). Applies across every dispatch surface
+    that routes through ``frontier_dispatch_v1``.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="xai")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "xai/grok-4.3", "mcp": False})
+
+    await handler.execute(step, context)
+
+    assert captured["req"].effort == "high"
+    # Provider-native ``effort`` shape for xAI is ``{"effort": "high"}``.
+    assert captured["req"].thinking == {"effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_handler_grok43_caller_effort_wins_over_default(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit caller ``reasoning_effort`` always wins over the model default.
+
+    Caller passes ``medium``; default is ``high``; the dispatched request
+    must carry the caller value.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="xai")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "xai/grok-4.3",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": "medium"},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    assert captured["req"].effort == "medium"
+
+
+@pytest.mark.asyncio
+async def test_handler_grok43_empty_string_effort_triggers_default(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty-string ``reasoning_effort`` (the MCP wrapper convention for
+    "unset") must trigger the model default. The MCP tool surface passes
+    ``reasoning_effort or ""``, so the default-resolution gate has to treat
+    empty strings as unset to fire at all from that path.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="xai")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(
+        options={
+            "model": "xai/grok-4.3",
+            "mcp": False,
+            "generation_parameters": {"reasoning_effort": ""},
+        }
+    )
+
+    await handler.execute(step, context)
+
+    assert captured["req"].effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_handler_non_default_model_unaffected_by_default_resolution(
+    handler: FrontierDispatchHandler,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Models outside ``_DEFAULT_HIGH_EFFORT_MODELS`` are not coerced. With no
+    caller effort, ``req.effort`` is None and ``req.thinking`` is None — the
+    provider-native default takes over.
+    """
+    captured: dict[str, Any] = {}
+
+    async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
+        captured["req"] = kwargs["req"]
+        return _FakeLoopResult(provider="openai")
+
+    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+
+    step = _FakeStep()
+    context = _make_context(options={"model": "openai/gpt-5.4", "mcp": False})
+
+    await handler.execute(step, context)
+
+    assert captured["req"].effort is None
+    assert captured["req"].thinking is None
+
+
+def test_resolve_default_reasoning_effort_grok43_returns_high() -> None:
+    """Unit test: ``xai/grok-4.3`` resolves to ``high``."""
+    from .frontier_dispatch_request import resolve_default_reasoning_effort
+
+    assert resolve_default_reasoning_effort("xai/grok-4.3") == "high"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "openai/gpt-5.4",
+        "openai/gpt-5.5",
+        "anthropic/claude-sonnet-4-6",
+        "xai/grok-4-fast-reasoning",
+        "google/gemini-2.5-pro",
+        None,
+        "",
+    ],
+)
+def test_resolve_default_reasoning_effort_other_models_return_none(
+    model: str | None,
+) -> None:
+    """Unit test: every non-listed model (and falsy values) returns None."""
+    from .frontier_dispatch_request import resolve_default_reasoning_effort
+
+    assert resolve_default_reasoning_effort(model) is None
+
+
+@pytest.mark.asyncio
 async def test_handler_surfaces_canonical_model_entity_id(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
