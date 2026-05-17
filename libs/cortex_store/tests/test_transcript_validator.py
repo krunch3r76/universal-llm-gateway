@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cortex_store.dispatch_ops.ops_journals import _validate_transcript_structure
+from cortex_store.session_close_validation import _validate_transcript_structure
 
 
 def _clean_transcript() -> str:
