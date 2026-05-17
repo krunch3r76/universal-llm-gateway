@@ -57,6 +57,10 @@ CREATE TABLE assertions (
     artifact_storage TEXT DEFAULT 'inline',
     entrenchment_score REAL,
     predicate_form TEXT,
+    raw_predicate_form TEXT,
+    normalization_decision TEXT,
+    candidate_set_fingerprint TEXT,
+    normalizer_version TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT
 );
