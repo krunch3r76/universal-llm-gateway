@@ -16,6 +16,7 @@ from ..models import (
     SessionJournalItem,
     SessionJournalList,
 )
+from ..session_close_validation import _USER_VOICE_RE, _emit_rejected
 from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
@@ -245,37 +246,6 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
     item = SessionJournalItem(**decode_row(rows[0], _JSON_FIELDS))
     item.transcript_entity_id = transcript_entity_id
     return item
-
-
-_USER_VOICE_RE = re.compile(r"\*\*User:\*\*|\bUser:\s|^#{1,4}\s+User\b", re.MULTILINE)
-
-# Reason enum for mcp.session.close.rejected — see docs/event-contracts.md
-_REJECT_REASONS = frozenset(
-    {
-        "transcript.hollow",
-        "transcript.missing_structure",
-        "summary.too_short",
-        "session_id.invalid",
-        "session.already_closed",
-        "transcript_jsonl.invalid",
-        "session_summary.invalid",
-    }
-)
-
-
-def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> None:
-    """Emit mcp.session.close.rejected on every 422 reject path.
-
-    Reason MUST be one of _REJECT_REASONS (enforced via assertion in dev).
-    """
-    assert reason in _REJECT_REASONS, f"unknown reject reason {reason!r}"
-    record(
-        "mcp.session.close.rejected",
-        reason=reason,
-        session_id=session_id,
-        agent=agent,
-        detail=detail,
-    )
 
 
 def _raise_422(*, reason: str, session_id: str, agent: str, detail: str) -> None:
