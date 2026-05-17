@@ -18,59 +18,9 @@ from fastapi import APIRouter, HTTPException, Request
 from universal_logging import get_logger
 
 from ...common.config import FederationConfig
+from .gateway_connection import resolve_gateway_connection
 
 logger = get_logger(__name__)
-
-
-def _resolve_gateway_connection(
-    config: FederationConfig, gateway_socket_path: str | None, gateway_url: str | None
-) -> tuple[str | None, str | None]:
-    """
-    Resolve gateway connection details (socket path OR HTTP URL).
-
-    Translates container paths (/sockets/*) to host paths (/tmp/universal-sockets/*)
-    to match Docker volume mount: /tmp/universal-sockets:/sockets
-
-    Args:
-        config: Federation configuration
-        gateway_socket_path: Explicit socket path (Edge/Master modes with Unix socket)
-        gateway_url: Explicit HTTP URL (Edge/Master modes with HTTP)
-
-    Returns:
-        Tuple of (socket_path, http_url) - exactly one will be non-None
-
-    Raises:
-        ValueError: If no connection method can be resolved
-    """
-    socket_path = None
-    http_url = None
-
-    # Resolve connection from config or parameters
-    # Priority: explicit params > config.local_edge (Remote mode)
-    if gateway_socket_path:
-        socket_path = gateway_socket_path
-    elif gateway_url:
-        http_url = gateway_url
-    elif config.local_edge:
-        # Remote mode: local_edge points to Edge Stargate (which forwards to Gateway)
-        socket_path = config.local_edge.socket_path
-
-    # Validate at least one connection method is available
-    if not socket_path and not http_url:
-        raise ValueError(
-            "Gateway connection (socket or URL) not configured for token counting"
-        )
-
-    # Convert container socket paths to host paths if using sockets
-    if socket_path and socket_path.startswith("/sockets/"):
-        socket_name = socket_path.split("/")[-1]
-        socket_path = f"/tmp/universal-sockets/{socket_name}"
-        logger.debug(
-            f"Translated container socket path to host: /sockets/{socket_name} -> "
-            f"{socket_path}"
-        )
-
-    return socket_path, http_url
 
 
 async def _proxy_to_gateway(
@@ -234,8 +184,8 @@ def create_federation_token_router(
             f"gateway_socket_path={gateway_socket_path}, gateway_url={gateway_url}"
         )
         try:
-            sock_path, http_url = _resolve_gateway_connection(
-                config, gateway_socket_path, gateway_url
+            sock_path, http_url = resolve_gateway_connection(
+                config, gateway_socket_path, gateway_url, purpose="token counting"
             )
         except ValueError as e:
             logger.error(f"❌ Failed to resolve gateway connection: {e}")

@@ -344,8 +344,8 @@ class RemoteIntegration:
     def _mount_remote_routes(self, app: FastAPI, gateway_manager: Any | None) -> None:
         """Mounts all Remote API routes to the FastAPI application."""
         """Mount all Remote API routes."""
+        from .api import create_inference_router
         from .api.cancel import create_cancel_router
-        from .api.inference import create_inference_router
         from .api.models import create_model_router
         from .api.telemetry import router as telemetry_router
         from .api.tokens import create_federation_token_router

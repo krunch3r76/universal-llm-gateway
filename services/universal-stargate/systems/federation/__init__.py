@@ -117,10 +117,10 @@ from .master.manager.federated_gateway_manager import FederatedGatewayManager
 # Routing (Master-only, but exposed for convenience)
 from .master.routing.forward import FederatedRequestForwarder
 from .master.routing.orchestrator import MasterRequestTracker
+from .remote.api import create_inference_router
 
 # Remote API (exposed for convenience, but Remote-only)
 from .remote.api.cancel import create_cancel_router
-from .remote.api.inference import create_inference_router
 from .remote.api.request_store import ActiveRequest, ActiveRequestStore
 
 __all__ = [
