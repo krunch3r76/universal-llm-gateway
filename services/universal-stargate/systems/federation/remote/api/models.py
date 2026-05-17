@@ -72,7 +72,9 @@ def create_model_router(
             headers["X-Federation-Source"] = relay_stargate_id
             headers["X-Federation-Key"] = local_edge_client._config.api_key
         client = httpx.AsyncClient(
-            transport=httpx.AsyncHTTPTransport(uds=local_edge_client._config.socket_path),
+            transport=httpx.AsyncHTTPTransport(
+                uds=local_edge_client._config.socket_path
+            ),
             timeout=timeout,
         )
         return client, headers

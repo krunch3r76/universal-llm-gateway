@@ -226,8 +226,8 @@ class FederationIntegration:
 
         Edge exposes same HTTP endpoints as Remote for Master→Edge requests.
         """
+        from ..remote.api import create_inference_router
         from ..remote.api.cancel import create_cancel_router
-        from ..remote.api.inference import create_inference_router
         from ..remote.api.models import create_model_router
         from ..remote.api.request_store import ActiveRequestStore
         from ..remote.api.tokens import create_federation_token_router
