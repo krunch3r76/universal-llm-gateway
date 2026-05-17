@@ -80,6 +80,13 @@ def _relay_remote_command(relay_cmd: str) -> str:
         for key in _FORWARDED_BUILD_ENV_KEYS
         if (value := os.environ.get(key))
     ]
+    # PYTHONPATH is set after cd so $(pwd) expands to the remote project root.
+    # This overrides the system sitecustomize.py that would otherwise shadow the
+    # venv's site-packages copy and leave libs/ off sys.path.
+    forwarded = [
+        "PYTHONPATH=$(pwd)/libs:$(pwd)/services/universal-stargate${PYTHONPATH:+:$PYTHONPATH}",
+        *forwarded,
+    ]
     prefix = " ".join(forwarded)
     command_prefix = f"{prefix} " if prefix else ""
     command = f"cd ~/universal-llm-gateway && {command_prefix}{relay_cmd}"

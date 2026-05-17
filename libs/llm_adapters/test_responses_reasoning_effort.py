@@ -6,7 +6,8 @@ logic in build_frontier_request:
 - Reasoning OpenAI models (gpt-5.x, o-series) receive reasoning.effort
 - Non-reasoning OpenAI models (gpt-4o, gpt-4.1) get reasoning stripped
 - xAI grok-3 family receives reasoning.effort
-- xAI grok-4 family gets reasoning stripped (built-in reasoning)
+- xAI grok-4.3 receives reasoning.effort (supported per 2026 xAI docs)
+- Earlier grok-4 family (pre-4.3) gets reasoning stripped (built-in, not controllable)
 - No thinking → no reasoning key in body (baseline)
 """
 
@@ -126,7 +127,22 @@ def test_xai_grok3_sends_effort(model: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Adapter: xAI grok-4 → reasoning stripped (built-in, not controllable)
+# Adapter: xAI grok-4.3 → reasoning.effort injected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("model", ["grok-4.3"])
+def test_xai_grok43_sends_effort(model: str) -> None:
+    assert _xai_supports_reasoning_effort(model) is True
+    req = _req_with_effort(model, effort="medium")
+    _url, _headers, body = _adapter("xai").build_frontier_request(req)
+    assert body.get("reasoning") == {"effort": "medium"}, (
+        f"Expected reasoning.effort for xAI model={model}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Adapter: xAI grok-4 (pre-4.3) → reasoning stripped (built-in, not controllable)
 # ---------------------------------------------------------------------------
 
 

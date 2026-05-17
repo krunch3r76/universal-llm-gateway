@@ -4,12 +4,14 @@ from __future__ import annotations
 
 
 def _xai_supports_reasoning_effort(model: str) -> bool:
-    """Only grok-3 family accepts reasoning.effort control.
+    """grok-3 family and grok-4.3 accept reasoning.effort control.
 
-    All grok-4 family models (including -reasoning variants) reject
-    reasoningEffort despite xAI docs suggesting otherwise (tested 2026-03-31).
+    Earlier grok-4 family models (pre-grok-4.3, including -reasoning variants)
+    rejected reasoningEffort despite xAI docs suggesting otherwise
+    (tested 2026-03-31). grok-4.3 explicitly supports reasoning.effort with
+    none/low/medium/high per current xAI docs (2026).
     """
-    return any(prefix in model for prefix in ("grok-3-mini", "grok-3"))
+    return any(prefix in model for prefix in ("grok-3-mini", "grok-3", "grok-4.3"))
 
 
 def _openai_supports_reasoning_effort(model: str) -> bool:
