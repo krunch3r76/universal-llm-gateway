@@ -533,6 +533,42 @@ async def test_worktree_list_in_flight_flag(
 
 
 @pytest.mark.asyncio
+async def test_worktree_list_dispatch_id_when_in_flight(
+    git_repo: Path, worktree_dirs: Path
+) -> None:
+    """When in_flight=True, dispatch_id surfaces the registry record."""
+    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+
+    _reset_for_tests()
+    create = await grok_build(
+        op="worktree_create", name="d1", branch="HEAD", source_repo=str(git_repo)
+    )
+    target = create["metadata"]["worktree_path"]
+    assert await try_acquire_cwd(target, "uuid-disp-42") is True
+
+    out = await grok_build(op="worktree_list")
+    entry = next(e for e in out["metadata"]["worktrees"] if e["name"] == "d1")
+    assert entry["in_flight"] is True
+    assert entry["dispatch_id"] == "uuid-disp-42"
+    _reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_worktree_list_dispatch_id_null_when_idle(
+    git_repo: Path, worktree_dirs: Path
+) -> None:
+    """When in_flight=False, dispatch_id is null."""
+    create = await grok_build(
+        op="worktree_create", name="idle1", branch="HEAD", source_repo=str(git_repo)
+    )
+    assert create["status"] == "completed"
+    out = await grok_build(op="worktree_list")
+    entry = next(e for e in out["metadata"]["worktrees"] if e["name"] == "idle1")
+    assert entry["in_flight"] is False
+    assert entry["dispatch_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_worktree_list_skips_non_git_dirs(
     worktree_dirs: Path,
 ) -> None:

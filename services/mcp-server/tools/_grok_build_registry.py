@@ -27,13 +27,17 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from tools._grok_build_events import emit_grok_build_registry_recovered
 
 _lock = asyncio.Lock()
-_in_flight: set[str] = set()
+# cwd → dispatch_id. dispatch_id may be "" for callers that pre-date the
+# field (test fixtures that pre-populate the registry without a uuid).
+# Production dispatch_op always passes a real uuid.
+_in_flight: dict[str, str] = {}
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 REGISTRY_PATH = Path(
     os.getenv("GROK_BUILD_REGISTRY_PATH", "/data/state/grok_build_registry.json")
 )
@@ -68,7 +72,10 @@ def _write_registry_to_disk() -> None:
     data = {
         "schema_version": SCHEMA_VERSION,
         "writer_pid": os.getpid(),
-        "entries": sorted(_in_flight),
+        "entries": [
+            {"cwd": cwd, "dispatch_id": _in_flight[cwd]}
+            for cwd in sorted(_in_flight)
+        ],
     }
     parent = REGISTRY_PATH.parent
     try:
@@ -119,7 +126,7 @@ def _load_registry_from_disk() -> None:
 
     schema_version = data.get("schema_version", 0)
     writer_pid: int = data.get("writer_pid", 0)
-    raw_entries: list[str] = data.get("entries", [])
+    raw_entries: list[Any] = data.get("entries", [])
 
     if not raw_entries:
         emit_grok_build_registry_recovered(
@@ -142,7 +149,12 @@ def _load_registry_from_disk() -> None:
         )
     else:
         for entry in raw_entries:
-            _in_flight.add(entry)
+            # Schema v1 stored bare cwd strings; v2 stores {cwd, dispatch_id}.
+            # Tolerate both so an in-place upgrade does not lose state.
+            if isinstance(entry, str):
+                _in_flight[entry] = ""
+            elif isinstance(entry, dict) and "cwd" in entry:
+                _in_flight[entry["cwd"]] = entry.get("dispatch_id", "") or ""
         emit_grok_build_registry_recovered(
             entries_recovered=len(raw_entries),
             entries_pruned=0,
@@ -150,8 +162,14 @@ def _load_registry_from_disk() -> None:
         )
 
 
-async def try_acquire_cwd(cwd: str) -> bool:
+async def try_acquire_cwd(cwd: str, dispatch_id: str = "") -> bool:
     """Reserve the cwd; return False if already in flight.
+
+    ``dispatch_id`` is recorded on the registry record so callers
+    (``worktree_list``, ``dispatch_conflict`` envelope) can surface the
+    in-flight dispatch_id without sidecar grepping. Empty default
+    preserves test fixtures that pre-populate the registry; production
+    dispatch_op always supplies a real uuid.
 
     Caller MUST pair every True return with a ``release_cwd`` call
     (typically in a ``finally`` block).
@@ -160,7 +178,7 @@ async def try_acquire_cwd(cwd: str) -> bool:
     async with _lock:
         if key in _in_flight:
             return False
-        _in_flight.add(key)
+        _in_flight[key] = dispatch_id
         _write_registry_to_disk()
         return True
 
@@ -169,28 +187,44 @@ async def release_cwd(cwd: str) -> None:
     """Release the cwd. Idempotent — silent if absent."""
     key = _canonical(cwd)
     async with _lock:
-        _in_flight.discard(key)
+        _in_flight.pop(key, None)
         _write_registry_to_disk()
 
 
-async def cwds_under(prefix: str) -> set[str]:
-    """Return in-flight cwds that are equal to or inside ``prefix``.
+async def get_dispatch_id(cwd: str) -> str | None:
+    """Return dispatch_id holding ``cwd``, or None if not in flight.
 
-    Used by ``worktree_remove`` to detect ``worktree_busy``. Comparison
-    is path-based after canonicalization; the prefix is normalized to
-    end with ``os.sep`` before substring match to avoid partial-name
-    false positives (``/a/foo`` must not match prefix ``/a/foo-bar``).
+    Empty-string registry values (legacy / test-injected) surface as None
+    so callers can treat "unknown dispatch_id" uniformly.
+    """
+    key = _canonical(cwd)
+    async with _lock:
+        if key not in _in_flight:
+            return None
+        return _in_flight[key] or None
+
+
+async def cwds_under(prefix: str) -> dict[str, str]:
+    """Return {cwd: dispatch_id} for in-flight cwds equal to or inside ``prefix``.
+
+    Used by ``worktree_remove`` (membership-only) and ``worktree_list``
+    (needs dispatch_id). Comparison is path-based after canonicalization;
+    the prefix is normalized to end with ``os.sep`` before substring match
+    to avoid partial-name false positives (``/a/foo`` must not match
+    prefix ``/a/foo-bar``).
     """
     canonical = _canonical(prefix)
     canonical_prefix = canonical if canonical.endswith(os.sep) else canonical + os.sep
     async with _lock:
         return {
-            c for c in _in_flight if c == canonical or c.startswith(canonical_prefix)
+            c: did
+            for c, did in _in_flight.items()
+            if c == canonical or c.startswith(canonical_prefix)
         }
 
 
 def _reset_for_tests() -> None:
-    """Clear the in-flight set. TEST-ONLY — not a public API."""
+    """Clear the in-flight registry. TEST-ONLY — not a public API."""
     _in_flight.clear()
 
 

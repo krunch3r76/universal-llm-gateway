@@ -95,6 +95,7 @@ def _enumerate(root: str) -> list[dict[str, Any]]:
                 "dirty": state["dirty"],
                 "valid": state["valid"],
                 "in_flight": False,
+                "dispatch_id": None,
             }
         )
     return entries
@@ -186,9 +187,23 @@ async def worktree_list_op() -> dict[str, Any]:
     in_flight = await cwds_under(root)
     for entry in entries:
         canonical = os.path.realpath(entry["path"])
-        entry["in_flight"] = canonical in in_flight or any(
+        matched_dispatch: str | None = None
+        if canonical in in_flight:
+            matched_dispatch = in_flight[canonical] or None
+        else:
+            prefix = canonical + os.sep
+            for cwd, did in in_flight.items():
+                if cwd.startswith(prefix):
+                    matched_dispatch = did or None
+                    break
+        # Membership in `in_flight` is the authoritative signal; dispatch_id
+        # may still be None when the registry record carries no uuid (legacy
+        # / test fixture pre-population).
+        in_flight_hit = canonical in in_flight or any(
             cwd.startswith(canonical + os.sep) for cwd in in_flight
         )
+        entry["in_flight"] = in_flight_hit
+        entry["dispatch_id"] = matched_dispatch if in_flight_hit else None
 
     duration_s = time.monotonic() - t0
     meta = _list_metadata(worktree_root=root, worktrees=entries)

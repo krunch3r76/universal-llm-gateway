@@ -17,6 +17,7 @@ from tools._grok_build_registry import (
     _pid_running,
     _reset_for_tests,
     cwds_under,
+    get_dispatch_id,
     release_cwd,
     try_acquire_cwd,
 )
@@ -129,7 +130,7 @@ async def test_cwds_under_no_partial_name_match(
     os.makedirs(cousin)
     assert await try_acquire_cwd(sibling) is True
     found = await cwds_under(cousin)
-    assert found == set()
+    assert found == {}
     await release_cwd(sibling)
 
 
@@ -148,12 +149,15 @@ async def test_acquire_writes_cwd_to_disk(
 
     cwd = str(tmp_path / "repo")
     os.makedirs(cwd)
-    assert await try_acquire_cwd(cwd) is True
+    assert await try_acquire_cwd(cwd, "dispatch-abc") is True
 
     data: dict[str, Any] = json.loads(reg.read_text())
     assert data["schema_version"] == SCHEMA_VERSION
     assert data["writer_pid"] == os.getpid()
-    assert os.path.realpath(cwd) in data["entries"]
+    cwds = [e["cwd"] for e in data["entries"]]
+    assert os.path.realpath(cwd) in cwds
+    matched = next(e for e in data["entries"] if e["cwd"] == os.path.realpath(cwd))
+    assert matched["dispatch_id"] == "dispatch-abc"
 
 
 @pytest.mark.asyncio
@@ -228,7 +232,7 @@ def test_startup_prunes_stale_entries_when_pid_gone(
 
     import tools._grok_build_registry as reg_mod
 
-    assert reg_mod._in_flight == set()
+    assert reg_mod._in_flight == {}
     assert any(sig == "mcp.grok.build.registry.recovered" for sig, _ in events)
     evt_payload = next(
         kw for sig, kw in events if sig == "mcp.grok.build.registry.recovered"
@@ -314,3 +318,63 @@ def test_pid_running_dead_pid() -> None:
     # PID 0 is not a valid user process and os.kill(0, 0) has special semantics
     # (sends to process group). Use a known-impossible large PID instead.
     assert _pid_running(99999999) is False
+
+
+# ---------------------------------------------------------------------------
+# dispatch_id exposure (thread 1028 followup)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_dispatch_id_returns_recorded_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    assert await try_acquire_cwd("/tmp", "uuid-xyz") is True
+    assert await get_dispatch_id("/tmp") == "uuid-xyz"
+    await release_cwd("/tmp")
+    assert await get_dispatch_id("/tmp") is None
+
+
+@pytest.mark.asyncio
+async def test_get_dispatch_id_none_for_empty_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Legacy fixtures may pre-populate without a uuid; surface as None."""
+    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    assert await try_acquire_cwd("/tmp") is True
+    assert await get_dispatch_id("/tmp") is None
+    await release_cwd("/tmp")
+
+
+@pytest.mark.asyncio
+async def test_cwds_under_carries_dispatch_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    root = str(tmp_path)
+    nested = os.path.join(root, "inside")
+    os.makedirs(nested)
+    assert await try_acquire_cwd(nested, "did-1") is True
+    found = await cwds_under(root)
+    assert found[os.path.realpath(nested)] == "did-1"
+    await release_cwd(nested)
+
+
+def test_legacy_v1_string_entries_load(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A v1 registry file (bare cwd strings) loads with empty dispatch_id."""
+    reg = tmp_path / "registry.json"
+    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    reg.write_text(
+        json.dumps(
+            {"schema_version": 1, "writer_pid": os.getpid(), "entries": ["/legacy/cwd"]}
+        )
+    )
+    with patch("tools._grok_build_registry._pid_running", return_value=True):
+        _reset_for_tests()
+        _load_registry_from_disk()
+    import tools._grok_build_registry as reg_mod
+
+    assert reg_mod._in_flight.get("/legacy/cwd") == ""
