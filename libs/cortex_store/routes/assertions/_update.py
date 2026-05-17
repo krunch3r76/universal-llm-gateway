@@ -105,8 +105,6 @@ def update_assertion(
                 "review_notes",
                 "resolution_status",
                 "fulfillment_assertion_id",
-                "reasoning_summary",
-                "chunk_id",
             ):
                 if k in body and body[k] is not None:
                     update_map[k] = body[k]
@@ -126,8 +124,6 @@ def update_assertion(
                 "review_notes",
                 "resolution_status",
                 "fulfillment_assertion_id",
-                "reasoning_summary",
-                "chunk_id",
             ):
                 val = getattr(body, k)
                 if val is not None:

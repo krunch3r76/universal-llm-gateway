@@ -374,8 +374,6 @@ def _op_assertion_update(
     reviewer: str | None = None,
     reviewed_at: str | None = None,
     review_notes: str | None = None,
-    reasoning_summary: str | None = None,
-    chunk_id: int | None = None,
     predicate_form: Any = _UNSET,
     force: bool = False,
     **_: object,
@@ -393,8 +391,6 @@ def _op_assertion_update(
             ("reviewer", reviewer),
             ("reviewed_at", reviewed_at),
             ("review_notes", review_notes),
-            ("reasoning_summary", reasoning_summary),
-            ("chunk_id", chunk_id),
         ]
         if val is not None
     }

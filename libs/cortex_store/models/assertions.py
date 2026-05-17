@@ -155,14 +155,6 @@ class AssertionUpdate(BaseModel):
     # pipelines/predicate_extract/ after fire-and-forget dispatch from the
     # assertion-create write hook. Explicit null in PATCH body clears the field.
     predicate_form: str | None = None
-    # Provenance metadata addable post-write to graduate staged assertions
-    # (F1 hint on assert). Following the predicate_form pattern, reasoning_summary
-    # and chunk_id are nullable patchable fields — not claim content, so they
-    # don't trigger the immutability-of-claim doctrine that justifies supersede
-    # for substantive edits. Absent and null are treated identically (no
-    # post-write clearing); use supersede if a value must be retracted.
-    reasoning_summary: str | None = None
-    chunk_id: int | None = None
     # Idempotency guard for superseded_by writes. When the target row already
     # has a non-null superseded_by, the PATCH is rejected with 409 Conflict
     # unless force=True is set. Prevents silent lineage clobber from
