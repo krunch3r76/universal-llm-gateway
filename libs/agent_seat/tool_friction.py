@@ -7,6 +7,7 @@ and applies a few conservative no-progress guards.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
@@ -48,6 +49,34 @@ def _inner_error_message(result: str) -> str:
     return str(message)
 
 
+def _args_hash(arguments: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        arguments, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    return f"args:{hashlib.sha256(canonical.encode()).hexdigest()[:12]}"
+
+
+# Priority order for extracting a target identifier from inner cortex args.
+_CORTEX_TARGET_KEYS = (
+    "id",
+    "entity_id",
+    "slug",
+    "source_id",
+    "target_id",
+    "relationship_id",
+    "journal_id",
+    "query",
+)
+
+
+def _extract_cortex_target(inner_args: dict[str, Any]) -> str:
+    for key in _CORTEX_TARGET_KEYS:
+        val = inner_args.get(key)
+        if val and isinstance(val, str):
+            return val
+    return ""
+
+
 def classify_tool_failure(
     name: str, arguments: dict[str, Any], result: str
 ) -> dict[str, Any]:
@@ -68,15 +97,20 @@ def classify_tool_failure(
                 "suggested_next_action": "Run md_list for the document, then retry with an exact section name.",
             }
 
-    if name == "cortex" and tool == "entity_create":
-        args = arguments.get("arguments")
-        entity_id = ""
-        if isinstance(args, str):
-            entity_id = str(_parse_json_object(args).get("id") or "")
-        elif isinstance(args, dict):
-            entity_id = str(args.get("id") or "")
-        target = entity_id
-        if "HTTP 409" in message or "Entity already exists" in message:
+    elif name == "cortex":
+        inner_tool = arguments.get("tool", "")
+        tool = f"cortex.{inner_tool}" if inner_tool else "cortex"
+        raw_args = arguments.get("arguments")
+        if isinstance(raw_args, str):
+            inner_args = _parse_json_object(raw_args)
+        elif isinstance(raw_args, dict):
+            inner_args = raw_args
+        else:
+            inner_args = {}
+        target = _extract_cortex_target(inner_args)
+        if inner_tool == "entity_create" and (
+            "HTTP 409" in message or "Entity already exists" in message
+        ):
             return {
                 "tool": "cortex.entity_create",
                 "code": "entity_exists",
@@ -85,13 +119,33 @@ def classify_tool_failure(
                 "suggested_next_action": "Use entity_get to verify the existing entity, then entity_update if metadata must change.",
             }
 
+    elif name == "observability":
+        params = arguments.get("params") or {}
+        if not isinstance(params, dict):
+            params = {}
+        operation = params.get("operation") or arguments.get("operation") or ""
+        execution_id = params.get("execution_id") or ""
+        tool = f"observability.{operation}" if operation else "observability"
+        if not execution_id:
+            return {
+                "tool": tool,
+                "code": "missing_required_argument",
+                "target": f"{operation}:execution_id",
+                "message": message[:300],
+                "suggested_next_action": suggested,
+            }
+        target = f"{operation}:{execution_id}"
+
     if name in {"dispatch", "agent_consult"} and tool == "agent_consult":
         suggested = "Skip further consult calls and synthesize from current evidence."
+
+    if not target:
+        target = _args_hash(arguments)
 
     return {
         "tool": tool,
         "code": "tool_error",
-        "target": target or str(arguments.get("path") or arguments.get("tool") or ""),
+        "target": target,
         "message": message[:300],
         "suggested_next_action": suggested,
     }
@@ -101,7 +155,10 @@ class ToolFrictionTracker:
     """Track deterministic tool-loop friction across native-loop turns."""
 
     def __init__(self) -> None:
+        # Raw per-key call count — used for informational summaries.
         self._failure_counts: Counter[tuple[str, str, str]] = Counter()
+        # Turn numbers per key — distinct-turn set drives the halt predicate.
+        self._failure_turns: dict[tuple[str, str, str], list[int]] = {}
         self._consult_calls = 0
         self.exhaustion_reason: str | None = None
 
@@ -135,7 +192,10 @@ class ToolFrictionTracker:
             str(failure["target"]),
         )
         self._failure_counts[key] += 1
-        if self._failure_counts[key] >= 2 and self.exhaustion_reason is None:
+        turns = self._failure_turns.setdefault(key, [])
+        turns.append(call.turn)
+        # ∀ key: halt iff |distinct_turns| ≥ 2 (same failure across two separate turns).
+        if len(set(turns)) >= 2 and self.exhaustion_reason is None:
             self.exhaustion_reason = (
                 f"repeated_{failure['code']} from {failure['tool']} "
                 f"against {failure['target']!r}"
@@ -168,6 +228,7 @@ class ToolFrictionTracker:
                     "code": failure["code"],
                     "target": failure["target"],
                     "count": 0,
+                    "_turns": set(),
                     "first_turn": call.turn,
                     "last_turn": call.turn,
                     "message": failure["message"],
@@ -175,7 +236,11 @@ class ToolFrictionTracker:
                 },
             )
             item["count"] += 1
+            item["_turns"].add(call.turn)
             item["last_turn"] = call.turn
+
+        for item in grouped.values():
+            item["distinct_turns"] = sorted(item.pop("_turns"))
 
         successful = [call for call in tool_calls if call.ok]
         return {

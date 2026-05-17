@@ -48,6 +48,11 @@ services:
       - ${GROK_AUTH_DIR:-/home/io/.grok}:/home/mcp/.grok:rw
       # torus projects — grok_build cwd access (rw required for edit-mode dispatches)
       - /mnt/torus/projects:/mnt/torus/projects:rw
+      # grok-build sidecar logs — bind-mount so host can observe dispatch lifecycle.
+      # The started record lands before grok spawns; exit record lands at completion.
+      # For live grok progress, tail ~/.grok/logs/unified.jsonl (already accessible
+      # via the ~/.grok mount above). Pre-create on host: mkdir -p /tmp/logs/grok-build
+      - ${GROK_SIDECAR_LOG_DIR:-/tmp/logs/grok-build}:/tmp/logs/grok-build:rw
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
       - PROJECT_ROOT=/data/project

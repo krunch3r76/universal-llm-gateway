@@ -34,6 +34,15 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # SQLite has no built-in REGEXP — register one so callers can use
+    # `col REGEXP pattern` in SQL. None inputs are treated as non-matching.
+    conn.create_function(
+        "REGEXP",
+        2,
+        lambda pattern, value: bool(
+            re.search(pattern, str(value)) if value is not None else False
+        ),
+    )
     return conn
 
 

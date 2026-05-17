@@ -60,7 +60,7 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "next: seed content assertions on relevant entities (decisions, observations); "
         "post to agent bus thread 480 with session debrief; "
         "entity_get on transcript_entity_id to confirm the full record. "
-        "Review staged_assertions from review_queue (F2) — add reasoning_summary or chunk_id to graduate."
+        "Review staged_assertions from review_queue (F2) — to graduate, supersede each with the missing reasoning_summary or chunk_id (carryover preserves the rest; new row is the committed version). reasoning_summary is immutable post-creation per v1.3-additions §7.5.3."
     ),
     "search": (
         "next: extract entity_ids from results → activate (for structurally "

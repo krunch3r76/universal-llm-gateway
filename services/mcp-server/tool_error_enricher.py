@@ -45,38 +45,110 @@ class ToolErrorEnricher(Middleware):
                 # lookup failure must never poison the error path
                 pass
 
+            schema_props_raw = (
+                schema.get("properties", {}) if isinstance(schema, dict) else {}
+            )
+            schema_props = (
+                schema_props_raw if isinstance(schema_props_raw, dict) else {}
+            )
+            tool_param_names = {k for k in schema_props if isinstance(k, str)}
+
+            # Heuristic: enrich only errors that look like they came from the
+            # FastMCP tool-arg validation boundary. If no error loc matches a
+            # tool parameter name AND no error type is arg-boundary-specific,
+            # the ValidationError almost certainly came from inside the tool
+            # body (e.g. an internal Model.model_validate call); enriching it
+            # with the tool's schema would emit misleading hints (the tool's
+            # parameter list would be listed as accepted_params for an
+            # internal Model error). Re-raise and let the tool's own
+            # try/except — or the generic _tool_error_envelope downstream —
+            # handle it.
+            arg_boundary_types = {
+                "unexpected_keyword_argument",
+                "missing",
+                "missing_argument",
+            }
+            err_first_locs: set[str] = set()
+            err_types: set[str] = set()
+            for e in exc.errors():
+                loc_seq = e.get("loc") or ()
+                if loc_seq:
+                    err_first_locs.add(str(loc_seq[0]))
+                err_types.add(str(e.get("type", "")))
+            looks_like_arg_boundary = bool(
+                (err_first_locs & tool_param_names)
+                or (err_types & arg_boundary_types)
+            )
+            if not looks_like_arg_boundary:
+                raise
+
             errors: list[dict[str, Any]] = []
             for err in exc.errors():
                 loc = err.get("loc") or ()
                 param = str(loc[0]) if loc else "?"
+                err_type = str(err.get("type", "unknown"))
                 input_val = err.get("input")
-                input_str = str(input_val) if input_val is not None else ""
-                input_type = type(input_val).__name__ if input_val is not None else "NoneType"
+                # For missing/missing_argument, pydantic puts the entire call
+                # payload in err["input"]. Describing that payload's type as
+                # the "received" type is misleading — the agent didn't send
+                # a value for the missing param at all. Override here so the
+                # downstream hint reflects the actual structural cause.
+                if err_type in {"missing", "missing_argument"}:
+                    input_str = ""
+                    input_type = "<missing>"
+                else:
+                    input_str = str(input_val) if input_val is not None else ""
+                    input_type = (
+                        type(input_val).__name__
+                        if input_val is not None
+                        else "NoneType"
+                    )
                 entry: dict[str, Any] = {
-                    "type": err.get("type", "unknown"),
+                    "type": err_type,
                     "param": param,
                     "msg": err.get("msg", ""),
                     "input": input_str,
                     "input_type": input_type,
                 }
-                if entry["type"] == "unexpected_keyword_argument":
-                    props = schema.get("properties", {}) if isinstance(schema, dict) else {}
-                    accepted = sorted(k for k in props if isinstance(k, str))
-                    required = schema.get("required", []) if isinstance(schema, dict) else []
-                    if not isinstance(required, list):
-                        required = []
+                if err_type == "unexpected_keyword_argument":
+                    accepted = sorted(tool_param_names)
+                    required_raw = (
+                        schema.get("required", [])
+                        if isinstance(schema, dict)
+                        else []
+                    )
+                    required = required_raw if isinstance(required_raw, list) else []
                     entry["accepted_params"] = accepted
                     entry["required_params"] = required
                     acc = ", ".join(accepted) if accepted else "none"
-                    entry["hint"] = f"'{param}' is not a parameter of '{tool_name}'. Accepted: {acc}."
-                else:
-                    props = schema.get("properties", {}) if isinstance(schema, dict) else {}
-                    prop_schema = props.get(param, {}) if isinstance(props, dict) else {}
-                    exp_type = prop_schema.get("type") if isinstance(prop_schema, dict) else None
+                    entry["hint"] = (
+                        f"'{param}' is not a parameter of '{tool_name}'. "
+                        f"Accepted: {acc}."
+                    )
+                elif err_type in {"missing", "missing_argument"}:
+                    prop_schema_raw = schema_props.get(param, {})
+                    prop_schema = (
+                        prop_schema_raw if isinstance(prop_schema_raw, dict) else {}
+                    )
+                    exp_type = prop_schema.get("type")
                     if exp_type:
                         entry["expected_type"] = exp_type
                     type_hint = exp_type or "valid input"
-                    entry["hint"] = f"'{param}' expects {type_hint}; received {input_type}."
+                    entry["hint"] = (
+                        f"'{param}' is required (expects {type_hint})."
+                    )
+                else:
+                    prop_schema_raw = schema_props.get(param, {})
+                    prop_schema = (
+                        prop_schema_raw if isinstance(prop_schema_raw, dict) else {}
+                    )
+                    exp_type = prop_schema.get("type")
+                    if exp_type:
+                        entry["expected_type"] = exp_type
+                    type_hint = exp_type or "valid input"
+                    entry["hint"] = (
+                        f"'{param}' expects {type_hint}; received {input_type}."
+                    )
                 errors.append(entry)
 
             envelope: dict[str, Any] = {

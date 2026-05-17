@@ -229,8 +229,12 @@ def _op_assert(
             hints = []
             if has_staging:
                 hints.append(
-                    "assertion routed to staging — add reasoning_summary or chunk_id "
-                    "to graduate to committed (see F1 in cortex-assertion-triage spec)"
+                    "assertion routed to staging — to graduate to committed, "
+                    "supersede with the missing reasoning_summary or chunk_id "
+                    "(carryover preserves all other fields; the new row is the "
+                    "committed version). reasoning_summary is immutable "
+                    "post-creation per cortex-provenance-substrate-v1.3-additions "
+                    "§7.5.3 — assertion_update does not accept it."
                 )
             if has_auditor:
                 hints.append(

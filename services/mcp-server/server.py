@@ -320,7 +320,13 @@ def _build_server() -> FastMCP:
         """Health check — confirms the MCP server is reachable."""
         return {"status": "ok"}
 
-    register_tool_error_enricher(mcp)
+    try:
+        register_tool_error_enricher(mcp)
+    except Exception:
+        logger.exception(
+            "Failed to initialize tool error enricher — proceeding without it"
+        )
+        record("mcp.tool.enricher.init.failed", error="see server logs")
     try:
         register_response_guard(mcp)
     except Exception:
