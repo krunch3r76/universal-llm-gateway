@@ -11,7 +11,13 @@ import json
 import logging
 from pathlib import Path
 
-import chromadb
+try:
+    import chromadb
+
+    _CHROMADB_AVAILABLE = True
+except ImportError:
+    chromadb = None  # type: ignore[assignment]
+    _CHROMADB_AVAILABLE = False
 
 logger = logging.getLogger("cortex-api.vector_store")
 
@@ -27,6 +33,10 @@ def init_vector_store(db_dir: Path) -> None:
                 as a sibling ``chroma/`` directory.
     """
     global _client, _collection
+    if not _CHROMADB_AVAILABLE:
+        raise RuntimeError(
+            "Vector store requires chromadb; install with `pip install chromadb`"
+        )
     chroma_path = db_dir / "chroma"
     chroma_path.mkdir(parents=True, exist_ok=True)
     _client = chromadb.PersistentClient(path=str(chroma_path))

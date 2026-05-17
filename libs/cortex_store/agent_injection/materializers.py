@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 
 from ..db import cortex_conn, decode_row, query
-from ..routes.assertions import _ASSERTION_COLS, _JSON_FIELDS
+from ..routes.assertions._shared import _ASSERTION_COLS, _JSON_FIELDS
 from .errors import AgentInjectionAdmissionError, ViolationDetail
 from .selection import select
 from .templates import render_d1, render_d2, render_d3, render_d4
@@ -102,7 +102,7 @@ def materialize_d2(
             )
         active_rows = query(
             conn,
-            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? AND superseded_by IS NULL",
+            f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? AND superseded_by IS NULL ORDER BY id",
             (entity_id,),
         )
     decoded = [decode_row(r, _JSON_FIELDS) for r in active_rows]
@@ -165,7 +165,7 @@ def materialize_d2(
     # strip the content_hash line (do not mutate via replace on final hash)
     body_lines = body_with_ph.splitlines()
     body_no_hash_lines = [
-        ln for ln in body_lines if not re.match(r"^\s*\| content_hash:", ln)
+        ln for ln in body_lines if not re.match(r"^\s*\| (content_hash|pulled_at):", ln)
     ]
     body_without = "\n".join(body_no_hash_lines)
     if body_with_ph.endswith("\n") and not body_without.endswith("\n"):

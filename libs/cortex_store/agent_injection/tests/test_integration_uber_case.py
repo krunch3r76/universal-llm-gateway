@@ -12,6 +12,7 @@ If the live DB is absent or the entity is not present, the test is skipped (not 
 from __future__ import annotations
 
 import os
+import re
 
 import pytest
 
@@ -86,17 +87,25 @@ def test_uber_case_d2_deterministic_and_roundtrip_and_validators():
     assert v.ok is True
 
     # 4. output validation on synthetic response citing every assertion from the D.2 -> zero findings
-    # extract assertion ids from rendered rows
-    assertion_ids = []
+    # extract assertion ids + valid_from from rendered rows; build dated-prose synthetic per Fix 4
+    citations = []
     for ln in d2a["rendered"].splitlines():
         if ln.strip().startswith("assertion_id="):
             try:
                 aid = int(ln.split("assertion_id=")[1].split()[0])
-                assertion_ids.append(aid)
+                vf = ""
+                if "valid_from=" in ln:
+                    vf = ln.split("valid_from=")[1].split()[0]
+                citations.append({"id": aid, "valid_from": vf})
             except Exception:
                 pass
-    if assertion_ids:
-        synthetic = " ".join(f"[assertion:{aid}]" for aid in assertion_ids)
+    if citations:
+        parts = []
+        for a in citations:
+            vf = a.get("valid_from") or ""
+            iso_date = vf[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", vf) else "2026-05-17"
+            parts.append(f"On {iso_date}, [assertion:{a['id']}] was observed.")
+        synthetic = " ".join(parts)
         outv = validate_output(synthetic)
         assert outv.ok is True
         assert outv.findings == []

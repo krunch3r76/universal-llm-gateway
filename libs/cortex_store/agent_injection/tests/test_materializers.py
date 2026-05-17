@@ -122,7 +122,7 @@ def test_materialize_d2_happy_and_roundtrip(mock_conn, mock_query):
     rendered = res["rendered"]
     # strip hash line exactly as materializer does
     body_lines = rendered.splitlines()
-    no_hash = [ln for ln in body_lines if not re.match(r"^\s*\| content_hash:", ln)]
+    no_hash = [ln for ln in body_lines if not re.match(r"^\s*\| (content_hash|pulled_at):", ln)]
     body_wo = "\n".join(no_hash)
     recomputed = compute_d2_content_hash(body_wo)
     assert recomputed == res["content_hash"], "D.2 hash round-trip failed — indicates broken replace-hash pattern"
