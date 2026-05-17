@@ -137,7 +137,7 @@ _ASSERTION_COLS = (
     "review_status, reviewer, reviewed_at, review_notes, "
     "resolution_status, fulfillment_assertion_id, quality_score, "
     "prospective_summary, events_json, artifact_uri, artifact_storage, "
-    "entrenchment_score, predicate_form, created_at"
+    "entrenchment_score, predicate_form, created_at, raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
 )
 
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}

@@ -180,6 +180,12 @@ def create_assertion(
                 )
             )
 
+        # v1.3.1 ledger values (write-once, None when no predicate_form seeded)
+        raw_pf = normalize_result.get("raw_predicate_form") if normalize_result else None
+        norm_dec = normalize_result.get("normalization_decision") if normalize_result else None
+        cand_fp = normalize_result.get("candidate_set_fingerprint") if normalize_result else None
+        norm_ver = normalize_result.get("normalizer_version") if normalize_result else None
+
         near_dup_warning: NearDuplicateWarning | None = None
 
         with WRITE_LOCK:
@@ -190,8 +196,9 @@ def create_assertion(
                 "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
                 "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
                 "  prospective_summary, events_json, artifact_uri, artifact_storage,"
-                "  entrenchment_score, predicate_form"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  entrenchment_score, predicate_form, "
+                "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -219,6 +226,10 @@ def create_assertion(
                     body.artifact_storage,
                     entrenchment,
                     predicate_form_to_store,
+                    raw_pf,
+                    norm_dec,
+                    cand_fp,
+                    norm_ver,
                 ),
             )
 

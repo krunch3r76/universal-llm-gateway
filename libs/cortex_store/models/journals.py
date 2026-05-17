@@ -20,6 +20,8 @@ session-close-either-of-validator).
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 
@@ -116,3 +118,6 @@ class SessionCloseResponse(BaseModel):
     content_hash: str
     turn_count: int
     byte_count: int
+    # v1.3.1 Path 3 advisory (non-blocking): normalization refusals detected
+    # in session-written assertions via the ledger. Never causes 422.
+    audit_warnings: list[dict[str, Any]] | None = None

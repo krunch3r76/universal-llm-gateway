@@ -36,6 +36,8 @@ SEVERITY = {
     "confirmed_entity_no_assertions": "warning",
     "confirmed_attribute_no_assertion": "warning",
     "case_marker_absent": "info",
+    # v1.3.1 normalization-decision ledger (shadow, Path 2/3)
+    "unresolved_bare_token_in_predicate_form": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

@@ -148,8 +148,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 "INSERT INTO assertions ("
                 "  entity_id, claim, confidence, evidence, evidence_uris,"
                 "  derivation_type, observed_at, valid_from, entrenchment_score,"
-                "  reasoning_summary, seeded_by, chunk_id, confidence_score"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  reasoning_summary, seeded_by, chunk_id, confidence_score,"
+                "  raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -164,6 +165,10 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                     eff_seeded_by,
                     eff_chunk_id,
                     eff_confidence_score,
+                    None,
+                    None,
+                    None,
+                    None,
                 ),
             )
             new_id = cur.lastrowid

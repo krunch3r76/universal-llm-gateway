@@ -29,6 +29,8 @@ across-revision stability guarantee for state-token clustering.
 
 from __future__ import annotations
 
+import hashlib
+
 from .classes import (
     apply_class_1,
     apply_class_2,
@@ -40,9 +42,13 @@ from .entity_resolve import (
     CortexEntityResolver,
     DBEntityResolver,
     EntityResolver,
+    ResolutionResult,
     StaticEntityResolver,
+    bare_token_to_slug,
 )
 from .parser import Predicate, PredicateParseError, parse, unparse
+
+NORMALIZER_VERSION = "v1.3.1"
 
 
 def _strip_prefixes(p: Predicate) -> Predicate:
@@ -61,6 +67,15 @@ def _strip_prefixes(p: Predicate) -> Predicate:
         else:
             new_args.append(arg)
     return Predicate(p.name, tuple(new_args))
+
+
+def _is_numeric(s: str) -> bool:
+    """Local copy of classes._is_numeric for ledger eligibility checks."""
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 
 def normalize_predicate_domain(
@@ -109,6 +124,40 @@ def normalize_predicate_domain(
     active_resolver: EntityResolver = (
         resolver if resolver is not None else CortexEntityResolver()
     )
+
+    # v1.3.1 ledger computation (shadow cardinality, does not affect canonical_form).
+    # Run over args that Class 2 sees (post 1/3/4). Aggregate per §4 of work-order.
+    per_arg_decisions: list[str] = []
+    per_arg_fps: list[str] = []
+    has_eligible = False
+    for arg in p.args:
+        if ":" in arg:
+            per_arg_fps.append("")
+            per_arg_decisions.append("")
+            continue
+        if _is_numeric(arg):
+            per_arg_fps.append("")
+            per_arg_decisions.append("")
+            continue
+        has_eligible = True
+        slug = bare_token_to_slug(arg)
+        res = active_resolver.resolve_slug_with_cardinality(slug)
+        per_arg_decisions.append(res.decision)
+        per_arg_fps.append(res.candidate_fingerprint)
+
+    if any(d == "collision_refused" for d in per_arg_decisions):
+        normalization_decision = "collision_refused"
+    elif any(d == "no_match" for d in per_arg_decisions):
+        normalization_decision = "no_match"
+    else:
+        normalization_decision = "resolved_single"
+    if not has_eligible:
+        normalization_decision = "resolved_single"
+        candidate_set_fingerprint = ""
+    else:
+        joined = "|".join(per_arg_fps)
+        candidate_set_fingerprint = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+
     p, fired = apply_class_2(p, active_resolver)
     if fired:
         classes_applied.append(2)
@@ -124,6 +173,11 @@ def normalize_predicate_domain(
         "canonical_form": canonical_form,
         "classes_applied": classes_applied,
         "requires_human_review": requires_review,
+        # v1.3.1 ledger fields
+        "raw_predicate_form": predicate_form,
+        "normalization_decision": normalization_decision,
+        "candidate_set_fingerprint": candidate_set_fingerprint,
+        "normalizer_version": NORMALIZER_VERSION,
     }
 
 
@@ -133,6 +187,7 @@ __all__ = [
     "EntityResolver",
     "Predicate",
     "PredicateParseError",
+    "ResolutionResult",
     "StaticEntityResolver",
     "normalize_predicate_domain",
     "parse",

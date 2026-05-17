@@ -138,6 +138,12 @@ class AssertionItem(BaseModel):
     # NULL = not yet extracted; populated by pipelines/predicate_extract/.
     predicate_form: str | None = None
     created_at: str
+    # v1.3.1 normalization-decision ledger (read-side only; write-once via
+    # create/supersede paths, never via AssertionUpdate PATCH).
+    raw_predicate_form: str | None = None
+    normalization_decision: str | None = None
+    candidate_set_fingerprint: str | None = None
+    normalizer_version: str | None = None
 
 
 class AssertionUpdate(BaseModel):

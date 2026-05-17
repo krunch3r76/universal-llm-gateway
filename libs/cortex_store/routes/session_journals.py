@@ -16,7 +16,11 @@ from ..models import (
     SessionJournalItem,
     SessionJournalList,
 )
-from ..session_close_validation import _USER_VOICE_RE, _emit_rejected
+from ..session_close_validation import (
+    _USER_VOICE_RE,
+    _audit_normalization_refusals_for_session,
+    _emit_rejected,
+)
 from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
@@ -482,6 +486,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     conn = cortex_conn()
     handoff_entry_id: int | None = None
     journal_row_id = 0
+    audit_warnings: list[dict] | None = None
     try:
         conn.execute(
             "INSERT OR IGNORE INTO entities "
@@ -547,6 +552,10 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             )
 
         conn.commit()
+        findings = _audit_normalization_refusals_for_session(
+            conn, body.session_id
+        )
+        audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()
         try:
@@ -597,6 +606,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         content_hash=content_hash,
         turn_count=turn_count,
         byte_count=len(transcript_md.encode("utf-8")),
+        audit_warnings=audit_warnings,
     )
 
 

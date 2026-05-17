@@ -14,6 +14,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from .db import query
+from .dispatch_ops._detectors._shared import _finding
 from .dispatch_ops._shared import _SESSION_ID_RE, record
 
 logger = get_logger(__name__)
@@ -201,3 +203,46 @@ def _check_transcript_hollow_guards(composed: str) -> dict[str, Any] | None:
             "hollow": True,
         }
     return None
+
+
+def _audit_normalization_refusals_for_session(
+    conn, session_id: str
+) -> list[dict[str, Any]]:
+    """Return advisory findings for assertions written during the session
+    whose normalization refused due to collision.
+
+    Returns [] when no refusals — close proceeds cleanly. Returns a list
+    of finding dicts ({kind, subject, severity, detail, audit_id}) when
+    refusals exist; the route handler attaches these to the close
+    response as an advisory `audit_warnings` field. NEVER returns a
+    rejection — Path 3 is informational only, per the substrate v1.3
+    §13 enforcement-layer split (audit-backstop, not write-time gate).
+
+    Session attribution is via `evidence LIKE '%[<session-tag>]%'` —
+    the existing _SESSION_TAG_RE pattern from
+    routes/assertions/_shared.py. Same pattern boot already uses.
+    """
+    if not session_id:
+        return []
+    tag = f"[{session_id}]"
+    sql = """
+        SELECT id, entity_id, raw_predicate_form, normalization_decision,
+               candidate_set_fingerprint
+        FROM assertions
+        WHERE normalization_decision IN ('collision_refused',
+                                          'alias_collision_refused')
+          AND superseded_by IS NULL
+          AND evidence LIKE ?
+    """
+    rows = query(conn, sql, (f"%{tag}%",))
+    return [
+        _finding(
+            "unresolved_bare_token_in_predicate_form",
+            str(r["id"]),
+            f"Assertion {r['id']} on {r['entity_id']}: predicate_form "
+            f"{r.get('raw_predicate_form')!r} refused due to "
+            f"{r.get('normalization_decision')} (fingerprint "
+            f"{r.get('candidate_set_fingerprint')}).",
+        )
+        for r in rows
+    ]
