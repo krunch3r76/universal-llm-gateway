@@ -341,6 +341,29 @@ class AnthropicAdapter:
         ]
         body["messages"].append({"role": "user", "content": result_blocks})
 
+    def strip_tools(self, body: dict[str, Any]) -> None:
+        """Remove tool inventory from the body for a no-tools synthesis turn.
+
+        Drops ``tools``, ``tool_choice``, and ``mcp_servers`` so the next
+        request sent to Anthropic carries no tool inventory. The conversation
+        history (assistant ``tool_use`` blocks + user ``tool_result`` blocks
+        already in ``messages``) is preserved so the model can summarize from
+        what it learned.
+        """
+        body.pop("tools", None)
+        body.pop("tool_choice", None)
+        body.pop("mcp_servers", None)
+
+    def append_exhaustion_advisory(self, body: dict[str, Any], text: str) -> None:
+        """Append a final user message carrying the exhaustion advisory.
+
+        Anthropic accepts consecutive ``user`` messages (the prior message is
+        typically a ``user`` carrying ``tool_result`` blocks from the last
+        round); the API concatenates them as the assistant's next prompt.
+        """
+        messages = body.setdefault("messages", [])
+        messages.append({"role": "user", "content": text})
+
     def extract_text(self, response_data: dict[str, Any]) -> str:
         parts: list[str] = []
         for block in response_data.get("content") or []:

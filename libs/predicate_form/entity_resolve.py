@@ -13,8 +13,9 @@ the library has zero hard dependency on the cortex HTTP surface.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
@@ -31,6 +32,27 @@ def bare_token_to_slug(token: str) -> str:
     return token.replace("_", "-")
 
 
+class ResolutionResult(NamedTuple):
+    """Cardinality-aware resolution output.
+
+    decision: one of 'resolved_single', 'no_match', 'collision_refused'.
+    match: the chosen entity_id when decision='resolved_single', else None.
+        For shadow-mode compat with current resolve_slug, on 'collision_refused'
+        the first-match entity_id is returned in `match_first_match` so callers
+        that want existing behavior can read it; new ledger writers MUST NOT
+        use match_first_match as the canonical resolution.
+    candidates: full sorted list of entity_ids matched (length 0, 1, or >1).
+    candidate_fingerprint: SHA256(first 16) of '\n'.join(sorted(candidates)),
+        or '' when candidates is empty.
+    """
+
+    decision: str
+    match: str | None
+    match_first_match: str | None
+    candidates: tuple[str, ...]
+    candidate_fingerprint: str
+
+
 class EntityResolver(Protocol):
     """Resolve a bare-token slug to its canonical entity_id.
 
@@ -39,6 +61,8 @@ class EntityResolver(Protocol):
     """
 
     def resolve_slug(self, slug: str) -> str | None: ...
+
+    def resolve_slug_with_cardinality(self, slug: str) -> ResolutionResult: ...
 
 
 class StaticEntityResolver:
@@ -53,6 +77,21 @@ class StaticEntityResolver:
 
     def resolve_slug(self, slug: str) -> str | None:
         return self._mapping.get(slug)
+
+    def resolve_slug_with_cardinality(self, slug: str) -> ResolutionResult:
+        """Shadow cardinality for static test maps (bare-slug → full entity_id).
+
+        Since static maps use bare slugs as keys (no duplicate keys possible),
+        collision cases are exercised via DBEntityResolver / Cortex in tests.
+        This impl returns 0- or 1-candidate results matching the dict content.
+        """
+        if slug in self._mapping:
+            match = self._mapping[slug]
+            cands: tuple[str, ...] = (match,)
+            fp = _candidate_fingerprint(cands)
+            return ResolutionResult("resolved_single", match, match, cands, fp)
+        else:
+            return ResolutionResult("no_match", None, None, (), _candidate_fingerprint(()))
 
 
 # Type prefixes the cortex-backed resolver tries when looking up a bare
@@ -118,6 +157,33 @@ class CortexEntityResolver:
                     return candidate
         return None
 
+    def resolve_slug_with_cardinality(self, slug: str) -> ResolutionResult:
+        """Enumerate *all* type prefixes (shadow cardinality); do not early-exit.
+
+        Collects the full candidate set for ledger decision + fingerprint.
+        resolve_slug (first-match) remains the storage path for canonical_form.
+        """
+        candidates: list[str] = []
+        with make_sync_client(self._cortex_url, timeout=5.0) as client:
+            for prefix in self._type_prefixes:
+                candidate = f"{prefix}:{slug}"
+                try:
+                    resp = client.get(f"/entities/{candidate}")
+                except httpx.HTTPError:
+                    continue
+                if resp.status_code == 200:
+                    candidates.append(candidate)
+        cands = tuple(sorted(candidates))
+        fp = _candidate_fingerprint(cands)
+        n = len(cands)
+        if n == 0:
+            return ResolutionResult("no_match", None, None, cands, fp)
+        if n == 1:
+            m = cands[0]
+            return ResolutionResult("resolved_single", m, m, cands, fp)
+        # >=2: collision_refused; first-match preserved in match_first_match for shadow compat
+        return ResolutionResult("collision_refused", None, cands[0], cands, fp)
+
 
 class DBEntityResolver:
     """In-process entity resolver for use inside the cortex-api routes.
@@ -156,3 +222,31 @@ class DBEntityResolver:
             if row:
                 return candidate
         return None
+
+    def resolve_slug_with_cardinality(self, slug: str) -> ResolutionResult:
+        """Enumerate all prefixes via direct DB query (shadow cardinality path)."""
+        candidates: list[str] = []
+        for prefix in self._type_prefixes:
+            candidate = f"{prefix}:{slug}"
+            row = self._conn.execute(
+                "SELECT id FROM entities WHERE id = ?", (candidate,)
+            ).fetchone()
+            if row:
+                candidates.append(candidate)
+        cands = tuple(sorted(candidates))
+        fp = _candidate_fingerprint(cands)
+        n = len(cands)
+        if n == 0:
+            return ResolutionResult("no_match", None, None, cands, fp)
+        if n == 1:
+            m = cands[0]
+            return ResolutionResult("resolved_single", m, m, cands, fp)
+        return ResolutionResult("collision_refused", None, cands[0], cands, fp)
+
+
+def _candidate_fingerprint(candidates: tuple[str, ...]) -> str:
+    """SHA256 of '\n'.join(sorted(cands)) , first 16 hex chars. '' for empty."""
+    if not candidates:
+        return ""
+    joined = "\n".join(sorted(candidates))
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]

@@ -365,6 +365,29 @@ class GoogleAdapter:
         if response_parts:
             body["contents"].append({"role": "user", "parts": response_parts})
 
+    def strip_tools(self, body: dict[str, Any]) -> None:
+        """Remove tool inventory from the body for a no-tools synthesis turn.
+
+        Drops ``tools`` and ``toolConfig`` so the next ``generateContent``
+        call carries no functionDeclarations. Prior model/user turns in
+        ``body["contents"]`` (including ``functionCall`` / ``functionResponse``
+        parts already appended via ``append_tool_round``) are preserved so
+        the model can summarize from what it learned.
+        """
+        body.pop("tools", None)
+        body.pop("toolConfig", None)
+
+    def append_exhaustion_advisory(self, body: dict[str, Any], text: str) -> None:
+        """Append a trailing user message in ``body["contents"]`` with the advisory.
+
+        Gemini's ``systemInstruction`` is a single block defined at request
+        time and not safe to mutate mid-conversation. The cleanest place for
+        the advisory is a final user-role turn in ``contents``, which the
+        model treats as the most recent instruction.
+        """
+        contents = body.setdefault("contents", [])
+        contents.append({"role": "user", "parts": [{"text": text}]})
+
     def extract_text(self, response_data: dict[str, Any]) -> str:
         candidates = response_data.get("candidates", [])
         if not candidates:

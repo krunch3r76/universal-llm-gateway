@@ -16,7 +16,11 @@ from ..models import (
     SessionJournalItem,
     SessionJournalList,
 )
-from ..session_close_validation import _USER_VOICE_RE, _emit_rejected
+from ..session_close_validation import (
+    _USER_VOICE_RE,
+    _audit_normalization_refusals_for_session,
+    _emit_rejected,
+)
 from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
@@ -320,29 +324,53 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             ),
         )
 
-    # Resolve path + assemble verbatim — failures are agent-actionable.
-    try:
-        resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
-    except TranscriptPathError as exc:
+    # Verbatim source: either-of {transcript_jsonl_path, transcript_md}.
+    # jsonl_path wins on conflict (cursor canonical path; web wouldn't
+    # legitimately pass both). See agent-bus thread 1026.
+    if not body.transcript_jsonl_path and not body.transcript_md:
         _raise_422(
-            reason="transcript_jsonl.invalid",
+            reason="transcript_source.missing",
             session_id=body.session_id,
             agent=body.agent,
-            detail=str(exc),
+            detail=(
+                "either transcript_jsonl_path (cursor) or transcript_md "
+                "(web) is required — neither was supplied"
+            ),
         )
 
-    try:
-        verbatim_md, turn_count = assemble_verbatim_md(
-            jsonl_path=resolved_path,
-            session_id=body.session_id,
-            assistant_label=body.assistant_label,
-        )
-    except ValueError as exc:
-        _raise_422(
-            reason="transcript_jsonl.invalid",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=f"JSONL parse error: {exc}",
+    if body.transcript_jsonl_path:
+        try:
+            resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
+        except TranscriptPathError as exc:
+            _raise_422(
+                reason="transcript_jsonl.invalid",
+                session_id=body.session_id,
+                agent=body.agent,
+                detail=str(exc),
+            )
+
+        try:
+            verbatim_md, turn_count = assemble_verbatim_md(
+                jsonl_path=resolved_path,
+                session_id=body.session_id,
+                assistant_label=body.assistant_label,
+            )
+        except ValueError as exc:
+            _raise_422(
+                reason="transcript_jsonl.invalid",
+                session_id=body.session_id,
+                agent=body.agent,
+                detail=f"JSONL parse error: {exc}",
+            )
+    else:
+        # Web path: caller-supplied markdown is the verbatim layer as-is.
+        # turn_count is best-effort from H2 ``## Turn`` headings; the
+        # web preprocessor emits these per agent_skill:web-transcript-
+        # preprocessing.md.
+        assert body.transcript_md is not None
+        verbatim_md = body.transcript_md
+        turn_count = sum(
+            1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
         )
 
     transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
@@ -458,6 +486,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     conn = cortex_conn()
     handoff_entry_id: int | None = None
     journal_row_id = 0
+    audit_warnings: list[dict] | None = None
     try:
         conn.execute(
             "INSERT OR IGNORE INTO entities "
@@ -523,6 +552,10 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             )
 
         conn.commit()
+        findings = _audit_normalization_refusals_for_session(
+            conn, body.session_id
+        )
+        audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()
         try:
@@ -573,6 +606,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         content_hash=content_hash,
         turn_count=turn_count,
         byte_count=len(transcript_md.encode("utf-8")),
+        audit_warnings=audit_warnings,
     )
 
 

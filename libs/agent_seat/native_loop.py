@@ -45,6 +45,21 @@ NATIVE_PATHS: dict[str, str] = {
 }
 
 
+# Advisory text shown to the model when the tool-loop budget exhausts and the
+# synthesis round fires. Designed to be neutral about WHY exhaustion happened
+# (could be max_turns OR friction-tracker stop) and to signal clearly that no
+# further tool calls are available — the model should now summarize from
+# already-loaded context.
+_EXHAUSTION_ADVISORY_TEXT = (
+    "[Tool budget exhausted] Your client-side tool-call budget for this "
+    "dispatch has been reached, and tool access is now disabled — no further "
+    "tool calls will be available on this turn. Synthesize the best possible "
+    "final answer from the information you have already gathered above. If "
+    "the work is incomplete, say so explicitly and state what the next step "
+    "would have been; do not request additional tools."
+)
+
+
 SendNativeFn = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 ToolEventFn = Callable[[str, dict[str, Any]], None]
 CancelCheckFn = Callable[[], bool]
@@ -78,6 +93,13 @@ class NativeLoopResult:
     provider: str = ""
     raw: dict[str, Any] | None = None
     exhaustion_summary: dict[str, Any] | None = None
+    synthesized: bool = False
+    """True iff a synthesis round fired after tool-loop exhaustion and
+    produced non-empty content. Lets downstream callers/telemetry tell
+    apart ``exhausted-with-content`` (synthesis succeeded) from
+    ``exhausted-with-content`` (model produced final text on the last
+    in-budget turn). When True, ``content`` came from the synthesis
+    round; otherwise ``content`` came from the last in-loop turn."""
 
     @property
     def tool_calls_made(self) -> int:
@@ -264,6 +286,15 @@ async def run_native_tool_loop(
     cancelled = False
     turns_used = 0
     friction = ToolFrictionTracker()
+    # When the loop terminates via friction.should_stop, the most recent
+    # tool round (assistant tool_use + executed tool_results) was NOT yet
+    # appended to ``json_body`` — append_tool_round only runs after the
+    # should_stop check. We stash the (raw, tool_results) pair here so the
+    # synthesis round (below) can finish appending the round before
+    # stripping tools and asking the model for a final summary. When the
+    # loop terminates via max_turns (the for-else branch), the last
+    # iteration's append_tool_round already ran and this stays None.
+    pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None = None
 
     for turn_idx in range(max_turns):
         turns_used = turn_idx + 1
@@ -295,6 +326,7 @@ async def run_native_tool_loop(
         captured.extend(executed)
         if friction.should_stop:
             exhausted = True
+            pending_round = (raw, tool_results)
             break
 
         if not hasattr(adapter, "append_tool_round"):
@@ -307,6 +339,77 @@ async def run_native_tool_loop(
         adapter.append_tool_round(json_body, raw, tool_results)
     else:
         exhausted = True
+
+    # ------------------------------------------------------------------
+    # Synthesis round (provider-history-withholding recovery).
+    #
+    # When the loop exhausts WITHOUT terminal content, the caller-visible
+    # NativeLoopResult.tool_calls still holds every executed round (captured
+    # is extended before the break), but the JSON body the provider sees on
+    # its NEXT turn is missing the most recent round (friction path) or has
+    # no remaining tool turns (max_turns path). Either way, the model
+    # never got to summarize.
+    #
+    # The synthesis round fixes this: append the last round if pending,
+    # strip the tool inventory, append an exhaustion advisory, and send one
+    # final no-tools request. This turn does NOT count against max_turns
+    # (it's outside the for loop). If the adapter doesn't implement the
+    # two synthesis hooks, or the synth request itself fails, we fall
+    # back to the previous exhausted-with-empty-content behavior.
+    # ------------------------------------------------------------------
+    synthesized = False
+    if (
+        exhausted
+        and not cancelled
+        and hasattr(adapter, "strip_tools")
+        and hasattr(adapter, "append_exhaustion_advisory")
+    ):
+        try:
+            if pending_round is not None and hasattr(adapter, "append_tool_round"):
+                last_raw, last_results = pending_round
+                adapter.append_tool_round(json_body, last_raw, last_results)
+            adapter.strip_tools(json_body)
+            adapter.append_exhaustion_advisory(json_body, _EXHAUSTION_ADVISORY_TEXT)
+
+            if cancel_check is not None and cancel_check():
+                cancelled = True
+            else:
+                synth_raw = await send_native(path, json_body)
+                if isinstance(synth_raw, dict):
+                    synth_result = adapter.parse_frontier_response(synth_raw)
+                    synth_content = (
+                        synth_result.get("content", "")
+                        if isinstance(synth_result, dict)
+                        else ""
+                    )
+                    if synth_content:
+                        logger.info(
+                            "native_loop synthesis round produced %d chars "
+                            "after exhaustion (provider=%s, turns_used=%d)",
+                            len(synth_content),
+                            provider,
+                            turns_used,
+                        )
+                        result = synth_result
+                        raw = synth_raw
+                        synthesized = True
+                    else:
+                        logger.info(
+                            "native_loop synthesis round returned empty "
+                            "content after exhaustion "
+                            "(provider=%s, turns_used=%d)",
+                            provider,
+                            turns_used,
+                        )
+        except Exception as exc:  # noqa: BLE001 — fall back to prior behavior
+            logger.warning(
+                "native_loop synthesis round failed "
+                "(provider=%s, turns_used=%d): %s. "
+                "Falling back to exhausted-empty-content behavior.",
+                provider,
+                turns_used,
+                exc,
+            )
 
     return NativeLoopResult(
         content=result.get("content", "") if isinstance(result, dict) else "",
@@ -338,4 +441,5 @@ async def run_native_tool_loop(
             if exhausted
             else None
         ),
+        synthesized=synthesized,
     )

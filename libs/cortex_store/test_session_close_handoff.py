@@ -381,6 +381,104 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_link_failure(
     assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
 
+def _web_transcript_md(session_id: str) -> str:
+    """Plausible web-supplied verbatim markdown (no JSONL exists)."""
+    return (
+        f"# Transcript: {session_id}\n\n"
+        "## Turn 1 — kickoff\n\n"
+        "### User\n\nWe need to validate the either-of path end to end.\n\n"
+        "### Assistant\n\nI confirmed the route handler accepts transcript_md "
+        "directly and writes the composed transcript atomically.\n\n"
+        "## Turn 2 — followup\n\n"
+        "### User\n\nGood — capture the decision and continuation state.\n\n"
+        "### Assistant\n\nSeeded decision and continuation-state assertions; "
+        "the close path now supports both cursor and web.\n\n"
+    )
+
+
+def _web_payload(
+    *, session_id: str, agent: str = "web", **extra: Any
+) -> dict[str, Any]:
+    summary = (
+        "Validated the web session-close transcript_md path against the "
+        "either-of validator."
+    )
+    base: dict[str, Any] = {
+        "session_id": session_id,
+        "agent": agent,
+        "transcript_md": _web_transcript_md(session_id),
+        "session_summary_md": _session_summary(summary),
+        "summary": summary,
+    }
+    base.update(extra)
+    return base
+
+
+def test_session_close_accepts_transcript_md_only(
+    session_env: dict[str, Path],
+) -> None:
+    """Web close path: transcript_md is sufficient — no JSONL needed."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    result = ops_journals._op_session_close(
+        **_web_payload(session_id="web-2026-05-17-0410")
+    )
+    assert "error" not in result, result
+    assert result["transcript_entity_id"] == "transcript:web-2026-05-17-0410"
+    assert result["turn_count"] == 2
+    assert result["content_hash"].startswith("sha256:")
+    on_disk = (files_root / result["transcript_path"]).read_text(encoding="utf-8")
+    assert "## Turn 1" in on_disk
+    assert "## Session Summary" in on_disk
+    journal = _query_one(
+        db_path,
+        "SELECT * FROM session_journals WHERE session_id = ?",
+        ("web-2026-05-17-0410",),
+    )
+    assert journal is not None
+
+
+def test_session_close_rejects_when_neither_source_supplied(
+    session_env: dict[str, Path],
+) -> None:
+    """Either-of: neither jsonl_path nor transcript_md ⟹ structured error."""
+    summary = (
+        "Confirmed the either-of validator rejects when both transcript "
+        "sources are missing."
+    )
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-17-0411",
+        agent="claude-web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+    )
+    assert "error" in result
+    assert "transcript_jsonl_path" in result["error"]
+    assert "transcript_md" in result["error"]
+
+
+def test_session_close_prefers_jsonl_path_when_both_supplied(
+    session_env: dict[str, Path],
+) -> None:
+    """Both supplied ⟹ jsonl_path wins; transcript_md is ignored."""
+    files_root = session_env["files_root"]
+    payload = _payload(
+        session_id="cursor-2026-05-17-0412",
+        agent="cursor",
+        transcripts_root=session_env["transcripts_root"],
+    )
+    payload["transcript_md"] = (
+        "# Transcript: SHOULD-NOT-APPEAR\n\n"
+        "## Turn 99 — ignored\n\n### User\n\nThis text MUST NOT land on disk.\n"
+    )
+    result = ops_journals._op_session_close(**payload)
+    assert "error" not in result, result
+    on_disk = (files_root / result["transcript_path"]).read_text(encoding="utf-8")
+    assert "SHOULD-NOT-APPEAR" not in on_disk
+    assert "## Turn 99" not in on_disk
+    assert "## Turn 1" in on_disk
+
+
 def test_session_close_warns_when_prior_session_id_is_omitted(
     session_env: dict[str, Path],
 ) -> None:

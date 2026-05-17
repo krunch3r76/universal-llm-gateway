@@ -39,7 +39,8 @@ def build_session_close(
         "error": "deprecated",
         "use": (
             'cortex(tool="session_close", arguments=\'{"session_id": ..., '
-            '"agent": ..., "transcript_jsonl_path": ..., '
+            '"agent": ..., '
+            '"transcript_jsonl_path": ... (cursor) OR "transcript_md": ... (web), '
             '"session_summary_md": ..., "summary": ...}\')'
         ),
         "reason": (
