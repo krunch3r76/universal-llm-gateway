@@ -342,7 +342,7 @@ async def test_dispatch_conflict_rejects_second_concurrent_call(
 
     _reset_for_tests()
     # Pre-populate the registry as if a concurrent dispatch were already running.
-    assert await try_acquire_cwd(admission) is True
+    assert await try_acquire_cwd(admission, "uuid-inflight-9") is True
 
     run_mock = AsyncMock()
     monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
@@ -352,6 +352,9 @@ async def test_dispatch_conflict_rejects_second_concurrent_call(
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "dispatch_conflict"
     assert "already in flight" in out["metadata"]["reason"]
+    # Recovery path: caller can fetch_result(conflicting_dispatch_id) without
+    # sidecar grep.
+    assert out["metadata"]["conflicting_dispatch_id"] == "uuid-inflight-9"
     rejected = next(p for s, p in event_log if s.endswith(".rejected"))
     assert rejected["reason_code"] == "dispatch_conflict"
     assert rejected["cwd"] == admission

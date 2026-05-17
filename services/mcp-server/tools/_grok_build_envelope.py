@@ -61,6 +61,9 @@ def _metadata_base(
         "worktree_path": "",
         "branch": "",
         "source_repo": "",
+        # Set non-null only on dispatch_conflict rejections so the caller
+        # can recover via fetch_result(dispatch_id) without sidecar grep.
+        "conflicting_dispatch_id": None,
     }
 
 
@@ -72,9 +75,13 @@ def _envelope_rejected(
     model: str | None,
     reason_code: str,
     reason: str,
+    *,
+    conflicting_dispatch_id: str | None = None,
 ) -> dict[str, Any]:
     meta = _metadata_base(mode, cwd, session_id, model)
     meta.update(reason_code=reason_code, reason=reason)
+    if conflicting_dispatch_id:
+        meta["conflicting_dispatch_id"] = conflicting_dispatch_id
     return {
         "dispatch_id": dispatch_id,
         "status": "rejected",

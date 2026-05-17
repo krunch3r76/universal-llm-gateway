@@ -23,7 +23,11 @@ from tools._grok_build_events import (
     emit_grok_build_dispatch_rejected,
     emit_grok_build_dispatch_timeout,
 )
-from tools._grok_build_registry import release_cwd, try_acquire_cwd
+from tools._grok_build_registry import (
+    get_dispatch_id,
+    release_cwd,
+    try_acquire_cwd,
+)
 from tools._grok_build_runner import RunnerSpec, run_dispatch
 from tools._grok_build_validator import validate_dispatch
 
@@ -77,7 +81,8 @@ async def dispatch_op(
 
     # Concurrent-dispatch guard — symmetric with session_conflict. A second
     # dispatch into a cwd already in flight rejects without spawning grok.
-    if not await try_acquire_cwd(cwd):
+    if not await try_acquire_cwd(cwd, dispatch_id):
+        conflicting = await get_dispatch_id(cwd)
         reason = f"another dispatch is already in flight for cwd: {cwd!r}"
         emit_grok_build_dispatch_rejected(
             dispatch_id=dispatch_id,
@@ -89,7 +94,14 @@ async def dispatch_op(
             model=model or "",
         )
         return _envelope_rejected(
-            dispatch_id, mode, cwd, session_id, model, "dispatch_conflict", reason
+            dispatch_id,
+            mode,
+            cwd,
+            session_id,
+            model,
+            "dispatch_conflict",
+            reason,
+            conflicting_dispatch_id=conflicting,
         )
 
     try:
