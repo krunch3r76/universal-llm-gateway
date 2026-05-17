@@ -8,13 +8,20 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Query, status
 
 from ..db import cortex_conn, decode_row, json_encode, query
-from ..dispatch_ops._shared import record
+from ..dispatch_ops._shared import _FILES_ROOT, record
 from ..models import (
     SessionCloseRequest,
     SessionCloseResponse,
     SessionJournalCreate,
     SessionJournalItem,
     SessionJournalList,
+)
+from ..transcript_assembly import (
+    TranscriptPathError,
+    assemble_verbatim_md,
+    compose_full_transcript,
+    compute_text_content_hash,
+    resolve_jsonl_path,
 )
 from .reflective_journal import _insert_journal_link_tx, _insert_reflective_entry_tx
 
@@ -251,6 +258,8 @@ _REJECT_REASONS = frozenset(
         "summary.too_short",
         "session_id.invalid",
         "session.already_closed",
+        "transcript_jsonl.invalid",
+        "session_summary.invalid",
     }
 )
 
@@ -270,110 +279,143 @@ def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> 
     )
 
 
+def _raise_422(*, reason: str, session_id: str, agent: str, detail: str) -> None:
+    """Emit `mcp.session.close.rejected` and raise the matching 422 in one call."""
+    _emit_rejected(reason, session_id=session_id, agent=agent, detail=detail)
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail
+    )
+
+
 @router.post(
     "/close",
     response_model=SessionCloseResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
-    """Atomic session close: create transcript entity, journal row, and continues edge.
+    """Atomic session close: assemble verbatim, write file, commit DB tx.
 
-    The MCP dispatch layer writes the transcript file to disk before calling
-    this endpoint.  This handler owns the DB-side atomicity guarantee.
+    The handler is the single atomic boundary:
+      1. Validate ``session_id``, ``summary``, ``session_summary_md``.
+      2. Resolve ``transcript_jsonl_path`` under ``CURSOR_AGENT_TRANSCRIPTS_ROOT``.
+      3. Assemble the verbatim layer from the JSONL.
+      4. Compose verbatim + ``session_summary_md`` into the final
+         markdown.
+      5. Re-validate the composed markdown (dual-layer doctrine — defense
+         in depth; should always pass when assembly succeeded).
+      6. Idempotency check on ``session_journals.session_id``.
+      7. Write the file under ``notes/system/transcripts/{session_id}.md``.
+      8. Atomic DB tx: entity + journal row + ``continues`` edge +
+         optional handoff entry.
+      9. Compute ``content_hash`` of the on-disk markdown and return.
 
-    Validation (server-enforced):
-    - session_id matches ``{agent}-YYYY-MM-DD-HHMM``
-    - summary >= 20 characters
-    - transcript_md >= 200 characters with structural headings
+    On any failure between steps 2 and 8 that occurs after the file is
+    written, the file is unlinked before raising.
     """
-    # ── validation ──
     if not _SESSION_ID_RE.match(body.session_id):
-        detail = (
-            f"session_id {body.session_id!r} does not match "
-            "pattern {{agent}}-YYYY-MM-DD-HHMM"
-        )
-        _emit_rejected(
-            "session_id.invalid",
+        _raise_422(
+            reason="session_id.invalid",
             session_id=body.session_id,
             agent=body.agent,
-            detail=detail,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=detail,
+            detail=(
+                f"session_id {body.session_id!r} does not match "
+                "pattern {{agent}}-YYYY-MM-DD-HHMM"
+            ),
         )
 
     if len(body.summary) < 20:
-        detail = f"summary must be >= 20 characters (got {len(body.summary)})"
-        _emit_rejected(
-            "summary.too_short",
+        _raise_422(
+            reason="summary.too_short",
             session_id=body.session_id,
             agent=body.agent,
-            detail=detail,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=detail,
+            detail=f"summary must be >= 20 characters (got {len(body.summary)})",
         )
 
-    if len(body.transcript_md) < 200:
-        detail = (
-            f"transcript_md must be >= 200 characters (got {len(body.transcript_md)}). "
-            "Stub-only closes are rejected."
-        )
-        _emit_rejected(
-            "transcript.missing_structure",
+    if not body.session_summary_md.strip():
+        _raise_422(
+            reason="session_summary.invalid",
             session_id=body.session_id,
             agent=body.agent,
-            detail=detail,
+            detail="session_summary_md is required (structural layer).",
         )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=detail,
+    if "## Session Summary" not in body.session_summary_md:
+        _raise_422(
+            reason="session_summary.invalid",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=(
+                "session_summary_md must contain a '## Session Summary' heading; "
+                "this is the structural layer the agent composes (decisions, "
+                "files modified, continuation state)."
+            ),
         )
 
-    has_structure = (
-        "## Turn" in body.transcript_md or "## Session Summary" in body.transcript_md
-    )
-    if not has_structure:
-        detail = (
-            "transcript_md must contain at least one '## Turn' heading "
-            "or a '## Session Summary' section."
-        )
-        _emit_rejected(
-            "transcript.missing_structure",
+    # Resolve path + assemble verbatim — failures are agent-actionable.
+    try:
+        resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
+    except TranscriptPathError as exc:
+        _raise_422(
+            reason="transcript_jsonl.invalid",
             session_id=body.session_id,
             agent=body.agent,
-            detail=detail,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=detail,
+            detail=str(exc),
         )
 
-    # Dual-layer doctrine — verbatim layer must be present alongside structural.
-    # File with `## Turn` headings but zero User-voice blocks is the
-    # web-2026-05-03-0431 failure mode (structural ✓, verbatim ✗).
-    # See agent-skills/web-session-close.md Step 2 for the dual-layer doctrine
-    # and notes/system/shared/session-close-protocol.md Step 2 for the canon.
-    user_blocks = len(_USER_VOICE_RE.findall(body.transcript_md))
-    if user_blocks == 0:
-        detail = (
-            "transcript_md has structural headings but zero User-voice blocks "
-            "(`**User:**` / `User:` / `### User`). This is the dual-layer "
-            "doctrine failure: structural layer present, verbatim layer hollow. "
-            "Rewrite mechanically — copy each user message verbatim into a "
-            "`### User` block. See agent-skills/web-session-close.md Step 2."
+    try:
+        verbatim_md, turn_count = assemble_verbatim_md(
+            jsonl_path=resolved_path,
+            session_id=body.session_id,
+            assistant_label=body.assistant_label,
         )
-        _emit_rejected(
-            "transcript.hollow",
+    except ValueError as exc:
+        _raise_422(
+            reason="transcript_jsonl.invalid",
             session_id=body.session_id,
             agent=body.agent,
-            detail=detail,
+            detail=f"JSONL parse error: {exc}",
         )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=detail,
+
+    transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
+
+    # Defense-in-depth: assembled markdown must still satisfy the on-disk
+    # dual-layer doctrine.  These checks should ALWAYS pass when the JSONL
+    # was non-trivial; failure indicates an empty/corrupt JSONL or a caller
+    # somehow supplying an empty structural layer that slipped past earlier
+    # guards.  Surface as transcript.hollow / transcript.missing_structure
+    # so existing event consumers don't need new reasons.
+    if len(transcript_md) < 200:
+        _raise_422(
+            reason="transcript.missing_structure",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=(
+                f"composed transcript is {len(transcript_md)} chars "
+                "(< 200) — JSONL may be empty or session_summary_md too thin."
+            ),
+        )
+    if "## Turn" not in transcript_md and "## Session Summary" not in transcript_md:
+        _raise_422(
+            reason="transcript.missing_structure",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=(
+                "composed transcript missing structural headings — assembly "
+                "did not produce '## Turn' blocks and structural layer lacks "
+                "'## Session Summary'."
+            ),
+        )
+    if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
+        _raise_422(
+            reason="transcript.hollow",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=(
+                "composed transcript has zero User-voice blocks. The "
+                "supplied JSONL contained no user messages (or only "
+                "tool_result records). Confirm transcript_jsonl_path "
+                "points at the active session, not a continuation-with-"
+                "no-prompt or a tool-only record set."
+            ),
         )
 
     # ── derive values ──
@@ -383,11 +425,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     opened_at = _parse_opened_at(body.session_id)
 
-    # ── idempotency gate: reject duplicate close for an already-closed session ──
-    # Pre-034 retries silently produced duplicate journal rows. Migration 034
-    # enforces UNIQUE(session_id); this check turns the IntegrityError into a
-    # structured 422 carrying the existing IDs so the caller can recover without
-    # reading them back.
+    # ── idempotency gate ──
     existing = (
         cortex_conn()
         .execute(
@@ -420,9 +458,28 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             detail=already_detail,
         )
 
+    # ── write transcript to disk under CORTEX_FILES_ROOT ──
+    abs_path = _FILES_ROOT / transcript_path
+    try:
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
+        abs_path.write_text(transcript_md, encoding="utf-8")
+    except OSError as exc:
+        logger.error(
+            "session_close: failed to write transcript to %s: %s", abs_path, exc
+        )
+        record(
+            "mcp.session.close.write.failed",
+            session_id=body.session_id,
+            agent=body.agent,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Transcript file write failed: {exc}",
+        )
+
     handoff_prompt = body.handoff_prompt.strip() if body.handoff_prompt else None
 
-    # ── derive entity name from summary (first ~6 words) ──
     name_words = body.summary.split()[:6]
     entity_name = " ".join(name_words)
     if len(name_words) < len(body.summary.split()):
@@ -430,8 +487,8 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
     conn = cortex_conn()
     handoff_entry_id: int | None = None
+    journal_row_id = 0
     try:
-        # 1. Create transcript entity
         conn.execute(
             "INSERT OR IGNORE INTO entities "
             "(id, type, name, description, status, source_uri, attributes, "
@@ -453,8 +510,6 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 now,
             ),
         )
-
-        # 2. Create thin journal index row
         cur = conn.execute(
             "INSERT INTO session_journals "
             "(timestamp, agent, summary, domains, decisions, open_items, "
@@ -475,14 +530,12 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         )
         journal_row_id = cur.lastrowid or 0
 
-        # 3. Create continues edge if chained
         if body.prior_session_id:
             _ensure_transcript_entity(conn, body.prior_session_id, body.agent, now)
             _ensure_continues_edge(
                 conn, body.session_id, body.prior_session_id, body.agent, now
             )
 
-        # 4. Optionally create handoff reflective entry + link
         if handoff_prompt:
             handoff_entry_id = _insert_reflective_entry_tx(
                 conn,
@@ -502,6 +555,17 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         conn.commit()
     except Exception:
         conn.rollback()
+        try:
+            abs_path.unlink(missing_ok=True)
+        except OSError:
+            logger.warning(
+                "Failed to unlink transcript after DB rollback: %s", abs_path
+            )
+            record(
+                "mcp.session.close.cleanup.failed",
+                session_id=body.session_id,
+                agent=body.agent,
+            )
         logger.error(
             "session_close DB transaction failed for %s",
             body.session_id,
@@ -511,12 +575,23 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     finally:
         conn.close()
 
+    content_hash = compute_text_content_hash(transcript_md)
     logger.info(
-        "session_close: %s agent=%s entity=%s journal_row=%d",
+        "session_close: %s agent=%s entity=%s journal_row=%d hash=%s",
         body.session_id,
         body.agent,
         transcript_entity_id,
         journal_row_id,
+        content_hash,
+    )
+    record(
+        "mcp.session.close.atomic",
+        agent=body.agent,
+        session_id=body.session_id,
+        transcript_path=transcript_path,
+        content_hash=content_hash,
+        turn_count=turn_count,
+        byte_count=len(transcript_md.encode("utf-8")),
     )
 
     return SessionCloseResponse(
@@ -525,6 +600,9 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         transcript_path=transcript_path,
         journal_row_id=journal_row_id,
         session_id=body.session_id,
+        content_hash=content_hash,
+        turn_count=turn_count,
+        byte_count=len(transcript_md.encode("utf-8")),
     )
 
 

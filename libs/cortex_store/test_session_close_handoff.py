@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -97,22 +98,95 @@ def session_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
     db_path = tmp_path / "cortex.db"
     files_root = tmp_path / "files"
     files_root.mkdir(parents=True)
+    transcripts_root = tmp_path / "agent-transcripts"
+    transcripts_root.mkdir()
     _install_schema(db_path)
     monkeypatch.setattr(db, "_CORTEX_DB", db_path)
     monkeypatch.setattr(ops_journals, "_FILES_ROOT", files_root)
-    return {"db_path": db_path, "files_root": files_root}
+    # Route handler reads _FILES_ROOT through its own import — patch the
+    # symbol on routes/session_journals.py as well to keep the test isolated
+    # from the cortex-api host's CORTEX_FILES_ROOT.
+    monkeypatch.setattr(session_journals, "_FILES_ROOT", files_root)
+    monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(transcripts_root))
+    return {
+        "db_path": db_path,
+        "files_root": files_root,
+        "transcripts_root": transcripts_root,
+    }
 
 
-def _transcript(summary: str) -> str:
+def _write_jsonl(path: Path) -> None:
+    """Two-turn fake Cursor JSONL — enough to satisfy the dual-layer doctrine."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records = [
+        {
+            "role": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Please continue the handoff capture arc and preserve "
+                            "atomicity."
+                        ),
+                    }
+                ]
+            },
+        },
+        {
+            "role": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "I audited the write path, confirmed the transaction "
+                            "boundary, and mapped the rollback risks."
+                        ),
+                    }
+                ]
+            },
+        },
+        {
+            "role": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "Make sure the next session can resume without "
+                            "reconstructing context from scratch."
+                        ),
+                    }
+                ]
+            },
+        },
+        {
+            "role": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "I will persist a continuation-grade handoff prompt, "
+                            "verify the link direction, and keep the summary "
+                            "grounded in the completed work."
+                        ),
+                    }
+                ]
+            },
+        },
+    ]
+    with path.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+
+
+def _session_summary(summary: str) -> str:
     return (
-        f"# Session Transcript\n\n"
-        f"## Session Summary\n{summary}\n\n"
-        "## Turn 1\n"
-        "### User\nPlease continue the handoff capture arc and preserve atomicity.\n\n"
-        "### Assistant\nI audited the write path, confirmed the transaction boundary, and mapped the rollback risks.\n\n"
-        "## Turn 2\n"
-        "### User\nMake sure the next session can resume without reconstructing context from scratch.\n\n"
-        "### Assistant\nI will persist a continuation-grade handoff prompt, verify the link direction, and keep the summary grounded in the completed work.\n"
+        "## Session Summary\n\n"
+        f"**Decisions:** {summary}\n"
+        "**Open items:** Finish the docstring and test pass.\n"
     )
 
 
@@ -122,12 +196,19 @@ def _payload(
     agent: str = "gatherer",
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
+    transcripts_root: Path,
 ) -> dict[str, Any]:
-    summary = "Validated the session-close handoff capture path and checked rollback behavior."
+    summary = (
+        "Validated the session-close handoff capture path and checked "
+        "rollback behavior."
+    )
+    jsonl_path = transcripts_root / session_id / f"{session_id}.jsonl"
+    _write_jsonl(jsonl_path)
     return {
         "session_id": session_id,
         "agent": agent,
-        "transcript_md": _transcript(summary),
+        "transcript_jsonl_path": str(jsonl_path),
+        "session_summary_md": _session_summary(summary),
         "summary": summary,
         "domains": ["cortex"],
         "decisions": ["Persist handoff prompts as reflective journal entries."],
@@ -170,6 +251,7 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
             session_id="orion-2026-05-04-0844",
             prior_session_id="orion-2026-05-04-0700",
             handoff_prompt=handoff,
+            transcripts_root=session_env["transcripts_root"],
         )
     )
 
@@ -220,7 +302,11 @@ def test_session_close_without_handoff_is_clean_no_warnings(
     db_path = session_env["db_path"]
 
     result = ops_journals._op_session_close(
-        **_payload(session_id="cursor-2026-05-04-0844", agent="cursor")
+        **_payload(
+            session_id="cursor-2026-05-04-0844",
+            agent="cursor",
+            transcripts_root=session_env["transcripts_root"],
+        )
     )
 
     assert result["handoff_entry_id"] is None
@@ -248,10 +334,11 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_handoff_insert_failu
             session_id="orion-2026-05-04-0845",
             prior_session_id="orion-2026-05-04-0700",
             handoff_prompt="Resume with rollback verification.",
+            transcripts_root=session_env["transcripts_root"],
         )
     )
 
-    assert "Session close failed after transcript write" in result["error"]
+    assert "Session close failed" in result["error"]
     assert not (
         files_root / "notes/system/transcripts/orion-2026-05-04-0845.md"
     ).exists()
@@ -279,10 +366,11 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_link_failure(
             session_id="orion-2026-05-04-0846",
             prior_session_id="orion-2026-05-04-0700",
             handoff_prompt="Resume by checking the journal link direction.",
+            transcripts_root=session_env["transcripts_root"],
         )
     )
 
-    assert "Session close failed after transcript write" in result["error"]
+    assert "Session close failed" in result["error"]
     assert not (
         files_root / "notes/system/transcripts/orion-2026-05-04-0846.md"
     ).exists()
@@ -300,6 +388,7 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
         **_payload(
             session_id="orion-2026-05-04-0700",
             handoff_prompt="Next session should continue the handoff capture work.",
+            transcripts_root=session_env["transcripts_root"],
         )
     )
     assert first["handoff_entry_id"] is not None
@@ -308,6 +397,7 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
         **_payload(
             session_id="orion-2026-05-04-0847",
             handoff_prompt="Resume with the final documentation pass.",
+            transcripts_root=session_env["transcripts_root"],
         )
     )
 

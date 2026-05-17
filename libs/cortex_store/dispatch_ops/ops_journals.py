@@ -20,6 +20,12 @@ from ..routes.session_journals import (
     _emit_rejected,
     _list_session_journals_impl,
 )
+from ..transcript_assembly import (
+    TranscriptPathError,
+    assemble_verbatim_md,
+    compose_full_transcript,
+    resolve_jsonl_path,
+)
 from ._shared import _FILES_ROOT, _SESSION_ID_RE, _derive_session_id_local, record
 from .ops_audit_detectors import run_detectors
 from .ops_review_gate import _run_session_audit_or_block
@@ -267,41 +273,46 @@ def _op_journal_write(
     return result
 
 
-def _validate_session_close_payload(
+def _validate_session_close_args(
     *,
     session_id: str | None,
     agent: str | None,
-    transcript_md: str | None,
+    transcript_jsonl_path: str | None,
+    session_summary_md: str | None,
     summary: str | None,
     emit_rejected: bool = True,
 ) -> dict[str, Any] | None:
-    """Run the structural validation layer for session_close.
+    """Lightweight arg-presence + session_id pattern + summary length gate.
 
-    Returns None on clean pass, or an error-dict suitable to return directly.
-    Mirrors the gates documented in `session-close.mdc` (session_id pattern,
-    summary length, transcript size + structure, dual-layer hollow guard).
-
-    `emit_rejected=False` suppresses the `mcp.session.close.rejected` event —
-    used by preflight/dry_run paths so probing does not pollute the event store.
+    Runs the cheap checks that don't require touching the filesystem or
+    parsing the JSONL.  Deep validation (path sandbox, JSONL parse,
+    composed-transcript structure) is owned by the route handler so the
+    atomic boundary stays in one place.  ``emit_rejected=False``
+    suppresses ``mcp.session.close.rejected`` for preflight/dry_run
+    probing.
     """
     required = {
         "session_id": session_id,
         "agent": agent,
-        "transcript_md": transcript_md,
+        "transcript_jsonl_path": transcript_jsonl_path,
+        "session_summary_md": session_summary_md,
         "summary": summary,
     }
     for field, val in required.items():
         if not val:
             return {"error": f"{field} is required"}
-    assert session_id and agent and transcript_md and summary  # narrow types
+    assert (
+        session_id
+        and agent
+        and transcript_jsonl_path
+        and session_summary_md
+        and summary
+    )
 
     def _reject(reason: str, detail: str) -> dict[str, Any]:
         if emit_rejected:
             _emit_rejected(
-                reason,
-                session_id=session_id,
-                agent=agent,
-                detail=detail,
+                reason, session_id=session_id, agent=agent, detail=detail
             )
         return {"error": detail, "reason": reason}
 
@@ -316,27 +327,12 @@ def _validate_session_close_payload(
             "summary.too_short",
             f"summary must be >= 20 characters (got {len(summary)})",
         )
-    if len(transcript_md) < 200:
+    if "## Session Summary" not in session_summary_md:
         return _reject(
-            "transcript.missing_structure",
-            f"transcript_md must be >= 200 characters (got {len(transcript_md)}). "
-            "Stub-only closes are rejected.",
-        )
-    has_structure = "## Turn" in transcript_md or "## Session Summary" in transcript_md
-    if not has_structure:
-        return _reject(
-            "transcript.missing_structure",
-            "transcript_md must contain at least one '## Turn' heading "
-            "or a '## Session Summary' section.",
-        )
-    if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
-        return _reject(
-            "transcript.hollow",
-            "transcript_md has structural headings but zero User-voice blocks "
-            "(`**User:**` / `User:` / `### User`). This is the dual-layer "
-            "doctrine failure: structural layer present, verbatim layer hollow. "
-            "Rewrite mechanically — copy each user message verbatim into a "
-            "`### User` block. See agent-skills/web-session-close.md Step 2.",
+            "session_summary.invalid",
+            "session_summary_md must contain a '## Session Summary' heading "
+            "(structural layer the agent composes — decisions, files modified, "
+            "continuation state).",
         )
     return None
 
@@ -348,14 +344,7 @@ def _safe_run_audit(
     entity_ids: list[str],
     defer_gaps: dict[str, str] | None,
 ) -> dict[str, Any]:
-    """Run audit gate with hard non-blocking guarantee (todo P4).
-
-    Wraps `_run_session_audit_or_block` so that no exception inside the audit
-    machinery (detector errors, schema gaps, record() failures) can ever turn
-    a session_close into HTTP 500. Returns the audit dict on clean run, or a
-    `{"warning": {"audit_degraded": True, ...}}` advisory on failure. Never
-    returns `{"blocked": True}` on its own — only forwards a real BLOCK verdict.
-    """
+    """Run audit gate with hard non-blocking guarantee (todo P4)."""
     try:
         return _run_session_audit_or_block(
             session_id=session_id,
@@ -382,32 +371,58 @@ def _safe_run_audit(
 def _op_session_close_preflight(
     session_id: str | None = None,
     agent: str | None = None,
-    transcript_md: str | None = None,
+    transcript_jsonl_path: str | None = None,
+    session_summary_md: str | None = None,
     summary: str | None = None,
     entity_ids: list[str] | None = None,
     defer_gaps: dict[str, str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    """Validate session_close payload + audit-gate health WITHOUT writing.
+    """Validate args + path sandbox + audit-gate health WITHOUT writing.
 
-    Returns `{"ok": True, "warnings": [...], "audit": {...}}` if a real close
-    would succeed, or `{"ok": False, "error": ..., "reason": ...}` otherwise.
-
-    Use case: agents probe this before committing to the full close so any
-    infra issue (broken detectors, missing schema) surfaces in one round-trip
-    instead of the multi-turn debug loop documented in F2 of the source TODO.
+    Returns ``{"ok": True, "audit": {...}, "turn_count": int}`` on a path
+    that would succeed at close time, or ``{"ok": False, "error", "reason"}``
+    otherwise.  Verbatim assembly is performed in-memory (no file
+    written, no DB row) so the agent learns about a bad JSONL before
+    paying for the audit and DB tx.
     """
-    validation_error = _validate_session_close_payload(
+    arg_error = _validate_session_close_args(
         session_id=session_id,
         agent=agent,
-        transcript_md=transcript_md,
+        transcript_jsonl_path=transcript_jsonl_path,
+        session_summary_md=session_summary_md,
         summary=summary,
         emit_rejected=False,
     )
-    if validation_error is not None:
-        return {"ok": False, **validation_error}
+    if arg_error is not None:
+        return {"ok": False, **arg_error}
+    assert (
+        session_id
+        and agent
+        and transcript_jsonl_path
+        and session_summary_md
+        and summary
+    )
 
-    assert session_id and agent and transcript_md and summary
+    try:
+        resolved = resolve_jsonl_path(transcript_jsonl_path)
+        verbatim_md, turn_count = assemble_verbatim_md(
+            jsonl_path=resolved, session_id=session_id
+        )
+    except TranscriptPathError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "reason": "transcript_jsonl.invalid",
+        }
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "error": f"JSONL parse error: {exc}",
+            "reason": "transcript_jsonl.invalid",
+        }
+
+    composed = compose_full_transcript(verbatim_md, session_summary_md)
 
     audit_outcome = _safe_run_audit(
         session_id=session_id,
@@ -416,26 +431,25 @@ def _op_session_close_preflight(
         defer_gaps=defer_gaps,
     )
     if audit_outcome.get("blocked"):
-        return {
-            "ok": False,
-            "reason": "session_audit_blocked",
-            **audit_outcome,
-        }
+        return {"ok": False, "reason": "session_audit_blocked", **audit_outcome}
 
     structural_warnings = _validate_transcript_structure(
-        transcript_md, summary_len=len(summary)
+        composed, summary_len=len(summary)
     )
     return {
         "ok": True,
-        "warnings": structural_warnings,
         "audit": audit_outcome,
+        "turn_count": turn_count,
+        "byte_count": len(composed.encode("utf-8")),
+        "warnings": structural_warnings,
     }
 
 
 def _op_session_close(
     session_id: str | None = None,
     agent: str | None = None,
-    transcript_md: str | None = None,
+    transcript_jsonl_path: str | None = None,
+    session_summary_md: str | None = None,
     summary: str | None = None,
     domains: list[str] | None = None,
     decisions: list[str] | None = None,
@@ -443,42 +457,47 @@ def _op_session_close(
     entity_ids: list[str] | None = None,
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
+    assistant_label: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     dry_run: bool = False,
     **_: object,
 ) -> dict[str, Any]:
-    """Atomic session close — write transcript, DB row, and run audit gate.
+    """Atomic session close (server-side transcript derivation).
 
-    Audit gate (session_close): runs the graph-only detector suite scoped to
-    entity_ids (or full graph if none). Two auditor-validatability detectors
-    (Checks 4–5) are included in the gate at warning severity:
+    Flow:
+      1. Cheap arg + session_id + summary validation.
+      2. Audit gate — may BLOCK before any file/DB write.
+      3. If ``dry_run``: assemble in-memory, validate, return preview.
+      4. Hand off to the route handler (`_close_session_impl`) which
+         owns the atomic boundary: resolve path → assemble verbatim →
+         compose → write file → DB tx → content_hash.
+      5. Append audit warnings + post-close detectors + structural
+         warnings to the response.
 
-    - confirmed_entity_no_assertions: entities at status:confirmed with zero
-      confirmed assertions — auditor cannot validate confirmed status.
-    - confirmed_attribute_no_assertion: confirmed entities with typed attributes
-      that have no backing confirmed assertion.
-
-    These are advisory (warning severity, never blocking in WARN mode).
-    Response includes `_warning.audit_findings` when any findings are present.
-    See agent_skill:auditor-validatable-confidence for full discipline.
+    See session-close-server-side-transcript Phase 2 for the architecture
+    rewrite; the route handler in `routes/session_journals.py` is the
+    single atomic boundary.
     """
-    validation_error = _validate_session_close_payload(
+    arg_error = _validate_session_close_args(
         session_id=session_id,
         agent=agent,
-        transcript_md=transcript_md,
+        transcript_jsonl_path=transcript_jsonl_path,
+        session_summary_md=session_summary_md,
         summary=summary,
         emit_rejected=not dry_run,
     )
-    if validation_error is not None:
+    if arg_error is not None:
         if dry_run:
-            return {"dry_run": True, "would_fail": True, **validation_error}
-        return {k: v for k, v in validation_error.items() if k != "reason"}
+            return {"dry_run": True, "would_fail": True, **arg_error}
+        return {k: v for k, v in arg_error.items() if k != "reason"}
+    assert (
+        session_id
+        and agent
+        and transcript_jsonl_path
+        and session_summary_md
+        and summary
+    )
 
-    assert session_id and agent and transcript_md and summary
-
-    # Session audit gate — MUST fire before any file I/O or DB mutation (C3).
-    # In WARN mode: populates _warning in response but close proceeds.
-    # In BLOCK mode (Phase 2.1): returns structured error before any disk write.
     audit_outcome = _safe_run_audit(
         session_id=session_id,
         agent=agent,
@@ -491,50 +510,45 @@ def _op_session_close(
         return audit_outcome
 
     if dry_run:
+        try:
+            resolved = resolve_jsonl_path(transcript_jsonl_path)
+            verbatim_md, turn_count = assemble_verbatim_md(
+                jsonl_path=resolved,
+                session_id=session_id,
+                assistant_label=assistant_label,
+            )
+        except TranscriptPathError as exc:
+            return {
+                "dry_run": True,
+                "would_fail": True,
+                "error": str(exc),
+                "reason": "transcript_jsonl.invalid",
+            }
+        except ValueError as exc:
+            return {
+                "dry_run": True,
+                "would_fail": True,
+                "error": f"JSONL parse error: {exc}",
+                "reason": "transcript_jsonl.invalid",
+            }
+        composed = compose_full_transcript(verbatim_md, session_summary_md)
         structural_warnings = _validate_transcript_structure(
-            transcript_md, summary_len=len(summary)
+            composed, summary_len=len(summary)
         )
         return {
             "dry_run": True,
             "would_succeed": True,
             "warnings": structural_warnings,
             "audit": audit_outcome,
-        }
-
-    transcript_path = f"notes/system/transcripts/{session_id}.md"
-    abs_path = _FILES_ROOT / transcript_path
-    try:
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(transcript_md, encoding="utf-8")
-    except OSError as exc:
-        logger.error(
-            "session_close: failed to write transcript to %s: %s", abs_path, exc
-        )
-        record(
-            "mcp.session.close.write.failed",
-            session_id=session_id,
-            agent=agent,
-            error=str(exc),
-        )
-        return {"error": f"Transcript file write failed: {exc}"}
-    if not abs_path.is_file():
-        logger.error(
-            "session_close: transcript absent after write — "
-            "CORTEX_FILES_ROOT=%s abs_path=%s",
-            _FILES_ROOT,
-            abs_path,
-        )
-        return {
-            "error": (
-                f"Transcript write appeared to succeed but file is absent at {abs_path}. "
-                f"CORTEX_FILES_ROOT={_FILES_ROOT}"
-            )
+            "turn_count": turn_count,
+            "byte_count": len(composed.encode("utf-8")),
         }
 
     body: dict[str, Any] = {
         "session_id": session_id,
         "agent": agent,
-        "transcript_md": transcript_md,
+        "transcript_jsonl_path": transcript_jsonl_path,
+        "session_summary_md": session_summary_md,
         "summary": summary,
     }
     for key, val in [
@@ -544,6 +558,7 @@ def _op_session_close(
         ("entity_ids", entity_ids),
         ("prior_session_id", prior_session_id),
         ("handoff_prompt", handoff_prompt),
+        ("assistant_label", assistant_label),
     ]:
         if val is not None:
             body[key] = val
@@ -551,31 +566,7 @@ def _op_session_close(
     try:
         result = _close_session_impl(body)
     except HTTPException as exc:
-        # Preserve structured detail (dict) so callers can recover the existing
-        # transcript_entity_id / journal_row_id on session.already_closed and
-        # the discriminator reason on every other 422 path. The transcript file
-        # we just wrote is the same content as the prior committed close (or a
-        # rewrite-and-retry of a rejected close); idempotent overwrite is safe.
-        # On already_closed specifically, leave the file in place — it is the
-        # canonical artifact of the prior successful close.
         detail = exc.detail
-        already_closed = (
-            isinstance(detail, dict)
-            and detail.get("reason") == "session.already_closed"
-        )
-        if not already_closed:
-            try:
-                abs_path.unlink(missing_ok=True)
-            except OSError:
-                logger.warning(
-                    "Failed to clean up transcript file after session_close 422: %s",
-                    abs_path,
-                )
-                record(
-                    "mcp.session.close.cleanup.failed",
-                    session_id=session_id,
-                    agent=agent,
-                )
         if isinstance(detail, dict):
             return {
                 "error": detail.get("message") or "session_close rejected",
@@ -583,63 +574,35 @@ def _op_session_close(
             }
         return {"error": str(detail), "reason": "session_close.rejected"}
     except Exception as exc:
-        try:
-            abs_path.unlink(missing_ok=True)
-        except OSError:
-            logger.warning(
-                "Failed to clean up transcript file after session_close exception: %s",
-                abs_path,
-            )
-            record(
-                "mcp.session.close.cleanup.failed",
-                session_id=session_id,
-                agent=agent,
-            )
         logger.error(
-            "session_close: DB transaction raised after transcript write for %s: %s",
+            "session_close: route handler raised for %s: %s",
             session_id,
             exc,
+            exc_info=True,
         )
-        record(
-            "mcp.session.close.write.failed",
-            session_id=session_id,
-            agent=agent,
-            error=str(exc),
-        )
-        return {"error": f"Session close failed after transcript write: {exc}"}
+        return {"error": f"Session close failed: {exc}"}
+
     if "error" in result:
-        try:
-            abs_path.unlink(missing_ok=True)
-        except OSError:
-            logger.warning(
-                "Failed to clean up transcript file after DB error: %s", abs_path
-            )
-            record(
-                "mcp.session.close.cleanup.failed",
-                session_id=session_id,
-                agent=agent,
-            )
         return result
 
-    logger.info(
-        "session_close: %s agent=%s transcript=%s",
-        session_id,
-        agent,
-        transcript_path,
-    )
-    record(
-        "mcp.session.close.atomic",
-        agent=agent,
-        session_id=session_id,
-        transcript_path=transcript_path,
-    )
     if audit_outcome.get("warning"):
         result["_warning"] = audit_outcome["warning"]
     _append_session_close_warnings(result, session_id=session_id, agent=agent)
 
-    transcript_warnings = _validate_transcript_structure(
-        transcript_md, summary_len=len(summary)
-    )
+    transcript_path = result.get("transcript_path", "")
+    abs_path = _FILES_ROOT / transcript_path if transcript_path else None
+    transcript_warnings: list[str] = []
+    if abs_path and abs_path.is_file():
+        try:
+            transcript_warnings = _validate_transcript_structure(
+                abs_path.read_text(encoding="utf-8"), summary_len=len(summary)
+            )
+        except OSError as exc:
+            logger.warning(
+                "session_close advisory re-read failed for %s: %s",
+                transcript_path,
+                exc,
+            )
     if transcript_warnings:
         logger.warning(
             "session_close: transcript structure warnings for %s: %s",

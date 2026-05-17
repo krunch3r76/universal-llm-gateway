@@ -32,23 +32,25 @@ def build_session_close(
     """Return a hard-deprecation error.
 
     The reminder-only dispatch path was the proximate cause of the
-    `cursor-2026-05-01-2059` hallucination (agent-bus thread 824). Use the
-    atomic `cortex(tool="session_close", ...)` path instead.
+    `cursor-2026-05-01-2059` hallucination (agent-bus thread 824). Use
+    the atomic ``cortex(tool="session_close", ...)`` path instead.
     """
     return {
         "error": "deprecated",
         "use": (
             'cortex(tool="session_close", arguments=\'{"session_id": ..., '
-            '"agent": ..., "transcript_md": ..., "summary": ...}\')'
+            '"agent": ..., "transcript_jsonl_path": ..., '
+            '"session_summary_md": ..., "summary": ...}\')'
         ),
         "reason": (
             "The reminder-only dispatch path returned step instructions "
             "without performing the close, leading to hallucinated "
             "session-close success. The atomic cortex session_close path "
-            "validates transcript structure, writes the file, and creates "
-            "the transcript entity + journal row + continues edge in a "
-            "single DB transaction. See agent-bus thread 824 and "
-            "session-close.mdc."
+            "reads the Cursor agent-transcripts JSONL server-side, "
+            "assembles the verbatim layer, validates structure, writes the "
+            "file, and creates the transcript entity + journal row + "
+            "continues edge in a single DB transaction. See agent-bus "
+            "thread 824 and session-close.mdc."
         ),
         "incident": "cursor-2026-05-01-2059",
         "thread": "824",

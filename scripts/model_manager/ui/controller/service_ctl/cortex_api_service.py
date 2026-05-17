@@ -69,17 +69,39 @@ async def start_cortex_api(
     if smoke_error is not None:
         _logger.error("Cortex API dispatch_ops smoke check failed:\n%s", smoke_error)
         return f"Cortex API not started — dispatch_ops compile error:\n{smoke_error}"
-    # CORTEX_FILES_ROOT must match the data_dir that the MCP Docker container
-    # bind-mounts as /data/files (set via MCP_DATA_DIR in build_mcp_env).
-    # Without this, session_close writes transcripts to ~/mcp-data/files while
-    # the container's fs(cortex) sandbox reads from the configured data_dir —
-    # a silent mismatch that produces confirmed session entities with no file.
-    extra_env: dict[str, str] | None = None
+    # Two roots are wired here so the host process has the same view of
+    # disk as the rest of the ecosystem:
+    #
+    #   CORTEX_FILES_ROOT — destination for session_close transcript
+    #     writes. Must match the MCP container's /data/files bind mount
+    #     (~/.gateway/mcp.yaml -> data_dir).
+    #
+    #   CURSOR_AGENT_TRANSCRIPTS_ROOT — source for the server-side
+    #     verbatim assembly. Sandbox root validated by
+    #     libs/cortex_store/transcript_assembly.resolve_jsonl_path. The
+    #     default is the workspace's Cursor IDE agent-transcripts
+    #     directory; operators override via env when running cortex-api
+    #     against a different workspace.
+    extra_env: dict[str, str] = {}
     cfg = load_mcp_config()
     if cfg is not None:
-        extra_env = {
-            "CORTEX_FILES_ROOT": str(Path(cfg.data_dir).expanduser() / "files")
-        }
+        extra_env["CORTEX_FILES_ROOT"] = str(
+            Path(cfg.data_dir).expanduser() / "files"
+        )
+    transcripts_root = os.environ.get("CURSOR_AGENT_TRANSCRIPTS_ROOT")
+    if not transcripts_root:
+        transcripts_root = str(
+            Path.home()
+            / ".cursor"
+            / "projects"
+            / "mnt-torus-projects-universal-llm-gateway"
+            / "agent-transcripts"
+        )
+    extra_env["CURSOR_AGENT_TRANSCRIPTS_ROOT"] = transcripts_root
+    _logger.info(
+        "Cortex API will read Cursor agent-transcripts from %s",
+        transcripts_root,
+    )
     return await _start_uvicorn_service(
         service_state=service_state,
         root=root,
@@ -91,7 +113,7 @@ async def start_cortex_api(
         tcp_config=None,
         log_dir=_CORTEX_LOG_DIR,
         log_filename="cortex-api.log",
-        extra_env=extra_env,
+        extra_env=extra_env or None,
     )
 
 

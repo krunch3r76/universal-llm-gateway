@@ -306,18 +306,27 @@ components:
 
     SessionCloseRequest:
       type: object
-      required: [session_id, agent, transcript_md, summary]
+      required: [session_id, agent, transcript_jsonl_path, session_summary_md, summary]
       properties:
         session_id:
           type: string
           description: "Pattern: {agent}-YYYY-MM-DD-HHMM"
         agent: { type: string }
-        transcript_md:
+        transcript_jsonl_path:
           type: string
           description: >
-            Verbatim dual-layer transcript. Must contain a structural layer
-            (## Turn N or ## Session Summary) AND a verbatim layer (### User
-            blocks). Hollow structures (no ### User blocks) return 422.
+            Absolute path under CURSOR_AGENT_TRANSCRIPTS_ROOT (default
+            ~/.cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts),
+            or relative to that root. The server reads the Cursor agent-transcripts
+            JSONL at this path and assembles the verbatim layer. Paths outside the
+            sandbox return 422 transcript_jsonl.invalid.
+        session_summary_md:
+          type: string
+          description: >
+            Agent-composed structural layer. MUST start with a "## Session Summary"
+            heading and include decisions, files modified, continuation state.
+            Concatenated to the assembled verbatim layer to produce the on-disk
+            transcript.
         summary:
           type: string
           description: ">= 20 chars; synthesis of session"
@@ -351,31 +360,48 @@ components:
             Agent-authored continuation prompt for the next session. Lands
             server-side as a reflective journal entry (kind="handoff",
             register="self") linked to this transcript via
-            link_type="handoff_for". Optional; omission does not trigger a
-            warning (handoffs are encouraged when moving to fresh context,
-            not required). See agent-skills/web-session-close.md Step 2c.
+            link_type="handoff_for".
+        assistant_label:
+          type: string
+          nullable: true
+          description: >
+            H3 heading label for assistant blocks in the assembled verbatim
+            layer. Defaults to "Assistant".
         dry_run:
           type: boolean
           default: false
-          description: "Validate-only, no file or DB write"
+          description: "Validate-only — assembles + composes in memory; no file or DB write."
 
     SessionCloseResponse:
       type: object
-      required: [transcript_entity_id, transcript_path, journal_row_id, session_id]
+      required:
+        [transcript_entity_id, transcript_path, journal_row_id, session_id, content_hash, turn_count, byte_count]
       properties:
         transcript_entity_id:
           type: string
-          description: "e.g. transcript:web-2026-05-04-0844"
+          description: "e.g. transcript:cursor-2026-05-04-0844"
         transcript_path: { type: string }
         journal_row_id: { type: integer }
         session_id: { type: string }
+        content_hash:
+          type: string
+          description: >
+            SHA-256 of the on-disk composed transcript markdown
+            (format: "sha256:<64 hex chars>"). Agents quote this in the
+            user-facing completion line as response-payload provenance evidence
+            (per provenance-discipline.mdc rule 1) instead of re-reading the file.
+        turn_count:
+          type: integer
+          description: "Number of `## Turn N` blocks in the assembled verbatim layer."
+        byte_count:
+          type: integer
+          description: "UTF-8 byte length of the on-disk composed transcript."
         handoff_entry_id:
           type: integer
           nullable: true
           description: >
             Reflective journal entry id when handoff_prompt was provided;
-            null otherwise. Use as direct reference to the handoff entry
-            for downstream tooling (e.g. arc-view handoffs queries).
+            null otherwise.
         transcript_warnings:
           type: array
           items: { type: string }
@@ -386,9 +412,7 @@ components:
           nullable: true
           description: >
             Audit warnings from pre-close gate (warn mode) and/or post-close
-            detectors. Post-close findings under `post_close_findings`
-            include `prior_session_id_omitted` kind (`missing_handoff`
-            retired — handoff absence is not a gap).
+            detectors.
 
     BootContinuityResponse:
       type: object
@@ -736,9 +760,12 @@ paths:
               schema: { $ref: "#/components/schemas/SessionCloseResponse" }
         "422":
           description: >
-            Transcript validation failed. Reason codes:
-            transcript.hollow, transcript.missing_structure,
-            summary.too_short, session_id.invalid.
+            Validation failed. Reason codes: transcript.hollow,
+            transcript.missing_structure, summary.too_short, session_id.invalid,
+            transcript_jsonl.invalid (path missing, outside sandbox, or JSONL
+            parse error), session_summary.invalid (missing '## Session Summary'
+            heading), session.already_closed (carries prior IDs in detail
+            object — treat as success).
           content:
             application/json:
               schema:

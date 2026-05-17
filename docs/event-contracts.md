@@ -2248,7 +2248,7 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 
 | Signal | Payload fields | Description |
 |---|---|---|
-| `mcp.session.close.atomic` | `agent`, `session_id`, `transcript_path` | Session closed successfully — transcript written to disk and journal row + entity created atomically. Fires once per successful `session_close` op, after all writes complete and before returning the response. |
+| `mcp.session.close.atomic` | `agent`, `session_id`, `transcript_path`, `content_hash`, `turn_count`, `byte_count` | Session closed successfully — transcript assembled, written to disk, and journal row + entity created atomically. Fires once per successful `session_close` op. `content_hash` is the SHA-256 of the on-disk markdown (`sha256:<hex>`); `turn_count` and `byte_count` come from the verbatim assembly. |
 | `mcp.session.close.write.failed` | `session_id`, `agent`, `error` | `OSError` raised while writing the transcript file to `notes/system/transcripts/{session_id}.md`. Session close aborted at this point — no DB mutations have occurred. `error` is `str(exc)`. |
 | `mcp.session.close.cleanup.failed` | `session_id`, `agent` | `OSError` raised while unlinking the transcript file during rollback (post-DB error). The DB write failed first (surfaced as an error in the response); this signal indicates the rollback cleanup also failed, leaving an orphaned transcript file at `notes/system/transcripts/{session_id}.md`. Warrants manual inspection. |
 | `mcp.session.close.rejected` | `session_id`, `agent`, `reason`, `detail` | Session close rejected at the validation gate — no file written, no DB mutations, no transcript entity. Returned to the caller as HTTP 422. Emitted by both the route handler (`libs/cortex_store/routes/session_journals.py:close_session`) and the dispatch handler (`_op_session_close`) — whichever fails first; the dispatch handler's check fires before file write to avoid orphaned files. `reason` is one of the four enumerated values below. `detail` carries the human-readable message for the agent's retry path. |
@@ -2259,10 +2259,13 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 |---|---|---|
 | `session_id.invalid` | `session_id` does not match `{agent}-YYYY-MM-DD-HHMM` | Reformat the session_id with UTC timestamp. |
 | `summary.too_short` | `len(summary) < 20` | Extend the summary to ≥20 chars. |
-| `transcript.missing_structure` | `len(transcript_md) < 200` OR no `## Turn` / `## Session Summary` heading present | Add structural headings; ensure transcript body ≥200 chars. |
-| `transcript.hollow` | File has ≥1 `## Turn` heading but ZERO User-voice blocks (`**User:**` / `User:` / `### User`) anywhere — the dual-layer doctrine failure (structural ✓, verbatim ✗). Canonical case: `web-2026-05-03-0431.md`. | Rewrite mechanically: walk the context window from the top, copy each user message verbatim into a `### User` block. See `agent-skills/web-session-close.md` Step 2 for the dual-layer doctrine and mechanical-copy mandate. |
+| `transcript_jsonl.invalid` | `transcript_jsonl_path` is missing, outside `CURSOR_AGENT_TRANSCRIPTS_ROOT`, or fails JSONL parse | Re-derive the path from `ls -lt $CURSOR_AGENT_TRANSCRIPTS_ROOT` (most recent UUID dir). |
+| `session_summary.invalid` | `session_summary_md` empty or missing `## Session Summary` heading | Compose the structural layer per `session-close.mdc` Step 1. |
+| `transcript.missing_structure` | Composed transcript <200 chars or missing `## Turn` and `## Session Summary` headings (defense-in-depth post-assembly check) | JSONL too short OR structural layer too thin — extend `session_summary_md`. |
+| `transcript.hollow` | Composed transcript has zero User-voice blocks after assembly (JSONL contained no user messages) | Confirm `transcript_jsonl_path` points at the active session, not a tool-only record set. |
+| `session.already_closed` | `session_journals.session_id` already has a row (migration 034 UNIQUE constraint). Detail object carries the prior `transcript_entity_id`, `transcript_path`, `journal_row_id`. | Treat as success — quote the IDs from the detail object. |
 
-Maximum one retry on 422 — if the second close also rejects, the agent surfaces the rejection reason explicitly to the user rather than spinning.
+Maximum one retry on 422 (except `session.already_closed`, which is success-equivalent). If a second close also rejects on a non-`already_closed` reason, the agent surfaces the rejection reason explicitly to the user.
 
 ### Post-Write Hook Signals
 

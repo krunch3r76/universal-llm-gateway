@@ -139,19 +139,23 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         """HARD-DEPRECATED — use cortex(tool="session_close", ...) for atomic closes.
 
         This tool only returned step-by-step instructions without performing
-        the close. The atomic version (cortex dispatch to /session-journals/close)
-        validates transcript content/length/structure, writes the file, and creates
-        entity + journal row + continues edge in a **single validated transaction**.
+        the close. The atomic version (cortex dispatch to
+        ``/session-journals/close``) reads the Cursor agent-transcripts
+        JSONL, assembles the verbatim layer server-side, validates
+        structure, writes the file, and creates entity + journal row +
+        continues edge in a **single validated transaction**.
 
-        The 2059 hallucination (agent reported success despite failed writes during
-        restart) was caused by following the old path. This tool now fails loudly.
+        The 2059 hallucination (agent reported success despite failed
+        writes during restart) was caused by following the old path. This
+        tool now fails loudly.
 
         Use:
         cortex(tool="session_close", arguments={
-          "session_id": "...",
+          "session_id": "cursor-YYYY-MM-DD-HHMM",
           "agent": "cursor",
-          "transcript_md": "# full transcript markdown ...",
-          "summary": "summary >=20 chars",
+          "transcript_jsonl_path": "<path under CURSOR_AGENT_TRANSCRIPTS_ROOT>",
+          "session_summary_md": "## Session Summary\\n\\n**Decisions:** ...",
+          "summary": "<summary >=20 chars>",
           ...
         })
 
@@ -162,10 +166,17 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             "error": "deprecated_session_close_reminder",
             "use": (
                 "cortex(tool='session_close', arguments={"
-                "'session_id': '...', 'agent': 'cursor', 'transcript_md': '<full md>', "
+                "'session_id': '...', 'agent': 'cursor', "
+                "'transcript_jsonl_path': '<path>', "
+                "'session_summary_md': '## Session Summary\\n...', "
                 "'summary': '<summary>=20 chars', 'domains': [...], ...}) — "
-                "atomic path that writes file + DB tx with validation. See "
-                "agent-bus thread 824 and libs/cortex_store/dispatch_ops/ops_journals.py"
+                "atomic path that derives the verbatim layer server-side and "
+                "writes file + DB tx with validation. See agent-bus thread 824 "
+                "and libs/cortex_store/dispatch_ops/ops_journals.py."
             ),
-            "detail": "The reminder path enabled hallucinated closes; atomic path prevents it.",
+            "detail": (
+                "The reminder path enabled hallucinated closes; atomic path "
+                "prevents it. Pre-Phase-2 transcript_md argument is gone — "
+                "supply transcript_jsonl_path instead."
+            ),
         }
