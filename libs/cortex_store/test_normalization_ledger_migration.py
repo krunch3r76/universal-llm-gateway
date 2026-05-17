@@ -47,7 +47,7 @@ def test_039_migration_adds_columns_and_indices(conn: sqlite3.Connection) -> Non
 
     # Indices exist
     idx_names = {
-        r[1] for r in conn.execute(
+        r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_assertions_%'"
         ).fetchall()
     }
