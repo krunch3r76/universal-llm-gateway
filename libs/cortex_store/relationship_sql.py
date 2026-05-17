@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..db import cortex_conn, query
+from .db import cortex_conn, query
 
 SYMMETRIC_REL_TYPES: frozenset[str] = frozenset({"related_to", "co-occurs_with"})
 

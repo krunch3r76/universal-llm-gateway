@@ -118,7 +118,7 @@ _JOURNALING_PROTOCOL = """\
 ## Session Journaling
 Session close: see `agent-skills/session-close.md` (canonical protocol for all \
 agents; per-agent bindings — `agent` field, session_id prefix — in the bindings \
-table at end of that skill). Cursor: `.cursor/rules/session-close.mdc`."""
+table at end of that skill)."""
 
 _THREAD_LIFECYCLE = """\
 ## Thread & Session Lifecycle

@@ -29,7 +29,7 @@ _READ_ONLY_PREFIX = (
     "explain that this mode does not permit writes."
 )
 
-_ALLOW = ("PATH", "HOME", "LANG", "LC_ALL")
+_ALLOW = ("PATH", "HOME", "LANG", "LC_ALL", "CORTEX_DB_PATH", "TODOS_DB_PATH")
 
 
 @dataclass(frozen=True, slots=True)

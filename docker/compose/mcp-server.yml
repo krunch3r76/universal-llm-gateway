@@ -97,6 +97,11 @@ services:
       - CORTEX_DEFAULT_USER_ENTITY=${CORTEX_DEFAULT_USER_ENTITY:-}
       - CORTEX_OWNER_NAME=${CORTEX_OWNER_NAME:-the user}
       - CORTEX_DEPLOYMENT_VOCABULARY=${CORTEX_DEPLOYMENT_VOCABULARY:-}
+      # Cortex DB paths — ~/.cortex is mounted at /data/cortex; grok subprocesses
+      # inherit these via _ALLOW in _grok_build_runner.py so cortex_conn() resolves
+      # to the live DB rather than the default HOME/.cortex fallback.
+      - CORTEX_DB_PATH=/data/cortex/cortex.db
+      - TODOS_DB_PATH=/data/cortex/todos.db
       # grok CLI paths (defaults match standard xAI CLI install location)
       - GROK_BIN_PATH=${GROK_BIN_PATH:-}
       - GROK_AUTH_DIR=${GROK_AUTH_DIR:-}
