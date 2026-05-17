@@ -189,6 +189,8 @@ wait_for_mcp_healthy() {
 }
 
 if [[ "$NO_CACHE" == "true" ]]; then
+  echo "Syncing latest grok CLI..."
+  curl -fsSL https://x.ai/cli/install.sh | bash
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
 else
