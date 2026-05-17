@@ -19,6 +19,7 @@ from tools._grok_build_dispatch import dispatch_op
 from tools._grok_build_envelope import _envelope_rejected
 from tools._grok_build_events import emit_grok_build_dispatch_rejected
 from tools._grok_build_fetch_result import fetch_result_op
+from tools._grok_build_git_ops import pr_create_op, push_op
 from tools._grok_build_worktree import worktree_create_op
 from tools._grok_build_worktree_list import worktree_list_op
 from tools._grok_build_worktree_remove import worktree_remove_op
@@ -29,7 +30,13 @@ if TYPE_CHECKING:
 
 async def grok_build(
     op: Literal[
-        "dispatch", "worktree_create", "worktree_remove", "worktree_list", "fetch_result"
+        "dispatch",
+        "worktree_create",
+        "worktree_remove",
+        "worktree_list",
+        "fetch_result",
+        "push",
+        "pr_create",
     ],
     cwd: str = "",
     prompt: str = "",
@@ -48,6 +55,13 @@ async def grok_build(
     start_point: str = "",
     dispatch_id: str = "",
     format: Literal["json", "text", "summary"] = "json",
+    remote: str = "origin",
+    set_upstream: bool = True,
+    pr_title: str = "",
+    pr_body: str = "",
+    pr_base: str = "",
+    pr_head: str = "",
+    draft: bool = False,
 ) -> dict[str, Any]:
     """Dispatch grok_build op to the matching handler.
 
@@ -84,6 +98,19 @@ async def grok_build(
         return await worktree_list_op()
     if op == "fetch_result":
         return await fetch_result_op(dispatch_id=dispatch_id, format=format)
+    if op == "push":
+        return await push_op(
+            cwd=cwd, remote=remote, branch=branch, set_upstream=set_upstream
+        )
+    if op == "pr_create":
+        return await pr_create_op(
+            cwd=cwd,
+            pr_title=pr_title,
+            pr_body=pr_body,
+            pr_base=pr_base,
+            pr_head=pr_head,
+            draft=draft,
+        )
     dispatch_id = str(uuid.uuid4())
     reason = f"unsupported op: {op!r}"
     emit_grok_build_dispatch_rejected(
