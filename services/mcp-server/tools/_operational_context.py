@@ -116,9 +116,9 @@ Never treat "too large" as "skip" — it means "navigate differently.\""""
 
 _JOURNALING_PROTOCOL = """\
 ## Session Journaling
-Session close: see `notes/system/shared/session-close-protocol.md` (canonical \
-protocol for all agents; per-agent bindings — `agent` field, session_id prefix \
-— in the bindings table at end of that doc)."""
+Session close: see `agent-skills/session-close.md` (canonical protocol for all \
+agents; per-agent bindings — `agent` field, session_id prefix — in the bindings \
+table at end of that skill). Cursor: `.cursor/rules/session-close.mdc`."""
 
 _THREAD_LIFECYCLE = """\
 ## Thread & Session Lifecycle
@@ -194,11 +194,10 @@ Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
 `.cursor/rules/session-close.mdc`) implement the canonical protocol."""
 
 _WEB_TRANSCRIPT_PREPROCESSING = """\
-Web's enforcement path is Cortex-resident — `agent-skills/web-session-close.md` \
-is the canonical close discipline (Step 2 dual-layer doctrine + mechanical-copy \
-mandate; Step 3b 422-retry semantics for `mcp.session.close.rejected`). \
-Web also applies `agent-skills/web-transcript-preprocessing.md` to trim raw tool \
-payloads immediately before calling `session_close`."""
+Web's close discipline is `agent-skills/session-close.md` (canonical; Step 2 \
+dual-layer + mechanical-copy; Step 3b 422-retry). Web also applies \
+`agent-skills/web-transcript-preprocessing.md` to trim raw tool payloads before \
+`session_close`."""
 
 # Generic web close pointer — shared by non-claude web seats.
 # ∀ web seats: transcript at notes/system/transcripts/web-YYYY-MM-DD-HHmm.md;
@@ -207,8 +206,8 @@ _WEB_SESSION_CLOSE_GENERIC = """\
 Session close (web platform): write transcript markdown to \
 `notes/system/transcripts/web-YYYY-MM-DD-HHmm.md`, seed assertions, \
 create transcript entity, write journal row, post to agent-activity-journal \
-(thread 480). See `notes/system/shared/session-close-protocol.md` for the \
-canonical six-step sequence."""
+(thread 480). See `agent-skills/session-close.md` for the canonical close \
+sequence."""
 
 _SUBAGENT_INHERITANCE = """\
 Subagents typically inherit close behavior from the calling agent. When a \
