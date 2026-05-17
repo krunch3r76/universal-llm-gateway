@@ -69,10 +69,12 @@ _FRICTION_CATEGORIES = frozenset(
 
 try:
     from mcp_events import record as _record
-except Exception:  # pragma: no cover - mcp_events only available in mcp-server context
+except (
+    ImportError
+):  # pragma: no cover - mcp_events only available in mcp-server context
     try:
         from cortex_store.event_publisher import record as _record
-    except Exception:
+    except ImportError:
         _record = None  # type: ignore[assignment]
 
 

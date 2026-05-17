@@ -34,12 +34,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import os
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("cortex-api.transcript_assembly")
+from universal_logging import get_logger
+
+logger = get_logger("cortex-api.transcript_assembly")
 
 _DEFAULT_ASSISTANT_LABEL = "Assistant"
 _TURN_TOPIC_MAX = 60

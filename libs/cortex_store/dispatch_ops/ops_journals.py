@@ -342,7 +342,11 @@ def _safe_run_audit(
     entity_ids: list[str],
     defer_gaps: dict[str, str] | None,
 ) -> dict[str, Any]:
-    """Run audit gate with hard non-blocking guarantee (todo P4)."""
+    """Run audit gate with hard non-blocking guarantee (todo P4).
+
+    Broad ``except Exception`` is required to guarantee the audit never
+    blocks a session close; all paths log before degrading to a warning.
+    """
     try:
         return _run_session_audit_or_block(
             session_id=session_id,

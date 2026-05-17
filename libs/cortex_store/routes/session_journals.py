@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, json_encode, query
-from ..dispatch_ops._shared import _FILES_ROOT, record
+from ..dispatch_ops._shared import _FILES_ROOT, _SESSION_ID_RE, record
 from ..models import (
     SessionCloseRequest,
     SessionCloseResponse,
@@ -25,7 +25,7 @@ from ..transcript_assembly import (
 )
 from .reflective_journal import _insert_journal_link_tx, _insert_reflective_entry_tx
 
-logger = logging.getLogger("cortex-api.session_journals")
+logger = get_logger("cortex-api.session_journals")
 router = APIRouter(prefix="/session-journals", tags=["session-journals"])
 
 _JSON_FIELDS = frozenset({"domains", "decisions", "open_items", "entity_ids"})
@@ -247,7 +247,6 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
     return item
 
 
-_SESSION_ID_RE = re.compile(r"^[a-z]+-\d{4}-\d{2}-\d{2}-\d{4}$")
 _USER_VOICE_RE = re.compile(r"\*\*User:\*\*|\bUser:\s|^#{1,4}\s+User\b", re.MULTILINE)
 
 # Reason enum for mcp.session.close.rejected — see docs/event-contracts.md
@@ -282,9 +281,7 @@ def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> 
 def _raise_422(*, reason: str, session_id: str, agent: str, detail: str) -> None:
     """Emit `mcp.session.close.rejected` and raise the matching 422 in one call."""
     _emit_rejected(reason, session_id=session_id, agent=agent, detail=detail)
-    raise HTTPException(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail
-    )
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
 
 
 @router.post(
@@ -311,6 +308,9 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
     On any failure between steps 2 and 8 that occurs after the file is
     written, the file is unlinked before raising.
+    On any failure after the transcript file is written, a best-effort
+    ``Path.unlink`` is performed; an OSError on unlink is logged at WARNING
+    and does not suppress the original exception.
     """
     if not _SESSION_ID_RE.match(body.session_id):
         _raise_422(
@@ -426,14 +426,14 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     opened_at = _parse_opened_at(body.session_id)
 
     # ── idempotency gate ──
-    existing = (
-        cortex_conn()
-        .execute(
+    _idem_conn = cortex_conn()
+    try:
+        existing = _idem_conn.execute(
             "SELECT id, file_path FROM session_journals WHERE session_id = ?",
             (body.session_id,),
-        )
-        .fetchone()
-    )
+        ).fetchone()
+    finally:
+        _idem_conn.close()
     if existing is not None:
         already_detail = {
             "reason": "session.already_closed",

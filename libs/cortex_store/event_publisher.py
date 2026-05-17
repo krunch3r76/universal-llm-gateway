@@ -59,7 +59,9 @@ class _UDSPublisher:
             try:
                 self._q.put_nowait(line)
             except queue.Full:
-                pass
+                logger.warning(
+                    "cortex-api event publisher queue full; event dropped",
+                )
 
     def _run(self) -> None:
         sock: socket.socket | None = None
@@ -83,7 +85,8 @@ class _UDSPublisher:
                 sock.sendall(line.encode())
             except queue.Empty:
                 continue
-            except OSError:
+            except OSError as send_error:
+                logger.warning("cortex-api event publisher send failed: %s", send_error)
                 try:
                     sock.close()
                 except OSError as close_error:

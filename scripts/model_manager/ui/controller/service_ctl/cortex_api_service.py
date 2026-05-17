@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import compileall
 import io
-import logging
 import os
 from collections.abc import Awaitable, Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+from universal_logging import get_logger
+
 from ...model.service_state import ServiceState
 from ..service_config import GATEWAY_DIR, load_mcp_config
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 
-_logger = logging.getLogger(__name__)
+_logger = get_logger(__name__)
 _DISPATCH_OPS_DIR = (
     Path(__file__).resolve().parents[5] / "libs" / "cortex_store" / "dispatch_ops"
 )
@@ -85,9 +86,7 @@ async def start_cortex_api(
     extra_env: dict[str, str] = {}
     cfg = load_mcp_config()
     if cfg is not None:
-        extra_env["CORTEX_FILES_ROOT"] = str(
-            Path(cfg.data_dir).expanduser() / "files"
-        )
+        extra_env["CORTEX_FILES_ROOT"] = str(Path(cfg.data_dir).expanduser() / "files")
     transcripts_root = os.environ.get("CURSOR_AGENT_TRANSCRIPTS_ROOT")
     if not transcripts_root:
         transcripts_root = str(

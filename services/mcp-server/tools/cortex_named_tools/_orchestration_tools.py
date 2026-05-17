@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
 from ._boot_diff import _build_boot_diff
@@ -11,7 +10,6 @@ from ._boot_runner import BootMode, run_cortex_boot
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
 
 _KNOWN_FAMILIES = frozenset({"claude", "gpt", "grok", "gemini"})
 
