@@ -38,7 +38,24 @@ _DEFAULT_USER_ENTITY = os.getenv("CORTEX_DEFAULT_USER_ENTITY", "")
 
 _VALID_STATUS = frozenset({"confirmed", "provisional", "merged", "deprecated"})
 _VALID_CONFIDENCE = frozenset({"confirmed", "believed", "suspected", "hypothesized"})
-_SESSION_ID_RE = re.compile(r"^[a-z]+-\d{4}-\d{2}-\d{2}-\d{4}$")
+# Agent slug may contain hyphens (e.g. ``claude-web``, ``api-claude``):
+# one or more lowercase-word segments separated by single hyphens, then the
+# ``YYYY-MM-DD-HHMM`` timestamp.  Pre-2026-05-17 the prefix was a single
+# ``[a-z]+`` word, which rejected hyphenated slugs and stranded web-claude
+# at session-close time (see this commit's motivating bug).
+_SESSION_ID_RE_SOURCE = r"^[a-z]+(-[a-z]+)*-\d{4}-\d{2}-\d{2}-\d{4}$"
+_SESSION_ID_RE = re.compile(_SESSION_ID_RE_SOURCE)
+_SESSION_ID_EXAMPLES = (
+    "cursor-2026-05-17-0458",
+    "claude-web-2026-05-17-0458",
+    "api-claude-2026-05-17-0458",
+)
+
+# Agent slug: lowercase alnum + hyphens, must start with a letter.  Used as a
+# permissive shape check (no allowlist — agent is a routing/metadata hint).
+_AGENT_SLUG_RE_SOURCE = r"^[a-z][a-z0-9-]*$"
+_AGENT_SLUG_RE = re.compile(_AGENT_SLUG_RE_SOURCE)
+_AGENT_SLUG_EXAMPLES = ("cursor", "web", "claude-web", "api-claude", "orion")
 
 _ENTITY_MUTABLE = frozenset(
     {

@@ -16,7 +16,15 @@ from universal_logging import get_logger
 
 from .db import query
 from .dispatch_ops._detectors._shared import _finding
-from .dispatch_ops._shared import _SESSION_ID_RE, record
+from .dispatch_ops._shared import (
+    _AGENT_SLUG_EXAMPLES,
+    _AGENT_SLUG_RE,
+    _AGENT_SLUG_RE_SOURCE,
+    _SESSION_ID_EXAMPLES,
+    _SESSION_ID_RE,
+    _SESSION_ID_RE_SOURCE,
+    record,
+)
 
 logger = get_logger(__name__)
 
@@ -41,8 +49,38 @@ _REJECT_REASONS = frozenset(
         "transcript_jsonl.invalid",
         "session_summary.invalid",
         "transcript_source.missing",
+        "agent.invalid",
     }
 )
+
+
+def build_validation_error(
+    *,
+    reason: str,
+    field: str,
+    received: Any,
+    expected: str,
+    examples: tuple[str, ...] | list[str],
+    hint: str,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    """Construct a structured MCP validation error payload.
+
+    The shape is the cross-tool standard for any input-validation 422 on the
+    session-close surface: an LLM caller can read ``expected`` + ``examples``
+    + ``hint`` and fix its next call without external help.  ``error`` and
+    ``reason`` are kept for back-compat with consumers that key off them.
+    """
+    msg = detail or f"{field} {received!r} does not match {expected}"
+    return {
+        "error": msg,
+        "reason": reason,
+        "field": field,
+        "received": received,
+        "expected": expected,
+        "examples": list(examples),
+        "hint": hint,
+    }
 
 
 def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> None:
@@ -127,7 +165,15 @@ def _validate_session_close_args(
     }
     for field, val in required.items():
         if not val:
-            return {"error": f"{field} is required"}
+            return {
+                "error": f"{field} is required",
+                "reason": f"{field}.required",
+                "field": field,
+                "received": val,
+                "expected": "non-empty string",
+                "examples": [],
+                "hint": (f"Supply a non-empty {field} on the session_close call."),
+            }
     if not transcript_jsonl_path and not transcript_md:
         detail = (
             "either transcript_jsonl_path (cursor) or transcript_md (web) "
@@ -140,31 +186,107 @@ def _validate_session_close_args(
                 agent=agent,
                 detail=detail,
             )
-        return {"error": detail, "reason": "transcript_source.missing"}
+        return {
+            "error": detail,
+            "reason": "transcript_source.missing",
+            "field": "transcript_jsonl_path|transcript_md",
+            "received": None,
+            "expected": (
+                "exactly one of {transcript_jsonl_path (cursor), transcript_md (web)}"
+            ),
+            "examples": [],
+            "hint": (
+                "Cursor agents pass transcript_jsonl_path under "
+                "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
+                "verbatim markdown via transcript_md."
+            ),
+        }
     assert session_id and agent and session_summary_md and summary
 
-    def _reject(reason: str, detail: str) -> dict[str, Any]:
+    def _reject(payload: dict[str, Any]) -> dict[str, Any]:
         if emit_rejected:
-            _emit_rejected(reason, session_id=session_id, agent=agent, detail=detail)
-        return {"error": detail, "reason": reason}
+            _emit_rejected(
+                payload["reason"],
+                session_id=session_id,
+                agent=agent,
+                detail=payload["error"],
+            )
+        return payload
 
     if not _SESSION_ID_RE.match(session_id):
         return _reject(
-            "session_id.invalid",
-            f"session_id {session_id!r} does not match "
-            "pattern {{agent}}-YYYY-MM-DD-HHMM",
+            build_validation_error(
+                reason="session_id.invalid",
+                field="session_id",
+                received=session_id,
+                expected=_SESSION_ID_RE_SOURCE,
+                examples=_SESSION_ID_EXAMPLES,
+                hint=(
+                    "Agent slugs may contain hyphens (e.g. claude-web, "
+                    "api-claude) — the full slug must precede the "
+                    "YYYY-MM-DD-HHMM timestamp."
+                ),
+                detail=(
+                    f"session_id {session_id!r} does not match "
+                    f"pattern {_SESSION_ID_RE_SOURCE} "
+                    "({agent-slug}-YYYY-MM-DD-HHMM, lowercase)."
+                ),
+            )
+        )
+    if not _AGENT_SLUG_RE.match(agent):
+        return _reject(
+            build_validation_error(
+                reason="agent.invalid",
+                field="agent",
+                received=agent,
+                expected=_AGENT_SLUG_RE_SOURCE,
+                examples=list(_AGENT_SLUG_EXAMPLES),
+                hint=(
+                    "agent is a routing/metadata hint (no allowlist) — "
+                    "must be a lowercase slug starting with a letter "
+                    "(hyphens allowed)."
+                ),
+                detail=(
+                    f"agent {agent!r} is not a valid lowercase slug "
+                    f"(expected {_AGENT_SLUG_RE_SOURCE})."
+                ),
+            )
         )
     if len(summary) < 20:
         return _reject(
-            "summary.too_short",
-            f"summary must be >= 20 characters (got {len(summary)})",
+            build_validation_error(
+                reason="summary.too_short",
+                field="summary",
+                received=summary,
+                expected="length >= 20",
+                examples=[],
+                hint=(
+                    "summary is the short synthesis used for the journal "
+                    "row + entity name — write at least one full sentence."
+                ),
+                detail=f"summary must be >= 20 characters (got {len(summary)})",
+            )
         )
     if "## Session Summary" not in session_summary_md:
         return _reject(
-            "session_summary.invalid",
-            "session_summary_md must contain a '## Session Summary' heading "
-            "(structural layer the agent composes — decisions, files modified, "
-            "continuation state).",
+            build_validation_error(
+                reason="session_summary.invalid",
+                field="session_summary_md",
+                received=session_summary_md[:120]
+                + ("…" if len(session_summary_md) > 120 else ""),
+                expected="must contain heading '## Session Summary'",
+                examples=["## Session Summary\\n…\\n## Decisions\\n…"],
+                hint=(
+                    "session_summary_md is the structural layer the agent "
+                    "composes (decisions, files modified, continuation "
+                    "state) — start it with a '## Session Summary' H2."
+                ),
+                detail=(
+                    "session_summary_md must contain a '## Session Summary' "
+                    "heading (structural layer the agent composes — "
+                    "decisions, files modified, continuation state)."
+                ),
+            )
         )
     return None
 

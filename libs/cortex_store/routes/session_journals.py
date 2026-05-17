@@ -8,7 +8,16 @@ from fastapi import APIRouter, HTTPException, Query, status
 from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, json_encode, query
-from ..dispatch_ops._shared import _FILES_ROOT, _SESSION_ID_RE, record
+from ..dispatch_ops._shared import (
+    _AGENT_SLUG_EXAMPLES,
+    _AGENT_SLUG_RE,
+    _AGENT_SLUG_RE_SOURCE,
+    _FILES_ROOT,
+    _SESSION_ID_EXAMPLES,
+    _SESSION_ID_RE,
+    _SESSION_ID_RE_SOURCE,
+    record,
+)
 from ..models import (
     SessionCloseRequest,
     SessionCloseResponse,
@@ -20,6 +29,7 @@ from ..session_close_validation import (
     _USER_VOICE_RE,
     _audit_normalization_refusals_for_session,
     _emit_rejected,
+    build_validation_error,
 )
 from ..transcript_assembly import (
     TranscriptPathError,
@@ -252,10 +262,26 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
     return item
 
 
-def _raise_422(*, reason: str, session_id: str, agent: str, detail: str) -> None:
-    """Emit `mcp.session.close.rejected` and raise the matching 422 in one call."""
+def _raise_422(
+    *,
+    reason: str,
+    session_id: str,
+    agent: str,
+    detail: str,
+    payload: dict | None = None,
+) -> None:
+    """Emit `mcp.session.close.rejected` and raise the matching 422 in one call.
+
+    When ``payload`` is supplied it becomes the ``HTTPException.detail`` body
+    so callers receive the full structured error (field/received/expected/
+    examples/hint) per the cross-tool validation-error contract. The plain
+    ``detail`` string is still used for the event payload (human-readable).
+    """
     _emit_rejected(reason, session_id=session_id, agent=agent, detail=detail)
-    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=payload if payload is not None else detail,
+    )
 
 
 @router.post(
@@ -287,40 +313,125 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     and does not suppress the original exception.
     """
     if not _SESSION_ID_RE.match(body.session_id):
+        payload = build_validation_error(
+            reason="session_id.invalid",
+            field="session_id",
+            received=body.session_id,
+            expected=_SESSION_ID_RE_SOURCE,
+            examples=_SESSION_ID_EXAMPLES,
+            hint=(
+                "Agent slugs may contain hyphens (e.g. claude-web, "
+                "api-claude) — the full slug must precede the "
+                "YYYY-MM-DD-HHMM timestamp."
+            ),
+            detail=(
+                f"session_id {body.session_id!r} does not match "
+                f"pattern {_SESSION_ID_RE_SOURCE} "
+                "({agent-slug}-YYYY-MM-DD-HHMM, lowercase)."
+            ),
+        )
         _raise_422(
             reason="session_id.invalid",
             session_id=body.session_id,
             agent=body.agent,
-            detail=(
-                f"session_id {body.session_id!r} does not match "
-                "pattern {{agent}}-YYYY-MM-DD-HHMM"
+            detail=payload["error"],
+            payload=payload,
+        )
+
+    if not _AGENT_SLUG_RE.match(body.agent):
+        payload = build_validation_error(
+            reason="agent.invalid",
+            field="agent",
+            received=body.agent,
+            expected=_AGENT_SLUG_RE_SOURCE,
+            examples=list(_AGENT_SLUG_EXAMPLES),
+            hint=(
+                "agent is a routing/metadata hint (no allowlist) — must "
+                "be a lowercase slug starting with a letter (hyphens "
+                "allowed)."
             ),
+            detail=(
+                f"agent {body.agent!r} is not a valid lowercase slug "
+                f"(expected {_AGENT_SLUG_RE_SOURCE})."
+            ),
+        )
+        _raise_422(
+            reason="agent.invalid",
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=payload["error"],
+            payload=payload,
+        )
+
+    def _structured(
+        reason: str,
+        field: str,
+        received: object,
+        expected: str,
+        examples: list[str],
+        hint: str,
+        detail: str,
+    ) -> None:
+        payload = build_validation_error(
+            reason=reason,
+            field=field,
+            received=received,
+            expected=expected,
+            examples=examples,
+            hint=hint,
+            detail=detail,
+        )
+        _raise_422(
+            reason=reason,
+            session_id=body.session_id,
+            agent=body.agent,
+            detail=detail,
+            payload=payload,
         )
 
     if len(body.summary) < 20:
-        _raise_422(
-            reason="summary.too_short",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=f"summary must be >= 20 characters (got {len(body.summary)})",
+        _structured(
+            "summary.too_short",
+            "summary",
+            body.summary,
+            "length >= 20",
+            [],
+            (
+                "summary is the short synthesis used for the journal row + "
+                "entity name — write at least one full sentence."
+            ),
+            f"summary must be >= 20 characters (got {len(body.summary)})",
         )
 
     if not body.session_summary_md.strip():
-        _raise_422(
-            reason="session_summary.invalid",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail="session_summary_md is required (structural layer).",
+        _structured(
+            "session_summary.invalid",
+            "session_summary_md",
+            body.session_summary_md,
+            "non-empty markdown with '## Session Summary' heading",
+            ["## Session Summary\\n…\\n## Decisions\\n…"],
+            (
+                "session_summary_md is the structural layer the agent "
+                "composes — must start with a '## Session Summary' H2."
+            ),
+            "session_summary_md is required (structural layer).",
         )
     if "## Session Summary" not in body.session_summary_md:
-        _raise_422(
-            reason="session_summary.invalid",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=(
-                "session_summary_md must contain a '## Session Summary' heading; "
-                "this is the structural layer the agent composes (decisions, "
-                "files modified, continuation state)."
+        _structured(
+            "session_summary.invalid",
+            "session_summary_md",
+            body.session_summary_md[:120]
+            + ("…" if len(body.session_summary_md) > 120 else ""),
+            "must contain heading '## Session Summary'",
+            ["## Session Summary\\n…\\n## Decisions\\n…"],
+            (
+                "Add a '## Session Summary' H2 to the structural layer "
+                "(decisions, files modified, continuation state)."
+            ),
+            (
+                "session_summary_md must contain a '## Session Summary' "
+                "heading; this is the structural layer the agent composes "
+                "(decisions, files modified, continuation state)."
             ),
         )
 
@@ -328,11 +439,18 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     # jsonl_path wins on conflict (cursor canonical path; web wouldn't
     # legitimately pass both). See agent-bus thread 1026.
     if not body.transcript_jsonl_path and not body.transcript_md:
-        _raise_422(
-            reason="transcript_source.missing",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=(
+        _structured(
+            "transcript_source.missing",
+            "transcript_jsonl_path|transcript_md",
+            None,
+            "exactly one of {transcript_jsonl_path (cursor), transcript_md (web)}",
+            [],
+            (
+                "Cursor agents pass transcript_jsonl_path under "
+                "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
+                "verbatim markdown via transcript_md."
+            ),
+            (
                 "either transcript_jsonl_path (cursor) or transcript_md "
                 "(web) is required — neither was supplied"
             ),
@@ -342,11 +460,17 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         try:
             resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
         except TranscriptPathError as exc:
-            _raise_422(
-                reason="transcript_jsonl.invalid",
-                session_id=body.session_id,
-                agent=body.agent,
-                detail=str(exc),
+            _structured(
+                "transcript_jsonl.invalid",
+                "transcript_jsonl_path",
+                body.transcript_jsonl_path,
+                "absolute or relative path under CURSOR_AGENT_TRANSCRIPTS_ROOT",
+                [],
+                (
+                    "Pass the active session's JSONL path under the cursor "
+                    "agent-transcripts root; the server resolves + sandboxes it."
+                ),
+                str(exc),
             )
 
         try:
@@ -356,11 +480,17 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 assistant_label=body.assistant_label,
             )
         except ValueError as exc:
-            _raise_422(
-                reason="transcript_jsonl.invalid",
-                session_id=body.session_id,
-                agent=body.agent,
-                detail=f"JSONL parse error: {exc}",
+            _structured(
+                "transcript_jsonl.invalid",
+                "transcript_jsonl_path",
+                body.transcript_jsonl_path,
+                "well-formed JSONL parseable by assemble_verbatim_md",
+                [],
+                (
+                    "Confirm the JSONL is the cursor agent-transcripts "
+                    "format (one record per line, user/assistant roles)."
+                ),
+                f"JSONL parse error: {exc}",
             )
     else:
         # Web path: caller-supplied markdown is the verbatim layer as-is.
@@ -382,32 +512,50 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     # guards.  Surface as transcript.hollow / transcript.missing_structure
     # so existing event consumers don't need new reasons.
     if len(transcript_md) < 200:
-        _raise_422(
-            reason="transcript.missing_structure",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=(
+        _structured(
+            "transcript.missing_structure",
+            "transcript_md|transcript_jsonl_path",
+            len(transcript_md),
+            "composed transcript length >= 200",
+            [],
+            (
+                "Either JSONL is empty or session_summary_md is too thin; "
+                "check the JSONL path and re-run."
+            ),
+            (
                 f"composed transcript is {len(transcript_md)} chars "
                 "(< 200) — JSONL may be empty or session_summary_md too thin."
             ),
         )
     if "## Turn" not in transcript_md and "## Session Summary" not in transcript_md:
-        _raise_422(
-            reason="transcript.missing_structure",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=(
+        _structured(
+            "transcript.missing_structure",
+            "transcript_md|session_summary_md",
+            None,
+            "composed transcript contains '## Turn' or '## Session Summary'",
+            [],
+            (
+                "JSONL produced no turn blocks and structural layer lacks "
+                "'## Session Summary' — verify both sources."
+            ),
+            (
                 "composed transcript missing structural headings — assembly "
                 "did not produce '## Turn' blocks and structural layer lacks "
                 "'## Session Summary'."
             ),
         )
     if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
-        _raise_422(
-            reason="transcript.hollow",
-            session_id=body.session_id,
-            agent=body.agent,
-            detail=(
+        _structured(
+            "transcript.hollow",
+            "transcript_jsonl_path|transcript_md",
+            None,
+            "composed transcript contains >=1 User-voice block",
+            [],
+            (
+                "JSONL contained no user messages — likely pointing at a "
+                "continuation-with-no-prompt or tool-only record set."
+            ),
+            (
                 "composed transcript has zero User-voice blocks. The "
                 "supplied JSONL contained no user messages (or only "
                 "tool_result records). Confirm transcript_jsonl_path "
@@ -552,9 +700,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             )
 
         conn.commit()
-        findings = _audit_normalization_refusals_for_session(
-            conn, body.session_id
-        )
+        findings = _audit_normalization_refusals_for_session(conn, body.session_id)
         audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()
