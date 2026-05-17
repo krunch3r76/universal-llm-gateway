@@ -144,6 +144,42 @@ def test_predicate_form_value_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_reasoning_summary_null_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F1-graduation path: stage an inference, patch reasoning_summary to lift it."""
+    conn = _make_conn()
+    _patch(monkeypatch, conn)
+    aid = _insert_assertion(conn)
+
+    result = _update_assertion_impl(
+        aid, {"reasoning_summary": "Lineage-mapping from prior dispatch to SDK design."}
+    )
+
+    assert result["reasoning_summary"] == (
+        "Lineage-mapping from prior dispatch to SDK design."
+    )
+    row = conn.execute(
+        "SELECT reasoning_summary FROM assertions WHERE id = ?", (aid,)
+    ).fetchone()
+    assert dict(row)["reasoning_summary"] == (
+        "Lineage-mapping from prior dispatch to SDK design."
+    )
+
+
+def test_chunk_id_null_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    """F1-graduation symmetry: chunk_id is also a post-write patchable field."""
+    conn = _make_conn()
+    _patch(monkeypatch, conn)
+    aid = _insert_assertion(conn)
+
+    result = _update_assertion_impl(aid, {"chunk_id": 4242})
+
+    assert result["chunk_id"] == 4242
+    row = conn.execute(
+        "SELECT chunk_id FROM assertions WHERE id = ?", (aid,)
+    ).fetchone()
+    assert dict(row)["chunk_id"] == 4242
+
+
 def test_predicate_form_clear_via_explicit_null(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
