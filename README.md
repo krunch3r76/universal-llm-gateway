@@ -114,7 +114,7 @@ Indexes Markdown, PDF, EPUB, HTML, and plain text. Code indexing (Python via tre
 
 ### Cortex (Persistent Memory)
 
-> Scoped documentation: `services/cortex-api/openapi.yaml`
+> Scoped documentation: `libs/cortex_store/` (`docs/architecture/appendices/libraries.md`)
 
 Cortex is a graph-native knowledge system for persistent, formally-structured belief revision. It stores what agents and humans know — and tracks what changes, when, and why.
 

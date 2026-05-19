@@ -174,7 +174,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             ),
             "detail": (
                 "The reminder path enabled hallucinated closes; atomic path "
-                "prevents it. Pre-Phase-2 transcript_md argument is gone — "
-                "supply transcript_jsonl_path instead."
+                "prevents it. Supply either transcript_jsonl_path for Cursor "
+                "sessions or transcript_md for web sessions."
             ),
         }
