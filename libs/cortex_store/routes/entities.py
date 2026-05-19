@@ -65,6 +65,14 @@ def list_entities(
             "universal."
         ),
     ),
+    query: str | None = Query(
+        None,
+        description=(
+            "Case-insensitive substring filter on entity `id` and `name`. "
+            "Composes with `type`, `workflow_state`, and `for_agent`. "
+            "Whitespace-only values are treated as absent."
+        ),
+    ),
 ) -> EntityList:
     """List entities, optionally constrained to one entity type / workflow_state."""
     with cortex_conn() as conn:
@@ -74,6 +82,7 @@ def list_entities(
             workflow_state=workflow_state,
             limit=limit,
             for_agent=for_agent,
+            query=query,
         )
     return EntityList(items=[EntitySummary(**item) for item in data["items"]])
 

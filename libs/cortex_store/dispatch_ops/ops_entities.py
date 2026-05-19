@@ -42,12 +42,19 @@ def _op_entities(
     type: str | None = None,
     workflow_state: str | None = None,
     limit: int | None = None,
+    query: str | None = None,
+    for_agent: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     _, _, _, _list_entities_impl, _ = _impls()
     with cortex_conn() as conn:
         return _list_entities_impl(
-            conn, entity_type=type, workflow_state=workflow_state, limit=limit or 50
+            conn,
+            entity_type=type,
+            workflow_state=workflow_state,
+            limit=limit or 50,
+            query=query,
+            for_agent=for_agent,
         )
 
 

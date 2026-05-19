@@ -19,7 +19,8 @@ from collections.abc import Callable
 
 from fastapi import HTTPException, status
 
-from .db import cortex_conn, decode_row, json_encode, query
+from .db import cortex_conn, decode_row, json_encode
+from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
 from .entity_exhibit_lint import (
     enforce_exhibit_belongs_to,
@@ -96,6 +97,7 @@ def list_entities_impl(
     workflow_state: str | None = None,
     limit: int = 50,
     for_agent: str | None = None,
+    query: str | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -119,13 +121,35 @@ def list_entities_impl(
         )
         params.append(for_agent)
 
+    # Case-insensitive LITERAL substring filter on id and name. SQLite
+    # LIKE is ASCII case-insensitive by default (no PRAGMA
+    # case_sensitive_like changes assumed). `%` and `_` in user input are
+    # escaped so they match literally rather than acting as LIKE
+    # wildcards — without escaping, `query="%"` returns all rows and
+    # `query="abc_def"` would match `abcXdef`. Empty/whitespace-only
+    # query is treated as absent.
+    if query is not None:
+        stripped = query.strip()
+        if stripped:
+            escaped = (
+                stripped.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            pattern = f"%{escaped}%"
+            clauses.append(
+                "(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')"
+            )
+            params.append(pattern)
+            params.append(pattern)
+
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = (
         "SELECT id, type, name, description, status, workflow_state, content_hash, "
         f"created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
     )
     params.append(limit)
-    rows = query(conn, sql, tuple(params))
+    rows = db_query(conn, sql, tuple(params))
     return {"items": [EntitySummary(**row).model_dump() for row in rows]}
 
 
@@ -148,7 +172,7 @@ def update_entity_impl(
     If ``commit=False`` and ``post_commit_emits`` is None, the workflow
     closure-gap signal is dropped silently rather than fired pre-commit.
     """
-    full_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    full_rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not full_rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -251,8 +275,8 @@ def update_entity_impl(
     elif closure_gap_emit is not None and post_commit_emits is not None:
         post_commit_emits.append(closure_gap_emit)
 
-    rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
-    assertion_rows = query(
+    rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
+    assertion_rows = db_query(
         conn,
         f"SELECT {_ASSERTION_COLS} FROM assertions WHERE entity_id = ? "
         "ORDER BY created_at DESC",
@@ -352,7 +376,7 @@ def create_entity_impl(
         )
     if commit:
         conn.commit()
-    rows = query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
+    rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
     if not rows:
         logger.error("Entity create succeeded but no row returned for id=%s", body.id)
         raise HTTPException(

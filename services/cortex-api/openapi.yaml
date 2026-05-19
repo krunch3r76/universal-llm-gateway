@@ -104,6 +104,13 @@ components:
         id: { type: string }
         type: { type: string }
         name: { type: string }
+        description: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [confirmed, provisional, merged, deprecated, reaped]
+          nullable: true
+        workflow_state: { type: string, nullable: true }
+        content_hash: { type: string, nullable: true }
         created_at: { type: string }
 
     EntityDetail:
@@ -574,14 +581,41 @@ paths:
   /entities:
     get:
       operationId: listEntities
-      summary: List entities with optional type filter
+      summary: List entities with optional filters
       parameters:
         - name: type
           in: query
           schema: { type: string }
+        - name: workflow_state
+          in: query
+          required: false
+          description: >
+            Filter by the typed `workflow_state` column (replaces the
+            legacy `json_extract(attributes,'$.status')` pattern).
+            Composes with `type`, `for_agent`, and `query`.
+          schema: { type: string }
         - name: limit
           in: query
-          schema: { type: integer, default: 50 }
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+        - name: for_agent
+          in: query
+          required: false
+          description: >
+            Filter to entities whose `applicable_agents` JSON-list
+            attribute contains either `*` (universal) or this agent
+            slug. Entities without the attribute are treated as
+            universal, so pre-backfill behaviour is non-narrowing.
+            Composes with `type`, `workflow_state`, and `query`.
+          schema: { type: string }
+        - name: query
+          in: query
+          required: false
+          description: >
+            Case-insensitive substring filter on entity `id` and `name`.
+            Composes with `type`, `workflow_state`, and `for_agent`.
+            Whitespace-only values are treated as absent. ASCII
+            semantics (SQLite LIKE default).
+          schema: { type: string }
       responses:
         "200":
           description: Entity list
