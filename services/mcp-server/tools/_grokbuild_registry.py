@@ -9,7 +9,7 @@ The registry is persisted to ``REGISTRY_PATH`` so ``worktree_busy`` rejection
 stays reliable across MCP restarts. On startup, stale entries are pruned via a
 PID check: all entries are owned by the writer process; if that PID is gone the
 entries are stale. The recovery outcome is announced via
-``mcp.grok.build.registry.recovered``.
+``mcp.grokbuild.registry.recovered``.
 
 ∀ write to ``_in_flight``: ``_write_registry_to_disk`` atomically persists the
 new state (write-temp → ``os.replace``) so the file is never torn on a crash.
@@ -29,7 +29,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from tools._grok_build_events import emit_grok_build_registry_recovered
+from tools._grokbuild_events import emit_grok_build_registry_recovered
 
 _lock = asyncio.Lock()
 # cwd → dispatch_id. dispatch_id may be "" for callers that pre-date the
@@ -39,7 +39,7 @@ _in_flight: dict[str, str] = {}
 
 SCHEMA_VERSION = 2
 REGISTRY_PATH = Path(
-    os.getenv("GROK_BUILD_REGISTRY_PATH", "/data/state/grok_build_registry.json")
+    os.getenv("GROKBUILD_REGISTRY_PATH", "/data/state/grokbuild_registry.json")
 )
 
 
@@ -73,14 +73,13 @@ def _write_registry_to_disk() -> None:
         "schema_version": SCHEMA_VERSION,
         "writer_pid": os.getpid(),
         "entries": [
-            {"cwd": cwd, "dispatch_id": _in_flight[cwd]}
-            for cwd in sorted(_in_flight)
+            {"cwd": cwd, "dispatch_id": _in_flight[cwd]} for cwd in sorted(_in_flight)
         ],
     }
     parent = REGISTRY_PATH.parent
     try:
         parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".grok_build_registry_")
+        fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".grokbuild_registry_")
         try:
             with os.fdopen(fd, "w") as fh:
                 json.dump(data, fh)
@@ -99,7 +98,7 @@ def _load_registry_from_disk() -> None:
     """Load persisted registry on module init (server startup).
 
     Prunes all entries if the writer PID is gone (crash recovery). Emits
-    ``mcp.grok.build.registry.recovered`` so operators see what happened
+    ``mcp.grokbuild.registry.recovered`` so operators see what happened
     post-restart. Safe to call before the event loop starts:
     ``mcp_events.record`` uses a background thread queue with no
     event-loop dependency.

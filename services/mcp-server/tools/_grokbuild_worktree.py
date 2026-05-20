@@ -1,6 +1,6 @@
 """Worktree shared helpers + ``worktree_create_op`` handler.
 
-The ``worktree_remove`` op lives in ``_grok_build_worktree_remove`` to keep
+The ``worktree_remove`` op lives in ``_grokbuild_worktree_remove`` to keep
 each module under the 300-SLOC ceiling; shared constants and helpers live
 here and are imported via module-attribute access so monkeypatching
 ``WORKTREE_ROOT`` / ``ALLOWED_SOURCE_ROOT`` in tests propagates to both
@@ -24,8 +24,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from tools._grok_build_envelope import _metadata_base
-from tools._grok_build_events import (
+from tools._grokbuild_envelope import _metadata_base
+from tools._grokbuild_events import (
     emit_grok_build_create_called,
     emit_grok_build_create_completed,
     emit_grok_build_create_failed,

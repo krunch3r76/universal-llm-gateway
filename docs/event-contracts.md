@@ -2,6 +2,14 @@
 
 **Purpose**: Define the structure, relationships, and guarantees for all Stargate events.
 
+## V1 (2026-05-19)
+
+* Renamed: tool surface `grok_build` → `grokbuild`; module files `_grok_build_*` → `_grokbuild_*`; sidecar dir `/tmp/logs/grok-build` → `/tmp/logs/grokbuild`.
+* Event signal family renamed in V1.1: `mcp.grokbuild.{family}.{event}` (4 parts; flattened from V1's 5-part `mcp.grok.build.{family}.{event}` to leave headroom under the 5-segment regex ceiling for future sub-domain events).
+* `dispatch.failed` payload gains `reason_code`.
+* `dispatch.called` / `dispatch.rejected` payload `op` field: now emits `'build'` instead of `'dispatch'` (rejected envelopes for retired callers still echo back the caller's value `'dispatch'` so audit consumers can see the actual input).
+* Envelope metadata gains the V1 resolved param surface (tier, reasoning_effort, effort, check, no_subagents, disable_web_search, resume_strict, max_turns, best_of_n, timeout_seconds, resolved_session_id).
+
 ## Event Schema
 
 All events follow this structure:
@@ -2398,32 +2406,43 @@ The `cycle_ms` distribution is the calibration target for `_RESTART_RETRY_DELAYS
 
 ### Grok Build Dispatch Signals
 
-Emitted by `services/mcp-server/tools/_grok_build_events.py` (factories) and `tools/grok_build.py` (handler) via the `record()` shim. Wrap the headless `grok` CLI dispatch lifecycle for `tools/grok_build.py` — the Option D intent-labeled + audited read-only model: the substrate does not enforce `read_only` at runtime (cortex assertion 10144), so post-hoc git-state audit IS the enforcement contract. See plan `workspaces://universal-llm-gateway/tmp/prompts/grok-build-dispatch-phase1.plan.md` §5.4 / §5.5.
+Emitted by `services/mcp-server/tools/_grokbuild_events.py` (factories) and `tools/grokbuild.py` (handler) via the `record()` shim. Wrap the headless `grok` CLI dispatch lifecycle for `tools/grokbuild.py` — the Option D intent-labeled + audited read-only model: the substrate does not enforce `read_only` at runtime (cortex assertion 10144), so post-hoc git-state audit IS the enforcement contract. See plan `workspaces://universal-llm-gateway/tmp/prompts/grokbuild-dispatch-phase1.plan.md` §5.4 / §5.5.
 
 All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
 
 | Signal | Payload fields | Description |
 |---|---|---|
-| `mcp.grok.build.dispatch.called` | `dispatch_id` (str — uuid4), `mode` (str — `read_only` \| `edit`), `op` (str — `dispatch`), `session_id` (str — caller-chosen or `""`), `model` (str — explicit `--model` or `""`) | Handler entered. Emitted BEFORE validation so `mcp.grok.build.dispatch.rejected` can be joined to a `.called` event by `dispatch_id` for correlation on admission-rejection paths. |
-| `mcp.grok.build.dispatch.completed` | `dispatch_id`, `duration_s` (float), `exit_code` (int), `truncated` (bool — stdout/stderr exceeded STDOUT_MAX/STDERR_MAX and was tail-truncated), `git_status_pre` (str — porcelain at admission, always empty per §5.3 check #4), `git_status_post` (str — porcelain after dispatch), `git_diff_stat` (str — `git diff --stat` after dispatch when porcelain non-empty), `read_only_violation` (bool), `audit_incomplete` (bool — git invocation in `_capture_post_state` failed; the verdict is not trustworthy), `sidecar_gaps` (int — count of `_append_sidecar` calls that raised OSError during chunk or exit writes; non-zero indicates a partial sidecar) | Dispatch completed with `exit_code == 0`. |
-| `mcp.grok.build.dispatch.failed` | Same as `.completed`, plus `error` (str — `runner.error` or stderr tail, truncated to 200 chars) instead of `truncated` | Dispatch completed with `exit_code != 0` OR sidecar `started`-write failed before subprocess spawn (in the latter case `audit_incomplete=true`). |
-| `mcp.grok.build.dispatch.timeout` | `dispatch_id`, `timeout_seconds` (int — configured cap), `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation`, `audit_incomplete`, `sidecar_gaps` | Subprocess hung past `timeout_seconds`; runner sent SIGTERM, waited 5s, then SIGKILL via `os.killpg`. Post-state captured after kill. |
-| `mcp.grok.build.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum, see below), `reason` (str — human-readable detail), `mode`, `op`, `cwd` (str — admission target), `model` | Validator rejected admission. No subprocess spawned. The correlation fields (`mode`/`op`/`cwd`/`model`) travel on the rejected event itself so admission-phase joins do not require a `.called` lookup — satisfies `[universal:events]` §Admission-phase payload contract. |
+| `mcp.grokbuild.dispatch.called` | `dispatch_id` (str — uuid4), `mode` (str — `read_only` \| `edit`), `op` (str — `build`; V1 rename: V0 callers passing `op='dispatch'` receive `retired_op`), `session_id` (str — caller-chosen or `""`), `model` (str — explicit `--model` or `""`) | Handler entered and dispatch admitted. Emitted AFTER both validator and registry acquire pass, so only admitted dispatches emit `.called`. Rejected dispatches emit only `.rejected`, which carries its own correlation fields (`mode`/`op`/`cwd`/`model`) — satisfies `[universal:events]` §Admission-phase payload contract without a `.called` join. |
+| `mcp.grokbuild.dispatch.completed` | `dispatch_id`, `duration_s` (float), `exit_code` (int), `truncated` (bool — stdout/stderr exceeded STDOUT_MAX/STDERR_MAX and was tail-truncated), `git_status_pre` (str — porcelain at admission, always empty per §5.3 check #4), `git_status_post` (str — porcelain after dispatch), `git_diff_stat` (str — `git diff --stat` after dispatch when porcelain non-empty), `read_only_violation` (bool), `audit_incomplete` (bool — git invocation in `_capture_post_state` failed; the verdict is not trustworthy), `sidecar_gaps` (int — count of `_append_sidecar` calls that raised OSError during chunk or exit writes; non-zero indicates a partial sidecar) | Dispatch completed with `exit_code == 0`. |
+| `mcp.grokbuild.dispatch.failed` | Same as `.completed`, plus `error` (str — `runner.error` or stderr tail, truncated to 200 chars) and `reason_code` (str — `spawn_failed` \| `sidecar_unwritable` \| `grok_nonzero_exit`; see `.rejected` enum for admission codes) instead of `truncated` | Dispatch completed with `exit_code != 0` OR sidecar `started`-write failed before subprocess spawn (in the latter case `audit_incomplete=true`). |
+| `mcp.grokbuild.dispatch.timeout` | `dispatch_id`, `timeout_seconds` (int — configured cap), `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation`, `audit_incomplete`, `sidecar_gaps` | Subprocess hung past `timeout_seconds`; runner sent SIGTERM, waited 5s, then SIGKILL via `os.killpg`. Post-state captured after kill. |
+| `mcp.grokbuild.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum, see below), `reason` (str — human-readable detail), `mode`, `op`, `cwd` (str — admission target), `model` | Validator rejected admission. No subprocess spawned. The correlation fields (`mode`/`op`/`cwd`/`model`) travel on the rejected event itself so admission-phase joins do not require a `.called` lookup — satisfies `[universal:events]` §Admission-phase payload contract. |
 
 `reason_code` enum on `.rejected`:
 
-| Reason code | Triggered when |
-|---|---|
-| `unknown_op` | `op` not in `{"dispatch"}` |
-| `cwd_missing` | `cwd` empty, not absolute, or not an existing directory |
-| `not_a_git_repo` | `git rev-parse --git-dir` exited non-zero on `cwd` (cwd exists but is not inside a git working tree) |
-| `git_unreachable` | `git rev-parse` or `git status` raised `OSError` or timed out (git binary missing, cwd vanished mid-call, process hung) — distinct from `not_a_git_repo`, which is a deterministic non-zero exit on a present binary |
-| `working_tree_dirty` | `git status --porcelain` returned non-empty output (§5.3 check #4: admission requires a clean tree so post-state divergence has clean semantics) |
-| `session_conflict` | Both `session_id` and `continue_recent` set; mutually exclusive |
-| `bad_output_format` | `output_format` not in `{"json", "streaming-json"}` |
-| `grok_not_in_path` | `shutil.which("grok")` returned None |
-| `missing_grok_auth` | `grok models` preflight exited non-zero (SuperGrok Heavy session expired; operator runs `grok login`) |
-| `sidecar_unavailable` | `mkdir(/tmp/logs/grok-build, parents=True, exist_ok=True)` raised `PermissionError` or `OSError`; fail-closed at admission so the runner never writes outside the intended sidecar directory |
+| reason_code | Source | Meaning |
+|---|---|---|
+| `retired_op` | handler + validator | `op='dispatch'` was retired in V1; use `op='build'` |
+| `retired_output_format` | validator | `output_format='json'` was retired; use `streaming-json` |
+| `retired_param` | validator | `continue_recent` retired; set `session_id` explicitly |
+| `unknown_op` | handler | op value is neither a V1 op nor a retired surface |
+| `bad_tier` | validator | tier not in `{quick, balanced, thorough, max}` |
+| `bad_reasoning_effort` | validator | reasoning_effort not in `{none, minimal, low, medium, high, xhigh}` or None |
+| `bad_effort` | validator | effort not in `{low, medium, high, xhigh, max}` or None |
+| `bad_max_turns` | validator | max_turns < 1 |
+| `bad_best_of_n` | validator | best_of_n not in `[1, 16]` |
+| `bad_timeout_seconds` | validator | timeout_seconds not in `[1, 3600]` |
+| `bad_resume_strict_without_session_id` | validator | resume_strict=True without session_id |
+| `bad_output_format` | validator | output_format not 'streaming-json' (V1-only) |
+| `cwd_missing` | validator | cwd absent / not absolute / not a directory |
+| `not_a_git_repo` | validator | cwd is not inside a git working tree |
+| `git_unreachable` | validator | git invocation failed (timeout/OS error) |
+| `working_tree_dirty` | validator | mode=edit + working tree dirty at admission |
+| `grok_not_in_path` | validator | grok binary not on PATH |
+| `missing_grok_auth` | validator | grok models preflight failed |
+| `sidecar_unavailable` | validator | sidecar dir `mkdir(/tmp/logs/grokbuild)` failed at admission |
+| `dispatch_conflict` | dispatch (registry) | another dispatch in flight for same cwd |
+| `session_conflict` | validator (defense-in-depth) | session_id + continue_recent both set |
 
 `read_only_violation` semantics: `True` iff `mode == "read_only"` AND `(git_diff_stat.strip() OR git_status_post.strip())`. Validator (§5.3 check #4) enforces clean pre-state, so any non-empty post-state porcelain is divergence; reading `git_status_post` alone is sufficient and catches all YX-coded changes — staged (`M `, `A `, `D `), unstaged (` M`, ` D`), and untracked (`??`). `git_diff_stat` is OR'd for defense in depth on `audit_incomplete=True` paths.
 
@@ -2439,7 +2458,7 @@ scripts/query-events --sql "
          json_extract(payload,'\$.git_status_post') AS post,
          json_extract(payload,'\$.git_diff_stat') AS diff
   FROM events
-  WHERE signal LIKE 'mcp.grok.build.dispatch.%'
+  WHERE signal LIKE 'mcp.grokbuild.dispatch.%'
     AND json_extract(payload,'\$.read_only_violation') = 1
     AND COALESCE(json_extract(payload,'\$.audit_incomplete'), 0) = 0
     AND ts_unix_ms > (unixepoch()-86400)*1000
@@ -2449,7 +2468,7 @@ scripts/query-events --sql "
 scripts/query-events --sql "
   SELECT ts_unix_ms, signal, json_extract(payload,'\$.dispatch_id') AS dispatch_id
   FROM events
-  WHERE signal LIKE 'mcp.grok.build.dispatch.%'
+  WHERE signal LIKE 'mcp.grokbuild.dispatch.%'
     AND json_extract(payload,'\$.audit_incomplete') = 1
   ORDER BY ts_unix_ms DESC LIMIT 50"
 
@@ -2459,7 +2478,7 @@ scripts/query-events --sql "
          COUNT(*) AS n,
          SUM(CAST(json_extract(payload,'\$.sidecar_gaps') AS INT)) AS total_gaps
   FROM events
-  WHERE signal LIKE 'mcp.grok.build.dispatch.%'
+  WHERE signal LIKE 'mcp.grokbuild.dispatch.%'
     AND COALESCE(json_extract(payload,'\$.sidecar_gaps'), 0) > 0
     AND ts_unix_ms > (unixepoch()-86400)*1000
   GROUP BY signal"
@@ -2468,7 +2487,7 @@ scripts/query-events --sql "
 scripts/query-events --sql "
   SELECT json_extract(payload,'\$.reason_code') AS reason, COUNT(*) AS n
   FROM events
-  WHERE signal = 'mcp.grok.build.dispatch.rejected'
+  WHERE signal = 'mcp.grokbuild.dispatch.rejected'
     AND ts_unix_ms > (unixepoch()-86400)*1000
   GROUP BY reason ORDER BY n DESC"
 ```

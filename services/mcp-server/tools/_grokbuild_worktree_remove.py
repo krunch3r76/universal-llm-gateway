@@ -1,7 +1,7 @@
 """``worktree_remove_op`` handler — git worktree removal with busy/dirty guards.
 
 Shared constants (``WORKTREE_ROOT``, ``_GIT_TIMEOUT``) are accessed via
-module-attribute lookup on ``_grok_build_worktree`` so test monkeypatches at
+module-attribute lookup on ``_grokbuild_worktree`` so test monkeypatches at
 that path propagate here. Other helpers (``_validate_name``, ``_envelope``,
 ``_worktree_metadata``, ``WorktreeValidationResult``, ``_reject``) are
 imported by name — they are pure functions and don't get patched.
@@ -16,15 +16,15 @@ import time
 import uuid
 from typing import Any
 
-from tools import _grok_build_worktree as _wt
-from tools._grok_build_events import (
+from tools import _grokbuild_worktree as _wt
+from tools._grokbuild_events import (
     emit_grok_build_remove_called,
     emit_grok_build_remove_completed,
     emit_grok_build_remove_failed,
     emit_grok_build_remove_rejected,
 )
-from tools._grok_build_registry import cwds_under
-from tools._grok_build_worktree import (
+from tools._grokbuild_registry import cwds_under
+from tools._grokbuild_worktree import (
     WorktreeValidationResult,
     _envelope,
     _reject,

@@ -1,4 +1,4 @@
-"""Push and PR primitive tests for grok_build."""
+"""Push and PR primitive tests for grokbuild."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from tools.grok_build import grok_build
+from tools.grokbuild import grokbuild
 
 
 def _current_branch(cwd: Path) -> str:
@@ -24,7 +24,9 @@ def _current_branch(cwd: Path) -> str:
 @pytest.mark.asyncio
 async def test_push_success_sets_real_upstream(git_repo: Path, tmp_path: Path) -> None:
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(git_repo), "remote", "add", "origin", str(remote)],
         check=True,
@@ -32,7 +34,7 @@ async def test_push_success_sets_real_upstream(git_repo: Path, tmp_path: Path) -
     )
     branch = _current_branch(git_repo)
 
-    out = await grok_build(op="push", cwd=str(git_repo), branch=branch)
+    out = await grokbuild(op="push", cwd=str(git_repo), branch=branch)
 
     assert out["status"] == "completed", out
     assert out["exit_code"] == 0
@@ -46,7 +48,9 @@ async def test_push_success_sets_real_upstream(git_repo: Path, tmp_path: Path) -
 async def test_push_failure_does_not_synthesize_upstream(git_repo: Path) -> None:
     branch = _current_branch(git_repo)
 
-    out = await grok_build(op="push", cwd=str(git_repo), branch=branch, remote="missing")
+    out = await grokbuild(
+        op="push", cwd=str(git_repo), branch=branch, remote="missing"
+    )
 
     assert out["status"] == "failed"
     assert out["exit_code"] != 0
@@ -72,9 +76,9 @@ async def test_push_failure_does_not_synthesize_upstream(git_repo: Path) -> None
 async def test_pr_create_rejects_when_gh_missing(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_git_ops.shutil.which", lambda _: None)
+    monkeypatch.setattr("tools._grokbuild_git_ops.shutil.which", lambda _: None)
 
-    out = await grok_build(op="pr_create", cwd=str(git_repo), pr_title="Ship it")
+    out = await grokbuild(op="pr_create", cwd=str(git_repo), pr_title="Ship it")
 
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "gh_not_in_path"
@@ -84,7 +88,9 @@ async def test_pr_create_rejects_when_gh_missing(
 async def test_pr_create_invokes_gh_with_fields(
     git_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_git_ops.shutil.which", lambda name: f"/bin/{name}")
+    monkeypatch.setattr(
+        "tools._grokbuild_git_ops.shutil.which", lambda name: f"/bin/{name}"
+    )
     calls: list[tuple[tuple[str, ...], dict[str, Any]]] = []
 
     class Proc:
@@ -99,7 +105,7 @@ async def test_pr_create_invokes_gh_with_fields(
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
-    out = await grok_build(
+    out = await grokbuild(
         op="pr_create",
         cwd=str(git_repo),
         pr_title="Ship it",

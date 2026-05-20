@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from tools._grok_build_runner import (
+from tools._grokbuild_runner import (
     _READ_ONLY_PREFIX,
     STDOUT_MAX,
     _build_argv,
     _build_env,
     run_dispatch,
 )
-from tools._grok_build_test_support import (
+from tools._grokbuild_test_support import (
     PROMPT,
     FakeProc,
     install_capture_post_state,
@@ -24,27 +25,22 @@ from tools._grok_build_test_support import (
 
 
 @pytest.mark.parametrize(
-    ("mode", "session_id", "continue_recent", "output_format"),
+    ("mode", "session_id"),
     [
-        ("read_only", None, False, "json"),
-        ("edit", "abc", False, "streaming-json"),
-        ("read_only", None, True, "json"),
-        ("edit", None, False, "streaming-json"),
+        ("read_only", None),
+        ("edit", "abc"),
+        ("edit", None),
     ],
 )
 def test_argv_always_includes_always_approve(
     admission: str,
     mode: str,
     session_id: str | None,
-    continue_recent: bool,
-    output_format: str,
 ) -> None:
     spec = runner_spec(
         cwd=admission,
         mode=mode,
         session_id=session_id,
-        continue_recent=continue_recent,
-        output_format=output_format,
         permission_mode="plan" if mode == "read_only" else "acceptEdits",
     )
     argv = _build_argv(spec)
@@ -102,8 +98,16 @@ async def test_stdout_truncation(
     assert rr.truncated is True
     assert len(rr.stdout) <= STDOUT_MAX
     lines = sidecar_lines(sidecar_root, spec.dispatch_id)
-    chunk = next(r for r in lines if r.get("phase") == "stdout_chunk")
-    assert len(chunk["data"]) >= STDOUT_MAX
+    # In streaming-json mode each line is capped at SIDECAR_STDOUT_LINE_MAX.
+    # A single oversized line produces stdout_chunk_truncated, not stdout_chunk.
+    from tools._grokbuild_runner import SIDECAR_STDOUT_LINE_MAX
+
+    chunk = next(
+        r
+        for r in lines
+        if r.get("phase") in ("stdout_chunk", "stdout_chunk_truncated")
+    )
+    assert chunk.get("kept", len(chunk.get("data", ""))) >= SIDECAR_STDOUT_LINE_MAX
 
 
 @pytest.mark.asyncio
@@ -127,7 +131,7 @@ async def test_sidecar_records_git_audit_fields(
     assert started["cwd"] == admission
     assert started["mode"] == "read_only"
     assert started["permission_mode"] == "plan"
-    assert started["output_format"] == "json"
+    assert started["output_format"] == "streaming-json"
     assert started["git_status_pre"] == pre
     assert started["dirty_admission"] is False
     assert exit_line["status"] == "completed"
@@ -141,13 +145,26 @@ def test_env_allow_list(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/test")
     monkeypatch.delenv("LANG", raising=False)
     monkeypatch.delenv("LC_ALL", raising=False)
+    # Strip the cortex-related allow-list keys so the strict equality
+    # assertion below isn't polluted by the test runner's inherited env
+    # (review C1). Docker-compose sets both in production.
+    monkeypatch.delenv("CORTEX_DB_PATH", raising=False)
+    monkeypatch.delenv("TODOS_DB_PATH", raising=False)
     monkeypatch.setenv("SECRET", "leak")
     monkeypatch.setenv("TERM", "xterm-256color")
 
     env = _build_env()
 
     assert env["TERM"] == "dumb"
-    assert set(env.keys()) <= {"PATH", "HOME", "LANG", "LC_ALL", "TERM"}
+    assert set(env.keys()) <= {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "CORTEX_DB_PATH",
+        "TODOS_DB_PATH",
+        "TERM",
+    }
     assert set(env) == {"PATH", "HOME", "TERM"}
     assert "SECRET" not in env
 
@@ -191,21 +208,25 @@ def test_system_context_routes_via_rules_flag(
 
 
 def test_continue_vs_resume_argv(admission: str) -> None:
-    cont = _build_argv(runner_spec(cwd=admission, continue_recent=True))
-    assert "--continue" in cont and "--resume" not in cont
+    # V1: -r (strict resume) when resume_strict=True + session_id
+    strict = _build_argv(runner_spec(cwd=admission, session_id="abc", resume_strict=True))
+    assert "-r" in strict and strict[strict.index("-r") + 1] == "abc"
+    assert "-s" not in strict
 
-    resume = _build_argv(runner_spec(cwd=admission, session_id="abc"))
-    assert "--resume" in resume and resume[resume.index("--resume") + 1] == "abc"
-    assert "--continue" not in resume
+    # V1: -s (idempotent resume) when session_id without resume_strict
+    idempotent = _build_argv(runner_spec(cwd=admission, session_id="abc"))
+    assert "-s" in idempotent and idempotent[idempotent.index("-s") + 1] == "abc"
+    assert "-r" not in idempotent
 
+    # Plain: no session flags
     plain = _build_argv(runner_spec(cwd=admission))
-    assert "--continue" not in plain and "--resume" not in plain
+    assert "-r" not in plain and "-s" not in plain
 
 
 @pytest.mark.asyncio
 async def test_capture_post_state_clean_repo(git_repo: Path) -> None:
     """Real _capture_post_state on a clean git repo returns ('', '', False)."""
-    from tools._grok_build_runner import _capture_post_state
+    from tools._grokbuild_runner import _capture_post_state
 
     status, diff, incomplete = await _capture_post_state(str(git_repo))
     assert status == ""
@@ -219,7 +240,7 @@ async def test_capture_post_state_dirty_repo(git_repo: Path) -> None:
     and audit_incomplete=False. Covers the status.strip() True branch +
     diff_proc invocation path.
     """
-    from tools._grok_build_runner import _capture_post_state
+    from tools._grokbuild_runner import _capture_post_state
 
     (git_repo / "tracked.txt").write_text("mutated\n")
     (git_repo / "new_untracked.txt").write_text("hi\n")
@@ -235,7 +256,7 @@ async def test_capture_post_state_dirty_repo(git_repo: Path) -> None:
 async def test_capture_post_state_unreachable(tmp_path: Path) -> None:
     """When cwd is not a git repo, git status --porcelain exits non-zero
     (CalledProcessError) — audit_incomplete=True."""
-    from tools._grok_build_runner import _capture_post_state
+    from tools._grokbuild_runner import _capture_post_state
 
     bogus = tmp_path / "not-a-repo"
     bogus.mkdir()
@@ -257,9 +278,7 @@ async def test_streaming_json_chunks_per_line(
     multi_line = b'{"event":1}\n{"event":2}\n{"event":3}'
     install_subprocess_exec(monkeypatch, FakeProc(stdout=multi_line))
     sidecar_root.mkdir(parents=True, exist_ok=True)
-    spec = runner_spec(
-        cwd=admission, output_format="streaming-json", dispatch_id="stream-id"
-    )
+    spec = runner_spec(cwd=admission, dispatch_id="stream-id")
 
     await run_dispatch(spec)
 
@@ -303,7 +322,7 @@ async def test_started_sidecar_oserror_returns_audit_incomplete(
     def boom(path: str, record: dict[str, object]) -> None:
         raise OSError("disk full")
 
-    monkeypatch.setattr("tools._grok_build_runner._append_sidecar", boom)
+    monkeypatch.setattr("tools._grokbuild_runner._append_sidecar", boom)
     exec_mock = AsyncMock()
     monkeypatch.setattr("asyncio.create_subprocess_exec", exec_mock)
 
@@ -340,7 +359,7 @@ async def test_try_append_sidecar_increments_gaps_on_chunk_oserror(
             return
         raise OSError("disk full mid-dispatch")
 
-    from tools import _grok_build_runner as runner_mod
+    from tools import _grokbuild_runner as runner_mod
 
     real_append = runner_mod._append_sidecar  # type: ignore[assignment]
     monkeypatch.setattr(runner_mod, "_append_sidecar", selective_boom)
@@ -350,3 +369,101 @@ async def test_try_append_sidecar_increments_gaps_on_chunk_oserror(
 
     assert rr.status == "completed"
     assert rr.sidecar_gaps >= 2  # stdout_chunk + exit at minimum
+
+
+@pytest.mark.asyncio
+async def test_spawn_failed_returns_failed_envelope(
+    sidecar_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar_root.mkdir(parents=True, exist_ok=True)
+
+    async def _raise(*_a: Any, **_k: Any) -> Any:
+        raise FileNotFoundError("/usr/bin/grok not found")
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _raise)
+    spec = runner_spec(cwd="/tmp")
+    rr = await run_dispatch(spec)
+    assert rr.status == "failed"
+    assert rr.reason_code == "spawn_failed"
+    assert rr.audit_incomplete is True
+    assert rr.exit_code is None
+
+
+@pytest.mark.asyncio
+async def test_sidecar_stdout_chunk_truncation(
+    sidecar_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tools._grokbuild_runner import SIDECAR_STDOUT_LINE_MAX
+
+    big_line = b"x" * (SIDECAR_STDOUT_LINE_MAX + 100)
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(monkeypatch, FakeProc(stdout=big_line))
+    sidecar_root.mkdir(parents=True, exist_ok=True)
+    spec = runner_spec(cwd="/tmp")
+    rr = await run_dispatch(spec)
+    assert rr.status == "completed"
+
+    import json as _json
+
+    sidecar_file = sidecar_root / f"{spec.dispatch_id}.ndjson"
+    if sidecar_file.exists():
+        lines = [
+            _json.loads(ln)
+            for ln in sidecar_file.read_text().splitlines()
+            if ln.strip()
+        ]
+        truncated = [r for r in lines if r.get("phase") == "stdout_chunk_truncated"]
+        assert truncated, (
+            f"expected stdout_chunk_truncated record; phases: {[r.get('phase') for r in lines]}"
+        )
+        assert truncated[0]["kept"] == SIDECAR_STDOUT_LINE_MAX
+
+
+def test_build_argv_check_flag() -> None:
+    from tools._grokbuild_runner import _build_argv
+
+    spec = runner_spec(cwd="/tmp", check=True)
+    argv = _build_argv(spec)
+    assert "--check" in argv
+
+
+def test_build_argv_no_subagents_flag() -> None:
+    from tools._grokbuild_runner import _build_argv
+
+    spec = runner_spec(cwd="/tmp", no_subagents=True)
+    argv = _build_argv(spec)
+    assert "--no-subagents" in argv
+
+
+def test_build_argv_omits_optional_when_none() -> None:
+    from tools._grokbuild_runner import _build_argv
+
+    spec = runner_spec(cwd="/tmp", reasoning_effort=None, effort=None)
+    argv = _build_argv(spec)
+    assert "--reasoning-effort" not in argv
+    assert "--effort" not in argv
+
+
+def test_build_argv_reasoning_effort_emitted() -> None:
+    spec = runner_spec(cwd="/tmp", reasoning_effort="high")
+    argv = _build_argv(spec)
+    assert "--reasoning-effort" in argv
+    assert argv[argv.index("--reasoning-effort") + 1] == "high"
+
+
+def test_build_argv_effort_emitted() -> None:
+    spec = runner_spec(cwd="/tmp", effort="max")
+    argv = _build_argv(spec)
+    assert "--effort" in argv
+    assert argv[argv.index("--effort") + 1] == "max"
+
+
+
+def test_build_argv_reasoning_effort_and_effort_both_emitted() -> None:
+    """Both flags can be emitted simultaneously; values are independent."""
+    spec = runner_spec(cwd="/tmp", reasoning_effort="xhigh", effort="max")
+    argv = _build_argv(spec)
+    assert "--reasoning-effort" in argv
+    assert argv[argv.index("--reasoning-effort") + 1] == "xhigh"
+    assert "--effort" in argv
+    assert argv[argv.index("--effort") + 1] == "max"

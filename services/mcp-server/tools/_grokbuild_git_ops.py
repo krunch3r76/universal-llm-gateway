@@ -1,4 +1,4 @@
-"""Git push and PR helpers for grok_build worktrees."""
+"""Git push and PR helpers for grokbuild worktrees."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from tools._grok_build_envelope import _metadata_base
-from tools._grok_build_worktree import _GIT_TIMEOUT
+from tools._grokbuild_envelope import _metadata_base
+from tools._grokbuild_worktree import _GIT_TIMEOUT
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
@@ -196,7 +196,15 @@ def _current_branch(cwd: str) -> str:
 def _current_upstream(cwd: str) -> str:
     try:
         proc = subprocess.run(
-            ["git", "-C", cwd, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            [
+                "git",
+                "-C",
+                cwd,
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{u}",
+            ],
             check=True,
             capture_output=True,
             text=True,
@@ -207,7 +215,9 @@ def _current_upstream(cwd: str) -> str:
     return proc.stdout.strip()
 
 
-async def _run_command(cmd: list[str], cwd: str | None = None) -> subprocess.CompletedProcess[str]:
+async def _run_command(
+    cmd: list[str], cwd: str | None = None
+) -> subprocess.CompletedProcess[str]:
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=cwd,

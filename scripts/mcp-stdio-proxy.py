@@ -62,9 +62,12 @@ MCP_URL = os.environ.get("MCP_URL", "https://mcp.k-1.me/mcp")
 # Primary timeout: watchdog kills the request after this many seconds.
 # Safety-net: urllib socket timeout is set slightly higher so the watchdog
 # fires first under normal conditions.
-# Default is 900s (15 min) to accommodate long-running dispatches (grok_build,
-# frontier_dispatch) that can easily exceed 300s on multi-file edit workloads.
-_WATCHDOG_TIMEOUT = int(os.environ.get("MCP_PROXY_TIMEOUT", "900"))
+# Default is 1860s (31 min) to accommodate long-running dispatches:
+# grokbuild tier='max' has a 1800s preset for the subprocess itself; the
+# watchdog needs to cover that plus startup, sidecar I/O, and post-state
+# capture (~60s margin). frontier_dispatch and other long flows already
+# fit under this budget.
+_WATCHDOG_TIMEOUT = int(os.environ.get("MCP_PROXY_TIMEOUT", "1860"))
 _SOCKET_TIMEOUT = _WATCHDOG_TIMEOUT + 30  # safety net beyond watchdog
 
 # How often to poll the result queue when no events arrive.
@@ -109,6 +112,10 @@ class _EventEmitter:
         self._sock_path = sock_path
         self._q: queue.Queue[str] = queue.Queue(maxsize=200)
         self._pid = os.getpid()
+        # Debounce stderr logging on UDS connect/send failures (review W7) so
+        # operators see at least one signal per minute when the event service
+        # is unreachable, without spamming stderr on every reconnect attempt.
+        self._last_err_log = 0.0
         t = threading.Thread(target=self._run, daemon=True, name="proxy-events")
         t.start()
 
@@ -137,6 +144,13 @@ class _EventEmitter:
             except queue.Full:
                 pass
 
+    def _log_err_debounced(self, msg: str) -> None:
+        """Print to stderr at most once per minute (review W7)."""
+        now = time.monotonic()
+        if now - self._last_err_log > 60:
+            print(f"mcp-stdio-proxy events: {msg}", file=sys.stderr, flush=True)
+            self._last_err_log = now
+
     def _run(self) -> None:
         sock: socket.socket | None = None
         while True:
@@ -145,7 +159,8 @@ class _EventEmitter:
                     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                     sock.settimeout(2.0)
                     sock.connect(self._sock_path)
-                except OSError:
+                except OSError as exc:
+                    self._log_err_debounced(f"UDS connect failed: {exc}")
                     if sock is not None:
                         try:
                             sock.close()
@@ -159,7 +174,8 @@ class _EventEmitter:
                 sock.sendall(line.encode())
             except queue.Empty:
                 continue
-            except OSError:
+            except OSError as exc:
+                self._log_err_debounced(f"UDS send failed: {exc}")
                 try:
                     sock.close()
                 except OSError:

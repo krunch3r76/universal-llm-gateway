@@ -1,4 +1,4 @@
-"""Post-timeout result retrieval for grok_build dispatches.
+"""Post-timeout result retrieval for grokbuild dispatches.
 
 Reads the existing NDJSON sidecar written by the runner. Returns the full
 log plus the terminal metadata envelope so callers recover exactly what a
@@ -12,9 +12,9 @@ import os
 import re
 from typing import Any, Literal
 
-from tools._grok_build_envelope import _envelope_rejected
-from tools._grok_build_events import emit_grok_build_dispatch_rejected
-from tools._grok_build_fetch_result_decode import (
+from tools._grokbuild_envelope import _envelope_rejected
+from tools._grokbuild_events import emit_grok_build_dispatch_rejected
+from tools._grokbuild_fetch_result_decode import (
     first_record,
     last_record,
     result_envelope,
@@ -23,12 +23,12 @@ from tools._grok_build_fetch_result_decode import (
     terminal_age_seconds,
     text_result,
 )
-from tools._grok_build_registry import cwds_under
-from tools._grok_build_runner import _SIDECAR_DIR
+from tools._grokbuild_registry import cwds_under
+from tools._grokbuild_runner import _SIDECAR_DIR
 
 _VALID_DISPATCH_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 _RETENTION_SECONDS = int(
-    os.getenv("GROK_BUILD_RESULT_RETENTION_SECONDS", str(7 * 24 * 60 * 60))
+    os.getenv("GROKBUILD_RESULT_RETENTION_SECONDS", str(7 * 24 * 60 * 60))
 )
 
 

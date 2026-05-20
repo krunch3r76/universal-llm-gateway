@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tools import _grok_build_dispatch as dispatch_mod
-from tools._grok_build_runner import run_dispatch
-from tools._grok_build_test_support import (
+from tools import _grokbuild_dispatch as dispatch_mod
+from tools._grokbuild_runner import run_dispatch
+from tools._grokbuild_test_support import (
     PROMPT,
     FakeProc,
     install_capture_post_state,
@@ -19,7 +19,7 @@ from tools._grok_build_test_support import (
     install_subprocess_exec,
     install_subprocess_run,
 )
-from tools.grok_build import grok_build
+from tools.grokbuild import grokbuild
 
 
 @pytest.mark.asyncio
@@ -33,15 +33,15 @@ async def test_read_only_happy_path(
     run_mock = AsyncMock(wraps=run_dispatch)
     monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["status"] == "completed"
     assert out["metadata"]["read_only_violation"] is False
     assert out["metadata"]["audit_incomplete"] is False
     assert out["metadata"]["sidecar_gaps"] == 0
     signals = [s for s, _ in event_log]
-    assert "mcp.grok.build.dispatch.called" in signals
-    assert "mcp.grok.build.dispatch.completed" in signals
+    assert "mcp.grokbuild.dispatch.called" in signals
+    assert "mcp.grokbuild.dispatch.completed" in signals
     run_mock.assert_awaited_once()
 
 
@@ -57,7 +57,7 @@ async def test_edit_mode_happy_path(
     )
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="edit")
+    out = await grokbuild("build", admission, PROMPT, mode="edit")
 
     assert out["status"] == "completed"
     assert out["metadata"]["git_diff_stat"] == diff
@@ -78,7 +78,7 @@ async def test_edit_working_tree_dirty_rejection(
     run_mock = AsyncMock()
     monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
-    out = await grok_build("dispatch", cwd, PROMPT, mode="edit")
+    out = await grokbuild("build", cwd, PROMPT, mode="edit")
 
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "working_tree_dirty"
@@ -90,7 +90,7 @@ async def test_edit_working_tree_dirty_rejection(
     # rejected event itself instead of joining via .called → dispatch_id).
     assert rejected["cwd"] == cwd
     assert rejected["mode"] == "edit"
-    assert rejected["op"] == "dispatch"
+    assert rejected["op"] == "build"
     run_mock.assert_not_awaited()
 
 
@@ -116,7 +116,7 @@ async def test_read_only_dirty_admission_sets_audit_incomplete(
     )
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", cwd, PROMPT, mode="read_only")
+    out = await grokbuild("build", cwd, PROMPT, mode="read_only")
 
     assert out["status"] == "completed"
     assert out["metadata"]["audit_incomplete"] is True
@@ -138,7 +138,7 @@ async def test_read_only_violation_detected(
     )
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["metadata"]["read_only_violation"] is True
     assert out["metadata"]["git_diff_stat"] == diff
@@ -153,7 +153,7 @@ async def test_read_only_untracked_violation(
     install_capture_post_state(monkeypatch, status_post="?? newfile\n", diff_stat="")
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["metadata"]["read_only_violation"] is True
 
@@ -177,7 +177,7 @@ async def test_read_only_staged_modification_violation(
     )
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["metadata"]["read_only_violation"] is True
     completed = next(p for s, p in event_log if s.endswith(".completed"))
@@ -199,7 +199,7 @@ async def test_audit_incomplete_propagated(
     )
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["status"] == "completed"
     assert out["metadata"]["audit_incomplete"] is True
@@ -221,7 +221,7 @@ async def test_edit_mode_captures_diff_into_event(
     )
     install_subprocess_exec(monkeypatch)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="edit")
+    out = await grokbuild("build", admission, PROMPT, mode="edit")
 
     assert out["metadata"]["git_diff_stat"] == diff
     completed = next(p for s, p in event_log if s.endswith(".completed"))
@@ -252,8 +252,8 @@ async def test_timeout_kills_process_group_and_captures_post_state(
 
     monkeypatch.setattr(asyncio, "wait_for", _instant_timeout)
 
-    out = await grok_build(
-        "dispatch", admission, PROMPT, mode="read_only", timeout_seconds=1
+    out = await grokbuild(
+        "build", admission, PROMPT, mode="read_only", timeout_seconds=1
     )
 
     assert out["status"] == "timeout"
@@ -272,8 +272,8 @@ async def test_dispatch_id_correlation(
     install_capture_post_state(monkeypatch, status_post="", diff_stat="")
     install_subprocess_exec(monkeypatch)
 
-    out1 = await grok_build("dispatch", admission, PROMPT)
-    out2 = await grok_build("dispatch", admission, PROMPT)
+    out1 = await grokbuild("build", admission, PROMPT)
+    out2 = await grokbuild("build", admission, PROMPT)
 
     assert out1["dispatch_id"] != out2["dispatch_id"]
     called1 = next(
@@ -298,7 +298,7 @@ async def test_unknown_op(
     run_mock = AsyncMock()
     monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
-    out = await grok_build("worktree", admission, PROMPT)  # type: ignore[arg-type]
+    out = await grokbuild("worktree", admission, PROMPT)  # type: ignore[arg-type]
 
     assert out["status"] == "rejected"
     assert any(p.get("reason_code") == "unknown_op" for _, p in event_log)
@@ -315,11 +315,11 @@ async def test_sidecar_unavailable_rejects(
     install_subprocess_run(monkeypatch, cwd=admission)
     blocked = MagicMock()
     blocked.mkdir.side_effect = PermissionError("denied")
-    monkeypatch.setattr("tools._grok_build_validator._SIDECAR_DIR", blocked)
+    monkeypatch.setattr("tools._grokbuild_validator._SIDECAR_DIR", blocked)
     run_mock = AsyncMock()
     monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
-    out = await grok_build("dispatch", admission, PROMPT)
+    out = await grokbuild("build", admission, PROMPT)
 
     assert out["status"] == "rejected"
     assert any(p.get("reason_code") == "sidecar_unavailable" for _, p in event_log)
@@ -338,7 +338,7 @@ async def test_dispatch_conflict_rejects_second_concurrent_call(
     condition; verifies validator passes → registry rejects → no runner
     call.
     """
-    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+    from tools._grokbuild_registry import _reset_for_tests, try_acquire_cwd
 
     _reset_for_tests()
     # Pre-populate the registry as if a concurrent dispatch were already running.
@@ -347,7 +347,7 @@ async def test_dispatch_conflict_rejects_second_concurrent_call(
     run_mock = AsyncMock()
     monkeypatch.setattr(dispatch_mod, "run_dispatch", run_mock)
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "dispatch_conflict"
@@ -372,8 +372,8 @@ async def test_dispatch_releases_cwd_after_completion(
     install_capture_post_state(monkeypatch, status_post="", diff_stat="")
     install_subprocess_exec(monkeypatch)
 
-    out1 = await grok_build("dispatch", admission, PROMPT, mode="read_only")
-    out2 = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out1 = await grokbuild("build", admission, PROMPT, mode="read_only")
+    out2 = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out1["status"] == "completed"
     assert out2["status"] == "completed"
@@ -396,7 +396,7 @@ async def test_failed_status_emits_failed_event(
         FakeProc(stdout=b"", stderr=b"grok crashed: traceback line\n", returncode=2),
     )
 
-    out = await grok_build("dispatch", admission, PROMPT, mode="read_only")
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
 
     assert out["status"] == "failed"
     assert out["exit_code"] == 2
@@ -404,3 +404,123 @@ async def test_failed_status_emits_failed_event(
     assert failed["exit_code"] == 2
     assert "grok crashed" in failed["error"]
     assert len(failed["error"]) <= 200
+
+
+@pytest.mark.asyncio
+async def test_retired_op_dispatch_rejected_at_handler(
+    admission: str,
+    event_log: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """op='dispatch' returns rejected envelope with reason_code=retired_op
+    at the handler level — never reaches dispatch_op or validate_dispatch."""
+    out = await grokbuild("dispatch", admission, PROMPT, mode="read_only")
+    assert out["status"] == "rejected"
+    assert out["metadata"]["reason_code"] == "retired_op"
+    signals = [s for s, payload in event_log]
+    assert "mcp.grokbuild.dispatch.rejected" in signals
+    rejected_payload = next(p for s, p in event_log if s == "mcp.grokbuild.dispatch.rejected")
+    assert rejected_payload["op"] == "dispatch"
+
+
+@pytest.mark.asyncio
+async def test_retired_continue_recent_rejected(
+    admission: str,
+) -> None:
+    """continue_recent=True yields retired_param reject."""
+    out = await grokbuild(
+        "build", admission, PROMPT, mode="read_only", continue_recent=True
+    )
+    assert out["status"] == "rejected"
+    assert out["metadata"]["reason_code"] == "retired_param"
+
+
+@pytest.mark.asyncio
+async def test_resume_strict_without_session_id_rejected(
+    admission: str,
+) -> None:
+    out = await grokbuild(
+        "build", admission, PROMPT, mode="read_only", resume_strict=True
+    )
+    assert out["status"] == "rejected"
+    assert out["metadata"]["reason_code"] == "bad_resume_strict_without_session_id"
+
+
+@pytest.mark.asyncio
+async def test_session_id_captured_from_streaming_json(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    streaming_stdout = (
+        b'{"phase":"start","sessionId":"sid-789"}\n'
+        b'{"phase":"chunk","data":"hello"}\n'
+        b'{"phase":"end","sessionId":"sid-999"}\n'
+    )
+    install_subprocess_exec(monkeypatch, FakeProc(stdout=streaming_stdout))
+    out = await grokbuild("build", admission, PROMPT, mode="read_only")
+    assert out["status"] == "completed"
+    assert out["metadata"]["resolved_session_id"] == "sid-789"
+
+
+@pytest.mark.asyncio
+async def test_tier_quick_overlay_in_envelope_metadata(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tier='quick' resolves reasoning_effort=minimal, effort=low; envelope metadata echoes resolved values."""
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(monkeypatch)
+    out = await grokbuild(
+        "build", admission, PROMPT, mode="read_only", tier="quick"
+    )
+    assert out["status"] == "completed"
+    assert out["metadata"]["tier"] == "quick"
+    assert out["metadata"]["reasoning_effort"] == "minimal"
+    assert out["metadata"]["effort"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_resume_strict_emits_dash_r(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    captured: list[list[str]] = []
+
+    async def _spy_spawn(*args: Any, **kwargs: Any) -> Any:
+        captured.append(list(args))
+        return FakeProc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spy_spawn)
+    await grokbuild(
+        "build",
+        admission,
+        PROMPT,
+        mode="read_only",
+        session_id="abc-123",
+        resume_strict=True,
+    )
+    assert "-r" in captured[0]
+    assert captured[0][captured[0].index("-r") + 1] == "abc-123"
+    assert "-s" not in captured[0]
+
+
+@pytest.mark.asyncio
+async def test_session_id_idempotent_emits_dash_s(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    captured: list[list[str]] = []
+
+    async def _spy_spawn(*args: Any, **kwargs: Any) -> Any:
+        captured.append(list(args))
+        return FakeProc()
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", _spy_spawn)
+    await grokbuild(
+        "build", admission, PROMPT, mode="read_only", session_id="abc-123"
+    )
+    assert "-s" in captured[0]
+    assert captured[0][captured[0].index("-s") + 1] == "abc-123"
+    assert "-r" not in captured[0]

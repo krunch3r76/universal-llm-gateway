@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tools._grok_build_registry import (
+from tools._grokbuild_registry import (
     SCHEMA_VERSION,
     _load_registry_from_disk,
     _pid_running,
@@ -37,7 +37,7 @@ def _reset() -> None:
 async def test_acquire_then_release_allows_reuse(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp") is True
     await release_cwd("/tmp")
     assert await try_acquire_cwd("/tmp") is True
@@ -47,7 +47,7 @@ async def test_acquire_then_release_allows_reuse(
 async def test_second_acquire_rejects_while_held(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp") is True
     assert await try_acquire_cwd("/tmp") is False
     await release_cwd("/tmp")
@@ -57,7 +57,7 @@ async def test_second_acquire_rejects_while_held(
 async def test_acquire_distinct_cwds_independent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp") is True
     assert await try_acquire_cwd("/var") is True
     await release_cwd("/tmp")
@@ -68,7 +68,7 @@ async def test_acquire_distinct_cwds_independent(
 async def test_release_idempotent_on_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     await release_cwd("/nonexistent")
     assert await try_acquire_cwd("/nonexistent") is True
 
@@ -78,7 +78,7 @@ async def test_trailing_slash_canonicalized(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """/tmp and /tmp/ collapse to the same key via realpath."""
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp") is True
     assert await try_acquire_cwd("/tmp/") is False
     await release_cwd("/tmp/")
@@ -89,7 +89,7 @@ async def test_cwds_under_exact_match(
     tmp_path: os.PathLike[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        "tools._grok_build_registry.REGISTRY_PATH", Path(str(tmp_path)) / "r.json"
+        "tools._grokbuild_registry.REGISTRY_PATH", Path(str(tmp_path)) / "r.json"
     )
     root = str(tmp_path)
     assert await try_acquire_cwd(root) is True
@@ -104,7 +104,7 @@ async def test_cwds_under_nested_match(
 ) -> None:
     """A cwd inside a worktree prefix is included by cwds_under."""
     monkeypatch.setattr(
-        "tools._grok_build_registry.REGISTRY_PATH", Path(str(tmp_path)) / "r.json"
+        "tools._grokbuild_registry.REGISTRY_PATH", Path(str(tmp_path)) / "r.json"
     )
     root = str(tmp_path)
     nested = os.path.join(root, "inside")
@@ -121,7 +121,7 @@ async def test_cwds_under_no_partial_name_match(
 ) -> None:
     """/a/foo must not match prefix /a/foo-bar."""
     monkeypatch.setattr(
-        "tools._grok_build_registry.REGISTRY_PATH", Path(str(tmp_path)) / "r.json"
+        "tools._grokbuild_registry.REGISTRY_PATH", Path(str(tmp_path)) / "r.json"
     )
     base = str(tmp_path)
     sibling = os.path.join(base, "foo")
@@ -145,7 +145,7 @@ async def test_acquire_writes_cwd_to_disk(
 ) -> None:
     """After try_acquire_cwd, the registry file contains the cwd."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
 
     cwd = str(tmp_path / "repo")
     os.makedirs(cwd)
@@ -166,7 +166,7 @@ async def test_release_removes_cwd_from_disk(
 ) -> None:
     """After release_cwd, the cwd is absent from the registry file."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
 
     cwd = str(tmp_path / "repo")
     os.makedirs(cwd)
@@ -183,11 +183,11 @@ async def test_registry_write_is_atomic(
 ) -> None:
     """No temp file left behind after a successful write."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
 
     await try_acquire_cwd("/tmp")
     leftover = [
-        f for f in tmp_path.iterdir() if f.name.startswith(".grok_build_registry_")
+        f for f in tmp_path.iterdir() if f.name.startswith(".grokbuild_registry_")
     ]
     assert leftover == []
 
@@ -215,27 +215,27 @@ def test_startup_prunes_stale_entries_when_pid_gone(
 ) -> None:
     """Entries owned by a dead PID are pruned on startup; _in_flight stays empty."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
 
     # Use a PID guaranteed not to be running (max+1 wraps; use a known-dead value).
     dead_pid = 99999999
-    with patch("tools._grok_build_registry._pid_running", return_value=False):
+    with patch("tools._grokbuild_registry._pid_running", return_value=False):
         _write_fake_registry(reg, pid=dead_pid, entries=["/some/cwd"])
         _reset_for_tests()  # clear any state from the module-level init call
 
         events: list[tuple[str, dict[str, Any]]] = []
         monkeypatch.setattr(
-            "tools._grok_build_events.record",
+            "tools._grokbuild_events.record",
             lambda sig, **kw: events.append((sig, kw)),
         )
         _load_registry_from_disk()
 
-    import tools._grok_build_registry as reg_mod
+    import tools._grokbuild_registry as reg_mod
 
     assert reg_mod._in_flight == {}
-    assert any(sig == "mcp.grok.build.registry.recovered" for sig, _ in events)
+    assert any(sig == "mcp.grokbuild.registry.recovered" for sig, _ in events)
     evt_payload = next(
-        kw for sig, kw in events if sig == "mcp.grok.build.registry.recovered"
+        kw for sig, kw in events if sig == "mcp.grokbuild.registry.recovered"
     )
     assert evt_payload["entries_recovered"] == 0
     assert evt_payload["entries_pruned"] == 1
@@ -246,15 +246,15 @@ def test_startup_recovers_entries_when_pid_alive(
 ) -> None:
     """Entries owned by a running PID are loaded into _in_flight."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
 
-    with patch("tools._grok_build_registry._pid_running", return_value=True):
+    with patch("tools._grokbuild_registry._pid_running", return_value=True):
         _write_fake_registry(reg, pid=os.getpid(), entries=["/live/cwd"])
         _reset_for_tests()
 
         _load_registry_from_disk()
 
-    import tools._grok_build_registry as reg_mod
+    import tools._grokbuild_registry as reg_mod
 
     assert (
         os.path.realpath("/live/cwd") in reg_mod._in_flight
@@ -267,20 +267,20 @@ def test_startup_emits_recovery_event_with_correct_payload(
 ) -> None:
     """Recovery event payload matches pruned/recovered counts."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
 
-    with patch("tools._grok_build_registry._pid_running", return_value=False):
+    with patch("tools._grokbuild_registry._pid_running", return_value=False):
         _write_fake_registry(reg, pid=1, entries=["/a", "/b", "/c"])
         _reset_for_tests()
 
         events: list[tuple[str, dict[str, Any]]] = []
         monkeypatch.setattr(
-            "tools._grok_build_events.record",
+            "tools._grokbuild_events.record",
             lambda sig, **kw: events.append((sig, kw)),
         )
         _load_registry_from_disk()
 
-    evt = next(kw for sig, kw in events if sig == "mcp.grok.build.registry.recovered")
+    evt = next(kw for sig, kw in events if sig == "mcp.grokbuild.registry.recovered")
     assert evt["entries_pruned"] == 3
     assert evt["entries_recovered"] == 0
     assert evt["schema_version"] == SCHEMA_VERSION
@@ -291,16 +291,16 @@ def test_startup_no_file_emits_zero_zero_event(
 ) -> None:
     """When no registry file exists, recovery event fires with 0/0."""
     reg = tmp_path / "nonexistent.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
     _reset_for_tests()
 
     events: list[tuple[str, dict[str, Any]]] = []
     monkeypatch.setattr(
-        "tools._grok_build_events.record", lambda sig, **kw: events.append((sig, kw))
+        "tools._grokbuild_events.record", lambda sig, **kw: events.append((sig, kw))
     )
     _load_registry_from_disk()
 
-    evt = next(kw for sig, kw in events if sig == "mcp.grok.build.registry.recovered")
+    evt = next(kw for sig, kw in events if sig == "mcp.grokbuild.registry.recovered")
     assert evt["entries_recovered"] == 0
     assert evt["entries_pruned"] == 0
 
@@ -329,7 +329,7 @@ def test_pid_running_dead_pid() -> None:
 async def test_get_dispatch_id_returns_recorded_value(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp", "uuid-xyz") is True
     assert await get_dispatch_id("/tmp") == "uuid-xyz"
     await release_cwd("/tmp")
@@ -341,7 +341,7 @@ async def test_get_dispatch_id_none_for_empty_value(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Legacy fixtures may pre-populate without a uuid; surface as None."""
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp") is True
     assert await get_dispatch_id("/tmp") is None
     await release_cwd("/tmp")
@@ -351,7 +351,7 @@ async def test_get_dispatch_id_none_for_empty_value(
 async def test_cwds_under_carries_dispatch_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", tmp_path / "r.json")
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", tmp_path / "r.json")
     root = str(tmp_path)
     nested = os.path.join(root, "inside")
     os.makedirs(nested)
@@ -366,15 +366,15 @@ def test_legacy_v1_string_entries_load(
 ) -> None:
     """A v1 registry file (bare cwd strings) loads with empty dispatch_id."""
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr("tools._grok_build_registry.REGISTRY_PATH", reg)
+    monkeypatch.setattr("tools._grokbuild_registry.REGISTRY_PATH", reg)
     reg.write_text(
         json.dumps(
             {"schema_version": 1, "writer_pid": os.getpid(), "entries": ["/legacy/cwd"]}
         )
     )
-    with patch("tools._grok_build_registry._pid_running", return_value=True):
+    with patch("tools._grokbuild_registry._pid_running", return_value=True):
         _reset_for_tests()
         _load_registry_from_disk()
-    import tools._grok_build_registry as reg_mod
+    import tools._grokbuild_registry as reg_mod
 
     assert reg_mod._in_flight.get("/legacy/cwd") == ""

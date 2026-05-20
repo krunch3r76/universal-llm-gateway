@@ -1,4 +1,4 @@
-"""``worktree_list_op`` handler — enumerate grok_build-managed worktrees.
+"""``worktree_list_op`` handler — enumerate grokbuild-managed worktrees.
 
 Scoped to ``WORKTREE_ROOT`` (the Phase 2 hardcoded root) — does not list
 worktrees registered elsewhere on the host. Enumeration walks the filesystem
@@ -27,14 +27,14 @@ import time
 import uuid
 from typing import Any
 
-from tools import _grok_build_worktree as _wt
-from tools._grok_build_envelope import _metadata_base
-from tools._grok_build_events import (
+from tools import _grokbuild_worktree as _wt
+from tools._grokbuild_envelope import _metadata_base
+from tools._grokbuild_events import (
     emit_grok_build_list_called,
     emit_grok_build_list_completed,
     emit_grok_build_list_failed,
 )
-from tools._grok_build_registry import cwds_under
+from tools._grokbuild_registry import cwds_under
 
 
 def _read_worktree_state(path: str) -> dict[str, Any]:

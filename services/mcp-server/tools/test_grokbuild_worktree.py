@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from tools.grok_build import grok_build
+from tools.grokbuild import grokbuild
 
 
 @pytest.fixture
@@ -24,8 +24,8 @@ def worktree_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """
     root = tmp_path / "worktrees"
     allowed = str(tmp_path)
-    monkeypatch.setattr("tools._grok_build_worktree.WORKTREE_ROOT", str(root))
-    monkeypatch.setattr("tools._grok_build_worktree.ALLOWED_SOURCE_ROOT", allowed)
+    monkeypatch.setattr("tools._grokbuild_worktree.WORKTREE_ROOT", str(root))
+    monkeypatch.setattr("tools._grokbuild_worktree.ALLOWED_SOURCE_ROOT", allowed)
     return root
 
 
@@ -35,7 +35,7 @@ async def test_worktree_create_happy_path(
     worktree_dirs: Path,
     event_log: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="t1",
         branch="HEAD",
@@ -50,8 +50,8 @@ async def test_worktree_create_happy_path(
     assert out["metadata"]["branch"] == "HEAD"
     assert os.path.isdir(expected_path)
     signals = [s for s, _ in event_log]
-    assert "mcp.grok.build.create.called" in signals
-    assert "mcp.grok.build.create.completed" in signals
+    assert "mcp.grokbuild.create.called" in signals
+    assert "mcp.grokbuild.create.completed" in signals
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_worktree_create_name_invalid_empty(
     worktree_dirs: Path,
     event_log: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="",
         branch="HEAD",
@@ -75,7 +75,7 @@ async def test_worktree_create_name_invalid_empty(
 async def test_worktree_create_name_invalid_slash(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="foo/bar",
         branch="HEAD",
@@ -89,7 +89,7 @@ async def test_worktree_create_name_invalid_slash(
 async def test_worktree_create_name_invalid_dotdot(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="..escape",
         branch="HEAD",
@@ -107,7 +107,7 @@ async def test_worktree_create_source_repo_invalid_outside_root(
 
     Use ``/tmp`` which is outside the monkeypatched allowed_root (tmp_path).
     """
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="t1",
         branch="HEAD",
@@ -123,7 +123,7 @@ async def test_worktree_create_source_repo_not_a_git_repo(
 ) -> None:
     not_a_repo = tmp_path / "plain-dir"
     not_a_repo.mkdir()
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="t1",
         branch="HEAD",
@@ -137,7 +137,7 @@ async def test_worktree_create_source_repo_not_a_git_repo(
 async def test_worktree_create_branch_not_found(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="t1",
         branch="nonexistent-branch-xyz",
@@ -155,7 +155,7 @@ async def test_worktree_create_worktree_exists(
     target = worktree_dirs / "t1"
     target.mkdir(parents=True)
 
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="t1",
         branch="HEAD",
@@ -172,7 +172,7 @@ async def test_worktree_create_with_create_branch_default_start_point(
     event_log: list[tuple[str, dict[str, Any]]],
 ) -> None:
     """create_branch=True with no start_point → new branch from HEAD."""
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="cb1",
         branch="feat-new",
@@ -191,7 +191,7 @@ async def test_worktree_create_with_create_branch_default_start_point(
     )
     assert rc.returncode == 0
     signals = [s for s, _ in event_log]
-    assert "mcp.grok.build.create.completed" in signals
+    assert "mcp.grokbuild.create.completed" in signals
 
 
 @pytest.mark.asyncio
@@ -208,7 +208,7 @@ async def test_worktree_create_with_create_branch_explicit_start_point(
         text=True,
         check=True,
     ).stdout.strip()
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="cb2",
         branch="feat-sha",
@@ -240,7 +240,7 @@ async def test_worktree_create_branch_exists(
         check=True,
         capture_output=True,
     )
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="cb3",
         branch="already-here",
@@ -256,7 +256,7 @@ async def test_worktree_create_start_point_not_found(
     git_repo: Path,
     worktree_dirs: Path,
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="cb4",
         branch="feat-bad-sp",
@@ -287,7 +287,7 @@ async def test_worktree_create_branch_checked_out_elsewhere(
         text=True,
         check=True,
     ).stdout.strip()
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="cb5",
         branch=primary,
@@ -302,7 +302,7 @@ async def test_worktree_create_branch_checked_out_elsewhere(
 async def test_worktree_create_branch_required(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
-    out = await grok_build(
+    out = await grokbuild(
         op="worktree_create",
         name="t1",
         branch="",
@@ -321,7 +321,7 @@ async def _create_then(
     git_repo: Path,
 ) -> dict[str, Any]:
     """Helper: create a worktree against git_repo, return the envelope."""
-    return await grok_build(
+    return await grokbuild(
         op="worktree_create",
         name="r1",
         branch="HEAD",
@@ -339,7 +339,7 @@ async def test_worktree_remove_happy_path(
     assert create["status"] == "completed"
     target = create["metadata"]["worktree_path"]
 
-    out = await grok_build(op="worktree_remove", name="r1")
+    out = await grokbuild(op="worktree_remove", name="r1")
 
     assert out["status"] == "completed"
     assert out["exit_code"] == 0
@@ -347,15 +347,15 @@ async def test_worktree_remove_happy_path(
     assert out["metadata"]["worktree_path"] == target
     assert not os.path.isdir(target)
     signals = [s for s, _ in event_log]
-    assert "mcp.grok.build.remove.called" in signals
-    assert "mcp.grok.build.remove.completed" in signals
+    assert "mcp.grokbuild.remove.called" in signals
+    assert "mcp.grokbuild.remove.completed" in signals
 
 
 @pytest.mark.asyncio
 async def test_worktree_remove_name_invalid(
     worktree_dirs: Path,
 ) -> None:
-    out = await grok_build(op="worktree_remove", name="")
+    out = await grokbuild(op="worktree_remove", name="")
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "name_invalid"
 
@@ -364,7 +364,7 @@ async def test_worktree_remove_name_invalid(
 async def test_worktree_remove_not_found(
     worktree_dirs: Path,
 ) -> None:
-    out = await grok_build(op="worktree_remove", name="never-existed")
+    out = await grokbuild(op="worktree_remove", name="never-existed")
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "worktree_not_found"
 
@@ -378,7 +378,7 @@ async def test_worktree_remove_dirty_rejection(
     target = Path(create["metadata"]["worktree_path"])
     (target / "tracked.txt").write_text("dirtied\n")
 
-    out = await grok_build(op="worktree_remove", name="r1")
+    out = await grokbuild(op="worktree_remove", name="r1")
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "worktree_dirty"
     # Worktree still exists since removal was refused.
@@ -390,7 +390,7 @@ async def test_worktree_remove_busy_rejection(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
     """An in-flight dispatch against a cwd under the worktree blocks removal."""
-    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+    from tools._grokbuild_registry import _reset_for_tests, try_acquire_cwd
 
     _reset_for_tests()
     create = await _create_then(git_repo)
@@ -398,7 +398,7 @@ async def test_worktree_remove_busy_rejection(
     # Simulate a concurrent dispatch holding the worktree cwd.
     assert await try_acquire_cwd(target) is True
 
-    out = await grok_build(op="worktree_remove", name="r1")
+    out = await grokbuild(op="worktree_remove", name="r1")
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "worktree_busy"
     assert "in-flight" in out["metadata"]["reason"]
@@ -410,7 +410,7 @@ async def test_worktree_remove_busy_nested_cwd(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
     """A dispatch into a subdirectory of the worktree also blocks removal."""
-    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+    from tools._grokbuild_registry import _reset_for_tests, try_acquire_cwd
 
     _reset_for_tests()
     create = await _create_then(git_repo)
@@ -419,7 +419,7 @@ async def test_worktree_remove_busy_nested_cwd(
     os.makedirs(nested, exist_ok=True)
     assert await try_acquire_cwd(nested) is True
 
-    out = await grok_build(op="worktree_remove", name="r1")
+    out = await grokbuild(op="worktree_remove", name="r1")
     assert out["status"] == "rejected"
     assert out["metadata"]["reason_code"] == "worktree_busy"
     _reset_for_tests()
@@ -431,9 +431,9 @@ async def test_worktree_remove_twice_second_not_found(
 ) -> None:
     create = await _create_then(git_repo)
     assert create["status"] == "completed"
-    out1 = await grok_build(op="worktree_remove", name="r1")
+    out1 = await grokbuild(op="worktree_remove", name="r1")
     assert out1["status"] == "completed"
-    out2 = await grok_build(op="worktree_remove", name="r1")
+    out2 = await grokbuild(op="worktree_remove", name="r1")
     assert out2["status"] == "rejected"
     assert out2["metadata"]["reason_code"] == "worktree_not_found"
 
@@ -448,14 +448,14 @@ async def test_worktree_list_root_missing(
 ) -> None:
     """Root directory does not yet exist → empty list, status completed."""
     assert not worktree_dirs.exists()
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     assert out["status"] == "completed"
     assert out["metadata"]["count"] == 0
     assert out["metadata"]["worktrees"] == []
     assert out["metadata"]["worktree_root"] == str(worktree_dirs)
     signals = [s for s, _ in event_log]
-    assert "mcp.grok.build.list.called" in signals
-    assert "mcp.grok.build.list.completed" in signals
+    assert "mcp.grokbuild.list.called" in signals
+    assert "mcp.grokbuild.list.completed" in signals
 
 
 @pytest.mark.asyncio
@@ -463,19 +463,19 @@ async def test_worktree_list_empty_root(
     worktree_dirs: Path,
 ) -> None:
     worktree_dirs.mkdir(parents=True)
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     assert out["status"] == "completed"
     assert out["metadata"]["count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_worktree_list_single(git_repo: Path, worktree_dirs: Path) -> None:
-    create = await grok_build(
+    create = await grokbuild(
         op="worktree_create", name="w1", branch="HEAD", source_repo=str(git_repo)
     )
     assert create["status"] == "completed"
 
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     assert out["status"] == "completed"
     assert out["metadata"]["count"] == 1
     entry = out["metadata"]["worktrees"][0]
@@ -491,22 +491,22 @@ async def test_worktree_list_single(git_repo: Path, worktree_dirs: Path) -> None
 @pytest.mark.asyncio
 async def test_worktree_list_multi_sorted(git_repo: Path, worktree_dirs: Path) -> None:
     for name in ("zeta", "alpha", "mid"):
-        c = await grok_build(
+        c = await grokbuild(
             op="worktree_create", name=name, branch="HEAD", source_repo=str(git_repo)
         )
         assert c["status"] == "completed"
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     names = [e["name"] for e in out["metadata"]["worktrees"]]
     assert names == ["alpha", "mid", "zeta"]
 
 
 @pytest.mark.asyncio
 async def test_worktree_list_dirty_flag(git_repo: Path, worktree_dirs: Path) -> None:
-    create = await grok_build(
+    create = await grokbuild(
         op="worktree_create", name="d1", branch="HEAD", source_repo=str(git_repo)
     )
     (Path(create["metadata"]["worktree_path"]) / "tracked.txt").write_text("dirtied\n")
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     entry = next(e for e in out["metadata"]["worktrees"] if e["name"] == "d1")
     assert entry["dirty"] is True
 
@@ -515,10 +515,10 @@ async def test_worktree_list_dirty_flag(git_repo: Path, worktree_dirs: Path) -> 
 async def test_worktree_list_in_flight_flag(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
-    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+    from tools._grokbuild_registry import _reset_for_tests, try_acquire_cwd
 
     _reset_for_tests()
-    create = await grok_build(
+    create = await grokbuild(
         op="worktree_create", name="f1", branch="HEAD", source_repo=str(git_repo)
     )
     target = create["metadata"]["worktree_path"]
@@ -526,7 +526,7 @@ async def test_worktree_list_in_flight_flag(
     os.makedirs(nested, exist_ok=True)
     assert await try_acquire_cwd(nested) is True
 
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     entry = next(e for e in out["metadata"]["worktrees"] if e["name"] == "f1")
     assert entry["in_flight"] is True
     _reset_for_tests()
@@ -537,16 +537,16 @@ async def test_worktree_list_dispatch_id_when_in_flight(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
     """When in_flight=True, dispatch_id surfaces the registry record."""
-    from tools._grok_build_registry import _reset_for_tests, try_acquire_cwd
+    from tools._grokbuild_registry import _reset_for_tests, try_acquire_cwd
 
     _reset_for_tests()
-    create = await grok_build(
+    create = await grokbuild(
         op="worktree_create", name="d1", branch="HEAD", source_repo=str(git_repo)
     )
     target = create["metadata"]["worktree_path"]
     assert await try_acquire_cwd(target, "uuid-disp-42") is True
 
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     entry = next(e for e in out["metadata"]["worktrees"] if e["name"] == "d1")
     assert entry["in_flight"] is True
     assert entry["dispatch_id"] == "uuid-disp-42"
@@ -558,11 +558,11 @@ async def test_worktree_list_dispatch_id_null_when_idle(
     git_repo: Path, worktree_dirs: Path
 ) -> None:
     """When in_flight=False, dispatch_id is null."""
-    create = await grok_build(
+    create = await grokbuild(
         op="worktree_create", name="idle1", branch="HEAD", source_repo=str(git_repo)
     )
     assert create["status"] == "completed"
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     entry = next(e for e in out["metadata"]["worktrees"] if e["name"] == "idle1")
     assert entry["in_flight"] is False
     assert entry["dispatch_id"] is None
@@ -575,7 +575,7 @@ async def test_worktree_list_skips_non_git_dirs(
     """A stray non-git directory under the root surfaces with valid=False."""
     worktree_dirs.mkdir(parents=True)
     (worktree_dirs / "stray").mkdir()
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     assert out["status"] == "completed"
     assert out["metadata"]["count"] == 1
     entry = out["metadata"]["worktrees"][0]
@@ -593,15 +593,15 @@ async def test_worktree_list_root_unreachable(
     """OSError on enumeration maps to worktree_root_unreachable."""
     fake_root = tmp_path / "wt-unreach"
     fake_root.mkdir()
-    monkeypatch.setattr("tools._grok_build_worktree.WORKTREE_ROOT", str(fake_root))
+    monkeypatch.setattr("tools._grokbuild_worktree.WORKTREE_ROOT", str(fake_root))
 
     def boom(_path: str) -> list[str]:
         raise OSError("simulated fs failure")
 
-    monkeypatch.setattr("tools._grok_build_worktree_list.os.listdir", boom)
+    monkeypatch.setattr("tools._grokbuild_worktree_list.os.listdir", boom)
 
-    out = await grok_build(op="worktree_list")
+    out = await grokbuild(op="worktree_list")
     assert out["status"] == "failed"
     assert out["metadata"]["reason_code"] == "worktree_root_unreachable"
     assert "simulated fs failure" in out["metadata"]["reason"]
-    assert any(s == "mcp.grok.build.list.failed" for s, _ in event_log)
+    assert any(s == "mcp.grokbuild.list.failed" for s, _ in event_log)

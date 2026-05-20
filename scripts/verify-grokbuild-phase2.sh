@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase-2 verification script for grok_build dispatch tool.
+# Phase-2 verification script for grokbuild dispatch tool.
 #
 # Closes phase-2-tests.md §Verification:
 #   - all 24 §5.11 tests pass (now 25 with the added staged-violation test
@@ -9,7 +9,7 @@
 #   - ruff + compileall clean
 #   - mutation-test smoke: predicate-incomplete mutants fail at least one test
 #
-# Usage: bash scripts/verify-grok-build-phase2.sh
+# Usage: bash scripts/verify-grokbuild-phase2.sh
 # Exit: 0 on full pass; non-zero on first failure.
 
 set -euo pipefail
@@ -37,19 +37,19 @@ echo "=== Step 1: pytest-cov install (idempotent) ==="
 
 echo "=== Step 2: ruff lint ==="
 echo "  ruff version: $("$RUFF" --version)"
-"$RUFF" check "$TOOLS_DIR"/_grok_build_*.py "$TOOLS_DIR"/grok_build.py "$TOOLS_DIR"/test_grok_build_*.py || {
+"$RUFF" check "$TOOLS_DIR"/_grokbuild_*.py "$TOOLS_DIR"/grokbuild.py "$TOOLS_DIR"/test_grokbuild_*.py || {
   echo "FAIL: ruff lint failed" >&2
   exit 4
 }
-if ! "$RUFF" format --check "$TOOLS_DIR"/_grok_build_*.py "$TOOLS_DIR"/grok_build.py "$TOOLS_DIR"/test_grok_build_*.py; then
+if ! "$RUFF" format --check "$TOOLS_DIR"/_grokbuild_*.py "$TOOLS_DIR"/grokbuild.py "$TOOLS_DIR"/test_grokbuild_*.py; then
   echo "--- ruff format --diff (showing required changes) ---" >&2
-  "$RUFF" format --diff "$TOOLS_DIR"/_grok_build_*.py "$TOOLS_DIR"/grok_build.py "$TOOLS_DIR"/test_grok_build_*.py >&2 || true
+  "$RUFF" format --diff "$TOOLS_DIR"/_grokbuild_*.py "$TOOLS_DIR"/grokbuild.py "$TOOLS_DIR"/test_grokbuild_*.py >&2 || true
   echo "FAIL: ruff format check failed" >&2
   exit 5
 fi
 
 echo "=== Step 3: compileall ==="
-"$PYTHON" -m compileall -q "$TOOLS_DIR"/_grok_build_*.py "$TOOLS_DIR"/grok_build.py "$TOOLS_DIR"/test_grok_build_*.py || {
+"$PYTHON" -m compileall -q "$TOOLS_DIR"/_grokbuild_*.py "$TOOLS_DIR"/grokbuild.py "$TOOLS_DIR"/test_grokbuild_*.py || {
   echo "FAIL: compileall failed" >&2
   exit 6
 }
@@ -57,14 +57,14 @@ echo "=== Step 3: compileall ==="
 echo "=== Step 4: pytest with coverage ==="
 cd "$REPO_ROOT/services/mcp-server"
 "$PYTEST" \
-  tools/test_grok_build_handler.py \
-  tools/test_grok_build_runner.py \
-  tools/test_grok_build_validator.py \
+  tools/test_grokbuild_handler.py \
+  tools/test_grokbuild_runner.py \
+  tools/test_grokbuild_validator.py \
   -v \
-  --cov=tools.grok_build \
-  --cov=tools._grok_build_runner \
-  --cov=tools._grok_build_validator \
-  --cov=tools._grok_build_events \
+  --cov=tools.grokbuild \
+  --cov=tools._grokbuild_runner \
+  --cov=tools._grokbuild_validator \
+  --cov=tools._grokbuild_events \
   --cov-report=term-missing \
   --cov-fail-under=90 \
   --tb=short || {
@@ -76,7 +76,7 @@ echo "=== Step 5: mutation-test smoke on _read_only_violation ==="
 # Verifies that the test suite would catch the staged-only bug we just fixed
 # AND a flat inversion. If either mutant passes all tests, the suite is too
 # permissive on this predicate.
-PREDICATE_FILE="$TOOLS_DIR/grok_build.py"
+PREDICATE_FILE="$TOOLS_DIR/grokbuild.py"
 BACKUP="$(mktemp)"
 cp "$PREDICATE_FILE" "$BACKUP"
 restore_predicate() { cp "$BACKUP" "$PREDICATE_FILE"; }
@@ -87,7 +87,7 @@ cd "$REPO_ROOT/services/mcp-server"
 # Mutant A: predicate always False (audit always passes)
 "$PYTHON" - <<'PY'
 import pathlib
-p = pathlib.Path("tools/grok_build.py")
+p = pathlib.Path("tools/grokbuild.py")
 src = p.read_text()
 target = (
     '    if mode != "read_only":\n'
@@ -102,7 +102,7 @@ replacement = (
 assert target in src, "Mutant A target string not found — predicate shape may have changed"
 p.write_text(src.replace(target, replacement))
 PY
-if "$PYTEST" tools/test_grok_build_handler.py -q --tb=no >/dev/null 2>&1; then
+if "$PYTEST" tools/test_grokbuild_handler.py -q --tb=no >/dev/null 2>&1; then
   echo "FAIL: mutation-test A — predicate-always-False passed all tests; suite cannot detect a flat false-negative" >&2
   restore_predicate
   exit 8
@@ -113,7 +113,7 @@ echo "  Mutant A (always-False): correctly detected"
 restore_predicate
 "$PYTHON" - <<'PY'
 import pathlib
-p = pathlib.Path("tools/grok_build.py")
+p = pathlib.Path("tools/grokbuild.py")
 src = p.read_text()
 patched = src.replace(
     "    return bool(git_diff_stat.strip()) or bool(git_status_post.strip())",
@@ -122,7 +122,7 @@ patched = src.replace(
 assert patched != src, "Mutant B patch did not match source"
 p.write_text(patched)
 PY
-if "$PYTEST" tools/test_grok_build_handler.py::test_read_only_staged_modification_violation -q --tb=no >/dev/null 2>&1; then
+if "$PYTEST" tools/test_grokbuild_handler.py::test_read_only_staged_modification_violation -q --tb=no >/dev/null 2>&1; then
   echo "FAIL: mutation-test B — staged-mutation regression passed; the new staged-mutation test does not actually guard the fix" >&2
   restore_predicate
   exit 9

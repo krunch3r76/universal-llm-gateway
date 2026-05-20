@@ -46,13 +46,19 @@ services:
       - ${GROK_BIN_PATH:-/home/io/.local/bin/grok}:/usr/local/bin/grok:ro
       # grok auth + session state (rw: grok writes session UUIDs to ~/.grok/sessions/)
       - ${GROK_AUTH_DIR:-/home/io/.grok}:/home/mcp/.grok:rw
-      # torus projects — grok_build cwd access (rw required for edit-mode dispatches)
+      # torus projects — grokbuild cwd access (rw required for edit-mode dispatches)
       - /mnt/torus/projects:/mnt/torus/projects:rw
-      # grok-build sidecar logs — bind-mount so host can observe dispatch lifecycle.
+      # grokbuild sidecar logs — bind-mount so host can observe dispatch lifecycle.
       # The started record lands before grok spawns; exit record lands at completion.
       # For live grok progress, tail ~/.grok/logs/unified.jsonl (already accessible
-      # via the ~/.grok mount above). Pre-create on host: mkdir -p /tmp/logs/grok-build
-      - ${GROK_SIDECAR_LOG_DIR:-/tmp/logs/grok-build}:/tmp/logs/grok-build:rw
+      # via the ~/.grok mount above). Pre-create on host: mkdir -p /tmp/logs/grokbuild
+      #
+      # NOTE: GROKBUILD_SIDECAR_LOG_DIR sets the HOST side of this bind mount only.
+      # The container-side path is hardcoded as /tmp/logs/grokbuild in
+      # _grokbuild_runner._SIDECAR_DIR and _grokbuild_validator._SIDECAR_DIR
+      # (review G9). Do not expect changing the env var to relocate where the
+      # container writes sidecars.
+      - ${GROKBUILD_SIDECAR_LOG_DIR:-/tmp/logs/grokbuild}:/tmp/logs/grokbuild:rw
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
       - PROJECT_ROOT=/data/project
@@ -98,7 +104,7 @@ services:
       - CORTEX_OWNER_NAME=${CORTEX_OWNER_NAME:-the user}
       - CORTEX_DEPLOYMENT_VOCABULARY=${CORTEX_DEPLOYMENT_VOCABULARY:-}
       # Cortex DB paths — ~/.cortex is mounted at /data/cortex; grok subprocesses
-      # inherit these via _ALLOW in _grok_build_runner.py so cortex_conn() resolves
+      # inherit these via _ALLOW in _grokbuild_runner.py so cortex_conn() resolves
       # to the live DB rather than the default HOME/.cortex fallback.
       - CORTEX_DB_PATH=/data/cortex/cortex.db
       - TODOS_DB_PATH=/data/cortex/todos.db

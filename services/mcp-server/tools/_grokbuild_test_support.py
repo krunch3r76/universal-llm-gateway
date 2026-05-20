@@ -1,4 +1,4 @@
-"""Shared fixtures and mocks for grok_build §5.11 test matrix."""
+"""Shared fixtures and mocks for grokbuild §5.11 test matrix."""
 
 from __future__ import annotations
 
@@ -14,9 +14,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools._grok_build_registry import _reset_for_tests as _reset_registry
-from tools._grok_build_runner import RunnerSpec
-from tools._grok_build_validator import _grok_models_ok, _resolve_grok_path
+from tools._grokbuild_registry import _reset_for_tests as _reset_registry
+from tools._grokbuild_runner import RunnerSpec
+from tools._grokbuild_validator import (
+    _reset_grok_models_cache_for_tests,
+    _resolve_grok_path,
+)
 
 GROK_BIN = "/usr/bin/grok"
 PROMPT = "do the thing"
@@ -37,16 +40,16 @@ def event_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]
     def _record(signal: str, **payload: Any) -> None:
         log.append((signal, payload))
 
-    monkeypatch.setattr("tools._grok_build_events.record", _record)
+    monkeypatch.setattr("tools._grokbuild_events.record", _record)
     return log
 
 
 @pytest.fixture
 def sidecar_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = tmp_path / "grok-build"
-    monkeypatch.setattr("tools._grok_build_fetch_result._SIDECAR_DIR", root)
-    monkeypatch.setattr("tools._grok_build_validator._SIDECAR_DIR", root)
-    monkeypatch.setattr("tools._grok_build_runner._SIDECAR_DIR", root)
+    root = tmp_path / "grokbuild"
+    monkeypatch.setattr("tools._grokbuild_fetch_result._SIDECAR_DIR", root)
+    monkeypatch.setattr("tools._grokbuild_validator._SIDECAR_DIR", root)
+    monkeypatch.setattr("tools._grokbuild_runner._SIDECAR_DIR", root)
     return root
 
 
@@ -92,7 +95,7 @@ def admission(
 
 def clear_validator_caches() -> None:
     _resolve_grok_path.cache_clear()
-    _grok_models_ok.cache_clear()
+    _reset_grok_models_cache_for_tests()
 
 
 def runner_spec(
@@ -101,12 +104,26 @@ def runner_spec(
     mode: str = "read_only",
     system_context: str | None = None,
     session_id: str | None = None,
-    continue_recent: bool = False,
-    output_format: str = "json",
     permission_mode: str = "plan",
     git_status_pre: str = "",
     dispatch_id: str = "test-dispatch-id",
+    tier: str = "thorough",
+    reasoning_effort: str | None = None,
+    effort: str | None = None,
+    check: bool = False,
+    no_subagents: bool = False,
+    disable_web_search: bool = False,
+    max_turns: int | None = None,
+    best_of_n: int | None = None,
+    resume_strict: bool = False,
+    timeout_seconds: int = 30,
 ) -> RunnerSpec:
+    """Build a minimal RunnerSpec for runner-level tests.
+
+    Defaults to ``tier='thorough'`` for compatibility with existing tests
+    that don't care about overlay output. ``continue_recent`` is gone —
+    Phase 4's validator rejects it before the runner can see it.
+    """
     return RunnerSpec(
         dispatch_id=dispatch_id,
         cwd=cwd,
@@ -116,11 +133,18 @@ def runner_spec(
         system_context=system_context,
         model=None,
         session_id=session_id,
-        continue_recent=continue_recent,
-        output_format=output_format,  # type: ignore[arg-type]
-        timeout_seconds=30,
+        timeout_seconds=timeout_seconds,
         grok_path=GROK_BIN,
         git_status_pre=git_status_pre,
+        tier=tier,  # type: ignore[arg-type]
+        reasoning_effort=reasoning_effort,
+        effort=effort,
+        check=check,
+        no_subagents=no_subagents,
+        disable_web_search=disable_web_search,
+        max_turns=max_turns,
+        best_of_n=best_of_n,
+        resume_strict=resume_strict,
     )
 
 
@@ -175,7 +199,7 @@ def install_capture_post_state(
         return status_post, diff_stat, audit_incomplete
 
     monkeypatch.setattr(
-        "tools._grok_build_runner._capture_post_state",
+        "tools._grokbuild_runner._capture_post_state",
         _fake_capture,
     )
 
@@ -208,7 +232,7 @@ class FakeProc:
 def install_grok_path(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_validator_caches()
     monkeypatch.setattr(
-        "tools._grok_build_validator.shutil.which",
+        "tools._grokbuild_validator.shutil.which",
         lambda name: GROK_BIN if name == "grok" else None,
     )
 
