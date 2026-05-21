@@ -27,7 +27,7 @@ from .compaction import (
     SUMMARY_SQL_LIKE,
     is_tombstone_only,
 )
-from .db import query
+from .db import json_decode, query
 from .models import (
     CardAssertion,
     CardDebug,
@@ -75,7 +75,7 @@ def get_entity_card(
     a_rows = query(
         conn,
         "SELECT id, claim, confidence, derivation_type, valid_from, "
-        "observed_at, predicate_form FROM assertions WHERE entity_id = ? "
+        "observed_at, predicate_form, evidence_uris FROM assertions WHERE entity_id = ? "
         "AND superseded_by IS NULL "
         "ORDER BY "
         "  (CASE WHEN LOWER(claim) LIKE LOWER(?) THEN 0 ELSE 1 END) ASC, "
@@ -155,7 +155,7 @@ def get_entity_card(
     if active_n > 0 and is_tombstone_only(all_active_claims):
         summary_rows = query(
             conn,
-            "SELECT id, claim, confidence, derivation_type, valid_from, observed_at "
+            "SELECT id, claim, confidence, derivation_type, valid_from, observed_at, evidence_uris "
             "FROM assertions WHERE entity_id = ? "
             "AND LOWER(claim) LIKE LOWER(?) ORDER BY created_at DESC LIMIT 1",
             (entity_id, SUMMARY_SQL_LIKE),
@@ -212,4 +212,5 @@ def _card_assertion(r: dict[str, object]) -> CardAssertion:
         derivation_type=r.get("derivation_type"),  # type: ignore[arg-type]
         valid_from=r.get("valid_from"),  # type: ignore[arg-type]
         observed_at=r.get("observed_at"),  # type: ignore[arg-type]
+        evidence_uris=json_decode(r.get("evidence_uris")),  # type: ignore[arg-type]
     )

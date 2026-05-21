@@ -418,7 +418,9 @@ async def test_retired_op_dispatch_rejected_at_handler(
     assert out["metadata"]["reason_code"] == "retired_op"
     signals = [s for s, payload in event_log]
     assert "mcp.grokbuild.dispatch.rejected" in signals
-    rejected_payload = next(p for s, p in event_log if s == "mcp.grokbuild.dispatch.rejected")
+    rejected_payload = next(
+        p for s, p in event_log if s == "mcp.grokbuild.dispatch.rejected"
+    )
     assert rejected_payload["op"] == "dispatch"
 
 
@@ -470,9 +472,7 @@ async def test_tier_quick_overlay_in_envelope_metadata(
     """tier='quick' resolves reasoning_effort=minimal, effort=low; envelope metadata echoes resolved values."""
     install_capture_post_state(monkeypatch, status_post="", diff_stat="")
     install_subprocess_exec(monkeypatch)
-    out = await grokbuild(
-        "build", admission, PROMPT, mode="read_only", tier="quick"
-    )
+    out = await grokbuild("build", admission, PROMPT, mode="read_only", tier="quick")
     assert out["status"] == "completed"
     assert out["metadata"]["tier"] == "quick"
     assert out["metadata"]["reasoning_effort"] == "minimal"
@@ -518,9 +518,90 @@ async def test_session_id_idempotent_emits_dash_s(
         return FakeProc()
 
     monkeypatch.setattr("asyncio.create_subprocess_exec", _spy_spawn)
-    await grokbuild(
-        "build", admission, PROMPT, mode="read_only", session_id="abc-123"
-    )
+    await grokbuild("build", admission, PROMPT, mode="read_only", session_id="abc-123")
     assert "-s" in captured[0]
     assert captured[0][captured[0].index("-s") + 1] == "abc-123"
     assert "-r" not in captured[0]
+
+
+# ── caller-wins-over-tier (independent axis control) ────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_caller_effort_overrides_tier_preset(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit effort wins over tier preset; reasoning_effort falls back to preset.
+
+    tier='quick' preset: reasoning_effort=minimal, effort=low.
+    Caller passes effort='max' → effort='max' in envelope, reasoning_effort=minimal.
+    """
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(monkeypatch)
+
+    out = await grokbuild(
+        "build", admission, PROMPT, mode="read_only", tier="quick", effort="max"
+    )
+
+    assert out["status"] == "completed"
+    assert out["metadata"]["tier"] == "quick"
+    assert out["metadata"]["effort"] == "max"  # caller wins
+    assert out["metadata"]["reasoning_effort"] == "minimal"  # preset fallback
+
+
+@pytest.mark.asyncio
+async def test_caller_reasoning_effort_overrides_tier_preset(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit reasoning_effort wins over tier preset; effort falls back to preset.
+
+    tier='quick' preset: reasoning_effort=minimal, effort=low.
+    Caller passes reasoning_effort='xhigh' → reasoning_effort='xhigh', effort=low.
+    """
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(monkeypatch)
+
+    out = await grokbuild(
+        "build",
+        admission,
+        PROMPT,
+        mode="read_only",
+        tier="quick",
+        reasoning_effort="xhigh",
+    )
+
+    assert out["status"] == "completed"
+    assert out["metadata"]["tier"] == "quick"
+    assert out["metadata"]["reasoning_effort"] == "xhigh"  # caller wins
+    assert out["metadata"]["effort"] == "low"  # preset fallback
+
+
+@pytest.mark.asyncio
+async def test_caller_both_axes_override_tier_preset(
+    admission: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both effort and reasoning_effort independently override tier preset.
+
+    tier='quick' preset: reasoning_effort=minimal, effort=low.
+    Caller overrides both axes → both caller values appear in the envelope.
+    """
+    install_capture_post_state(monkeypatch, status_post="", diff_stat="")
+    install_subprocess_exec(monkeypatch)
+
+    out = await grokbuild(
+        "build",
+        admission,
+        PROMPT,
+        mode="read_only",
+        tier="quick",  # preset: reasoning_effort=minimal, effort=low
+        effort="xhigh",  # override effort axis
+        reasoning_effort="high",  # override reasoning_effort axis
+    )
+
+    assert out["status"] == "completed"
+    assert out["metadata"]["tier"] == "quick"
+    assert out["metadata"]["effort"] == "xhigh"
+    assert out["metadata"]["reasoning_effort"] == "high"

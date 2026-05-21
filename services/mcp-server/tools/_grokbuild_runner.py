@@ -17,7 +17,12 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-from tools._grokbuild_constants import _NON_REASONING_MODELS, _SIDECAR_DIR
+from tools._grokbuild_constants import (
+    _MODEL_REGISTRY,
+    _SIDECAR_DIR,
+    _XAI_EFFORT_INJECT_MODELS,
+    _XAI_GROK43_EFFORT_STANZA,
+)
 
 STDOUT_MAX = 64 * 1024  # max bytes of stdout retained in the envelope (post-decode)
 STDERR_MAX = 16 * 1024  # max bytes of stderr retained in the envelope (post-decode)
@@ -153,7 +158,16 @@ def _build_argv(spec: RunnerSpec) -> list[str]:
         "--always-approve",
     ]
     if spec.model:
-        argv.extend(["--model", spec.model])
+        # For xAI grok-4.3 dispatches, substitute the base stanza with a tier-specific
+        # effort stanza so cloud-proxy can decode __effort_<value> and inject
+        # reasoning.effort.  The grok CLI ignores --reasoning-effort for custom stanzas;
+        # stanza substitution is the only reliable path for effort injection.
+        effective_model = (
+            _XAI_GROK43_EFFORT_STANZA.get(spec.tier, spec.model)
+            if spec.model in _XAI_EFFORT_INJECT_MODELS
+            else spec.model
+        )
+        argv.extend(["--model", effective_model])
     if combined_rules:
         argv.extend(["--rules", combined_rules])
 
@@ -162,12 +176,16 @@ def _build_argv(spec: RunnerSpec) -> list[str]:
         argv.append("-r" if spec.resume_strict else "-s")
         argv.append(spec.session_id)
 
-    _reasoning_capable = (
-        spec.model is not None and spec.model not in _NON_REASONING_MODELS
-    )
-    if spec.reasoning_effort is not None and _reasoning_capable:
+    # Per-flag capability check: model=None resolves to "grok-build" (CLI default).
+    # Unknown models (not in registry) pass both flags through — admission won't
+    # block, but the caller may still hit a CLI/API rejection downstream.
+    _lookup = spec.model if spec.model is not None else "grok-build"
+    _caps = _MODEL_REGISTRY.get(_lookup)
+    if spec.reasoning_effort is not None and (
+        _caps is None or _caps.supports_reasoning_effort
+    ):
         argv.extend(["--reasoning-effort", spec.reasoning_effort])
-    if spec.effort is not None and _reasoning_capable:
+    if spec.effort is not None and (_caps is None or _caps.supports_effort):
         argv.extend(["--effort", spec.effort])
     if spec.max_turns is not None:
         argv.extend(["--max-turns", str(spec.max_turns)])

@@ -131,7 +131,7 @@ def test_xai_grok3_sends_effort(model: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("model", ["grok-4.3"])
+@pytest.mark.parametrize("model", ["grok-4.3", "grok-4.20-multi-agent-0309"])
 def test_xai_grok43_sends_effort(model: str) -> None:
     assert _xai_supports_reasoning_effort(model) is True
     req = _req_with_effort(model, effort="medium")
@@ -149,7 +149,8 @@ def test_xai_grok43_sends_effort(model: str) -> None:
 @pytest.mark.parametrize(
     "model",
     [
-        "grok-4.20-multi-agent-0309",
+        "grok-4.20-0309-reasoning",
+        "grok-4.20-0309-non-reasoning",
         "grok-4-fast-reasoning",
         "grok-4",
     ],

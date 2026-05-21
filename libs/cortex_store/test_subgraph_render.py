@@ -17,6 +17,7 @@ from .dispatch_ops.ops_subgraph import _op_render_subgraph
 from .main import create_app
 from .subgraph_renderer import SubgraphRenderError, render_subgraph
 from .test_subgraph_render_fixtures import (
+    add_assertion,
     add_edge,
     add_entity,
     init_temp_db,
@@ -341,6 +342,187 @@ def test_route_returns_validation_envelope_shape(tmp_path, monkeypatch):
     assert body["code"] == "validation_error"
     assert body["source"] == "cortex-api"
     assert body["data"]["field"] == "root"
+
+
+# --- V1.5 polish: state signals block + provenance flags ---
+
+
+def test_v15_state_signals_block_emitted_when_predicate_summary_nonempty():
+    """Edge-derived predicate_summary surfaces as ## State signals block."""
+    conn = make_test_conn()
+    seed_grokbuild_graph(conn)
+    md = render_subgraph(conn, _ROOT, hops=1).rendered
+    # seed_grokbuild_graph has outgoing depends_on + inbound references
+    # edges, so Tier 2 synthesis yields a non-empty predicate_summary.
+    assert "## State signals" in md
+    assert "depends_on(" in md
+    # Block must precede Active Assertions in the rendered order.
+    assert md.index("## State signals") < md.index("## Active Assertions")
+    conn.close()
+
+
+def test_v15_state_signals_block_omitted_when_empty():
+    """Solo entity with no edges/archives has empty predicate_summary; block omitted."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:isolated", "decision", "Isolated", "No links.")
+    conn.commit()
+    md = render_subgraph(conn, "decision:isolated", hops=1).rendered
+    assert "## State signals" not in md
+    conn.close()
+
+
+def test_v15_provenance_flag_primary_source_backed():
+    """Assertion with URI-shaped evidence_uris gets [primary-source-backed]."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:src", "decision", "Sourced", "d")
+    add_assertion(
+        conn,
+        "decision:src",
+        "Source-backed claim.",
+        confidence="confirmed",
+        derivation_type="agent_observation",
+        evidence_uris=["cortex://notes/legal/exhibit-3.md"],
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:src", hops=1).rendered
+    assert "**[confirmed]** [primary-source-backed] Source-backed claim." in md
+    conn.close()
+
+
+def test_v15_provenance_flag_verbatim_quote_beats_uri():
+    """derivation_type='quotation' takes precedence over URI-shape check."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:quo", "decision", "Quoted", "d")
+    add_assertion(
+        conn,
+        "decision:quo",
+        "Verbatim claim.",
+        confidence="confirmed",
+        derivation_type="quotation",
+        evidence_uris=["cortex://notes/exhibit.md"],
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:quo", hops=1).rendered
+    assert "[verbatim-quote]" in md
+    assert "[primary-source-backed]" not in md
+    conn.close()
+
+
+def test_v15_provenance_flag_derived_for_inference():
+    """derivation_type='inference' without URI evidence gets [derived]."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:inf", "decision", "Inferred", "d")
+    add_assertion(
+        conn,
+        "decision:inf",
+        "Inferred claim.",
+        confidence="believed",
+        derivation_type="inference",
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:inf", hops=1).rendered
+    assert "**[believed]** [derived] Inferred claim." in md
+    conn.close()
+
+
+def test_v15_provenance_flag_observation_class_no_flag():
+    """direct_observation / agent_observation / user_statement carry no flag."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:obs", "decision", "Observed", "d")
+    add_assertion(
+        conn,
+        "decision:obs",
+        "Observed claim.",
+        confidence="confirmed",
+        derivation_type="direct_observation",
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:obs", hops=1).rendered
+    assert "**[confirmed]** Observed claim." in md
+    # No bracketed flag between **[confirmed]** and the claim.
+    assert "[primary-source-backed]" not in md
+    assert "[derived]" not in md
+    assert "[verbatim-quote]" not in md
+    conn.close()
+
+
+def test_v15_uri_shape_rejects_free_text_evidence():
+    """evidence_uris with free-text (not URI-shaped) doesn't trigger flag."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:freetext", "decision", "Freetext", "d")
+    add_assertion(
+        conn,
+        "decision:freetext",
+        "Loosely-evidenced claim.",
+        confidence="confirmed",
+        derivation_type="agent_observation",
+        evidence_uris=["various sources", "session context"],
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:freetext", hops=1).rendered
+    assert "[primary-source-backed]" not in md
+    assert "**[confirmed]** Loosely-evidenced claim." in md
+    conn.close()
+
+
+def test_v15_uri_shape_accepts_absolute_path():
+    """Absolute path (starts with /) qualifies as URI-shaped."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:abspath", "decision", "Abspath", "d")
+    add_assertion(
+        conn,
+        "decision:abspath",
+        "File-backed claim.",
+        confidence="confirmed",
+        derivation_type="agent_observation",
+        evidence_uris=["/data/files/exhibit.pdf"],
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:abspath", hops=1).rendered
+    assert "[primary-source-backed]" in md
+    conn.close()
+
+
+def test_v15_confidence_extraction_regex_unbroken():
+    """Provenance flag placement outside the bold preserves confidence-regex stability."""
+    import re
+
+    conn = make_test_conn()
+    add_entity(conn, "decision:re", "decision", "Regex", "d")
+    add_assertion(
+        conn,
+        "decision:re",
+        "Some claim.",
+        confidence="confirmed",
+        derivation_type="agent_observation",
+        evidence_uris=["cortex://notes/x.md"],
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:re", hops=1).rendered
+    # Canonical downstream parser pattern: capture confidence between **[ and ]**.
+    matches = re.findall(r"\*\*\[(\w+)\]\*\*", md)
+    assert "confirmed" in matches
+    conn.close()
+
+
+def test_v15_provenance_flag_renders_on_related_entity_top_assertion():
+    """Per-related-entity 'Top assertion:' line also carries the provenance flag."""
+    conn = make_test_conn()
+    add_entity(conn, "decision:root", "decision", "Root", "r")
+    add_entity(conn, "todo:child", "todo", "Child", "c", workflow_state="open")
+    add_edge(conn, "decision:root", "todo:child", "depends_on")
+    add_assertion(
+        conn,
+        "todo:child",
+        "Child claim.",
+        confidence="believed",
+        derivation_type="quotation",
+        evidence_uris=["cortex://exhibit.md"],
+    )
+    conn.commit()
+    md = render_subgraph(conn, "decision:root", hops=1).rendered
+    assert "**Top assertion:** [believed] [verbatim-quote] Child claim." in md
+    conn.close()
 
 
 # Inline guard against unused import flake \u2014 TestClient + sqlite3 are used above.

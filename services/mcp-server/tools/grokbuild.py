@@ -3,6 +3,7 @@
 Routes to per-op handlers:
 
 * ``op="build"`` → ``_grokbuild_dispatch.dispatch_op`` (CLI invocation)
+* ``op="models"`` → registry listing with per-model capability flags
 * ``op="worktree_create"`` / ``op="worktree_remove"`` / ``op="worktree_list"``
 * ``op="fetch_result"`` (sidecar replay for past dispatch_ids)
 * ``op="push"`` / ``op="pr_create"`` (git/PR helpers)
@@ -23,6 +24,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
+from tools._grokbuild_constants import _MODEL_REGISTRY
 from tools._grokbuild_dispatch import dispatch_op
 from tools._grokbuild_envelope import _envelope_rejected
 from tools._grokbuild_events import emit_grok_build_dispatch_rejected
@@ -78,9 +80,9 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
 ) -> dict[str, Any]:
     """Dispatch grokbuild op to the matching handler.
 
-    V1 op set: ``build`` (renamed from ``dispatch``), ``worktree_create``,
-    ``worktree_remove``, ``worktree_list``, ``fetch_result``, ``push``,
-    ``pr_create``.
+    V1 op set: ``build`` (renamed from ``dispatch``), ``models``,
+    ``worktree_create``, ``worktree_remove``, ``worktree_list``,
+    ``fetch_result``, ``push``, ``pr_create``.
 
     Retired in V1 (validator emits structured rejection):
 
@@ -105,6 +107,8 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
       accepted by ``reasoning_effort``.
     * ``mode``: ``read_only`` | ``edit``
     """
+    if op == "models":
+        return _list_models()
     if op == "build":
         return await dispatch_op(
             cwd,
@@ -173,6 +177,24 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     return _envelope_rejected(
         rejection_id, mode, cwd, session_id, model, reason_code, reason
     )
+
+
+def _list_models() -> dict[str, Any]:
+    """Build the op='models' response from the registry + live Stargate config."""
+    return {
+        "models": [
+            {
+                "id": model_id,
+                "supports_reasoning_effort": caps.supports_reasoning_effort,
+                "supports_effort": caps.supports_effort,
+                "supports_subagents": caps.supports_subagents,
+                "internal_multi_agent": caps.internal_multi_agent,
+                "default_reasoning_effort": caps.default_reasoning_effort,
+                "notes": caps.notes,
+            }
+            for model_id, caps in _MODEL_REGISTRY.items()
+        ]
+    }
 
 
 def register_grokbuild_tools(mcp: FastMCP) -> None:

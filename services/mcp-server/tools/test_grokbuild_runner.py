@@ -103,9 +103,7 @@ async def test_stdout_truncation(
     from tools._grokbuild_runner import SIDECAR_STDOUT_LINE_MAX
 
     chunk = next(
-        r
-        for r in lines
-        if r.get("phase") in ("stdout_chunk", "stdout_chunk_truncated")
+        r for r in lines if r.get("phase") in ("stdout_chunk", "stdout_chunk_truncated")
     )
     assert chunk.get("kept", len(chunk.get("data", ""))) >= SIDECAR_STDOUT_LINE_MAX
 
@@ -209,7 +207,9 @@ def test_system_context_routes_via_rules_flag(
 
 def test_continue_vs_resume_argv(admission: str) -> None:
     # V1: -r (strict resume) when resume_strict=True + session_id
-    strict = _build_argv(runner_spec(cwd=admission, session_id="abc", resume_strict=True))
+    strict = _build_argv(
+        runner_spec(cwd=admission, session_id="abc", resume_strict=True)
+    )
     assert "-r" in strict and strict[strict.index("-r") + 1] == "abc"
     assert "-s" not in strict
 
@@ -445,25 +445,77 @@ def test_build_argv_omits_optional_when_none() -> None:
 
 
 def test_build_argv_reasoning_effort_emitted() -> None:
-    spec = runner_spec(cwd="/tmp", reasoning_effort="high")
+    """--reasoning-effort is emitted for reasoning-capable models."""
+    spec = runner_spec(cwd="/tmp", reasoning_effort="high", model="grok-3")
     argv = _build_argv(spec)
     assert "--reasoning-effort" in argv
     assert argv[argv.index("--reasoning-effort") + 1] == "high"
 
 
 def test_build_argv_effort_emitted() -> None:
-    spec = runner_spec(cwd="/tmp", effort="max")
+    """--effort is emitted for reasoning-capable models."""
+    spec = runner_spec(cwd="/tmp", effort="max", model="grok-3")
     argv = _build_argv(spec)
     assert "--effort" in argv
     assert argv[argv.index("--effort") + 1] == "max"
 
 
-
 def test_build_argv_reasoning_effort_and_effort_both_emitted() -> None:
-    """Both flags can be emitted simultaneously; values are independent."""
-    spec = runner_spec(cwd="/tmp", reasoning_effort="xhigh", effort="max")
+    """Both flags emitted simultaneously for reasoning-capable model; values are independent."""
+    spec = runner_spec(
+        cwd="/tmp", reasoning_effort="xhigh", effort="max", model="grok-3"
+    )
     argv = _build_argv(spec)
     assert "--reasoning-effort" in argv
     assert argv[argv.index("--reasoning-effort") + 1] == "xhigh"
     assert "--effort" in argv
     assert argv[argv.index("--effort") + 1] == "max"
+
+
+def test_build_argv_suppresses_reasoning_flags_for_none_model() -> None:
+    """model=None (CLI default → grok-build) suppresses --reasoning-effort and --effort.
+
+    The grok-build model rejects both flags at the CLI level; suppression is the
+    only safe path when no explicit model is chosen.
+    """
+    spec = runner_spec(cwd="/tmp", reasoning_effort="high", effort="max")  # model=None
+    argv = _build_argv(spec)
+    assert "--reasoning-effort" not in argv
+    assert "--effort" not in argv
+
+
+def test_build_argv_suppresses_reasoning_flags_for_non_reasoning_model() -> None:
+    """grok-build registry entry (supports_reasoning_effort=False, supports_effort=False)
+    suppresses both flags even when explicitly set on the spec."""
+    spec = runner_spec(
+        cwd="/tmp", reasoning_effort="high", effort="max", model="grok-build"
+    )
+    argv = _build_argv(spec)
+    assert "--reasoning-effort" not in argv
+    assert "--effort" not in argv
+
+
+@pytest.mark.parametrize(
+    ("model", "expect_effort", "expect_reasoning_effort"),
+    [
+        ("xai/grok-4.20-0309-reasoning", True, False),
+        ("xai/grok-4.20-0309-non-reasoning", True, False),
+        ("xai/grok-4.20-multi-agent-0309", True, True),
+        ("xai/grok-4.3", True, True),
+    ],
+)
+def test_build_argv_registry_splits_effort_from_reasoning_effort(
+    model: str,
+    expect_effort: bool,
+    expect_reasoning_effort: bool,
+) -> None:
+    """Registry per-flag split: --effort is universal; --reasoning-effort gated by model.
+
+    grok-4.20-* models support --effort (agent-loop tier) but suppress
+    --reasoning-effort (silently swallowed by xAI CLI, API rejects it).
+    grok-4.3 supports both. Unknown models pass both through.
+    """
+    spec = runner_spec(cwd="/tmp", effort="max", reasoning_effort="high", model=model)
+    argv = _build_argv(spec)
+    assert ("--effort" in argv) == expect_effort
+    assert ("--reasoning-effort" in argv) == expect_reasoning_effort

@@ -110,6 +110,7 @@ class CardAssertion(BaseModel):
     derivation_type: str | None = None
     valid_from: str | None = None
     observed_at: str | None = None
+    evidence_uris: list[str] | None = None
 
 
 class CardEdgeTypeCount(BaseModel):

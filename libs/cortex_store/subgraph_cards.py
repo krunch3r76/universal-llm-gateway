@@ -12,7 +12,7 @@ import sqlite3
 from typing import Any
 
 from .card import get_entity_card
-from .db import query
+from .db import json_decode, query
 
 
 class CardBuildError(Exception):
@@ -95,7 +95,7 @@ def _override_top_k_with_superseded(
     for eid in cards:
         rows = query(
             conn,
-            "SELECT id, claim, confidence, derivation_type, valid_from, observed_at "
+            "SELECT id, claim, confidence, derivation_type, valid_from, observed_at, evidence_uris "
             "FROM assertions WHERE entity_id = ? "
             "ORDER BY COALESCE(entrenchment_score,0) DESC, "
             "  COALESCE(observed_at,'') DESC, id DESC LIMIT ?",
@@ -109,6 +109,7 @@ def _override_top_k_with_superseded(
                 "derivation_type": row.get("derivation_type"),
                 "valid_from": row.get("valid_from"),
                 "observed_at": row.get("observed_at"),
+                "evidence_uris": json_decode(row.get("evidence_uris")),
             }
             for row in rows
         ]

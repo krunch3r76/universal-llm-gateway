@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/providers", tags=["provider-native"])
 
 _MCP_SERVER_NAME = "vortex"
+_EFFORT_SUFFIX = "__effort_"
 
 
 def _inject_native_mcp(provider_key: str, body: dict) -> None:
@@ -146,6 +147,16 @@ async def _forward_native(
         body = {**body, "model": raw_model}
         _inject_native_mcp(provider_key, body)
 
+    # Decode __effort_<value> model suffix for xAI Responses API.
+    # The grok CLI silently ignores --reasoning-effort for custom stanzas;
+    # effort tier is encoded out-of-band in the model name so cloud-proxy
+    # can inject reasoning.effort before the request reaches xAI.
+    # Suffix is stripped here so upstream validation sees a clean model ID.
+    _xai_injected_effort: str | None = None
+    if provider_key == "xai" and _EFFORT_SUFFIX in raw_model:
+        raw_model, _xai_injected_effort = raw_model.split(_EFFORT_SUFFIX, 1)
+        body = {**body, "model": raw_model}
+
     try:
         _ = model_id_from_native(provider_key, raw_model)
     except ValueError as exc:
@@ -153,6 +164,21 @@ async def _forward_native(
 
     workspace_id = workspace_catalog_id_from_native(provider_key, raw_model)
     streaming = bool(body.get("stream", False))
+
+    # Inject reasoning.effort decoded from model suffix.
+    # Caller-supplied reasoning.effort in the body takes precedence (caller wins).
+    if _xai_injected_effort is not None:
+        existing_reasoning = body.get("reasoning") or {}
+        if "effort" not in existing_reasoning:
+            body = {
+                **body,
+                "reasoning": {**existing_reasoning, "effort": _xai_injected_effort},
+            }
+            logger.info(
+                "xAI reasoning.effort injected from model suffix — model=%s effort=%s",
+                raw_model,
+                _xai_injected_effort,
+            )
 
     try:
         adapter = forwarder.adapter_type(provider_key)

@@ -18,6 +18,65 @@ if TYPE_CHECKING:
 
 _DIRECTION_ARROW = {"outbound": "\u2192", "inbound": "\u2190", "cross": "\u2194"}
 
+_PROVENANCE_URI_PREFIXES = (
+    "cortex://",
+    "workspaces:",
+    "transcript:",
+    "agent-bus://",
+    "agent-bus:",
+    "https://",
+    "http://",
+    "file://",
+    "files://",
+    "files:",
+)
+
+
+def _is_uri_shaped(value: object) -> bool:
+    """True when ``value`` is a non-empty string with URI shape.
+
+    Accepts known scheme prefixes (cortex://, workspaces:, transcript:,
+    agent-bus://, https://, file://, files://) and absolute paths
+    starting with ``/``. Free-text evidence descriptions like
+    ``"various sources"`` do NOT qualify.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    if value.startswith("/"):
+        return True
+    return any(value.startswith(prefix) for prefix in _PROVENANCE_URI_PREFIXES)
+
+
+def _provenance_flag(assertion: dict[str, Any]) -> str:
+    """Return the leading-space provenance flag for an assertion, or empty.
+
+    Three rules in evaluation order (V1.5 spec, refined by assertion 10630):
+
+    1. ``[verbatim-quote]`` for ``derivation_type='quotation'`` — the
+       asserter cited the literal source text.
+    2. ``[primary-source-backed]`` when ``evidence_uris`` contains at
+       least one URI-shaped entry (scheme or absolute path).
+    3. ``[derived]`` for ``derivation_type='inference'`` — agent
+       synthesis that wants spot-checking.
+
+    Observation-class derivation types (direct_observation,
+    agent_observation, user_statement, commitment, stated, other) carry
+    no flag — they're treated as ground-state credibility.
+
+    The flag returns with a leading space so it slots into the existing
+    template positions: ``**[confidence]**{flag} {claim}``. Empty string
+    when no rule fires, so the format collapses cleanly.
+    """
+    dtype = assertion.get("derivation_type") or ""
+    if dtype == "quotation":
+        return " [verbatim-quote]"
+    uris = assertion.get("evidence_uris") or []
+    if isinstance(uris, list) and any(_is_uri_shaped(u) for u in uris):
+        return " [primary-source-backed]"
+    if dtype == "inference":
+        return " [derived]"
+    return ""
+
 
 def build_subgraph_markdown(
     *,
@@ -71,6 +130,14 @@ def _render_root(
     desc = _escape_md(descriptions.get(root_id, ""))
     if desc:
         lines.append(desc)
+    # State signals block (V1.5): surface predicate_summary — the
+    # highest-density navigational signal on the card — between the
+    # description and Active Assertions. Omitted when empty (e.g.
+    # tombstone-only cards have no aggregated forms to render).
+    psum = root_card.get("predicate_summary") or ""
+    if psum:
+        lines.append("## State signals")
+        lines.append(_escape_md(psum))
     return lines
 
 
@@ -87,7 +154,8 @@ def _render_root_assertions(
         claim = _escape_md(str(a.get("claim", "")))
         conf = a.get("confidence", "")
         observed = a.get("observed_at") or ""
-        assertion_lines.append(f"- **[{conf}]** {claim}")
+        flag = _provenance_flag(a)
+        assertion_lines.append(f"- **[{conf}]**{flag} {claim}")
         if observed:
             assertion_lines.append(f"  - *Observed:* {observed}")
     parts.append("\n".join(assertion_lines))
@@ -151,8 +219,9 @@ def _render_edge_block(
     t_assertions = tcard.get("top_k_assertions") or []
     if t_assertions:
         top = t_assertions[0]
+        flag = _provenance_flag(top)
         block_lines.append(
-            f"**Top assertion:** [{top.get('confidence', '')}] "
+            f"**Top assertion:** [{top.get('confidence', '')}]{flag} "
             f"{_escape_md(str(top.get('claim', '')))}"
         )
     block_lines.append("---")

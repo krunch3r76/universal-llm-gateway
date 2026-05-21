@@ -4,14 +4,26 @@ from __future__ import annotations
 
 
 def _xai_supports_reasoning_effort(model: str) -> bool:
-    """grok-3 family and grok-4.3 accept reasoning.effort control.
+    """grok-3 family, grok-4.3, and grok-4.20-multi-agent accept reasoning.effort.
 
-    Earlier grok-4 family models (pre-grok-4.3, including -reasoning variants)
-    rejected reasoningEffort despite xAI docs suggesting otherwise
-    (tested 2026-03-31). grok-4.3 explicitly supports reasoning.effort with
-    none/low/medium/high per current xAI docs (2026).
+    Other grok-4.20 variants (-reasoning, -non-reasoning) reject reasoningEffort
+    with HTTP 400 'Model does not support parameter reasoningEffort' (verified
+    direct against /v1/responses 2026-05-20 — same finding as 2026-03-31).
+    grok-4.3 explicitly supports reasoning.effort per xAI docs.
+    grok-4.20-multi-agent-0309 honors effort by scaling its internal swarm
+    (low/medium → ~4 agents, high/xhigh → ~16 agents); empirically verified
+    2026-05-20 (cortex 10603) — low→high reasoning_tokens 1081→10736
+    (~9.9x), input_tokens 3631→49658 (~13.7x).
     """
-    return any(prefix in model for prefix in ("grok-3-mini", "grok-3", "grok-4.3"))
+    return any(
+        prefix in model
+        for prefix in (
+            "grok-3-mini",
+            "grok-3",
+            "grok-4.3",
+            "grok-4.20-multi-agent",
+        )
+    )
 
 
 def _openai_supports_reasoning_effort(model: str) -> bool:

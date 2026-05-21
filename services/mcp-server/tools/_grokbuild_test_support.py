@@ -103,6 +103,7 @@ def runner_spec(
     cwd: str,
     mode: str = "read_only",
     system_context: str | None = None,
+    model: str | None = None,
     session_id: str | None = None,
     permission_mode: str = "plan",
     git_status_pre: str = "",
@@ -123,6 +124,10 @@ def runner_spec(
     Defaults to ``tier='thorough'`` for compatibility with existing tests
     that don't care about overlay output. ``continue_recent`` is gone —
     Phase 4's validator rejects it before the runner can see it.
+
+    ``model=None`` → grok-build CLI default (suppresses --reasoning-effort
+    and --effort in argv). Pass a non-None model (e.g. ``model="grok-3"``)
+    to test reasoning-flag emission paths.
     """
     return RunnerSpec(
         dispatch_id=dispatch_id,
@@ -131,7 +136,7 @@ def runner_spec(
         mode=mode,  # type: ignore[arg-type]
         permission_mode=permission_mode,
         system_context=system_context,
-        model=None,
+        model=model,
         session_id=session_id,
         timeout_seconds=timeout_seconds,
         grok_path=GROK_BIN,

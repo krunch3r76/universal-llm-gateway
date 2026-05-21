@@ -7,6 +7,7 @@ production schema for the subset of tables the renderer reads.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -20,8 +21,8 @@ CREATE TABLE entities (
 CREATE TABLE assertions (
     id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT, claim TEXT,
     confidence TEXT, superseded_by INTEGER, observed_at TEXT,
-    entrenchment_score REAL, evidence TEXT, derivation_type TEXT,
-    valid_from TEXT, predicate_form TEXT,
+    entrenchment_score REAL, evidence TEXT, evidence_uris TEXT,
+    derivation_type TEXT, valid_from TEXT, predicate_form TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE relationships (
@@ -105,13 +106,27 @@ def add_assertion(
     confidence: str = "confirmed",
     superseded_by: int | None = None,
     entrenchment: float = 1.0,
+    derivation_type: str | None = None,
+    evidence_uris: list[str] | None = None,
+    predicate_form: str | None = None,
 ) -> None:
     now = datetime.now(UTC).isoformat()
     conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, "
-        "superseded_by, observed_at, entrenchment_score) "
-        "VALUES (?,?,?,?,?,?)",
-        (eid, claim, confidence, superseded_by, now, entrenchment),
+        "superseded_by, observed_at, entrenchment_score, "
+        "derivation_type, evidence_uris, predicate_form) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            eid,
+            claim,
+            confidence,
+            superseded_by,
+            now,
+            entrenchment,
+            derivation_type,
+            json.dumps(evidence_uris) if evidence_uris else None,
+            predicate_form,
+        ),
     )
 
 
