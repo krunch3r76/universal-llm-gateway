@@ -73,6 +73,7 @@ from .ops_relationships import (
     _op_relationships,
 )
 from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
+from .ops_subgraph import _op_render_subgraph
 from .ops_todos import _op_todo_audit, _op_todo_candidates
 from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
@@ -142,6 +143,7 @@ _OPS: dict[str, Any] = {
     "rj_list": _op_rj_list,
     "rj_link": _op_rj_link,
     "rj_consolidate": _op_rj_consolidate,
+    "render_subgraph": _op_render_subgraph,
 }
 
 

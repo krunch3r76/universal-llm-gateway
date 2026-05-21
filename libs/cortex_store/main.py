@@ -40,6 +40,7 @@ from .routes import (
     salience,
     session_journals,
     stats,
+    subgraph,
     surface_forms,
     tags,
     todo_audit,
@@ -151,6 +152,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(resolve.router)
     app.include_router(tags.router)
     app.include_router(graph.router)
+    app.include_router(subgraph.router)
     app.include_router(reaper.router)
     app.include_router(reflective_journal.router)
     from .routes.triage import router as triage_router

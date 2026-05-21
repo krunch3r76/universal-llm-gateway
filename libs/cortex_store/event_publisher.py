@@ -5,10 +5,10 @@ receives cortex-api lifecycle signals (e.g. mcp.session.close.atomic,
 mcp.session.close.rejected) without requiring the mcp-server
 ``request_profile`` dependency.
 
-∀ emit call: fire-and-forget; drops oldest if queue is full, never blocks
+\u2200 emit call: fire-and-forget; drops oldest if queue is full, never blocks
 the caller. Falls back silently if the event service socket is unavailable.
 
-∀ signal: stdlib + universal_logging only — no mcp-server imports allowed.
+\u2200 signal: stdlib + universal_logging only \u2014 no mcp-server imports allowed.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
+from universal_event_bus.events import Event
+from universal_event_bus.events.factory import event_factory
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -36,7 +38,7 @@ _SEND_TIMEOUT = 2.0
 class _UDSPublisher:
     """Thread-based UDS publisher with bounded queue and auto-reconnect.
 
-    ∀ event: either delivered or dropped (never blocks the caller).
+    \u2200 event: either delivered or dropped (never blocks the caller).
     Drop policy: drop-oldest when queue full.
     """
 
@@ -104,7 +106,7 @@ _publisher: _UDSPublisher | None = _UDSPublisher(_EVENTS_SOCK) if _ENABLED else 
 def record(signal: str, **payload: Any) -> None:
     """Publish a structured event to the event service via UDS.
 
-    Wire format mirrors mcp_events.py — source is ``cortex-api`` here since
+    Wire format mirrors mcp_events.py \u2014 source is ``cortex-api`` here since
     cortex_store runs inside the cortex-api process, not the mcp-server.
     """
     if _publisher is None:
@@ -120,3 +122,89 @@ def record(signal: str, **payload: Any) -> None:
         "payload": payload,
     }
     _publisher.put_nowait(json.dumps(event, default=str) + "\n")
+
+
+@event_factory
+def cortex_subgraph_render_called(
+    render_id: str,
+    root: str,
+    hops: int,
+    edge_types_count: int,
+    top_k_assertions: int,
+    include_superseded: bool,
+) -> Event:
+    """cortex.subgraph.render.called \u2014 emitted at entry to render_subgraph (V1.1)."""
+    ev = Event(
+        signal="cortex.subgraph.render.called",
+        role="observation",
+        scope="global",
+        payload={
+            "render_id": render_id,
+            "root": root,
+            "hops": hops,
+            "edge_types_count": edge_types_count,
+            "top_k_assertions": top_k_assertions,
+            "include_superseded": include_superseded,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_subgraph_render_completed(
+    render_id: str,
+    root: str,
+    hops: int,
+    entity_count: int,
+    edge_count: int,
+    duration_ms: int,
+    rendered_bytes: int,
+) -> Event:
+    """cortex.subgraph.render.completed \u2014 emitted on successful render (V1.1)."""
+    ev = Event(
+        signal="cortex.subgraph.render.completed",
+        role="observation",
+        scope="global",
+        payload={
+            "render_id": render_id,
+            "root": root,
+            "hops": hops,
+            "entity_count": entity_count,
+            "edge_count": edge_count,
+            "duration_ms": duration_ms,
+            "rendered_bytes": rendered_bytes,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_subgraph_render_failed(
+    render_id: str,
+    root: str,
+    reason: str,
+    hops: int,
+) -> Event:
+    """cortex.subgraph.render.failed \u2014 emitted on error paths inside render_subgraph (V1.1).
+
+    The ``reason`` enum widens beyond V1.1 spec to carry field-level granularity:
+    ``root_missing``, ``hops_out_of_range``, ``top_k_out_of_range``,
+    ``unknown_edge_type``, ``entity_not_found``, ``entity_cap_exceeded``,
+    ``card_build_failed``. The grok V1 stub collapsed every validation
+    failure to ``"validation_error"`` \u2014 fixed in this revision.
+    """
+    ev = Event(
+        signal="cortex.subgraph.render.failed",
+        role="observation",
+        scope="global",
+        payload={
+            "render_id": render_id,
+            "root": root,
+            "reason": reason,
+            "hops": hops,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

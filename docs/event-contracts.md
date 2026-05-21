@@ -2163,6 +2163,9 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detector
 | `cortex.session.audit.gaps.observed` | `session_id`, `gap_count`, `criticals` (list of `{kind, subject}`) | WARN mode (Phase 2.0): session_close completed despite findings. |
 | `cortex.session.audit.blocked` | `session_id`, `criticals` (list of `{kind, subject, detail}`) | BLOCK mode (Phase 2.1) only: critical gap with no `defer_gaps` reason caused session_close to abort. `role="coordination"`. **Not yet emitted — Phase 2.1 pending.** |
 | `cortex.render.applied` | `view`, `subject`, `path`, `bytes_written` | Phase 4 (deferred): `render_into` success. Not yet emitted. |
+| `cortex.subgraph.render.called` | `render_id, root, hops, edge_types_count, top_k_assertions, include_superseded` | Entry to shared renderer (both REST and dispatch paths). `render_id` (uuid4 hex) correlates with `.completed` / `.failed` for the same call. |
+| `cortex.subgraph.render.completed` | `render_id, root, hops, entity_count, edge_count, duration_ms, rendered_bytes` | Successful render; `rendered_bytes` is UTF-8 length of markdown (generated_at excluded). |
+| `cortex.subgraph.render.failed` | `render_id, root, reason, hops` (reason ∈ `root_missing`, `hops_out_of_range`, `top_k_out_of_range`, `unknown_edge_type`, `entity_not_found`, `entity_cap_exceeded`, `card_build_failed`) | Error path inside renderer; emitted before structured envelope return. Reason enum widened from V1.1 spec to field-level granularity. |
 
 **Implementation note:** `cortex.session.audit.blocked` is the only `coordination`-role signal in this family. The `record()` shim defaults to `role="observation"` — confirm shim supports per-call role override before Phase 2.1 BLOCK-mode flip; if not, surface as a precondition.
 

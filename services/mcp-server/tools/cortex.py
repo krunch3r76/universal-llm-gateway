@@ -77,6 +77,19 @@ def register_cortex_tools(mcp: FastMCP) -> None:
           deadline_resolve  (deadline_id, resolution_note, resolved_at, evidence?, fulfilling_assertion_id?) — atomic two-write close: confirmed RESOLVED assertion + outcome:met on attributes. Eliminates ghost-deadline boot failures where agents forget the second write.
           todo_candidates   (q/query?, limit?, workflow_state?, priority?, domain?, domain_exclude?, context?) — ranked TODO retrieval for user intent; prefer over broad open TODO enumeration
           todo_audit        (stale_days?, limit?, domain?, priority?) — old/open TODO audit for deferral, closure, merge, or spec conversion
+          render_subgraph   (root, hops?, top_k_assertions?, include_superseded?, edge_types?) — render a cortex subgraph as deterministic markdown for session-open materialization.
+
+Use when:
+- Opening a session and needing a materialized canvas of a decision/todo and its related work (replaces fan-out: entity_get root + edge_traverse + entity_get per neighbor + assertions per node).
+- Building an artifact canvas for chat display.
+- Verifying a roadmap subgraph is intact after writes.
+
+Do NOT use for:
+- Looking up a single entity → use entity_get with intent='card'.
+- Hybrid search across cortex → use search.
+- Reasoning-edge traversal → use edge_traverse with edge_type filter (session_edges, not structural relationships).
+
+Hard cap: 50 entities per render. Subgraph_too_large 422 if exceeded — reduce hops or apply edge_types filter.
           audit             (subject?, kinds?, include_filesystem?) — run gap detectors for integrity audit (graph-only default; include_filesystem=true for fs checks). Returns findings + counts. Phase 1b of cortex-graph-projection-and-audit-primitives.
 
         confidence values: confirmed / believed / suspected / hypothesized
