@@ -17,11 +17,13 @@ import time
 from dataclasses import dataclass
 from typing import Literal
 
-from tools._grokbuild_constants import _SIDECAR_DIR
+from tools._grokbuild_constants import _NON_REASONING_MODELS, _SIDECAR_DIR
 
 STDOUT_MAX = 64 * 1024  # max bytes of stdout retained in the envelope (post-decode)
 STDERR_MAX = 16 * 1024  # max bytes of stderr retained in the envelope (post-decode)
-SIDECAR_STDOUT_LINE_MAX = 32 * 1024  # max CHARACTERS per stdout line persisted to sidecar
+SIDECAR_STDOUT_LINE_MAX = (
+    32 * 1024
+)  # max CHARACTERS per stdout line persisted to sidecar
 SIDECAR_STDERR_BYTE_MAX = 256 * 1024  # max CHARACTERS for stderr persisted to sidecar
 # Note: SIDECAR_*_MAX are applied to str via len() so they cap characters,
 # not bytes (review W2). For ASCII content chars==bytes; multi-byte UTF-8
@@ -34,15 +36,15 @@ SIDECAR_STDERR_BYTE_MAX = 256 * 1024  # max CHARACTERS for stderr persisted to s
 
 _READ_ONLY_PREFIX = (
     "MODE: read_only. The operator has invoked you in advisory mode. "
-    "Do NOT modify, create, or delete files. Do NOT run shell commands "
-    "that mutate the filesystem (no `git commit`, `git add`, `mv`, `rm`, "
-    "no editor saves, no code execution that writes outputs). Instead, "
-    "narrate the changes you would propose — describe the diff in prose, "
-    "name the files you would touch, and quote the exact patch hunks. "
-    "The operator will review your proposal and re-invoke you in edit "
-    "mode if they want the changes applied. If the task requires writing "
-    "to proceed (e.g., the user asked you to create a file), refuse and "
-    "explain that this mode does not permit writes."
+    "Do NOT modify, create, or delete source code files. Do NOT run shell commands "
+    "that mutate source files (no editor saves, no code generation that writes outputs). "
+    "Git index operations (git stash, git stash pop, git stash apply, git add, "
+    "git commit, git merge) ARE permitted when they are the explicit stated purpose "
+    "of the dispatch — these are bookkeeping operations, not source edits. "
+    "For all other tasks: narrate the changes you would propose — describe the diff "
+    "in prose, name the files you would touch, and quote the exact patch hunks. "
+    "The operator will review your proposal and re-invoke you in edit mode if they "
+    "want the changes applied."
 )
 
 _ALLOW = ("PATH", "HOME", "LANG", "LC_ALL", "CORTEX_DB_PATH", "TODOS_DB_PATH")
@@ -101,8 +103,12 @@ class RunnerResult:
     error: str = ""
     dirty_admission: bool = False
     # V1 additions:
-    reason_code: str = ""  # structured failure category on failed status; "" on success/timeout
-    resolved_session_id: str | None = None  # captured from streaming-json stdout sessionId
+    reason_code: str = (
+        ""  # structured failure category on failed status; "" on success/timeout
+    )
+    resolved_session_id: str | None = (
+        None  # captured from streaming-json stdout sessionId
+    )
 
 
 def _build_env() -> dict[str, str]:
@@ -156,9 +162,12 @@ def _build_argv(spec: RunnerSpec) -> list[str]:
         argv.append("-r" if spec.resume_strict else "-s")
         argv.append(spec.session_id)
 
-    if spec.reasoning_effort is not None:
+    _reasoning_capable = (
+        spec.model is not None and spec.model not in _NON_REASONING_MODELS
+    )
+    if spec.reasoning_effort is not None and _reasoning_capable:
         argv.extend(["--reasoning-effort", spec.reasoning_effort])
-    if spec.effort is not None:
+    if spec.effort is not None and _reasoning_capable:
         argv.extend(["--effort", spec.effort])
     if spec.max_turns is not None:
         argv.extend(["--max-turns", str(spec.max_turns)])

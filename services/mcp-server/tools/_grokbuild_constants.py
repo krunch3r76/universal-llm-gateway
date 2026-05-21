@@ -27,7 +27,7 @@ _SIDECAR_DIR: Final[Path] = Path("/tmp/logs/grokbuild")
 # grok argv). The reverse map is derived so adding a new mode cannot
 # silently leave the decode path with a stale reverse lookup.
 _PERMISSION_BY_MODE: Final[dict[str, str]] = {
-    "read_only": "plan",
+    "read_only": "acceptEdits",
     "edit": "acceptEdits",
 }
 _MODE_BY_PERMISSION: Final[dict[str, str]] = {
@@ -53,3 +53,15 @@ _TIER_PRESETS: Final[dict[str, _TierPreset]] = {
     "max": _TierPreset("xhigh", "max", 1800),
 }
 _VALID_TIERS: Final[frozenset[str]] = frozenset(_TIER_PRESETS.keys())
+
+# Models that do not accept reasoning controls. `grok` exposes `--effort`
+# (agent-loop tier: turn budget / subagent depth / retry behavior) and
+# `--reasoning-effort` (passthrough to the API `reasoning_effort` parameter)
+# as two distinct flags with distinct value spaces. Both are suppressed in
+# _build_argv for these models and for model=None (the CLI default,
+# currently grok-build) because `grok-build` rejects both flags entirely
+# and the API rejects `reasoning_effort` with HTTP 400 on the
+# grok-4.20-0309-reasoning / grok-4.20-0309-non-reasoning models despite
+# the CLI swallowing it with exit 0. Restoring either control requires
+# routing through a reasoning-capable model (e.g. grok-4.3).
+_NON_REASONING_MODELS: Final[frozenset[str]] = frozenset({"grok-build"})
