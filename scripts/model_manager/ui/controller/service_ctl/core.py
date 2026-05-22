@@ -40,6 +40,7 @@ from . import (
     cloud_proxy_service,
     cortex_api_service,
     event_service,
+    grokbuild_worker_service,
     rag_service,
 )
 
@@ -692,6 +693,28 @@ class ServiceController:
         """Rebuild agent-bus — host process, so rebuild = restart."""
         await self.stop_agent_bus()
         return await self.start_agent_bus()
+
+    async def start_grokbuild_worker(self) -> str:
+        """Start grokbuild-worker as host TCP subprocess."""
+        return await grokbuild_worker_service.start_grokbuild_worker(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def stop_grokbuild_worker(self) -> str:
+        """Stop grokbuild-worker gracefully."""
+        return await grokbuild_worker_service.stop_grokbuild_worker(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def restart_grokbuild_worker(self) -> str:
+        """Restart grokbuild-worker (stop then start)."""
+        await self.stop_grokbuild_worker()
+        return await self.start_grokbuild_worker()
+
+    async def rebuild_grokbuild_worker(self, *, no_cache: bool = False) -> str:  # noqa: ARG002
+        """Rebuild grokbuild-worker — host process, so rebuild = restart."""
+        await self.stop_grokbuild_worker()
+        return await self.start_grokbuild_worker()
 
     async def start_email_bridge(self) -> str:
         """Start email-bridge as host subprocess."""

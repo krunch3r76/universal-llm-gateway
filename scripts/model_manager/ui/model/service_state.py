@@ -80,6 +80,7 @@ class ServiceState:
             self.check_cortex_api(),
             self.check_agent_bus(),
             self.check_email_bridge(),
+            self.check_grokbuild_worker(),
         ]
 
     def check_rag(self) -> ServiceInfo:
@@ -489,6 +490,70 @@ class ServiceState:
                 pid, "src.main:app", "email-bridge.sock"
             ),
         )
+
+    GROKBUILD_WORKER_PID_FILE: Path = Path.home() / ".gateway" / "grokbuild-worker.pid"
+    GROKBUILD_WORKER_HOST: str = os.environ.get("GROKBUILD_WORKER_HOST", "127.0.0.1")
+    GROKBUILD_WORKER_PORT: int = int(os.environ.get("GROKBUILD_WORKER_PORT", "8090"))
+
+    def check_grokbuild_worker(self) -> ServiceInfo:
+        """Check grokbuild-worker status via PID file + TCP /health probe."""
+        pid, pid_note = self._resolve_pid_file(self.GROKBUILD_WORKER_PID_FILE)
+        host = self.GROKBUILD_WORKER_HOST
+        port = self.GROKBUILD_WORKER_PORT
+        port_open = self._port_open(port, host)
+        listener_pid = self._find_listener_pid(port) if port_open else None
+        if listener_pid is not None and listener_pid != pid:
+            self._write_pid_file(self.GROKBUILD_WORKER_PID_FILE, listener_pid)
+            pid = listener_pid
+            pid_note = self._merge_notes(
+                pid_note, "PID file refreshed from live listener"
+            )
+        healthy = port_open and self._grokbuild_worker_probe_http(host, port)
+        health_url = f"http://{host}:{port}/api/v1/grokbuild/health"
+        if pid is not None:
+            uptime = self._proc_uptime_str(pid)
+            uptime_str = f" ({uptime})" if uptime else ""
+            return ServiceInfo(
+                name="grokbuild-worker",
+                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                port=port,
+                pid=pid,
+                health_url=health_url,
+                detail=self._with_note(
+                    f"PID {pid}{uptime_str}"
+                    + ("" if healthy else ", health probe failed"),
+                    pid_note,
+                ),
+            )
+        if healthy:
+            return ServiceInfo(
+                name="grokbuild-worker",
+                status=ServiceStatus.RUNNING,
+                port=port,
+                health_url=health_url,
+                detail=self._with_note("Port open (PID file missing)", pid_note),
+            )
+        return ServiceInfo(
+            name="grokbuild-worker",
+            status=ServiceStatus.STOPPED,
+            port=port,
+            detail=pid_note or "",
+        )
+
+    def _grokbuild_worker_probe_http(self, host: str, port: int) -> bool:
+        """Probe ``/api/v1/grokbuild/health`` via TCP. Short timeout, fail closed."""
+        import http.client
+
+        try:
+            conn = http.client.HTTPConnection(host, port, timeout=_SERVICE_HEALTH_TIMEOUT)
+            try:
+                conn.request("GET", "/api/v1/grokbuild/health")
+                resp = conn.getresponse()
+                return resp.status == 200
+            finally:
+                conn.close()
+        except Exception:
+            return False
 
     EVENT_SERVICE_PID_FILE: Path = Path.home() / ".gateway" / "event-service.pid"
     EVENT_SERVICE_QUERY_SOCK: Path = Path(

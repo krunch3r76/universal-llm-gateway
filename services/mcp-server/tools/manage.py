@@ -240,7 +240,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              rebuild = restart.
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
 
-        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus, email_bridge
+        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus, email_bridge, grokbuild_worker
 
         IMPORTANT — sync_restart(service="mcp") self-restart semantics:
           This MCP server is itself the "mcp" service. sync_restart(service="mcp")

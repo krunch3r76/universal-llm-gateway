@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from .admission_state import router as admission_state_router
 from .gateways import router as gateways_router
+from .grokbuild import router as grokbuild_router
 from .model_availability_watch import router as model_availability_watch_router
 from .model_capacity import router as model_capacity_router
 from .model_status import router as model_status_router
@@ -37,3 +38,4 @@ router.include_router(rag_articles_router)
 router.include_router(rerank_router)
 router.include_router(admission_state_router)
 router.include_router(model_capacity_router)
+router.include_router(grokbuild_router)

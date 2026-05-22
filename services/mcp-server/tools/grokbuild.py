@@ -1,41 +1,83 @@
-"""grokbuild MCP tool — top-level op dispatcher for headless grok CLI work (V1).
+"""grokbuild MCP tool — thin relay to grokbuild-worker via Stargate (V2).
 
-Routes to per-op handlers:
+Routes every MCP op to the worker's ``/api/v1/grokbuild/*`` REST surface.
+The MCP tool descriptor (caller-visible op vocabulary, parameter schemas) is
+unchanged from V1 — only the execution host moved to grokbuild-worker.
 
-* ``op="build"`` → ``_grokbuild_dispatch.dispatch_op`` (CLI invocation)
-* ``op="models"`` → registry listing with per-model capability flags
-* ``op="worktree_create"`` / ``op="worktree_remove"`` / ``op="worktree_list"``
-* ``op="fetch_result"`` (sidecar replay for past dispatch_ids)
-* ``op="push"`` / ``op="pr_create"`` (git/PR helpers)
-
-Retired in V1 (uniform .rejected envelope at top level):
-
-* ``op='dispatch'`` → ``retired_op``
-* ``output_format='json'`` → ``retired_output_format``
-* ``continue_recent=True`` → ``retired_param``
-
-Unknown ops reject at the top level with ``reason_code="unknown_op"`` and
-emit ``mcp.grokbuild.dispatch.rejected`` (the dispatch family carries the
-catch-all for malformed entry calls).
+Retired ops (``op='dispatch'``, unknown ops) are still rejected at the relay
+layer to preserve backwards-compatible envelope shapes for callers that
+pre-date the V2 cutover.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import TYPE_CHECKING, Any, Literal
 
-from tools._grokbuild_constants import _MODEL_REGISTRY
-from tools._grokbuild_dispatch import dispatch_op
-from tools._grokbuild_envelope import _envelope_rejected
-from tools._grokbuild_events import emit_grok_build_dispatch_rejected
-from tools._grokbuild_fetch_result import fetch_result_op
-from tools._grokbuild_git_ops import pr_create_op, push_op
-from tools._grokbuild_worktree import worktree_create_op
-from tools._grokbuild_worktree_list import worktree_list_op
-from tools._grokbuild_worktree_remove import worktree_remove_op
+import httpx
+from transport_utils import DEFAULT_STARGATE_URL, make_async_client
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
+
+logger = get_logger(__name__)
+
+_SYNC_TIMEOUT = 60.0
+# POST /dispatches returns 202 immediately; no need for a long budget.
+_BUILD_TIMEOUT = 30.0
+
+# Allowed params for op="build" (mirrors GrokbuildDispatchRequest fields).
+_BUILD_PARAMS: frozenset[str] = frozenset(
+    "cwd prompt mode system_context model session_id continue_recent output_format "
+    "timeout_seconds tier reasoning_effort effort check no_subagents "
+    "disable_web_search max_turns best_of_n resume_strict".split()
+)
+
+# (HTTP method, path template, allowed param names)
+_OPS: dict[str, tuple[str, str, frozenset[str]]] = {
+    "models": ("GET", "/api/v1/grokbuild/models", frozenset()),
+    "worktree_create": (
+        "POST",
+        "/api/v1/grokbuild/worktrees",
+        frozenset({"name", "branch", "source_repo", "create_branch", "start_point"}),
+    ),
+    "worktree_list": ("GET", "/api/v1/grokbuild/worktrees", frozenset()),
+    "worktree_remove": (
+        "DELETE",
+        "/api/v1/grokbuild/worktrees/{name}",
+        frozenset({"name"}),
+    ),
+    "push": (
+        "POST",
+        "/api/v1/grokbuild/worktrees/{name}/push",
+        frozenset({"name", "remote", "branch", "set_upstream"}),
+    ),
+    "pr_create": (
+        "POST",
+        "/api/v1/grokbuild/worktrees/{name}/pull-requests",
+        frozenset({"name", "pr_title", "pr_body", "pr_base", "pr_head", "draft"}),
+    ),
+    "fetch_result": (
+        "GET",
+        "/api/v1/grokbuild/dispatches/{dispatch_id}/result",
+        frozenset({"dispatch_id", "format"}),
+    ),
+    "build": ("POST", "/api/v1/grokbuild/dispatches", _BUILD_PARAMS),
+    "build_status": (
+        "GET",
+        "/api/v1/grokbuild/dispatches/{dispatch_id}",
+        frozenset({"dispatch_id"}),
+    ),
+    "build_cancel": (
+        "DELETE",
+        "/api/v1/grokbuild/dispatches/{dispatch_id}",
+        frozenset({"dispatch_id"}),
+    ),
+}
+
+_PATH_PARAM_RE = re.compile(r"\{(\w+)\}")
 
 
 async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
@@ -84,15 +126,19 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     ``worktree_create``, ``worktree_remove``, ``worktree_list``,
     ``fetch_result``, ``push``, ``pr_create``.
 
-    Retired in V1 (validator emits structured rejection):
+    V2 additions (async build surface): ``build_status``, ``build_cancel``.
+    ``op='build'`` now returns a 202 async envelope (``dispatch_id``,
+    ``status_url``, ``events_url``); callers poll with ``build_status``
+    and retrieve the result with ``fetch_result``.
+
+    Retired in V1 (relay emits structured rejection):
 
     * ``op='dispatch'`` → ``retired_op`` (use ``op='build'``)
     * ``output_format='json'`` → ``retired_output_format`` (use ``streaming-json``)
     * ``continue_recent=True`` → ``retired_param`` (set ``session_id`` explicitly)
 
-    Tier resolution (only relevant for ``op='build'``): the dispatcher
-    overlays preset values onto unspecified params; per-param explicit
-    values always win. See ``_grokbuild_dispatch._TIER_PRESETS``.
+    Tier resolution (only relevant for ``op='build'``): the worker overlays
+    preset values onto unspecified params; per-param explicit values always win.
 
     Parameter valid values (``op='build'``):
 
@@ -107,93 +153,104 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
       accepted by ``reasoning_effort``.
     * ``mode``: ``read_only`` | ``edit``
     """
-    if op == "models":
-        return _list_models()
-    if op == "build":
-        return await dispatch_op(
-            cwd,
-            prompt,
-            mode=mode,
-            system_context=system_context,
-            model=model,
-            session_id=session_id,
-            continue_recent=continue_recent,
-            output_format=output_format,
-            timeout_seconds=timeout_seconds,
-            tier=tier,
-            reasoning_effort=reasoning_effort,
-            effort=effort,
-            check=check,
-            no_subagents=no_subagents,
-            disable_web_search=disable_web_search,
-            max_turns=max_turns,
-            best_of_n=best_of_n,
-            resume_strict=resume_strict,
-        )
-    if op == "worktree_create":
-        return await worktree_create_op(
-            name=name,
-            branch=branch,
-            source_repo=source_repo,
-            create_branch=create_branch,
-            start_point=start_point,
-        )
-    if op == "worktree_remove":
-        return await worktree_remove_op(name=name)
-    if op == "worktree_list":
-        return await worktree_list_op()
-    if op == "fetch_result":
-        return await fetch_result_op(dispatch_id=dispatch_id, format=format)
-    if op == "push":
-        return await push_op(
-            cwd=cwd, remote=remote, branch=branch, set_upstream=set_upstream
-        )
-    if op == "pr_create":
-        return await pr_create_op(
-            cwd=cwd,
-            pr_title=pr_title,
-            pr_body=pr_body,
-            pr_base=pr_base,
-            pr_head=pr_head,
-            draft=draft,
-        )
-    # Retired or unknown op — synthesize a rejection envelope at the top level.
-    rejection_id = str(uuid.uuid4())
+    # Capture function params before any local variables are assigned.
+    _kwargs = locals()
+
     if op == "dispatch":
-        reason_code = "retired_op"
-        reason = "op='dispatch' was retired in V1; use op='build'"
-    else:
-        reason_code = "unknown_op"
-        reason = f"unsupported op: {op!r}"
-    emit_grok_build_dispatch_rejected(
-        dispatch_id=rejection_id,
-        reason_code=reason_code,
-        reason=reason,
-        mode=mode,
-        op=op,
-        cwd=cwd,
-        model=model or "",
-    )
-    return _envelope_rejected(
-        rejection_id, mode, cwd, session_id, model, reason_code, reason
-    )
+        return _reject_local(
+            "retired_op", "op='dispatch' was retired in V1; use op='build'"
+        )
+    if op not in _OPS:
+        return _reject_local("unknown_op", f"unsupported op: {op!r}")
+
+    method, path_template, allowed = _OPS[op]
+    timeout = _BUILD_TIMEOUT if op == "build" else _SYNC_TIMEOUT
+    op_params = {k: _kwargs[k] for k in allowed}
+    return await _relay(method, path_template, op_params, timeout)
 
 
-def _list_models() -> dict[str, Any]:
-    """Build the op='models' response from the registry + live Stargate config."""
+def _reject_local(reason_code: str, reason: str) -> dict[str, Any]:
+    """Return a backwards-compatible rejected envelope for local relay rejections."""
     return {
-        "models": [
-            {
-                "id": model_id,
-                "supports_reasoning_effort": caps.supports_reasoning_effort,
-                "supports_effort": caps.supports_effort,
-                "supports_subagents": caps.supports_subagents,
-                "internal_multi_agent": caps.internal_multi_agent,
-                "default_reasoning_effort": caps.default_reasoning_effort,
-                "notes": caps.notes,
+        "dispatch_id": str(uuid.uuid4()),
+        "status": "rejected",
+        "stdout": "",
+        "stderr": "",
+        "exit_code": None,
+        "duration_s": 0.0,
+        "sidecar_path": None,
+        "metadata": {"reason_code": reason_code, "reason": reason},
+    }
+
+
+async def _relay(
+    method: str,
+    path_template: str,
+    params: dict[str, Any],
+    timeout: float,
+) -> dict[str, Any]:
+    path, body, query = _split_params(path_template, params, method)
+    async with make_async_client(DEFAULT_STARGATE_URL, timeout=timeout) as client:
+        try:
+            resp = await client.request(method, path, json=body, params=query)
+        except httpx.RequestError as exc:
+            logger.error(
+                "grokbuild relay transport failure: %s %s — %s", method, path, exc
+            )
+            return {
+                "error": {"code": "grokbuild_worker_unreachable", "message": str(exc)}
             }
-            for model_id, caps in _MODEL_REGISTRY.items()
-        ]
+
+    if resp.status_code >= 400:
+        return _http_error_to_mcp(resp)
+    try:
+        return resp.json()
+    except ValueError:
+        return {"error": {"code": "invalid_response", "message": resp.text[:200]}}
+
+
+def _split_params(
+    path_template: str,
+    params: dict[str, Any],
+    method: str,
+) -> tuple[str, dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve path params; split remainder into body (POST) or query (GET/DELETE)."""
+    path_param_names: set[str] = set(_PATH_PARAM_RE.findall(path_template))
+    path = _PATH_PARAM_RE.sub(
+        lambda m: str(params.get(m.group(1), m.group(0))),
+        path_template,
+    )
+    remaining = {
+        k: v for k, v in params.items() if k not in path_param_names and v is not None
+    }
+    if method in ("GET", "DELETE"):
+        return path, None, remaining or None
+    return path, remaining or None, None
+
+
+def _http_error_to_mcp(resp: httpx.Response) -> dict[str, Any]:
+    """Map a worker HTTP error response back to the MCP error envelope shape."""
+    try:
+        body: dict[str, Any] = resp.json()
+    except ValueError:
+        body = {}
+    raw_detail = body.get("detail")
+    # Prefer the FastAPI HTTPException detail dict; fall back to the flat body
+    # (e.g. TrackerCapacityError 429 returns reason_code/reason at the top level).
+    src = raw_detail if isinstance(raw_detail, dict) else body
+    reason_code = src.get(
+        "reason_code", "relay_error" if resp.status_code < 500 else "op_failed"
+    )
+    reason = src.get("reason", f"HTTP {resp.status_code}")
+    if resp.status_code < 500:
+        meta: dict[str, Any] = {"reason_code": reason_code, "reason": reason}
+        for k in ("running", "capacity", "retry_after"):
+            if k in body:
+                meta[k] = body[k]
+        return {"status": "rejected", "metadata": meta}
+    return {
+        "status": "failed",
+        "metadata": {"reason_code": reason_code, "reason": reason},
     }
 
 

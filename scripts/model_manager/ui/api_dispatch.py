@@ -27,11 +27,19 @@ VALID_SERVICES = frozenset(
         "event_service",
         "cortex_api",
         "agent_bus",
+        "grokbuild_worker",
         "email_bridge",
     }
 )
 REBUILD_SERVICES = frozenset(
-    {"mcp", "event_service", "cortex_api", "agent_bus", "email_bridge"}
+    {
+        "mcp",
+        "event_service",
+        "cortex_api",
+        "agent_bus",
+        "grokbuild_worker",
+        "email_bridge",
+    }
 )
 SYNC_RESTART_SERVICES = frozenset(
     {
@@ -42,6 +50,7 @@ SYNC_RESTART_SERVICES = frozenset(
         "cloud_proxy",
         "cortex_api",
         "agent_bus",
+        "grokbuild_worker",
         "event_service",
     }
 )
@@ -212,6 +221,8 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         return await ctl.rebuild_cortex_api()
     if service == "agent_bus":
         return await ctl.rebuild_agent_bus()
+    if service == "grokbuild_worker":
+        return await ctl.rebuild_grokbuild_worker()
     if service == "email_bridge":
         return await ctl.rebuild_email_bridge(no_cache=True)
     raise ValueError(f"rebuild not supported for '{service}'")
