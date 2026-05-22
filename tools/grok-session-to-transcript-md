@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""Convert a grok-direct session to transcript_md for cortex session_close."""
+
+import argparse
+import json
+import signal
+import sys
+from pathlib import Path
+from urllib.parse import quote
+
+_TRUNCATE = 4000
+
+
+def _truncate(text: str) -> str:
+    if len(text) > _TRUNCATE:
+        return text[:_TRUNCATE] + "\n[... truncated ...]"
+    return text
+
+
+def _text_from_content(content) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text", ""))
+        return "\n".join(parts)
+    return ""
+
+
+def _load_lines(path: Path) -> list[dict]:
+    lines = []
+    for raw in path.read_text().splitlines():
+        raw = raw.strip()
+        if raw:
+            lines.append(json.loads(raw))
+    return lines
+
+
+def _is_real_user(entry: dict) -> bool:
+    return entry.get("type") == "user" and not entry.get("synthetic_reason")
+
+
+def _render_tool_calls(tool_calls: list[dict]) -> str:
+    parts = []
+    for tc in tool_calls:
+        name = tc.get("name", "unknown")
+        try:
+            args = json.loads(tc.get("arguments", "{}"))
+            args_str = json.dumps(args, indent=2)
+        except (json.JSONDecodeError, TypeError):
+            args_str = str(tc.get("arguments", ""))
+        parts.append(f"```tool_use\n{name}({_truncate(args_str)})\n```")
+    return "\n\n".join(parts)
+
+
+def _render_tool_result(entry: dict) -> str:
+    content = entry.get("content", "")
+    if isinstance(content, (dict, list)):
+        content = json.dumps(content, indent=2)
+    return f"```tool_result\n{_truncate(str(content))}\n```"
+
+
+def convert(session_id: str, workspace: str) -> str:
+    encoded = quote(workspace, safe="")
+    session_dir = Path.home() / ".grok" / "sessions" / encoded / session_id
+    if not session_dir.exists():
+        print(f"error: session not found: {session_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    summary_path = session_dir / "summary.json"
+    history_path = session_dir / "chat_history.jsonl"
+
+    try:
+        summary = json.loads(summary_path.read_text())
+    except Exception as exc:
+        print(f"error: cannot read summary.json: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        entries = _load_lines(history_path)
+    except Exception as exc:
+        print(f"error: cannot read chat_history.jsonl: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    title = (
+        summary.get("generated_title") or summary.get("session_summary") or session_id
+    )
+    cwd = summary.get("info", {}).get("cwd") or summary.get("cwd", workspace)
+    branch = summary.get("head_branch", "")
+    commit = (summary.get("head_commit") or "")[:8]
+    created = summary.get("created_at", "")
+
+    lines: list[str] = [
+        f"# Session: {title}",
+        "",
+        f"**Session ID**: {session_id}",
+        f"**Workspace**: {cwd}",
+        f"**Branch**: {branch} ({commit})",
+        f"**Created**: {created}",
+        "",
+        "---",
+        "",
+    ]
+
+    turn_num = 0
+    i = 0
+    n = len(entries)
+
+    while i < n:
+        entry = entries[i]
+        etype = entry.get("type")
+
+        if etype == "system" or (etype == "user" and entry.get("synthetic_reason")):
+            i += 1
+            continue
+
+        if etype == "user" and _is_real_user(entry):
+            turn_num += 1
+            lines.append(f"## Turn {turn_num}")
+            lines.append("")
+            user_text = _truncate(_text_from_content(entry.get("content", [])))
+            lines.append(f"**User:** {user_text}")
+            lines.append("")
+            i += 1
+            # Consume all subsequent assistant + tool_result entries until next real user
+            while i < n:
+                next_entry = entries[i]
+                ntype = next_entry.get("type")
+                if ntype == "user" and _is_real_user(next_entry):
+                    break
+                if ntype == "user" and next_entry.get("synthetic_reason"):
+                    i += 1
+                    continue
+                if ntype == "assistant":
+                    text = _text_from_content(next_entry.get("content", ""))
+                    if text.strip():
+                        lines.append(f"**Assistant:** {_truncate(text)}")
+                        lines.append("")
+                    tool_calls = next_entry.get("tool_calls", [])
+                    if tool_calls:
+                        lines.append(_render_tool_calls(tool_calls))
+                        lines.append("")
+                    i += 1
+                elif ntype == "tool_result":
+                    lines.append(_render_tool_result(next_entry))
+                    lines.append("")
+                    i += 1
+                else:
+                    i += 1
+            continue
+
+        i += 1
+
+    return "\n".join(lines)
+
+
+def main() -> None:
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    parser = argparse.ArgumentParser(
+        description="Convert a grok-direct session to transcript_md for cortex session_close."
+    )
+    parser.add_argument("session_id", help="Session UUID")
+    parser.add_argument(
+        "--workspace",
+        default=None,
+        help="Workspace path to locate the session (default: cwd)",
+    )
+    parser.add_argument(
+        "--out", default=None, help="Write output to file instead of stdout"
+    )
+    args = parser.parse_args()
+
+    workspace = args.workspace or str(Path.cwd())
+    result = convert(args.session_id, workspace)
+
+    if args.out:
+        Path(args.out).write_text(result)
+    else:
+        print(result)
+
+
+if __name__ == "__main__":
+    main()
