@@ -66,6 +66,7 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
             resume_strict=req.resume_strict,
             dispatch_id=entry.dispatch_id,
             proc_pid_holder=entry.pid_holder,
+            recursion_depth=req.recursion_depth,
         )
     except asyncio.CancelledError:
         _finalize(

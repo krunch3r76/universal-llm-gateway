@@ -86,6 +86,9 @@ models/
 # Pydantic schema modules under libs/cortex_store/models/ are source, not weights
 !libs/cortex_store/models/
 !libs/cortex_store/models/**
+# Pydantic models under services/grokbuild_worker/models/ are source, not weights
+!services/grokbuild_worker/models/
+!services/grokbuild_worker/models/**
 # Negation above re-includes bytecode; keep it untracked
 libs/cortex_store/models/**/__pycache__/
 summaries/

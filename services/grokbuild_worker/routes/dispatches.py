@@ -142,6 +142,34 @@ async def start_dispatch(
     other rejection codes (e.g. ``mcp.grokbuild.dispatch.rejected`` on
     the lib side).
     """
+    _recursion_depth_limit = 2
+    if req.recursion_depth is not None and req.recursion_depth > _recursion_depth_limit:
+        rejection_id = str(uuid.uuid4())
+        publish_nowait(
+            GrokbuildDispatchRejectedEvent(
+                dispatch_id=rejection_id,
+                reason_code="recursion_depth_exceeded",
+                reason=(
+                    f"recursion_depth {req.recursion_depth} exceeds limit "
+                    f"{_recursion_depth_limit}"
+                ),
+                running=0,
+                capacity=0,
+            )
+        )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "reason_code": "recursion_depth_exceeded",
+                "reason": (
+                    f"recursion_depth {req.recursion_depth} exceeds limit "
+                    f"{_recursion_depth_limit}"
+                ),
+                "depth_received": req.recursion_depth,
+                "depth_limit": _recursion_depth_limit,
+            },
+        )
+
     tracker = _get_tracker(request)
     try:
         dispatch_id = await tracker.start(req)

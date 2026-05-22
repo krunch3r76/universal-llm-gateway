@@ -269,6 +269,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         timeout_seconds: int | None = None,
         thread: str | None = None,
         subject: str | None = None,
+        recursion_depth: int | None = None,
     ) -> dict[str, Any]:
         """Direct native-frontier dispatch (no role envelope) with explicit op discrimination.
 
@@ -286,6 +287,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``transcript_id`` — caller's session ID for provenance attribution only.
         Recorded in the execution record; never forwarded to the dispatched model.
         A forward-reference to an in-progress session is fine.
+
+        ``recursion_depth`` — MQ3 dispatch chain depth. Callers pass the current
+        depth (read from ``GROKBUILD_RECURSION_DEPTH`` env or incremented from a
+        parent dispatch). Stargate enforces depth ≤ 2; exceeding it returns
+        ``reason_code="recursion_depth_exceeded"``.
 
         Use ``team_dispatch`` for role-envelope dispatch with team-seat assignment.
         """
@@ -323,6 +329,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ("transcript_id", transcript_id),
             ("caller_agent", caller_agent),
             ("timeout_seconds", timeout_seconds),
+            ("recursion_depth", recursion_depth),
         ):
             if val is not None:
                 body[key] = val

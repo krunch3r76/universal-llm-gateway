@@ -69,6 +69,10 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
     sidecar = _sidecar_path(spec.dispatch_id)
     gaps: list[int] = [0]
 
+    _env = _build_env()
+    if spec.recursion_depth is not None:
+        _env["GROKBUILD_RECURSION_DEPTH"] = str(spec.recursion_depth)
+
     try:
         _append_sidecar(
             sidecar,
@@ -76,7 +80,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
                 "phase": "started",
                 "ts": int(time.time() * 1000),
                 "argv": argv,
-                "env_keys": sorted(_build_env()),
+                "env_keys": sorted(_env),
                 "cwd": spec.cwd,
                 "mode": spec.mode,
                 "permission_mode": spec.permission_mode,
@@ -118,7 +122,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
         proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=spec.cwd,
-            env=_build_env(),
+            env=_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,

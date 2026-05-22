@@ -32,7 +32,8 @@ _BUILD_TIMEOUT = 30.0
 _BUILD_PARAMS: frozenset[str] = frozenset(
     "cwd prompt mode system_context model session_id continue_recent output_format "
     "timeout_seconds tier reasoning_effort effort check no_subagents "
-    "disable_web_search max_turns best_of_n resume_strict".split()
+    "disable_web_search max_turns best_of_n resume_strict "
+    "seat role recursion_depth".split()
 )
 
 # (HTTP method, path template, allowed param names)
@@ -102,6 +103,10 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     max_turns: int | None = None,
     best_of_n: int | None = None,
     resume_strict: bool = False,
+    # MQ3 (G7): audit + recursion enforcement.
+    seat: str | None = None,  # caller seat slug; default "grok-api" applied at worker
+    role: str | None = None,  # caller role slug; default "artisan" applied at worker
+    recursion_depth: int | None = None,  # MQ3 depth tracking; worker rejects if > 2
     # worktree ops surface.
     name: str = "",
     branch: str = "",
@@ -152,6 +157,11 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
       Note: ``none`` and ``minimal`` are NOT valid here; they are only
       accepted by ``reasoning_effort``.
     * ``mode``: ``read_only`` | ``edit``
+    * ``seat``: caller seat slug (e.g. ``grok-direct``); default applied at worker.
+    * ``role``: caller role slug (e.g. ``artisan``); default applied at worker.
+    * ``recursion_depth``: MQ3 dispatch chain depth. Worker rejects with
+      ``recursion_depth_exceeded`` if > 2. Callers should pass the current
+      depth from ``GROKBUILD_RECURSION_DEPTH`` (set in env by the outer worker).
     """
     # Capture function params before any local variables are assigned.
     _kwargs = locals()

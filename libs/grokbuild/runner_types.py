@@ -60,6 +60,10 @@ class RunnerSpec:
     # ``list[int]`` is mutable and survives ``frozen=True`` (we mutate the
     # referenced list, not the field binding).
     proc_pid_holder: list[int] | None = None
+    # MQ3: caller-provided dispatch depth for recursion enforcement (G7).
+    # When non-None, the runner injects GROKBUILD_RECURSION_DEPTH=<value>
+    # into the subprocess env so nested dispatches can propagate the chain.
+    recursion_depth: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

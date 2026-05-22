@@ -124,6 +124,7 @@ async def dispatch_op(
     resume_strict: bool,
     dispatch_id: str | None = None,
     proc_pid_holder: list[int] | None = None,
+    recursion_depth: int | None = None,
 ) -> dict[str, Any]:
     """Run the full dispatch flow and return the uniform envelope.
 
@@ -241,6 +242,7 @@ async def dispatch_op(
             resume_strict=resume_strict,
             vr=vr,
             proc_pid_holder=proc_pid_holder,
+            recursion_depth=recursion_depth,
         )
     finally:
         await release_cwd(cwd)
@@ -263,6 +265,7 @@ async def _run_and_envelope(
     resume_strict: bool,
     vr: ValidationResult,
     proc_pid_holder: list[int] | None = None,
+    recursion_depth: int | None = None,
 ) -> dict[str, Any]:
     """Run grok and assemble the completed/failed/timeout envelope."""
     spec = RunnerSpec(
@@ -288,6 +291,7 @@ async def _run_and_envelope(
         resume_strict=resume_strict,
         dirty_admission=vr.dirty_admission,
         proc_pid_holder=proc_pid_holder,
+        recursion_depth=recursion_depth,
     )
     rr = await run_dispatch(spec)
     duration_s = time.monotonic() - t0
