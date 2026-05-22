@@ -27,14 +27,14 @@ from typing import Final
 # (append NDJSON) hit this directory; fetch_result reads from it.
 #
 # Env-driven (V2): the grokbuild-worker `WorkerConfig.sidecar_dir` propagates
-# through `GROKBUILD_SIDECAR_DIR` so the lib reads from the operator-locked
-# path (`/var/lib/grokbuild-worker/sidecars/` per decision:grokbuild-execution-
-# tracker-shape A.2 override). The default value matches `WorkerConfig`'s
-# default so the lib and worker land on the same dir even when the env var
-# is missing in a bare-metal shell.
+# through `GROKBUILD_SIDECAR_DIR` so the lib reads from the same path as the
+# worker.  Default is XDG-compliant (~/.local/share/grokbuild-worker/sidecars);
+# expanduser() handles the tilde so the default works even when the env var is
+# absent.  Docker deployments set GROKBUILD_SIDECAR_DIR explicitly to keep the
+# bind-mounted /var/lib path; env var override always takes precedence.
 _SIDECAR_DIR: Final[Path] = Path(
-    os.getenv("GROKBUILD_SIDECAR_DIR", "/var/lib/grokbuild-worker/sidecars")
-)
+    os.getenv("GROKBUILD_SIDECAR_DIR", "~/.local/share/grokbuild-worker/sidecars")
+).expanduser()
 
 
 # mode ↔ grok --permission-mode mapping. Canonical direction is

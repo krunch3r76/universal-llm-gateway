@@ -24,7 +24,15 @@ _READ_ONLY_PREFIX = (
     "want the changes applied."
 )
 
-_ALLOW = ("PATH", "HOME", "LANG", "LC_ALL", "CORTEX_DB_PATH", "TODOS_DB_PATH")
+_ALLOW = (
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "CORTEX_DB_PATH",
+    "TODOS_DB_PATH",
+    "GROKBUILD_RECURSION_DEPTH",
+)
 
 
 def _build_env() -> dict[str, str]:

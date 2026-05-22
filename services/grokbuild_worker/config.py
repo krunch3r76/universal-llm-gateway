@@ -2,13 +2,18 @@
 
 Operator-locked decisions encoded here:
 
-* Sidecar dir: ``/var/lib/grokbuild-worker/sidecars/`` (service-owned).
+* Sidecar dir default: ``~/.local/share/grokbuild-worker/sidecars/`` (XDG,
+  user-writable, no root required).  Docker deployments set
+  ``GROKBUILD_SIDECAR_DIR`` explicitly to keep the bind-mounted
+  ``/var/lib/grokbuild-worker/sidecars`` path.
+* Registry path default: ``~/.local/share/grokbuild-worker/registry.json``
+  — same XDG root.
 * No ``GROKBUILD_AUTH_TOKEN`` — Stargate enforces auth at its edge and
   the worker trusts requests arriving from Stargate (same pattern as
   ``cortex-api`` / ``agent-bus``).
 
-Same defaults apply to bare-metal systemd and the container fallback;
-the container compose bind-mounts host paths at identical locations.
+``GROKBUILD_SIDECAR_DIR`` / ``GROKBUILD_REGISTRY_PATH`` env var overrides
+always take precedence over the defaults.
 """
 
 from __future__ import annotations
@@ -48,10 +53,10 @@ def load_config() -> WorkerConfig:
         host=os.environ.get("GROKBUILD_WORKER_HOST", "127.0.0.1"),
         port=int(os.environ.get("GROKBUILD_WORKER_PORT", "8090")),
         sidecar_dir=_env_path(
-            "GROKBUILD_SIDECAR_DIR", "/var/lib/grokbuild-worker/sidecars"
+            "GROKBUILD_SIDECAR_DIR", "~/.local/share/grokbuild-worker/sidecars"
         ),
         registry_path=_env_path(
-            "GROKBUILD_REGISTRY_PATH", "/var/lib/grokbuild-worker/registry.json"
+            "GROKBUILD_REGISTRY_PATH", "~/.local/share/grokbuild-worker/registry.json"
         ),
         grok_bin_path=_env_path("GROK_BIN_PATH", "/home/io/.local/bin/grok"),
         grok_auth_dir=_env_path("GROK_AUTH_DIR", "/home/io/.grok"),

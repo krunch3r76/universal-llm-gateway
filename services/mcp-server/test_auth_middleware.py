@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 from typing import Any
@@ -53,3 +54,39 @@ def test_static_caller_identity_defaults_to_static() -> None:
     assert (
         auth_middleware._resolve_static_caller_identity("Bearer token-123") == "static"
     )
+
+
+# ── VORTEX_BEARER_TOKENS multi-bearer smoke tests ────────────────────────────
+
+
+def test_vortex_bearer_tokens_additional_token_accepted(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "grok-direct-token\ncursor-token")
+    auth_middleware = _auth_middleware()
+    assert auth_middleware._is_static_token_authorized("Bearer grok-direct-token")
+    assert auth_middleware._is_static_token_authorized("Bearer cursor-token")
+
+
+def test_vortex_bearer_tokens_primary_token_still_accepted(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "grok-direct-token")
+    auth_middleware = _auth_middleware()
+    # Primary MCP_AUTH_TOKEN must remain accepted alongside extra tokens.
+    assert auth_middleware._is_static_token_authorized("Bearer token-123")
+
+
+def test_vortex_bearer_tokens_absent_no_change() -> None:
+    os.environ.pop("VORTEX_BEARER_TOKENS", None)
+    auth_middleware = _auth_middleware()
+    assert len(auth_middleware._bearer_tokens) == 0
+    assert not auth_middleware._is_static_token_authorized("Bearer unknown-token")
+
+
+def test_vortex_bearer_tokens_blank_lines_ignored(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setenv("VORTEX_BEARER_TOKENS", "\n  \ngrok-direct-token\n\n")
+    auth_middleware = _auth_middleware()
+    assert auth_middleware._bearer_tokens == frozenset({"grok-direct-token"})

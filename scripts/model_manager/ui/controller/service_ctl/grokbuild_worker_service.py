@@ -26,13 +26,13 @@ _LOG_DIR = Path("/tmp/logs/grokbuild-worker")
 _DEFAULT_HOST = os.environ.get("GROKBUILD_WORKER_HOST", "127.0.0.1")
 _DEFAULT_PORT = int(os.environ.get("GROKBUILD_WORKER_PORT", "8090"))
 
-# Operator-locked defaults from decision:grokbuild-execution-tracker-shape
-# (assertion 10634, Phase A.2). The lib (`libs/grokbuild/constants.py` /
-# `libs/grokbuild/registry.py`) consults the env vars below — propagate
-# unconditionally so the lib's hardcoded fallback never gets a chance to
-# diverge from the worker config's view of these paths.
-_DEFAULT_SIDECAR_DIR = "/var/lib/grokbuild-worker/sidecars"
-_DEFAULT_REGISTRY_PATH = "/var/lib/grokbuild-worker/registry.json"
+# XDG-compliant defaults (user-writable, no root required).  The lib
+# (`libs/grokbuild/constants.py`) and worker config both use the same tilde
+# string; Path.expanduser() is applied downstream (in config._env_path and
+# constants._SIDECAR_DIR).  Propagate unconditionally so the lib's default
+# never diverges from the worker's view when these env vars are absent.
+_DEFAULT_SIDECAR_DIR = "~/.local/share/grokbuild-worker/sidecars"
+_DEFAULT_REGISTRY_PATH = "~/.local/share/grokbuild-worker/registry.json"
 
 
 def _tcp_config() -> tuple[str, int]:

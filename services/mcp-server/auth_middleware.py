@@ -102,6 +102,12 @@ class AuthMiddleware:
         self._token = token
         self._oauth_service = oauth_service
         self._cursor_token = os.getenv("MCP_CURSOR_AUTH_TOKEN", "").strip()
+        # Additional valid bearer tokens, one per line. Each is independently
+        # valid; absent or empty → no extra tokens (backward-compatible).
+        _extra = os.getenv("VORTEX_BEARER_TOKENS", "")
+        self._bearer_tokens: frozenset[str] = frozenset(
+            t for line in _extra.splitlines() if (t := line.strip())
+        )
 
     @staticmethod
     def _slugify(text: str, max_len: int = 60) -> str:
@@ -162,8 +168,10 @@ class AuthMiddleware:
     def _is_static_token_authorized(self, auth_header: str) -> bool:
         """Return True when auth header matches configured static token(s)."""
         token = self._extract_authorization_token(auth_header)
-        return token == self._token or (
-            self._cursor_token and token == self._cursor_token
+        return (
+            token == self._token
+            or (self._cursor_token and token == self._cursor_token)
+            or (token is not None and token in self._bearer_tokens)
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
