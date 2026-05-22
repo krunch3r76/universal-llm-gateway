@@ -122,6 +122,9 @@ README_REVISED.md
 
 # Documentation — root and selected scoped READMEs + architecture are public
 **/*.md
+!/AGENTS.md
+!/services/AGENTS.md
+!/libs/AGENTS.md
 !/README.md
 !/CONTRIBUTING.md
 !/examples/adding-model-workflow-cpu.md

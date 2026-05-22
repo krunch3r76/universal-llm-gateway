@@ -1,0 +1,201 @@
+# Universal LLM Gateway — Agent Guide (grok-direct)
+
+This repository is the **Universal LLM Gateway (ULG)** workspace: the integration hub for local and cloud LLM routing (Stargate), inference workers, MCP tooling (vortex), pipelines, RAG, cortex memory, and agent-bus coordination. Operators and agents working here share one ecosystem; conventions below apply when you boot **cold in a terminal** via the Grok CLI (`grok`) with vortex MCP wired—not when you are inside Cursor IDE.
+
+Canonical rule sources remain `.cursor/rules/` and `/mnt/torus/projects/.cursor/rules/`. This file is the **grok-direct projection** (Phase 0 hand-authored). Deeper subtree scope: `services/AGENTS.md`, `libs/AGENTS.md`.
+
+---
+
+## Agent identity
+
+| Field | Value |
+|---|---|
+| **Family** | Grok |
+| **Seat** | `grok-direct` (operator-driven Grok CLI in a workspace terminal) |
+| **Not** | `grok-cursor` (Grok *inside* Cursor IDE—that is a different registered seat) |
+
+**Single identity per session.** A grok-direct session does not split into lead/coder/reviewer seats. All cortex assertions, agent-bus posts, and journal entries use `agent=grok-direct` and family `Grok`.
+
+**Sign-off:** end substantive turns with the model family only—`Grok`, or versioned (`Grok 4.20`, etc.). Do not sign off with seat slugs (`grok-direct`), role names, or hybrid labels like `Grok-cursor`.
+
+**Audit (MQ4):** identity drift is detected periodically, not at write time. Example gap query:
+
+```sql
+SELECT agent FROM assertions
+WHERE agent = 'grok-direct' AND seeded_by NOT LIKE 'grok%';
+```
+
+(Track B Output 2 seat registry—`config/agents.yaml`, `libs/agent_seat/registry.py`—may still be pending; use `grok-direct` in MCP calls regardless.)
+
+---
+
+## Cortex boot
+
+Run this ritual at session start (same intent as Cursor’s `cursor-boot_ws.mdc`; you call MCP tools directly—no slash-command wrapper):
+
+1. **Open todos** — `cortex(tool="entities", arguments={"workflow_state": "open"})`
+2. **Prior context** — `cortex(tool="journal_read")`
+3. **Active threads** — `agent_bus(tool="threads", arguments={"last": 10})`
+4. **Skill manifest** — `fs(sandbox="cortex", op="list", path="agent-skills")` then read skills relevant to the task
+
+Optional slim briefing: `cortex_boot(agent="grok-direct", family="Grok", session_id="grok-direct-YYYY-MM-DD-HHmm")`.
+
+**Investigation order:** for failures, query the Event Service first (`observability` or `scripts/query-events`), then logs under `/tmp/logs/`.
+
+---
+
+## MCP surface
+
+Vortex is **live** for grok-direct via global `~/.grok/config.toml` (wired 2026-05-22). Shape (substitute your bearer token; keep the file mode `0600`):
+
+```toml
+[mcp_servers.user-vortex]
+url = "https://mcp.k-1.me/mcp"
+type = "http"
+enabled = true
+
+[mcp_servers.user-vortex.headers]
+Authorization = "Bearer <MCP_AUTH_TOKEN>"
+```
+
+| Property | Value |
+|---|---|
+| **Server** | `user-vortex` (22 tools) |
+| **Auth** | Static bearer; reuse `MCP_AUTH_TOKEN` (OD3—per-seat token is audit nice-to-have only) |
+| **Scope** | Full vortex surface, symmetric with Cursor for this deployment (OD1) |
+
+**Hard-excluded MCP servers** (never available to grok-direct): `cursor-ide-browser`, `cursor-app-control`, `cursor-backend-control`. They are Cursor-internal; grok CLI cannot use them meaningfully.
+
+Primary tools: `cortex`, `cortex_boot`, `fs`, `agent_bus`, `observability`, `rag`, `pipeline`, `grokbuild`, `manage`, `dispatch`, `frontier_dispatch`, `team_dispatch`, and the rest of the vortex catalog.
+
+Phase 2 will codegen this block from workspace-root `mcp-registry.toml`; until then the manual TOML above is authoritative.
+
+---
+
+## Skills
+
+Two skill pools—**different content by design**, not duplicates:
+
+| Skill type | Source of truth | Read via |
+|---|---|---|
+| Cross-workspace shared | `agent-skills/<name>.md` (cortex sandbox) | `fs(sandbox="cortex", op="md_read", path="agent-skills/<name>.md")` |
+| Workspace-tooled | `.cursor/skills/<name>/SKILL.md` | `fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/.cursor/skills/<name>/SKILL.md")` |
+
+Before non-standard document or tool work, read the matching skill from the boot manifest (`cortex` entities `agent_skill:*`).
+
+### Grokbuild partial supersedence (load-bearing)
+
+`agent_skill:grokbuild-v2` **partially** supersedes `agent_skill:grokbuild-v1`:
+
+| Authority | Skill |
+|---|---|
+| Dispatch lifecycle (async `build` → 202 → poll/SSE → cancel) | **`grokbuild-v2.md`** |
+| Mode/tier, handoff packet, worktree lifecycle, sidecar, audit | **`grokbuild-v1.md`** |
+
+**Read both** for grokbuild work. V2 does not replace V1 wholesale. Workspace stub: `.cursor/skills/delegate-to-grok/SKILL.md` points at v1.
+
+---
+
+## Rules summary
+
+Rules distill from always-applied workspace + shared project rules. Phase 3 will mechanically re-flatten from `.mdc` sources; this section separates **workflow/command-bearing** fragments from **general conduct** (OD7) so Cursor and grok-direct can converge workflows over time without a same-day full pass.
+
+### Workflow and commands (translation targets)
+
+These encode *procedures*—in Cursor they appear as slash-commands or session protocols; in grok-direct you invoke the **underlying MCP** (no `/session-end`, `/cortex-boot`, etc.):
+
+| Cursor affordance | grok-direct equivalent |
+|---|---|
+| `/cortex-boot`, Universal boot | § Cortex boot above; `cortex_boot` when needed |
+| `/session-end`, `session-close.mdc` | `cortex(tool="session_close", transcript_md=..., ...)` — see § Session close |
+| `/agent-bus` | `agent_bus(...)` directly |
+| `/implement-plan`, phase prompts | MCP + `fs`; no Plan-mode switch |
+| `delegate-to-grok` / grokbuild dispatches | `grokbuild(...)` MCP or shell scripts below |
+| `cursor-boot_ws.mdc` Continue mode (`transcript:cursor-...`) | Not applicable; grok uses `transcript_md` path |
+
+### General conduct (carries over directly)
+
+| Topic | Rule / practice |
+|---|---|
+| **Logging** | `universal_logging.get_logger()` only—never `import logging` in app code |
+| **Modularization** | ≤300 SLOC per file target; >400 is a blocker; split before large edits (`modularization.mdc`) |
+| **SRP** | One concern per function; split validation/orchestration/I/O |
+| **Provenance** | Completion claims must cite tool responses—no narrative-only “done” |
+| **Advisor timing** | Pause before substantive writes, before declaring done, after two failures, at phase boundaries |
+| **Code style** | Meaningful names; comments explain *why*; minimal scope diffs |
+| **`tmp/`** | Ephemeral—never commit or treat as durable memory |
+| **Docs** | Do not write `docs/` except workflows that explicitly allow it |
+| **Identity sign-off** | Family name only (`Grok`) |
+
+Glob-matched rules (e.g. `pipeline_ws.mdc`, `routing_ws.mdc`) apply when you touch matching paths—same as Cursor.
+
+---
+
+## Worktree discipline
+
+Grok’s `--worktree` flag is unreliable under streaming JSON dispatch; **all code-modifying work** uses grokbuild-managed git worktrees.
+
+1. **Location** — `/mnt/torus/projects/ulg-grok-worktrees/<name>` (`WORKTREE_ROOT`). Code-modifying dispatches and edits go here—not the live checkout while Cursor may be editing the same tree.
+2. **Read-only** — inspection, RAG, events, and non-mutating cortex work may use the live repo cwd.
+3. **Translation** — same protocol whether the caller is MCP, a human shell, or CI:
+
+| Intent | MCP (`grokbuild`) | Shell (operator) |
+|---|---|---|
+| Create worktree + enter | `op="worktree_create"` (`source_repo`, `name`, `branch`, …) | `scripts/grok-worktree <name> [<branch>]` |
+| Remove worktree | `op="worktree_remove"` (`name`) | `scripts/grok-worktree-cleanup <name>` |
+| List worktrees | `op="worktree_list"` | (MCP only) |
+| Async code dispatch | `op="build"` (V2: 202 + poll `build_status` + `fetch_result`) | After create: run `grok` inside worktree path |
+
+Shell scripts are **thin HTTP clients** to Stargate → grokbuild-worker (`/api/v1/grokbuild/worktrees`). They do not re-implement dirty/busy/registry guards—that is `[universal:no-bc]` territory in the worker.
+
+4. **Concurrency** — Cursor agents tracking MCP dispatches will not see your interactive `grok` session. Use **unique worktree names** as the shared conflict-avoidance primitive.
+5. **Depth reference** — worktree lifecycle detail: `agent-skills/grokbuild-v1.md` (cortex). Dispatch async contract: `agent-skills/grokbuild-v2.md`. Topology: `docs/grokbuild-topology.md`.
+
+---
+
+## Session close
+
+Grok-direct uses the **web-agent path**: inline markdown, not Cursor JSONL.
+
+```
+cortex(tool="session_close",
+  transcript_md="<verbatim session markdown>",
+  session_summary_md="...",
+  agent="grok-direct",
+  family="Grok",
+  session_id="grok-direct-YYYY-MM-DD-HHmm",
+  ...)
+```
+
+- **Do not** pass `transcript_jsonl_path` (Cursor-only).
+- Authoritative shared protocol: load `session-close.mdc` and cortex skill `agent-skills/session-close.md` via `fs` when closing.
+
+**MQ1 adapter (not yet in repo):** `tools/grok-session-to-transcript-md` will convert Grok session logs to markdown for `transcript_md`. **BLOCKED** until the operator verifies on-disk session log shape (presumed `~/.grok/sessions/<id>.json`—confirm before implementing).
+
+---
+
+## Cursor-only exclusions
+
+Grok-direct does **not** have these Cursor surfaces; do not assume parity:
+
+| Excluded | Notes |
+|---|---|
+| `cursor-ide-browser`, `cursor-app-control`, `cursor-backend-control` | MCP servers |
+| `Task` subagent types (`generalPurpose`, `explore`, `browser-use`, …) | Use Grok’s native subagent system—no vocabulary mapping |
+| Plan / Ask / Debug IDE modes | Grok: `read_only` vs edit only |
+| `transcript_jsonl_path` / `~/.cursor/.../agent-transcripts/` | Use `transcript_md` |
+| Cursor hooks (`hooks.json`) | Not load-bearing in ULG today |
+| `CallMcpTool(server="user-vortex", ...)` syntax | Native MCP tool calls in Grok |
+
+Recursion: `grokbuild` / `frontier_generate` depth ≤ 2 (MQ3)—enforcement Phase 1 at MCP tool layer.
+
+---
+
+## Environment quick reference
+
+| Item | Value |
+|---|---|
+| Venv | `$HOME/.venvs/universal` (Python 3.12) |
+| PYTHONPATH | `libs/` via `sitecustomize.py` |
+| Stargate (default) | `http://localhost:9999` (`STARGATE_PORT` / `STARGATE_URL`; see `services/AGENTS.md`) |
+| grokbuild-worker | `127.0.0.1:8090` (via Stargate proxy `/api/v1/grokbuild/*`) |

@@ -143,6 +143,23 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
 
+  grok/direct:
+    provider: xai
+    default_model: xai/grok-4.20-0309-reasoning
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    dispatchable: false
+    addenda:
+      - session-close-pointer-grok-direct
+      - session-close-markdown-audit
+      - session-close-transcript
+    allowed_models:
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.3
+
   gemini/api:
     provider: google
     default_model: google/gemini-2.5-flash

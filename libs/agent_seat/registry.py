@@ -60,6 +60,7 @@ def normalize_agent_slug(slug: str) -> str:
         "grok_cursor": "grok-cursor",
         "grok_api": "grok-api",
         "grok_api_multi": "grok-api-multi",
+        "grok_direct": "grok-direct",
         "grok_web": "grok-web",
         "gemini_api": "gemini-api",
         # Role slugs pass through unchanged

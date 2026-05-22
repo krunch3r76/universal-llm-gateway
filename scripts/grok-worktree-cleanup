@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Thin client: DELETE worktree via Stargate → grokbuild-worker (no local guards).
+set -euo pipefail
+
+WORKTREE_ROOT="${WORKTREE_ROOT:-/mnt/torus/projects/ulg-grok-worktrees}"
+STARGATE_URL="${STARGATE_URL:-http://localhost:9999}"
+
+usage() {
+  echo "Usage: scripts/grok-worktree-cleanup <name>" >&2
+  exit 1
+}
+
+[[ $# -eq 1 ]] || usage
+: "${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN is required}"
+
+name="$1"
+resp="$(mktemp)"
+trap 'rm -f "$resp"' EXIT
+
+http_code="$(
+  curl -sS -o "$resp" -w '%{http_code}' \
+    -X DELETE \
+    -H "Authorization: Bearer ${MCP_AUTH_TOKEN}" \
+    "${STARGATE_URL}/api/v1/grokbuild/worktrees/${name}"
+)"
+
+if [[ ! "$http_code" =~ ^2 ]]; then
+  cat "$resp" >&2
+  exit 1
+fi
+
+echo "removed worktree ${name} under ${WORKTREE_ROOT}"

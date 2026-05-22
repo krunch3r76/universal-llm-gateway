@@ -248,10 +248,19 @@ Re-poll up to 5× if status is still pending/running.
 tools (xAI multi-agent rejects them; standard API path has no vortex). This platform
 (grok.com) has the full vortex MCP catalog available — use it."""
 
+_GROK_DIRECT_SESSION_CLOSE = """\
+Grok-direct sessions use `cortex(tool="session_close", transcript_md="<full session \
+markdown>", session_summary_md="<summary>", agent="grok-direct", family="Grok")`. \
+Do NOT supply `transcript_jsonl_path` — that is Cursor-only. \
+Assemble the transcript markdown via `tools/grok-session-to-transcript-md` \
+(pending operator verification of grok session log format \
+`~/.grok/sessions/<id>.json`)."""
+
 _ADDENDA_BLOCKS: dict[str, str] = {
     "session-close-pointer-cursor": _CURSOR_LOCAL_ENFORCEMENT,
     "session-close-pointer-web": _WEB_TRANSCRIPT_PREPROCESSING,  # claude-web only
     "session-close-pointer-web-generic": _WEB_SESSION_CLOSE_GENERIC,  # other web seats
+    "session-close-pointer-grok-direct": _GROK_DIRECT_SESSION_CLOSE,
     "session-close-pointer-subagent": _SUBAGENT_INHERITANCE,
     "session-close-markdown-audit": _SESSION_CLOSE_MARKDOWN_AUDIT,
     "session-close-transcript": _TRANSCRIPT_CLOSE_PROTOCOL,
