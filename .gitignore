@@ -137,6 +137,8 @@ README_REVISED.md
 !services/rag/README.md
 !services/universal_cloud_proxy/README.md
 !services/mcp-server/README.md
+!agent-surface/
+!agent-surface/**/*.md
 !notes/
 !notes/system/
 !notes/system/specs/

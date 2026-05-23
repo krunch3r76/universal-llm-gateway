@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+"""Generate cursor `.mdc` rule files and AGENTS.md grok-direct sections from
+`agent-surface/` neutral-canonical sources.
+
+Usage:
+    scripts/gen-rules --target {cursor|grok-direct} [--check] [--dry-run]
+
+Targets:
+    cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + `.cursor/rules/mcp-tool-awareness_ws.mdc`;
+                 run drift-check between `core_ws.mdc` Subagent Model Selection table and
+                 `agent-surface/table-variants/subagent-model-table.cursor.md`.
+    grok-direct  Splice grok-direct content for `boot-protocol`, `mcp-tool-awareness`,
+                 and `subagent-model-table` sections into AGENTS.md `gen-rules:start:X`
+                 marker pairs.
+
+Flags:
+    --check     Diff-gate: exit non-zero if generated output differs from committed
+                file. No writes.
+    --dry-run   Print what would be written/spliced; do not modify files.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+# Allow direct execution from the workspace tree without PYTHONPATH gymnastics.
+_REPO = Path(__file__).resolve().parent.parent
+if str(_REPO / "libs") not in sys.path:
+    sys.path.insert(0, str(_REPO / "libs"))
+
+from gen_rules.check import diff_against, extract_core_subagent_table  # noqa: E402
+from gen_rules.parser import parse_source  # noqa: E402
+from gen_rules.renderer import (  # noqa: E402
+    extract_agents_md_section,
+    render_agents_md_section,
+    render_cursor_mdc,
+    render_table_variant,
+    splice_agents_md,
+)
+
+# Section registry: single source of authoritative IDs and paths. The migration
+# entry-point (`scripts/gen-rules`) stays under SLOC budget by delegating parse/
+# render/check to libs/gen_rules/.
+SECTIONS = {
+    "boot-protocol": {
+        "source": "agent-surface/sources/boot-protocol.md",
+        "cursor_out": ".cursor/rules/cursor-boot_ws.mdc",
+    },
+    "mcp-tool-awareness": {
+        "source": "agent-surface/sources/mcp-tool-awareness.md",
+        "cursor_out": ".cursor/rules/mcp-tool-awareness_ws.mdc",
+    },
+    "subagent-model-table": {
+        "cursor_variant": "agent-surface/table-variants/subagent-model-table.cursor.md",
+        "grok_variant": "agent-surface/table-variants/subagent-model-table.grok.md",
+        "core_mdc": ".cursor/rules/core_ws.mdc",
+    },
+}
+
+
+def _workspace_root() -> Path:
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        return Path(out)
+    except subprocess.CalledProcessError:
+        return _REPO
+
+
+def _emit_cursor(root: Path, *, check: bool, dry_run: bool) -> int:
+    """Generate `.cursor/rules/*.mdc` outputs and run drift-check.
+
+    Returns process exit code (0 OK, 1 on drift / write failure).
+    """
+    fail = 0
+    for sect_id in ("boot-protocol", "mcp-tool-awareness"):
+        spec = SECTIONS[sect_id]
+        source_path = root / spec["source"]
+        out_path = root / spec["cursor_out"]
+        parsed = parse_source(source_path)
+        rendered = render_cursor_mdc(parsed, source_rel=spec["source"])
+        if dry_run:
+            print(f"--- {out_path} ---")
+            print(rendered, end="")
+            continue
+        if check:
+            current = out_path.read_text() if out_path.exists() else ""
+            d = diff_against(
+                current,
+                rendered,
+                label_expected=str(out_path),
+                label_actual="<generated>",
+            )
+            if d:
+                print(d, end="")
+                print(
+                    f"DRIFT: {out_path} out of sync with {spec['source']}",
+                    file=sys.stderr,
+                )
+                fail = 1
+            continue
+        out_path.write_text(rendered)
+        print(f"wrote {out_path}")
+
+    spec = SECTIONS["subagent-model-table"]
+    core_table = extract_core_subagent_table(root / spec["core_mdc"])
+    cursor_variant = (root / spec["cursor_variant"]).read_text()
+    if not cursor_variant.endswith("\n"):
+        cursor_variant += "\n"
+    d = diff_against(
+        core_table,
+        cursor_variant,
+        label_expected=spec["core_mdc"],
+        label_actual=spec["cursor_variant"],
+    )
+    if d:
+        print(d, end="")
+        print(
+            f"DRIFT: {spec['cursor_variant']} disagrees with {spec['core_mdc']} "
+            "subagent-model-table. Update the variant file (do NOT modify core_ws.mdc).",
+            file=sys.stderr,
+        )
+        fail = 1
+    elif not dry_run and not check:
+        print(f"OK drift-check: {spec['cursor_variant']} matches {spec['core_mdc']}")
+
+    return fail
+
+
+def _emit_grok(root: Path, *, check: bool, dry_run: bool) -> int:
+    """Splice grok-direct sections into AGENTS.md."""
+    fail = 0
+    agents_md = root / "AGENTS.md"
+
+    section_bodies: dict[str, str] = {}
+    for sect_id in ("boot-protocol", "mcp-tool-awareness"):
+        spec = SECTIONS[sect_id]
+        parsed = parse_source(root / spec["source"])
+        body = render_agents_md_section(parsed, source_rel=spec["source"])
+        section_bodies[sect_id] = body
+
+    spec = SECTIONS["subagent-model-table"]
+    table_md = (root / spec["grok_variant"]).read_text()
+    section_bodies["subagent-model-table"] = render_table_variant(
+        table_md, source_rel=spec["grok_variant"]
+    )
+
+    if dry_run:
+        for sect_id, body in section_bodies.items():
+            print(f"--- AGENTS.md section {sect_id!r} ---")
+            print(body, end="")
+        return 0
+
+    if check:
+        for sect_id, body in section_bodies.items():
+            current = extract_agents_md_section(agents_md, sect_id)
+            if current is None:
+                print(
+                    f"ERROR: AGENTS.md missing gen-rules markers for {sect_id!r}",
+                    file=sys.stderr,
+                )
+                fail = 1
+                continue
+            d = diff_against(
+                current,
+                body,
+                label_expected=f"AGENTS.md:{sect_id}",
+                label_actual="<generated>",
+            )
+            if d:
+                print(d, end="")
+                print(f"DRIFT: AGENTS.md section {sect_id!r}", file=sys.stderr)
+                fail = 1
+        return fail
+
+    for sect_id, body in section_bodies.items():
+        new_text = splice_agents_md(agents_md, sect_id, body)
+        agents_md.write_text(new_text)
+    print(f"wrote {agents_md}")
+    return fail
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target", choices=("cursor", "grok-direct"), required=True)
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args(argv)
+
+    root = _workspace_root()
+    if args.target == "cursor":
+        rc = _emit_cursor(root, check=args.check, dry_run=args.dry_run)
+    else:
+        rc = _emit_grok(root, check=args.check, dry_run=args.dry_run)
+
+    if args.check and rc == 0:
+        print(f"OK gen-rules --check --target {args.target}")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
