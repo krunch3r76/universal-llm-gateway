@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Agent-surface drift gate — runs all three Phase 3 / Phase 2 --check invocations
+# and exits non-zero on any drift. CI entry point.
+#
+# Gates:
+#   1. scripts/gen-rules --target cursor --check
+#      → .cursor/rules/cursor-boot_ws.mdc and mcp-tool-awareness_ws.mdc match
+#        agent-surface/sources/*.md; subagent-model-table.cursor.md byte-equal
+#        to core_ws.mdc Subagent Model Selection table.
+#   2. scripts/gen-rules --target grok-direct --check
+#      → AGENTS.md gen-rules sections (boot-protocol, mcp-tool-awareness,
+#        subagent-model-table) match generator output.
+#   3. scripts/gen-agents-md --check
+#      → AGENTS.md MCP surface block matches mcp-registry.toml projection.
+#
+# Wire this into whichever CI surface the operator runs (.github/workflows/,
+# pre-commit hook, manual gate). Workspace .github/ is not tracked, so the
+# entry point lives in scripts/ where the rest of the gates live.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+scripts/gen-rules --target cursor --check
+scripts/gen-rules --target grok-direct --check
+scripts/gen-agents-md --check
+
+echo "OK agent-surface-check: all gates passed"

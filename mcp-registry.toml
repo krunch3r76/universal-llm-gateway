@@ -46,7 +46,9 @@ claudeburst. Full vortex surface available to both Cursor and grok-direct \
 # script runs (or when grok reads ~/.grok/config.toml at session start).
 [server.auth]
 type = "bearer"
-env = "VORTEX_MCP_TOKEN"
+# Operator-canonical name (matches AGENTS.md and ~/.grok/config.toml). Harmonized
+# 2026-05-22 in Phase 3 — was VORTEX_MCP_TOKEN.
+env = "MCP_AUTH_TOKEN"
 
 # Per-target tool filter.
 # Per B-Q4/§4.6: grok CLI TOML has no per-server tool-filter primitive.
