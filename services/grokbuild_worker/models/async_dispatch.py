@@ -52,6 +52,10 @@ class GrokbuildDispatchRequest(BaseModel):
     recursion_depth: int | None = Field(
         None, description="MQ3 dispatch chain depth; worker rejects if > 2."
     )
+    # Phase D: MCP path selector.
+    # True (default) → grok CLI subprocess with dispatch bearer (grok-build-dispatch seat).
+    # False → direct LLM API call via Stargate; no subprocess, no MCP inside dispatch.
+    mcp: bool = Field(True, description="MCP-enabled path selector.")
 
 
 class GrokbuildDispatchAccepted(BaseModel):

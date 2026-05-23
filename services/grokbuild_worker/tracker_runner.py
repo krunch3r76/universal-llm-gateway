@@ -13,6 +13,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
+from grokbuild.api_dispatch import api_dispatch_op
 from grokbuild.dispatch import dispatch_op
 from universal_logging import get_logger
 
@@ -45,29 +46,41 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
     entry.state = "running"
     entry.updated_at = iso_now()
     try:
-        envelope = await dispatch_op(
-            cwd=req.cwd,
-            prompt=req.prompt,
-            mode=req.mode,
-            system_context=req.system_context,
-            model=req.model,
-            session_id=req.session_id,
-            continue_recent=req.continue_recent,
-            output_format=req.output_format,
-            timeout_seconds=req.timeout_seconds,
-            tier=req.tier,
-            reasoning_effort=req.reasoning_effort,
-            effort=req.effort,
-            check=req.check,
-            no_subagents=req.no_subagents,
-            disable_web_search=req.disable_web_search,
-            max_turns=req.max_turns,
-            best_of_n=req.best_of_n,
-            resume_strict=req.resume_strict,
-            dispatch_id=entry.dispatch_id,
-            proc_pid_holder=entry.pid_holder,
-            recursion_depth=req.recursion_depth,
-        )
+        if not req.mcp:
+            # mcp=False: direct LLM API call — no subprocess, no MCP tooling inside dispatch.
+            envelope = await api_dispatch_op(
+                cwd=req.cwd,
+                prompt=req.prompt,
+                system_context=req.system_context,
+                model=req.model,
+                session_id=req.session_id,
+                dispatch_id=entry.dispatch_id,
+                timeout_seconds=req.timeout_seconds,
+            )
+        else:
+            envelope = await dispatch_op(
+                cwd=req.cwd,
+                prompt=req.prompt,
+                mode=req.mode,
+                system_context=req.system_context,
+                model=req.model,
+                session_id=req.session_id,
+                continue_recent=req.continue_recent,
+                output_format=req.output_format,
+                timeout_seconds=req.timeout_seconds,
+                tier=req.tier,
+                reasoning_effort=req.reasoning_effort,
+                effort=req.effort,
+                check=req.check,
+                no_subagents=req.no_subagents,
+                disable_web_search=req.disable_web_search,
+                max_turns=req.max_turns,
+                best_of_n=req.best_of_n,
+                resume_strict=req.resume_strict,
+                dispatch_id=entry.dispatch_id,
+                proc_pid_holder=entry.pid_holder,
+                recursion_depth=req.recursion_depth,
+            )
     except asyncio.CancelledError:
         _finalize(
             tracker,

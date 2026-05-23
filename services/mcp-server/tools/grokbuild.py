@@ -33,7 +33,7 @@ _BUILD_PARAMS: frozenset[str] = frozenset(
     "cwd prompt mode system_context model session_id continue_recent output_format "
     "timeout_seconds tier reasoning_effort effort check no_subagents "
     "disable_web_search max_turns best_of_n resume_strict "
-    "seat role recursion_depth".split()
+    "seat role recursion_depth mcp".split()
 )
 
 # (HTTP method, path template, allowed param names)
@@ -107,6 +107,8 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     seat: str | None = None,  # caller seat slug; default "grok-api" applied at worker
     role: str | None = None,  # caller role slug; default "artisan" applied at worker
     recursion_depth: int | None = None,  # MQ3 depth tracking; worker rejects if > 2
+    # MCP path selection (Phase D).
+    mcp: bool = True,  # True → grok CLI subprocess w/ dispatch token; False → API direct
     # worktree ops surface.
     name: str = "",
     branch: str = "",
@@ -162,6 +164,12 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     * ``recursion_depth``: MQ3 dispatch chain depth. Worker rejects with
       ``recursion_depth_exceeded`` if > 2. Callers should pass the current
       depth from ``GROKBUILD_RECURSION_DEPTH`` (set in env by the outer worker).
+    * ``mcp``: dispatch path selector (``op='build'`` only). ``True`` (default)
+      spawns a grok CLI subprocess with the dispatch bearer token —
+      ``grok-build-dispatch`` seat, full vortex surface available inside the
+      dispatch. ``False`` calls the LLM API directly via Stargate (no subprocess,
+      no MCP tooling inside the dispatch); use when the prompt is self-contained
+      and the response is a text answer rather than a tool-driven task.
     """
     # Capture function params before any local variables are assigned.
     _kwargs = locals()
