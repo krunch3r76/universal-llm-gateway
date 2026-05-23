@@ -158,16 +158,11 @@ Two skill pools—**different content by design**, not duplicates:
 
 Before non-standard document or tool work, read the matching skill from the boot manifest (`cortex` entities `agent_skill:*`).
 
-### Grokbuild partial supersedence (load-bearing)
+### Grokbuild (consolidated v3)
 
-`agent_skill:grokbuild-v2` **partially** supersedes `agent_skill:grokbuild-v1`:
+`agent_skill:grokbuild` — read for any grokbuild work. Consolidated V3 (2026-05-22) supersedes the former v1+v2 split. `agent_skill:grokbuild-v1` and `agent_skill:grokbuild-v2` are deprecated (kept for history).
 
-| Authority | Skill |
-|---|---|
-| Dispatch lifecycle (async `build` → 202 → poll/SSE → cancel) | **`grokbuild-v2.md`** |
-| Mode/tier, handoff packet, worktree lifecycle, sidecar, audit | **`grokbuild-v1.md`** |
-
-**Read both** for grokbuild work. V2 does not replace V1 wholesale. Workspace stub: `.cursor/skills/delegate-to-grok/SKILL.md` points at v1.
+Workspace stub: `.cursor/skills/delegate-to-grok/SKILL.md` points at the consolidated skill.
 
 ---
 
