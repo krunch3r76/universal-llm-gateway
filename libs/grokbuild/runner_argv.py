@@ -24,15 +24,23 @@ _READ_ONLY_PREFIX = (
     "want the changes applied."
 )
 
+# Environment variables inherited from the parent process (pass-through).
+# HOME is intentionally absent: it is substituted per-dispatch by runner.py
+# via setup_dispatch_home() so the grok subprocess sees the dispatch-scoped
+# config.toml rather than the real ~/.grok/config.toml.
 _ALLOW = (
     "PATH",
-    "HOME",
     "LANG",
     "LC_ALL",
     "CORTEX_DB_PATH",
     "TODOS_DB_PATH",
     "GROKBUILD_RECURSION_DEPTH",
 )
+
+# Environment variables that are explicitly OVERRIDDEN per dispatch (not
+# inherited). Runner code is responsible for setting these in the env dict
+# returned by _build_env() before spawning the subprocess.
+_OVERRIDE = ("HOME",)
 
 
 def _build_env() -> dict[str, str]:

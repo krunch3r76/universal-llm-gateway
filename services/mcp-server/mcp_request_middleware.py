@@ -196,6 +196,9 @@ class McpRequestEventsMiddleware:
         # Mcp-Session-Id: client-side session token (stable across tool calls
         # within one session even in stateless_http=True mode).
         mcp_session_id = (request.headers.get("mcp-session-id", "") or "").strip()
+        # Dispatch-scoped attribution (C.1-i): present when grok-build-dispatch
+        # bearer was admitted with X-Grokbuild-Dispatch-Id (set by AuthMiddleware).
+        dispatch_id = str(scope.get("grokbuild_dispatch_id", "") or "")
         t0 = monotonic_now()
         mcp_method = ""
         tool_name = ""
@@ -231,6 +234,8 @@ class McpRequestEventsMiddleware:
             "auth_mode": auth_mode,
             "seat_class": seat_class,
             **({"tool_name": tool_name} if tool_name else {}),
+            **({"caller_identity": caller_identity} if caller_identity else {}),
+            **({"dispatch_id": dispatch_id} if dispatch_id else {}),
         }
 
         record("mcp.request.started", **started_payload)
@@ -295,6 +300,7 @@ class McpRequestEventsMiddleware:
             caller_identity=caller_identity or None,
             oauth_client_id=oauth_client_id or None,
             mcp_session_id=mcp_session_id or None,
+            dispatch_id=dispatch_id or None,
             **request_tool_context,
         ):
             try:
@@ -352,6 +358,8 @@ class McpRequestEventsMiddleware:
                     "response_bytes": response_bytes,
                     "seat_class": seat_class,
                     **({"tool_name": tool_name} if tool_name else {}),
+                    **({"caller_identity": caller_identity} if caller_identity else {}),
+                    **({"dispatch_id": dispatch_id} if dispatch_id else {}),
                 }
                 record("mcp.request.completed", **completed_payload)
                 tdone: dict[str, Any] = {

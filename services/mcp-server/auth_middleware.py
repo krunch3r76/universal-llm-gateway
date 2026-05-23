@@ -5,21 +5,27 @@ bearer validation, and ``WWW-Authenticate`` response construction.  Does
 **not** emit ``mcp.request.*`` lifecycle events — it only annotates
 authenticated requests with ``scope["auth_mode"]`` so downstream middleware
 can include the admission path in telemetry.
+
+Grok bearer-context enforcement (``/mcp/grok`` path only):
+  - ``grok-build-dispatch`` bearer (``MCP_GROK_BUILD_DISPATCH_TOKEN``) REQUIRES
+    ``X-Grokbuild-Dispatch-Id`` on every request; absent → 400.
+  - Any other static bearer WITH ``X-Grokbuild-Dispatch-Id`` → 400 (prevents
+    silent identity collapse where a grok-direct session masquerades as a
+    dispatch subprocess by sending the dispatch-id header).
+  On success the dispatch-id is placed in ``scope["grokbuild_dispatch_id"]``
+  for downstream event propagation.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import re
-import time
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from artifact_proxy import (
     handle_artifact_preflight,
     handle_artifact_proxy,
 )
+from clip_handler import CLIP_CORS_HEADERS, handle_clip_upload
 from cortex_proxy import (
     _CORS_HEADERS as CORTEX_CORS_HEADERS,
 )
@@ -37,7 +43,6 @@ from llm_proxy import (
 from mcp_events import record
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from tools.clip import normalize_clip_content
 from universal_logging import get_logger
 from workbench_relay import (
     _CORS_HEADERS as RELAY_CORS_HEADERS,
@@ -82,15 +87,6 @@ class AuthMiddleware:
     ``mcp.request.*`` events with the final admission path.
     """
 
-    _CLIPS_DIR = Path("/data/files/clips")
-    _MAX_BODY_BYTES = 5 * 1024 * 1024
-    _CLIP_CORS_HEADERS: dict[str, str] = {
-        "access-control-allow-origin": "*",
-        "access-control-allow-methods": "POST, OPTIONS",
-        "access-control-allow-headers": "Authorization, Content-Type",
-        "access-control-max-age": "86400",
-    }
-
     def __init__(
         self,
         app: ASGIApp,
@@ -102,19 +98,18 @@ class AuthMiddleware:
         self._token = token
         self._oauth_service = oauth_service
         self._cursor_token = os.getenv("MCP_CURSOR_AUTH_TOKEN", "").strip()
+        # Bearer for grok-build-dispatch subprocesses (distinct seat slug).
+        # When set, the /mcp/grok enforcement requires X-Grokbuild-Dispatch-Id
+        # when this token is used, and forbids it for all other tokens.
+        self._grok_build_dispatch_token = os.getenv(
+            "MCP_GROK_BUILD_DISPATCH_TOKEN", ""
+        ).strip()
         # Additional valid bearer tokens, one per line. Each is independently
         # valid; absent or empty → no extra tokens (backward-compatible).
         _extra = os.getenv("VORTEX_BEARER_TOKENS", "")
         self._bearer_tokens: frozenset[str] = frozenset(
             t for line in _extra.splitlines() if (t := line.strip())
         )
-
-    @staticmethod
-    def _slugify(text: str, max_len: int = 60) -> str:
-        """Convert a string to a URL-safe slug for persisted clip filenames."""
-        slug = re.sub(r"[^a-z0-9]+", "-", text.lower())
-        slug = slug.strip("-")[:max_len].rstrip("-")
-        return slug or "untitled"
 
     @staticmethod
     def _extract_authorization_token(authorization: str) -> str | None:
@@ -162,6 +157,8 @@ class AuthMiddleware:
         token = self._extract_authorization_token(auth_header)
         if self._cursor_token and token == self._cursor_token:
             return "cursor"
+        if self._grok_build_dispatch_token and token == self._grok_build_dispatch_token:
+            return "grok-build-dispatch"
         configured = os.getenv("MCP_STATIC_CALLER_IDENTITY", "").strip()
         return configured or "static"
 
@@ -171,6 +168,10 @@ class AuthMiddleware:
         return (
             token == self._token
             or (self._cursor_token and token == self._cursor_token)
+            or (
+                self._grok_build_dispatch_token
+                and token == self._grok_build_dispatch_token
+            )
             or (token is not None and token in self._bearer_tokens)
         )
 
@@ -204,27 +205,25 @@ class AuthMiddleware:
         if path == "/clip":
             auth = request.headers.get("authorization", "")
             if request.method == "OPTIONS":
-                response = JSONResponse(
-                    {"status": "ok"}, headers=self._CLIP_CORS_HEADERS
-                )
+                response = JSONResponse({"status": "ok"}, headers=CLIP_CORS_HEADERS)
                 await response(scope, receive, send)
                 return
             if not self._is_static_token_authorized(auth):
                 response = JSONResponse(
                     {"error": "Unauthorized"},
                     status_code=401,
-                    headers=self._CLIP_CORS_HEADERS,
+                    headers=CLIP_CORS_HEADERS,
                 )
                 await response(scope, receive, send)
                 return
             if request.method == "POST":
-                response = await self._handle_clip(request)
+                response = await handle_clip_upload(request)
                 await response(scope, receive, send)
                 return
             response = JSONResponse(
                 {"error": "Method not allowed"},
                 status_code=405,
-                headers=self._CLIP_CORS_HEADERS,
+                headers=CLIP_CORS_HEADERS,
             )
             await response(scope, receive, send)
             return
@@ -306,6 +305,43 @@ class AuthMiddleware:
 
         if self._is_static_token_authorized(auth_header):
             caller_identity = self._resolve_static_caller_identity(auth_header)
+            # Bearer-context enforcement for /mcp/grok — prevents identity collapse.
+            # Build-dispatch bearer ⟹ X-Grokbuild-Dispatch-Id required (else 400).
+            # Any other bearer WITH that header ⟹ 400 (no silent masquerade).
+            if path.startswith("/mcp/grok"):
+                _disp_hdr = (
+                    request.headers.get("x-grokbuild-dispatch-id", "") or ""
+                ).strip()
+                _is_dispatch = caller_identity == "grok-build-dispatch"
+                if _is_dispatch and not _disp_hdr:
+                    record(
+                        "mcp.grokbuild.bearer_context_rejected",
+                        reason="missing_dispatch_id_header",
+                        path=path,
+                    )
+                    await JSONResponse(
+                        {
+                            "error": "X-Grokbuild-Dispatch-Id required for build-dispatch bearer"
+                        },
+                        status_code=400,
+                    )(scope, receive, send)
+                    return
+                if not _is_dispatch and _disp_hdr:
+                    record(
+                        "mcp.grokbuild.bearer_context_rejected",
+                        reason="dispatch_id_header_not_permitted",
+                        caller_identity=caller_identity,
+                        path=path,
+                    )
+                    await JSONResponse(
+                        {
+                            "error": "X-Grokbuild-Dispatch-Id not permitted for this bearer"
+                        },
+                        status_code=400,
+                    )(scope, receive, send)
+                    return
+                if _is_dispatch:
+                    scope["grokbuild_dispatch_id"] = _disp_hdr
             scope["auth_mode"] = "static"
             scope["mcp_profile"] = self._resolve_profile(auth_header)
             scope["mcp_caller_identity"] = caller_identity
@@ -376,102 +412,3 @@ class AuthMiddleware:
             {"error": "Unauthorized"}, status_code=401, headers=headers
         )
         await response(scope, receive, send)
-
-    async def _handle_clip(self, request: Request) -> JSONResponse:
-        """Process a bookmarklet clip upload after static-token authentication."""
-        body = bytearray()
-        async for chunk in request.stream():
-            body.extend(chunk)
-            if len(body) > self._MAX_BODY_BYTES:
-                logger.warning("clip: rejected oversized payload (%d bytes)", len(body))
-                record(
-                    "mcp.clip.upload_failed", reason="payload_too_large", size=len(body)
-                )
-                return JSONResponse(
-                    {"error": "Payload too large (5MB limit)"},
-                    status_code=413,
-                    headers=self._CLIP_CORS_HEADERS,
-                )
-
-        try:
-            data = json.loads(body.decode("utf-8"))
-        except json.JSONDecodeError:
-            logger.warning("clip: rejected invalid JSON payload")
-            return JSONResponse(
-                {"error": "Invalid JSON"},
-                status_code=400,
-                headers=self._CLIP_CORS_HEADERS,
-            )
-
-        url = data.get("url", "").strip()
-        title = data.get("title", "").strip()
-        content = data.get("content", "").strip()
-        selected = bool(data.get("selected", False))
-
-        if not content:
-            logger.warning("clip: rejected empty content payload")
-            return JSONResponse(
-                {"error": "Missing required field: content"},
-                status_code=400,
-                headers=self._CLIP_CORS_HEADERS,
-            )
-
-        content, extracted = normalize_clip_content(content)
-        if not title:
-            title = "Untitled Clip"
-
-        ts = int(time.time())
-        slug = self._slugify(title)
-        filename = f"{slug}-{ts}.md"
-        self._CLIPS_DIR.mkdir(parents=True, exist_ok=True)
-
-        title_sanitized = title.replace("\r", "").replace("\n", " ")
-        url_sanitized = url.replace("\r", "").replace("\n", " ")
-        safe_title = title_sanitized.replace("\\", "\\\\").replace('"', '\\"')
-        safe_url = url_sanitized.replace("\\", "\\\\").replace('"', '\\"')
-        frontmatter = f"""
----
-url: "{safe_url}"
-title: "{safe_title}"
-clipped_at: {ts}
-selected: {str(selected).lower()}
-extracted: {str(extracted).lower()}
-chars: {len(content)}
----
-
-"""
-
-        for attempt in range(5):
-            candidate = self._CLIPS_DIR / (
-                f"{slug}-{ts + attempt}.md" if attempt else filename
-            )
-            try:
-                with candidate.open("x", encoding="utf-8") as clip_file:
-                    clip_file.write(frontmatter + content)
-                filename = candidate.name
-                break
-            except FileExistsError:
-                logger.debug("clip: filename '%s' already exists, retrying", candidate)
-                continue
-            except OSError as exc:
-                logger.error("clip: failed writing %s: %s", candidate, exc)
-                return JSONResponse(
-                    {"error": "Failed to save clip"},
-                    status_code=500,
-                    headers=self._CLIP_CORS_HEADERS,
-                )
-        else:
-            logger.error("clip: unable to allocate unique filename for slug '%s'", slug)
-            return JSONResponse(
-                {"error": f"Unable to allocate unique clip filename for slug '{slug}'"},
-                status_code=409,
-                headers=self._CLIP_CORS_HEADERS,
-            )
-
-        logger.info(
-            "clip: saved %s (%d chars, selected=%s)", filename, len(content), selected
-        )
-        return JSONResponse(
-            {"status": "clipped", "clip_id": filename},
-            headers=self._CLIP_CORS_HEADERS,
-        )

@@ -160,7 +160,32 @@ profiles:
       - xai/grok-4.20-0309-reasoning
       - xai/grok-4.3
 
+  grok/build-dispatch:
+    # Subprocess seat for grokbuild dispatches. The grok CLI subprocess spawned
+    # by the grokbuild runner connects to /mcp/grok with a distinct bearer token
+    # (MCP_GROK_BUILD_DISPATCH_TOKEN) and X-Grokbuild-Dispatch-Id header so
+    # inner MCP traffic is attributed to seat=grok-build-dispatch rather than
+    # to grok-direct. Verified seat per four-layer criterion (assertion 10991):
+    # promoted from candidate once cortex(tool='assert') succeeds under this slug.
+    provider: xai
+    default_model: xai/grok-4.20-0309-reasoning
+    tool_surface: mcp
+    delivery: auto
+    include_deadlines: false
+    include_review_queue: false
+    confirm_and_proceed: false
+    dispatchable: false
+    addenda: []
+    allowed_models:
+      - xai/grok-4.20-0309-reasoning
+      - xai/grok-4.3
+
   gemini/api:
+    # CANDIDATE SEAT — declared tool_surface=mcp, but end-to-end MCP wiring
+    # has not been verified by a round-trip dispatch. Treat as a dispatch
+    # target until todo:gemini-api-mcp-wiring-verify confirms cortex
+    # participation under the gemini-api slug. See agent-identity-signoff.mdc
+    # "Four-layer model" for the seat ≡ MCP-wired runtime criterion.
     provider: google
     default_model: google/gemini-2.5-flash
     tool_surface: mcp

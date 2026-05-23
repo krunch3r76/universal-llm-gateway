@@ -17,10 +17,12 @@ from typing import Literal
 from grokbuild.constants import _SIDECAR_DIR
 from grokbuild.runner_argv import (  # noqa: F401 — re-exported
     _ALLOW,
+    _OVERRIDE,
     _READ_ONLY_PREFIX,
     _build_argv,
     _build_env,
 )
+from grokbuild.runner_home import preflight_inspect, setup_dispatch_home
 from grokbuild.runner_sidecar import (  # noqa: F401 — re-exported; patching "grokbuild.runner.*" in tests works via this namespace
     _append_sidecar,
     _capture_post_state,
@@ -72,6 +74,68 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
     _env = _build_env()
     if spec.recursion_depth is not None:
         _env["GROKBUILD_RECURSION_DEPTH"] = str(spec.recursion_depth)
+
+    # Per-dispatch HOME override (seat-promotion, item 7-10).
+    # HOME is in _OVERRIDE (not _ALLOW), so it must be explicitly set here.
+    # When MCP_GROK_BUILD_DISPATCH_TOKEN is configured:
+    #   - create <sidecar_dir>/<dispatch_id>-home/ with dispatch config.toml
+    #   - run grok inspect --json to verify the override took effect
+    #   - refuse dispatch on pre-flight failure (prevents silent attribution drift)
+    # When token is not configured: fall back to inherited HOME with a warning.
+    _dispatch_token = os.getenv("MCP_GROK_BUILD_DISPATCH_TOKEN", "").strip()
+    _real_home = os.environ.get("HOME", "")
+    if _dispatch_token:
+        try:
+            _dispatch_home = setup_dispatch_home(
+                spec.dispatch_id,
+                _SIDECAR_DIR,
+                token=_dispatch_token,
+                real_home=_real_home,
+            )
+        except OSError as _exc:
+            return RunnerResult(
+                status="failed",
+                stdout="",
+                stderr="",
+                exit_code=None,
+                duration_s=time.monotonic() - t0,
+                sidecar_path=None,
+                truncated=False,
+                git_status_post="",
+                git_diff_stat="",
+                audit_incomplete=True,
+                sidecar_gaps=0,
+                error=f"dispatch_home_setup_failed: {_exc}",
+                reason_code="dispatch_home_setup_failed",
+                dirty_admission=spec.dirty_admission,
+            )
+        _env["HOME"] = str(_dispatch_home)
+        # Pre-flight assertion (item 10): verify grok inspect sees override config.
+        _preflight_error = preflight_inspect(
+            spec.dispatch_id, _dispatch_home, spec.grok_path, _env
+        )
+        if _preflight_error:
+            return RunnerResult(
+                status="failed",
+                stdout="",
+                stderr="",
+                exit_code=None,
+                duration_s=time.monotonic() - t0,
+                sidecar_path=None,
+                truncated=False,
+                git_status_post="",
+                git_diff_stat="",
+                audit_incomplete=True,
+                sidecar_gaps=0,
+                error=f"dispatch_preflight_failed: {_preflight_error}",
+                reason_code="dispatch_preflight_failed",
+                dirty_admission=spec.dirty_admission,
+            )
+    else:
+        # Token not configured — fall back to real HOME with warning so
+        # existing environments continue to work during transition.
+        if _real_home:
+            _env["HOME"] = _real_home
 
     try:
         _append_sidecar(

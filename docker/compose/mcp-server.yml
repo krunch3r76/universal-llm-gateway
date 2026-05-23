@@ -44,6 +44,10 @@ services:
       - ~/.gateway:/home/mcp/.gateway:ro
     environment:
       - MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN required}
+      # grok-build-dispatch seat: distinct bearer for grok CLI subprocesses spawned by grokbuild.
+      # Absent/empty → enforcement disabled (backward-compatible). Set to a fresh token when
+      # enabling dispatch-scoped MCP attribution (plan:grokbuild-mcp-integration phase-c).
+      - MCP_GROK_BUILD_DISPATCH_TOKEN=${MCP_GROK_BUILD_DISPATCH_TOKEN:-}
       - PROJECT_ROOT=/data/project
       - TASKS_ROOT=/data/tasks
       # Browser tools (Playwright Firefox) are disabled by default.
