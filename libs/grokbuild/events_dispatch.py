@@ -150,6 +150,56 @@ def GrokBuildDispatchRejected(  # noqa: N802
     )
 
 
+@event_factory
+def GrokBuildDispatchToolCalls(  # noqa: N802
+    dispatch_id: str,
+    tool_count: int,
+    tool_names: list[str],
+) -> Event:
+    """C.1(ii): summary of MCP tool calls extracted from sidecar streaming-JSON.
+
+    Emitted after every completed/failed dispatch that had stdout to parse,
+    even when tool_count == 0. The zero-count case is the raw signal; the
+    anomaly event (zero_tool_calls_when_expected) fires on top of it when
+    mode='edit' implies tool calls were expected.
+
+    JOIN this event with ``mcp.request.completed`` (seat=grok-build-dispatch,
+    dispatch_id) to detect header-vs-sidecar discrepancies.
+    """
+    return Event(
+        signal="mcp.grokbuild.dispatch.tool_calls",
+        payload={
+            "dispatch_id": dispatch_id,
+            "tool_count": tool_count,
+            "tool_names": tool_names,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokBuildDispatchZeroToolCallsWhenExpected(  # noqa: N802
+    dispatch_id: str,
+    mode: str,
+) -> Event:
+    """C.1(ii) anomaly: edit-mode dispatch completed with zero sidecar tool calls.
+
+    Fires when tool_count == 0 AND mode == 'edit'. In read_only mode zero
+    tool calls is normal (advisory narrative only); in edit mode the grok
+    subprocess is expected to call vortex MCP tools to carry out its work.
+    Zero calls indicates the dispatch HOME override may have failed silently,
+    the grok subprocess ignored MCP, or the task was trivially answerable.
+    """
+    return Event(
+        signal="mcp.grokbuild.dispatch.zero_tool_calls_when_expected",
+        payload={
+            "dispatch_id": dispatch_id,
+            "mode": mode,
+        },
+        scope="global",
+    )
+
+
 # Wrappers below are typed with the same signatures as their factories
 # (review G4) — this eliminates the per-call ``# type: ignore[arg-type]``
 # the prior ``**kwargs: object`` form required, and lets call sites get
@@ -285,5 +335,33 @@ def emit_grok_build_dispatch_rejected(
             op=op,
             cwd=cwd,
             model=model,
+        )
+    )
+
+
+def emit_grok_build_dispatch_tool_calls(
+    *,
+    dispatch_id: str,
+    tool_count: int,
+    tool_names: list[str],
+) -> None:
+    _emit(
+        GrokBuildDispatchToolCalls(
+            dispatch_id=dispatch_id,
+            tool_count=tool_count,
+            tool_names=tool_names,
+        )
+    )
+
+
+def emit_grok_build_dispatch_zero_tool_calls_when_expected(
+    *,
+    dispatch_id: str,
+    mode: str,
+) -> None:
+    _emit(
+        GrokBuildDispatchZeroToolCallsWhenExpected(
+            dispatch_id=dispatch_id,
+            mode=mode,
         )
     )

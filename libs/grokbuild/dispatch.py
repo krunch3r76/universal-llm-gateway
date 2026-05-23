@@ -25,6 +25,8 @@ from grokbuild.events import (
     emit_grok_build_dispatch_failed,
     emit_grok_build_dispatch_rejected,
     emit_grok_build_dispatch_timeout,
+    emit_grok_build_dispatch_tool_calls,
+    emit_grok_build_dispatch_zero_tool_calls_when_expected,
 )
 from grokbuild.registry import (
     get_dispatch_id,
@@ -337,6 +339,24 @@ async def _run_and_envelope(
             cwd=cwd,
             **audit,
         )
+
+    # C.1(ii): emit tool-calls summary after every dispatch with parsed stdout.
+    # tool_call_names is empty on spawn-failed / timeout / dispatch_home failures;
+    # those paths never reach communicate() so there is no stdout to parse.
+    if rr.tool_call_names or rr.status in {"completed", "failed"}:
+        _names = list(rr.tool_call_names)
+        emit_grok_build_dispatch_tool_calls(
+            dispatch_id=dispatch_id,
+            tool_count=len(_names),
+            tool_names=_names,
+        )
+        # Anomaly: edit-mode dispatch with zero tool calls is unexpected.
+        if len(_names) == 0 and mode == "edit" and rr.status == "completed":
+            emit_grok_build_dispatch_zero_tool_calls_when_expected(
+                dispatch_id=dispatch_id,
+                mode=mode,
+            )
+
     return _envelope_result(
         dispatch_id,
         mode,

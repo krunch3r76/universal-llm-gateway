@@ -88,3 +88,7 @@ class RunnerResult:
     resolved_session_id: str | None = (
         None  # captured from streaming-json stdout sessionId
     )
+    # C.1(ii): tool names extracted from streaming-json stdout (phase C observability).
+    # Populated by runner after successful communicate(); empty on timeout/spawn-failed.
+    # Ordered by call time, duplicates preserved so count == len(tool_call_names).
+    tool_call_names: tuple[str, ...] = ()

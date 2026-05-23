@@ -26,6 +26,37 @@ def _try_append_sidecar(path: str, record: dict[str, object], gaps: list[int]) -
         gaps[0] += 1
 
 
+def parse_tool_calls(stdout_bytes: bytes) -> list[str]:
+    """Parse streaming-JSON lines from grok stdout and return tool names called.
+
+    Scans each newline-delimited JSON record for ``type == "tool_use"`` and
+    extracts the tool name. Returns names in call order with duplicates
+    preserved (counts are meaningful for anomaly detection).
+
+    Never raises — best-effort parse. Unrecognised or malformed lines are
+    silently skipped so parse failures cannot block a completed dispatch.
+
+    Grok streaming-JSON format: each line is a JSON object. Tool-use
+    records carry ``type="tool_use"`` and ``name="<tool_name>"``.
+    """
+    tool_names: list[str] = []
+    for raw in stdout_bytes.splitlines():
+        if not raw:
+            continue
+        try:
+            rec = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("type") != "tool_use":
+            continue
+        name = rec.get("name") or rec.get("toolName")
+        if isinstance(name, str) and name:
+            tool_names.append(name)
+    return tool_names
+
+
 def _snap_session_id(line: bytes) -> str | None:
     """Best-effort parse: return ``sessionId`` from a single streaming-JSON line.
 

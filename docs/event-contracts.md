@@ -2098,6 +2098,8 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.manage.service.called` | `action`, `service` | manage tool invoked |
 | `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage completed successfully |
 | `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage returned error |
+| `mcp.server.claude.manifest.boot` | `domain_count`, `names_sha256` | Claude dispatcher manifest derived at MCP boot; `names_sha256 = sha256(json.dumps(sorted(tool_names)))` for drift detection |
+| `mcp.server.grok.manifest.boot` | `tool_count`, `total_bytes`, `names_sha256` | Grok flat manifest derived at MCP boot; `names_sha256 = sha256(json.dumps(sorted(canonical_names)))` for drift detection |
 | `mcp.response.guarded` | `tool_name`, `profile`, `original_bytes`, `threshold_bytes`, `ref_id`, `store_count` | Tool response exceeded profile threshold; stored in memory, reference returned |
 | `mcp.response.retrieved` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Consumer retrieved a stored oversized response via `retrieve` tool |
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
@@ -2424,6 +2426,8 @@ All signals: `role="observation"`, `scope="global"`.
 | `mcp.grokbuild.dispatch.failed` | Same as `.completed` plus `error` (str, ≤200 chars) and `reason_code` (str — `spawn_failed` \| `sidecar_unwritable` \| `grok_nonzero_exit`) instead of `truncated` | Dispatch completed with non-zero exit OR sidecar `started`-write failed before subprocess spawn. |
 | `mcp.grokbuild.dispatch.timeout` | `dispatch_id`, `timeout_seconds`, `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation`, `audit_incomplete`, `sidecar_gaps` | Subprocess exceeded `timeout_seconds`; SIGTERM → 5s → SIGKILL via `os.killpg`. |
 | `mcp.grokbuild.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum), `reason` (str), `mode`, `op`, `cwd`, `model` | Validator or registry rejected admission. No subprocess spawned. Correlation fields travel inline so no `.called` join required (admission-phase contract). |
+| `mcp.grokbuild.dispatch.tool_calls` | `dispatch_id`, `tool_count` (int), `tool_names` (list[str]) | C.1(ii) sidecar parse summary. Emitted after every dispatch that produced stdout (completed or non-zero exit). `tool_count == len(tool_names)`. JOIN with `mcp.request.completed` on `dispatch_id` to detect header-vs-sidecar discrepancy. Empty (tool_count=0) on spawn-failed/timeout — those paths never reach `communicate()`. |
+| `mcp.grokbuild.dispatch.zero_tool_calls_when_expected` | `dispatch_id`, `mode` (str) | C.1(ii) anomaly. Fires when `tool_count == 0` AND `mode == 'edit'` AND `status == 'completed'`. In edit mode the grok subprocess is expected to call MCP tools; zero calls may indicate a silent HOME-override failure, the grok subprocess ignoring MCP, or a trivially-answerable task. Always co-emitted with `.tool_calls`. |
 | `mcp.grokbuild.create.called` | `dispatch_id`, `name`, `branch`, `source_repo`, `create_branch` (bool), `start_point` (str) | `worktree_create_op` admitted (V2: emits **after** name/branch/source-repo validation, review W9). |
 | `mcp.grokbuild.create.completed` | `dispatch_id`, `duration_s`, `exit_code` (0), `name`, `branch`, `source_repo`, `worktree_path`, `create_branch`, `start_point` | `git worktree add` succeeded. |
 | `mcp.grokbuild.create.failed` | Same as `.completed` plus `error` (str ≤200) | `git worktree add` non-zero exit OR setup OSError. |
@@ -2464,6 +2468,29 @@ All signals: `role="observation"`, `scope="global"`.
 | `grokbuild.pr.created` | `name`, `pr_number` (int \| null — **typed**, surfaced from envelope metadata per review W8), `duration_s`, `outcome` | `POST /worktrees/{name}/pull-requests` succeeded. |
 | `grokbuild.models.listed` | `count` (int), `duration_s` | `GET /models` succeeded. |
 | `grokbuild.tracker.orphan.cleaned` | `count` (int), `dispatch_ids` (list[str]) | Lifespan startup hook (`cleanup_orphans`) purged tracker entries whose subprocess PID is dead. With pure-in-memory storage this is usually a no-op; test harnesses pre-seed dead entries to exercise the path. |
+
+**C.1 header-vs-sidecar JOIN example (discrepancy detection).** Both the
+MCP-server header path (C.1(i): `mcp.request.completed` with
+`caller_identity=grok-build-dispatch` + `dispatch_id`) and the sidecar parse
+path (C.1(ii): `mcp.grokbuild.dispatch.tool_calls`) are CO-PRIMARY attribution
+sources. Their disagreement is itself an anomaly signal:
+
+```sql
+-- Find dispatches where sidecar tool_count disagrees with MCP-server request count.
+SELECT
+    tc.dispatch_id,
+    json_extract(tc.payload,'$.tool_count') AS sidecar_count,
+    COUNT(mrc.id) AS header_count
+FROM events tc
+LEFT JOIN events mrc
+    ON json_extract(mrc.payload,'$.dispatch_id') = json_extract(tc.payload,'$.dispatch_id')
+    AND mrc.signal = 'mcp.request.completed'
+    AND json_extract(mrc.payload,'$.caller_identity') = 'grok-build-dispatch'
+WHERE tc.signal = 'mcp.grokbuild.dispatch.tool_calls'
+  AND tc.ts_unix_ms > (unixepoch()-86400)*1000
+GROUP BY tc.dispatch_id
+HAVING sidecar_count != header_count
+```
 
 **Dual-vocabulary observability note.** A single `op="build"` dispatch produces signals from BOTH families:
 

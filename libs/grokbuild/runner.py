@@ -29,6 +29,7 @@ from grokbuild.runner_sidecar import (  # noqa: F401 — re-exported; patching "
     _snap_session_id,
     _try_append_sidecar,
     _try_append_sidecar_chunk,
+    parse_tool_calls,
 )
 from grokbuild.runner_types import (  # noqa: F401 — re-exported
     SIDECAR_STDERR_BYTE_MAX,
@@ -324,7 +325,9 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
         )
 
     # streaming-json: split per line, snap first sessionId, sidecar-cap each chunk.
+    # C.1(ii): parse tool calls in the same pass so we don't iterate twice.
     resolved_session_id: str | None = None
+    _tool_call_names: list[str] = []
     for line in stdout_b.splitlines():
         if resolved_session_id is None:
             resolved_session_id = _snap_session_id(line)
@@ -335,6 +338,8 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             cap=SIDECAR_STDOUT_LINE_MAX,
             gaps=gaps,
         )
+    # Parse tool calls from full stdout_b (simpler than per-line accumulation).
+    _tool_call_names = parse_tool_calls(stdout_b)
 
     if stderr_b:
         _try_append_sidecar_chunk(
@@ -394,4 +399,5 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
         reason_code=reason_code,
         resolved_session_id=resolved_session_id,
         dirty_admission=spec.dirty_admission,
+        tool_call_names=tuple(_tool_call_names),
     )
