@@ -39,7 +39,9 @@ _BOOT_IN_FLIGHT_TODOS_SQL = """
 @router.get("/boot-recent-work")
 def get_boot_recent_work(
     phase_limit: int = Query(3, ge=1, le=10, description="Max plan phases to return"),
-    todo_limit: int = Query(5, ge=1, le=20, description="Max in-flight todos to return"),
+    todo_limit: int = Query(
+        5, ge=1, le=20, description="Max in-flight todos to return"
+    ),
 ) -> dict[str, Any]:
     """Recent work trail for boot briefings.
 
@@ -51,12 +53,9 @@ def get_boot_recent_work(
     Surfaced alongside plan phases so Universal Mode and Continue Mode agents
     both receive a consistent work-trail without separate boot queries.
     """
-    conn = cortex_conn()
-    try:
+    with cortex_conn() as conn:
         phase_rows = db_query(conn, _BOOT_PLAN_PHASES_SQL, (phase_limit,))
         todo_rows = db_query(conn, _BOOT_IN_FLIGHT_TODOS_SQL, (todo_limit,))
-    finally:
-        conn.close()
 
     plan_phases = [
         {

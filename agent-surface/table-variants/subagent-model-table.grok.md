@@ -20,4 +20,4 @@ API-dispatched workers are non-MCP and suitable for pre-staged-corpus dispatch o
 
 **Default for general grok-native dispatch (non-MCP)**: `xai/grok-4.3__effort_medium`.
 
-Full policy: consult `agent-skills/grokbuild-v1.md` (cortex) for handoff packet, mode/tier, sidecar, audit; `agent-skills/grokbuild-v2.md` for async dispatch lifecycle.
+Full policy: `agent_skill:grokbuild` (cortex, consolidated v3 — 2026-05-22) covers handoff packet, mode/tier, sidecar, audit, and async dispatch lifecycle. The former v1+v2 split is superseded; v1/v2 entries are kept for history only.

@@ -14,6 +14,8 @@ startup-time coherence checks — not a typed data layer.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +173,15 @@ def derive_claude_manifest(
         "claude_manifest_boot domain_count=%d domains=%s",
         len(manifest),
         sorted(e["domain"] for e in manifest),
+    )
+    tool_names = sorted(e["tool_name"] for e in manifest)
+    names_sha256 = hashlib.sha256(json.dumps(tool_names).encode()).hexdigest()
+    from mcp_events import record  # noqa: PLC0415
+
+    record(
+        "mcp.server.claude.manifest.boot",
+        domain_count=len(manifest),
+        names_sha256=names_sha256,
     )
     return manifest
 

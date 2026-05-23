@@ -9,14 +9,16 @@ import json
 import re
 from typing import Any
 
+from universal_logging import get_logger
+
 from ...db import query
 from .._shared import _FILES_ROOT
 from ._shared import _finding
 
+logger = get_logger("cortex-api.dispatch_ops.detectors.cases")
 
-def detect_case_no_assertions(
-    conn, subject: str | None = None
-) -> list[dict[str, Any]]:
+
+def detect_case_no_assertions(conn, subject: str | None = None) -> list[dict[str, Any]]:
     """Cases with no assertions (basic integrity)."""
     sql = """
         SELECT id, name FROM entities
@@ -61,9 +63,7 @@ def detect_case_no_relationships(
     ]
 
 
-def detect_case_no_documents(
-    conn, subject: str | None = None
-) -> list[dict[str, Any]]:
+def detect_case_no_documents(conn, subject: str | None = None) -> list[dict[str, Any]]:
     """Cases with no wired documents (via evidence_for or inventory_item)."""
     sql = """
         SELECT id, name FROM entities
@@ -212,7 +212,16 @@ def detect_case_marker_absent(conn, subject: str | None = None) -> list[dict[str
                             audit_id=None,
                         )
                     )
-        except Exception:
+        except (OSError, UnicodeDecodeError) as exc:
+            # External I/O boundary — narrow the catch and surface the failure
+            # via WARN log per [quality] exception handling. Continue the loop
+            # so a single unreadable path doesn't blind the whole detector.
+            logger.warning(
+                "case_marker_absent: skipped %s (%s): %s",
+                r.get("id"),
+                uri,
+                exc,
+            )
             continue
     return findings
 

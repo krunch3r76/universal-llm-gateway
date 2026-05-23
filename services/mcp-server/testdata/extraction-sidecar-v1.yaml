@@ -1,0 +1,67 @@
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: cortex://configs/schemas/extraction-sidecar-v1.yaml
+title: Extraction Sidecar Frontmatter v1
+type: object
+required:
+  - naming_version
+  - canonical
+  - partial
+  - page_spec
+  - default_profile
+  - source_path
+  - source_sha256
+  - source_size
+  - extracted_at
+  - model
+  - dpi
+  - pages
+  - prompt_hash
+  - extraction_type
+  - tool_version
+properties:
+  naming_version:
+    type: integer
+    const: 1
+  canonical:
+    type: boolean
+  partial:
+    type: boolean
+  page_spec:
+    type: string
+  args_hash:
+    type: [string, "null"]
+    pattern: "^[a-f0-9]{64}$"
+  args_hash_prefix:
+    type: [string, "null"]
+    pattern: "^[a-f0-9]{6}$"
+  default_profile:
+    type: string
+  source_path:
+    type: string
+  source_sha256:
+    type: string
+    pattern: "^[a-f0-9]{64}$"
+  source_size:
+    type: integer
+    minimum: 0
+  extracted_at:
+    type: string
+    format: date-time
+  model:
+    type: string
+  dpi:
+    type: integer
+    minimum: 72
+  pages:
+    oneOf:
+      - const: all
+      - type: array
+        items: { type: integer, minimum: 1 }
+  prompt_hash:
+    type: string
+    pattern: "^[a-f0-9]{64}$"
+  extraction_type:
+    type: string
+  tool_version:
+    type: string
+additionalProperties: false

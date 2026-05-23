@@ -27,6 +27,7 @@ def _impls() -> tuple:
         _list_entities_impl,
         _update_entity_impl,
     )
+
     return (
         _create_entity_impl,
         _get_entity_card_impl,
@@ -34,6 +35,7 @@ def _impls() -> tuple:
         _list_entities_impl,
         _update_entity_impl,
     )
+
 
 logger = get_logger("cortex-api.dispatch_ops.entities")
 
@@ -154,7 +156,14 @@ def _op_entity_create(
         try:
             with cortex_conn() as conn:
                 existing = _get_entity_impl(conn, entity_id=str(id))
-        except HTTPException:
+        except HTTPException as exc:
+            # Conflict-lookup race — the IntegrityError says the entity
+            # exists, so a 404 here is unexpected (concurrent delete? bad
+            # state?). Log and proceed; the outer 409 still raises so the
+            # caller sees the conflict.
+            logger.warning(
+                "entity_create conflict-lookup failed for %s: %s", id, exc.detail
+            )
             existing = None
         raise HTTPException(
             status_code=409,

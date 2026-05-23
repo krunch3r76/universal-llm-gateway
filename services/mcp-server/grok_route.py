@@ -63,6 +63,14 @@ def emit_boot_shadow_log() -> None:
         total_bytes,
         names_sha256,
     )
+    from mcp_events import record  # noqa: PLC0415
+
+    record(
+        "mcp.server.grok.manifest.boot",
+        tool_count=len(manifest),
+        total_bytes=total_bytes,
+        names_sha256=names_sha256,
+    )
 
 
 async def capture_pre_prune_tools(mcp: FastMCP) -> dict[str, Any]:
@@ -182,7 +190,7 @@ def build_grok_server(
         if name not in effective_tools:
             effective_tools[name] = _CallableWrapper(fn)
 
-    registered_count, missing = register_grok_flat_tools(
+    registered_count, _missing = register_grok_flat_tools(
         grok_mcp, effective_tools, manifest, raw_data
     )
 
@@ -206,20 +214,15 @@ def build_grok_server(
             _asyncio.run(_patch_ts())
         registered_count += 1
 
-    if missing:
-        logger.warning(
-            "grok_mcp built with %d/%d canonical tools; %d missing: %s",
-            registered_count,
-            len(manifest),
-            len(missing),
-            sorted(missing),
-        )
-    else:
-        logger.info(
-            "grok_mcp built: %d/%d canonical tools registered",
-            registered_count,
-            len(manifest),
-        )
+    # verify_grok_manifest_count (caller) raises on count mismatch, so any
+    # missing-tools state would fail boot before reaching production. Single
+    # info log keeps the success-path breadcrumb; failure path surfaces via
+    # the RuntimeError, not via a degraded log here.
+    logger.info(
+        "grok_mcp built: %d/%d canonical tools registered",
+        registered_count,
+        len(manifest),
+    )
 
     return grok_mcp
 
