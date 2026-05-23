@@ -17,7 +17,6 @@ MCP handler, so observability lands at the process where work actually runs.
 
 from __future__ import annotations
 
-import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -26,10 +25,11 @@ from fastapi import APIRouter, HTTPException, status
 from ocr_core import SCANNABLE_SUFFIXES, ocr_directory, ocr_pages
 from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL
+from universal_logging import get_logger
 
 from ..dispatch_ops._shared import _FILES_ROOT, record
 
-logger = logging.getLogger("cortex-api.documents")
+logger = get_logger("cortex-api.documents")
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 

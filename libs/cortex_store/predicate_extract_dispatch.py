@@ -14,13 +14,13 @@ Disable via `CORTEX_PREDICATE_EXTRACT_DISABLED=1` (e.g. tests).
 
 from __future__ import annotations
 
-import logging
 import os
 import threading
 
 import httpx
+from universal_logging import get_logger
 
-logger = logging.getLogger("cortex-api.predicate_extract")
+logger = get_logger("cortex-api.predicate_extract")
 
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://localhost:9999")
 _REQUEST_TIMEOUT = 90.0

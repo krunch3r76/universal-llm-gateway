@@ -1,4 +1,4 @@
-"""MCP request lifecycle middleware — emits ``mcp.request.*`` signals for ``/mcp``.
+"""MCP request lifecycle middleware — emits ``mcp.request.*`` signals for ``/mcp`` and ``/mcp/grok``.
 
 Sits inside the auth middleware so that rejected OAuth tokens terminate before
 ``mcp.request.started`` fires.  Includes ``auth_mode`` from the ASGI scope
@@ -8,6 +8,14 @@ observability.
 Tool-call extraction: for ``tools/call`` MCP methods, the middleware parses
 ``params.name`` from the JSON-RPC body to include the specific tool name in
 both log lines and event payloads, enabling per-tool observability.
+
+``seat_class`` field: derived from the request path and included in every event
+payload and in the request-scoped metadata (via ``bind_request``).  Allows
+per-endpoint event queries, e.g.
+``scripts/query-events --op mcp.tool.call.error --filter seat_class=grok``.
+  /mcp       → ``seat_class: "claude"``  (Cursor / Anthropic API surface)
+  /mcp/grok  → ``seat_class: "grok"``   (grok-CLI flat-manifest surface)
+  other      → ``seat_class: "unknown"``
 """
 
 from __future__ import annotations
@@ -26,6 +34,24 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 _SUSPECTED_TIMEOUT_MIN_DURATION_S = 25.0
 _SUSPECTED_TIMEOUT_MAX_RESPONSE_BYTES = 100
+
+# Paths handled by this middleware; everything else is passed through unchanged.
+_MCP_CLAUDE_PATH = "/mcp"
+_MCP_GROK_PREFIX = "/mcp/grok"
+
+
+def _seat_class_from_path(path: str) -> str:
+    """Return the seat_class tag for the given request path.
+
+    /mcp        → "claude"   (Cursor / Anthropic API surface)
+    /mcp/grok*  → "grok"    (grok-CLI flat-manifest surface)
+    other       → "unknown"
+    """
+    if path == _MCP_CLAUDE_PATH:
+        return "claude"
+    if path == _MCP_GROK_PREFIX or path.startswith(_MCP_GROK_PREFIX + "/"):
+        return "grok"
+    return "unknown"
 
 
 def _extract_jsonrpc_id(body: bytes) -> Any:
@@ -71,6 +97,7 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
 
     Examples:
         - dispatch tool with inner tool 'foo': '→foo'
+        - cortex tool with inner tool 'entity_get': '→entity_get'
         - files tool with op 'read' and path '/a/b': 'op=read path=/a/b'
     """
     if not args:
@@ -78,19 +105,16 @@ def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
     if tool_name == "dispatch":
         inner = args.get("tool", "")
         return f"→{inner}" if inner else ""
-    if tool_name in ("files", "project", "cortex", "workspaces"):
+    if tool_name in ("cortex", "agent_bus"):
+        inner = args.get("tool", "")
+        return f"→{inner}" if inner else ""
+    if tool_name in ("files", "project", "workspaces"):
         op = args.get("op", "")
         path = args.get("path", "")
         return f"op={op} path={path}" if op else ""
-    if tool_name == "cortex":
-        inner = args.get("tool", "")
-        return f"→{inner}" if inner else ""
     if tool_name == "cortex_boot":
         agent = args.get("agent", "cursor")
         return f"agent={agent}"
-    if tool_name == "agent_bus":
-        inner = args.get("tool", "")
-        return f"→{inner}" if inner else ""
     if tool_name == "web_search":
         q = str(args.get("query", ""))[:60]
         return f"q={q}" if q else ""
@@ -145,7 +169,7 @@ def _is_suspected_fs_timeout(
 
 
 class McpRequestEventsMiddleware:
-    """Emit ``mcp.request.*`` signals only for authenticated ``/mcp`` HTTP traffic."""
+    """Emit ``mcp.request.*`` signals for authenticated ``/mcp`` and ``/mcp/grok`` traffic."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -156,9 +180,12 @@ class McpRequestEventsMiddleware:
             return
 
         request = Request(scope, receive)
-        if request.url.path != "/mcp":
+        path = request.url.path
+        if path != _MCP_CLAUDE_PATH and not path.startswith(_MCP_GROK_PREFIX):
             await self._app(scope, receive, send)
             return
+
+        seat_class = _seat_class_from_path(path)
 
         client_ip = request.client.host if request.client else "unknown"
         method = request.method
@@ -166,6 +193,9 @@ class McpRequestEventsMiddleware:
         profile = str(scope.get("mcp_profile", "default"))
         caller_identity = str(scope.get("mcp_caller_identity", ""))
         oauth_client_id = str(scope.get("oauth_client_id", ""))
+        # Mcp-Session-Id: client-side session token (stable across tool calls
+        # within one session even in stateless_http=True mode).
+        mcp_session_id = (request.headers.get("mcp-session-id", "") or "").strip()
         t0 = monotonic_now()
         mcp_method = ""
         tool_name = ""
@@ -199,6 +229,7 @@ class McpRequestEventsMiddleware:
             "client_ip": client_ip,
             "mcp_method": mcp_method,
             "auth_mode": auth_mode,
+            "seat_class": seat_class,
             **({"tool_name": tool_name} if tool_name else {}),
         }
 
@@ -210,6 +241,7 @@ class McpRequestEventsMiddleware:
             "client_ip": client_ip,
             "mcp_method": mcp_method,
             "auth_mode": auth_mode,
+            "seat_class": seat_class,
         }
         if correlation_hdr:
             transport_started["cloudproxy_correlation_id"] = correlation_hdr
@@ -239,6 +271,7 @@ class McpRequestEventsMiddleware:
                         "client_ip": client_ip,
                         "mcp_method": mcp_method,
                         "auth_mode": auth_mode,
+                        "seat_class": seat_class,
                     }
                     if correlation_hdr:
                         opened_payload["cloudproxy_correlation_id"] = correlation_hdr
@@ -256,10 +289,12 @@ class McpRequestEventsMiddleware:
             auth_mode=auth_mode,
             mcp_method=mcp_method,
             tool_name=tool_name or None,
+            seat_class=seat_class,
             jsonrpc_id=jsonrpc_id,
             cloudproxy_correlation_id=correlation_hdr or None,
             caller_identity=caller_identity or None,
             oauth_client_id=oauth_client_id or None,
+            mcp_session_id=mcp_session_id or None,
             **request_tool_context,
         ):
             try:
@@ -275,6 +310,7 @@ class McpRequestEventsMiddleware:
                     "auth_mode": auth_mode,
                     "mcp_method": mcp_method,
                     "response_bytes": response_bytes,
+                    "seat_class": seat_class,
                 }
                 if tool_name:
                     failed_payload["tool_name"] = tool_name
@@ -288,6 +324,7 @@ class McpRequestEventsMiddleware:
                     "auth_mode": auth_mode,
                     "mcp_method": mcp_method,
                     "response_bytes": response_bytes,
+                    "seat_class": seat_class,
                 }
                 if correlation_hdr:
                     tfail["cloudproxy_correlation_id"] = correlation_hdr
@@ -313,6 +350,7 @@ class McpRequestEventsMiddleware:
                     "duration_s": round(duration, 3),
                     "auth_mode": auth_mode,
                     "response_bytes": response_bytes,
+                    "seat_class": seat_class,
                     **({"tool_name": tool_name} if tool_name else {}),
                 }
                 record("mcp.request.completed", **completed_payload)
@@ -323,6 +361,7 @@ class McpRequestEventsMiddleware:
                     "auth_mode": auth_mode,
                     "response_bytes": response_bytes,
                     "mcp_method": mcp_method,
+                    "seat_class": seat_class,
                 }
                 if correlation_hdr:
                     tdone["cloudproxy_correlation_id"] = correlation_hdr

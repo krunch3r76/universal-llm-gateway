@@ -14,8 +14,6 @@ Submodule layout:
   ``entities``      — entity CRUD + Card v0 read projection
   ``deadlines``     — matter deadline lists
   ``journals``      — session journals + atomic session close
-  ``chunks``        — chunk CRUD
-  ``ingest``        — document ingest + assert-from-chunk
   ``extraction``    — extraction-run lifecycle
   ``surface_forms`` — surface-form resolution cache
   ``reflective``    — reflective journal entries
@@ -58,7 +56,6 @@ from .assertions import (
     SupersedeResponse,
     TouchedAssertionItem,
 )
-from .chunks import ChunkCreate, ChunkItem, ChunkList
 from .deadlines import DeadlineItem, DeadlineList
 from .edges import EdgeCreate, EdgeItem, EdgeList, EdgeRetire
 from .entities import (
@@ -81,13 +78,6 @@ from .extraction import (
     ExtractionCheckResponse,
     ExtractionRunComplete,
     ExtractionRunItem,
-)
-from .ingest import (
-    AssertFromChunkRequest,
-    AssertFromChunkResponse,
-    ChunkResult,
-    IngestDocumentRequest,
-    IngestDocumentResponse,
 )
 from .journals import (
     SessionCloseRequest,
@@ -157,10 +147,6 @@ __all__ = [
     "SupersedeRequest",
     "SupersedeResponse",
     "TouchedAssertionItem",
-    # chunks
-    "ChunkCreate",
-    "ChunkItem",
-    "ChunkList",
     # deadlines
     "DeadlineItem",
     "DeadlineList",
@@ -188,12 +174,6 @@ __all__ = [
     "ExtractionCheckResponse",
     "ExtractionRunComplete",
     "ExtractionRunItem",
-    # ingest
-    "AssertFromChunkRequest",
-    "AssertFromChunkResponse",
-    "ChunkResult",
-    "IngestDocumentRequest",
-    "IngestDocumentResponse",
     # journals
     "SessionCloseRequest",
     "SessionCloseResponse",

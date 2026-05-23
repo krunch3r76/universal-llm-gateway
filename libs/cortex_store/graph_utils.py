@@ -9,14 +9,15 @@ Spreading activation (C3) lives in ``activation.py``.
 
 from __future__ import annotations
 
-import logging
 import re
 import sqlite3
 from dataclasses import dataclass
 
+from universal_logging import get_logger
+
 from .db import query
 
-logger = logging.getLogger("cortex-api.graph")
+logger = get_logger("cortex-api.graph")
 
 _DEPENDENCY_EDGE_TYPES = ("depends_on", "evidence_for", "extends")
 

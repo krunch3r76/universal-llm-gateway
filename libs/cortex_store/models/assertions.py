@@ -37,7 +37,8 @@ class AssertionCreate(BaseModel):
     evidence: str
     evidence_uris: list[str] | None = None
     seeded_by: str | None = None
-    chunk_id: int | None = None
+    chunk_id: str | None = None  # RAG-deterministic ID: {content_hash_prefix}-{i}
+    chunk_id_schema: str | None = None  # 'rag_deterministic' | 'legacy_cortex' | None
     derivation_type: DerivationType | None = None
     reasoning_summary: str | None = None
     observed_at: str | None = None
@@ -113,7 +114,8 @@ class AssertionItem(BaseModel):
     evidence_uris: list[str] | None = None
     seeded_by: str | None = None
     derivation_type: DerivationType | None = None
-    chunk_id: int | None = None
+    chunk_id: str | None = None  # RAG-deterministic ID: {content_hash_prefix}-{i}
+    chunk_id_schema: str | None = None  # 'rag_deterministic' | 'legacy_cortex' | None
     reasoning_summary: str | None = None
     is_atomic: bool | None = None
     is_decontextualized: bool | None = None
@@ -195,10 +197,16 @@ class SupersedeRequest(BaseModel):
     derivation_type: DerivationType | None = None
     reasoning_summary: str | None = None
     seeded_by: str | None = None
-    chunk_id: int | None = None
+    chunk_id: str | None = None  # RAG-deterministic ID: {content_hash_prefix}-{i}
     confidence_score: float | None = None
     session_id: str
     agent: str
+    # Clone-then-override: predicate_form is carried over from the superseded
+    # assertion unless explicitly supplied here. Pass explicit null to
+    # intentionally drop the field on the new row. When supplied and non-null,
+    # the route normalises via normalize_predicate_domain() before INSERT.
+    # Fixes friction 9826 / todo:cortex-supersede-predicate-form-carryover.
+    predicate_form: str | None = None
     # Idempotency guard for the old assertion's superseded_by field. When the
     # target old assertion already has a non-null superseded_by, the supersede
     # call is rejected with 409 Conflict unless force=True is set. Prevents

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
+
+from universal_logging import get_logger
 
 from ..models import ImpactAnalysisRequest
 from ..routes.assertions import (
@@ -15,7 +16,6 @@ from ..routes.assertions import (
     _update_assertion_impl,
 )
 from ..routes.graph import activate, analyze_impact_semantic
-from ..routes.ingest import _assert_from_chunk_impl
 from ..routes.triage import AgeStagedRequest, age_staged
 from ._shared import (
     _DEFAULT_USER_ENTITY,
@@ -107,7 +107,7 @@ def _op_age_staged(
     )
 
 
-logger = logging.getLogger("cortex-api.dispatch_ops.assertions")
+logger = get_logger("cortex-api.dispatch_ops.assertions")
 
 
 def _op_assertions(
@@ -140,7 +140,7 @@ def _op_assert(
     confidence_score: float | None = None,
     observed_at: str | None = None,
     valid_from: str | None = None,
-    chunk_id: int | None = None,
+    chunk_id: str | None = None,
     reasoning_summary: str | None = None,
     prospective_summary: str | None = None,
     events_json: str | None = None,
@@ -432,7 +432,7 @@ def _op_supersede(
     derivation_type: str | None = None,
     reasoning_summary: str | None = None,
     seeded_by: str | None = None,
-    chunk_id: int | None = None,
+    chunk_id: str | None = None,
     confidence_score: float | None = None,
     session_id: str | None = None,
     agent: str | None = None,
@@ -637,65 +637,3 @@ def _op_review_queue(
     }
 
 
-def _op_assert_from_chunk(
-    chunk_id: int | None = None,
-    entity_id: str | None = None,
-    claim: str | None = None,
-    confidence: str | None = None,
-    evidence: str | None = None,
-    evidence_uris: list[str] | str | None = None,
-    derivation_type: str | None = None,
-    confidence_score: float | None = None,
-    observed_at: str | None = None,
-    valid_from: str | None = None,
-    reasoning_summary: str | None = None,
-    resolution_status: str | None = None,
-    seeded_by: str | None = None,
-    **_: object,
-) -> dict[str, Any]:
-    required = {
-        "chunk_id": chunk_id,
-        "entity_id": entity_id,
-        "claim": claim,
-        "confidence": confidence,
-        "evidence": evidence,
-    }
-    for field, val in required.items():
-        if not val and val != 0:
-            return {"error": f"{field} is required"}
-    body: dict[str, Any] = {
-        "chunk_id": chunk_id,
-        "entity_id": entity_id,
-        "claim": claim,
-        "confidence": confidence,
-        "evidence": evidence,
-    }
-    if evidence_uris:
-        if isinstance(evidence_uris, str):
-            evidence_uris = [evidence_uris]
-        body["evidence_uris"] = [str(u) for u in evidence_uris]
-    for key, val in [
-        ("derivation_type", derivation_type),
-        ("confidence_score", confidence_score),
-        ("observed_at", observed_at),
-        ("valid_from", valid_from),
-        ("reasoning_summary", reasoning_summary),
-        ("resolution_status", resolution_status),
-        ("seeded_by", seeded_by),
-    ]:
-        if val is not None:
-            body[key] = val
-    result = _assert_from_chunk_impl(body)
-    if "error" not in result:
-        logger.info(
-            "cortex assert_from_chunk: chunk=%s entity=%s — %s",
-            chunk_id,
-            entity_id,
-            str(claim)[:60],
-        )
-        record(
-            "mcp.cortex.assert_from_chunk",
-            chunk_id=chunk_id,
-            entity_id=entity_id,
-        )
-    return result

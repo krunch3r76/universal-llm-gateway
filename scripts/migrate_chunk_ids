@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+"""Phase E step 2 — migrate chunk-linked assertions to RAG-deterministic chunk_ids.
+
+Implements plan:cortex-v3-completion Phase E step 2, per Phase B migration
+verification report strategy (Option c + partial Option a):
+
+  (a) 8 assertions backfillable via RAG re-index + content-match:
+      - assertion IDs: 7492, 7493, 10439, 10440, 10441, 10442, 10443, 10444
+      - Query RAG for chunks of each source_uri; content-match against the
+        assertion's chunk text from the legacy cortex chunks table; update
+        chunk_id to RAG-deterministic format + set chunk_id_schema='rag_deterministic'
+
+  (b) 30 assertions from non-RAG-indexable sources remain chunk_id_schema='legacy_cortex'
+      - No migration attempted; their chunks table rows are preserved
+
+Phase B report:
+  cortex://notes/system/threads/cortex-v3-completion-phase-b-migration-verification.md
+
+Exit codes:
+  0 — migration complete (including any partial failures logged)
+  1 — migration aborted due to critical error
+
+Usage:
+  python scripts/migrate_chunk_ids [--dry-run] [--verbose]
+
+  --dry-run   Print plan and match results without writing to DB
+  --verbose   Log per-assertion detail
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_LIBS = _REPO_ROOT / "libs"
+if str(_LIBS) not in sys.path:
+    sys.path.insert(0, str(_LIBS))
+
+import httpx
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
+
+# (a)-bucket assertion IDs from Phase B classification.
+# Original set: {7492, 7493, 10439–10444}. After todo:rag-resolver-cortex-uri-delegation
+# (2026-05-23) the cortex:// sextet was superseded to fix URI shape — the active
+# assertion IDs carrying the correct cortex://type/slug evidence_uris are now
+# 10817–10822. Original 10439–10444 remain in DB as superseded legacy_cortex rows.
+_BACKFILLABLE_ASSERTION_IDS = {7492, 7493, 10817, 10818, 10819, 10820, 10821, 10822}
+
+import os
+
+_STARGATE_URL = os.environ.get("STARGATE_URL", "http://localhost:9999")
+_RAG_TIMEOUT = 20.0
+
+
+def _get_chunk_text(conn, chunk_id: int) -> str | None:
+    """Fetch the text content of a legacy cortex chunk by integer ID."""
+    from cortex_store.db import query
+
+    rows = query(conn, "SELECT content FROM chunks WHERE id = ?", (chunk_id,))
+    if not rows:
+        return None
+    return str(rows[0]["content"])
+
+
+def _jaccard_overlap(a: str, b: str) -> float:
+    """Word-level Jaccard overlap between two strings."""
+    words_a = set(a.lower().split())
+    words_b = set(b.lower().split())
+    if not words_a or not words_b:
+        return 0.0
+    return len(words_a & words_b) / len(words_a | words_b)
+
+
+def _rag_search_chunks(source: str, limit: int = 50) -> list[dict]:
+    """Fetch all RAG-indexed chunks for a given source path."""
+    from cortex_store.rag_resolver import normalize_evidence_uri
+
+    try:
+        rag_source = normalize_evidence_uri(source)
+    except ValueError as exc:
+        logger.warning("Cannot normalize URI %r: %s", source, exc)
+        return []
+
+    # Use chunks_by_index to fetch the first `limit` chunk indices.
+    indices = list(range(limit))
+    body = {"groups": [{"source": rag_source, "chunk_indices": indices}]}
+    url = f"{_STARGATE_URL.rstrip('/')}/api/v1/rag/chunks_by_index"
+
+    try:
+        with httpx.Client(timeout=_RAG_TIMEOUT) as client:
+            resp = client.post(url, json=body)
+            resp.raise_for_status()
+    except Exception as exc:
+        logger.warning("RAG chunks_by_index failed for %r: %s", rag_source, exc)
+        return []
+
+    return resp.json().get("chunks", [])
+
+
+def _best_match(chunk_text: str, rag_chunks: list[dict]) -> dict | None:
+    """Find the RAG chunk with highest Jaccard overlap against chunk_text."""
+    best_chunk = None
+    best_score = 0.0
+    for rag_chunk in rag_chunks:
+        score = _jaccard_overlap(chunk_text, rag_chunk.get("text", ""))
+        if score > best_score:
+            best_score = score
+            best_chunk = rag_chunk
+    if best_chunk is not None and best_score >= 0.1:
+        return best_chunk
+    return None
+
+
+def _update_assertion(conn, assertion_id: int, new_chunk_id: str, dry_run: bool) -> bool:
+    """Update chunk_id and chunk_id_schema for the given assertion."""
+    if dry_run:
+        logger.info(
+            "DRY-RUN: would update assertion %d → chunk_id=%r schema='rag_deterministic'",
+            assertion_id,
+            new_chunk_id,
+        )
+        return True
+    conn.execute(
+        "UPDATE assertions SET chunk_id = ?, chunk_id_schema = 'rag_deterministic' "
+        "WHERE id = ?",
+        (new_chunk_id, assertion_id),
+    )
+    return True
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    from cortex_store.db import cortex_conn, query
+
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT id, entity_id, chunk_id, chunk_id_schema, evidence_uris "
+            "FROM assertions WHERE chunk_id IS NOT NULL ORDER BY id",
+            (),
+        )
+
+    total = len(rows)
+    backfillable = [r for r in rows if int(r["id"]) in _BACKFILLABLE_ASSERTION_IDS]
+    legacy_only = [r for r in rows if int(r["id"]) not in _BACKFILLABLE_ASSERTION_IDS]
+
+    print(
+        f"Found {total} chunk-linked assertions: "
+        f"{len(backfillable)} backfillable (a-bucket), "
+        f"{len(legacy_only)} legacy_cortex (b-bucket, no migration)."
+    )
+    if args.dry_run:
+        print("-- DRY-RUN mode --")
+
+    migrated = 0
+    failed = 0
+
+    with cortex_conn() as conn:
+        for row in backfillable:
+            assertion_id = int(row["id"])
+
+            # Already migrated — skip.
+            if row.get("chunk_id_schema") == "rag_deterministic":
+                if args.verbose:
+                    print(f"  skip assertion {assertion_id} (already rag_deterministic)")
+                continue
+
+            legacy_chunk_id = int(str(row["chunk_id"]))
+
+            import json
+
+            raw_uris = row.get("evidence_uris") or "[]"
+            try:
+                uris = json.loads(raw_uris) if isinstance(raw_uris, str) else raw_uris
+            except json.JSONDecodeError:
+                uris = [raw_uris]
+
+            if not uris:
+                logger.warning("assertion %d: no evidence_uris — skipping", assertion_id)
+                failed += 1
+                continue
+
+            source_uri = uris[0]
+            chunk_text = _get_chunk_text(conn, legacy_chunk_id)
+            if not chunk_text:
+                logger.warning(
+                    "assertion %d: chunk %d not found in chunks table — skipping",
+                    assertion_id,
+                    legacy_chunk_id,
+                )
+                failed += 1
+                continue
+
+            rag_chunks = _rag_search_chunks(source_uri)
+            if not rag_chunks:
+                logger.warning(
+                    "assertion %d: no RAG chunks for source=%r — skipping",
+                    assertion_id,
+                    source_uri,
+                )
+                failed += 1
+                continue
+
+            best = _best_match(chunk_text, rag_chunks)
+            if best is None:
+                logger.warning(
+                    "assertion %d: no matching RAG chunk (Jaccard < 0.1) for source=%r",
+                    assertion_id,
+                    source_uri,
+                )
+                failed += 1
+                continue
+
+            new_chunk_id = str(best["chunk_id"])
+            if args.verbose:
+                print(
+                    f"  assertion {assertion_id}: legacy chunk_id={legacy_chunk_id} "
+                    f"→ rag chunk_id={new_chunk_id!r} "
+                    f"(source={source_uri!r})"
+                )
+
+            _update_assertion(conn, assertion_id, new_chunk_id, args.dry_run)
+            migrated += 1
+
+        if not args.dry_run:
+            conn.commit()
+
+    print(
+        f"\nMigration complete: {migrated} assertions updated to 'rag_deterministic', "
+        f"{failed} failed (see logs), "
+        f"{len(legacy_only)} remain 'legacy_cortex' (b-bucket, no action)."
+    )
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

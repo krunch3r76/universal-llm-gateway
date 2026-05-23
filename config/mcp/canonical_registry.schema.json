@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Canonical Tool Name Registry",
+  "description": "JSON Schema for config/mcp/canonical.yaml. Enforces naming, FOL descriptor presence, and required fields for G1 CI gate.",
+  "type": "object",
+  "required": ["schema_version", "generated_by", "last_audited", "domains", "tools"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "generated_by": {
+      "type": "string"
+    },
+    "last_audited": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "domains": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "tools": {
+      "type": "array",
+      "items": {"$ref": "#/definitions/CanonicalTool"},
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "CanonicalTool": {
+      "type": "object",
+      "required": [
+        "canonical_name",
+        "domain",
+        "operation",
+        "dispatcher_call_shape",
+        "flat_call_shape",
+        "fol_descriptor",
+        "json_schema",
+        "skill_uri",
+        "seat_visibility",
+        "mandate_safety",
+        "cache_priority"
+      ],
+      "properties": {
+        "canonical_name": {
+          "type": "string",
+          "description": "Unique key. Form: <domain>_<operation>. Must match G8 naming pattern.",
+          "pattern": "^[a-z][a-z0-9]*(_[a-z0-9]+)+$"
+        },
+        "domain": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "dispatcher_call_shape": {
+          "type": "object",
+          "required": ["tool", "dispatch_key", "dispatch_value"],
+          "properties": {
+            "tool": {"type": "string"},
+            "dispatch_key": {
+              "type": "string",
+              "description": "D8-normalized: must be 'op' for all entries (Phase D cutover enforces this)."
+            },
+            "dispatch_value": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "flat_call_shape": {
+          "type": "object",
+          "required": ["tool", "substrate_qualified"],
+          "properties": {
+            "tool": {"type": "string"},
+            "substrate_qualified": {
+              "type": "string",
+              "pattern": "^user-vortex__"
+            }
+          },
+          "additionalProperties": false
+        },
+        "fol_descriptor": {
+          "type": "string",
+          "description": "FOL-style invariant body. Must contain at least one of: ∀ ∃ ⟹ ¬ ∈ (enforced by G6).",
+          "minLength": 20
+        },
+        "json_schema": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {"type": "string"},
+            "properties": {"type": "object"},
+            "required": {"type": "array"}
+          }
+        },
+        "skill_uri": {
+          "type": "string",
+          "pattern": "^agent_skill:"
+        },
+        "seat_visibility": {
+          "type": "array",
+          "items": {"type": "string", "enum": ["mcp", "mcp_grok"]},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "mandate_safety": {
+          "type": "string",
+          "enum": ["read_only", "write", "destructive"]
+        },
+        "cache_priority": {
+          "type": "string",
+          "enum": ["always_loaded", "on_demand"]
+        },
+        "introduced": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

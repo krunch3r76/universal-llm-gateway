@@ -147,6 +147,9 @@ def _normalize_op_body(
     common["output_contract"] = "thread"
     common["target_thread"] = thread
     common["op"] = "to_thread"
+    subject: str | None = getattr(body, "subject", None)
+    if subject is not None:
+        common["reply_subject"] = subject
     return common
 
 

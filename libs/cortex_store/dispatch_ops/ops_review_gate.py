@@ -17,8 +17,12 @@ import os
 import time
 from typing import Any
 
+from universal_logging import get_logger
+
 from ._shared import record
 from .ops_audit_detectors import run_detectors
+
+logger = get_logger(__name__)
 
 _AUDIT_MODE_ENV = "CORTEX_SESSION_AUDIT_MODE"
 _PRE_CLOSE_GATE_KINDS = [
@@ -62,9 +66,7 @@ def _run_session_audit_graph_only(
             )
         return run_detectors(kinds=kinds, subject=None, include_filesystem=False)
     except Exception:
-        import logging
-
-        logging.getLogger(__name__).warning(
+        logger.warning(
             "session audit degraded for %s — detector error suppressed",
             session_id,
             exc_info=True,

@@ -1,0 +1,1719 @@
+[
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "agent_bus_fetch",
+    "description": "\u2200 thread \u2208 \u2115: fetch(thread) \u27f9\n  result \u2208 List[Turn]\n  \u2227 args.compact = true \u27f9 \u2200 t \u2208 result: t.body truncated.\nRead-only. \u00acside-effects. See agent_skill:agent_bus.",
+    "domain": "agent_bus",
+    "inputSchema": {
+      "properties": {
+        "compact": {
+          "type": "boolean"
+        },
+        "last": {
+          "type": "integer"
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "agent_bus_fetch",
+    "skill_uri": "agent_skill:agent_bus"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "agent_bus_get",
+    "description": "\u2200 thread \u2208 \u2115 \u2227 turn_number \u2208 \u2115:\n  get(thread, turn_number) \u27f9 Turn \u2228 raises NotFound.\nRead-only. \u00acside-effects. See agent_skill:agent_bus.",
+    "domain": "agent_bus",
+    "inputSchema": {
+      "properties": {
+        "thread": {
+          "type": "string"
+        },
+        "turn_number": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "thread",
+        "turn_number"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "agent_bus_get",
+    "skill_uri": "agent_skill:agent_bus"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "agent_bus_post",
+    "description": "\u2200 body \u2208 str \u2227 from \u2208 str \u2227 to \u2208 str:\n  post(body, from, to) \u27f9 thread_id \u2208 \u2115 \u2227 turn_number = 1.\nCreates new thread. Mutating. \u00acidempotent. See agent_skill:agent_bus.",
+    "domain": "agent_bus",
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "agent_bus_post",
+    "skill_uri": "agent_skill:agent_bus"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "agent_bus_reply",
+    "description": "\u2200 thread \u2208 \u2115 \u2227 body \u2208 str \u2227 from \u2208 str:\n  reply(thread, body, from) \u27f9 turn_number \u2208 \u2115.\nMutating. \u00acidempotent. See agent_skill:agent_bus.",
+    "domain": "agent_bus",
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread",
+        "body",
+        "from"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "agent_bus_reply",
+    "skill_uri": "agent_skill:agent_bus"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "agent_bus_threads",
+    "description": "\u2200 args \u2208 ThreadsArgs: threads(args) \u27f9\n  result \u2208 List[ThreadSummary]\n  \u2227 |result| \u2264 args.last \u2228 args.last = \u2205.\nRead-only. \u00acside-effects. See agent_skill:agent_bus.",
+    "domain": "agent_bus",
+    "inputSchema": {
+      "properties": {
+        "lifecycle_state": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "agent_bus_threads",
+    "skill_uri": "agent_skill:agent_bus"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_assert",
+    "description": "\u2200 entity_id \u2208 Cortex \u2227 claim \u2208 str \u2227 confidence \u2208 ConfidenceLevel:\n  assert(entity_id, claim, confidence, evidence) \u27f9\n    assertion_id \u2208 \u2115 \u2227 assertion \u2208 Cortex.\nMutating. \u00acidempotent (each call mints a new assertion row). See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "claim": {
+          "type": "string"
+        },
+        "confidence": {
+          "enum": [
+            "confirmed",
+            "believed",
+            "suspected",
+            "hypothesized"
+          ],
+          "type": "string"
+        },
+        "derivation_type": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "claim",
+        "confidence",
+        "evidence",
+        "derivation_type"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_assert",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_assertion_update",
+    "description": "\u2200 assertion_id \u2208 Assertions:\n  assertion_update(assertion_id, \u0394) \u27f9\n    assertion.mutable_fields \u2190 \u0394.\nPartial-patch. \u00acchanges claim/entity. Mutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "assertion_id": {
+          "type": "integer"
+        },
+        "review_status": {
+          "type": "string"
+        },
+        "superseded_by": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "assertion_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_assertion_update",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_assertions",
+    "description": "\u2200 args \u2208 AssertionsArgs: assertions(args) \u27f9\n  result \u2208 List[Assertion]\n  \u2227 args.superseded = false \u27f9 \u2200 a \u2208 result: a.superseded = false.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "confidence": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "review_status": {
+          "type": "string"
+        },
+        "superseded": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_assertions",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_edge_create",
+    "description": "\u2200 from_node \u2208 Cortex \u2227 to_node \u2208 Cortex \u2227 edge_type \u2208 EdgeTypes:\n  edge_create(from_node, to_node, edge_type) \u27f9 edge_id \u2208 \u2115.\nMutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "edge_type": {
+          "type": "string"
+        },
+        "from_node": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "to_node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "agent",
+        "from_node",
+        "to_node",
+        "edge_type"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_edge_create",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_edge_traverse",
+    "description": "\u2200 node \u2208 Cortex \u2227 hops \u2208 {1,2}:\n  edge_traverse(node, hops) \u27f9 subgraph \u2208 List[Node].\nBFS expansion. Read-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "edge_type": {
+          "type": "string"
+        },
+        "hops": {
+          "type": "integer"
+        },
+        "min_strength": {
+          "type": "number"
+        },
+        "node": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_edge_traverse",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_edges",
+    "description": "\u2200 args \u2208 EdgesArgs: edges(args) \u27f9 result \u2208 List[Edge].\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "edge_type": {
+          "type": "string"
+        },
+        "from_node": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "to_node": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_edges",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_entities",
+    "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  result \u2208 List[Entity]\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "for_agent": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_entities",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_entities_bulk_upsert",
+    "description": "\u2200 entities \u2208 List[EntitySpec]:\n  bulk_upsert(entities, if_exists) \u27f9\n    \u2200 e \u2208 entities: (create \u2228 update \u2228 skip) per if_exists policy.\nAtomic. Mutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "entities": {
+          "type": "array"
+        },
+        "if_exists": {
+          "enum": [
+            "fail",
+            "update",
+            "skip"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "entities"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_entities_bulk_upsert",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_entity_create",
+    "description": "\u2200 id \u2208 str \u2227 type \u2208 EntityType \u2227 name \u2208 str:\n  entity_create(id, type, name) \u27f9\n    (entity_created \u2227 id \u2208 Cortex) \u2228 raises Conflict.\n\u00acidempotent (duplicate id \u2192 409). Mutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_entity_create",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_entity_get",
+    "description": "\u2200 entity_id \u2208 str: entity_get(entity_id) \u27f9\n  (entity \u2208 Cortex \u2228 raises NotFound).\n\u2200 intent \u2208 {\"full\",\"card\"}: response shape differs by projection depth.\nRead-only. \u00acside-effects. Idempotent. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        },
+        "include_edges": {
+          "type": "boolean"
+        },
+        "intent": {
+          "enum": [
+            "full",
+            "card"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_entity_get",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_entity_update",
+    "description": "\u2200 entity_id \u2208 Cortex: entity_update(entity_id, \u0394) \u27f9\n  entity.fields \u2190 entity.fields \u222a \u0394.\n\u00accreates. Partial-patch semantics. Mutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_entity_update",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_journal_read",
+    "description": "\u2200 limit \u2208 \u2115: journal_read(limit) \u27f9\n  result \u2208 List[JournalEntry]\n  \u2227 |result| \u2264 limit \u2227 ordered by timestamp DESC.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_journal_read",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_relationship_create",
+    "description": "\u2200 source_id \u2208 Cortex \u2227 target_id \u2208 Cortex \u2227 type_id \u2208 str:\n  relationship_create(source_id, target_id, type_id) \u27f9 rel_id \u2208 \u2115.\nMutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "strength": {
+          "type": "number"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "type_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "target_id",
+        "type_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_relationship_create",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_relationships",
+    "description": "\u2200 entity_id \u2208 Cortex: relationships(entity_id) \u27f9\n  result \u2208 List[Relationship].\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "entity_id": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "type_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_relationships",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_search",
+    "description": "\u2200 query \u2208 str: search(query) \u27f9\n  result \u2208 List[SearchHit]\n  \u2227 \u2200 h \u2208 result: h.text \u220b query (FTS5 match).\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "entity_type": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_search",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_session_close",
+    "description": "\u2200 session_id \u2208 str \u2227 agent \u2208 str \u2227 (transcript_jsonl_path \u2228 transcript_md) \u2260 \u2205:\n  session_close(...) \u27f9\n    transcript_entity_id \u2208 Cortex \u2227 journal_row_id \u2208 \u2115 \u2227 content_hash \u2208 sha256.\nAtomic. Mutating. Idempotent by session_id (second close \u2192 422 session.already_closed).\nSee agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "session_summary_md": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "transcript_jsonl_path": {
+          "type": "string"
+        },
+        "transcript_md": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "agent",
+        "session_summary_md",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_session_close",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_supersede",
+    "description": "\u2200 old_id \u2208 Assertions \u2227 entity_id \u2208 Cortex:\n  supersede(old_id, entity_id, claim, ...) \u27f9\n    old_id.superseded = true \u2227 \u2203 new_id \u2208 Assertions: new_id.supersedes = old_id.\nAtomic close-and-create. Mutating. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "claim": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "old_assertion_id": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "old_assertion_id",
+        "entity_id",
+        "claim",
+        "confidence",
+        "evidence",
+        "session_id",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_supersede",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_todo_candidates",
+    "description": "\u2200 q \u2208 str: todo_candidates(q) \u27f9\n  result \u2208 List[Todo]\n  \u2227 \u2200 t \u2208 result: t.workflow_state \u2208 {\"open\",\"in_progress\",\"blocked\"}.\nRead-only. Ranked retrieval. \u00acside-effects. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "q": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "workflow_state": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_todo_candidates",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "dispatch_frontier",
+    "description": "\u2200 model \u2208 FrontierModels \u2227 prompt \u2208 str:\n  dispatch_frontier(model, prompt) \u27f9\n    response \u2208 str \u2227 execution_id \u2208 UUIDv4.\nAsync. Mutating (external call). See agent_skill:dispatch.",
+    "domain": "dispatch",
+    "inputSchema": {
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "system": {
+          "type": "string"
+        },
+        "timeout_s": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "model",
+        "prompt"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "dispatch_frontier",
+    "skill_uri": "agent_skill:dispatch"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "dispatch_overflow",
+    "description": "\u2200 tool \u2208 OverflowRegistry \u2227 arguments \u2208 JSONStr:\n  dispatch_overflow(tool, arguments) \u27f9 result \u2208 Any.\nGeneral overflow routing. \u2200 t \u2209 PrimaryTools: reachable via dispatch.\nSee agent_skill:dispatch.",
+    "domain": "dispatch",
+    "inputSchema": {
+      "properties": {
+        "arguments": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "dispatch_overflow",
+    "skill_uri": "agent_skill:dispatch"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "dispatch_team",
+    "description": "\u2200 role \u2208 TeamRoles \u2227 body \u2208 str:\n  dispatch_team(role, body) \u27f9 reply \u2208 str.\nDelegates to named team agent. Async. Mutating (external call). See agent_skill:dispatch.",
+    "domain": "dispatch",
+    "inputSchema": {
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "body"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "dispatch_team",
+    "skill_uri": "agent_skill:dispatch"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_append",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 content \u2208 str:\n  fs_append(sandbox, path, content) \u27f9 file.end += content.\nMutating. \u00acidempotent (repeated appends accumulate). See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_append",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_copy",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 Exists \u2227 target \u2208 str:\n  fs_copy(sandbox, path, target) \u27f9 path \u2208 Filesystem \u2227 target \u2208 Filesystem.\n\u00acdestructive. May cross sandboxes via target_sandbox. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "target_sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "target"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_copy",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_delete",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 Exists:\n  fs_delete(sandbox, path) \u27f9 path \u2209 Filesystem.\nMutating. Destructive. \u00acreversible. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "destructive",
+    "name": "fs_delete",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "fs_list",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str:\n  fs_list(sandbox, path) \u27f9 entries \u2208 List[str].\nRead-only. \u00acside-effects. Idempotent. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "fs_list",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_md_append",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 section \u2208 Headings(path):\n  fs_md_append(sandbox, path, section, content) \u27f9\n    section.end += content.\nMutating. Text files only. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "section",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_md_append",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_md_delete",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 section \u2208 Headings(path):\n  fs_md_delete(sandbox, path, section) \u27f9\n    section \u2209 Headings(path).\nMutating. Destructive within file. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "section"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "destructive",
+    "name": "fs_md_delete",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_md_list",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str:\n  fs_md_list(sandbox, path) \u27f9 toc \u2208 List[HeadingEntry].\nRead-only. TOC extraction. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "fs_md_list",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "fs_md_read",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 section \u2208 str:\n  fs_md_read(sandbox, path, section) \u27f9 section_content \u2208 str.\nRead-only. Section-level access for large docs. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "section"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "fs_md_read",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_md_replace",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 section \u2208 Headings(path):\n  fs_md_replace(sandbox, path, section, content) \u27f9\n    section.body \u2190 content.\nMutating. Text files only. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "section": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "section",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_md_replace",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_move",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 Exists \u2227 target \u2208 str:\n  fs_move(sandbox, path, target) \u27f9 path \u2209 Filesystem \u2227 target \u2208 Filesystem.\nMutating. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "target"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_move",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "fs_read",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str:\n  fs_read(sandbox, path) \u27f9 content \u2208 str \u2228 content_base64 \u2208 str.\nRead-only. \u00acside-effects. Idempotent. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "enum": [
+            "cortex",
+            "workspaces"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "fs_read",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_read_multi",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 paths \u2208 List[str]:\n  fs_read_multi(sandbox, paths) \u27f9\n    \u2200 p \u2208 paths: result[p] \u2208 FileContent \u2228 result[p].error \u2208 str.\nRead-only. Batch. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "paths"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "fs_read_multi",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_replace",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 target \u2208 str \u2227 content \u2208 str:\n  fs_replace(sandbox, path, target, content) \u27f9\n    file.occurrences(target) \u2190 content.\nMutating. Idempotent when target absent. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "all_occurrences": {
+          "type": "boolean"
+        },
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "target",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_replace",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_search",
+    "description": "\u2200 sandbox = \"workspaces\" \u2227 path \u2208 str \u2227 content \u2208 str:\n  fs_search(sandbox, path, content) \u27f9\n    result \u2208 List[Match] \u2227 \u2200 m \u2208 result: m.line \u220b regex(content).\nRead-only. workspaces sandbox only. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "fs_search",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "fs_write",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 content \u2208 str:\n  fs_write(sandbox, path, content) \u27f9 file at path = content.\nMutating. Idempotent (same content). See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_write",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "fs_write_binary",
+    "description": "\u2200 sandbox = \"cortex\" \u2227 path \u2208 str \u2227 content \u2208 base64str:\n  fs_write_binary(sandbox, path, content) \u27f9 binary_file at path.\ncortex sandbox only. Mutating. See agent_skill:fs.",
+    "domain": "fs",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sandbox",
+        "path",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "fs_write_binary",
+    "skill_uri": "agent_skill:fs"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_build",
+    "description": "\u2200 args \u2208 BuildArgs:\n  grokbuild_build(args) \u27f9\n    202 \u2227 dispatch_id \u2208 UUIDv4.\n  \u2227 subsequent grokbuild_build_status(dispatch_id) \u27f9 progress.\n  \u2227 \u2203 T \u2264 args.timeout_s: grokbuild_fetch_result(dispatch_id) \u27f9 artifact \u2228 error.\nargs.source_repo \u2208 Workspaces \u2227 args.name \u2208 valid_worktree_names.\nAsync. Mutating. \u00acidempotent across distinct dispatch_ids. See agent_skill:grokbuild.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "source_repo": {
+          "type": "string"
+        },
+        "timeout_s": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "source_repo",
+        "name"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "grokbuild_build",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_build_status",
+    "description": "\u2200 dispatch_id \u2208 UUIDv4:\n  grokbuild_build_status(dispatch_id) \u27f9\n    status \u2208 {\"pending\",\"running\",\"complete\",\"error\"} \u2227 progress \u2208 [0,100].\nPolling. Read-only per call. See agent_skill:grokbuild.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {
+        "dispatch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dispatch_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "grokbuild_build_status",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_fetch_result",
+    "description": "\u2200 dispatch_id \u2208 UUIDv4:\n  grokbuild_fetch_result(dispatch_id) \u27f9\n    (artifact \u2208 str \u2227 status = \"complete\")\n    \u2228 (error \u2208 str \u2227 status = \"error\").\nRead-only. Idempotent. See agent_skill:grokbuild.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {
+        "dispatch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "dispatch_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "grokbuild_fetch_result",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_worktree_create",
+    "description": "\u2200 source_repo \u2208 Workspaces \u2227 name \u2208 valid_worktree_names:\n  grokbuild_worktree_create(source_repo, name) \u27f9\n    worktree at WORKTREE_ROOT/name.\nMutating. \u00acidempotent (duplicate name \u2192 error). See agent_skill:grokbuild.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source_repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_repo",
+        "name"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "grokbuild_worktree_create",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_worktree_list",
+    "description": "\u2200 (): grokbuild_worktree_list() \u27f9\n  result \u2208 List[WorktreeMeta].\nRead-only. \u00acside-effects. See agent_skill:grokbuild.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "grokbuild_worktree_list",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_worktree_remove",
+    "description": "\u2200 name \u2208 ActiveWorktrees:\n  grokbuild_worktree_remove(name) \u27f9\n    worktree at WORKTREE_ROOT/name \u2209 Filesystem.\nMutating. Destructive. See agent_skill:grokbuild.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "destructive",
+    "name": "grokbuild_worktree_remove",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "manage_health",
+    "description": "\u2200 service \u2208 ManagedServices:\n  manage_health(service) \u27f9\n    healthy \u2208 bool \u2227 uptime_s \u2208 \u2115.\nRead-only. \u00acside-effects. See agent_skill:manage.",
+    "domain": "manage",
+    "inputSchema": {
+      "properties": {
+        "service": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "manage_health",
+    "skill_uri": "agent_skill:manage"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "manage_rebuild",
+    "description": "\u2200 service \u2208 ManagedServices:\n  manage_rebuild(service) \u27f9\n    new_image \u2208 DockerImage \u2227 service.state \u2192 rebuilding.\nMutating. Long-running. \u00acidempotent in time. See agent_skill:manage.",
+    "domain": "manage",
+    "inputSchema": {
+      "properties": {
+        "service": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "manage_rebuild",
+    "skill_uri": "agent_skill:manage"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "manage_restart",
+    "description": "\u2200 service \u2208 ManagedServices:\n  manage_restart(service) \u27f9\n    service.state \u2192 restarted \u2227 old_pid \u2260 new_pid.\nMutating. Side-effects (service interruption). See agent_skill:manage.",
+    "domain": "manage",
+    "inputSchema": {
+      "properties": {
+        "service": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "manage_restart",
+    "skill_uri": "agent_skill:manage"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "manage_status",
+    "description": "\u2200 service \u2208 ManagedServices \u222a {\u2205}:\n  manage_status(service) \u27f9\n    result \u2208 ServiceStatus.\nRead-only. \u00acside-effects. See agent_skill:manage.",
+    "domain": "manage",
+    "inputSchema": {
+      "properties": {
+        "service": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "manage_status",
+    "skill_uri": "agent_skill:manage"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "manage_wait_healthy",
+    "description": "\u2200 service \u2208 ManagedServices \u2227 timeout_s \u2208 \u2115:\n  manage_wait_healthy(service, timeout_s) \u27f9\n    (healthy = true \u2227 elapsed \u2264 timeout_s) \u2228 raises Timeout.\nBlocking poll. \u00acside-effects. See agent_skill:manage.",
+    "domain": "manage",
+    "inputSchema": {
+      "properties": {
+        "service": {
+          "type": "string"
+        },
+        "timeout_s": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "manage_wait_healthy",
+    "skill_uri": "agent_skill:manage"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "observability_preview",
+    "description": "\u2200 (): observability_preview() \u27f9\n  schema \u2208 List[EventSpec] \u2227 \u2200 s \u2208 schema: s.op_name \u2208 str.\nRead-only. Returns available event op names. See agent_skill:observability.",
+    "domain": "observability",
+    "inputSchema": {
+      "properties": {
+        "service": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "observability_preview",
+    "skill_uri": "agent_skill:observability"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "observability_query",
+    "description": "\u2200 op_name \u2208 str: observability_query(op_name, params) \u27f9\n  result \u2208 List[Event].\nRead-only. Event Service parameterized query. See agent_skill:observability.",
+    "domain": "observability",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "op_name": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "op_name"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "observability_query",
+    "skill_uri": "agent_skill:observability"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "observability_recent_failures",
+    "description": "\u2200 limit \u2208 \u2115: observability_recent_failures(limit) \u27f9\n  result \u2208 List[Event]\n  \u2227 \u2200 e \u2208 result: e.level \u2208 {\"ERROR\",\"CRITICAL\"}.\nRead-only. Event Service query. \u00acside-effects. See agent_skill:observability.",
+    "domain": "observability",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "service": {
+          "type": "string"
+        },
+        "since_minutes": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "observability_recent_failures",
+    "skill_uri": "agent_skill:observability"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "pipeline_consult",
+    "description": "\u2200 question \u2208 str: pipeline_consult(question) \u27f9\n  advice \u2208 str \u2227 sources \u2208 List[str].\nRead-only. RAG-backed. \u00acside-effects. See agent_skill:pipeline.",
+    "domain": "pipeline",
+    "inputSchema": {
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "pipeline_consult",
+    "skill_uri": "agent_skill:pipeline"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "pipeline_iterate",
+    "description": "\u2200 execution_id \u2208 str: pipeline_iterate(execution_id) \u27f9\n  (result \u2208 StepOutput \u2227 status = \"running\")\n  \u2228 (result = null \u2227 status = \"complete\").\nPolling. Read-only per call. See agent_skill:pipeline.",
+    "domain": "pipeline",
+    "inputSchema": {
+      "properties": {
+        "execution_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "execution_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "pipeline_iterate",
+    "skill_uri": "agent_skill:pipeline"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "pipeline_run",
+    "description": "\u2200 pipeline \u2208 PipelineID \u2227 input \u2208 dict:\n  pipeline_run(pipeline, input) \u27f9\n    execution_id \u2208 str \u2227 status \u2208 {\"pending\",\"running\",\"complete\",\"error\"}.\nAsync. Mutating. See agent_skill:pipeline.",
+    "domain": "pipeline",
+    "inputSchema": {
+      "properties": {
+        "async_exec": {
+          "type": "boolean"
+        },
+        "input": {
+          "type": "object"
+        },
+        "pipeline": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "pipeline_run",
+    "skill_uri": "agent_skill:pipeline"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "rag_coverage",
+    "description": "\u2200 scope \u2208 RAGScope: rag_coverage(scope) \u27f9\n  stats \u2208 CoverageReport \u2227 stats.total_chunks \u2208 \u2115.\nRead-only. \u00acside-effects. See agent_skill:rag.",
+    "domain": "rag",
+    "inputSchema": {
+      "properties": {
+        "scope": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "rag_coverage",
+    "skill_uri": "agent_skill:rag"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "rag_list_sources",
+    "description": "\u2200 scope \u2208 RAGScope: rag_list_sources(scope) \u27f9\n  result \u2208 List[SourceMeta].\nRead-only. \u00acside-effects. See agent_skill:rag.",
+    "domain": "rag",
+    "inputSchema": {
+      "properties": {
+        "scope": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "rag_list_sources",
+    "skill_uri": "agent_skill:rag"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "rag_search",
+    "description": "\u2200 query \u2208 str \u2227 scope \u2208 RAGScope:\n  rag_search(query, scope) \u27f9\n    result \u2208 List[Chunk] \u2227 \u2200 c \u2208 result: c.score \u2265 0.\nRead-only. Semantic + keyword. \u00acside-effects. See agent_skill:rag.",
+    "domain": "rag",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "rag_search",
+    "skill_uri": "agent_skill:rag"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "rag_upsert_article",
+    "description": "\u2200 source_uri \u2208 str \u2227 content \u2208 str:\n  rag_upsert_article(source_uri, content) \u27f9\n    source_uri \u2208 RAGCorpus.\nMutating. Idempotent by source_uri. See agent_skill:rag.",
+    "domain": "rag",
+    "inputSchema": {
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "source_uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_uri",
+        "content"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "rag_upsert_article",
+    "skill_uri": "agent_skill:rag"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "retrieve_payload",
+    "description": "\u2200 id \u2208 ResponseStoreKey:\n  retrieve_payload(id) \u27f9 payload \u2208 Any \u2228 raises Expired.\n\u2200 id matching \"rs_[A-Za-z0-9]+\": use this before re-calling the source tool.\nRead-only (consumes stored response). \u00acside-effects on Cortex. See agent_skill:retrieve.",
+    "domain": "retrieve",
+    "inputSchema": {
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "retrieve",
+    "skill_uri": "agent_skill:retrieve"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "tool_search_query",
+    "description": "\u2200 query \u2208 str: tool_search_query(query) \u27f9\n  results \u2208 List[ManifestEntry]\n  \u2227 \u2200 e \u2208 results: e \u2209 PrimaryTools.\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.",
+    "domain": "tool_search",
+    "inputSchema": {
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "tool_search",
+    "skill_uri": "agent_skill:tool_search"
+  }
+]

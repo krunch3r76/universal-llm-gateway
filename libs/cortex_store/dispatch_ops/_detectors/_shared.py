@@ -36,6 +36,10 @@ SEVERITY = {
     "confirmed_entity_no_assertions": "warning",
     "confirmed_attribute_no_assertion": "warning",
     "case_marker_absent": "info",
+    # Skill-manifest structural drift (migration 041). project / plan /
+    # plan_phase entities with required_skills attribute but no `requires`
+    # relationship pointing at the named agent_skill entities.
+    "project_required_skills_no_relationship": "warning",
     # v1.3.1 normalization-decision ledger (shadow, Path 2/3)
     "unresolved_bare_token_in_predicate_form": "warning",
 }

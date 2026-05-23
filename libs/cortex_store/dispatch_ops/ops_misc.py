@@ -1,18 +1,19 @@
-"""Misc cortex ops: stats, surface forms, resolve, tags, ingest."""
+"""Misc cortex ops: stats, surface forms, resolve, tags, chunk resolver."""
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-from ..routes.ingest import _ingest_document_impl
+from universal_logging import get_logger
+
+from ..rag_resolver import ChunkIdMismatchError, resolve_assertion_chunk
 from ..routes.resolve import _resolve_cortex_uri_impl
 from ..routes.stats import _get_stats_impl
 from ..routes.surface_forms import _list_surface_forms_impl
 from ..routes.tags import _assign_tag_impl, _list_tags_impl
 from ._shared import record
 
-logger = logging.getLogger("cortex-api.dispatch_ops.misc")
+logger = get_logger("cortex-api.dispatch_ops.misc")
 
 
 def _op_stats(**_: object) -> dict[str, Any]:
@@ -103,34 +104,41 @@ def _op_tag_resolve(
     return _resolve_cortex_uri_impl(uri=uri, tag=tag_name)
 
 
-def _op_ingest_document(
-    source_uri: str | None = None,
-    content: str | None = None,
-    observer: str = "cursor",
-    source_date: str | None = None,
-    authority_class: str | None = None,
+def _op_resolve_assertion_chunk(
+    assertion_id: int | None = None,
     **_: object,
 ) -> dict[str, Any]:
-    if not source_uri:
-        return {"error": "source_uri is required"}
-    if not content:
-        return {"error": "content is required"}
-    body: dict[str, Any] = {
-        "source_uri": source_uri,
-        "content": content,
-        "observer": observer,
-    }
-    if source_date is not None:
-        body["source_date"] = source_date
-    if authority_class is not None:
-        body["authority_class"] = authority_class
-    result = _ingest_document_impl(body)
-    if "error" not in result:
-        chunk_count = result.get("chunk_count", 0)
-        logger.info("cortex ingest_document: %s — %d chunks", source_uri, chunk_count)
-        record(
-            "mcp.cortex.ingest_document",
-            source_uri=source_uri,
-            chunk_count=chunk_count,
-        )
-    return result
+    """Resolve an assertion's chunk_id to RAG chunk text.
+
+    Looks up the assertion's chunk_id and evidence_uris[0], normalizes the
+    URI to a RAG source path, calls POST /chunks_by_index, and verifies
+    round-trip fidelity. Raises ChunkIdMismatch (logged as error) if the
+    returned chunk_id differs from the stored one.
+
+    Returns: ChunkByIndexItem dict (chunk_id, source, chunk_index, text,
+    metadata) or error dict.
+    """
+    if assertion_id is None:
+        return {"error": "assertion_id is required (integer)"}
+    try:
+        chunk = resolve_assertion_chunk(int(assertion_id))
+        record("mcp.cortex.resolve_assertion_chunk", assertion_id=assertion_id)
+        return {
+            "assertion_id": assertion_id,
+            "chunk": chunk,
+        }
+    except ChunkIdMismatchError as exc:
+        logger.error("resolve_assertion_chunk mismatch: %s", exc)
+        return {
+            "error": "chunk_id_mismatch",
+            "detail": str(exc),
+            "assertion_id": assertion_id,
+        }
+    except ValueError as exc:
+        return {"error": str(exc), "assertion_id": assertion_id}
+    except Exception as exc:
+        logger.error("resolve_assertion_chunk failed: %s", exc)
+        return {
+            "error": f"RAG lookup failed: {exc}",
+            "assertion_id": assertion_id,
+        }

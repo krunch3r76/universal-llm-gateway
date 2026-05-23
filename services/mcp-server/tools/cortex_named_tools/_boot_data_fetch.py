@@ -2,12 +2,84 @@
 
 from __future__ import annotations
 
+import os
+import time
 from typing import Any
 from urllib.parse import urlencode
+
+import httpx
+from transport_utils import make_sync_client
+from universal_logging import get_logger
 
 from .._boot_helpers import safe_list
 from .._cortex_relay import _cx
 from .._local_relay import relay as _relay
+
+logger = get_logger(__name__)
+
+_EVENTS_QUERY_SOCKET = os.environ.get(
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+)
+_24H_MS = 24 * 60 * 60 * 1000
+
+
+def _fetch_async_dispatches_from_events(agent: str) -> list[dict[str, Any]]:
+    """Query event service for async pipeline dispatches in-flight for `agent`.
+
+    In-flight = has a ``pipeline.dispatch.async`` event but NO corresponding
+    ``pipeline.dispatch.completed`` event in the last 24 h.  Returns an empty
+    list on any failure (graceful degradation — boot must not block).
+
+    ∀ returned entry: {execution_id, pipeline_id, started_at, retrieval_hint}.
+    No prose, no model output — structural IDs only (§C.3).
+    """
+    cutoff_ms = int(time.time() * 1000) - _24H_MS
+    sql = (
+        "SELECT e.execution_id,"
+        " json_extract(e.payload, '$.pipeline_id') AS pipeline_id,"
+        " e.timestamp AS started_at"
+        " FROM events e"
+        " WHERE e.signal = 'pipeline.dispatch.async'"
+        "   AND json_extract(e.payload, '$.caller_agent') = ?"
+        "   AND e.ts_unix_ms > ?"
+        "   AND NOT EXISTS ("
+        "     SELECT 1 FROM events c"
+        "     WHERE c.signal = 'pipeline.dispatch.completed'"
+        "       AND c.execution_id = e.execution_id"
+        "   )"
+        " ORDER BY e.ts_unix_ms DESC"
+        " LIMIT 10"
+    )
+    try:
+        with make_sync_client(f"unix://{_EVENTS_QUERY_SOCKET}", timeout=5.0) as client:
+            resp = client.post(
+                "/v1/query",
+                json={"type": "sql", "sql": sql, "params": [agent, cutoff_ms]},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except (httpx.RequestError, httpx.HTTPError, ValueError) as exc:
+        logger.debug("async dispatch event query failed: %s", exc)
+        return []
+
+    dispatches: list[dict[str, Any]] = []
+    for row in data.get("rows", []):
+        eid = row.get("execution_id") or ""
+        pid = row.get("pipeline_id") or ""
+        if not eid:
+            continue
+        dispatches.append(
+            {
+                "execution_id": eid,
+                "pipeline_id": pid,
+                "started_at": row.get("started_at", ""),
+                "status": "running",
+                "retrieval_hint": (
+                    f"pipeline(op='result', execution_id='{eid}')"
+                ),
+            }
+        )
+    return dispatches
 
 
 def _build_futures_spec(
@@ -131,6 +203,18 @@ def _build_futures_spec(
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (cx, "GET", "/boot-recent-work")
+    # read-only: graph-only audit (no filesystem) — surfaces critical alert counts
+    futures_spec["audit"] = (
+        cx,
+        "POST",
+        "/dispatch",
+        {"tool": "audit", "arguments": {}},
+    )
+    # read-only: in-flight async dispatches for this agent from event service
+    futures_spec["async_dispatches"] = (
+        _fetch_async_dispatches_from_events,
+        agent,
+    )
 
     self_entity_id = profile.get("self_entity_id")
     self_reflections_limit = profile.get("self_reflections_limit", 0)
@@ -224,6 +308,19 @@ def _extract_boot_results(
     if profile.get("include_review_queue", True):
         review_total = len(staging_items)
 
+    # Audit — extract severity counters; degrade gracefully if unavailable.
+    _audit_raw = raw.get("audit", {})
+    audit_counters: dict[str, int] | None = None
+    if isinstance(_audit_raw, dict) and "criticals" in _audit_raw:
+        audit_counters = {
+            "criticals": int(_audit_raw.get("criticals", 0)),
+            "warnings": int(_audit_raw.get("warnings", 0)),
+            "infos": int(_audit_raw.get("infos", 0)),
+        }
+
+    # In-flight async dispatches — already a structured list from event service.
+    async_dispatches: list[dict[str, Any]] = safe_list(raw.get("async_dispatches", []))
+
     return {
         "sessions": sessions,
         "continuity": raw.get("continuity")
@@ -245,4 +342,6 @@ def _extract_boot_results(
         "temporal_active": temporal_active,
         "expired_unresolved": expired_unresolved,
         "review_total": review_total,
+        "audit_counters": audit_counters,
+        "async_dispatches": async_dispatches,
     }

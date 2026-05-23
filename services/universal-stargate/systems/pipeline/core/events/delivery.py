@@ -9,8 +9,11 @@ Invariants:
 - ∀ delivery attempt: emit exactly one of ``.sent``, ``.failed``, ``.skipped``.
 - ``.skipped`` means ``result_delivery`` was absent or incomplete — not
   an error.
-- Phase 2: ``to_thread`` dispatches also emit ``.completed`` after reply
-  observation succeeds (turn count delta confirms the agent saw the reply).
+- Bus-mode (``op="to_thread"``): ``.sent`` on the on-behalf POST 2xx;
+  ``.failed`` on POST non-2xx, oversized content, or unresolved to_agent.
+  The legacy ``pipeline.dispatch.delivery.completed`` signal (reply-
+  observation success) was retired with the 2026-05-22 delivery
+  architectural fix.
 """
 
 from __future__ import annotations
@@ -96,35 +99,6 @@ def PipelineDispatchDeliverySkipped(  # noqa: N802
             "reason": reason,
             "op": op,
             "output_contract": output_contract,
-        },
-    )
-
-
-@event_factory
-def PipelineDispatchDeliveryCompleted(  # noqa: N802
-    pipeline_id: str,
-    execution_id: str,
-    thread: str,
-    observed_at: str,
-) -> Event:
-    """Emitted after reply observation confirms the thread received the turn.
-
-    Phase 2 — ``op="to_thread"`` dispatches only. The tracker sets
-    ``thread_reply_observed_at`` on the record before emitting this signal.
-    ``observed_at`` is ISO-8601 UTC (Z suffix).
-
-    This signal is the terminal success signal for ``to_thread`` dispatches:
-    ``.sent`` means the POST landed; ``.completed`` means the agent saw it.
-    """
-    return Event(
-        signal="pipeline.dispatch.delivery.completed",
-        payload={
-            "pipeline_id": pipeline_id,
-            "execution_id": execution_id,
-            "thread": thread,
-            "observed_at": observed_at,
-            "op": "to_thread",
-            "output_contract": "thread",
         },
     )
 

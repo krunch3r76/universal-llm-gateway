@@ -29,8 +29,9 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "hint identifying which warning categories fired (staging vs auditor) "
         "and what to do."
     ),
-    "assert_from_chunk": (
-        "next: relationship_create if connecting entities; entity_get to verify"
+    "resolve_assertion_chunk": (
+        "next: entity_get on the assertion's entity_id to see the full context; "
+        "use chunk.text to verify the claim is grounded in the source"
     ),
     "relationship_create": (
         "next: entity_get on source_id or target_id to verify the full graph "
@@ -46,10 +47,6 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "next: entity_get to confirm the new assertion is visible "
         "and the old one is marked superseded; "
         "tag_assign to pin the new assertion as 'current' if it is the canonical state"
-    ),
-    "ingest_document": (
-        "next: assert_from_chunk to pin specific claims to chunk IDs; "
-        "entity_get to verify"
     ),
     "journal_write": (
         "DEPRECATED: Use session_close instead. session_close atomically writes "

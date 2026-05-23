@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter
+from universal_logging import get_logger
 
 from ..compaction import POINTER_SQL_LIKE
 from ..db import cortex_conn, query
 
-logger = logging.getLogger("cortex-api.stats")
+logger = get_logger("cortex-api.stats")
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 
@@ -37,7 +36,6 @@ def get_stats() -> dict:
         )[0]["cnt"]
         r_total = query(conn, "SELECT COUNT(*) as cnt FROM relationships")[0]["cnt"]
         sf_total = query(conn, "SELECT COUNT(*) as cnt FROM surface_forms")[0]["cnt"]
-        ch_total = query(conn, "SELECT COUNT(*) as cnt FROM chunks")[0]["cnt"]
 
         return {
             "entities": {
@@ -60,10 +58,6 @@ def get_stats() -> dict:
             "surface_forms": {
                 "total": sf_total,
                 "by_mention_type": _count_by(conn, "surface_forms", "mention_type"),
-            },
-            "chunks": {
-                "total": ch_total,
-                "by_observer": _count_by(conn, "chunks", "observer"),
             },
         }
 

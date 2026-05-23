@@ -16,10 +16,10 @@ fetch plan stays uniform; the rendering varies.
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 
 from fastapi import HTTPException, status
+from universal_logging import get_logger
 
 from .card_adapters import CardAdapterCounts, get_adapter
 from .compaction import (
@@ -36,7 +36,7 @@ from .models import (
 )
 from .predicate_summary import aggregate_predicate_summary
 
-logger = logging.getLogger("cortex-api.card")
+logger = get_logger("cortex-api.card")
 
 CARD_TOP_K_DEFAULT = 7
 CARD_INTENTS_DEFERRED = frozenset({"cluster", "impact"})

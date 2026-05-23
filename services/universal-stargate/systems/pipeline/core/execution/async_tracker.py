@@ -10,6 +10,13 @@ Invariants:
 - ∀ ``register_execution`` success: emit ``pipeline.dispatch.async`` once.
 - ∀ terminal transition (``complete_execution`` / ``fail_execution``):
   emit ``pipeline.dispatch.completed`` exactly once (idempotent guard).
+  Note: for ``op="to_thread"`` records, ``_run_delivery_with_outcome``
+  may demote a ``completed`` record to ``failed`` after the on-behalf
+  POST fails (architectural decision dispatch-to-thread-delivery-2026-05-22
+  §2.1). The demote emits a second ``pipeline.dispatch.completed`` with
+  ``status="failed"`` for the same execution_id. Consumers of the event
+  signal should expect up to two emissions per to_thread execution and
+  key off the latest ``status``.
 - ∀ admission refusal: emit ``pipeline.dispatch.rejected`` before raising.
 - TTL pruning uses ``completed_at_monotonic`` — running records are never
   evicted by age alone, only by explicit admission-time capacity pressure
@@ -141,8 +148,19 @@ class PipelineExecutionRecord:
     target_thread: str | None = None
     # None = no op discrimination supplied (direct pipeline callers)
     op: Literal["generate", "to_thread"] | None = None
-    # ISO-8601 Z; populated by Phase 2 delivery observation
+    # ISO-8601 Z; populated when the system-on-behalf post lands on
+    # target_thread. Field name preserved for tracker.to_dict back-compat;
+    # semantics shifted from "observed reply" to "post completed" in the
+    # to-thread delivery architectural fix (2026-05-22) — see
+    # notes/system/decisions/dispatch-to-thread-delivery-architecture-2026-05-22.md.
     thread_reply_observed_at: str | None = None
+    # Identity to post as for op="to_thread". Populated at admission from the
+    # role (team_dispatch) or model identifier (frontier_dispatch). Reply
+    # turns are posted from this agent to record.caller_agent (or a thread
+    # fallback) by the delivery handler.
+    from_agent: str | None = None
+    # Caller-supplied subject for the on-behalf reply turn. None ⇒ auto-derive.
+    reply_subject: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to the shape returned by ``GET /api/v1/pipelines/executions/{id}``."""  # noqa: E501
@@ -277,15 +295,17 @@ class PipelineExecutionTracker:
             logger.warning("Failed to schedule dispatch delivery: %s", exc)
 
     async def _run_delivery_with_outcome(self, record: PipelineExecutionRecord) -> None:
-        """Invoke delivery sender; demote record to failed on bus-mode timeout.
+        """Invoke delivery sender; demote record to failed on bus-mode delivery failure.
 
-        Phase 2: ``op="to_thread"`` dispatches reach terminal ``completed``
-        from the model-completion side, but the true success criterion is
-        the agent's reply being observed on the target thread.  If the
-        delivery sender returns ``DeliveryOutcome(status="failed",
-        failure_reason="thread_reply_not_observed")``, this method demotes
-        the record from ``completed`` to ``failed`` and schedules journaling
-        so the final journal entry reflects the actual outcome.
+        For ``op="to_thread"`` dispatches the record reaches ``completed`` from
+        the model-completion side, but the true success criterion is the
+        system-on-behalf POST landing on the target thread (architectural
+        fix 2026-05-22 — see
+        ``notes/system/decisions/dispatch-to-thread-delivery-architecture-2026-05-22.md``).
+        If the delivery sender returns
+        ``DeliveryOutcome(status="failed", failure_reason=…)``, this method
+        demotes the record from ``completed`` to ``failed`` and schedules
+        journaling so the final journal entry reflects the actual outcome.
 
         For all other outcomes (delivered, skipped, non-bus-mode) the record
         is unchanged here — side-effects (events, mutations) are the delivery
@@ -307,16 +327,16 @@ class PipelineExecutionTracker:
 
         if (
             result.status == "failed"
-            and result.failure_reason == "thread_reply_not_observed"
             and record.op == "to_thread"
             and record.status == "completed"
         ):
+            failure_reason = result.failure_reason or "delivery_failed"
             record.status = "failed"
             record.error = PipelineExecutionError(
-                code="thread_reply_not_observed",
+                code=failure_reason,
                 message=(
-                    f"Agent reply not observed on thread {record.target_thread!r} "
-                    "within delivery timeout."
+                    f"On-behalf reply post to thread {record.target_thread!r} "
+                    f"failed: {failure_reason}."
                 ),
             )
             self._emit(
@@ -447,6 +467,8 @@ class PipelineExecutionTracker:
         output_contract: Literal["inline", "thread"] = "inline",
         target_thread: str | None = None,
         op: Literal["generate", "to_thread"] | None = None,
+        from_agent: str | None = None,
+        reply_subject: str | None = None,
     ) -> PipelineExecutionRecord:
         """Admit a new execution and emit ``pipeline.dispatch.async``.
 
@@ -488,6 +510,8 @@ class PipelineExecutionTracker:
             output_contract=output_contract,
             target_thread=target_thread,
             op=op,
+            from_agent=from_agent,
+            reply_subject=reply_subject,
         )
         self.records[execution_id] = record
 

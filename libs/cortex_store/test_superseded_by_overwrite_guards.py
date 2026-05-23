@@ -316,3 +316,79 @@ def test_supersede_first_chain_link_succeeds_without_force(
         "SELECT superseded_by FROM assertions WHERE id = ?", (target,)
     ).fetchone()
     assert row["superseded_by"] == new_id
+
+
+# ---------------------------------------------------------------------------
+# predicate_form carryover — friction 9826 regression suite
+# ---------------------------------------------------------------------------
+
+
+def _insert_with_predicate_form(
+    conn: sqlite3.Connection,
+    *,
+    predicate_form: str | None = None,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form)"
+        " VALUES (?, ?, ?, ?)",
+        ("test:entity", "Test claim.", "believed", predicate_form),
+    )
+    conn.commit()
+    return cur.lastrowid  # type: ignore[return-value]
+
+
+def test_supersede_carries_over_predicate_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Superseding an assertion with a populated predicate_form must preserve
+    it on the new row (when not explicitly overridden in the call)."""
+    conn = _make_conn()
+    _patch_supersede(monkeypatch, conn)
+    target = _insert_with_predicate_form(conn, predicate_form="status(test:entity, active)")
+
+    body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target}
+    result = _supersede_assertion_impl(body)
+
+    new_id = result["new"]["id"]
+    row = conn.execute(
+        "SELECT predicate_form FROM assertions WHERE id = ?", (new_id,)
+    ).fetchone()
+    assert row["predicate_form"] == "status(test:entity, active)"
+
+
+def test_supersede_drops_predicate_form_on_explicit_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Passing predicate_form=null explicitly must clear it on the new row
+    (intentional drop semantics — spec §7.3 clone-then-override)."""
+    conn = _make_conn()
+    _patch_supersede(monkeypatch, conn)
+    target = _insert_with_predicate_form(conn, predicate_form="status(test:entity, active)")
+
+    body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target, "predicate_form": None}
+    result = _supersede_assertion_impl(body)
+
+    new_id = result["new"]["id"]
+    row = conn.execute(
+        "SELECT predicate_form FROM assertions WHERE id = ?", (new_id,)
+    ).fetchone()
+    assert row["predicate_form"] is None
+
+
+def test_supersede_null_predicate_form_stays_null(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Superseding an assertion with predicate_form=NULL produces a new row
+    with predicate_form=NULL (carryover of null is null)."""
+    conn = _make_conn()
+    _patch_supersede(monkeypatch, conn)
+    target = _insert_with_predicate_form(conn, predicate_form=None)
+
+    body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target}
+    result = _supersede_assertion_impl(body)
+
+    new_id = result["new"]["id"]
+    row = conn.execute(
+        "SELECT predicate_form FROM assertions WHERE id = ?", (new_id,)
+    ).fetchone()
+    assert row["predicate_form"] is None

@@ -8,7 +8,6 @@ from cortex_store.routes.assertions import (
     _supersede_assertion_impl,
     _update_assertion_impl,
 )
-from cortex_store.routes.ingest import _assert_from_chunk_impl
 
 
 def _assert_payload_422(exc: HTTPException) -> None:
@@ -58,17 +57,3 @@ def test_update_assertion_impl_maps_payload_validation_to_422() -> None:
     _assert_payload_422(exc_info.value)
 
 
-def test_assert_from_chunk_impl_maps_payload_validation_to_422() -> None:
-    with pytest.raises(HTTPException) as exc_info:
-        _assert_from_chunk_impl(
-            {
-                "chunk_id": 1,
-                "entity_id": "entity:test",
-                "claim": "Chunk claim.",
-                "confidence": "confirmed",
-                "evidence": "unit test",
-                "evidence_uris": ["files:///dropbox/staged.pdf"],
-            }
-        )
-
-    _assert_payload_422(exc_info.value)

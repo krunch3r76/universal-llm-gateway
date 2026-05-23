@@ -213,6 +213,38 @@ _SUBAGENT_INHERITANCE = """\
 Subagents typically inherit close behavior from the calling agent. When a \
 subagent closes its own session, use the calling agent's bindings."""
 
+_MCP_TOOL_SEARCH = """\
+## MCP Catalog Discovery
+
+The advertised MCP catalog is intentionally lean — only `cortex`, `agent_bus`,
+`fs`, `dispatch`, `tool_search`, and `retrieve` are primary tools. Everything
+else (pipelines, dispatch surfaces, service control, observability, data,
+session boot, code quality) is reachable in two steps:
+
+```
+tool_search(query="<keywords>")          # → returns dispatch_template
+dispatch(tool="<name>", arguments='...') # → invokes the tool
+```
+
+Examples:
+```
+tool_search(query="restart service")     # → dispatch(tool="manage", ...)
+tool_search(query="poll pipeline")       # → dispatch(tool="pipeline", op="result", ...)
+tool_search(query="raw sql")             # → dispatch(tool="sql", ...)
+tool_search(query="query events")        # → dispatch(tool="observability", ...)
+tool_search(query="fetch web page")      # → dispatch(tool="web_fetch", ...)
+```
+
+Search responses include `name`, `purpose`, `ops`, `dispatch_template`, and
+`required_args_by_op`. Hold the returned `dispatch_template` in working memory
+and call `dispatch` directly — do not re-search unless the result was clearly
+wrong (the response includes a `_next` hint that steers away from search loops).
+
+Catalog membership decisions live in `services/mcp-server/server.py`
+(`_PRIMARY_TOOLS`); the demoted set is auto-derived. Promotion to primary is
+warranted only when descriptor_bytes × 50 turns × N sessions justifies the cost
+— see `tasks/discoveries/mcp-tool-definition-context-churn.md` for the rubric."""
+
 _GROK_WEB_TOOL_SURFACE = """\
 ## Grok.com Tool Surface
 
@@ -384,7 +416,9 @@ wait_seconds=60)`. Runs detached, survives session boundaries.
 **Output channel (`op` parameter)**:
 - `op="generate"` — direct mode. Content returned via `pipeline(op="result")`.
   Use for single-shot consults where the caller acts on the reply within the session.
-- `op="to_thread"` — bus mode. Agent posts substantive reply to the bus `thread`.
+- `op="to_thread"` — bus mode. Stargate posts the model's reply to the bus
+  `thread` on the role/model's behalf after the dispatch completes; the
+  caller does not need to instruct the model to call `agent_bus.reply`.
   Read with `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`.
   Use when the reply is a durable artifact for multi-agent workflows or future sessions.
 
@@ -441,6 +475,8 @@ For durable bus artifacts (review workflows, multi-agent handoffs):
 team_dispatch(op="to_thread", role=..., thread="<id>", messages=..., subject=..., caller_agent=...)
 ```
 then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')` to read the reply.
+Stargate posts the role's reply to the thread on its behalf when the dispatch
+completes — the role doesn't need an `agent_bus.reply` tool call to deliver.
 
 MCP access available by default; some provider models suppress client-side
 function tools and use server-side builtins instead — see
@@ -558,6 +594,7 @@ def render_operational_context(
     if unread_count > 0:
         sections.append(_AGENT_BUS_EXAMPLES.format(**subs))
     sections.append(_AGENT_BUS_LARGE_PAYLOADS)
+    sections.append(_MCP_TOOL_SEARCH)
     sections.append(_JOURNALING_PROTOCOL)
     for addendum_key in profile.addenda:
         block = _ADDENDA_BLOCKS.get(addendum_key)

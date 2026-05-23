@@ -8,9 +8,9 @@ idempotent write primitives (Phase 2) absorb re-ingestion safely.
 from __future__ import annotations
 
 import datetime as dt
-import logging
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..models import (
@@ -20,7 +20,7 @@ from ..models import (
     ExtractionRunItem,
 )
 
-logger = logging.getLogger("cortex-api.extraction-runs")
+logger = get_logger("cortex-api.extraction-runs")
 router = APIRouter(prefix="/extraction-runs", tags=["extraction-runs"])
 
 _COLS = (

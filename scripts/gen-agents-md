@@ -69,7 +69,8 @@ def _warn_if_exclude_for(server: dict[str, Any], target: str) -> str | None:
 def _emit_grok_toml_block(server: dict[str, Any], target: str) -> str:
     """Emit a single [mcp_servers.<name>] block for a grok-direct server entry."""
     name = server["name"]
-    url = server.get("url", "")
+    url_overrides = server.get("url_overrides", {})
+    url = url_overrides.get(target) or server.get("url", "")
     transport = server.get("transport", "http")
     auth_env = server.get("auth", {}).get("env", "")
 

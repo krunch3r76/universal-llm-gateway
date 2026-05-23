@@ -12,6 +12,9 @@ from ._briefing_card_render import (
     _deadline_line,
     _filter_recent_self_reflections,
     _truncate_at_sentence,
+    render_async_dispatch_section,
+    render_audit_alerts_section,
+    render_views_section,
 )
 from ._manifest import _build_manifest
 from ._time import _relative_time
@@ -23,6 +26,12 @@ _LA = ZoneInfo("America/Los_Angeles")
 # that primed confabulation in the canonical claude-web-lead-2026-05-12 boot.
 _LAST_SESSION_SUMMARY_MAX = 300
 _LAST_SESSION_RECOVERY = "cortex(tool='journal_read', arguments='{\"limit\": 1}')"
+
+# Cap dropbox-pending inline listing to keep the briefing card compact
+# (~3-5KB target per render_briefing_card docstring). At HEAD with 254+
+# pending files an unbounded dump pushes the card to ~37KB; first-20 +
+# count tail mirrors the truncation pattern used elsewhere in this renderer.
+_DROPBOX_DISPLAY_MAX = 20
 
 
 def render_briefing_card(
@@ -49,6 +58,9 @@ def render_briefing_card(
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
     dropbox_files: list[str] | None = None,
+    views_data: list[dict[str, Any]] | None = None,
+    async_dispatches: list[dict[str, Any]] | None = None,
+    audit_counters: dict[str, int] | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -103,8 +115,17 @@ def render_briefing_card(
     if dropbox_files:
         n = len(dropbox_files)
         parts.append(f"\n## ⚠ Dropbox Pending ({n} file(s))")
-        for f in dropbox_files:
+        # Cap inline listing to keep the briefing card compact (~3-5KB target
+        # per render_briefing_card docstring). At HEAD with 254+ pending files
+        # an unbounded dump pushes the card to ~37KB; first-20 + count tail
+        # mirrors the truncation pattern used elsewhere in this renderer.
+        for f in dropbox_files[:_DROPBOX_DISPLAY_MAX]:
             parts.append(f"  {f}")
+        if n > _DROPBOX_DISPLAY_MAX:
+            parts.append(
+                f"  *…{n - _DROPBOX_DISPLAY_MAX} more — "
+                "see /data/files/dropbox/ for full listing*"
+            )
         parts.append(
             "→ Read agent-skills/document-lifecycle-tracking.md before handling"
             " — dropbox ingest required."
@@ -344,6 +365,15 @@ def render_briefing_card(
                 "`cortex(tool='rj_list', arguments='{\"limit\": 5}')` to confirm."
             )
 
+    if views_data:
+        parts.extend(render_views_section(views_data))
+
+    if async_dispatches:
+        parts.extend(render_async_dispatch_section(async_dispatches))
+
+    if audit_counters and audit_counters.get("criticals", 0) > 0:
+        parts.extend(render_audit_alerts_section(audit_counters))
+
     card = "\n".join(parts)
     manifest = _build_manifest(
         plan_phases=plan_phases,
@@ -354,5 +384,8 @@ def render_briefing_card(
         recent_mentions=recent_mentions,
         skills=skills,
         continuity=continuity,
+        views_data=views_data,
+        async_dispatches=async_dispatches,
+        audit_counters=audit_counters,
     )
     return card, manifest

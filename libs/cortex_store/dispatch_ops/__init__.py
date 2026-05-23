@@ -7,15 +7,15 @@ Exports:
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+from universal_logging import get_logger
 
 from ._shared import record
 from .ops_assertions import (
     _op_activate,
     _op_analyze_impact,
     _op_assert,
-    _op_assert_from_chunk,
     _op_assertion_get,
     _op_assertion_update,
     _op_assertions,
@@ -51,8 +51,8 @@ from .ops_journals import (
     _op_session_close_preflight,
 )
 from .ops_misc import (
-    _op_ingest_document,
     _op_resolve,
+    _op_resolve_assertion_chunk,
     _op_stats,
     _op_surface_forms,
     _op_tag_assign,
@@ -85,7 +85,7 @@ from .workflow_hints import (
     _parse_cortex_arguments,
 )
 
-logger = logging.getLogger("cortex-api.dispatch_ops")
+logger = get_logger("cortex-api.dispatch_ops")
 
 
 _OPS: dict[str, Any] = {
@@ -101,8 +101,7 @@ _OPS: dict[str, Any] = {
     "assertion_get": _op_assertion_get,
     "assertion_update": _op_assertion_update,
     "supersede": _op_supersede,
-    "ingest_document": _op_ingest_document,
-    "assert_from_chunk": _op_assert_from_chunk,
+    "resolve_assertion_chunk": _op_resolve_assertion_chunk,
     "relationships": _op_relationships,
     "relationship_create": _op_relationship_create,
     "relationships_bulk_upsert": _op_relationships_bulk_upsert,

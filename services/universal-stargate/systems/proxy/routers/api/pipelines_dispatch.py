@@ -131,6 +131,10 @@ class DispatchRequest(BaseModel):
     and ``op`` are set by the canonical Stargate routes (``/api/v1/team/dispatch``
     and ``/api/v1/frontier/dispatch``).  Direct callers via legacy routes omit
     them; the tracker defaults to ``output_contract="inline"`` and ``op=None``.
+
+    For ``op="to_thread"``, ``from_agent`` is the identity Stargate posts as
+    when delivering the model's reply to ``target_thread`` (role name for
+    team_dispatch, ``frontier:{model_short}`` for frontier_dispatch).
     """
 
     model_config = {"extra": "allow"}
@@ -144,6 +148,9 @@ class DispatchRequest(BaseModel):
     output_contract: Literal["inline", "thread"] = "inline"
     target_thread: str | None = None
     op: Literal["generate", "to_thread"] | None = None
+    # On-behalf delivery identity (2026-05-22 architectural fix).
+    from_agent: str | None = None
+    reply_subject: str | None = None
 
 
 def _error_response(status_code: int, code: str, message: str) -> JSONResponse:
@@ -164,7 +171,14 @@ def _build_chat_completion_request(dispatch: DispatchRequest) -> ChatCompletionR
     ``target_thread``, ``op``) are excluded — they are already stored on
     the tracker record and must not pollute the model-facing request shape.
     """
-    tracker_only = {"result_delivery", "output_contract", "target_thread", "op"}
+    tracker_only = {
+        "result_delivery",
+        "output_contract",
+        "target_thread",
+        "op",
+        "from_agent",
+        "reply_subject",
+    }
     payload = dispatch.model_dump(exclude_none=True, exclude=tracker_only)
     return ChatCompletionRequest(**payload)
 
@@ -262,6 +276,8 @@ async def dispatch_pipeline(
             output_contract=dispatch.output_contract,
             target_thread=dispatch.target_thread,
             op=dispatch.op,
+            from_agent=dispatch.from_agent,
+            reply_subject=dispatch.reply_subject,
         )
     except TrackerCapacityError as exc:
         logger.warning("Dispatch rejected (capacity): %s", exc)

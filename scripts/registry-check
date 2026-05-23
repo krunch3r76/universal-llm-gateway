@@ -1,0 +1,756 @@
+#!/usr/bin/env python3
+"""Registry CI gates — G1, G2, G3, G4, G5, G6, G7, G8, G9, Risk-4.
+
+Gates:
+  G1 — JSON-Schema validate config/mcp/canonical.yaml against
+       config/mcp/canonical_registry.schema.json.
+  G2 — Derivation-determinism snapshot: derive_grok_manifest output matches
+       services/mcp-server/testdata/golden_grok_manifest.json.
+  G3 — Claude /mcp cap enforcement: number of unique domains ≤ 24.
+  G4 — Skill ↔ registry consistency: every canonical name referenced in
+       .cursor/skills/**/*.md exists in canonical.yaml.
+       Partial mode if cortex API unreachable (workspace skills only).
+       B-phase exit criterion: G4 must pass fully OR migration-040 must be
+       resolved with G4 scheduled OR descriptors flagged
+       'skill-pointer unvalidated' before B5 cutover.
+  G5 — JSON-Schema ≡ live OpenAPI: compare canonical.yaml json_schema fields
+       against /openapi.json from the running MCP server. Skipped (not failed)
+       if the server is unreachable. Drift written to tmp/reviews/g5-drift-*.md.
+  G6 — FOL descriptor presence: every entry has a fol_descriptor containing
+       at least one FOL symbol (∀ ∃ ⟹ ¬ ∈).
+  G7 — Cache-invariance window (D5): if any fol_descriptor block was modified
+       within the last 30 days (git blame, non-initial commits) AND the entry
+       lacks cache_window_override: true, fail.
+       Sequencing: G7 MUST run after concurrent Phase B PRs settle AND before
+       B2 cutover. This gate enforces that no descriptor edits slip in during
+       the Phase B review window, which would silently invalidate the
+       Anthropic prompt-cache. Do NOT disable this gate between Phase A
+       completion and Phase D cutover.
+  G8 — Naming convention: every canonical_name matches
+       ^[a-z][a-z0-9]*(_[a-z0-9]+)+$ and starts with <domain>_.
+  G9 — Seat-visibility coherence: scan .cursor/skills/**/*.md for canonical
+       tool name references; assert each referenced tool's seat_visibility
+       covers the appropriate seat(s). Violations are B2 prerequisite
+       blockers (operator reclassification 2026-05-22).
+  Risk-4 — PRIMARY_TOOLS drift: assert every tool in _PRIMARY_TOOLS in
+       server.py has a corresponding domain in canonical.yaml. Permanent
+       invariant during Phase B–C transition; remove at Phase D when
+       _PRIMARY_TOOLS becomes dead code.
+
+Usage:
+  scripts/registry-check [--registry PATH] [--schema PATH]
+                         [--skills-root PATH] [--mcp-url URL]
+                         [--no-server-gates]
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import datetime
+import json
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+# ∀ date objects produced by PyYAML: normalize to ISO string before schema
+# validation to avoid false type errors on YAML auto-date parsing.
+def _fix_dates(obj: object) -> object:
+    if isinstance(obj, dict):
+        return {k: _fix_dates(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_fix_dates(v) for v in obj]
+    if isinstance(obj, datetime.date):
+        return obj.isoformat()
+    return obj
+
+
+_FOL_SYMBOLS: frozenset[str] = frozenset({"∀", "∃", "⟹", "¬", "∈"})
+_NAME_RE = re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$")
+# G3 cap: Claude /mcp dispatcher count ≤ 24 (D0).
+_CLAUDE_DISPATCHER_CAP = 24
+# G7: cache-invariance window in days (D5).
+_CACHE_WINDOW_DAYS = 30
+
+
+def _fail(gate: str, message: str) -> None:
+    print(f"FAIL {gate}: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _ok(gate: str, detail: str) -> None:
+    print(f"OK   {gate}: {detail}")
+
+
+def _warn(gate: str, detail: str) -> None:
+    print(f"WARN {gate}: {detail}")
+
+
+# ── G2 helpers ────────────────────────────────────────────────────────────────
+
+
+def _run_g2(registry_path: Path) -> None:
+    """G2: derive_grok_manifest output must match golden snapshot."""
+    repo_root = Path(__file__).resolve().parent.parent
+    golden_path = (
+        repo_root / "services" / "mcp-server" / "testdata" / "golden_grok_manifest.json"
+    )
+    derive_path = repo_root / "services" / "mcp-server"
+
+    if not golden_path.exists():
+        _fail(
+            "G2", f"golden file missing: {golden_path} — run test_derive.py --refresh"
+        )
+
+    sys.path.insert(0, str(derive_path))
+    try:
+        from _derive import derive_grok_manifest  # type: ignore[import]
+    except ImportError as exc:
+        _fail("G2", f"cannot import _derive: {exc}")
+    finally:
+        sys.path.pop(0)
+
+    manifest = derive_grok_manifest(registry_path)
+    actual = json.dumps(manifest, sort_keys=True, indent=2)
+    expected = golden_path.read_text(encoding="utf-8")
+    if actual != expected:
+        _fail(
+            "G2",
+            "snapshot drift — canonical.yaml changed without updating golden. "
+            "Run: python3 services/mcp-server/test_derive.py --refresh",
+        )
+    _ok("G2", f"golden matches — {len(manifest)} grok manifest entries")
+
+
+# ── G4 helpers ────────────────────────────────────────────────────────────────
+
+
+def _check_cortex_api_health() -> bool:
+    """Return True if cortex-api.sock is present and responsive."""
+    sock_path = Path("/tmp/universal-protocol/cortex-api.sock")
+    return sock_path.exists()
+
+
+def _run_g4(tools: list[dict], skills_root: Path) -> None:
+    """G4: every canonical name mentioned in skill files exists in the registry.
+
+    B-phase exit criterion (per missed risk #2): G4 must pass fully OR
+    migration-040 must be resolved with G4 scheduled OR descriptors flagged
+    'skill-pointer unvalidated' before B5 cutover.
+    """
+    canonical_names: set[str] = {t["canonical_name"] for t in tools}
+    cortex_available = _check_cortex_api_health()
+
+    if not cortex_available:
+        _warn(
+            "G4",
+            "G4 partial — cortex API unavailable (cortex-api.sock absent), "
+            "cortex-side skills not validated. Workspace skills only.",
+        )
+
+    skill_files = list(skills_root.rglob("*.md"))
+    if not skill_files:
+        _warn("G4", f"no skill files found under {skills_root}")
+        return
+
+    # Scan for canonical-name references inside code blocks only to avoid
+    # false positives from YAML field names and prose identifiers.
+    # Match function-call syntax: canonical_name( only (not string literals,
+    # which produce too many false positives from JSON examples / YAML fields).
+    fenced_code_re = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+    indented_code_re = re.compile(r"^(?: {4}|\t)(.+)$", re.MULTILINE)
+    call_re = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\s*\(")
+    known_domains: set[str] = {t["domain"] for t in tools}
+    stale_refs: list[str] = []
+
+    def _scan_code_block(text: str, rel_path: str) -> None:
+        for m in call_re.finditer(text):
+            token = m.group(1)
+            if "_" not in token:
+                continue
+            domain_prefix = token.split("_")[0]
+            if domain_prefix not in known_domains:
+                continue
+            if token not in canonical_names:
+                stale_refs.append(f"{rel_path}: {token!r}")
+
+    for skill_file in sorted(skill_files):
+        content = skill_file.read_text(encoding="utf-8", errors="ignore")
+        rel = str(skill_file.relative_to(skills_root.parent))
+        for fenced in fenced_code_re.finditer(content):
+            _scan_code_block(fenced.group(1), rel)
+        for indented in indented_code_re.finditer(content):
+            _scan_code_block(indented.group(1), rel)
+
+    if stale_refs:
+        _fail(
+            "G4",
+            f"{len(stale_refs)} stale canonical name reference(s) in skills:\n  "
+            + "\n  ".join(sorted(set(stale_refs))),
+        )
+
+    suffix = " (cortex skills not scanned)" if not cortex_available else ""
+    _ok(
+        "G4",
+        f"all canonical names in {len(skill_files)} skill file(s) exist in registry{suffix}",
+    )
+
+
+# ── G5 helpers ────────────────────────────────────────────────────────────────
+
+
+def _run_g5(tools: list[dict], mcp_url: str, repo_root: Path) -> None:
+    """G5: json_schema fields in canonical.yaml must match live /openapi.json.
+
+    Skipped (not failed) if the MCP server is unreachable.
+    Drift written to tmp/reviews/g5-drift-YYYY-MM-DD.md for human review.
+    Output phrased as 'snapshot drift detected — refresh canonical.yaml'
+    (per plan PB-6), not as 'server bug'.
+    """
+    openapi_url = mcp_url.rstrip("/") + "/openapi.json"
+    try:
+        with urllib.request.urlopen(openapi_url, timeout=5) as resp:  # noqa: S310
+            openapi: dict = json.loads(resp.read())
+    except (urllib.error.URLError, OSError) as exc:
+        _warn("G5", f"skipped — MCP server unreachable at {openapi_url} ({exc})")
+        return
+
+    openapi_paths: dict = openapi.get("paths", {})
+    drift_pairs: list[dict] = []
+
+    for tool in tools:
+        cn = tool["canonical_name"]
+        registered_schema = tool.get("json_schema", {})
+        if not registered_schema:
+            continue
+
+        # Best-effort match: look for the tool by its flat name in OpenAPI paths.
+        # Current server exposes tools via /mcp prefix; map by operation name
+        # in the MCP tools/list response rather than REST paths.
+        # G5 checks that input schemas are consistent; REST-endpoint matching
+        # is best-effort until Phase B2 wires /mcp/grok as a discrete endpoint.
+        flat_name = tool.get("flat_call_shape", {}).get("tool", "")
+        if not flat_name:
+            continue
+
+        # Look for a matching path in openapi_paths that contains the flat name.
+        match_paths = [p for p in openapi_paths if flat_name in p]
+        if not match_paths:
+            continue
+
+        # For each matching path, compare json_schema properties against
+        # the OpenAPI requestBody schema.
+        for path in match_paths:
+            path_item = openapi_paths[path]
+            for method_data in path_item.values():
+                if not isinstance(method_data, dict):
+                    continue
+                req_body = method_data.get("requestBody", {})
+                content = req_body.get("content", {})
+                for media_type_data in content.values():
+                    live_schema = media_type_data.get("schema", {})
+                    if not live_schema:
+                        continue
+                    if live_schema != registered_schema:
+                        drift_pairs.append(
+                            {
+                                "canonical_name": cn,
+                                "openapi_path": path,
+                                "registered_schema": registered_schema,
+                                "live_schema": live_schema,
+                            }
+                        )
+
+    if drift_pairs:
+        today = datetime.date.today().isoformat()
+        drift_report_dir = repo_root / "tmp" / "reviews"
+        drift_report_dir.mkdir(parents=True, exist_ok=True)
+        drift_report = drift_report_dir / f"g5-drift-{today}.md"
+        lines = [
+            f"# G5 OpenAPI Parity Drift — {today}",
+            "",
+            "snapshot drift detected — refresh canonical.yaml",
+            "",
+            f"Affected entries: {len(drift_pairs)}",
+            "",
+        ]
+        for pair in drift_pairs:
+            lines += [
+                f"## {pair['canonical_name']}",
+                f"OpenAPI path: `{pair['openapi_path']}`",
+                "",
+                "**Registered schema** (canonical.yaml):",
+                f"```json\n{json.dumps(pair['registered_schema'], indent=2)}\n```",
+                "",
+                "**Live schema** (/openapi.json):",
+                f"```json\n{json.dumps(pair['live_schema'], indent=2)}\n```",
+                "",
+            ]
+        drift_report.write_text("\n".join(lines), encoding="utf-8")
+        _fail(
+            "G5",
+            f"snapshot drift detected — refresh canonical.yaml. "
+            f"{len(drift_pairs)} entries differ. "
+            f"Diff written to {drift_report}",
+        )
+
+    _ok("G5", f"OpenAPI schemas match for {len(tools)} entries (server: {mcp_url})")
+
+
+# ── G7 helpers ────────────────────────────────────────────────────────────────
+
+
+def _git_fol_modified_entries_last_n_days(
+    registry_path: Path, days: int
+) -> list[tuple[str, str]]:
+    """Return (canonical_name, commit_date) pairs for fol_descriptor edits in last N days.
+
+    Only counts modification commits (--diff-filter=M), not the initial add.
+    Uses git log + git diff to identify which canonical_name entries changed.
+    """
+    result = subprocess.run(
+        [
+            "git",
+            "log",
+            "--format=%H %ci",
+            "--diff-filter=M",
+            f"--since={days} days ago",
+            "--",
+            str(registry_path),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=registry_path.parent,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+
+    modified_entries: list[tuple[str, str]] = []
+    for line in result.stdout.strip().splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) < 2:
+            continue
+        commit_hash, commit_date = parts[0], parts[1].split("+")[0].strip()
+
+        diff_check = subprocess.run(
+            ["git", "diff", f"{commit_hash}~1", commit_hash, "--", str(registry_path)],
+            capture_output=True,
+            text=True,
+            cwd=registry_path.parent,
+        )
+        if diff_check.returncode != 0:
+            continue
+
+        # Parse diff to find canonical_name of changed fol_descriptor blocks
+        current_cn = ""
+        in_fol = False
+        for diff_line in diff_check.stdout.splitlines():
+            if diff_line.startswith("@@"):
+                in_fol = False
+                current_cn = ""
+            elif diff_line.startswith("+  - canonical_name:") or diff_line.startswith(
+                "   - canonical_name:"
+            ):
+                current_cn = diff_line.split(":", 1)[-1].strip()
+                in_fol = False
+            elif "fol_descriptor:" in diff_line and diff_line.startswith("+"):
+                in_fol = True
+            elif in_fol and diff_line.startswith("+") and current_cn:
+                modified_entries.append((current_cn, commit_date))
+                in_fol = False
+
+    return modified_entries
+
+
+def _run_g7(tools: list[dict], registry_path: Path) -> None:
+    """G7: fol_descriptor blocks not edited within 30-day cache-invariance window.
+
+    Sequencing invariant (per plan PB-3, missed risk #3):
+      ∀ Phase B PR: G7 MUST run after all concurrent B PRs settle
+      AND before B2 cutover. A fol_descriptor edit during the Phase B
+      review window silently invalidates Anthropic prompt-cache.
+      Do NOT disable between Phase A completion and Phase D.
+    """
+    entries_with_override: set[str] = {
+        t["canonical_name"] for t in tools if t.get("cache_window_override")
+    }
+
+    try:
+        modified = _git_fol_modified_entries_last_n_days(
+            registry_path, _CACHE_WINDOW_DAYS
+        )
+    except Exception as exc:
+        _warn("G7", f"git blame unavailable ({exc}); gate skipped")
+        return
+
+    violations = [
+        (cn, date) for cn, date in modified if cn not in entries_with_override
+    ]
+
+    if violations:
+        details = "; ".join(f"{cn} (modified {date})" for cn, date in violations)
+        _fail(
+            "G7",
+            f"{len(violations)} fol_descriptor edit(s) within {_CACHE_WINDOW_DAYS}-day "
+            f"cache-invariance window (D5): {details}. "
+            f"Add 'cache_window_override: true' to exempt an entry.",
+        )
+
+    _ok(
+        "G7",
+        f"no fol_descriptor edits in last {_CACHE_WINDOW_DAYS} days "
+        f"(checked {len(tools)} entries)",
+    )
+
+
+# ── G9 helpers ────────────────────────────────────────────────────────────────
+
+_FLAT_CALL_RE = re.compile(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\s*\(")
+_SUBSTRATE_RE = re.compile(r"user-vortex__([a-z][a-z0-9]*(?:_[a-z0-9]+)+)")
+_DISPATCHER_RE = re.compile(
+    r"\b([a-z][a-z0-9]*)\s*\(\s*(?:tool|op|action|operation)\s*="
+)
+
+
+def _run_g9(tools: list[dict], skills_root: Path) -> None:
+    """G9: seat-visibility coherence across corpus.
+
+    ∀ canonical name referenced as a flat call (grok surface) in a skill:
+      'mcp_grok' ∈ seat_visibility.
+    ∀ domain name referenced as a dispatcher call (claude surface) in a skill:
+      'mcp' ∈ domain_seat_visibility.
+    Violations are B2 prerequisite blockers (operator reclassification 2026-05-22).
+    """
+    cn_to_sv: dict[str, list[str]] = {
+        t["canonical_name"]: t.get("seat_visibility", []) for t in tools
+    }
+    canonical_names: set[str] = set(cn_to_sv.keys())
+    domain_set: set[str] = {t["domain"] for t in tools}
+    domain_sv: dict[str, list[str]] = {}
+    for t in tools:
+        d = t["domain"]
+        if d not in domain_sv:
+            domain_sv[d] = t.get("seat_visibility", [])
+
+    skill_files = list(skills_root.rglob("*.md"))
+    violations: list[str] = []
+
+    for skill_file in sorted(skill_files):
+        content = skill_file.read_text(encoding="utf-8", errors="ignore")
+        rel = skill_file.relative_to(skills_root.parent)
+
+        # Flat call references (grok surface): canonical_name(...)
+        for m in _FLAT_CALL_RE.finditer(content):
+            token = m.group(1)
+            if token not in canonical_names:
+                continue
+            sv = cn_to_sv[token]
+            if "mcp_grok" not in sv:
+                violations.append(
+                    f"{rel}: {token!r} referenced as flat call but "
+                    f"seat_visibility={sv!r} lacks 'mcp_grok'"
+                )
+
+        # Substrate-qualified references (grok surface)
+        for m in _SUBSTRATE_RE.finditer(content):
+            token = m.group(1)
+            if token not in canonical_names:
+                continue
+            sv = cn_to_sv[token]
+            if "mcp_grok" not in sv:
+                violations.append(
+                    f"{rel}: user-vortex__{token} lacks 'mcp_grok' in seat_visibility"
+                )
+
+        # Dispatcher call references (claude surface): domain(tool=... / op=... / ...)
+        for m in _DISPATCHER_RE.finditer(content):
+            domain = m.group(1)
+            if domain not in domain_set:
+                continue
+            sv = domain_sv.get(domain, [])
+            if "mcp" not in sv:
+                violations.append(
+                    f"{rel}: {domain!r} referenced as dispatcher but "
+                    f"domain seat_visibility={sv!r} lacks 'mcp'"
+                )
+
+    if violations:
+        _fail(
+            "G9",
+            f"{len(violations)} seat-visibility violation(s) — B2 prerequisite blockers:\n  "
+            + "\n  ".join(violations),
+        )
+
+    _ok(
+        "G9",
+        f"seat-visibility coherent across {len(skill_files)} skill file(s)",
+    )
+
+
+# ── Risk-4 helpers ────────────────────────────────────────────────────────────
+
+
+def _extract_primary_tools(server_py: Path) -> set[str] | None:
+    """Parse _PRIMARY_TOOLS set literal from server.py via AST.
+
+    Returns None if the symbol cannot be found.
+    """
+    try:
+        tree = ast.parse(server_py.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return None
+
+    for node in ast.walk(tree):
+        # Handle both annotated (x: T = ...) and plain (x = ...) assignments.
+        if isinstance(node, ast.AnnAssign):
+            if (
+                isinstance(node.target, ast.Name)
+                and node.target.id == "_PRIMARY_TOOLS"
+                and isinstance(node.value, ast.Set)
+            ):
+                return {
+                    elt.value
+                    for elt in node.value.elts
+                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+                }
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "_PRIMARY_TOOLS":
+                    if isinstance(node.value, ast.Set):
+                        return {
+                            elt.value
+                            for elt in node.value.elts
+                            if isinstance(elt, ast.Constant)
+                            and isinstance(elt.value, str)
+                        }
+    return None
+
+
+def _run_risk4(tools: list[dict], server_py: Path) -> None:
+    """Risk-4: every item in _PRIMARY_TOOLS has a domain in canonical.yaml.
+
+    Permanent invariant during Phase B–C transition: the set of tools
+    directly served on /mcp (_PRIMARY_TOOLS) must be a subset of the
+    domain names registered in canonical.yaml with mcp seat_visibility.
+
+    Remove this gate at Phase D when _PRIMARY_TOOLS becomes dead code.
+
+    Failure = server is serving tools the registry doesn't know about.
+    Informational note = registry domains not yet in _PRIMARY_TOOLS (Phase D work).
+    """
+    if not server_py.exists():
+        _warn("Risk-4", f"server.py not found at {server_py}; gate skipped")
+        return
+
+    primary_tools = _extract_primary_tools(server_py)
+    if primary_tools is None:
+        _warn("Risk-4", "could not parse _PRIMARY_TOOLS from server.py; gate skipped")
+        return
+
+    registry_domains: set[str] = {
+        t["domain"] for t in tools if "mcp" in t.get("seat_visibility", [])
+    }
+
+    # Critical check: all _PRIMARY_TOOLS items must be in registry domains.
+    undocumented = primary_tools - registry_domains
+    if undocumented:
+        _fail(
+            "Risk-4",
+            f"_PRIMARY_TOOLS contains domain(s) not in canonical.yaml: "
+            f"{sorted(undocumented)}. "
+            f"Add these to canonical.yaml before Phase D cutover.",
+        )
+
+    # Informational: registry-mcp domains not yet in _PRIMARY_TOOLS (Phase D).
+    unregistered = registry_domains - primary_tools
+    if unregistered:
+        _warn(
+            "Risk-4",
+            f"{len(unregistered)} registry-mcp domain(s) not yet in _PRIMARY_TOOLS "
+            f"(Phase D work): {sorted(unregistered)}",
+        )
+
+    _ok(
+        "Risk-4",
+        f"all {len(primary_tools)} _PRIMARY_TOOLS items accounted for in registry "
+        f"({len(registry_domains)} mcp-visible domains total)",
+    )
+
+
+# ── main gate runner ──────────────────────────────────────────────────────────
+
+
+def run_gates(
+    registry_path: Path,
+    schema_path: Path,
+    skills_root: Path,
+    mcp_url: str,
+    no_server_gates: bool,
+) -> None:
+    try:
+        import yaml  # type: ignore[import]
+    except ImportError:
+        print("FAIL G1: PyYAML not installed (pip install pyyaml)", file=sys.stderr)
+        sys.exit(1)
+    try:
+        import jsonschema  # type: ignore[import]
+    except ImportError:
+        print(
+            "FAIL G1: jsonschema not installed (pip install jsonschema)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    repo_root = Path(__file__).resolve().parent.parent
+
+    # ── load YAML ────────────────────────────────────────────────────────────
+    try:
+        raw = registry_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(raw)
+    except Exception as exc:
+        _fail("G1", f"YAML parse error in {registry_path}: {exc}")
+
+    data = _fix_dates(data)
+
+    # ── G1 — schema validation ────────────────────────────────────────────────
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _fail("G1", f"schema parse error in {schema_path}: {exc}")
+
+    try:
+        jsonschema.validate(instance=data, schema=schema)
+    except jsonschema.exceptions.ValidationError as exc:
+        _fail(
+            "G1",
+            f"schema validation failed: {exc.message} — path: {list(exc.absolute_path)}",
+        )
+
+    tools: list[dict] = data.get("tools", [])
+    domains: list[str] = data.get("domains", [])
+    _ok("G1", f"schema valid — {len(tools)} tools, {len(domains)} domains")
+
+    # ── G2 — derivation determinism ───────────────────────────────────────────
+    _run_g2(registry_path)
+
+    # ── G3 — Claude /mcp dispatcher cap ──────────────────────────────────────
+    mcp_domains: set[str] = {
+        t["domain"] for t in tools if "mcp" in t.get("seat_visibility", [])
+    }
+    if len(mcp_domains) > _CLAUDE_DISPATCHER_CAP:
+        _fail(
+            "G3",
+            f"Claude /mcp dispatcher count {len(mcp_domains)} > cap {_CLAUDE_DISPATCHER_CAP}: "
+            f"{sorted(mcp_domains)}",
+        )
+    _ok(
+        "G3",
+        f"Claude /mcp domains {len(mcp_domains)} ≤ {_CLAUDE_DISPATCHER_CAP}: "
+        f"{sorted(mcp_domains)}",
+    )
+
+    # ── G4 — skill ↔ registry consistency ────────────────────────────────────
+    _run_g4(tools, skills_root)
+
+    # ── G5 — OpenAPI parity (server-dependent) ────────────────────────────────
+    if no_server_gates:
+        _warn("G5", "skipped (--no-server-gates)")
+    else:
+        _run_g5(tools, mcp_url, repo_root)
+
+    # ── G6 — FOL descriptor presence ─────────────────────────────────────────
+    missing_fol: list[str] = [
+        t["canonical_name"]
+        for t in tools
+        if not any(sym in t.get("fol_descriptor", "") for sym in _FOL_SYMBOLS)
+    ]
+    if missing_fol:
+        _fail(
+            "G6",
+            f"{len(missing_fol)} entries missing FOL symbols: {missing_fol}",
+        )
+    _ok("G6", f"all {len(tools)} entries have FOL descriptors")
+
+    # ── G7 — cache-invariance window ──────────────────────────────────────────
+    _run_g7(tools, registry_path)
+
+    # ── G8 — canonical naming convention ─────────────────────────────────────
+    violations: list[str] = []
+    for t in tools:
+        name = t["canonical_name"]
+        domain = t["domain"]
+        if not _NAME_RE.match(name):
+            violations.append(f"{name!r}: does not match naming pattern")
+        elif not name.startswith(domain + "_"):
+            violations.append(
+                f"{name!r}: does not start with domain prefix {domain!r}_"
+            )
+    if violations:
+        _fail("G8", "naming violations:\n  " + "\n  ".join(violations))
+    _ok("G8", f"all {len(tools)} canonical names satisfy <domain>_<operation> pattern")
+
+    # ── G9 — seat-visibility coherence ───────────────────────────────────────
+    _run_g9(tools, skills_root)
+
+    # ── Risk-4 — PRIMARY_TOOLS drift assertion ────────────────────────────────
+    server_py = repo_root / "services" / "mcp-server" / "server.py"
+    _run_risk4(tools, server_py)
+
+    print("\nOK registry-check: all gates passed")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    repo_root = Path(__file__).resolve().parent.parent
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--registry",
+        type=Path,
+        default=repo_root / "config" / "mcp" / "canonical.yaml",
+        help="Path to canonical.yaml (default: config/mcp/canonical.yaml)",
+    )
+    p.add_argument(
+        "--schema",
+        type=Path,
+        default=repo_root / "config" / "mcp" / "canonical_registry.schema.json",
+        help="Path to schema JSON (default: config/mcp/canonical_registry.schema.json)",
+    )
+    p.add_argument(
+        "--skills-root",
+        type=Path,
+        default=repo_root / ".cursor" / "skills",
+        help="Root directory for skill files (default: .cursor/skills)",
+    )
+    p.add_argument(
+        "--mcp-url",
+        default="https://mcp.k-1.me",
+        help="Base URL for MCP server (default: https://mcp.k-1.me)",
+    )
+    p.add_argument(
+        "--no-server-gates",
+        action="store_true",
+        help="Skip gates that require a running server (G5)",
+    )
+    return p
+
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
+    if not args.registry.exists():
+        print(f"FAIL: registry not found: {args.registry}", file=sys.stderr)
+        sys.exit(1)
+    if not args.schema.exists():
+        print(f"FAIL: schema not found: {args.schema}", file=sys.stderr)
+        sys.exit(1)
+    run_gates(
+        args.registry,
+        args.schema,
+        args.skills_root,
+        args.mcp_url,
+        args.no_server_gates,
+    )

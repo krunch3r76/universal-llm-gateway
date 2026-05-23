@@ -9,13 +9,13 @@ DO NOT import from services.rag.embeddings — cortex-api must be self-contained
 
 from __future__ import annotations
 
-import logging
 import random
 import time
 
 import httpx
+from universal_logging import get_logger
 
-logger = logging.getLogger("cortex-api.embeddings")
+logger = get_logger("cortex-api.embeddings")
 
 GATEWAY_URL = "http://localhost:9999"
 

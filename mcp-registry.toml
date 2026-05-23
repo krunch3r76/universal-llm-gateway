@@ -50,6 +50,12 @@ type = "bearer"
 # 2026-05-22 in Phase 3 — was VORTEX_MCP_TOKEN.
 env = "MCP_AUTH_TOKEN"
 
+# Per-target URL overrides.
+# grok-direct uses the flat-manifest /mcp/grok endpoint (D4 decision: per-seat
+# endpoints for explicit routing). Cursor stays at /mcp.
+[server.url_overrides]
+"grok-direct" = "https://mcp.k-1.me/mcp/grok"
+
 # Per-target tool filter.
 # Per B-Q4/§4.6: grok CLI TOML has no per-server tool-filter primitive.
 # `exclude_for.grok-direct` is schema-retained for future multi-tenant operators

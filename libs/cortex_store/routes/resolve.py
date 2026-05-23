@@ -1,29 +1,27 @@
 """Cortex URI resolution — cortex://TYPE/SLUG[?r=N][&a=ARTIFACT][#PINPOINT].
 
-Resolves cortex:// URIs to entity + optional assertion + optional chunk data.
-Additive endpoint — does not modify any existing routes. The ``#PINPOINT``
-fragment extension is spec § 2.2 of
-docs/architecture/entity-backed-claim-provenance.md and reads from the
-``chunks.pinpoint`` column added by migration 037.
+Resolves cortex:// URIs to entity + optional assertion data.
+The ``#PINPOINT`` fragment extension per spec § 2.2 returns
+``pinpoint_unresolved`` after Phase E dropped the chunks table (migration
+040). Pinpoint resolution via RAG is a Phase F+ follow-up.
 """
 
 from __future__ import annotations
 
-import logging
-import sqlite3
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, query
 
-_resolve_logger = logging.getLogger("cortex-api.resolve")
+_resolve_logger = get_logger("cortex-api.resolve")
 
 router = APIRouter(prefix="/resolve", tags=["resolve"])
 
 _ASSERTION_COLS = (
     "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by, "
-    "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
+    "derivation_type, chunk_id, chunk_id_schema, reasoning_summary, is_atomic, is_decontextualized, "
     "observed_at, valid_from, valid_until, superseded_by, "
     "review_status, reviewer, reviewed_at, review_notes, "
     "resolution_status, fulfillment_assertion_id, quality_score, "
@@ -74,30 +72,20 @@ def parse_cortex_uri(uri: str) -> dict:
 
 
 def _resolve_pinpoint_chunk(
-    conn: sqlite3.Connection, *, entity_id: str, pinpoint: str
+    entity_id: str, pinpoint: str
 ) -> dict | None:
-    """Look up the chunk whose (source_uri = cortex://entity_id, pinpoint).
+    """Pinpoint chunk lookup — returns None (unresolvable) after Phase E.
 
-    Returns the chunk row as a dict, or ``None`` if no chunk matches —
-    callers surface this as ``pinpoint_unresolved`` per spec § 2.2.
-
-    The lookup keys on the canonical ``cortex://<entity_id>`` form. If
-    callers wrote chunks using an alternative ``source_uri`` (e.g. a
-    workspace path), pinpoint resolution will not find them — Phase 2
-    seeding standardizes on the cortex:// form.
+    The chunks table was dropped by migration 040 (Phase E). Pinpoint
+    resolution via RAG is a Phase F+ follow-up. All callers receive
+    ``pinpoint_unresolved`` until that work lands.
     """
-    canonical_uri = f"cortex://{entity_id.replace(':', '/', 1)}"
-    rows = query(
-        conn,
-        "SELECT id, content, source_uri, source_date, observer, "
-        "       chunk_index, token_count, pinpoint "
-        "FROM chunks "
-        "WHERE source_uri = ? AND pinpoint = ?",
-        (canonical_uri, pinpoint),
+    _resolve_logger.debug(
+        "pinpoint resolution for %s#%s: unresolvable (chunks table dropped by migration 040)",
+        entity_id,
+        pinpoint,
     )
-    if not rows:
-        return None
-    return dict(rows[0])
+    return None
 
 
 @router.get("")
@@ -170,7 +158,6 @@ def resolve_cortex_uri(
         # present (entity + tagged-assertion + chunk all returned together).
         if parsed["pinpoint"] is not None:
             chunk = _resolve_pinpoint_chunk(
-                conn,
                 entity_id=entity_id,
                 pinpoint=parsed["pinpoint"],
             )
@@ -215,9 +202,11 @@ def resolve_cortex_uri(
                     (entity_id,),
                 )
                 conn.commit()
-            except Exception:
-                _resolve_logger.debug(
-                    "Access log insert failed for tag_resolve %s", entity_id
+            except Exception as exc:
+                _resolve_logger.warning(
+                    "tag_resolve access log insert failed: entity=%s err=%s",
+                    entity_id,
+                    exc,
                 )
             return result
 

@@ -16,6 +16,7 @@ from tool_error_enricher import register_tool_error_enricher
 @pytest.mark.asyncio
 async def test_unexpected_keyword_argument_enrichment():
     mcp = FastMCP("test-enricher")
+
     @mcp.tool()
     def fs(op: str, path: str = "") -> dict:
         return {"op": op, "path": path}
@@ -40,6 +41,7 @@ async def test_unexpected_keyword_argument_enrichment():
 @pytest.mark.asyncio
 async def test_type_mismatch_enrichment_includes_expected_type():
     mcp = FastMCP("test-enricher")
+
     @mcp.tool()
     def sample(a: int, b: str = "x") -> dict:
         return {"a": a, "b": b}
@@ -61,6 +63,7 @@ async def test_type_mismatch_enrichment_includes_expected_type():
 @pytest.mark.asyncio
 async def test_valid_call_passes_through_unchanged():
     mcp = FastMCP("test-enricher")
+
     @mcp.tool()
     def sample(a: int) -> dict:
         return {"got": a * 2}
@@ -168,9 +171,11 @@ async def test_body_internal_validation_error_not_enriched():
         # Whatever the FastMCP default error path produces, it must NOT be
         # the enricher's structured envelope — enricher must have re-raised.
         if isinstance(env, dict):
-            assert env.get("error_type") != "ValidationError" or env.get(
-                "tool"
-            ) != "sample" or "accepted_params" not in str(env.get("errors", []))
+            assert (
+                env.get("error_type") != "ValidationError"
+                or env.get("tool") != "sample"
+                or "accepted_params" not in str(env.get("errors", []))
+            )
         # Also acceptable: the call surfaces as an error result without
         # structured_content shape we recognize.
         assert getattr(res, "is_error", True) is True

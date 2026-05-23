@@ -9,10 +9,10 @@ contradiction_set, falsifier).
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, json_decode, query
 from ..models import (
@@ -23,7 +23,7 @@ from ..models import (
     ReflectiveEntryList,
 )
 
-logger = logging.getLogger("cortex-api.reflective_journal")
+logger = get_logger("cortex-api.reflective_journal")
 router = APIRouter(prefix="/reflective-journal", tags=["reflective-journal"])
 
 _VALID_KINDS = frozenset(

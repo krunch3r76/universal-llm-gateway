@@ -15,6 +15,9 @@ def _build_manifest(
     recent_mentions: list[dict[str, Any]] | None,
     skills: list[dict[str, Any]] | None,
     continuity: dict[str, Any] | None = None,
+    views_data: list[dict[str, Any]] | None = None,
+    async_dispatches: list[dict[str, Any]] | None = None,
+    audit_counters: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the section manifest returned alongside the briefing card."""
     manifest: list[dict[str, Any]] = []
@@ -107,4 +110,71 @@ def _build_manifest(
                 ),
             }
         )
+
+    # §C.4: view materialization entries — one per requested view entity.
+    # render_subgraph is the canonical retrieval primitive for these entries.
+    for v in views_data or []:
+        eid = v.get("entity_id", "")
+        if not eid:
+            continue
+        manifest.append(
+            {
+                "section": f"views/{eid}",
+                "entity_id": eid,
+                "entity_count": v.get("entity_count", 0),
+                "edge_count": v.get("edge_count", 0),
+                "hint": (
+                    "cortex(tool='render_subgraph', arguments='"
+                    f'{{"root": "{eid}", "hops": 1}}\')'
+                ),
+            }
+        )
+
+    # §C.4: render_subgraph hint for plan/project entities surfaced via plan_phases.
+    # Enables agents to drill into a roadmap subgraph from the manifest entry.
+    _seen_plan_ids: set[str] = set()
+    for phase in plan_phases or []:
+        plan_id = phase.get("plan_id") or ""
+        if plan_id and plan_id not in _seen_plan_ids:
+            _seen_plan_ids.add(plan_id)
+            manifest.append(
+                {
+                    "section": f"subgraph/{plan_id}",
+                    "entity_id": plan_id,
+                    "hint": (
+                        "cortex(tool='render_subgraph', arguments='"
+                        f'{{"root": "{plan_id}", "hops": 1}}\')'
+                    ),
+                }
+            )
+
+    # §C.6: in-flight async dispatch section — structural IDs + retrieval hints.
+    if async_dispatches:
+        manifest.append(
+            {
+                "section": "async_dispatches",
+                "count": len(async_dispatches),
+                "hint": "pipeline(op='stats') for aggregate; pipeline(op='result', execution_id=<id>) per dispatch",
+                "items": [
+                    {
+                        "execution_id": d.get("execution_id", ""),
+                        "pipeline_id": d.get("pipeline_id", ""),
+                    }
+                    for d in async_dispatches
+                ],
+            }
+        )
+
+    # §C.6: audit alert counts — degrade silently when audit unavailable.
+    if audit_counters is not None:
+        manifest.append(
+            {
+                "section": "audit",
+                "criticals": audit_counters.get("criticals", 0),
+                "warnings": audit_counters.get("warnings", 0),
+                "infos": audit_counters.get("infos", 0),
+                "hint": "cortex(tool='audit') for findings detail",
+            }
+        )
+
     return manifest

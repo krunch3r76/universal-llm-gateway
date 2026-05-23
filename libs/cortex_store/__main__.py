@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import os
+
+from universal_logging import setup
 
 from .server import run_service
 
@@ -32,11 +33,8 @@ def main() -> None:
         parser.print_help()
         return
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%SZ",
-    )
+    # CLI bootstrap: universal_logging auto-init (replaces stdlib basicConfig).
+    setup()
     db_path = os.path.expanduser(args.db)
     asyncio.run(
         run_service(db_path=db_path, sock=args.sock, host=args.host, port=args.port)

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query
+from universal_logging import get_logger
 
 from ...db import cortex_conn
 from ...salience import SalienceResult, compute_all_salience
@@ -16,7 +16,7 @@ from ._render import (
     _build_oneline_sections,
 )
 
-logger = logging.getLogger("cortex-api.boot")
+logger = get_logger("cortex-api.boot")
 router = APIRouter(tags=["boot"])
 
 

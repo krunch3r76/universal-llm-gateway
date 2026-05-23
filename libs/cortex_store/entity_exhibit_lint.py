@@ -17,14 +17,14 @@ accepted by Cortex's ID column during session
 from __future__ import annotations
 
 import datetime
-import logging
 import sqlite3
 
 from fastapi import HTTPException, status
+from universal_logging import get_logger
 
 from .db import query
 
-logger = logging.getLogger("cortex-api.entity_exhibit_lint")
+logger = get_logger("cortex-api.entity_exhibit_lint")
 
 
 def parse_exhibit_case_id(entity_id: str) -> str:

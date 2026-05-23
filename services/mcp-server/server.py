@@ -12,7 +12,7 @@ Security boundaries:
 from __future__ import annotations
 
 import asyncio
-import logging
+import logging  # stdlib needed for _UTCFormatter / uvicorn integration below
 import os
 import signal
 import socket
@@ -43,6 +43,7 @@ from schema_compact import patch_fastmcp_tool_serialization
 from starlette.middleware.gzip import GZipMiddleware
 from tool_access import dispatch_denial_reason, is_dispatch_tool_allowed
 from tool_error_enricher import register_tool_error_enricher
+from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
 from tools.agent_consult import register_agent_consult_tools
@@ -75,13 +76,14 @@ from tools.security_js import register_security_js_tools
 from tools.sqlite import register_sqlite_tools
 from tools.topology import register_topology_tools
 from tools.web import register_web_tools
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from asyncio.transports import BaseTransport
     from collections.abc import Callable
     from types import FrameType
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _AUTH_TOKEN_ENV = "MCP_AUTH_TOKEN"
 _CERT_FILE = "/etc/letsencrypt/live/mcp.k-1.me/fullchain.pem"
@@ -179,41 +181,13 @@ def _build_oauth_service(config: OAuthServerConfig | None) -> OAuthService | Non
     return OAuthService(config=config, store=store)
 
 
-_PRIMARY_TOOLS: set[str] = {
-    # Meta
-    "dispatch",
-    "web_search",
-    "web_fetch",
-    # Consolidated file surface
-    "fs",
-    # SQLite
-    "sql",
-    # Infra
-    "pipeline",
-    "manage",
-    "model_status",
-    "quality_gate",
-    "observability",
-    # Frontier dispatch — most-used agent surfaces
-    "team_dispatch",
-    "frontier_dispatch",
-    # Agent-bus (dispatch-style)
-    "agent_bus",
-    # Cortex (dispatch-style + boot)
-    "cortex",
-    "cortex_boot",
-    "boot_inspect",
-    # RAG (consolidated)
-    "rag",
-    # Response size guard
-    "retrieve",
-    # Domain dispatch (private layer — discovered from tools.local/)
-    "email",
-    "claudeburst",
-    "bot_supervisor",
-    # Grok CLI dispatch
-    "grokbuild",
-}
+from _derive import (  # noqa: E402, I001
+    derive_claude_manifest as _derive_claude_manifest,
+    get_claude_manifest,  # noqa: F401 — re-exported for test access
+)
+
+_claude_manifest = _derive_claude_manifest()
+_PRIMARY_TOOLS: set[str] = {e["tool_name"] for e in _claude_manifest}
 
 
 def _discover_private_tools(
@@ -267,11 +241,32 @@ async def _tool_names(mcp: FastMCP) -> set[str]:
     return {t.name for t in await mcp.list_tools()}
 
 
-def _build_server() -> FastMCP:
+async def _capture_pre_prune_tools(mcp: FastMCP) -> dict[str, Any]:
+    """Capture all registered Tool objects before pruning for the grok server (B2).
+
+    ∀ tool registered at call time: captured by name → Tool object.
+    Must be called before _prune_to_primary removes non-primary tools.
+    """
+    from grok_route import capture_pre_prune_tools  # noqa: PLC0415
+
+    return await capture_pre_prune_tools(mcp)
+
+
+def _build_server() -> tuple[
+    FastMCP,
+    dict[str, Any],
+    dict[str, tuple[str, dict[str, Any]]],
+    dict[str, Any],
+]:
     """Construct the FastMCP server, register tool surfaces, and prune exports.
 
     The resulting server advertises a primary tool set and routes non-primary
     tools through `dispatch` for clients with limited tool enumeration capacity.
+
+    Returns:
+        Tuple of (mcp, pre_prune_tool_objects, overflow_metadata, overflow_registry).
+        pre_prune_tool_objects: all Tool objects (including post-prune inline tools) for B2.
+        overflow_registry: callables for rag and other demoted inline wrappers, for B2.
     """
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
@@ -335,7 +330,15 @@ def _build_server() -> FastMCP:
         )
         record("mcp.response.guard.init.failed", error="see server logs")
 
+    # Capture descriptions BEFORE pruning — _prune_to_primary removes the
+    # underlying Tool objects, so post-prune metadata reads return empty.
+    overflow_metadata = asyncio.run(
+        capture_overflow_metadata(mcp, frozenset(_PRIMARY_TOOLS))
+    )
+    # Capture all Tool objects before pruning for the /mcp/grok server (B2).
+    pre_prune_tool_objects = asyncio.run(_capture_pre_prune_tools(mcp))
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
+    register_tool_search_tool(mcp, overflow_metadata)
 
     valid_sandboxes = {"cortex", "workspaces"}
     sandbox_tool: dict[str, str] = {
@@ -682,10 +685,10 @@ def _build_server() -> FastMCP:
 
     @mcp.tool(title="Tool Dispatcher")
     async def dispatch(tool: str, arguments: str = "{}") -> Any:
-        """Call any server tool by name — gateway to tools beyond the primary set.
+        """Invoke a non-primary tool by name. Discover candidates via tool_search first.
 
         arguments: JSON-encoded object string (e.g. '{"key": "value"}').
-        Full catalog: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="dispatch")
+        Use tool_search(query="...") to locate the tool name and dispatch_template.
         """
         from tools._agent_tools import _parse_dispatch_arguments
 
@@ -703,6 +706,7 @@ def _build_server() -> FastMCP:
 
         fn = overflow_registry.get(tool)
         if fn is None:
+            record("mcp.tool.dispatch.unknown", tool=tool)
             return {
                 "tool": tool,
                 "result": {
@@ -740,6 +744,22 @@ def _build_server() -> FastMCP:
             return result
         return {"tool": tool, "result": result}
 
+    # Inline wrappers (rag) are defined after _prune_to_primary because they
+    # close over overflow_registry. They leak into the advertised catalog
+    # unless explicitly demoted to overflow here. ∀ inline wrapper not in
+    # _PRIMARY_TOOLS: capture metadata + callable, then remove from mcp.
+    _demote_inline_wrappers(mcp, overflow_registry, overflow_metadata)
+    import tool_search as _ts_module  # noqa: PLC0415
+    from tool_search import build_manifest_from_metadata as _build_mf  # noqa: PLC0415
+
+    _ts_module._MANIFEST = _build_mf(overflow_metadata)
+
+    # Capture inline tools (fs, dispatch — primary, defined post-prune) into
+    # pre_prune_tool_objects for /mcp/grok flat server construction (B2).
+    from grok_route import capture_post_prune_tools  # noqa: PLC0415
+
+    asyncio.run(capture_post_prune_tools(mcp, pre_prune_tool_objects))
+
     primary_count = len(_PRIMARY_TOOLS)
     overflow_count = len(overflow_registry)
     logger.info(
@@ -752,7 +772,47 @@ def _build_server() -> FastMCP:
             "Overflow tools (not in _PRIMARY_TOOLS — add to promote): %s",
             sorted(overflow_registry),
         )
-    return mcp
+    return mcp, pre_prune_tool_objects, overflow_metadata, overflow_registry
+
+
+def _demote_inline_wrappers(
+    mcp: FastMCP,
+    overflow_registry: dict[str, Callable[..., Any]],
+    overflow_metadata: dict[str, tuple[str, dict[str, Any]]],
+) -> None:
+    """Move any post-prune inline wrappers (e.g. rag) out of the advertised catalog.
+
+    These wrappers close over ``overflow_registry`` so they are necessarily
+    defined after ``_prune_to_primary`` runs. Any such wrapper whose name is
+    not in ``_PRIMARY_TOOLS`` must be moved into the overflow registry and
+    its description captured so ``tool_search`` can surface it.
+    """
+    import warnings
+
+    async def _capture_and_remove() -> None:
+        for tool in await mcp.list_tools():
+            if tool.name in _PRIMARY_TOOLS or tool.name in overflow_registry:
+                continue
+            tool_obj = await mcp.get_tool(tool.name)
+            overflow_registry[tool.name] = tool_obj.fn
+            description = getattr(tool_obj, "description", "") or ""
+            schema = (
+                getattr(tool_obj, "parameters", None)
+                or getattr(tool_obj, "inputSchema", None)
+                or {}
+            )
+            overflow_metadata[tool.name] = (description, schema)
+
+    asyncio.run(_capture_and_remove())
+    current_tool_names = asyncio.run(_tool_names(mcp))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        for name in list(overflow_metadata):
+            if name not in current_tool_names:
+                continue
+            if name in _PRIMARY_TOOLS:
+                continue
+            mcp.remove_tool(name)
 
 
 def _prune_to_primary(mcp: FastMCP) -> dict[str, Callable[..., Any]]:
@@ -824,6 +884,26 @@ class _UTCFormatter(logging.Formatter):
     converter = time.gmtime
 
 
+def _emit_claude_boot_shadow_log() -> None:
+    """Emit structured boot line for /mcp Claude manifest health.
+
+    ∀ boot: logs domain_count + tool_names_sha256 for drift detection.
+    """
+    import hashlib  # noqa: PLC0415
+    import json  # noqa: PLC0415
+
+    from _derive import get_claude_manifest  # noqa: PLC0415, F811
+
+    manifest = get_claude_manifest()
+    tool_names = sorted(e["tool_name"] for e in manifest)
+    names_sha256 = hashlib.sha256(json.dumps(tool_names).encode()).hexdigest()
+    logger.info(
+        "claude_manifest_boot domain_count=%d names_sha256=%s",
+        len(manifest),
+        names_sha256,
+    )
+
+
 def main() -> None:
     """Initialize logging/auth/TLS state and run the MCP HTTPS server loop."""
     utc_fmt = _UTCFormatter(
@@ -862,7 +942,7 @@ def main() -> None:
     auth_token = _require_env(_AUTH_TOKEN_ENV)
     oauth_config = load_oauth_config()
     oauth_service = _build_oauth_service(oauth_config)
-    mcp = _build_server()
+    mcp, pre_prune_tool_objects, overflow_metadata, overflow_registry = _build_server()
 
     # stateless_http=True: each POST is self-contained (no session ID tracking).
     # Anthropic's API client creates a new session per interaction rather than
@@ -879,6 +959,14 @@ def main() -> None:
             token_endpoint=oauth_service.token_endpoint,
             authorization_endpoint=oauth_service.authorization_endpoint,
         )
+
+    # Wire /mcp/grok flat-manifest route (B2).
+    from grok_route import wire_grok_route  # noqa: PLC0415
+
+    wire_grok_route(
+        asgi_app, pre_prune_tool_objects, overflow_metadata, overflow_registry
+    )
+    _emit_claude_boot_shadow_log()
 
     # Middleware composition order (outermost first):
     # Drain → EdgeTelemetry → AuthMiddleware → McpRequestEventsMiddleware → AcceptNormalize → GZip → asgi_app

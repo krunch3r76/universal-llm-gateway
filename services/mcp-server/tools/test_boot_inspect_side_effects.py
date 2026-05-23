@@ -57,6 +57,8 @@ def test_boot_inspect_has_no_live_side_effects(
             "expired_unresolved": [],
             "review_total": 0,
             "rag_pipeline": {},
+            "audit_counters": None,
+            "async_dispatches": [],
         },
     )
     monkeypatch.setattr(_boot_runner, "_build_unread_threads", lambda _threads: [])
@@ -111,3 +113,95 @@ def test_boot_inspect_has_no_live_side_effects(
         "notes/system/shared/operational-context-claude-web.md"
     )
     assert result["audit_dump_path"] is None
+
+
+def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
+    """At least one fixture exercises the full view materialization path.
+
+    Verifies that views passed to cortex_boot appear in sections_available
+    with correct section keys and render_subgraph retrieval hints (§C.4).
+    """
+    _stub_entity_count = 4
+    _stub_edge_count = 3
+
+    monkeypatch.setattr(_boot_runner, "_resolve_transcript", lambda _tid: None)
+    monkeypatch.setattr(
+        _boot_runner,
+        "_build_futures_spec",
+        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+    )
+    monkeypatch.setattr(
+        _boot_runner,
+        "_extract_boot_results",
+        lambda _agent, _raw, _profile: {
+            "sessions": [],
+            "deadlines": [],
+            "threads": [],
+            "unread_turns": [],
+            "staging_items": [],
+            "todos": [],
+            "self_reflections": [],
+            "rj_entries": [],
+            "rj_total": 0,
+            "recent_mentions": [],
+            "skills": [],
+            "plan_phases": [],
+            "in_flight_todos": [],
+            "temporal_active": [],
+            "expired_unresolved": [],
+            "review_total": 0,
+            "audit_counters": None,
+            "async_dispatches": [],
+        },
+    )
+    monkeypatch.setattr(_boot_runner, "_build_unread_threads", lambda _t: [])
+    monkeypatch.setattr(_boot_runner, "_build_review_top", lambda _i: [])
+    monkeypatch.setattr(
+        _boot_runner,
+        "render_operational_context",
+        lambda **_kw: "ctx",
+    )
+    monkeypatch.setattr(_boot_runner, "record", lambda signal, **_kw: None)
+    monkeypatch.setattr(_boot_runner, "write_audit_dump", lambda **_kw: None)
+
+    shared_dir = tmp_path / "shared"
+    shared_dir.mkdir(parents=True)
+    monkeypatch.setattr(_boot_runner, "_OPS_CONTEXT_DIR", shared_dir)
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(_boot_audit_dump, "AUDIT_DIR", audit_dir)
+
+    # Stub _materialize_views so no live HTTP calls are made.
+    view_entity = "plan:test-roadmap"
+    monkeypatch.setattr(
+        _boot_runner,
+        "_materialize_views",
+        lambda _views: [
+            {
+                "entity_id": view_entity,
+                "entity_count": _stub_entity_count,
+                "edge_count": _stub_edge_count,
+                "retrieval_hint": (
+                    "cortex(tool='render_subgraph', arguments='"
+                    f'{{"root": "{view_entity}", "hops": 1}}\')'
+                ),
+            }
+        ],
+    )
+
+    mcp = _DummyMcp()
+    _orchestration_tools.register_orchestration_tools(mcp)
+    result = mcp.tools["cortex_boot"](
+        family="claude", platform="cursor", views=[view_entity]
+    )
+
+    sections = {s["section"]: s for s in result.get("sections_available", [])}
+    view_section_key = f"views/{view_entity}"
+    assert view_section_key in sections, (
+        f"Expected '{view_section_key}' in sections_available, got: {list(sections)}"
+    )
+    section = sections[view_section_key]
+    assert section["entity_count"] == _stub_entity_count
+    assert section["edge_count"] == _stub_edge_count
+    assert "render_subgraph" in section["hint"]
+    assert view_entity in result["briefing_card"]

@@ -80,6 +80,56 @@ def _filter_recent_self_reflections(
     return fresh
 
 
+def render_views_section(views_data: list[dict[str, Any]]) -> list[str]:
+    """Render the Views section lines from materialized subgraph data.
+
+    Structural only: entity_count, edge_count, retrieval hint.  No prose,
+    no rendered subgraph content (§C.3 compliance).
+    """
+    lines: list[str] = ["\n## Views"]
+    for v in views_data:
+        eid = v.get("entity_id", "?")
+        ec = v.get("entity_count", 0)
+        eg = v.get("edge_count", 0)
+        hint = v.get("retrieval_hint", "")
+        lines.append(f"- `{eid}` — {ec} entities, {eg} edges | `{hint}`")
+    return lines
+
+
+def render_async_dispatch_section(dispatches: list[dict[str, Any]]) -> list[str]:
+    """Render the In-flight Async Dispatches section lines.
+
+    Structural only: execution_id, pipeline_id, started_at, retrieval hint.
+    Appears only when called with a non-empty list (§C.3).
+    """
+    lines: list[str] = [f"\n## In-flight Async Dispatches ({len(dispatches)})"]
+    for d in dispatches:
+        eid = d.get("execution_id", "?")
+        pid = d.get("pipeline_id", "?")
+        started = d.get("started_at", "")[:19]  # trim subseconds
+        hint = d.get("retrieval_hint", "")
+        lines.append(f"- `{eid}` [{pid}] started {started} | `{hint}`")
+    return lines
+
+
+def render_audit_alerts_section(counters: dict[str, int]) -> list[str]:
+    """Render the Critical Alerts section lines from audit counters.
+
+    Severity-ordered counts only; no finding content (§C.6).  Returns an
+    empty list when there are no criticals (section omitted when silent).
+    """
+    criticals = counters.get("criticals", 0)
+    if criticals == 0:
+        return []
+    warnings = counters.get("warnings", 0)
+    infos = counters.get("infos", 0)
+    return [
+        "\n## Critical Alerts",
+        f"{criticals} critical, {warnings} warning, {infos} info",
+        "→ `cortex(tool='audit')` for finding details",
+    ]
+
+
 def _deadline_line(d: dict[str, Any], today: datetime) -> str:
     """Render a single deadline as a compact markdown line."""
     dl_date = d.get("deadline_date", "")

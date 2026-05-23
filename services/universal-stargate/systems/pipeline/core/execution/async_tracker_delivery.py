@@ -7,18 +7,32 @@ Two delivery paths gated on ``record.op``:
   metadata envelope turn to the configured thread at terminal transition.
   Failures are observable but do not mutate tracker state.
 
-**Bus-mode path** (``record.op == "to_thread"``, Phase 2):
-  Do NOT post a metadata envelope. Instead, poll the target thread for a
-  new turn — the agent's actual reply IS the durable artifact. If no turn
-  is observed within ``_BUS_WRITE_TIMEOUT_S``, return
-  ``DeliveryOutcome("failed", "thread_reply_not_observed")`` so the
-  tracker can demote the provisional ``completed`` record to ``failed``.
+**Bus-mode path** (``record.op == "to_thread"``):
+  Stargate posts ``record.result.content`` to ``record.target_thread`` on
+  behalf of the dispatched role/model. ``from_agent`` is supplied at
+  admission (role for team_dispatch, model identifier for
+  frontier_dispatch); ``to_agent`` is resolved from ``record.caller_agent``
+  with a thread last-turn-from fallback. Long content (> ~1.5 KB)
+  passes ``allow_long_body=true`` so the agent-bus briefing-rule warning
+  is suppressed. Content above the bus 8 000-char hard limit fails with
+  ``content_exceeds_bus_limit`` (poll ``pipeline(op="result")`` for the
+  full text; sidecar-write fallback is a v2 follow-up).
+
+  This replaces the previous "observe the model self-posting" contract
+  (architectural fix 2026-05-22 —
+  ``notes/system/decisions/dispatch-to-thread-delivery-architecture-2026-05-22.md``).
+  That contract failed structurally for ``mcp=False`` dispatches (no
+  agent_bus tool available) and for tool-budget-exhausted dispatches
+  (model ran out of turns before posting), as observed on executions
+  ``9d970982`` and ``8c1df5d3``.
 
 Invariants:
 - ∀ legacy record with ``result_delivery`` ∧ terminal transition: emit
   exactly one of ``.sent`` or ``.failed``.
-- ∀ bus-mode record (``op="to_thread"``): emit ``.completed`` on
-  observation, ``.failed`` on timeout; ¬envelope turn posted.
+- ∀ bus-mode record with non-empty ``result.content``: emit ``.sent`` on
+  POST 2xx, ``.failed`` on POST non-2xx or content-too-large.
+- ∀ bus-mode record with empty ``result.content``: skip POST and emit
+  ``.skipped`` — the record is already ``failed`` by EmptyCompletionError.
 - ∀ delivery failure: tracker record mutation is the caller's
   responsibility (see ``async_tracker._run_delivery_with_outcome``).
 - ¬retry: one-shot per terminal transition.
@@ -28,7 +42,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -45,8 +58,15 @@ logger = get_logger(__name__)
 
 
 _HTTP_TIMEOUT_S = 15.0
-_BUS_WRITE_TIMEOUT_S = 30.0
-_POLL_INTERVAL_S = 0.5
+# Bus turn body hard limit. Mirrors
+# ``libs/agent_bus_store/turns_models.MAX_TURN_BODY_CHARS`` — kept as a
+# module-level constant rather than imported so this module stays
+# self-contained for testing without the agent_bus_store dependency tree.
+_BUS_MAX_BODY_CHARS = 8_000
+# Threshold below which we post inline without allow_long_body=true. Above
+# this, opt into long-body to suppress the briefing-rule 413 envelope; under
+# the hard limit either way.
+_BUS_BRIEFING_RULE_CHARS = 1_500
 
 
 @dataclass
@@ -54,13 +74,13 @@ class DeliveryOutcome:
     """Return value from ``deliver_result`` — allows the tracker to act on failures.
 
     ``status`` is one of:
-    - ``"delivered"``: success (envelope posted or reply observed).
+    - ``"delivered"``: success (envelope posted or on-behalf reply landed).
     - ``"failed"``: delivery attempt failed (see ``failure_reason``).
     - ``"skipped"``: no delivery config present; no attempt was made.
 
-    The tracker's ``_run_delivery_with_outcome()`` consults this when
-    ``record.op == "to_thread"`` to demote a provisional ``completed``
-    record to ``failed`` on ``thread_reply_not_observed`` timeouts.
+    The tracker's ``_run_delivery_with_outcome()`` consults this to demote
+    a ``op="to_thread"`` record from ``completed`` to ``failed`` on any
+    non-delivered outcome.
     """
 
     status: Literal["delivered", "failed", "skipped"]
@@ -77,7 +97,7 @@ def _build_envelope(
     record: PipelineExecutionRecord,
     brief_summary: str | None = None,
 ) -> str:
-    """Render the delivery body as a compact JSON pointer envelope.
+    """Render the legacy delivery body as a compact JSON pointer envelope.
 
     Full model output is never inlined — callers poll via the execution
     endpoint if they need the complete result.  Stays well under the
@@ -130,6 +150,15 @@ def _build_close_summary(record: PipelineExecutionRecord) -> str:
     return f"{record.status}{duration_str}"
 
 
+def _build_on_behalf_subject(record: PipelineExecutionRecord) -> str:
+    """Auto-derive the reply turn subject when none was caller-supplied."""
+    if record.reply_subject:
+        return record.reply_subject
+    short_id = record.execution_id[:8]
+    actor = record.from_agent or "dispatch"
+    return f"{actor} reply — execution {short_id}"
+
+
 async def _close_thread(
     *,
     url: str,
@@ -166,6 +195,7 @@ async def _post_turn(
     subject: str,
     body: str,
     attachments: list[dict[str, Any]] | None = None,
+    allow_long_body: bool = False,
 ) -> tuple[int, str]:
     """POST /turns; return ``(status_code, response_text)``.
 
@@ -179,6 +209,8 @@ async def _post_turn(
         "subject": subject,
         "body": body,
     }
+    if allow_long_body:
+        payload["allow_long_body"] = True
     if attachments:
         payload["attachments"] = attachments
     try:
@@ -194,29 +226,45 @@ async def _post_turn(
         return 599, f"transport_error: {exc}"
 
 
-async def _fetch_thread_turn_count(
+async def _fetch_thread_last_turn_from(
     thread: str, *, url: str, auth_token: str
-) -> int | None:
-    """Return the thread's current turn count; ``None`` on transport/404 error."""
+) -> str | None:
+    """Return the agent who posted the most recent turn; ``None`` on error/empty.
+
+    Used by the on-behalf delivery path as a ``to_agent`` fallback when
+    ``record.caller_agent`` is unset.
+    """
     headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
     try:
         async with make_async_client(url, timeout=5.0) as client:
             resp = await client.get(f"/threads/{thread}", headers=headers)
-        if resp.status_code == 404:
-            return None
         if resp.status_code >= 400:
-            logger.warning(
-                "Thread turn-count fetch failed: thread=%s status=%d",
-                thread,
-                resp.status_code,
-            )
             return None
-        return int(resp.json().get("turn_count", 0))
+        data = resp.json()
+        last_from = data.get("last_turn_from")
+        return str(last_from) if last_from else None
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning(
-            "Thread turn-count transport error: thread=%s error=%s", thread, exc
+            "Thread last-turn-from fetch failed: thread=%s error=%s", thread, exc
         )
         return None
+
+
+def _resolve_to_agent(
+    record: PipelineExecutionRecord, *, last_turn_from: str | None
+) -> str | None:
+    """Pick ``to_agent`` for the on-behalf reply turn.
+
+    Order: ``caller_agent`` (the originating dispatcher) when distinct from
+    ``from_agent``; otherwise the thread's last turn author; otherwise None
+    (caller must resolve — delivery fails with ``unresolved_to_agent``).
+    """
+    from_agent = record.from_agent
+    if record.caller_agent and record.caller_agent != from_agent:
+        return record.caller_agent
+    if last_turn_from and last_turn_from != from_agent:
+        return last_turn_from
+    return None
 
 
 def _utc_now_iso() -> str:
@@ -225,23 +273,19 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
-async def _observe_reply_and_record(
+async def _post_content_on_behalf(
     record: PipelineExecutionRecord,
     *,
     event_bus: _EventBusProtocol | None,
     auth_token: str,
     url: str,
-    timeout_s: float = _BUS_WRITE_TIMEOUT_S,
-    poll_interval_s: float = _POLL_INTERVAL_S,
 ) -> DeliveryOutcome:
-    """Poll target_thread for a new turn; emit observation events; return outcome.
+    """Post ``record.result.content`` to ``record.target_thread`` as the role/model.
 
-    Phase 2 bus-mode path.  Does NOT post a metadata envelope turn — the
-    agent's reply IS the durable artifact.  Polls until a new turn appears
-    or ``timeout_s`` elapses.
-
-    ``timeout_s`` uses the record's configured ``timeout_seconds`` value when
-    present (callers can shorten the polling window via dispatch timeout).
+    Replaces the previous polling-based "observe self-post" path. The
+    dispatched model produces the reply content; Stargate posts it on the
+    model's behalf so delivery is deterministic regardless of the model's
+    tool surface or tool-budget consumption.
     """
     thread = record.target_thread
     if not thread:
@@ -257,13 +301,33 @@ async def _observe_reply_and_record(
         )
         return DeliveryOutcome(status="skipped", failure_reason="no_target_thread")
 
-    # Snapshot the turn count at the start of observation (after model finished).
-    pre_count = await _fetch_thread_turn_count(thread, url=url, auth_token=auth_token)
-    if pre_count is None:
-        logger.error(
-            "Bus-mode reply observation failed: thread=%s not found. execution_id=%s",
-            thread,
+    content = record.result.content if record.result is not None else ""
+    if not content or not content.strip():
+        # Empty completions are already failed by EmptyCompletionError upstream;
+        # this branch handles the unexpected case where complete_execution ran
+        # with empty content. Skip the post — there is nothing to deliver.
+        _emit(
+            event_bus,
+            _build_skipped_event(
+                pipeline_id=record.pipeline,
+                execution_id=record.execution_id,
+                reason="empty_content",
+                op=record.op or "",
+                output_contract=record.output_contract,
+            ),
+        )
+        return DeliveryOutcome(status="skipped", failure_reason="empty_content")
+
+    from_agent = record.from_agent or "dispatch"
+
+    if len(content) > _BUS_MAX_BODY_CHARS:
+        logger.warning(
+            "On-behalf delivery exceeds bus body limit: execution_id=%s "
+            "thread=%s body_chars=%d limit=%d",
             record.execution_id,
+            thread,
+            len(content),
+            _BUS_MAX_BODY_CHARS,
         )
         _emit(
             event_bus,
@@ -271,39 +335,80 @@ async def _observe_reply_and_record(
                 pipeline_id=record.pipeline,
                 execution_id=record.execution_id,
                 thread=thread,
-                status_code=404,
-                error_preview="thread_not_found_during_observation",
+                status_code=413,
+                error_preview=(
+                    f"content_exceeds_bus_limit body_chars={len(content)} "
+                    f"limit={_BUS_MAX_BODY_CHARS}"
+                ),
                 op=record.op or "",
                 output_contract=record.output_contract,
             ),
         )
-        return DeliveryOutcome(status="failed", failure_reason="thread_not_found")
-
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        await asyncio.sleep(poll_interval_s)
-        current_count = await _fetch_thread_turn_count(
-            thread, url=url, auth_token=auth_token
+        return DeliveryOutcome(
+            status="failed", failure_reason="content_exceeds_bus_limit"
         )
-        if current_count is not None and current_count > pre_count:
-            observed_at = _utc_now_iso()
-            record.thread_reply_observed_at = observed_at
-            _emit(
-                event_bus,
-                _build_delivery_completed_event(
-                    pipeline_id=record.pipeline,
-                    execution_id=record.execution_id,
-                    thread=thread,
-                    observed_at=observed_at,
-                ),
-            )
-            return DeliveryOutcome(status="delivered")
 
-    logger.warning(
-        "Bus-mode reply not observed: execution_id=%s thread=%s timeout=%.1fs",
+    last_turn_from = await _fetch_thread_last_turn_from(
+        thread, url=url, auth_token=auth_token
+    )
+    to_agent = _resolve_to_agent(record, last_turn_from=last_turn_from)
+    if not to_agent:
+        logger.error(
+            "On-behalf delivery missing to_agent: execution_id=%s thread=%s "
+            "caller_agent=%r from_agent=%r last_turn_from=%r",
+            record.execution_id,
+            thread,
+            record.caller_agent,
+            from_agent,
+            last_turn_from,
+        )
+        _emit(
+            event_bus,
+            _build_failed_event(
+                pipeline_id=record.pipeline,
+                execution_id=record.execution_id,
+                thread=thread,
+                status_code=0,
+                error_preview="unresolved_to_agent",
+                op=record.op or "",
+                output_contract=record.output_contract,
+            ),
+        )
+        return DeliveryOutcome(status="failed", failure_reason="unresolved_to_agent")
+
+    subject = _build_on_behalf_subject(record)
+    allow_long_body = len(content) > _BUS_BRIEFING_RULE_CHARS
+    status_code, response_text = await _post_turn(
+        url=url,
+        auth_token=auth_token,
+        thread=thread,
+        from_agent=from_agent,
+        to_agent=to_agent,
+        subject=subject,
+        body=content,
+        allow_long_body=allow_long_body,
+    )
+
+    if 200 <= status_code < 300:
+        record.thread_reply_observed_at = _utc_now_iso()
+        _emit(
+            event_bus,
+            _build_sent_event(
+                pipeline_id=record.pipeline,
+                execution_id=record.execution_id,
+                thread=thread,
+                to_agent=to_agent,
+                from_agent=from_agent,
+            ),
+        )
+        return DeliveryOutcome(status="delivered")
+
+    logger.error(
+        "On-behalf delivery POST failed: execution_id=%s thread=%s status=%d body=%s",
         record.execution_id,
         thread,
-        timeout_s,
+        status_code,
+        response_text[:300],
     )
     _emit(
         event_bus,
@@ -311,13 +416,13 @@ async def _observe_reply_and_record(
             pipeline_id=record.pipeline,
             execution_id=record.execution_id,
             thread=thread,
-            status_code=0,
-            error_preview="thread_reply_not_observed",
+            status_code=status_code,
+            error_preview=response_text[:300],
             op=record.op or "",
             output_contract=record.output_contract,
         ),
     )
-    return DeliveryOutcome(status="failed", failure_reason="thread_reply_not_observed")
+    return DeliveryOutcome(status="failed", failure_reason=f"post_{status_code}")
 
 
 async def deliver_result(
@@ -327,14 +432,13 @@ async def deliver_result(
     auth_token: str,
     url: str = DEFAULT_AGENT_BUS_URL,
 ) -> DeliveryOutcome:
-    """Route delivery based on op: legacy envelope-post OR bus-mode reply observation.
+    """Route delivery based on op: legacy envelope-post OR bus-mode on-behalf post.
 
     Returns ``DeliveryOutcome`` so the tracker can act on failures for
-    ``op="to_thread"`` records (status demotion on ``thread_reply_not_observed``).
+    ``op="to_thread"`` records (status demotion on any non-delivered outcome).
     """
     if record.op == "to_thread":
-        # Phase 2 bus-mode: observe reply; ¬post metadata envelope.
-        return await _observe_reply_and_record(
+        return await _post_content_on_behalf(
             record,
             event_bus=event_bus,
             auth_token=auth_token,
@@ -506,23 +610,6 @@ def _build_skipped_event(
         reason=reason,
         op=op,
         output_contract=output_contract,
-    )
-
-
-def _build_delivery_completed_event(
-    *,
-    pipeline_id: str,
-    execution_id: str,
-    thread: str,
-    observed_at: str,
-) -> Event:
-    from ..events.delivery import PipelineDispatchDeliveryCompleted
-
-    return PipelineDispatchDeliveryCompleted(
-        pipeline_id=pipeline_id,
-        execution_id=execution_id,
-        thread=thread,
-        observed_at=observed_at,
     )
 
 

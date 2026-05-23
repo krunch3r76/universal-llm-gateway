@@ -17,14 +17,14 @@ broader Cortex graph.
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 
 from fastapi import HTTPException, status
+from universal_logging import get_logger
 
 from .db import query, table_exists
 
-logger = logging.getLogger("cortex-api.type_schemas")
+logger = get_logger("cortex-api.type_schemas")
 
 
 def type_attribute_schema(

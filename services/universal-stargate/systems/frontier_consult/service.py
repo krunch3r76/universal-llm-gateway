@@ -61,6 +61,9 @@ class FrontierGenerateRequest:
     output_contract: Literal["inline", "thread"] = "inline"
     target_thread: str | None = None
     op: Literal["generate", "to_thread"] | None = None
+    # On-behalf delivery (2026-05-22) — caller-supplied subject for the
+    # reply turn posted by Stargate. None ⇒ delivery handler auto-derives.
+    reply_subject: str | None = None
 
 
 @dataclass(slots=True)
@@ -379,4 +382,16 @@ async def build_dispatch_body(
         body["target_thread"] = req.target_thread
     if req.op is not None:
         body["op"] = req.op
+    # On-behalf delivery identity for op="to_thread" (2026-05-22).
+    # team_dispatch posts as the role; frontier_dispatch posts as a
+    # model-tagged identity. Both are deterministic and never equal the
+    # caller_agent (rejected by the agent-bus self-address guard).
+    if req.op == "to_thread":
+        if req.role:
+            body["from_agent"] = req.role
+        else:
+            model_short = effective_model.replace("/", ":")
+            body["from_agent"] = f"frontier:{model_short}"
+    if req.reply_subject is not None:
+        body["reply_subject"] = req.reply_subject
     return body

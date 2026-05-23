@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import datetime
-import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, json_decode, json_encode, query
 from ..models import (
@@ -17,7 +17,7 @@ from ..models import (
 if TYPE_CHECKING:
     import sqlite3
 
-logger = logging.getLogger("cortex-api.staging")
+logger = get_logger("cortex-api.staging")
 router = APIRouter(prefix="/staging", tags=["staging"])
 
 _COLS = (

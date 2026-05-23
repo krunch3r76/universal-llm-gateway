@@ -159,6 +159,16 @@ cleanup_orphan_mcp_containers() {
     echo "Removing orphan mcp-server containers: $(echo "$orphans" | tr '\n' ' ')"
     echo "$orphans" | xargs -r docker rm -f >/dev/null 2>&1 || true
   fi
+
+  # After a full image rebuild the existing mcp-server container (if any) must
+  # be removed before `docker compose up` attempts to create a new one — compose
+  # performs an internal rename-then-create that fails with a "name already in
+  # use" conflict when the old container is still present and the daemon cannot
+  # atomically swap it.
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
+    echo "Removing existing mcp-server container before recreate..."
+    docker rm -f mcp-server >/dev/null 2>&1 || true
+  fi
 }
 
 wait_for_mcp_healthy() {

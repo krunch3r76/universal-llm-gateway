@@ -23,15 +23,15 @@ Three-tier aggregation strategy (Slice 4 cap-at-1 ratification, thread 907):
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any
 
 import httpx
+from universal_logging import get_logger
 
 from .compaction import synthesize_predicate_summary
 
-logger = logging.getLogger("cortex-api.predicate_summary")
+logger = get_logger("cortex-api.predicate_summary")
 
 STARGATE_URL = os.environ.get("STARGATE_URL", "http://localhost:9999")
 _SYNC_MODEL = os.environ.get("CORTEX_PREDICATE_SYNC_MODEL", "")

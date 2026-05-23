@@ -14,13 +14,13 @@ names from ``cortex_store.routes.assertions`` (re-exports in ``__init__``).
 
 from __future__ import annotations
 
-import logging
 import re
 import sqlite3
 import threading
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import ValidationError
+from universal_logging import get_logger
 
 from ... import embeddings as cortex_embeddings
 from ... import vector_store
@@ -28,7 +28,7 @@ from ...db import WRITE_LOCK, cortex_conn
 from ...models import AssertionItem, PredicateFormNormalize
 from ...projection_guard import assert_projection_covers_required
 
-logger = logging.getLogger("cortex-api.assertions")
+logger = get_logger("cortex-api.assertions")
 
 # §boot-compact: session-id pattern embedded in `evidence` that the briefing
 # renderer extracts for the "Your Notes" prefix (e.g. "[web-2026-04-30-0528]").
@@ -132,7 +132,7 @@ _VALID_CONFIDENCE = {"confirmed", "believed", "suspected", "hypothesized"}
 
 _ASSERTION_COLS = (
     "id, entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by, "
-    "derivation_type, chunk_id, reasoning_summary, is_atomic, is_decontextualized, "
+    "derivation_type, chunk_id, chunk_id_schema, reasoning_summary, is_atomic, is_decontextualized, "
     "observed_at, valid_from, valid_until, superseded_by, "
     "review_status, reviewer, reviewed_at, review_notes, "
     "resolution_status, fulfillment_assertion_id, quality_score, "

@@ -57,6 +57,31 @@ def test_s1_to_thread_normalizes_to_thread_contract() -> None:
     assert kwargs["target_thread"] == "867"
 
 
+def test_to_thread_propagates_subject_as_reply_subject() -> None:
+    """Caller-supplied subject lands on reply_subject for the on-behalf turn."""
+    body = TeamDispatchToThreadBody(
+        op="to_thread",
+        role="reviewer",
+        thread="1051",
+        subject="Re: plan-promotion review",
+        messages=[{"role": "user", "content": "x"}],
+    )
+    kwargs = _normalize_op_body(body)
+    assert kwargs["reply_subject"] == "Re: plan-promotion review"
+
+
+def test_to_thread_omits_reply_subject_when_unset() -> None:
+    """No subject ⇒ no reply_subject (delivery handler auto-derives)."""
+    body = TeamDispatchToThreadBody(
+        op="to_thread",
+        role="reviewer",
+        thread="1051",
+        messages=[{"role": "user", "content": "x"}],
+    )
+    kwargs = _normalize_op_body(body)
+    assert "reply_subject" not in kwargs
+
+
 # ---------------------------------------------------------------------------
 # S2 — generate op rejects thread field (extra="forbid")
 # ---------------------------------------------------------------------------
@@ -258,22 +283,26 @@ async def test_d3_open_thread_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 # GAPS — integration tests requiring live services
 # ---------------------------------------------------------------------------
 #
-# S4 — Bus-mode happy path (op="to_thread" end-to-end):
+# S4 — Bus-mode happy path (op="to_thread" end-to-end, on-behalf delivery):
 #   Requires: running agent-bus + model dispatch.
-#   Manual: POST /api/v1/team/dispatch {op="to_thread", agent="gatherer",
+#   Manual: POST /api/v1/team/dispatch {op="to_thread", role="gatherer",
 #   thread=<open_thread_id>, messages=[...]}; poll /api/v1/pipelines/result
-#   until status="completed"; verify thread has Orion reply; verify NO system turn.
+#   until status="completed"; verify thread has a Stargate-posted turn whose
+#   body matches result.content and whose from=<role>; verify
+#   thread_reply_observed_at is populated.
 #
-# D1 — Bus-mode terminal status reflects reply observation mid-flight:
+# D1 — Bus-mode terminal status reflects on-behalf POST mid-flight:
 #   Requires: tracker introspection surface not currently exposed.
-#   Manual: POST to_thread; poll /api/v1/pipelines/result immediately (should see
-#   status="running"); wait until agent replies; re-poll (should see
+#   Manual: POST to_thread; poll /api/v1/pipelines/result immediately (should
+#   see status="running"); after model completes, re-poll (should see
 #   status="completed" with thread_reply_observed_at populated).
 #
-# D2 — Bus-mode timeout demotes status to failed:
-#   Requires: test agent fixture that returns content without calling agent_bus.reply.
-#   Manual: dispatch to_thread against a dummy agent that never posts; poll result
-#   after 35s; assert status="failed", error.code="thread_reply_not_observed".
+# D2 — Bus-mode POST failure demotes status to failed:
+#   Manual: dispatch to_thread against an unreachable agent-bus; assert
+#   terminal status="failed", error.code starts with "post_".
+#   Note: the prior contract (D2 = "test agent that never posts") is no
+#   longer achievable as a failure mode — system-on-behalf delivery posts
+#   record.result.content deterministically regardless of model tool use.
 #
 # D5 — Cancel mid-flight is non-transactional:
 #   Requires: slow-reply agent fixture + cancel endpoint.
@@ -283,5 +312,6 @@ async def test_d3_open_thread_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 # E1 — Transcript regression (yesterday's failure mode structurally impossible):
 #   Requires: live dispatch.  Unit-testable slice covered by D6 (output_short
 #   suppressed) and D3/D4 (no spurious envelope); remaining assertions are live.
-#   Manual: dispatch op="to_thread" with agent="gatherer"; verify final poll result
-#   has no "output_short" hint; verify thread has no system/stargate turn.
+#   Manual: dispatch op="to_thread" with role="gatherer"; verify final poll result
+#   has no "output_short" hint; verify thread has exactly one stargate-posted
+#   reply turn (no metadata envelope).

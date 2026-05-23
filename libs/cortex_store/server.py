@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 from pathlib import Path
 
 import uvicorn
+from universal_logging import get_logger
 
 from .main import create_app
 
-logger = logging.getLogger("cortex-api")
+logger = get_logger("cortex-api")
 
 
 def _default_sock() -> str:

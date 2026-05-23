@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import datetime
-import logging
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..models import (
@@ -19,7 +19,7 @@ from ..models import (
 )
 from ..relationship_sql import FROM_CLAUSE, SELECT_COLUMNS, SYMMETRIC_REL_TYPES
 
-logger = logging.getLogger("cortex-api.relationships")
+logger = get_logger("cortex-api.relationships")
 router = APIRouter(prefix="/relationships", tags=["relationships"])
 
 

@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from universal_event_bus import Event, event_factory
+from universal_event_bus.events.factory import _allow_construction
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -87,7 +88,12 @@ def GrokbuildWorkerDegraded(  # noqa: N802
 
 def publish_lib_signal(signal: str, payload: dict[str, Any]) -> None:
     """Relay ``mcp.grokbuild.*`` lib events from the worker process."""
-    _emit_uds(Event(signal=signal, payload=payload, scope="global"))
+    _allow_construction.value = True
+    try:
+        ev = Event(signal=signal, payload=payload, scope="global")
+        _emit_uds(ev)
+    finally:
+        _allow_construction.value = False
 
 
 def _emit_uds(event: Event) -> None:

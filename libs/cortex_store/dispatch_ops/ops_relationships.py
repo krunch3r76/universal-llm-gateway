@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from fastapi import HTTPException
+from universal_logging import get_logger
 
 from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
@@ -17,7 +17,7 @@ from ..routes.relationships import (
 )
 from ._shared import record
 
-logger = logging.getLogger("cortex-api.dispatch_ops.relationships")
+logger = get_logger("cortex-api.dispatch_ops.relationships")
 
 
 def _op_relationships(

@@ -12,16 +12,16 @@ Reaping criteria (ALL must be true):
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Query
+from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 
-logger = logging.getLogger("cortex-api.reaper")
+logger = get_logger("cortex-api.reaper")
 router = APIRouter(prefix="/reaper", tags=["reaper"])
 
 _DEFAULT_TTL_DAYS = 30

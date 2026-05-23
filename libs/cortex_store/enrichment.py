@@ -11,17 +11,17 @@ Failures are logged at WARNING and swallowed.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import threading
 from typing import TYPE_CHECKING
 
 import httpx
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     import sqlite3
 
-logger = logging.getLogger("cortex-api.enrichment")
+logger = get_logger("cortex-api.enrichment")
 
 _ENRICHMENT_ENABLED: set[str] = set()
 _raw = os.environ.get("CORTEX_ENRICHMENT_ENABLED", "")

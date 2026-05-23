@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import logging
 import sqlite3
 
 from fastapi import APIRouter, Query
+from universal_logging import get_logger
 
 from ..action_hints import detect_deadline_resolution
 from ..db import cortex_conn, query
 from ..models import DeadlineItem, DeadlineList
 
-logger = logging.getLogger("cortex-api.deadlines")
+logger = get_logger("cortex-api.deadlines")
 router = APIRouter(prefix="/deadlines", tags=["deadlines"])
 
 _RESOLVED_OUTCOMES = frozenset({"defaulted", "met", "withdrawn", "superseded"})

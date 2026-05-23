@@ -11,15 +11,15 @@ is an upsert.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel
+from universal_logging import get_logger
 
 from ..db import cortex_conn, execute, query
 
-logger = logging.getLogger("cortex-api.tags")
+logger = get_logger("cortex-api.tags")
 router = APIRouter(prefix="/tags", tags=["tags"])
 
 

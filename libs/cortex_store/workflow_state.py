@@ -9,15 +9,15 @@ todo-closure-gap signal (visibility, not enforcement).
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 
 from fastapi import HTTPException, status
+from universal_logging import get_logger
 
 from .db import query
 from .dispatch_ops._shared import record
 
-logger = logging.getLogger("cortex-api.workflow_state")
+logger = get_logger("cortex-api.workflow_state")
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:

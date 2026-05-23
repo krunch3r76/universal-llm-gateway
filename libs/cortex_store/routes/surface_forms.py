@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..models import (
@@ -12,7 +11,7 @@ from ..models import (
     SurfaceFormList,
 )
 
-logger = logging.getLogger("cortex-api.surface_forms")
+logger = get_logger("cortex-api.surface_forms")
 router = APIRouter(prefix="/surface-forms", tags=["surface-forms"])
 
 # Common columns used for SELECT statements to ensure consistency across queries.

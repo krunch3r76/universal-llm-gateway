@@ -20,9 +20,13 @@ envelope (execution_id, pipeline, started_at, status) immediately.
 Callers:
 - For ``op="generate"``: poll with ``pipeline(op="result", execution_id=...)``
   to retrieve content.
-- For ``op="to_thread"``: read the agent's reply with
+- For ``op="to_thread"``: Stargate posts the model's reply on the
+  role/model's behalf when the dispatch completes (architectural fix
+  2026-05-22 — replaces the prior "observe the model self-posting"
+  contract that failed for ``mcp=False`` and tool-budget-exhausted
+  dispatches). Read with
   ``agent_bus(tool="fetch", arguments={"thread": ...})``. The tracker's
-  terminal status reflects observed reply on the thread.
+  terminal status reflects the on-behalf POST outcome.
 
 Both tools share ``_relay`` for transport, JSON envelope handling, and error
 normalization.
@@ -184,10 +188,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
           ``thread`` / ``subject`` must be absent when using this op.
-        - ``op="to_thread"``: admits dispatch; the role's reply lands on
-          ``thread``; tracker terminal status reflects observed reply. ``thread``
-          is required. ``subject`` is optional (auto-derived from last message
-          if absent).
+        - ``op="to_thread"``: admits dispatch; Stargate posts the role's
+          reply to ``thread`` on its behalf after the dispatch completes
+          (system-on-behalf delivery). Tracker terminal status reflects
+          the POST outcome. ``thread`` is required. ``subject`` is
+          optional (defaults to ``"{role} reply — execution {short_id}"``).
 
         Tool surface (no caller knob — derived from the effective model):
         - xAI multi-agent models — no client-side MCP tools.
@@ -277,12 +282,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
           ``thread`` / ``subject`` must be absent.
-        - ``op="to_thread"``: admits dispatch; model's reply lands on ``thread``.
-          ``thread`` is required.
+        - ``op="to_thread"``: admits dispatch; Stargate posts the model's
+          reply to ``thread`` on its behalf after the dispatch completes
+          (system-on-behalf delivery — works with ``mcp=False``). ``thread``
+          is required.
 
         ``mcp`` defaults to ``False`` (one-shot reasoning; no tool loop) — the
         canonical use of direct frontier dispatch is inline-substrate single-shot
         calls. Pass ``mcp=True`` to enable the full MCP catalog tool loop.
+        Delivery on ``op="to_thread"`` is independent of ``mcp`` because the
+        system posts the model's content on its behalf.
 
         ``transcript_id`` — caller's session ID for provenance attribution only.
         Recorded in the execution record; never forwarded to the dispatched model.

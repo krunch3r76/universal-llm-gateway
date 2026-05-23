@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+from universal_logging import get_logger
 
 from ..routes.reflective_journal import (
     _add_link_impl,
@@ -13,7 +14,7 @@ from ..routes.reflective_journal import (
 )
 from ._shared import record
 
-logger = logging.getLogger("cortex-api.dispatch_ops.reflective")
+logger = get_logger("cortex-api.dispatch_ops.reflective")
 
 
 def _op_rj_write(

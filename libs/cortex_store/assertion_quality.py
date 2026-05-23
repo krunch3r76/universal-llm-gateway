@@ -156,10 +156,10 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
                 ValidationDiagnostic(
                     field="chunk_id",
                     message=f"derivation_type={body.derivation_type!r} requires chunk_id — "
-                    "create chunks via POST /chunks or cortex_ingest_document() first. "
-                    "For session-originated claims: use 'inference' for agent "
-                    "synthesis from prior context, or 'user_statement' for claims "
-                    "the user told you directly.",
+                    "chunk_id is the RAG-deterministic ID of the form "
+                    "'{content_hash_prefix}-{i}'. For session-originated claims: "
+                    "use 'inference' for agent synthesis from prior context, or "
+                    "'user_statement' for claims the user told you directly.",
                 )
             )
         if not body.evidence_uris:
@@ -202,7 +202,8 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
             ValidationDiagnostic(
                 field="chunk_id",
                 message="evidence_uris present but chunk_id null — sourced but unchunked; "
-                "consider using cortex_ingest_document() for proper chunking",
+                "supply chunk_id (RAG-deterministic '{content_hash_prefix}-{i}') "
+                "when the source has been indexed by RAG",
             )
         )
         result.route_to_staging = True

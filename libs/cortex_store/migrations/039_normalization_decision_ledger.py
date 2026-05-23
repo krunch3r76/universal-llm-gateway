@@ -16,10 +16,11 @@ Drives decision:cortex-alias-drift-defense-in-depth (assertion 10404).
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 
-logger = logging.getLogger("cortex-api.migration.039")
+from universal_logging import get_logger
+
+logger = get_logger("cortex-api.migration.039")
 
 
 def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:

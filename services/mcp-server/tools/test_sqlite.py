@@ -123,6 +123,7 @@ def test_sqlite_execute_omitted_db_requires_explicit_target(
 
     assert "requires an explicit db name" in result["error"]
 
+
 def _make_recorder_with_cortex(tmp_path: Path, monkeypatch: Any) -> _ToolRecorder:
     """Common setup: create a cortex.db with the facts table, swap _CONFIG."""
     cortex_db = tmp_path / "cortex.db"
@@ -163,9 +164,7 @@ def test_sql_accepts_leading_block_comment(tmp_path: Path, monkeypatch: Any) -> 
     assert result == {"columns": ["value"], "rows": [["ok"]], "count": 1}
 
 
-def test_sql_accepts_chained_leading_comments(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
+def test_sql_accepts_chained_leading_comments(tmp_path: Path, monkeypatch: Any) -> None:
     recorder = _make_recorder_with_cortex(tmp_path, monkeypatch)
     result = recorder.registered["sql"](
         "-- first comment\n/* second comment */\n-- third\nSELECT value FROM facts"

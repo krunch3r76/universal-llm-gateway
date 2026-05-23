@@ -8,10 +8,10 @@ one response. Eliminates the 4-6 query stitching agents previously needed.
 from __future__ import annotations
 
 import datetime
-import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, json_decode, query
 from ..entity_crud import (
@@ -36,7 +36,7 @@ from ..status_models import (
 )
 from .assertions import _ASSERTION_COLS
 
-logger = logging.getLogger("cortex-api.entity_status")
+logger = get_logger("cortex-api.entity_status")
 router = APIRouter(tags=["entity_status"])
 
 _ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})

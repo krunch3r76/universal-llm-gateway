@@ -158,7 +158,7 @@ The `derivation_type` field is a structured signal about HOW the evidence was ob
 | `agent_observation` | Agent received the claim from a tool whose output mediated the source (web_fetch, file read, API). The source was not directly inspected by the agent's own reasoning; the tool's output was. | `evidence_uris` non-empty; `evidence` string names the tool and the run. |
 | `inference` | Agent synthesized the claim from prior context, sibling sources, or pattern-completion. | `evidence` string names the reasoning path. `evidence_uris` may point at supporting entities or transcripts but does not claim to be the source of the inferred fact. |
 | `user_statement` | The user told the agent the claim directly. | `evidence` string identifies the user message (turn / session); `evidence_uris` typically `transcript:<session>` or `agent-bus:<thread>/<turn>`. |
-| `quotation` | Verbatim quote of source text at chunk granularity. | `chunk_id` required (resolved via `ingest_document` → `assert_from_chunk`); `evidence_uris` MUST contain the URI of the chunk's parent source. |
+| `quotation` | Verbatim quote of source text at chunk granularity. | `chunk_id` required (RAG-deterministic ID `{content_hash_prefix}-{i}`, resolved via `libs/cortex_store/rag_resolver.py`); `evidence_uris` MUST contain the URI of the chunk's parent source. |
 | `compression` | Compression of a chunk into a derived claim that summarizes or paraphrases. | `chunk_id` required; `evidence_uris` MUST contain the parent source URI. |
 | `commitment` | Agent commitment to do something in the future — the claim is performative, not descriptive. | `evidence` string identifies the commitment context. |
 | `stated` | Generic stated claim with no narrower derivation_type fit; rare. | `evidence` string supplied. |
@@ -168,10 +168,10 @@ The taxonomy is derived from TROVE (quotation / compression / inference / other)
 
 ### 3.2 Chunk binding for `quotation` and `compression`
 
-A `chunk_id` resolves to a contiguous span of a previously-ingested document. The ingestion path is:
+A `chunk_id` resolves to a contiguous span of a previously-ingested document. After Phase E (master @ 25a2260a), RAG is the authoritative chunk store; cortex assertions reference chunks by RAG-deterministic ID. The ingestion path is:
 
-1. `ingest_document(source_uri, content, observer?, source_date?)` — chunks the document at structure boundaries (headings, paragraphs, sections) and returns chunk IDs.
-2. `assert_from_chunk(chunk_id, entity_id, claim, confidence, evidence, ...)` — writes an assertion bound to a specific chunk.
+1. RAG ingest writes the source and returns chunk IDs of the form `{content_hash_prefix}-{i}`.
+2. Write an assertion with `chunk_id` (the RAG-deterministic ID) + `evidence_uris[0]` (the source URI RAG indexed). The cortex resolver — `libs/cortex_store/rag_resolver.py::resolve_assertion_chunk` — fetches the exact span by calling `POST /api/v1/rag/chunks_by_index`.
 
 For `derivation_type: quotation`, the claim text contains the literal verbatim from the chunk, in quote marks, and the chunk-id binding gives an auditor a deterministic way to fetch the exact passage the claim is quoting. For `derivation_type: compression`, the claim text summarizes/paraphrases the chunk and the chunk-id binding gives the auditor the source span the compression must be faithful to.
 

@@ -3,10 +3,16 @@
 Catches pydantic.ValidationError from FastMCP tool-arg validation and
 returns an agent-actionable structured envelope (accepted_params,
 required_params, expected_type, hints) so the model can self-correct.
+
+Signal 5: mcp.tool.validation.error events include first_invocation_this_session:
+  True  → model invoked this tool blind (first call, schema never seen)
+  False → schema worked before; this is a regression or model drift
 """
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 import mcp.types as mt
@@ -14,12 +20,36 @@ from fastmcp.server.middleware.middleware import CallNext, Middleware, Middlewar
 from fastmcp.tools.tool import ToolResult
 from mcp_events import record
 from pydantic import ValidationError
+from request_profile import current_request_metadata
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = get_logger(__name__)
+
+# Per-session invocation tracker for Signal 5 (first_invocation_this_session).
+# Maps (session_id, tool_name) → True once we've seen a call for that pair.
+# Bounded LRU to avoid unbounded memory growth across many sessions.
+_SESSION_TOOL_LOCK = threading.Lock()
+_SESSION_TOOL_SEEN: OrderedDict[tuple[str, str], bool] = OrderedDict()
+_SESSION_TOOL_MAX = 4096  # max distinct (session, tool) pairs tracked
+
+
+def _record_invocation(session_id: str, tool_name: str) -> bool:
+    """Record invocation; return True if this is the first call for (session, tool).
+
+    Thread-safe. Evicts oldest entries when capacity is reached.
+    """
+    key = (session_id, tool_name)
+    with _SESSION_TOOL_LOCK:
+        if key in _SESSION_TOOL_SEEN:
+            _SESSION_TOOL_SEEN.move_to_end(key)
+            return False
+        _SESSION_TOOL_SEEN[key] = True
+        while len(_SESSION_TOOL_SEEN) > _SESSION_TOOL_MAX:
+            _SESSION_TOOL_SEEN.popitem(last=False)
+        return True
 
 
 class ToolErrorEnricher(Middleware):
@@ -30,20 +60,26 @@ class ToolErrorEnricher(Middleware):
         context: MiddlewareContext[mt.CallToolRequestParams],
         call_next: CallNext[mt.CallToolRequestParams, ToolResult],
     ) -> ToolResult:
+        tool_name = getattr(context.message, "name", "<unknown>")
+
+        # Signal 5: track invocation before call to capture first-call status.
+        # session_id comes from mcp_session_id injected by McpRequestEventsMiddleware.
+        meta = current_request_metadata()
+        session_id = str(meta.get("mcp_session_id") or "")
+        first_invocation = _record_invocation(session_id, tool_name)
+
         try:
             return await call_next(context)
         except ValidationError as exc:
-            tool_name = getattr(context.message, "name", "<unknown>")
-
             schema: dict[str, Any] = {}
             try:
                 if context.fastmcp_context and context.fastmcp_context.fastmcp:
                     tool_obj = await context.fastmcp_context.fastmcp.get_tool(tool_name)
                     if tool_obj is not None:
                         schema = getattr(tool_obj, "parameters", {}) or {}
-            except Exception:
+            except Exception as exc:
                 # lookup failure must never poison the error path
-                pass
+                logger.debug("ToolErrorEnricher schema lookup failed for %s: %s", tool_name, exc)
 
             schema_props_raw = (
                 schema.get("properties", {}) if isinstance(schema, dict) else {}
@@ -76,8 +112,7 @@ class ToolErrorEnricher(Middleware):
                     err_first_locs.add(str(loc_seq[0]))
                 err_types.add(str(e.get("type", "")))
             looks_like_arg_boundary = bool(
-                (err_first_locs & tool_param_names)
-                or (err_types & arg_boundary_types)
+                (err_first_locs & tool_param_names) or (err_types & arg_boundary_types)
             )
             if not looks_like_arg_boundary:
                 raise
@@ -113,9 +148,7 @@ class ToolErrorEnricher(Middleware):
                 if err_type == "unexpected_keyword_argument":
                     accepted = sorted(tool_param_names)
                     required_raw = (
-                        schema.get("required", [])
-                        if isinstance(schema, dict)
-                        else []
+                        schema.get("required", []) if isinstance(schema, dict) else []
                     )
                     required = required_raw if isinstance(required_raw, list) else []
                     entry["accepted_params"] = accepted
@@ -134,9 +167,7 @@ class ToolErrorEnricher(Middleware):
                     if exp_type:
                         entry["expected_type"] = exp_type
                     type_hint = exp_type or "valid input"
-                    entry["hint"] = (
-                        f"'{param}' is required (expects {type_hint})."
-                    )
+                    entry["hint"] = f"'{param}' is required (expects {type_hint})."
                 else:
                     prop_schema_raw = schema_props.get(param, {})
                     prop_schema = (
@@ -162,6 +193,7 @@ class ToolErrorEnricher(Middleware):
                 tool=tool_name,
                 error_count=len(errors),
                 error_types=sorted({e.get("type", "") for e in errors}),
+                first_invocation_this_session=first_invocation,
             )
             return ToolResult(structured_content=envelope)
 

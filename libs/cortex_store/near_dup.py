@@ -8,13 +8,14 @@ inserts. Near-duplicates are recorded as graph metadata in
 from __future__ import annotations
 
 import datetime as dt
-import logging
 import re
 import sqlite3
 from difflib import SequenceMatcher
 from typing import NamedTuple
 
-logger = logging.getLogger("cortex-api.near-dup")
+from universal_logging import get_logger
+
+logger = get_logger("cortex-api.near-dup")
 
 DEDUP_SIMILARITY_THRESHOLD = 0.85
 DEDUP_FTS_CANDIDATE_LIMIT = 10

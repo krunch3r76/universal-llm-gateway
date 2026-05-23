@@ -6,18 +6,18 @@ Supports dry_run for preview. Uses existing assertion update path. Thin, REST-fi
 
 from __future__ import annotations
 
-import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Body
 from pydantic import BaseModel
+from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ..models import AssertionUpdate
 from .assertions import update_assertion
 
-logger = logging.getLogger("cortex-api.triage")
+logger = get_logger("cortex-api.triage")
 
 router = APIRouter(tags=["triage"])
 

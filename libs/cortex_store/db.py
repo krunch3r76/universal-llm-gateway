@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import re
 import sqlite3
@@ -9,7 +8,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("cortex-api.db")
+from universal_logging import get_logger
+
+logger = get_logger("cortex-api.db")
 
 _CORTEX_DB = Path(
     os.environ.get("CORTEX_DB_PATH", str(Path.home() / ".cortex" / "cortex.db"))

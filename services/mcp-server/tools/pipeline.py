@@ -9,7 +9,6 @@ one first-class schema.
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -17,11 +16,12 @@ import httpx
 from mcp_events import monotonic_now, record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end, toolprogress_phase
 from transport_utils import make_sync_client
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
@@ -451,32 +451,11 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         - ``"async"`` — async dispatch; returns ``execution_id`` immediately.
           Required: ``pipeline_id``, ``messages``. Optional: ``options``,
           ``result_delivery`` (``{bus_thread, bus_from_agent, bus_to_agent,
-          bus_subject[, bus_brief_summary, bus_lifecycle]}`` — terminal
-          notification hook; posts a **pointer envelope** to the bus thread
-          at completion, NOT the model output; the envelope contains
-          ``execution_id``, ``status``, ``poll`` URL, ``usage``, and
-          ``duration_s`` — receive it, then call ``op="result"`` to fetch
-          actual content). Use for long-running pipelines that exceed the
-          MCP 300s client read timeout (high-effort reasoning models, deep
-          consensus runs, etc.). Poll completion with ``op="result"``.
-
-          **Role-based consults — use ``team_dispatch`` instead.** If you
-          would dispatch ``pipeline_id="frontier-dispatch"`` for a role-based
-          consult, prefer
-          ``team_dispatch(op="generate", role=..., messages=..., ...)``.
-          ``team_dispatch`` resolves the role's ``default_model`` from
-          Cortex, enforces the role contract, assembles briefing + continuation,
-          and rejects contract violations BEFORE dispatch.
-
-          **Direct frontier dispatch (no role envelope) — use
-          ``frontier_dispatch``.** For dispatches without a role contract,
-          ``frontier_dispatch`` is the canonical door: direct native-frontier
-          relay with structured admission. The raw ``frontier-dispatch`` path
-          is the pipeline-composition entry point; it enforces strict
-          validation at the handler level (unknown ``runtime_options`` keys
-          raise ``UnknownPipelineOptionsError``; agent/model provider
-          mismatches raise a validation error) but skips the role contract
-          gates in ``team_dispatch``.
+          bus_subject[, bus_brief_summary, bus_lifecycle]}`` — posts a
+          pointer envelope at completion; receive then call ``op="result"``).
+          For role-based or direct frontier consults, prefer
+          ``team_dispatch`` / ``frontier_dispatch`` (the handler returns a
+          redirect hint when called with ``pipeline_id="frontier-dispatch"``).
 
         - ``"result"`` — fetch or short-block on async-dispatched pipeline
           result. Returns tracker shape: ``{execution_id, pipeline, status,

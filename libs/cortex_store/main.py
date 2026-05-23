@@ -6,7 +6,6 @@ module or directly by uvicorn (``cortex_store.main:create_app``).
 
 from __future__ import annotations
 
-import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -15,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from universal_logging import get_logger
 
 from . import embeddings as cortex_embeddings
 from . import vector_store
@@ -22,7 +22,6 @@ from .db import check_cortex_db, cortex_conn, run_migrations
 from .routes import (
     assertions,
     boot,
-    chunks,
     deadlines,
     dispatch,
     documents,
@@ -32,7 +31,6 @@ from .routes import (
     extraction_runs,
     gated,
     graph,
-    ingest,
     reaper,
     reflective_journal,
     relationships,
@@ -48,7 +46,7 @@ from .routes import (
 )
 from .scoring import compact_access_log
 
-logger = logging.getLogger("cortex-api")
+logger = get_logger("cortex-api")
 
 _DEFAULT_EMBEDDING_MODEL = "qwen3-embedding-8b-q8-0-8192"
 
@@ -135,7 +133,6 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(entity_status.router)
     app.include_router(assertions.router)
     app.include_router(edges.router)
-    app.include_router(chunks.router)
     app.include_router(surface_forms.router)
     app.include_router(relationships.router)
     app.include_router(deadlines.router)
@@ -147,7 +144,6 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(todo_audit.router)
     app.include_router(extraction_runs.router)
     app.include_router(gated.router)
-    app.include_router(ingest.router)
     app.include_router(documents.router)
     app.include_router(resolve.router)
     app.include_router(tags.router)

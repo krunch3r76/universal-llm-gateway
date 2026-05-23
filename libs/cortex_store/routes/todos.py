@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import datetime
 import json
-import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
+from universal_logging import get_logger
 
 from ..db import decode_row, execute, query, todos_conn
 from ..models import TodoCreate, TodoItem, TodoList, TodoStatusUpdate
 
-logger = logging.getLogger("cortex-api.todos")
+logger = get_logger("cortex-api.todos")
 router = APIRouter(prefix="/todos", tags=["todos"])
 
 _JSON_FIELDS = frozenset({"refs"})

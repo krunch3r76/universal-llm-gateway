@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 from typing import Any
 
 from fastapi import HTTPException
+from universal_logging import get_logger
 
 from ..card import CARD_INTENTS_DEFERRED as _CARD_INTENTS_DEFERRED
 from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
@@ -35,7 +35,7 @@ def _impls() -> tuple:
         _update_entity_impl,
     )
 
-logger = logging.getLogger("cortex-api.dispatch_ops.entities")
+logger = get_logger("cortex-api.dispatch_ops.entities")
 
 
 def _op_entities(

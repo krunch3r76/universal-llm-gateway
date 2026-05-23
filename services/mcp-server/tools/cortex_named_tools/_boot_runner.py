@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from enum import Enum
@@ -12,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 from agent_seat.profiles import get_profile, resolve_seat
 from mcp_events import record
+from universal_logging import get_logger
 
 from .._boot_helpers import render_briefing_card, render_operational_context
 from ..filesystem._ops_text import list_files_impl as _list_files
@@ -23,7 +23,7 @@ from ._boot_transcript import _resolve_transcript
 
 _LA = ZoneInfo("America/Los_Angeles")
 _OPS_CONTEXT_DIR = Path("/data/files/notes/system/shared")
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class BootMode(Enum):
@@ -104,12 +104,47 @@ def _build_artifacts(
     return artifacts
 
 
+def _materialize_views(
+    views: list[str],
+) -> list[dict[str, Any]]:
+    """Fetch structural subgraph data for each view entity.
+
+    Calls GET /subgraph/render?root=<entity_id>&hops=1 for each view and
+    extracts entity_count + edge_count.  All failures degrade gracefully to a
+    zero-count entry so the manifest entry still appears (retrieval hint is
+    always accurate).  Returns no prose — structural IDs/counts only (§C.3).
+    """
+    from urllib.parse import urlencode
+
+    from .._cortex_relay import _cx
+
+    results: list[dict[str, Any]] = []
+    for entity_id in views:
+        qs = urlencode({"root": entity_id, "hops": 1})
+        resp = _cx("GET", f"/subgraph/render?{qs}")
+        entity_count = int(resp.get("entity_count", 0)) if "entity_count" in resp else 0
+        edge_count = int(resp.get("edge_count", 0)) if "edge_count" in resp else 0
+        results.append(
+            {
+                "entity_id": entity_id,
+                "entity_count": entity_count,
+                "edge_count": edge_count,
+                "retrieval_hint": (
+                    "cortex(tool='render_subgraph', arguments='"
+                    f'{{"root": "{entity_id}", "hops": 1}}\')'
+                ),
+            }
+        )
+    return results
+
+
 def run_cortex_boot(
     family: str | None = None,
     platform: str | None = None,
     role: str | None = None,
     transcript_id: str = "",
     mode: BootMode = BootMode.LIVE,
+    views: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a Cortex boot briefing for internal callers and MCP.
 
@@ -120,6 +155,8 @@ def run_cortex_boot(
                        synthesizer / artisan / skeptic / investigator
         transcript_id — if provided, loads continuation context for that transcript
         mode         — LIVE (default) writes op-context to disk; INSPECT is side-effect-free
+        views        — optional list of entity IDs to materialize as subgraph views
+                       in the briefing card (structural counts + manifest hints, no prose)
 
     Returns a slim briefing card (~5-10KB) with a section manifest pointing to
     existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
@@ -205,8 +242,14 @@ def run_cortex_boot(
                 ops_context
             )
             op_ctx_written = True
-        except OSError:
-            logger.warning("Could not write operational context to %s", op_ctx_path)
+        except OSError as exc:
+            logger.warning("Could not write operational context to %s: %s", op_ctx_path, exc)
+            record(
+                "mcp.cortex.boot.op_context.write_failed",
+                agent=seat_slug,
+                path=op_ctx_path,
+                error=str(exc),
+            )
 
     tc_summary: dict[str, Any] | None = None
     if transcript_continuation:
@@ -225,6 +268,8 @@ def run_cortex_boot(
     review_top = _build_review_top(extracted["staging_items"])
 
     dropbox_files: list[str] = _list_files("dropbox/").get("files", [])
+
+    views_data: list[dict[str, Any]] = _materialize_views(views) if views else []
 
     card, manifest = render_briefing_card(
         deadlines=extracted["deadlines"]
@@ -259,6 +304,9 @@ def run_cortex_boot(
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
         dropbox_files=dropbox_files or None,
+        views_data=views_data or None,
+        async_dispatches=extracted.get("async_dispatches") or None,
+        audit_counters=extracted.get("audit_counters") or None,
     )
 
     artifacts = _build_artifacts(

@@ -10,8 +10,9 @@ to a close.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+from universal_logging import get_logger
 
 from ..transcript_assembly import (
     TranscriptPathError,
@@ -19,7 +20,7 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
 )
 
-logger = logging.getLogger("cortex-api.dispatch_ops.transcript_assembly")
+logger = get_logger("cortex-api.dispatch_ops.transcript_assembly")
 
 
 def _op_assemble_transcript(

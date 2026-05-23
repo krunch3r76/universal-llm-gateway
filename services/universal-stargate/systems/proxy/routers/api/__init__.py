@@ -13,6 +13,7 @@ from .pipelines_dispatch import router as pipelines_dispatch_router
 from .profiles import router as profiles_router
 from .providers_native import router as providers_native_router
 from .rag_articles import router as rag_articles_router
+from .rag_chunks_by_index import router as rag_chunks_by_index_router
 from .rag_coverage import router as rag_coverage_router
 from .rag_scopes import router as rag_scopes_router
 from .report_model import router as report_model_router
@@ -34,6 +35,7 @@ router.include_router(report_model_router)
 router.include_router(cancel_router)
 router.include_router(rag_scopes_router)
 router.include_router(rag_coverage_router)
+router.include_router(rag_chunks_by_index_router)
 router.include_router(rag_articles_router)
 router.include_router(rerank_router)
 router.include_router(admission_state_router)

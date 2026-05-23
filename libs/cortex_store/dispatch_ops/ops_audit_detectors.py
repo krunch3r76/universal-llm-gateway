@@ -49,6 +49,7 @@ from ._detectors.markdown_render import (
     detect_unregistered_document_in_markdown,
 )
 from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate_form
+from ._detectors.project import detect_project_required_skills_no_relationship
 from ._detectors.relationship import detect_dangling_relationship_target
 from ._detectors.session import detect_prior_session_id_omitted
 
@@ -69,6 +70,8 @@ GRAPH_ONLY_KINDS = {
     # entities touched in the session. Advisory, never blocking.
     "confirmed_entity_no_assertions",
     "confirmed_attribute_no_assertion",
+    # Skill-manifest structural drift — see migration 041.
+    "project_required_skills_no_relationship",
     # v1.3.1 normalization ledger Path 2 detector
     "unresolved_bare_token_in_predicate_form",
     # missing_handoff retired — handoffs are optional artifacts for manual
@@ -86,7 +89,6 @@ FS_TOUCHING_KINDS = {
 INFO_KINDS = {"case_marker_absent"}
 
 ALL_KINDS = GRAPH_ONLY_KINDS | FS_TOUCHING_KINDS | INFO_KINDS
-ALL_KINDS.add("unresolved_bare_token_in_predicate_form")
 
 
 def get_all_detectors() -> dict[str, Any]:
@@ -105,6 +107,7 @@ def get_all_detectors() -> dict[str, Any]:
         "prior_session_id_omitted": detect_prior_session_id_omitted,
         "confirmed_entity_no_assertions": detect_confirmed_entity_no_assertions,
         "confirmed_attribute_no_assertion": detect_confirmed_attribute_no_assertion,
+        "project_required_skills_no_relationship": detect_project_required_skills_no_relationship,
         "entity_source_uri_unresolved": detect_entity_source_uri_unresolved,
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
         "unregistered_document_in_markdown": detect_unregistered_document_in_markdown,
@@ -182,6 +185,7 @@ __all__ = [
     "detect_markdown_section_drift",
     "detect_marker_nesting_violation",
     "detect_prior_session_id_omitted",
+    "detect_project_required_skills_no_relationship",
     "detect_unregistered_document_in_markdown",
     "get_all_detectors",
     "run_detectors",

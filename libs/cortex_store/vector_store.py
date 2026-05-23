@@ -8,8 +8,9 @@ search pipeline (B2: CombMAX score fusion).
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
+
+from universal_logging import get_logger
 
 try:
     import chromadb
@@ -19,7 +20,7 @@ except ImportError:
     chromadb = None  # type: ignore[assignment]
     _CHROMADB_AVAILABLE = False
 
-logger = logging.getLogger("cortex-api.vector_store")
+logger = get_logger("cortex-api.vector_store")
 
 _client: chromadb.PersistentClient | None = None
 _collection: chromadb.Collection | None = None

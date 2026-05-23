@@ -11,15 +11,16 @@ See v2 plan §5 for exact semantics, error codes, and docstring requirements.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+from universal_logging import get_logger
 
 from ..db import cortex_conn, query
 from ._shared import _validate_canonical_sandbox_path, record
 from .ops_entities import _op_entity_create
 from .ops_relationships import _op_relationship_create
 
-logger = logging.getLogger("cortex-api.dispatch_ops.composites")
+logger = get_logger("cortex-api.dispatch_ops.composites")
 
 
 def _op_register_skill_substrate(

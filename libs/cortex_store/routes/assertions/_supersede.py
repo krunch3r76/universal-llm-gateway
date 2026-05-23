@@ -31,6 +31,7 @@ from ._shared import (
     _JSON_FIELDS,
     _VALID_CONFIDENCE,
     _embed_assertion_background,
+    _normalize_predicate_form_for_write,
     _payload_validation_exception,
     logger,
     router,
@@ -103,8 +104,26 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         eff_valid_from: str | None = _resolve("valid_from")  # type: ignore[assignment]
         eff_reasoning_summary: str | None = _resolve("reasoning_summary")  # type: ignore[assignment]
         eff_seeded_by: str | None = _resolve("seeded_by")  # type: ignore[assignment]
-        eff_chunk_id: int | None = _resolve("chunk_id")  # type: ignore[assignment]
+        eff_chunk_id: str | None = _resolve("chunk_id")  # type: ignore[assignment]
         eff_confidence_score: float | None = _resolve("confidence_score")  # type: ignore[assignment]
+
+        # predicate_form: carry over from predecessor unless explicitly supplied.
+        # When caller explicitly passes predicate_form (non-null), normalise it
+        # before INSERT (same path as create). When carried over, use the stored
+        # canonical value as-is (already normalised at original write time).
+        # Explicit null in payload intentionally drops the field on the new row.
+        # Fixes friction 9826 / todo:cortex-supersede-predicate-form-carryover.
+        eff_predicate_form: str | None = _resolve("predicate_form")  # type: ignore[assignment]
+        normalize_result: dict | None = None
+        if "predicate_form" in specified and body.predicate_form is not None:
+            eff_predicate_form, normalize_result = _normalize_predicate_form_for_write(
+                body.entity_id, body.predicate_form, body.claim, conn
+            )
+
+        raw_pf = normalize_result.get("raw_predicate_form") if normalize_result else None
+        norm_dec = normalize_result.get("normalization_decision") if normalize_result else None
+        cand_fp = normalize_result.get("candidate_set_fingerprint") if normalize_result else None
+        norm_ver = normalize_result.get("normalizer_version") if normalize_result else None
 
         entities = query(
             conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)
@@ -149,8 +168,9 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 "  entity_id, claim, confidence, evidence, evidence_uris,"
                 "  derivation_type, observed_at, valid_from, entrenchment_score,"
                 "  reasoning_summary, seeded_by, chunk_id, confidence_score,"
-                "  raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "  predicate_form, raw_predicate_form, normalization_decision,"
+                "  candidate_set_fingerprint, normalizer_version"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -165,10 +185,11 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                     eff_seeded_by,
                     eff_chunk_id,
                     eff_confidence_score,
-                    None,
-                    None,
-                    None,
-                    None,
+                    eff_predicate_form,
+                    raw_pf,
+                    norm_dec,
+                    cand_fp,
+                    norm_ver,
                 ),
             )
             new_id = cur.lastrowid

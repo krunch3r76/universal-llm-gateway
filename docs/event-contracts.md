@@ -1786,9 +1786,8 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | - | admission refused (e.g. `capacity_exhausted`) |
 | `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | - | terminal record TTL-pruned from the in-process tracker |
 | `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent`, `op`, `output_contract` | - | agent-bus turn posted successfully for a terminal dispatch record; `op` ∈ {`generate`, `to_thread`, ``}; `output_contract` ∈ {`inline`, `thread`} (node-scoped) |
-| `pipeline.dispatch.delivery.completed` | `pipeline_id`, `execution_id`, `thread`, `observed_at`, `op="to_thread"`, `output_contract="thread"` | - | reply observation confirmed the thread received the turn — terminal success signal for `op="to_thread"` dispatches; `.sent` means POST landed, `.completed` means agent saw it (node-scoped) |
 | `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview`, `op`, `output_contract` | - | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
-| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason`, `op`, `output_contract` | - | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config}` (node-scoped) |
+| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason`, `op`, `output_contract` | - | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config, no_target_thread, empty_content}` (node-scoped) |
 | `pipeline.dispatch.delivery.close.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | - | ephemeral thread close failed after successful delivery; delivery itself is unaffected — alert on this without false-positiving on the delivery channel (node-scoped) |
 | `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | - | terminal dispatch record persisted to sqlite journal (node-scoped) |
 | `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | - | tracker miss served from sqlite journal fallback (node-scoped) |
@@ -2548,6 +2547,25 @@ scripts/query-events --sql "
     AND ts_unix_ms > (unixepoch()-86400)*1000
   GROUP BY reason ORDER BY n DESC"
 ```
+
+
+### Tool Catalog Discovery Signals
+
+Emitted by `tool_search` (manifest discovery for demoted tools) and the
+`dispatch` envelope when a non-existent tool name is invoked.
+
+| Signal | Trigger | Payload |
+|---|---|---|
+| `mcp.tool.search.called` | every `tool_search(...)` call | `query`, `limit` |
+| `mcp.tool.search.empty` | `tool_search` invoked with empty query | (none) |
+| `mcp.tool.search.miss` | `tool_search` returned no matches | `query` |
+| `mcp.tool.dispatch.unknown` | `dispatch(tool=X)` for X not in overflow_registry | `tool` (the invented name) |
+
+Use `mcp.tool.search.miss` and `mcp.tool.dispatch.unknown` rates as the primary
+rollback signals (see `tasks/discoveries/mcp-tool-definition-context-churn.md`
+§ Q10 thresholds). A sudden spike in either signal post-deploy means agents
+cannot find demoted tools — investigate manifest coverage or descriptor
+quality before disabling the lean partition.
 
 ## MCP Stdio Proxy Signals
 

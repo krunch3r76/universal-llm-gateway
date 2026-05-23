@@ -27,9 +27,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from grokbuild.events_core import register_uds_publisher
 from universal_logging import get_logger
+import traceback
 
 from services.grokbuild_worker.config import WorkerConfig, load_config
 from services.grokbuild_worker.events import (
@@ -165,6 +167,16 @@ def create_app() -> FastAPI:
         docs_url="/api/v1/grokbuild/docs",
         openapi_url="/api/v1/grokbuild/openapi.json",
     )
+
+    @app.exception_handler(Exception)
+    async def _log_unhandled(request: Request, exc: Exception) -> JSONResponse:
+        tb = traceback.format_exc()
+        logger.error("UNHANDLED %s %s: %s\n%s", request.method, request.url.path, exc, tb)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error", "error": str(exc), "path": str(request.url.path)},
+        )
+
     app.include_router(health_router)
     app.include_router(models_router)
     app.include_router(worktrees_router)

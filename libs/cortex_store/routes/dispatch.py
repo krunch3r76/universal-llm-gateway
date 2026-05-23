@@ -7,15 +7,15 @@ single registry in libs/cortex_store/dispatch_ops/.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from universal_logging import get_logger
 
 from ..dispatch_ops import execute_op
 
-logger = logging.getLogger("cortex-api.dispatch")
+logger = get_logger("cortex-api.dispatch")
 router = APIRouter(tags=["dispatch"])
 
 

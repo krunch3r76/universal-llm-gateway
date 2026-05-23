@@ -650,3 +650,49 @@ curl -X POST --unix-socket /tmp/universal-protocol/rag.sock \
   `scheduled` indicates watcher admission.
 
 All four are `role=coordination`.
+
+## Chunker Immutability Contract
+
+**Established:** Phase E of `plan:cortex-v3-completion` (2026-05-22)
+
+RAG chunk IDs are deterministic: `{content_hash_prefix}-{i}` where the hash
+incorporates file bytes **and** the extraction schema version (see
+`services/rag/chunkers.py` module docstring). Cortex `assertions.chunk_id`
+stores these RAG-native IDs as durable provenance pointers.
+
+### Invariant
+
+∀ RAG re-index: if chunker parameters or schema version change, **all** existing
+`assertions.chunk_id` values that reference the affected source become dangling
+pointers. The cortex resolver (`libs/cortex_store/rag_resolver.py`) detects this
+via verify-on-fetch (`ChunkIdMismatch`), but it cannot self-heal.
+
+**MUST NOT** change the following without an explicit migration plan:
+- `_SCHEMA_VERSION` / `file_hash(raw, schema_version=...)` in `chunkers.py`
+- Chunking strategy (`target_chars`, `pad_chars`, overlap size) in `chunkers.py`
+- The chunk-ID format (`{content_hash_prefix}-{i}`)
+
+A parameter change or schema-version bump MUST be accompanied by:
+1. A migration script that re-derives all affected `assertions.chunk_id` values
+   via content-match against the re-indexed RAG corpus.
+2. A cortex assertion on `service:cortex` documenting the migration.
+3. A run of `scripts/verify_chunk_id_migration` to confirm round-trips.
+
+### Schema Version Bump Procedure
+
+```bash
+# 1. Bump _SCHEMA_VERSION in services/rag/chunkers.py
+# 2. Trigger full re-index
+curl -sf -X POST --unix-socket /tmp/universal-protocol/rag.sock \
+  http://localhost/reindex_all
+# 3. After re-index completes, run cortex chunk_id migration
+python scripts/migrate_chunk_ids.py
+# 4. Verify all assertions resolve
+python scripts/verify_chunk_id_migration
+```
+
+### Discoverability
+
+This contract is also recorded as an assertion on `service:cortex` in the
+Cortex knowledge graph (seeded by Phase E, assertion subject:
+"RAG chunker immutability contract").

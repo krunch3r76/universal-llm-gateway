@@ -7,10 +7,10 @@ only; dispatch ops and tests should import from the impl modules directly.
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from universal_logging import get_logger
 
 from ..card import (
     CARD_INTENTS_DEFERRED,
@@ -43,7 +43,7 @@ _get_entity_card_impl = get_entity_card
 _update_entity_impl = update_entity_impl
 _create_entity_impl = create_entity_impl
 
-logger = logging.getLogger("cortex-api.entities")
+logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
 
 

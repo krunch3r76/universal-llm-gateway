@@ -5,6 +5,7 @@ checks, and background embedding/predicate-extract dispatch.
 
 from __future__ import annotations
 
+import datetime as dt
 import threading
 
 from fastapi import HTTPException, Response, status
@@ -192,13 +193,13 @@ def create_assertion(
             cur = conn.execute(
                 "INSERT OR IGNORE INTO assertions ("
                 "  entity_id, claim, confidence, confidence_score, evidence, evidence_uris, seeded_by,"
-                "  chunk_id, derivation_type, reasoning_summary, observed_at,"
+                "  chunk_id, chunk_id_schema, derivation_type, reasoning_summary, observed_at,"
                 "  valid_from, valid_until, is_atomic, is_decontextualized, claim_hash,"
                 "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
                 "  prospective_summary, events_json, artifact_uri, artifact_storage,"
                 "  entrenchment_score, predicate_form, "
                 "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -208,6 +209,7 @@ def create_assertion(
                     json_encode(body.evidence_uris),
                     body.seeded_by,
                     body.chunk_id,
+                    body.chunk_id_schema,
                     body.derivation_type or "inference",
                     body.reasoning_summary,
                     body.observed_at,
@@ -238,14 +240,41 @@ def create_assertion(
 
             if was_new:
                 if body.force and body.supersedes_id:
-                    import datetime as dt
-
                     now_str = dt.datetime.now(tz=dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    conn.execute(
+                    # CAS on superseded_by IS NULL — mirrors _supersede.py
+                    # (assertion 9956 / friction 9824). If the target is
+                    # already part of a supersession chain, rowcount=0; roll
+                    # back the just-inserted replacement so we don't leave a
+                    # dangling lineage pointer with was_new=True.
+                    sup_cur = conn.execute(
                         "UPDATE assertions SET superseded_by = ?, valid_until = ?, "
                         "updated_at = ? WHERE id = ? AND superseded_by IS NULL",
                         (new_id, now_str, now_str, body.supersedes_id),
                     )
+                    if sup_cur.rowcount == 0:
+                        conn.rollback()
+                        existing = query(
+                            conn,
+                            "SELECT superseded_by FROM assertions WHERE id = ?",
+                            (body.supersedes_id,),
+                        )
+                        if not existing:
+                            raise HTTPException(
+                                status_code=status.HTTP_404_NOT_FOUND,
+                                detail=(
+                                    f"supersedes_id assertion {body.supersedes_id} "
+                                    f"no longer exists (deleted concurrently)"
+                                ),
+                            )
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=(
+                                f"Assertion {body.supersedes_id} is already "
+                                f"superseded by {existing[0].get('superseded_by')}; "
+                                f"call POST /assertions/supersede with force=true "
+                                f"to override an existing supersedence chain"
+                            ),
+                        )
 
                 if contradiction_warnings_out:
                     c2_notes = "; ".join(

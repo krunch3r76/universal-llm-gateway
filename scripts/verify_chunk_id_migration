@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Step 3 verification — end-to-end round-trip check for migrated assertions.
+
+Runs after scripts/migrate_chunk_ids.py (Phase E step 2) to confirm that
+every chunk-linked assertion in cortex resolves through the RAG resolver.
+
+For each assertion with a non-null chunk_id:
+  1. Pull chunk_id and evidence_uris from DB.
+  2. Call resolve_assertion_chunk(assertion_id).
+  3. Confirm the returned chunk text is non-empty.
+  4. Optionally check that the assertion's claim text overlaps with the chunk
+     text (substrate spec §3.2 audit mode — logs mismatches, does not fail).
+
+Exit codes:
+  0 — all assertions resolved (or 0 chunk-linked assertions in DB)
+  1 — one or more assertions failed to resolve
+
+Usage:
+  python scripts/verify_chunk_id_migration [--verbose] [--dry-run]
+
+  --verbose   Log per-assertion results even on success
+  --dry-run   Print plan without calling RAG (prints assertion IDs and chunk_ids)
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+# Resolve workspace root so local imports work without install.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_LIBS = _REPO_ROOT / "libs"
+if str(_LIBS) not in sys.path:
+    sys.path.insert(0, str(_LIBS))
+
+from universal_logging import get_logger
+
+logger = get_logger(__name__)
+
+
+def _get_chunk_linked_assertions() -> list[dict]:
+    """Return all assertions with chunk_id_schema='rag_deterministic' from cortex DB."""
+    from cortex_store.db import cortex_conn, query
+
+    with cortex_conn() as conn:
+        rows = query(
+            conn,
+            "SELECT id, entity_id, claim, chunk_id, chunk_id_schema, evidence_uris "
+            "FROM assertions "
+            "WHERE chunk_id_schema = 'rag_deterministic' "
+            "ORDER BY id",
+            (),
+        )
+    return [dict(r) for r in rows]
+
+
+def _looks_like_rag_id(chunk_id: str) -> bool:
+    """Return True if chunk_id matches RAG-deterministic format {prefix}-{i}."""
+    parts = str(chunk_id).rsplit("-", 1)
+    return len(parts) == 2 and parts[1].isdigit()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    assertions = _get_chunk_linked_assertions()
+    total = len(assertions)
+
+    if total == 0:
+        print(
+            "No rag_deterministic assertions found — verification trivially passes "
+            "(run scripts/migrate_chunk_ids first if migration is pending)."
+        )
+        return 0
+
+    print(f"Found {total} rag_deterministic assertion(s) to verify.")
+
+    # Pre-flight: confirm all have proper RAG-format chunk_id.
+    bad_format = [a for a in assertions if not _looks_like_rag_id(str(a["chunk_id"]))]
+    if bad_format:
+        print(
+            f"WARNING: {len(bad_format)} assertion(s) have chunk_id_schema='rag_deterministic' "
+            "but chunk_id format is not {prefix}-{i} — these may have been incorrectly migrated."
+        )
+        for a in bad_format:
+            print(f"  assertion {a['id']} entity={a['entity_id']} chunk_id={a['chunk_id']!r}")
+
+    if args.dry_run:
+        print("\n-- DRY RUN: would verify the following assertions --")
+        for a in assertions:
+            print(f"  assertion {a['id']} chunk_id={a['chunk_id']} entity={a['entity_id']}")
+        return 0 if not bad_format else 1
+
+    rag_format = [a for a in assertions if _looks_like_rag_id(str(a["chunk_id"]))]
+    if not rag_format:
+        print("No properly-formatted RAG chunk_ids found — nothing to verify.")
+        return 1 if bad_format else 0
+
+    from cortex_store.rag_resolver import ChunkIdMismatchError, resolve_assertion_chunk
+
+    passed = 0
+    failed = 0
+    claim_text_mismatches = 0
+
+    for a in rag_format:
+        assertion_id = int(a["id"])
+        chunk_id = str(a["chunk_id"])
+        try:
+            chunk = resolve_assertion_chunk(assertion_id)
+            chunk_text: str = chunk.get("text", "")
+
+            if not chunk_text:
+                logger.warning(
+                    "assertion %d resolved chunk_id=%s but chunk text is empty",
+                    assertion_id,
+                    chunk_id,
+                )
+                failed += 1
+                continue
+
+            # §3.2 audit — soft check: claim should overlap with chunk text.
+            claim = str(a.get("claim", ""))
+            claim_words = set(claim.lower().split())
+            chunk_words = set(chunk_text.lower().split())
+            overlap = claim_words & chunk_words
+            if len(claim_words) > 5 and len(overlap) < 2:
+                logger.warning(
+                    "assertion %d §3.2 mismatch: claim has low overlap with chunk text "
+                    "(claim words=%d overlap=%d) — may need manual review",
+                    assertion_id,
+                    len(claim_words),
+                    len(overlap),
+                )
+                claim_text_mismatches += 1
+
+            passed += 1
+            if args.verbose:
+                print(
+                    f"  ✓ assertion {assertion_id} chunk_id={chunk_id} "
+                    f"source={chunk.get('source', '')!r} "
+                    f"text_len={len(chunk_text)}"
+                )
+
+        except ChunkIdMismatchError as exc:
+            logger.error("assertion %d CHUNK_ID_MISMATCH: %s", assertion_id, exc)
+            failed += 1
+        except ValueError as exc:
+            logger.error("assertion %d RESOLVE_ERROR: %s", assertion_id, exc)
+            failed += 1
+        except Exception as exc:
+            logger.error("assertion %d UNEXPECTED: %s", assertion_id, exc)
+            failed += 1
+
+    print(
+        f"\nVerification complete: {passed} passed, {failed} failed, "
+        f"{claim_text_mismatches} §3.2 text-overlap warnings."
+    )
+    if bad_format:
+        print(
+            f"  {len(bad_format)} assertion(s) had malformed chunk_id in rag_deterministic schema."
+        )
+
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

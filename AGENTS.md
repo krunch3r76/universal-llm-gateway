@@ -124,7 +124,7 @@ Vortex is **live** for grok-direct via global `~/.grok/config.toml` (wired 2026-
 # Source: mcp-registry.toml (schema_version="1"; locked 2026-05-22).
 # Do not edit this block directly — edit mcp-registry.toml and re-run.
 [mcp_servers.user-vortex]
-url = "https://mcp.k-1.me/mcp"
+url = "https://mcp.k-1.me/mcp/grok"
 type = "http"
 enabled = true
 

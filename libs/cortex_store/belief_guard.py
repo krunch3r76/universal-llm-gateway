@@ -16,16 +16,17 @@ Exempt callers (bypass audit — Phase C):
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 from dataclasses import dataclass, field
+
+from universal_logging import get_logger
 
 from . import embeddings as cortex_embeddings
 from . import vector_store
 from .db import query as db_query
 from .polarity import build_candidate_query, detect_polarity_conflict
 
-logger = logging.getLogger("cortex-api.belief-guard")
+logger = get_logger("cortex-api.belief-guard")
 
 TOUCHED_COSINE_THRESHOLD = 0.72
 SUPERSEDE_COSINE_THRESHOLD = 0.85

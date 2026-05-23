@@ -37,6 +37,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         platform: str | None = None,
         role: str | None = None,
         transcript_id: str = "",
+        views: list[str] | None = None,
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
         (~5-10KB) with priority signals and a section manifest for on-demand pulls.
@@ -69,6 +70,12 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           proceeds without continuation context and surfaces a
                           ``transcript_id_note`` in the response. This is expected
                           behavior, not a failure.
+          views         — optional list of entity IDs to materialize as subgraph views.
+                          Each entry is fetched via render_subgraph(root=<entity_id>, hops=1)
+                          and surfaced in the briefing card as structural counts (entities,
+                          edges) plus a retrieval hint. No prose is inlined (§C.3). The
+                          section_manifest includes a render_subgraph entry per view for
+                          on-demand full materialization (§C.4).
 
         Key response fields:
           session_id             — server-minted ID; hold for entire session
@@ -81,6 +88,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             platform=platform,
             role=role,
             transcript_id=transcript_id,
+            views=views,
         )
 
     @mcp.tool(title="Boot Inspect")
@@ -90,6 +98,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         role: str | None = None,
         transcript_id: str = "",
         diff_with: str = "",
+        views: list[str] | None = None,
     ) -> dict[str, Any]:
         """Read-only inspection of the boot surface without boot side effects.
 
@@ -112,6 +121,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             role=role,
             transcript_id=transcript_id,
             mode=BootMode.INSPECT,
+            views=views,
         )
         if not diff_with:
             return primary

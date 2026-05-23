@@ -8,17 +8,17 @@ for gateway-managed services. Single entry point reduces agent context overhead.
 from __future__ import annotations
 
 import json
-import logging
 import os
 import socket
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _MANAGE_SOCK = os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
 _DEFAULT_TIMEOUT = 30.0
@@ -220,47 +220,22 @@ def register_manage_tools(mcp: FastMCP) -> None:
           start         (service)           — start a stopped service
           stop          (service)           — stop a running service
           restart       (service)           — stop then start (no source sync)
-          sync_restart  (service)           — DEPLOY LOCAL CODE EDITS — per service:
-                                             - 'gateway': restart (libs/, services/,
-                                               config/ are bind-mounted, so restart
-                                               alone picks up Python source edits)
-                                             - 'mcp': cached --refresh-source rebuild
-                                               + restart (~20s) since MCP source
-                                               is baked into the image
-                                             - host procs (stargate, rag, cloud_proxy,
-                                               cortex_api, agent_bus, event_service):
-                                               restart
-          rebuild       (service)           — full --no-cache rebuild + restart.
-                                             AGENT-FORBIDDEN for 'gateway' and 'mcp'
-                                             (heavy ops paths — gateway recompiles
-                                             vLLM CUDA from source, 60-90 min).
-                                             Use 'sync_restart' for code deploys.
-                                             For host services (event_service,
-                                             cortex_api, agent_bus, email_bridge):
-                                             rebuild = restart.
+          sync_restart  (service)           — deploy local code edits. gateway
+                                             uses bind-mounts (restart only); mcp
+                                             does a cached refresh-source rebuild
+                                             (~20s); host procs just restart.
+          rebuild       (service)           — full --no-cache rebuild. Forbidden
+                                             for gateway/mcp via this tool — use
+                                             sync_restart. Ops-only via TUI.
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
 
-        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service, cortex_api, agent_bus, email_bridge, grokbuild_worker
+        Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
+                  cortex_api, agent_bus, email_bridge, grokbuild_worker
 
-        IMPORTANT — sync_restart(service="mcp") self-restart semantics:
-          This MCP server is itself the "mcp" service. sync_restart(service="mcp")
-          builds the image first, returns a clean "rebuild_scheduled" response,
-          then recreates the container from the host-side manage daemon in the
-          background. The triggering call should not see a transport-level
-          disconnect in the happy path.
-          During the restart window, new MCP tool calls may receive JSON-RPC
-          error -32099 with data.reason="server_restarting" and Retry-After: 30.
-          Clients should retry with backoff before surfacing the error.
-          Correct workflow:
-            1. manage(action="sync_restart", service="mcp")
-            2. manage(action="wait_healthy", service="mcp", timeout=120)
-            3. If tool schemas changed, verify Cursor descriptors refreshed.
-
-        Post-code-change workflow (canonical):
-          1. quality_gate(files=[...])
-          2. manage(action="sync_restart", service=X)
-             — if service="mcp": expect "rebuild_scheduled", then wait_healthy
-          3. manage(action="wait_healthy", service=X, timeout=120)
+        Self-restart caveat: sync_restart(service="mcp") returns
+        "rebuild_scheduled" then recreates the container in background. During
+        the window, calls may get -32099 with data.reason="server_restarting"
+        and Retry-After: 30. Always follow with wait_healthy.
         """
         if action == "rebuild" and service in {"gateway", "mcp"}:
             heavy = (

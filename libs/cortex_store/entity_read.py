@@ -8,10 +8,10 @@ legacy ``intent="full"`` shape (assertions + relationships + reasoning edges
 
 from __future__ import annotations
 
-import logging
 import sqlite3
 
 from fastapi import HTTPException, status
+from universal_logging import get_logger
 
 from .action_hints import detect_expired_unresolved
 from .compaction import apply_compaction_filter
@@ -27,7 +27,7 @@ from .relationship_sql import FROM_CLAUSE, SELECT_COLUMNS
 from .routes.assertions import _ASSERTION_COLS
 from .routes.edges import _EDGE_COLS
 
-logger = logging.getLogger("cortex-api.entity_read")
+logger = get_logger("cortex-api.entity_read")
 
 ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})

@@ -13,11 +13,11 @@ Workflow-state schema, validation, and todo-closure-gap emission live in
 from __future__ import annotations
 
 import datetime
-import logging
 import sqlite3
 from collections.abc import Callable
 
 from fastapi import HTTPException, status
+from universal_logging import get_logger
 
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
@@ -40,7 +40,7 @@ from .workflow_state import (
     workflow_schema,
 )
 
-logger = logging.getLogger("cortex-api.entity_crud")
+logger = get_logger("cortex-api.entity_crud")
 
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
 

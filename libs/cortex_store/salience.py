@@ -7,11 +7,12 @@ cache invalidation. Component scoring functions live in ``scoring.py``.
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+from universal_logging import get_logger
 
 from .db import query
 from .scoring import (
@@ -23,7 +24,7 @@ from .scoring import (
     fast_state_hash,
 )
 
-logger = logging.getLogger("cortex-api.salience")
+logger = get_logger("cortex-api.salience")
 
 # Per-persona salience weights: (temporal, structural, contextual, frequency)
 PERSONA_WEIGHTS: dict[str, tuple[float, float, float, float]] = {

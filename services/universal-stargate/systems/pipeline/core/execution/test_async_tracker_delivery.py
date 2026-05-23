@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -354,3 +355,250 @@ def test_record_to_dict_hints_empty_when_none() -> None:
     record = _make_record()  # default result has hints=None
     d = record.to_dict()
     assert d["result"]["hints"] == [], "to_dict must normalize None hints to []"
+
+
+# ---------------------------------------------------------------------------
+# On-behalf delivery (op="to_thread") — 2026-05-22 architectural fix
+# ---------------------------------------------------------------------------
+
+
+def _make_to_thread_record(
+    *,
+    content: str = "Reply body text.",
+    from_agent: str = "reviewer",
+    caller_agent: str = "claude-web",
+    target_thread: str = "1051",
+    reply_subject: str | None = None,
+) -> PipelineExecutionRecord:
+    """Bus-mode record with all on-behalf delivery fields populated."""
+    return PipelineExecutionRecord(
+        execution_id="exec-to-thread-1",
+        pipeline="frontier-dispatch",
+        status="completed",
+        started_at="2026-05-22T22:34:26Z",
+        started_at_monotonic=0.0,
+        completed_at="2026-05-22T22:37:05Z",
+        completed_at_monotonic=159.0,
+        result=PipelineExecutionResult(
+            content=content,
+            model="openai/gpt-5.5",
+            usage={
+                "prompt_tokens": 1000,
+                "completion_tokens": 500,
+                "total_tokens": 1500,
+            },
+            duration_s=159.0,
+            reasoning=None,
+        ),
+        error=None,
+        result_delivery=None,
+        caller_agent=caller_agent,
+        output_contract="thread",
+        target_thread=target_thread,
+        op="to_thread",
+        from_agent=from_agent,
+        reply_subject=reply_subject,
+    )
+
+
+def _make_thread_aware_transport(
+    captured: dict[str, Any],
+    *,
+    last_turn_from: str = "claude-web",
+    post_status: int = 201,
+) -> httpx.MockTransport:
+    """Mock /threads/{id} GET (last_turn_from) and /turns POST."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and "/threads/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "1051",
+                    "status": "active",
+                    "turn_count": 5,
+                    "last_turn_from": last_turn_from,
+                },
+            )
+        if request.method == "POST" and request.url.path == "/turns":
+            captured["post_path"] = request.url.path
+            captured["post_body"] = json.loads(request.content)
+            return httpx.Response(post_status, json={"id": 6, "turn_number": 6})
+        return httpx.Response(404, json={})
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_delivered_on_2xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """op=to_thread + non-empty content + 2xx POST → delivered.
+
+    Regression: replaces the polling-based contract that failed structurally
+    for mcp=False dispatches (exec 9d970982) and tool-budget-exhausted
+    dispatches (exec 8c1df5d3) on 2026-05-22.
+    """
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record(content="Short review body.")
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "delivered"
+    assert captured["post_path"] == "/turns"
+    body = captured["post_body"]
+    assert body["from"] == "reviewer"
+    assert body["to"] == "claude-web"  # caller_agent preferred over last_turn_from
+    assert body["thread"] == "1051"
+    assert body["body"] == "Short review body."
+    assert "allow_long_body" not in body  # under 1500 chars
+    assert record.thread_reply_observed_at is not None
+    signals = [getattr(e, "signal", None) for e in bus.events]
+    assert "pipeline.dispatch.delivery.sent" in signals
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_sets_allow_long_body_above_briefing_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Content above the briefing-rule threshold opts into allow_long_body=true."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    long_body = "x" * 2000  # > _BUS_BRIEFING_RULE_CHARS (1500)
+    record = _make_to_thread_record(content=long_body)
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "delivered"
+    assert captured["post_body"]["allow_long_body"] is True
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_rejects_content_over_bus_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Content exceeding 8 000 chars fails fast with content_exceeds_bus_limit."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    over_limit = "x" * 8_001
+    record = _make_to_thread_record(content=over_limit)
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "failed"
+    assert outcome.failure_reason == "content_exceeds_bus_limit"
+    assert "post_path" not in captured  # POST never attempted
+    signals = [getattr(e, "signal", None) for e in bus.events]
+    assert "pipeline.dispatch.delivery.failed" in signals
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_skips_empty_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty content skips POST and returns skipped (record is already failed)."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record(content="   ")  # whitespace-only
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "skipped"
+    assert outcome.failure_reason == "empty_content"
+    assert "post_path" not in captured
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_falls_back_to_last_turn_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When caller_agent is unset, the thread's last_turn_from becomes to_agent."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record(caller_agent=None)
+
+    _patch_client(
+        monkeypatch,
+        _make_thread_aware_transport(captured, last_turn_from="oppie"),
+    )
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "delivered"
+    assert captured["post_body"]["to"] == "oppie"
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_fails_when_no_to_agent_resolvable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unresolved to_agent (no caller_agent, no thread last_turn_from) fails fast."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record(caller_agent=None)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200, json={"id": "1051", "status": "active", "last_turn_from": None}
+            )
+        captured["post_attempted"] = True
+        return httpx.Response(201, json={"id": 1})
+
+    _patch_client(monkeypatch, httpx.MockTransport(handler))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "failed"
+    assert outcome.failure_reason == "unresolved_to_agent"
+    assert "post_attempted" not in captured
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_demotes_record_on_post_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """POST 5xx on bus-mode delivery returns failed with post_{code} reason."""
+    bus = _FakeBus()
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record()
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured, post_status=503))
+
+    outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert outcome.status == "failed"
+    assert outcome.failure_reason == "post_503"
+    assert record.thread_reply_observed_at is None
+    signals = [getattr(e, "signal", None) for e in bus.events]
+    assert "pipeline.dispatch.delivery.failed" in signals
+
+
+@pytest.mark.asyncio
+async def test_on_behalf_post_uses_caller_subject_when_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reply_subject on the record propagates into the posted turn subject."""
+    captured: dict[str, Any] = {}
+    record = _make_to_thread_record(reply_subject="Re: plan-promotion review")
+
+    _patch_client(monkeypatch, _make_thread_aware_transport(captured))
+
+    await deliver_result(record, event_bus=_FakeBus(), auth_token="secret")
+    await asyncio.sleep(0)
+
+    assert captured["post_body"]["subject"] == "Re: plan-promotion review"

@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import datetime
 import json
-import logging
 import os
 from typing import Any
 
 from transport_utils import make_sync_client
+from universal_logging import get_logger
 
 from .status_models import (
     InFlightRequest,
@@ -23,7 +23,7 @@ from .status_models import (
     ThreadReference,
 )
 
-logger = logging.getLogger("cortex-api.observability_bridge")
+logger = get_logger("cortex-api.observability_bridge")
 
 _EVENTS_QUERY_URL = (
     f"unix://{os.environ.get('EVENTS_QUERY_SOCK', '/tmp/universal-protocol/events-query.sock')}"
