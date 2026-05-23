@@ -14,6 +14,7 @@ from ._briefing_card_render import (
     _truncate_at_sentence,
     render_async_dispatch_section,
     render_audit_alerts_section,
+    render_skills_section,
     render_views_section,
 )
 from ._manifest import _build_manifest
@@ -84,33 +85,7 @@ def render_briefing_card(
             parts.append(f"**Summary**: {summary}")
 
     if skills:
-        parts.append(
-            "\n## Agent Skills "
-            "(read on trigger match — "
-            "`fs(sandbox='cortex', op='read', "
-            "path='agent-skills/<NAME>.md')`)"
-        )
-        for s in skills:
-            slug = s.get("name") or (s.get("id") or "?").removeprefix("agent_skill:")
-            # Prefer the API-side projection (`/boot-skills` ships
-            # `description_first_sentence`); fall back to first-sentence split
-            # over a full `description` field for any caller still wiring the
-            # legacy `/entities?type=agent_skill` shape through.
-            short = s.get("description_first_sentence")
-            if not short:
-                full = (s.get("description") or "").strip()
-                short = full.split(". ", 1)[0].rstrip(".")
-            parts.append(f"- **{slug}** — {short}")
-        # Drift reminder: surface skills missing `applicable_agents` so the
-        # partition script (`scripts/cortex/backfill_agent_skill_applicability.py`)
-        # doesn't go stale silently as new and temp skills land. Silent when 0.
-        if skills_unpartitioned_count:
-            parts.append(
-                f"\n> **Skill partition drift**: {skills_unpartitioned_count} "
-                f"skill(s) missing `applicable_agents` (default to universal "
-                f"via COALESCE). Audit: `scripts/cortex/"
-                f"backfill_agent_skill_applicability.py --audit`."
-            )
+        parts.extend(render_skills_section(skills, skills_unpartitioned_count))
 
     if dropbox_files:
         n = len(dropbox_files)

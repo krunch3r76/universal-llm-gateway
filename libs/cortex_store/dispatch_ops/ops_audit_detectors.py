@@ -52,6 +52,10 @@ from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate
 from ._detectors.project import detect_project_required_skills_no_relationship
 from ._detectors.relationship import detect_dangling_relationship_target
 from ._detectors.session import detect_prior_session_id_omitted
+from ._detectors.skill_binding import (
+    detect_skill_binding_missing,
+    detect_skill_binding_tool_unknown,
+)
 
 # Gap taxonomy per v2 plan §6
 GRAPH_ONLY_KINDS = {
@@ -74,6 +78,9 @@ GRAPH_ONLY_KINDS = {
     "project_required_skills_no_relationship",
     # v1.3.1 normalization ledger Path 2 detector
     "unresolved_bare_token_in_predicate_form",
+    # skill_binding substrate (thread 1067)
+    "skill_binding_missing",
+    "skill_binding_tool_unknown",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -114,6 +121,8 @@ def get_all_detectors() -> dict[str, Any]:
         "markdown_section_drift": detect_markdown_section_drift,
         "case_marker_absent": detect_case_marker_absent,
         "unresolved_bare_token_in_predicate_form": detect_unresolved_bare_token_in_predicate_form,
+        "skill_binding_missing": detect_skill_binding_missing,
+        "skill_binding_tool_unknown": detect_skill_binding_tool_unknown,
     }
 
 
@@ -186,6 +195,8 @@ __all__ = [
     "detect_marker_nesting_violation",
     "detect_prior_session_id_omitted",
     "detect_project_required_skills_no_relationship",
+    "detect_skill_binding_missing",
+    "detect_skill_binding_tool_unknown",
     "detect_unregistered_document_in_markdown",
     "get_all_detectors",
     "run_detectors",

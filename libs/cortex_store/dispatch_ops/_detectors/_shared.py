@@ -42,6 +42,9 @@ SEVERITY = {
     "project_required_skills_no_relationship": "warning",
     # v1.3.1 normalization-decision ledger (shadow, Path 2/3)
     "unresolved_bare_token_in_predicate_form": "warning",
+    # skill_binding substrate (thread 1067 backfill, U2 audit-gate)
+    "skill_binding_missing": "warning",
+    "skill_binding_tool_unknown": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

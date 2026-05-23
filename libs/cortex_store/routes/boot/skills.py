@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Query
@@ -17,7 +18,8 @@ router = APIRouter(tags=["boot"])
 # without the attribute are treated as `["*"]` via COALESCE so the default
 # behaviour pre-backfill is "show to everyone" — no silent narrowing.
 _BOOT_SKILLS_SQL = """
-    SELECT id, name, description
+    SELECT id, name, description,
+           json_extract(attributes, '$.skill_binding') AS skill_binding_json
     FROM entities
     WHERE type = 'agent_skill'
       AND (status IS NULL OR status != 'deprecated')
@@ -61,6 +63,49 @@ def _first_sentence(text: str | None) -> str:
     return text.split(". ", 1)[0].rstrip(".").strip()
 
 
+def _parse_skill_binding(
+    raw: str | None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    if not raw:
+        return None, None
+    try:
+        binding = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None, None
+    if not isinstance(binding, dict):
+        return None, None
+    skill_class = binding.get("skill_class")
+    tool_binding = binding.get("tool_binding") if skill_class == "tool_manual" else None
+    return skill_class, tool_binding
+
+
+def _derive_binding_kind(
+    skill_class: str | None,
+    tool_binding: dict[str, Any] | None,
+) -> str | None:
+    if skill_class is None:
+        return None
+    if skill_class == "tool_manual":
+        exposure = (tool_binding or {}).get("exposure", "primary")
+        return f"mcp_{exposure}"
+    return skill_class
+
+
+def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
+    skill_class, tool_binding = _parse_skill_binding(row.get("skill_binding_json"))
+    item: dict[str, Any] = {
+        "id": row["id"],
+        "entity_id": row["id"],
+        "name": row["name"],
+        "description_first_sentence": _first_sentence(row["description"]),
+        "skill_class": skill_class,
+        "binding_kind": _derive_binding_kind(skill_class, tool_binding),
+    }
+    if tool_binding is not None:
+        item["tool_binding"] = tool_binding
+    return item
+
+
 @router.get("/boot-skills")
 def get_boot_skills(
     limit: int = Query(50, ge=1, le=200, description="Max skill entries"),
@@ -75,13 +120,13 @@ def get_boot_skills(
         ),
     ),
 ) -> dict[str, Any]:
-    """Compact agent_skill projection: id, name, first sentence of description.
+    """Compact agent_skill projection for boot briefings.
 
     Replaces the wider `/entities?type=agent_skill` fetch on the boot path.
-    Each row is reduced to the three fields the briefing card actually
-    renders, with the description trimmed to its first sentence (the trigger
-    condition). Full SKILL.md is loaded on demand via `fs read` once an
-    agent's task matches a trigger.
+    Each row ships id/entity_id, name, description_first_sentence, and when
+    present the skill_binding axes (skill_class, tool_binding, binding_kind).
+    Full SKILL.md is loaded on demand via `fs read` once an agent's task
+    matches a trigger.
     """
     params: list[Any] = []
     if for_agent:
@@ -101,15 +146,6 @@ def get_boot_skills(
         unpartitioned_rows = db_query(conn, _UNPARTITIONED_COUNT_SQL, ())
     finally:
         conn.close()
-    items = [
-        {
-            "id": r["id"],
-            "name": r["name"],
-            "description_first_sentence": _first_sentence(r["description"]),
-        }
-        for r in rows
-    ]
-    unpartitioned = (
-        int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
-    )
+    items = [_boot_skill_row(r) for r in rows]
+    unpartitioned = int(unpartitioned_rows[0]["n"]) if unpartitioned_rows else 0
     return {"items": items, "unpartitioned_count": unpartitioned}

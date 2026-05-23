@@ -130,6 +130,101 @@ def render_audit_alerts_section(counters: dict[str, int]) -> list[str]:
     ]
 
 
+_SKILL_CLASS_ORDER = (
+    "tool_manual",
+    "protocol",
+    "matter_playbook",
+    "discipline",
+)
+_EXPOSURE_ORDER = ("primary", "overflow", "private")
+_EXPOSURE_HEADERS: dict[str, str] = {
+    "primary": "### Tool Manuals — Primary",
+    "overflow": "### Tool Manuals — Overflow",
+    "private": "### Tool Manuals — Private",
+}
+_CLASS_HEADERS: dict[str, str] = {
+    "protocol": "### Protocols",
+    "matter_playbook": "### Matter Playbooks",
+    "discipline": "### Disciplines",
+}
+
+
+def _skill_slug(skill: dict[str, Any]) -> str:
+    entity_id = skill.get("id") or skill.get("entity_id") or "?"
+    return skill.get("name") or str(entity_id).removeprefix("agent_skill:")
+
+
+def _skill_short(skill: dict[str, Any]) -> str:
+    short = skill.get("description_first_sentence")
+    if not short:
+        full = (skill.get("description") or "").strip()
+        short = full.split(". ", 1)[0].rstrip(".")
+    return short or ""
+
+
+def _append_skill_rows(lines: list[str], bucket: list[dict[str, Any]]) -> None:
+    for skill in sorted(bucket, key=_skill_slug):
+        lines.append(f"- **{_skill_slug(skill)}** — {_skill_short(skill)}")
+
+
+def render_skills_section(
+    skills: list[dict[str, Any]],
+    skills_unpartitioned_count: int,
+) -> list[str]:
+    """Group agent skills by class (and tool_manual exposure) for the boot card."""
+    lines: list[str] = [
+        "\n## Agent Skills "
+        "(read on trigger match — "
+        "`fs(sandbox='cortex', op='read', "
+        "path='agent-skills/<NAME>.md')`)"
+    ]
+    by_class: dict[str | None, list[dict[str, Any]]] = {}
+    for skill in skills:
+        by_class.setdefault(skill.get("skill_class"), []).append(skill)
+
+    no_class = by_class.pop(None, [])
+
+    for skill_class in _SKILL_CLASS_ORDER:
+        bucket = by_class.pop(skill_class, None)
+        if not bucket:
+            continue
+        if skill_class == "tool_manual":
+            by_exposure: dict[str, list[dict[str, Any]]] = {}
+            for skill in bucket:
+                tb = skill.get("tool_binding") or {}
+                exposure = str(tb.get("exposure", "primary")).lower()
+                by_exposure.setdefault(exposure, []).append(skill)
+            for exposure in _EXPOSURE_ORDER:
+                sub = by_exposure.pop(exposure, None)
+                if not sub:
+                    continue
+                lines.append(_EXPOSURE_HEADERS[exposure])
+                _append_skill_rows(lines, sub)
+            for exposure in sorted(by_exposure):
+                lines.append(f"### Tool Manuals — {exposure.replace('_', ' ').title()}")
+                _append_skill_rows(lines, by_exposure[exposure])
+        else:
+            lines.append(_CLASS_HEADERS[skill_class])
+            _append_skill_rows(lines, bucket)
+
+    for skill_class in sorted(by_class):
+        lines.append(f"### {skill_class.replace('_', ' ').title()}")
+        _append_skill_rows(lines, by_class[skill_class])
+
+    if no_class:
+        lines.append("### Other Skills")
+        _append_skill_rows(lines, no_class)
+
+    if skills_unpartitioned_count:
+        lines.append(
+            f"\n> **Skill partition drift**: {skills_unpartitioned_count} "
+            f"skill(s) missing `applicable_agents` (default to universal "
+            f"via COALESCE). Audit: `scripts/cortex/"
+            f"backfill_agent_skill_applicability.py --audit`."
+        )
+    return lines
+
+
 def _deadline_line(d: dict[str, Any], today: datetime) -> str:
     """Render a single deadline as a compact markdown line."""
     dl_date = d.get("deadline_date", "")
@@ -148,3 +243,15 @@ def _deadline_line(d: dict[str, Any], today: datetime) -> str:
         f"- **{dl_date}**{remaining} — "
         f"{d.get('deadline_name', '')} ({d.get('matter_name', '')})"
     )
+
+
+__all__ = [
+    "_PREVIEW_MAX_CHARS",
+    "_deadline_line",
+    "_filter_recent_self_reflections",
+    "_truncate_at_sentence",
+    "render_async_dispatch_section",
+    "render_audit_alerts_section",
+    "render_skills_section",
+    "render_views_section",
+]
