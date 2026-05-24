@@ -14,8 +14,8 @@ class AgentInjectionError(Exception):
 
 @dataclass
 class ViolationDetail:
-    invariant: int                    # 1..5 per D.5
-    block_index: int | None = None    # which block in the packet (None for packet-level)
+    invariant: int  # 1..5 per D.5
+    block_index: int | None = None  # which block in the packet (None for packet-level)
     detail: str = ""
     payload_excerpt: dict[str, Any] = field(default_factory=dict)
 

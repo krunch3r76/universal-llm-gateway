@@ -56,7 +56,9 @@ def _insert_reflective_entry_tx(
 ) -> int:
     """Insert a reflective journal row on an existing transaction."""
     if kind not in _VALID_KINDS:
-        raise ValueError(f"Invalid kind {kind!r}. Must be one of: {sorted(_VALID_KINDS)}")
+        raise ValueError(
+            f"Invalid kind {kind!r}. Must be one of: {sorted(_VALID_KINDS)}"
+        )
     if kind == "revision" and revises is None:
         raise ValueError("revises is required for kind='revision'")
     if kind == "consolidation" and consolidation_data_json is None:

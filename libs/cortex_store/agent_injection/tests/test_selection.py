@@ -12,10 +12,42 @@ from ..selection import STRATEGIES, select
 
 def _fixture_items() -> list[dict]:
     return [
-        {"id": 1, "claim": "oldest", "observed_at": "2020-01-01", "confidence": "suspected", "confidence_score": 0.3, "derivation_type": "inference", "entity_id": "e:1"},
-        {"id": 2, "claim": "mid", "observed_at": "2024-01-01", "confidence": "believed", "confidence_score": 0.6, "derivation_type": "user_statement", "entity_id": "e:2"},
-        {"id": 3, "claim": "newest high", "observed_at": "2025-06-01", "confidence": "confirmed", "confidence_score": 0.9, "derivation_type": "direct_observation", "entity_id": "e:1"},
-        {"id": 4, "claim": "recent low", "observed_at": "2025-05-01", "confidence": "hypothesized", "confidence_score": 0.2, "derivation_type": "inference", "entity_id": "e:3"},
+        {
+            "id": 1,
+            "claim": "oldest",
+            "observed_at": "2020-01-01",
+            "confidence": "suspected",
+            "confidence_score": 0.3,
+            "derivation_type": "inference",
+            "entity_id": "e:1",
+        },
+        {
+            "id": 2,
+            "claim": "mid",
+            "observed_at": "2024-01-01",
+            "confidence": "believed",
+            "confidence_score": 0.6,
+            "derivation_type": "user_statement",
+            "entity_id": "e:2",
+        },
+        {
+            "id": 3,
+            "claim": "newest high",
+            "observed_at": "2025-06-01",
+            "confidence": "confirmed",
+            "confidence_score": 0.9,
+            "derivation_type": "direct_observation",
+            "entity_id": "e:1",
+        },
+        {
+            "id": 4,
+            "claim": "recent low",
+            "observed_at": "2025-05-01",
+            "confidence": "hypothesized",
+            "confidence_score": 0.2,
+            "derivation_type": "inference",
+            "entity_id": "e:3",
+        },
     ]
 
 
@@ -86,7 +118,9 @@ def test_set_aggregation_traverses_has_member():
         {"source_id": "set:foo", "target_id": "e:1", "type_id": "has_member"},
         {"source_id": "set:foo", "target_id": "e:2", "type_id": "has_member"},
     ]
-    with patch("cortex_store.relationship_sql.fetch_relationships", return_value=fake_rels) as mock_fetch:
+    with patch(
+        "cortex_store.relationship_sql.fetch_relationships", return_value=fake_rels
+    ) as mock_fetch:
         out = select(items, "set_aggregation", set_entity_id="set:foo")
     # only items whose entity_id in {e:1,e:2} and deduped
     assert [o["id"] for o in out] == [1, 2, 3]  # 1 and 3 share e:1, 2 is e:2

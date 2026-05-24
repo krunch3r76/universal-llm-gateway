@@ -73,6 +73,38 @@ tools:
   cache_priority: always_loaded
   introduced: 2026-05-22
 
+- canonical_name: cortex_entities_by_content_hash
+  domain: cortex
+  operation: entities_by_content_hash
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: entities_by_content_hash
+  flat_call_shape:
+    tool: cortex_entities_by_content_hash
+    substrate_qualified: user-vortex__cortex_entities_by_content_hash
+  fol_descriptor: |
+    ∀ content_hash ∈ str ∧ content_hash ≠ ∅:
+      entities_by_content_hash(content_hash) ⟹
+        result ∈ List[Entity]
+        ∧ ∀ e ∈ result: e.content_hash = content_hash.removeprefix("sha256:")
+        ∧ |result| ≤ (limit ∨ 5).
+    ∀ content_hash = ∅ ⟹ error("content_hash is required").
+    Read-only. Dedicated lookup op for duplicate-detection callers
+    (default limit=5, no full-list semantics). See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      content_hash: {type: string, description: "Required. Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form."}
+      type: {type: string, description: "Optional entity type filter (e.g. \"document\")."}
+      limit: {type: integer, description: "Result cap (default 5)."}
+    required: [content_hash]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-05-24
+
 - canonical_name: cortex_entity_get
   domain: cortex
   operation: entity_get

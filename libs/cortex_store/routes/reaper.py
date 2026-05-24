@@ -88,17 +88,19 @@ def _find_candidates(
 
         protector = _check_permanent_inbound(conn, entity_id)
 
-        candidates.append(ReapCandidate(
-            entity_id=entity_id,
-            entity_name=row["name"],
-            entity_type=row["type"],
-            retention_ttl_days=ttl,
-            last_accessed_at=row["last_accessed_at"],
-            days_since_access=days_since,
-            max_entrenchment=max_e or 0.0,
-            active_assertion_count=cnt,
-            protected_by=protector,
-        ))
+        candidates.append(
+            ReapCandidate(
+                entity_id=entity_id,
+                entity_name=row["name"],
+                entity_type=row["type"],
+                retention_ttl_days=ttl,
+                last_accessed_at=row["last_accessed_at"],
+                days_since_access=days_since,
+                max_entrenchment=max_e or 0.0,
+                active_assertion_count=cnt,
+                protected_by=protector,
+            )
+        )
 
     return candidates
 
@@ -152,7 +154,9 @@ def _reap_entity(conn: object, entity_id: str, now_iso: str) -> dict[str, int]:
 
 @router.get("/preview")
 def reaper_preview(
-    ttl_default: int = Query(_DEFAULT_TTL_DAYS, ge=1, description="Default TTL in days"),
+    ttl_default: int = Query(
+        _DEFAULT_TTL_DAYS, ge=1, description="Default TTL in days"
+    ),
     entrenchment_threshold: float = Query(
         _DEFAULT_ENTRENCHMENT_THRESHOLD, ge=0.0, le=1.0
     ),
@@ -195,7 +199,9 @@ def reaper_preview(
 
 @router.post("/run")
 def reaper_run(
-    ttl_default: int = Query(_DEFAULT_TTL_DAYS, ge=1, description="Default TTL in days"),
+    ttl_default: int = Query(
+        _DEFAULT_TTL_DAYS, ge=1, description="Default TTL in days"
+    ),
     entrenchment_threshold: float = Query(
         _DEFAULT_ENTRENCHMENT_THRESHOLD, ge=0.0, le=1.0
     ),
@@ -211,15 +217,19 @@ def reaper_run(
         results: list[dict[str, Any]] = []
         for c in reapable:
             counts = _reap_entity(conn, c.entity_id, now_iso)
-            results.append({
-                "entity_id": c.entity_id,
-                "entity_name": c.entity_name,
-                **counts,
-            })
+            results.append(
+                {
+                    "entity_id": c.entity_id,
+                    "entity_name": c.entity_name,
+                    **counts,
+                }
+            )
             logger.info(
                 "Reaped %s (%s): %d assertions closed, %d edges retired",
-                c.entity_id, c.entity_name,
-                counts["assertions_closed"], counts["edges_retired"],
+                c.entity_id,
+                c.entity_name,
+                counts["assertions_closed"],
+                counts["edges_retired"],
             )
 
         conn.commit()

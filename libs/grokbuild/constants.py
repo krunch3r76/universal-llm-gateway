@@ -68,10 +68,10 @@ class _TierPreset:
 # hand-mirrored. Adding a tier here automatically updates the
 # validator's accept-set.
 _TIER_PRESETS: Final[dict[str, _TierPreset]] = {
-    "quick": _TierPreset("minimal", "low", "xai/grok-4.3"),
-    "balanced": _TierPreset("medium", "medium", "xai/grok-4.3"),
-    "thorough": _TierPreset("high", "high", "xai/grok-4.3"),
-    "max": _TierPreset("xhigh", "max", "xai/grok-4.3"),
+    "quick": _TierPreset("minimal", "low", "grok-4.3"),
+    "balanced": _TierPreset("medium", "medium", "grok-4.3"),
+    "thorough": _TierPreset("high", "high", "grok-4.3"),
+    "max": _TierPreset("xhigh", "max", "grok-4.3"),
 }
 _VALID_TIERS: Final[frozenset[str]] = frozenset(_TIER_PRESETS.keys())
 
@@ -92,7 +92,7 @@ class _ModelCapabilities:
 # ∀ model ∉ MODEL_REGISTRY: both effort flags treated as supported (pass-
 # through — caller may still hit a CLI/API failure, but admission won't block).
 # dispatch_op resolves omitted model to each tier preset's default_model
-# (xai/grok-4.3) before RunnerSpec; RunnerSpec.model=None still maps to
+# (grok-4.3) before RunnerSpec; RunnerSpec.model=None still maps to
 # "grok-build" here for capability lookup only.
 #
 # --effort is the grok CLI agent-loop tier flag (independent of reasoning API).
@@ -100,10 +100,12 @@ class _ModelCapabilities:
 # (currently only "grok-build" legacy default).
 #
 # --reasoning-effort is the API passthrough for xAI reasoning_effort.
-# grok-4.20-{reasoning,non-reasoning} silently swallow it at the CLI level
-# (xAI confirmed CLI bug); the API rejects it with HTTP 400. Suppress for
-# those. grok-4.20-multi-agent-0309 does honor reasoning.effort (verified
-# 2026-05-20 direct against /v1/responses) — swarm size scales with effort.
+# Subscription plan: grok-4.3 supports both --reasoning-effort and --effort
+# directly via CLI (no stanza workaround needed). grok-4.20-{reasoning,non-
+# reasoning} silently swallow --reasoning-effort at the CLI level (xAI CLI bug);
+# the API rejects it with HTTP 400. Suppress for those.
+# grok-4.20-multi-agent-0309 does honor reasoning.effort (verified 2026-05-20
+# direct against /v1/responses) — swarm size scales with effort.
 MODEL_REGISTRY: Final[dict[str, _ModelCapabilities]] = {
     "grok-build": _ModelCapabilities(
         supports_reasoning_effort=False,
@@ -113,15 +115,29 @@ MODEL_REGISTRY: Final[dict[str, _ModelCapabilities]] = {
         default_reasoning_effort=None,
         notes="Legacy CLI default; rejects both effort flags. Deprecated.",
     ),
-    "xai/grok-4.3": _ModelCapabilities(
+    "grok-4.3": _ModelCapabilities(
         supports_reasoning_effort=True,
         supports_effort=True,
         supports_subagents=True,
         internal_multi_agent=False,
         default_reasoning_effort="high",
-        notes="Primary reasoning model; effort injection via __effort_ stanzas.",
+        notes="Primary reasoning model; subscription plan supports --reasoning-effort and --effort natively.",
     ),
-    "xai/grok-4.20-0309-reasoning": _ModelCapabilities(
+    "grok-build-0.1": _ModelCapabilities(
+        supports_reasoning_effort=False,
+        supports_effort=False,
+        supports_subagents=True,
+        internal_multi_agent=False,
+        default_reasoning_effort=None,
+        notes=(
+            "CLI lists this subscription alias, but probes on 2026-05-24 "
+            "showed grok -m grok-build-0.1 resolves upstream as "
+            "model_id=grok-build and 404s; JSON success likely came from "
+            "CLI fallback. Keep registered to suppress effort flags until "
+            "targeting is verified."
+        ),
+    ),
+    "grok-4.20-0309-reasoning": _ModelCapabilities(
         supports_reasoning_effort=False,
         supports_effort=True,
         supports_subagents=True,
@@ -129,7 +145,7 @@ MODEL_REGISTRY: Final[dict[str, _ModelCapabilities]] = {
         default_reasoning_effort=None,
         notes="Built-in reasoning; --reasoning-effort silently swallowed (xAI CLI bug).",
     ),
-    "xai/grok-4.20-0309-non-reasoning": _ModelCapabilities(
+    "grok-4.20-0309-non-reasoning": _ModelCapabilities(
         supports_reasoning_effort=False,
         supports_effort=True,
         supports_subagents=True,
@@ -137,7 +153,7 @@ MODEL_REGISTRY: Final[dict[str, _ModelCapabilities]] = {
         default_reasoning_effort=None,
         notes="Non-reasoning fast variant.",
     ),
-    "xai/grok-4.20-multi-agent-0309": _ModelCapabilities(
+    "grok-4.20-multi-agent-0309": _ModelCapabilities(
         supports_reasoning_effort=True,
         supports_effort=True,
         supports_subagents=False,
@@ -157,53 +173,20 @@ MODEL_REGISTRY: Final[dict[str, _ModelCapabilities]] = {
 }
 
 
-# Tier → effort-encoded stanza name for xAI grok-4.3 (Responses API).
-# The grok CLI ignores --reasoning-effort for custom stanzas; effort is
-# encoded in the model-ID suffix (__effort_<value>) so the cloud-proxy
-# _forward_native handler can inject reasoning.effort before forwarding.
-# Stanza base_url must point at Stargate (http://localhost:9999/providers/xai).
-# Wire values mirror xAI spec: low | medium | high | xhigh.
-_XAI_GROK43_EFFORT_STANZA: Final[dict[str, str]] = {
-    "quick": "xai/grok-4.3__effort_low",
-    "balanced": "xai/grok-4.3__effort_medium",
-    "thorough": "xai/grok-4.3__effort_high",
-    "max": "xai/grok-4.3__effort_xhigh",
-}
-
-# xAI models that use effort-stanza routing instead of --reasoning-effort.
-# ∀ m ∈ _XAI_EFFORT_INJECT_MODELS: _build_argv substitutes m with the
-# tier-appropriate effort stanza before emitting --model.
-_XAI_EFFORT_INJECT_MODELS: Final[frozenset[str]] = frozenset({"xai/grok-4.3"})
-
-
 def default_model_for_tier(tier: str) -> str:
-    """Resolve tier preset → effective model id (incl. xai effort stanzas).
+    """Resolve tier preset → effective model id.
 
     Caller MUST validate ``tier ∈ _VALID_TIERS`` before calling; this helper
     indexes ``_TIER_PRESETS`` directly.
     """
-    base = _TIER_PRESETS[tier].default_model
-    if base in _XAI_EFFORT_INJECT_MODELS:
-        return _XAI_GROK43_EFFORT_STANZA.get(tier, base)
-    return base
-
-
-_XAI_GROK43_EFFORT_STANZA_VALUES: Final[frozenset[str]] = frozenset(
-    _XAI_GROK43_EFFORT_STANZA.values()
-)
+    return _TIER_PRESETS[tier].default_model
 
 
 def envelope_metadata_model(*, model: str | None, tier: str) -> str:
-    """Resolve envelope / sidecar ``model`` field (base id, never effort stanza).
+    """Resolve envelope / sidecar ``model`` field.
 
     Caller MUST validate ``tier ∈ _VALID_TIERS`` when ``model`` is None.
-    Known xAI 4.3 effort stanzas collapse to the tier preset base via the
-    stanza registry — no string splitting on ``__effort_``.
     """
     if model is None:
-        return _TIER_PRESETS[tier].default_model
-    if model in _XAI_EFFORT_INJECT_MODELS:
-        return model
-    if model in _XAI_GROK43_EFFORT_STANZA_VALUES:
         return _TIER_PRESETS[tier].default_model
     return model

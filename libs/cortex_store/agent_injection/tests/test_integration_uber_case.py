@@ -50,7 +50,9 @@ def _find_uber_entity_id() -> str | None:
 def test_uber_case_d2_deterministic_and_roundtrip_and_validators():
     entity_id = _find_uber_entity_id()
     if not entity_id:
-        pytest.skip("No Uber/case entity found in live cortex DB; cannot run D.2 regression")
+        pytest.skip(
+            "No Uber/case entity found in live cortex DB; cannot run D.2 regression"
+        )
 
     # 1. materialize twice -> deterministic included_count, total_active_count, content_hash
     d2a = materialize_d2(entity_id, selection_strategy="all", per_entity_limit=50)
@@ -63,11 +65,16 @@ def test_uber_case_d2_deterministic_and_roundtrip_and_validators():
     # 2. Cursor round-trip (note: 1.0a materializer uses stub cursor="offset:N"; second call ignores cursor
     #    and re-selects; the test verifies union==full and no dups under current impl. Full server-side
     #    cursor paging lands later.)
-    d2_page1 = materialize_d2(entity_id, selection_strategy="newest_n_by_observed_at", per_entity_limit=2)
+    d2_page1 = materialize_d2(
+        entity_id, selection_strategy="newest_n_by_observed_at", per_entity_limit=2
+    )
     cursor = d2_page1.get("cursor")
     assert cursor is not None or d2_page1["included_count"] <= 2
     d2_page2 = materialize_d2(
-        entity_id, selection_strategy="newest_n_by_observed_at", per_entity_limit=2, cursor=cursor
+        entity_id,
+        selection_strategy="newest_n_by_observed_at",
+        per_entity_limit=2,
+        cursor=cursor,
     )
     # union by id
     ids1 = set()
@@ -79,7 +86,9 @@ def test_uber_case_d2_deterministic_and_roundtrip_and_validators():
         if "assertion_id=" in ln:
             ids2.add(ln.split("assertion_id=")[1].split()[0])
     # under stub cursor the second page may overlap or be empty; check no crash + content_hash stable
-    assert d2_page1["content_hash"] == d2_page2["content_hash"] or True  # tolerant of stub
+    assert (
+        d2_page1["content_hash"] == d2_page2["content_hash"] or True
+    )  # tolerant of stub
 
     # 3. preflight on a packet containing the D.2 block
     pkt = [d2a]

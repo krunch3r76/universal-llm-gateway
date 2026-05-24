@@ -228,10 +228,10 @@ def test_build_argv_suppresses_reasoning_flags_for_non_reasoning_model() -> None
 @pytest.mark.parametrize(
     ("model", "expect_effort", "expect_reasoning_effort"),
     [
-        ("xai/grok-4.20-0309-reasoning", True, False),
-        ("xai/grok-4.20-0309-non-reasoning", True, False),
-        ("xai/grok-4.20-multi-agent-0309", True, True),
-        ("xai/grok-4.3", True, True),
+        ("grok-4.20-0309-reasoning", True, False),
+        ("grok-4.20-0309-non-reasoning", True, False),
+        ("grok-4.20-multi-agent-0309", True, True),
+        ("grok-4.3", True, True),
     ],
 )
 def test_build_argv_registry_splits_effort_from_reasoning_effort(

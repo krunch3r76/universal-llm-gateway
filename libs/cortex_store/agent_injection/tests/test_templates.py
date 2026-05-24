@@ -128,6 +128,7 @@ def test_render_d4_missing_raises():
 def test_no_placeholder_in_source():
     """Anti-fabrication gate: source must not contain v1-style placeholder text."""
     import os
+
     here = os.path.dirname(__file__)
     src_path = os.path.join(here, "..", "templates.py")
     with open(src_path) as f:

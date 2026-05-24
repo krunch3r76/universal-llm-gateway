@@ -25,12 +25,8 @@ from .status_models import (
 
 logger = get_logger("cortex-api.observability_bridge")
 
-_EVENTS_QUERY_URL = (
-    f"unix://{os.environ.get('EVENTS_QUERY_SOCK', '/tmp/universal-protocol/events-query.sock')}"
-)
-_AGENT_BUS_URL = (
-    f"unix://{os.environ.get('AGENT_BUS_SOCK', '/tmp/universal-protocol/agent-bus.sock')}"
-)
+_EVENTS_QUERY_URL = f"unix://{os.environ.get('EVENTS_QUERY_SOCK', '/tmp/universal-protocol/events-query.sock')}"
+_AGENT_BUS_URL = f"unix://{os.environ.get('AGENT_BUS_SOCK', '/tmp/universal-protocol/agent-bus.sock')}"
 _AGENT_BUS_TOKEN = os.environ.get("AGENT_BUS_TOKEN", "")
 
 

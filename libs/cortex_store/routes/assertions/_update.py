@@ -151,10 +151,18 @@ def update_assertion(
                 conn,
             )
             update_map["predicate_form"] = canonical
-            update_map["raw_predicate_form"] = normalize_result.get("raw_predicate_form")
-            update_map["normalization_decision"] = normalize_result.get("normalization_decision")
-            update_map["candidate_set_fingerprint"] = normalize_result.get("candidate_set_fingerprint")
-            update_map["normalizer_version"] = normalize_result.get("normalizer_version")
+            update_map["raw_predicate_form"] = normalize_result.get(
+                "raw_predicate_form"
+            )
+            update_map["normalization_decision"] = normalize_result.get(
+                "normalization_decision"
+            )
+            update_map["candidate_set_fingerprint"] = normalize_result.get(
+                "candidate_set_fingerprint"
+            )
+            update_map["normalizer_version"] = normalize_result.get(
+                "normalizer_version"
+            )
 
         sets: list[str] = []
         params: list[object] = []

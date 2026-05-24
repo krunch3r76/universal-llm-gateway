@@ -28,9 +28,9 @@ from ._extract_document_helpers import (
     format_sidecar,
 )
 from ._extraction_profile import hash_prompt, load_default_profile
+from ._file_helpers import FILES_ROOT, resolve_files_path
 from ._sidecar_naming import compute_args_hash, normalize_page_spec
 from ._sidecar_schema import validate_sidecar_frontmatter
-from ._file_helpers import FILES_ROOT, resolve_files_path
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP

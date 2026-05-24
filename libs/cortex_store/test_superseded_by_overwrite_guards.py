@@ -118,9 +118,7 @@ def _patch_update(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) -> 
     )
 
 
-def _patch_supersede(
-    monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection
-) -> None:
+def _patch_supersede(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) -> None:
     # Route calls conn.close() in finally — wrap with a no-op close so the
     # in-memory DB survives for test assertions read-back.
     class _NoCloseConn:
@@ -344,7 +342,9 @@ def test_supersede_carries_over_predicate_form(
     it on the new row (when not explicitly overridden in the call)."""
     conn = _make_conn()
     _patch_supersede(monkeypatch, conn)
-    target = _insert_with_predicate_form(conn, predicate_form="status(test:entity, active)")
+    target = _insert_with_predicate_form(
+        conn, predicate_form="status(test:entity, active)"
+    )
 
     body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target}
     result = _supersede_assertion_impl(body)
@@ -363,7 +363,9 @@ def test_supersede_drops_predicate_form_on_explicit_null(
     (intentional drop semantics — spec §7.3 clone-then-override)."""
     conn = _make_conn()
     _patch_supersede(monkeypatch, conn)
-    target = _insert_with_predicate_form(conn, predicate_form="status(test:entity, active)")
+    target = _insert_with_predicate_form(
+        conn, predicate_form="status(test:entity, active)"
+    )
 
     body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target, "predicate_form": None}
     result = _supersede_assertion_impl(body)

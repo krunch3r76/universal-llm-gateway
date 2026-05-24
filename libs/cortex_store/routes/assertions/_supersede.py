@@ -120,10 +120,20 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                 body.entity_id, body.predicate_form, body.claim, conn
             )
 
-        raw_pf = normalize_result.get("raw_predicate_form") if normalize_result else None
-        norm_dec = normalize_result.get("normalization_decision") if normalize_result else None
-        cand_fp = normalize_result.get("candidate_set_fingerprint") if normalize_result else None
-        norm_ver = normalize_result.get("normalizer_version") if normalize_result else None
+        raw_pf = (
+            normalize_result.get("raw_predicate_form") if normalize_result else None
+        )
+        norm_dec = (
+            normalize_result.get("normalization_decision") if normalize_result else None
+        )
+        cand_fp = (
+            normalize_result.get("candidate_set_fingerprint")
+            if normalize_result
+            else None
+        )
+        norm_ver = (
+            normalize_result.get("normalizer_version") if normalize_result else None
+        )
 
         entities = query(
             conn, "SELECT id FROM entities WHERE id = ?", (body.entity_id,)

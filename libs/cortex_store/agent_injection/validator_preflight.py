@@ -38,7 +38,9 @@ def preflight_validate(injection_packet: list[dict]) -> ValidationResult:
     if total_bytes > max_bytes:
         raise AgentInjectionAdmissionError(
             f"D.5 invariant 4: packet exceeds {max_bytes} bytes",
-            violations=[ViolationDetail(invariant=4, detail=f"packet_too_large:{total_bytes}")],
+            violations=[
+                ViolationDetail(invariant=4, detail=f"packet_too_large:{total_bytes}")
+            ],
         )
 
     for i, block in enumerate(injection_packet):
@@ -48,11 +50,20 @@ def preflight_validate(injection_packet: list[dict]) -> ValidationResult:
         # 1. Evidence envelope first
         if not any(
             rendered.startswith(tok)
-            for tok in ("[STRUCTURED_LOOKUP", "[CONTEXT_PROVISION", "[TEMPORAL_QUALIFIED", "[BELIEF_INJECTION")
+            for tok in (
+                "[STRUCTURED_LOOKUP",
+                "[CONTEXT_PROVISION",
+                "[TEMPORAL_QUALIFIED",
+                "[BELIEF_INJECTION",
+            )
         ):
             raise AgentInjectionAdmissionError(
                 "D.5 invariant 1: evidence envelope not first",
-                violations=[ViolationDetail(invariant=1, block_index=i, detail="envelope_not_first")],
+                violations=[
+                    ViolationDetail(
+                        invariant=1, block_index=i, detail="envelope_not_first"
+                    )
+                ],
             )
 
         # 2. Citation anchor mandatory: D.1/D.3/D.4 carry block["assertion_id"]; D.2 carries per-row assertion_id= in body
@@ -64,7 +75,11 @@ def preflight_validate(injection_packet: list[dict]) -> ValidationResult:
         if not has_anchor:
             raise AgentInjectionAdmissionError(
                 "D.5 invariant 2: missing citation anchor",
-                violations=[ViolationDetail(invariant=2, block_index=i, detail="missing_citation_anchor")],
+                violations=[
+                    ViolationDetail(
+                        invariant=2, block_index=i, detail="missing_citation_anchor"
+                    )
+                ],
             )
 
         # 3. No prose laundering
@@ -75,22 +90,44 @@ def preflight_validate(injection_packet: list[dict]) -> ValidationResult:
                 continue
             if s.startswith(("[", "|", "]", "#")):
                 continue
-            if s.startswith(("Field:", "Value:", "Claim:", "Reasoning:", "assertion_id=")):
+            if s.startswith(
+                ("Field:", "Value:", "Claim:", "Reasoning:", "assertion_id=")
+            ):
                 continue
             # markdown header or English sentence heuristic
-            if s.startswith(("#", "##")) or (s[0].isupper() and s.endswith(".") and "Field:" not in s and "Value:" not in s):
+            if s.startswith(("#", "##")) or (
+                s[0].isupper()
+                and s.endswith(".")
+                and "Field:" not in s
+                and "Value:" not in s
+            ):
                 raise AgentInjectionAdmissionError(
                     "D.5 invariant 3: prose laundering or header detected",
-                    violations=[ViolationDetail(invariant=3, block_index=i, detail="prose_sentence_or_header")],
+                    violations=[
+                        ViolationDetail(
+                            invariant=3,
+                            block_index=i,
+                            detail="prose_sentence_or_header",
+                        )
+                    ],
                 )
 
         # 4. Admission-gated truncation (per-D.2 checks + aggregate already done)
         if kind == "d2":
             if block.get("truncated"):
-                if block.get("cursor") is None or block.get("selection_strategy") == "all":
+                if (
+                    block.get("cursor") is None
+                    or block.get("selection_strategy") == "all"
+                ):
                     raise AgentInjectionAdmissionError(
                         "D.5 invariant 4: truncated D.2 block missing cursor or used default strategy",
-                        violations=[ViolationDetail(invariant=4, block_index=i, detail="truncation_violation")],
+                        violations=[
+                            ViolationDetail(
+                                invariant=4,
+                                block_index=i,
+                                detail="truncation_violation",
+                            )
+                        ],
                     )
 
         # 5. Content-hash integrity for D.2
@@ -99,17 +136,29 @@ def preflight_validate(injection_packet: list[dict]) -> ValidationResult:
             if not re.match(r"^sha256:[0-9a-f]{64}$", ch):
                 raise AgentInjectionAdmissionError(
                     "D.5 invariant 5: malformed content_hash",
-                    violations=[ViolationDetail(invariant=5, block_index=i, detail="hash_malformed")],
+                    violations=[
+                        ViolationDetail(
+                            invariant=5, block_index=i, detail="hash_malformed"
+                        )
+                    ],
                 )
             # recompute after stripping the hash line
             body_lines = rendered.splitlines()
-            no_hash = [ln for ln in body_lines if not re.match(r"^\s*\| content_hash:", ln)]
+            no_hash = [
+                ln for ln in body_lines if not re.match(r"^\s*\| content_hash:", ln)
+            ]
             body_wo = "\n".join(no_hash)
             recomputed = compute_d2_content_hash(body_wo)
             if recomputed != ch:
                 raise AgentInjectionAdmissionError(
                     "D.5 invariant 5: content_hash mismatch",
-                    violations=[ViolationDetail(invariant=5, block_index=i, detail="hash_mismatch")],
+                    violations=[
+                        ViolationDetail(
+                            invariant=5, block_index=i, detail="hash_mismatch"
+                        )
+                    ],
                 )
 
-    return ValidationResult(ok=True, packet_size_bytes=total_bytes, block_count=len(injection_packet))
+    return ValidationResult(
+        ok=True, packet_size_bytes=total_bytes, block_count=len(injection_packet)
+    )

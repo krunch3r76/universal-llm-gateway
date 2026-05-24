@@ -74,7 +74,7 @@ def _build_config_toml(
     stanzas and other host settings.  Strips any [mcp_servers.user-vortex*]
     sections from the host config and appends the dispatch-specific block,
     so the dispatch subprocess uses the correct bearer token and dispatch_id
-    while still being able to resolve xai/grok-4.3__effort_* model IDs.
+    while still being able to resolve any model stanzas from the host config.
 
     ∀ result: result contains all host [model.*] stanzas ∧
               result contains exactly one [mcp_servers.user-vortex] block ∧

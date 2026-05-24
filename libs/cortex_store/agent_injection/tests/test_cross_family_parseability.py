@@ -49,4 +49,6 @@ def test_cross_family_models_emit_parseable_citations():
     #
     # The 1.0b deliverable only lands the validator + the gated test skeleton.
     # Full wiring (skill router, §D.7 dispatch) is later.
-    pytest.skip("Live dispatch not wired in this 1.0b dispatch; test is documentation + gate only.")
+    pytest.skip(
+        "Live dispatch not wired in this 1.0b dispatch; test is documentation + gate only."
+    )

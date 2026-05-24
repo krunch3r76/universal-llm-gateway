@@ -35,7 +35,10 @@ def _mk_assertion(
 def test_finding_13_missing_assertion():
     # Plant a [assertion:99999] ; mock fetch to return None.
     text = "The event happened [assertion:99999] on Tuesday."
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=None):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=None,
+    ):
         res = validate_output(text)
     assert isinstance(res, OutputValidationResult)
     assert len(res.findings) == 1
@@ -49,7 +52,10 @@ def test_finding_13_missing_assertion():
 def test_finding_13_retired_superseded():
     text = "Per the record [assertion:123]."
     retired = _mk_assertion(123, superseded_by=456, valid_until="2025-01-01")
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=retired):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=retired,
+    ):
         res = validate_output(text)
     assert len(res.findings) == 1
     assert res.findings[0].kind == "output_citation_missing_assertion"
@@ -60,16 +66,27 @@ def test_finding_13_ledger_claim_without_citation():
     # ledger claim appears in text but no [assertion: ] within ±20
     text = "The total damages are $1,234,567. This is the key fact."
     ledger = [{"claim_text": "$1,234,567", "supporting_assertion_id": 77}]
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=None):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=None,
+    ):
         res = validate_output(text, ledger=ledger)
-    missing = [f for f in res.findings if f.kind == "output_citation_missing_assertion" and f.evidence.get("reason") == "ledger_claim_without_citation"]
+    missing = [
+        f
+        for f in res.findings
+        if f.kind == "output_citation_missing_assertion"
+        and f.evidence.get("reason") == "ledger_claim_without_citation"
+    ]
     assert len(missing) >= 1
 
 
 def test_finding_5_ext_verbatim_check_failed():
     text = 'The contract states "the sky is green" [assertion:42].'
     assertion = _mk_assertion(42, claim="the sky is blue", chunk_id=101)
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=assertion):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=assertion,
+    ):
         res = validate_output(text)
     vf = [f for f in res.findings if f.kind == "verbatim_check_failed"]
     assert len(vf) == 1
@@ -80,8 +97,13 @@ def test_finding_5_ext_verbatim_check_failed():
 
 def test_finding_14_high_cardinality():
     # 9 supporting for one claim
-    ledger = [{"claim_text": "X caused Y", "supporting_assertion_id": i} for i in range(10, 19)]
-    res = validate_output("irrelevant text here", ledger=ledger, high_cardinality_threshold=8)
+    ledger = [
+        {"claim_text": "X caused Y", "supporting_assertion_id": i}
+        for i in range(10, 19)
+    ]
+    res = validate_output(
+        "irrelevant text here", ledger=ledger, high_cardinality_threshold=8
+    )
     hc = [f for f in res.findings if f.kind == "output_citation_high_cardinality"]
     assert len(hc) == 1
     assert hc[0].severity == "medium"
@@ -91,7 +113,10 @@ def test_finding_14_high_cardinality():
 def test_finding_15_grade_laundering():
     text = "The analysis shows that the defendant is liable [assertion:55]."
     inf = _mk_assertion(55, derivation_type="inference")
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=inf):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=inf,
+    ):
         res = validate_output(text)
     gl = [f for f in res.findings if f.kind == "grade_laundering_in_output"]
     assert len(gl) == 1
@@ -103,7 +128,10 @@ def test_finding_16_temporal_omitted():
     text = "The policy took effect [assertion:88] and coverage began."
     # no ISO date in surrounding para
     timed = _mk_assertion(88, valid_from="2025-03-01")
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=timed):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=timed,
+    ):
         res = validate_output(text)
     to = [f for f in res.findings if f.kind == "temporal_qualification_omitted"]
     assert len(to) == 1
@@ -117,7 +145,10 @@ The key fact is here [assertion:1].
 ## References
 - See also [assertion:2]
 """
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=_mk_assertion(1)):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=_mk_assertion(1),
+    ):
         res = validate_output(text, domain_tag="legal_brief")
     orphans = [f for f in res.findings if f.kind == "bibliography_orphan"]
     # body has 1, bib has 2 -> two orphans
@@ -131,7 +162,10 @@ def test_review_required_brief_domain():
     # clean response, no findings, but domain_tag -> True
     text = "All good [assertion:1]."
     assertion = _mk_assertion(1)
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=assertion):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=assertion,
+    ):
         res = validate_output(text, domain_tag="demand_letter")
     assert res.review_required is True
     assert res.ok is True  # no findings
@@ -140,7 +174,10 @@ def test_review_required_brief_domain():
 
 def test_review_required_high_severity():
     text = "Bad [assertion:99999]."
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", return_value=None):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        return_value=None,
+    ):
         res = validate_output(text, domain_tag=None)
     assert res.review_required is True
     assert any(f.severity == "high" for f in res.findings)
@@ -152,6 +189,7 @@ def test_validate_output_parameter_name():
     assert "response_text" in sig.parameters
     # also verify source contains the token (per work-order intent)
     import pathlib
+
     src = pathlib.Path(__file__).parent.parent / "validator_output.py"
     content = src.read_text(encoding="utf-8")
     assert "def validate_output(" in content

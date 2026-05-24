@@ -8,7 +8,6 @@ import pytest
 
 from grokbuild.constants import (
     _TIER_PRESETS,
-    _XAI_GROK43_EFFORT_STANZA,
     DEFAULT_TIMEOUT_SECONDS,
     default_model_for_tier,
 )
@@ -18,7 +17,7 @@ from grokbuild.test_support import runner_spec
 
 
 def test_resolve_params_preset_fields_all_tiers() -> None:
-    """All tier presets carry default_model='xai/grok-4.3' plus the expected
+    """All tier presets carry default_model='grok-4.3' plus the expected
     effort scalars; verifies the _TierPreset field shape did not regress
     when default_model was added alongside reasoning_effort/effort, and
     that _resolve_params copies the effort scalars through correctly."""
@@ -29,7 +28,7 @@ def test_resolve_params_preset_fields_all_tiers() -> None:
         "max": ("xhigh", "max"),
     }
     for tier, (eff_r, eff) in expected.items():
-        assert _TIER_PRESETS[tier].default_model == "xai/grok-4.3"
+        assert _TIER_PRESETS[tier].default_model == "grok-4.3"
         assert _TIER_PRESETS[tier].reasoning_effort == eff_r
         assert _TIER_PRESETS[tier].effort == eff
 
@@ -77,8 +76,8 @@ def test_resolve_params_timeout_zero_means_unlimited() -> None:
 
 
 def test_default_model_for_tier_all_presets() -> None:
-    for tier, stanza in _XAI_GROK43_EFFORT_STANZA.items():
-        assert default_model_for_tier(tier) == stanza
+    for tier in ("quick", "balanced", "thorough", "max"):
+        assert default_model_for_tier(tier) == "grok-4.3"
 
 
 def test_dispatch_op_model_none_becomes_tier_default() -> None:
@@ -96,10 +95,11 @@ def test_dispatch_op_model_none_becomes_tier_default() -> None:
     )
     if model is None:
         model = _TIER_PRESETS[resolved.tier].default_model
-    assert model == "xai/grok-4.3"
+    assert model == "grok-4.3"
 
 
-def test_build_argv_tier_balanced_stanza_after_model_resolve() -> None:
+def test_build_argv_tier_balanced_model_after_resolve() -> None:
+    """Tier preset resolves to bare grok-4.3; --reasoning-effort carries the effort."""
     resolved = _resolve_params(
         tier="balanced",
         reasoning_effort=None,
@@ -119,7 +119,9 @@ def test_build_argv_tier_balanced_stanza_after_model_resolve() -> None:
     )
     argv = _build_argv(spec)
     assert "--model" in argv
-    assert argv[argv.index("--model") + 1] == _XAI_GROK43_EFFORT_STANZA["balanced"]
+    assert argv[argv.index("--model") + 1] == "grok-4.3"
+    assert "--reasoning-effort" in argv
+    assert argv[argv.index("--reasoning-effort") + 1] == "medium"
 
 
 def test_build_argv_explicit_grok_build_unchanged() -> None:

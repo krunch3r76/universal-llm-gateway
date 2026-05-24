@@ -34,6 +34,7 @@ FROM_CLAUSE = """
     LEFT JOIN entities te ON te.id = r.to_entity
 """
 
+
 def fetch_relationships(
     source_id: str | None = None,
     type_id: str | None = None,

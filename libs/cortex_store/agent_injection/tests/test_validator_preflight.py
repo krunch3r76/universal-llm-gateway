@@ -14,10 +14,20 @@ from ..validator_preflight import ValidationResult, preflight_validate
 
 def _d1_block(assertion_id: int = 1, claim: str = "x") -> dict:
     rendered = f"[STRUCTURED_LOOKUP | source: assertion {assertion_id} | confidence: 0.9 | valid_from: 2025 | checked: 2026]\nField: f\nValue: {claim}\n[/STRUCTURED_LOOKUP]\n"
-    return {"kind": "d1", "rendered": rendered, "assertion_id": assertion_id, "grade": "structural"}
+    return {
+        "kind": "d1",
+        "rendered": rendered,
+        "assertion_id": assertion_id,
+        "grade": "structural",
+    }
 
 
-def _d2_block(truncated: bool = False, cursor: str | None = None, strategy: str = "all", content_hash: str | None = None) -> dict:
+def _d2_block(
+    truncated: bool = False,
+    cursor: str | None = None,
+    strategy: str = "all",
+    content_hash: str | None = None,
+) -> dict:
     rows = "  assertion_id=42 predicate=p claim=c confidence=0.5 valid_from=2025"
     base = f"""[CONTEXT_PROVISION
   | entity: e:1
@@ -73,7 +83,9 @@ def test_preflight_invariant_2_missing_citation():
     bad = _d1_block()
     # corrupt both the dict key and the rendered patterns (D1 uses "source: assertion NNN")
     bad["assertion_id"] = None
-    bad["rendered"] = re.sub(r"source: assertion \d+", "source: assertion ???", bad["rendered"])
+    bad["rendered"] = re.sub(
+        r"source: assertion \d+", "source: assertion ???", bad["rendered"]
+    )
     bad["rendered"] = bad["rendered"].replace("assertion_id=1", "no_id_here")
     with pytest.raises(AgentInjectionAdmissionError) as exc:
         preflight_validate([bad])
@@ -84,7 +96,9 @@ def test_preflight_invariant_2_missing_citation():
 def test_preflight_invariant_3_prose_laundering():
     bad = _d1_block()
     # insert a sentence line after meta
-    bad["rendered"] = bad["rendered"].replace("Value: x", "Value: x\nThis is a sentence that should not be here.")
+    bad["rendered"] = bad["rendered"].replace(
+        "Value: x", "Value: x\nThis is a sentence that should not be here."
+    )
     with pytest.raises(AgentInjectionAdmissionError) as exc:
         preflight_validate([bad])
     assert exc.value.violations[0].invariant == 3

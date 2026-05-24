@@ -67,7 +67,9 @@ _DEADLINES_SQL = """
 """
 
 
-def _resolved_assertion_ids(conn: sqlite3.Connection, deadline_ids: list[str]) -> frozenset[str]:
+def _resolved_assertion_ids(
+    conn: sqlite3.Connection, deadline_ids: list[str]
+) -> frozenset[str]:
     """Return set of deadline_ids that have ≥1 confirmed RESOLVED assertion.
 
     Belt-and-suspenders: catches ghosts where outcome attribute was never set

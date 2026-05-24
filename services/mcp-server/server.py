@@ -55,9 +55,6 @@ from tools.cortex_named_tools import register_cortex_named_tools
 from tools.events import register_event_tools
 from tools.extract_directory import register_extract_directory_tools
 from tools.extract_document import register_extract_document_tools
-from tools.promote_document_to_evidence import (
-    register_promote_document_to_evidence_tools,
-)
 from tools.filesystem import register_filesystem_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
@@ -71,6 +68,9 @@ from tools.model_status import register_model_status_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools
+from tools.promote_document_to_evidence import (
+    register_promote_document_to_evidence_tools,
+)
 from tools.quality import register_quality_tools
 from tools.rag import register_rag_tools
 from tools.rag_articles import register_rag_article_tools

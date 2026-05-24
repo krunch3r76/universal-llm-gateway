@@ -55,16 +55,21 @@ See prior art [assertion:101].
 
     # ledger for 13c (claim without cite nearby) + 14 (9 supports)
     ledger = [
-        {"claim_text": "$9,999,999", "supporting_assertion_id": 5000 + i} for i in range(9)
+        {"claim_text": "$9,999,999", "supporting_assertion_id": 5000 + i}
+        for i in range(9)
     ]
     # one more for the missing-cite detection (the $9,999,999 already in text but we use different claim for 13c to avoid overlap)
-    ledger.append({"claim_text": "separate un-cited fact 12345", "supporting_assertion_id": 6000})
+    ledger.append(
+        {"claim_text": "separate un-cited fact 12345", "supporting_assertion_id": 6000}
+    )
 
     def fake_fetch(aid: int):
         if aid == 999:
             return None
         if aid == 10:
-            return _mk_assertion_for_brief(10, claim="the term began on the second", chunk_id=42)
+            return _mk_assertion_for_brief(
+                10, claim="the term began on the second", chunk_id=42
+            )
         if aid == 20:
             return _mk_assertion_for_brief(20, derivation_type="inference")
         if aid == 30:
@@ -75,7 +80,10 @@ See prior art [assertion:101].
             return _mk_assertion_for_brief(101)
         return _mk_assertion_for_brief(aid)
 
-    with patch("cortex_store.agent_injection.validator_output._fetch_assertion", side_effect=fake_fetch):
+    with patch(
+        "cortex_store.agent_injection.validator_output._fetch_assertion",
+        side_effect=fake_fetch,
+    ):
         res = validate_output(text, ledger=ledger, domain_tag="legal_brief")
 
     assert res.review_required is True

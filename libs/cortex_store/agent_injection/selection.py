@@ -49,9 +49,12 @@ def _confidence_key(item: dict[str, Any]) -> float:
     if score is not None:
         return float(score)
     conf = (item.get("confidence") or "hypothesized").lower()
-    return {"confirmed": 1.0, "believed": 0.75, "suspected": 0.5, "hypothesized": 0.25}.get(
-        conf, 0.0
-    )
+    return {
+        "confirmed": 1.0,
+        "believed": 0.75,
+        "suspected": 0.5,
+        "hypothesized": 0.25,
+    }.get(conf, 0.0)
 
 
 def select(
@@ -109,11 +112,7 @@ def select(
     if strategy == "temporal_window":
         since = _coerce_dt(params.get("since"))
         until = _coerce_dt(params.get("until") or datetime.max)
-        out = [
-            it
-            for it in items
-            if since <= _observed_key(it) <= until
-        ]
+        out = [it for it in items if since <= _observed_key(it) <= until]
         for it in out:
             it.setdefault("_selection", {})["mode"] = "temporal_window"
         return out
@@ -130,11 +129,14 @@ def select(
     if strategy == "set_aggregation":
         set_entity_id = params.get("set_entity_id") or params.get("set_id")
         if not set_entity_id or not set_entity_id.startswith("set:"):
-            raise SelectionError(f"set_aggregation requires set: entity_id, got: {set_entity_id!r}")
+            raise SelectionError(
+                f"set_aggregation requires set: entity_id, got: {set_entity_id!r}"
+            )
 
         # Phase 1.0b: traverse has_member edges, return member assertions.
         # Phase 1.5 will add aggregate-claim synthesis on top of this.
         from ..relationship_sql import fetch_relationships
+
         member_relationships = fetch_relationships(
             source_id=set_entity_id,
             type_id="has_member",
@@ -145,7 +147,10 @@ def select(
         out: list[dict[str, Any]] = []
         seen: set[Any] = set()
         for item in items:
-            if item.get("entity_id") in member_entity_ids and item.get("id") not in seen:
+            if (
+                item.get("entity_id") in member_entity_ids
+                and item.get("id") not in seen
+            ):
                 out.append(item)
                 seen.add(item.get("id"))
 

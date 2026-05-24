@@ -14,9 +14,9 @@ from universal_logging import get_logger
 
 from .._file_helpers import (
     BINARY_EXTENSIONS,
-    is_binary_by_magic,
     build_binary_read_result,
     extract_text_content,
+    is_binary_by_magic,
 )
 from .tasks_path_policy import TASKS_ROOT, safe_tasks_path
 

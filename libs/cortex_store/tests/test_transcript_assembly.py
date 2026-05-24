@@ -24,9 +24,7 @@ def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
 
 
 @pytest.fixture()
-def transcripts_root(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def transcripts_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "agent-transcripts"
     root.mkdir()
     monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(root))
@@ -84,9 +82,7 @@ def test_assemble_verbatim_md_basic(transcripts_root: Path) -> None:
         [
             {
                 "role": "user",
-                "message": {
-                    "content": [{"type": "text", "text": "Hello there"}]
-                },
+                "message": {"content": [{"type": "text", "text": "Hello there"}]},
             },
             {
                 "role": "assistant",
@@ -99,9 +95,7 @@ def test_assemble_verbatim_md_basic(transcripts_root: Path) -> None:
             },
             {
                 "role": "user",
-                "message": {
-                    "content": [{"type": "text", "text": "Second turn"}]
-                },
+                "message": {"content": [{"type": "text", "text": "Second turn"}]},
             },
             {
                 "role": "assistant",
@@ -136,9 +130,7 @@ def test_assemble_verbatim_md_merges_tool_result_user_records(
             },
             {
                 "role": "assistant",
-                "message": {
-                    "content": [{"type": "tool_use", "name": "shell"}]
-                },
+                "message": {"content": [{"type": "tool_use", "name": "shell"}]},
             },
             {
                 "role": "user",
@@ -162,9 +154,7 @@ def test_assemble_verbatim_md_merges_tool_result_user_records(
 
 def test_compose_full_transcript_concatenates_layers() -> None:
     verbatim = "# Transcript: cursor-2026-05-16-1820\n\n## Turn 1\n### User\nhi\n"
-    summary = (
-        "## Session Summary\n\n**Decisions:** none\n**Journal:** cursor-2026-05-16-1820\n"
-    )
+    summary = "## Session Summary\n\n**Decisions:** none\n**Journal:** cursor-2026-05-16-1820\n"
     full = compose_full_transcript(verbatim, summary)
     assert full.startswith("# Transcript:")
     assert "## Session Summary" in full
@@ -182,6 +172,8 @@ def test_compute_text_content_hash_deterministic() -> None:
     assert compute_text_content_hash("x") != compute_text_content_hash("y")
 
 
-def test_transcripts_root_default_when_env_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transcripts_root_default_when_env_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", raising=False)
     assert ta._transcripts_root().name == "agent-transcripts"

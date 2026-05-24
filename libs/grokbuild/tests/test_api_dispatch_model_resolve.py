@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from grokbuild.api_dispatch import api_dispatch_op
-from grokbuild.constants import _XAI_GROK43_EFFORT_STANZA, default_model_for_tier
+from grokbuild.constants import default_model_for_tier
 
 
 @pytest.mark.asyncio
@@ -17,6 +17,7 @@ async def test_api_dispatch_balanced_tier_resolves_effort_medium() -> None:
 
     async def _post(_path: str, *, json: dict[str, Any]) -> MagicMock:
         captured["model"] = json["model"]
+        captured["reasoning"] = json.get("reasoning")
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
@@ -41,8 +42,9 @@ async def test_api_dispatch_balanced_tier_resolves_effort_medium() -> None:
         )
 
     assert envelope["status"] == "completed"
-    assert captured["model"] == _XAI_GROK43_EFFORT_STANZA["balanced"]
-    assert envelope["metadata"]["model"] == "xai/grok-4.3"
+    assert captured["model"] == "grok-4.3"
+    assert captured["reasoning"] == {"effort": "medium"}
+    assert envelope["metadata"]["model"] == "grok-4.3"
 
 
 @pytest.mark.asyncio
@@ -51,6 +53,7 @@ async def test_api_dispatch_max_tier_resolves_effort_xhigh() -> None:
 
     async def _post(_path: str, *, json: dict[str, Any]) -> MagicMock:
         captured["model"] = json["model"]
+        captured["reasoning"] = json.get("reasoning")
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
@@ -75,16 +78,54 @@ async def test_api_dispatch_max_tier_resolves_effort_xhigh() -> None:
         )
 
     assert envelope["status"] == "completed"
-    assert captured["model"] == _XAI_GROK43_EFFORT_STANZA["max"]
-    assert envelope["metadata"]["model"] == "xai/grok-4.3"
-    assert default_model_for_tier("max") == "xai/grok-4.3__effort_xhigh"
+    assert captured["model"] == "grok-4.3"
+    assert captured["reasoning"] == {"effort": "xhigh"}
+    assert envelope["metadata"]["model"] == "grok-4.3"
+    assert default_model_for_tier("max") == "grok-4.3"
 
 
 @pytest.mark.asyncio
-async def test_api_dispatch_events_carry_effective_model_stanza(
+async def test_api_dispatch_explicit_grok43_model_still_injects_reasoning_effort() -> (
+    None
+):
+    captured: dict[str, Any] = {}
+
+    async def _post(_path: str, *, json: dict[str, Any]) -> MagicMock:
+        captured["model"] = json["model"]
+        captured["reasoning"] = json.get("reasoning")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        return resp
+
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=_post)
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "grokbuild.api_dispatch.make_async_client",
+        return_value=client,
+    ):
+        envelope = await api_dispatch_op(
+            cwd="/tmp",
+            prompt="x",
+            system_context=None,
+            model="grok-4.3",
+            session_id=None,
+            tier="balanced",
+        )
+
+    assert envelope["status"] == "completed"
+    assert captured["model"] == "grok-4.3"
+    assert captured["reasoning"] == {"effort": "medium"}
+
+
+@pytest.mark.asyncio
+async def test_api_dispatch_events_carry_model(
     event_log: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    """A2: apidispatch.* events expose routing stanza as effective_model; model is base."""
+    """apidispatch.* events carry model=grok-4.3; model and effective_model are equal."""
 
     async def _post(_path: str, *, json: dict[str, Any]) -> MagicMock:
         resp = MagicMock()
@@ -113,8 +154,8 @@ async def test_api_dispatch_events_carry_effective_model_stanza(
 
     called = [(s, p) for s, p in event_log if s == "mcp.grokbuild.apidispatch.called"]
     assert len(called) == 1
-    assert called[0][1]["model"] == "xai/grok-4.3"
-    assert called[0][1]["effective_model"] == _XAI_GROK43_EFFORT_STANZA["balanced"]
+    assert called[0][1]["model"] == "grok-4.3"
+    assert called[0][1]["effective_model"] == "grok-4.3"
 
 
 @pytest.mark.asyncio
@@ -183,14 +224,14 @@ async def test_api_dispatch_emits_called_and_completed_with_usage(
 
     assert called[0][1]["dispatch_id"] == "evt-1"
     assert called[0][1]["tier"] == "max"
-    assert called[0][1]["model"] == "xai/grok-4.3"
-    assert called[0][1]["effective_model"] == _XAI_GROK43_EFFORT_STANZA["max"]
+    assert called[0][1]["model"] == "grok-4.3"
+    assert called[0][1]["effective_model"] == "grok-4.3"
 
     payload = completed[0][1]
     assert payload["dispatch_id"] == "evt-1"
     assert payload["tier"] == "max"
-    assert payload["model"] == "xai/grok-4.3"
-    assert payload["effective_model"] == _XAI_GROK43_EFFORT_STANZA["max"]
+    assert payload["model"] == "grok-4.3"
+    assert payload["effective_model"] == "grok-4.3"
     assert payload["prompt_tokens"] == 123
     assert payload["completion_tokens"] == 45
     assert payload["total_tokens"] == 168
@@ -214,7 +255,9 @@ async def test_api_dispatch_bad_tier_emits_rejected_event(
         dispatch_id="evt-2",
     )
 
-    rejected = [(s, p) for s, p in event_log if s == "mcp.grokbuild.apidispatch.rejected"]
+    rejected = [
+        (s, p) for s, p in event_log if s == "mcp.grokbuild.apidispatch.rejected"
+    ]
     called = [(s, p) for s, p in event_log if s == "mcp.grokbuild.apidispatch.called"]
 
     assert len(rejected) == 1

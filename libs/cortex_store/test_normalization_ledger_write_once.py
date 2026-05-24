@@ -1,4 +1,5 @@
 """v1.3.1 write-once: PATCH does not mutate ledger (enforced by AssertionUpdate lacking the fields)."""
+
 from __future__ import annotations
 
 from cortex_store.models.assertions import AssertionItem, AssertionUpdate

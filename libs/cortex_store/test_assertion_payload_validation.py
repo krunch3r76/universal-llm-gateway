@@ -55,5 +55,3 @@ def test_update_assertion_impl_maps_payload_validation_to_422() -> None:
         _update_assertion_impl(1, {"confidence": "not_a_valid_confidence_value"})
 
     _assert_payload_422(exc_info.value)
-
-

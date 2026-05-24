@@ -8,7 +8,9 @@ from pathlib import Path
 
 import pytest
 
-_MIG_PATH = Path(__file__).parent / "migrations" / "039_normalization_decision_ledger.py"
+_MIG_PATH = (
+    Path(__file__).parent / "migrations" / "039_normalization_decision_ledger.py"
+)
 _spec = importlib.util.spec_from_file_location(
     "migration_039_normalization_decision_ledger", _MIG_PATH
 )
@@ -47,7 +49,8 @@ def test_039_migration_adds_columns_and_indices(conn: sqlite3.Connection) -> Non
 
     # Indices exist
     idx_names = {
-        r[0] for r in conn.execute(
+        r[0]
+        for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_assertions_%'"
         ).fetchall()
     }
@@ -67,6 +70,8 @@ def test_pre_ledger_rows_remain_null(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
     migration_039.migrate(conn)
-    row = conn.execute("SELECT * FROM assertions WHERE entity_id='person:old'").fetchone()
+    row = conn.execute(
+        "SELECT * FROM assertions WHERE entity_id='person:old'"
+    ).fetchone()
     assert row["raw_predicate_form"] is None
     assert row["normalization_decision"] is None

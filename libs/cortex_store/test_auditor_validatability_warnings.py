@@ -486,10 +486,7 @@ def test_check3_curly_single_quotes_are_recognised() -> None:
 
 def test_check3_guillemets_are_recognised() -> None:
     # « … » — French guillemets. Pinned for the same reason.
-    claim = (
-        "The footer reads: «Amended by Stats. 2024, Ch. 922, "
-        "Sec. 7.» (verbatim)."
-    )
+    claim = "The footer reads: «Amended by Stats. 2024, Ch. 922, Sec. 7.» (verbatim)."
     w = check_confirmed_validatability(
         confidence="confirmed",
         derivation_type="direct_observation",
@@ -510,9 +507,9 @@ def test_auditor_warnings_carry_category_field() -> None:
         claim="No quoted source text.",
     )
     assert w, "expected at least one warning to fire"
-    assert all(
-        entry.get("category") == "auditor" for entry in w
-    ), f"all auditor warnings must carry category='auditor'; got {w!r}"
+    assert all(entry.get("category") == "auditor" for entry in w), (
+        f"all auditor warnings must carry category='auditor'; got {w!r}"
+    )
 
 
 def test_check5_short_key_substring_no_longer_false_suppresses(tmp_path: Path) -> None:
@@ -539,7 +536,9 @@ def test_check5_short_key_substring_no_longer_false_suppresses(tmp_path: Path) -
     assert any(
         f["kind"] == "confirmed_attribute_no_assertion" and "date" in f["subject"]
         for f in findings
-    ), "word-boundary scan must not treat `candidate` as a reference to attribute `date`"
+    ), (
+        "word-boundary scan must not treat `candidate` as a reference to attribute `date`"
+    )
 
 
 def test_check5_short_key_actual_reference_still_clean(tmp_path: Path) -> None:

@@ -34,7 +34,9 @@ def _conn() -> sqlite3.Connection:
     return conn
 
 
-def _insert(conn: sqlite3.Connection, eid: str, name: str, etype: str = "agent_skill") -> None:
+def _insert(
+    conn: sqlite3.Connection, eid: str, name: str, etype: str = "agent_skill"
+) -> None:
     conn.execute(
         "INSERT INTO entities (id, type, name, status, workflow_state, created_at) "
         "VALUES (?, ?, ?, 'confirmed', NULL, '2026-05-19T00:00:00Z')",
@@ -101,7 +103,6 @@ def test_query_absent_returns_all() -> None:
 
     result = list_entities_impl(conn)
     assert len(result["items"]) == 2
-
 
 
 def test_query_composes_with_workflow_state() -> None:

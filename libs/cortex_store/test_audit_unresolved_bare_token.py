@@ -44,7 +44,13 @@ def test_detector_emits_finding_for_collision_refused() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint) VALUES (?, ?, ?, ?, ?)",
-        (42, "decision:test", "status(fred_mansubi, ready)", "collision_refused", "abc123def456"),
+        (
+            42,
+            "decision:test",
+            "status(fred_mansubi, ready)",
+            "collision_refused",
+            "abc123def456",
+        ),
     )
     findings = detect_unresolved_bare_token_in_predicate_form(conn)
     assert len(findings) == 1, f"expected 1 finding, got {len(findings)}: {findings}"
@@ -61,7 +67,13 @@ def test_detector_emits_finding_for_alias_collision_refused() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint) VALUES (?, ?, ?, ?, ?)",
-        (7, "decision:test", "status(mary_mansubi, ready)", "alias_collision_refused", "deadbeefcafebabe"),
+        (
+            7,
+            "decision:test",
+            "status(mary_mansubi, ready)",
+            "alias_collision_refused",
+            "deadbeefcafebabe",
+        ),
     )
     findings = detect_unresolved_bare_token_in_predicate_form(conn)
     assert len(findings) == 1
@@ -74,7 +86,14 @@ def test_detector_skips_superseded_rows() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint, superseded_by) VALUES (?, ?, ?, ?, ?, ?)",
-        (99, "decision:test", "status(fred_mansubi, ready)", "collision_refused", "abc", 100),
+        (
+            99,
+            "decision:test",
+            "status(fred_mansubi, ready)",
+            "collision_refused",
+            "abc",
+            100,
+        ),
     )
     findings = detect_unresolved_bare_token_in_predicate_form(conn)
     assert findings == [], "superseded rows must be skipped"
@@ -95,6 +114,8 @@ def test_detector_subject_filter() -> None:
     )
     all_findings = detect_unresolved_bare_token_in_predicate_form(conn)
     assert len(all_findings) == 2
-    a_findings = detect_unresolved_bare_token_in_predicate_form(conn, subject="person:a")
+    a_findings = detect_unresolved_bare_token_in_predicate_form(
+        conn, subject="person:a"
+    )
     assert len(a_findings) == 1
     assert "1" in a_findings[0]["subject"]

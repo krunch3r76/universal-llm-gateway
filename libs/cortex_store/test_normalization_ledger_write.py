@@ -10,7 +10,9 @@ from predicate_form.entity_resolve import DBEntityResolver
 
 def _seed_entities(conn: sqlite3.Connection, ids: list[str]) -> None:
     conn.executescript("CREATE TABLE IF NOT EXISTS entities (id TEXT PRIMARY KEY);")
-    conn.executemany("INSERT OR IGNORE INTO entities (id) VALUES (?)", [(i,) for i in ids])
+    conn.executemany(
+        "INSERT OR IGNORE INTO entities (id) VALUES (?)", [(i,) for i in ids]
+    )
     conn.commit()
 
 
@@ -18,7 +20,10 @@ def test_normalize_returns_ledger_fields_on_single() -> None:
     conn = sqlite3.connect(":memory:")
     _seed_entities(conn, ["person:camelia-mahmoudi"])
     res = normalize_predicate_domain(
-        "person:test", "status(camelia_mahmoudi, ready)", "claim", resolver=DBEntityResolver(conn)
+        "person:test",
+        "status(camelia_mahmoudi, ready)",
+        "claim",
+        resolver=DBEntityResolver(conn),
     )
     assert "raw_predicate_form" in res
     assert res["normalization_decision"] in ("resolved_single", "no_match")

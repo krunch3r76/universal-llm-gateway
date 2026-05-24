@@ -98,6 +98,7 @@ def test_materialize_d4_happy(mock_conn, mock_query):
 @patch("cortex_store.agent_injection.materializers.cortex_conn")
 def test_materialize_d2_happy_and_roundtrip(mock_conn, mock_query):
     """D.2 content-hash ROUND-TRIP test (load-bearing)."""
+
     # entity exists + 3 active assertions
     def q_side_effect(conn, sql, params):
         if "FROM entities" in sql:
@@ -109,9 +110,12 @@ def test_materialize_d2_happy_and_roundtrip(mock_conn, mock_query):
                 _mk_row(id=3, claim="C", confidence_score=0.9, predicate_form="p3"),
             ]
         return []
+
     mock_query.side_effect = q_side_effect
 
-    res = materialize_d2("case:42", selection_strategy="highest_confidence_n", selection_params={"n": 2})
+    res = materialize_d2(
+        "case:42", selection_strategy="highest_confidence_n", selection_params={"n": 2}
+    )
     assert res["kind"] == "d2"
     assert res["included_count"] == 2
     assert res["total_active_count"] == 3
@@ -122,10 +126,14 @@ def test_materialize_d2_happy_and_roundtrip(mock_conn, mock_query):
     rendered = res["rendered"]
     # strip hash line exactly as materializer does
     body_lines = rendered.splitlines()
-    no_hash = [ln for ln in body_lines if not re.match(r"^\s*\| (content_hash|pulled_at):", ln)]
+    no_hash = [
+        ln for ln in body_lines if not re.match(r"^\s*\| (content_hash|pulled_at):", ln)
+    ]
     body_wo = "\n".join(no_hash)
     recomputed = compute_d2_content_hash(body_wo)
-    assert recomputed == res["content_hash"], "D.2 hash round-trip failed — indicates broken replace-hash pattern"
+    assert recomputed == res["content_hash"], (
+        "D.2 hash round-trip failed — indicates broken replace-hash pattern"
+    )
 
 
 @patch("cortex_store.agent_injection.materializers.query")
@@ -135,6 +143,7 @@ def test_materialize_d2_overflow_default_raises(mock_conn, mock_query):
         if "entities" in sql:
             return [{}]
         return [_mk_row(id=i) for i in range(5)]
+
     mock_query.side_effect = q_side_effect
 
     with pytest.raises(AgentInjectionAdmissionError) as exc:
@@ -148,6 +157,7 @@ def test_materialize_d2_overflow_default_raises(mock_conn, mock_query):
 def test_materialize_d3_follows_superseded_chain(mock_conn, mock_query):
     # original superseded, points to 200 which is active
     calls = []
+
     def q_side_effect(conn, sql, params):
         calls.append(params[0] if params else None)
         if params and params[0] == 100:
@@ -155,6 +165,7 @@ def test_materialize_d3_follows_superseded_chain(mock_conn, mock_query):
         if params and params[0] == 200:
             return [_mk_row(id=200, superseded_by=None, claim="current claim")]
         return []
+
     mock_query.side_effect = q_side_effect
 
     res = materialize_d3(100)

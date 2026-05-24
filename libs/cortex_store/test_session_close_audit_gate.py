@@ -48,7 +48,14 @@ def test_empty_session_id_returns_empty_list() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint, evidence) VALUES (?, ?, ?, ?, ?, ?)",
-        (1, "person:a", "raw", "collision_refused", "fp", "evidence [web-2026-05-17-0534] etc"),
+        (
+            1,
+            "person:a",
+            "raw",
+            "collision_refused",
+            "fp",
+            "evidence [web-2026-05-17-0534] etc",
+        ),
     )
     out = _audit_normalization_refusals_for_session(conn, "")
     assert out == [], "empty session_id must not match rows"
@@ -61,18 +68,32 @@ def test_session_with_refused_writes_returns_findings() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint, evidence) VALUES (?, ?, ?, ?, ?, ?)",
-        (1, "decision:test", "status(fred_mansubi, ready)", "collision_refused", "fp1",
-         f"Session [{session}] writeup"),
+        (
+            1,
+            "decision:test",
+            "status(fred_mansubi, ready)",
+            "collision_refused",
+            "fp1",
+            f"Session [{session}] writeup",
+        ),
     )
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint, evidence) VALUES (?, ?, ?, ?, ?, ?)",
-        (2, "decision:other", "status(person:foo, ready)", "resolved_single", "fp2",
-         f"Session [{session}] writeup"),
+        (
+            2,
+            "decision:other",
+            "status(person:foo, ready)",
+            "resolved_single",
+            "fp2",
+            f"Session [{session}] writeup",
+        ),
     )
     out = _audit_normalization_refusals_for_session(conn, session)
     assert isinstance(out, list)
-    assert len(out) == 1, f"expected only the collision_refused row to surface, got {out}"
+    assert len(out) == 1, (
+        f"expected only the collision_refused row to surface, got {out}"
+    )
 
 
 def test_different_session_does_not_match() -> None:
@@ -81,8 +102,14 @@ def test_different_session_does_not_match() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint, evidence) VALUES (?, ?, ?, ?, ?, ?)",
-        (1, "decision:test", "raw", "collision_refused", "fp",
-         "Session [claude-web-2026-05-16-1234] writeup"),
+        (
+            1,
+            "decision:test",
+            "raw",
+            "collision_refused",
+            "fp",
+            "Session [claude-web-2026-05-16-1234] writeup",
+        ),
     )
     out = _audit_normalization_refusals_for_session(conn, "claude-web-2026-05-17-0534")
     assert out == []
@@ -95,7 +122,15 @@ def test_superseded_refused_rows_skipped() -> None:
     conn.execute(
         "INSERT INTO assertions (id, entity_id, raw_predicate_form, normalization_decision, "
         "candidate_set_fingerprint, evidence, superseded_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (1, "decision:test", "raw", "collision_refused", "fp", f"Session [{session}]", 2),
+        (
+            1,
+            "decision:test",
+            "raw",
+            "collision_refused",
+            "fp",
+            f"Session [{session}]",
+            2,
+        ),
     )
     out = _audit_normalization_refusals_for_session(conn, session)
     assert out == []
@@ -109,7 +144,9 @@ def test_helper_never_raises_on_bad_data() -> None:
     # The work-order's contract is "never blocks close" so the helper must
     # not propagate exceptions. If this test fails, the helper needs a try/except.
     try:
-        out = _audit_normalization_refusals_for_session(conn, "claude-web-2026-05-17-0534")
+        out = _audit_normalization_refusals_for_session(
+            conn, "claude-web-2026-05-17-0534"
+        )
         assert out == []
     except sqlite3.OperationalError:
         # Acceptable in v1.3.1 — the helper assumes migration 039 has run.

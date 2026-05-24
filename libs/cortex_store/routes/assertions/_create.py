@@ -182,10 +182,20 @@ def create_assertion(
             )
 
         # v1.3.1 ledger values (write-once, None when no predicate_form seeded)
-        raw_pf = normalize_result.get("raw_predicate_form") if normalize_result else None
-        norm_dec = normalize_result.get("normalization_decision") if normalize_result else None
-        cand_fp = normalize_result.get("candidate_set_fingerprint") if normalize_result else None
-        norm_ver = normalize_result.get("normalizer_version") if normalize_result else None
+        raw_pf = (
+            normalize_result.get("raw_predicate_form") if normalize_result else None
+        )
+        norm_dec = (
+            normalize_result.get("normalization_decision") if normalize_result else None
+        )
+        cand_fp = (
+            normalize_result.get("candidate_set_fingerprint")
+            if normalize_result
+            else None
+        )
+        norm_ver = (
+            normalize_result.get("normalizer_version") if normalize_result else None
+        )
 
         near_dup_warning: NearDuplicateWarning | None = None
 

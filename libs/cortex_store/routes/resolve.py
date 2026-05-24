@@ -71,9 +71,7 @@ def parse_cortex_uri(uri: str) -> dict:
     }
 
 
-def _resolve_pinpoint_chunk(
-    entity_id: str, pinpoint: str
-) -> dict | None:
+def _resolve_pinpoint_chunk(entity_id: str, pinpoint: str) -> dict | None:
     """Pinpoint chunk lookup — returns None (unresolvable) after Phase E.
 
     The chunks table was dropped by migration 040 (Phase E). Pinpoint

@@ -22,10 +22,12 @@ from .materializers import _fetch_assertion
 
 @dataclass
 class Finding:
-    kind: str               # one of the six Phase 1.0 finding-kind strings
-    severity: str           # "high" | "medium" | "low"
+    kind: str  # one of the six Phase 1.0 finding-kind strings
+    severity: str  # "high" | "medium" | "low"
     evidence: dict[str, Any] = field(default_factory=dict)
-    location: dict[str, Any] | None = None  # {char_offset: int, citation_id: int | None}
+    location: dict[str, Any] | None = (
+        None  # {char_offset: int, citation_id: int | None}
+    )
 
 
 @dataclass
@@ -55,7 +57,12 @@ def _get_surrounding_paragraph(text: str, offset: int, window: int = 200) -> str
     if para_start == -1:
         para_start = max(0, offset - window)
     else:
-        para_start += 2 if text[para_start:para_start+2] == "\n\n" or text[para_start:para_start+2] == ". " else 1
+        para_start += (
+            2
+            if text[para_start : para_start + 2] == "\n\n"
+            or text[para_start : para_start + 2] == ". "
+            else 1
+        )
 
     # end: next \n\n or '. '
     n1 = text.find("\n\n", offset)
@@ -102,12 +109,19 @@ def validate_output(
             )
             continue
 
-        if assertion.get("superseded_by") is not None and assertion.get("valid_until") is not None:
+        if (
+            assertion.get("superseded_by") is not None
+            and assertion.get("valid_until") is not None
+        ):
             findings.append(
                 Finding(
                     kind="output_citation_missing_assertion",
                     severity="high",
-                    evidence={"assertion_id": cid, "reason": "retired", "superseded_by": assertion.get("superseded_by")},
+                    evidence={
+                        "assertion_id": cid,
+                        "reason": "retired",
+                        "superseded_by": assertion.get("superseded_by"),
+                    },
                     location=loc,
                 )
             )
@@ -146,12 +160,19 @@ def validate_output(
         w50_end = min(len(text), offset + 50)
         window50 = text[w50_start:w50_end]
         if assertion.get("derivation_type") in {"inference", "user_statement"}:
-            if re.search(r"\b(is|shows|establishes|demonstrates|proves|confirms)\b", window50, re.IGNORECASE):
+            if re.search(
+                r"\b(is|shows|establishes|demonstrates|proves|confirms)\b",
+                window50,
+                re.IGNORECASE,
+            ):
                 findings.append(
                     Finding(
                         kind="grade_laundering_in_output",
                         severity="high",
-                        evidence={"assertion_id": cid, "derivation_type": assertion.get("derivation_type")},
+                        evidence={
+                            "assertion_id": cid,
+                            "derivation_type": assertion.get("derivation_type"),
+                        },
                         location=loc,
                     )
                 )
@@ -163,7 +184,10 @@ def validate_output(
                 Finding(
                     kind="temporal_qualification_omitted",
                     severity="medium",
-                    evidence={"assertion_id": cid, "valid_from": assertion.get("valid_from")},
+                    evidence={
+                        "assertion_id": cid,
+                        "valid_from": assertion.get("valid_from"),
+                    },
                     location=loc,
                 )
             )
@@ -199,13 +223,18 @@ def validate_output(
                 continue
             idx = text.find(ct)
             while idx != -1:
-                neighborhood = text[max(0, idx - 20) : min(len(text), idx + len(ct) + 20)]
+                neighborhood = text[
+                    max(0, idx - 20) : min(len(text), idx + len(ct) + 20)
+                ]
                 if "[assertion:" not in neighborhood:
                     findings.append(
                         Finding(
                             kind="output_citation_missing_assertion",
                             severity="high",
-                            evidence={"claim_text": ct, "reason": "ledger_claim_without_citation"},
+                            evidence={
+                                "claim_text": ct,
+                                "reason": "ledger_claim_without_citation",
+                            },
                             location={"char_offset": idx, "citation_id": None},
                         )
                     )
@@ -248,4 +277,6 @@ def validate_output(
     has_high = any(f.severity == "high" for f in findings)
     review_required = has_high or (domain_tag in BRIEF_DOMAINS)
     ok = len(findings) == 0
-    return OutputValidationResult(ok=ok, findings=findings, review_required=review_required)
+    return OutputValidationResult(
+        ok=ok, findings=findings, review_required=review_required
+    )

@@ -4,11 +4,7 @@ from __future__ import annotations
 
 import os
 
-from grokbuild.constants import (
-    _XAI_EFFORT_INJECT_MODELS,
-    _XAI_GROK43_EFFORT_STANZA,
-    MODEL_REGISTRY,
-)
+from grokbuild.constants import MODEL_REGISTRY
 from grokbuild.runner_types import RunnerSpec
 
 _READ_ONLY_PREFIX = (
@@ -95,16 +91,7 @@ def _build_argv(spec: RunnerSpec) -> list[str]:
         "--always-approve",
     ]
     if spec.model:
-        # For xAI grok-4.3 dispatches, substitute the base stanza with a tier-specific
-        # effort stanza so cloud-proxy can decode __effort_<value> and inject
-        # reasoning.effort.  The grok CLI ignores --reasoning-effort for custom stanzas;
-        # stanza substitution is the only reliable path for effort injection.
-        effective_model = (
-            _XAI_GROK43_EFFORT_STANZA.get(spec.tier, spec.model)
-            if spec.model in _XAI_EFFORT_INJECT_MODELS
-            else spec.model
-        )
-        argv.extend(["--model", effective_model])
+        argv.extend(["--model", spec.model])
     if combined_rules:
         argv.extend(["--rules", combined_rules])
 

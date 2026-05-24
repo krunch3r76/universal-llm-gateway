@@ -225,10 +225,10 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
 # not satisfy the auditor's verbatim requirement.
 _VERBATIM_RE = re.compile(
     r'"[^"]{15,}"'
-    r'|\'[^\']{15,}\''
-    r'|\u201c[^\u201d]{15,}\u201d'
-    r'|«[^»]{15,}»'
-    r'|\u2018[^\u2019]{15,}\u2019'
+    r"|\'[^\']{15,}\'"
+    r"|\u201c[^\u201d]{15,}\u201d"
+    r"|«[^»]{15,}»"
+    r"|\u2018[^\u2019]{15,}\u2019"
 )
 
 # derivation types where we expect verbatim source text in the claim

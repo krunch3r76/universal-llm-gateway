@@ -39,12 +39,16 @@ def test_supersede_writes_null_ledger_fields_documented_scope() -> None:
     src = Path(__file__).parent / "routes" / "assertions" / "_supersede.py"
     text = src.read_text(encoding="utf-8")
     # The INSERT must list the 4 ledger columns AND must pass them as None literals.
-    assert "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version" in text, \
-        "Supersede INSERT must list the 4 ledger columns"
+    assert (
+        "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
+        in text
+    ), "Supersede INSERT must list the 4 ledger columns"
     # Count how many `None,` followed by another None,None,None appear right before the closing paren —
     # we just check the textual block exists; tighter pinning would be too brittle.
-    assert "None,\n                    None,\n                    None,\n                    None," in text, \
-        "Supersede INSERT must pass None for the 4 ledger columns in v1.3.1"
+    assert (
+        "None,\n                    None,\n                    None,\n                    None,"
+        in text
+    ), "Supersede INSERT must pass None for the 4 ledger columns in v1.3.1"
 
 
 def test_supersede_path_round_trip_leaves_ledger_null() -> None:
@@ -80,10 +84,20 @@ def test_supersede_path_round_trip_leaves_ledger_null() -> None:
         "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
         " raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ("person:x", "old claim", "confirmed", "status(person:x, ready)",
-         "status(person:x, ready)", "resolved_single", "abc123def456", "v1.3.1"),
+        (
+            "person:x",
+            "old claim",
+            "confirmed",
+            "status(person:x, ready)",
+            "status(person:x, ready)",
+            "resolved_single",
+            "abc123def456",
+            "v1.3.1",
+        ),
     )
-    old_id = conn.execute("SELECT id FROM assertions WHERE claim='old claim'").fetchone()[0]
+    old_id = conn.execute(
+        "SELECT id FROM assertions WHERE claim='old claim'"
+    ).fetchone()[0]
 
     # New row — supersede-equivalent INSERT writes NULL ledger
     conn.execute(
@@ -92,8 +106,13 @@ def test_supersede_path_round_trip_leaves_ledger_null() -> None:
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         ("person:x", "new claim", "confirmed", None, None, None, None),
     )
-    new_id = conn.execute("SELECT id FROM assertions WHERE claim='new claim'").fetchone()[0]
-    conn.execute("UPDATE assertions SET superseded_by=?, valid_until='now' WHERE id=?", (new_id, old_id))
+    new_id = conn.execute(
+        "SELECT id FROM assertions WHERE claim='new claim'"
+    ).fetchone()[0]
+    conn.execute(
+        "UPDATE assertions SET superseded_by=?, valid_until='now' WHERE id=?",
+        (new_id, old_id),
+    )
 
     new_row = conn.execute("SELECT * FROM assertions WHERE id=?", (new_id,)).fetchone()
     assert new_row["raw_predicate_form"] is None

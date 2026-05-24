@@ -117,7 +117,9 @@ def materialize_d2(
         if selection_strategy == "all":
             raise AgentInjectionAdmissionError(
                 f"D.2: {len(selected)} exceeds per_entity_limit {per_entity_limit} with default strategy",
-                violations=[ViolationDetail(invariant=4, detail="overflow_default_strategy")],
+                violations=[
+                    ViolationDetail(invariant=4, detail="overflow_default_strategy")
+                ],
             )
         included = selected[:per_entity_limit]
         truncated = True
@@ -129,7 +131,11 @@ def materialize_d2(
         rid = a.get("id")
         pred = a.get("predicate_form") or ""
         claim = a.get("claim") or ""
-        conf = a.get("confidence_score") if a.get("confidence_score") is not None else a.get("confidence", "")
+        conf = (
+            a.get("confidence_score")
+            if a.get("confidence_score") is not None
+            else a.get("confidence", "")
+        )
         vf = a.get("valid_from") or ""
         row_lines.append(
             f"  assertion_id={rid} predicate={pred} claim={claim} confidence={conf} valid_from={vf}"
@@ -140,7 +146,9 @@ def materialize_d2(
     sel_params_str = "none"
     if selection_params:
         try:
-            sel_params_str = json.dumps(selection_params, sort_keys=True, separators=(",", ":"))
+            sel_params_str = json.dumps(
+                selection_params, sort_keys=True, separators=(",", ":")
+            )
         except Exception:
             sel_params_str = str(selection_params)
 
@@ -282,7 +290,9 @@ def materialize_d4(assertion_id: int) -> dict[str, Any]:
     if not row.get("reasoning_summary"):
         raise AgentInjectionAdmissionError(
             f"D.4: assertion {assertion_id} missing reasoning_summary",
-            violations=[ViolationDetail(invariant=2, detail="missing_reasoning_summary")],
+            violations=[
+                ViolationDetail(invariant=2, detail="missing_reasoning_summary")
+            ],
         )
 
     ctx = {

@@ -6,9 +6,7 @@ from pathlib import Path
 
 
 def _load_migration_015():
-    path = (
-        Path(__file__).resolve().parent / "migrations" / "015_dedup_guard.py"
-    )
+    path = Path(__file__).resolve().parent / "migrations" / "015_dedup_guard.py"
     spec = importlib.util.spec_from_file_location("migration_015_dedup_guard", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -65,10 +63,12 @@ def test_migration_handles_preexisting_extraction_runs_without_content_hash():
         migration.migrate(conn)
 
         columns = {
-            row[1] for row in conn.execute("PRAGMA table_info(extraction_runs)").fetchall()
+            row[1]
+            for row in conn.execute("PRAGMA table_info(extraction_runs)").fetchall()
         }
         indexes = {
-            row[1] for row in conn.execute("PRAGMA index_list(extraction_runs)").fetchall()
+            row[1]
+            for row in conn.execute("PRAGMA index_list(extraction_runs)").fetchall()
         }
 
         assert "content_hash" in columns

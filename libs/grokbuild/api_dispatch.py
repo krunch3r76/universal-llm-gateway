@@ -6,6 +6,10 @@ self-contained and the response is a text answer rather than a tool-driven task.
 
 Caller contract:
   * ``system_context`` serves as the pre-staged corpus.
+  * ``tier`` is canonical for ``reasoning.effort``. When ``model`` is
+    supplied, api_dispatch still injects the tier preset iff
+    ``MODEL_REGISTRY`` says the effective model supports reasoning effort;
+    there is no caller-level ``reasoning_effort`` override.
   * Response envelope shape mirrors the CLI path so callers can treat both
     paths uniformly; fields absent from the API path are set to safe defaults.
   * Admission failures (``bad_tier``) return ``status="rejected"`` consistent
@@ -27,8 +31,10 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from grokbuild.constants import (
+    _TIER_PRESETS,
     _VALID_TIERS,
     DEFAULT_TIMEOUT_SECONDS,
+    MODEL_REGISTRY,
     default_model_for_tier,
     envelope_metadata_model,
 )
@@ -82,6 +88,13 @@ async def api_dispatch_op(
     effective_model = model if model is not None else default_model_for_tier(tier)
     metadata_model = envelope_metadata_model(model=model, tier=tier)
 
+    # Inject reasoning.effort when the selected model supports it. api_dispatch
+    # has no explicit reasoning_effort override, so tier remains canonical even
+    # when the caller supplies a model.
+    _caps = MODEL_REGISTRY.get(effective_model)
+    _tier_reasoning_effort = _TIER_PRESETS[tier].reasoning_effort
+    _inject_reasoning_effort = _caps is None or _caps.supports_reasoning_effort
+
     emit_grok_build_api_dispatch_called(
         dispatch_id=dispatch_id,
         cwd=cwd,
@@ -103,12 +116,13 @@ async def api_dispatch_op(
     else:
         http_timeout = float(DEFAULT_TIMEOUT_SECONDS)
 
+    request_body: dict[str, object] = {"model": effective_model, "messages": messages}
+    if _inject_reasoning_effort:
+        request_body["reasoning"] = {"effort": _tier_reasoning_effort}
+
     async with make_async_client(DEFAULT_STARGATE_URL, timeout=http_timeout) as client:
         try:
-            resp = await client.post(
-                "/v1/chat/completions",
-                json={"model": effective_model, "messages": messages},
-            )
+            resp = await client.post("/v1/chat/completions", json=request_body)
         except httpx.RequestError as exc:
             logger.error("api_dispatch transport failure: %s", exc)
             emit_grok_build_api_dispatch_failed(
@@ -136,12 +150,16 @@ async def api_dispatch_op(
     duration_s = time.monotonic() - t0
 
     if resp.status_code >= 400:
+        response_text = getattr(resp, "text", "")
+        failure_reason = f"HTTP {resp.status_code}"
+        if response_text:
+            failure_reason = f"{failure_reason}: {response_text[:500]}"
         emit_grok_build_api_dispatch_failed(
             dispatch_id=dispatch_id,
             duration_s=duration_s,
             cwd=cwd,
             reason_code="api_error",
-            reason=f"HTTP {resp.status_code}",
+            reason=failure_reason,
             tier=tier,
             model=metadata_model,
             effective_model=effective_model,
@@ -151,7 +169,7 @@ async def api_dispatch_op(
             dispatch_id,
             t0,
             reason_code="api_error",
-            reason=f"HTTP {resp.status_code}",
+            reason=failure_reason,
             duration_s=duration_s,
             cwd=cwd,
             session_id=session_id,

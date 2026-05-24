@@ -150,12 +150,16 @@ def test_parse_exhibit_case_id_empty_slug_rejected() -> None:
 
 def test_enforce_returns_none_for_non_exhibit_types() -> None:
     conn = _fresh_conn()
-    assert enforce_exhibit_belongs_to(
-        conn, entity_id="person:foo", entity_type="person"
-    ) is None
-    assert enforce_exhibit_belongs_to(
-        conn, entity_id="case-law:larson-v-duca-1989", entity_type="case-law"
-    ) is None
+    assert (
+        enforce_exhibit_belongs_to(conn, entity_id="person:foo", entity_type="person")
+        is None
+    )
+    assert (
+        enforce_exhibit_belongs_to(
+            conn, entity_id="case-law:larson-v-duca-1989", entity_type="case-law"
+        )
+        is None
+    )
 
 
 def test_enforce_returns_case_id_when_case_exists() -> None:
