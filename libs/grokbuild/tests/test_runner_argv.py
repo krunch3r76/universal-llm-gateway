@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from grokbuild.runner import (
@@ -9,6 +11,7 @@ from grokbuild.runner import (
     _build_argv,
     _build_env,
 )
+from grokbuild.runner_argv import _VENV_BIN, _VENV_ROOT
 from grokbuild.test_support import (
     PROMPT,
     runner_spec,
@@ -90,16 +93,9 @@ def test_env_allow_list(monkeypatch: pytest.MonkeyPatch) -> None:
     env = _build_env()
 
     assert env["TERM"] == "dumb"
-    assert set(env.keys()) <= {
-        "PATH",
-        "HOME",
-        "LANG",
-        "LC_ALL",
-        "CORTEX_DB_PATH",
-        "TODOS_DB_PATH",
-        "TERM",
-    }
-    assert set(env) == {"PATH", "HOME", "TERM"}
+    assert env["VIRTUAL_ENV"] == _VENV_ROOT
+    assert env["PATH"].split(os.pathsep)[0] == _VENV_BIN
+    assert set(env) == {"PATH", "TERM", "VIRTUAL_ENV"}
     assert "SECRET" not in env
 
 

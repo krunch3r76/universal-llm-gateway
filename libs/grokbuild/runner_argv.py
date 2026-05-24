@@ -43,10 +43,20 @@ _ALLOW = (
 _OVERRIDE = ("HOME",)
 
 
+_VENV_ROOT = os.path.join(os.path.expanduser("~"), ".venvs", "universal")
+_VENV_BIN = os.path.join(_VENV_ROOT, "bin")
+
+
 def _build_env() -> dict[str, str]:
     src = os.environ
     env = {k: src[k] for k in _ALLOW if k in src}
     env["TERM"] = "dumb"
+    env["VIRTUAL_ENV"] = _VENV_ROOT
+    parent_path = env.get("PATH", "")
+    if _VENV_BIN not in parent_path.split(os.pathsep):
+        env["PATH"] = (
+            f"{_VENV_BIN}{os.pathsep}{parent_path}" if parent_path else _VENV_BIN
+        )
     return env
 
 
@@ -103,7 +113,8 @@ def _build_argv(spec: RunnerSpec) -> list[str]:
         argv.append("-r" if spec.resume_strict else "-s")
         argv.append(spec.session_id)
 
-    # Per-flag capability check: model=None resolves to "grok-build" (CLI default).
+    # Per-flag capability check: RunnerSpec.model=None → "grok-build" lookup.
+    # dispatch_op normally sets model from tier preset before run_dispatch.
     # Unknown models (not in registry) pass both flags through — admission won't
     # block, but the caller may still hit a CLI/API rejection downstream.
     _lookup = spec.model if spec.model is not None else "grok-build"
