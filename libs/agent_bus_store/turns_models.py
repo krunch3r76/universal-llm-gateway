@@ -3,27 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 
 from .models import AgentName
 
-
-def _reject_self_addressed(from_agent: str, to: str) -> None:
-    """Reject turns where sender == recipient.
-
-    Symptom-level guard for the host-seat persona attribution bug
-    (todo:agent-bus-from-attribution-bug). When a host MCP seat posts on
-    behalf of a parallel-instance persona but omits an explicit ``from_agent``,
-    the field defaults to the host seat name, collapsing into ``from == to``.
-    A multi-actor thread has no legitimate self-addressed reply, so reject
-    fail-closed at the REST surface.
-    """
-    if from_agent and to and from_agent == to:
-        raise ValueError(
-            f"from == to ({from_agent!r}): a turn cannot be self-addressed. "
-            "Pass an explicit from_agent identifying the actual author "
-            "(e.g. when posting on behalf of a parallel-instance persona)."
-        )
+# Self-addressed guard removed — root cause fixed (fix-1, todo:agent-bus-from-attribution-root-cause).
 
 # Free-form strings. The agent_bus docstring documents a `namespace:value`
 # convention (e.g. `project:claudeburst`, `type:bug`, `agent:cursor`) but
@@ -118,11 +102,6 @@ class TurnCreate(BaseModel):
     after_turn: int | None = None
     supersedes_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None
-
-    @model_validator(mode="after")
-    def _check_distinct_actors(self) -> TurnCreate:
-        _reject_self_addressed(self.from_agent, self.to)
-        return self
 
 
 class TurnCreated(BaseModel):
@@ -256,11 +235,6 @@ class ThreadWithTurnCreate(BaseModel):
     after_turn: int | None = None
     attachments: list[AttachmentCreate] | None = None
     tags: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _check_distinct_actors(self) -> ThreadWithTurnCreate:
-        _reject_self_addressed(self.from_agent, self.to)
-        return self
 
 
 class ThreadWithTurnCreated(BaseModel):
