@@ -54,6 +54,7 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
                 system_context=req.system_context,
                 model=req.model,
                 session_id=req.session_id,
+                tier=req.tier,
                 dispatch_id=entry.dispatch_id,
                 timeout_seconds=req.timeout_seconds,
             )

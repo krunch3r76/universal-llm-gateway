@@ -36,8 +36,20 @@ class GrokbuildDispatchRequest(BaseModel):
         False, description="Always False in production; validator rejects True."
     )
     output_format: str = Field("streaming-json", description="grok output format.")
-    timeout_seconds: int | None = Field(None, description="Override tier preset.")
-    tier: str = Field("thorough", description="Tier preset key.")
+    timeout_seconds: int | None = Field(
+        None,
+        description=(
+            "Subprocess wall-clock limit (seconds). Omitted → 3600. "
+            "0 → no limit. Otherwise 1–86400."
+        ),
+    )
+    tier: str = Field(
+        "thorough",
+        description=(
+            "Tier preset key. When model is omitted, selects the default model "
+            "for both mcp=True (CLI subprocess) and mcp=False (API) paths."
+        ),
+    )
     reasoning_effort: str | None = Field(None)
     effort: str | None = Field(None)
     check: bool | None = Field(None)

@@ -232,10 +232,13 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
         spec.proc_pid_holder.append(proc.pid)
 
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(),
-            timeout=spec.timeout_seconds,
-        )
+        if spec.timeout_seconds is None:
+            stdout_b, stderr_b = await proc.communicate()
+        else:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=spec.timeout_seconds,
+            )
     except TimeoutError:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGTERM)

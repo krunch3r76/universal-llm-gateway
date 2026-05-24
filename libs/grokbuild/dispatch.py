@@ -13,7 +13,12 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from grokbuild.constants import _TIER_PRESETS
+from grokbuild.constants import (
+    DEFAULT_TIMEOUT_SECONDS,
+    _TIER_PRESETS,
+    _VALID_TIERS,
+    default_model_for_tier,
+)
 from grokbuild.envelope import (
     _envelope_rejected,
     _envelope_result,
@@ -64,7 +69,7 @@ class _ResolvedParams:
     tier: str
     reasoning_effort: str
     effort: str
-    timeout_seconds: int
+    timeout_seconds: int | None
     check: bool
     max_turns: int | None
     best_of_n: int | None
@@ -83,10 +88,13 @@ def _resolve_params(
 ) -> _ResolvedParams:
     """Apply tier preset, then per-param explicit overrides.
 
-    Caller responsibility: ``tier`` MUST be in _TIER_PRESETS (validator
-    enforces). reasoning_effort/effort/timeout_seconds: explicit value
-    wins over preset; None reverts to preset. max_turns/best_of_n: opt-in
-    only; explicit None means "do not include the grok flag".
+    Caller responsibility: ``tier`` MUST be in _TIER_PRESETS. ``dispatch_op``
+    enforces this pre-resolve so a bad tier produces the structured
+    rejected envelope rather than a KeyError; direct callers (tests) must
+    pre-validate. reasoning_effort/effort: explicit value wins over preset.
+    timeout_seconds: explicit int wins; omitted None → DEFAULT_TIMEOUT_SECONDS;
+    0 → None (no wall-clock limit). max_turns/best_of_n: opt-in only;
+    explicit None means "do not include the grok flag".
     """
     preset = _TIER_PRESETS[tier]
     return _ResolvedParams(
@@ -95,9 +103,15 @@ def _resolve_params(
         if reasoning_effort is not None
         else preset.reasoning_effort,
         effort=effort if effort is not None else preset.effort,
-        timeout_seconds=timeout_seconds
-        if timeout_seconds is not None
-        else preset.timeout_seconds,
+        timeout_seconds=(
+            None
+            if timeout_seconds == 0
+            else (
+                timeout_seconds
+                if timeout_seconds is not None
+                else DEFAULT_TIMEOUT_SECONDS
+            )
+        ),
         check=_resolve_check(mode=mode, explicit=check),
         max_turns=max_turns,
         best_of_n=best_of_n,
@@ -147,6 +161,27 @@ async def dispatch_op(
     # carry their own correlation fields (mode/op/cwd/model); they do
     # NOT depend on joining via ``.called`` → dispatch_id.
 
+    # Pre-resolve admission: _resolve_params indexes _TIER_PRESETS[tier]
+    # and would raise KeyError on bad input, propagating as dispatch_crashed
+    # instead of the structured rejected envelope. Validator's bad_tier
+    # check (validator.py §2) is unreachable for this case because tier
+    # overlay runs first; this guard restores the structured rejection
+    # contract before _resolve_params is called.
+    if tier not in _VALID_TIERS:
+        reason = f"tier must be one of {sorted(_VALID_TIERS)!r}, got {tier!r}"
+        emit_grok_build_dispatch_rejected(
+            dispatch_id=dispatch_id,
+            reason_code="bad_tier",
+            reason=reason,
+            mode=mode,
+            op="build",
+            cwd=cwd,
+            model=model or "",
+        )
+        return _envelope_rejected(
+            dispatch_id, mode, cwd, session_id, model, "bad_tier", reason
+        )
+
     # Tier overlay BEFORE validator so range checks see resolved scalars.
     resolved = _resolve_params(
         tier=tier,
@@ -158,6 +193,8 @@ async def dispatch_op(
         best_of_n=best_of_n,
         mode=mode,
     )
+    if model is None:
+        model = default_model_for_tier(resolved.tier)
 
     vr = await asyncio.get_running_loop().run_in_executor(
         None,
@@ -335,7 +372,7 @@ async def _run_and_envelope(
     else:
         emit_grok_build_dispatch_timeout(
             dispatch_id=dispatch_id,
-            timeout_seconds=spec.timeout_seconds,
+            timeout_seconds=spec.timeout_seconds or 0,
             cwd=cwd,
             **audit,
         )

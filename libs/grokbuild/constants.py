@@ -2,7 +2,8 @@
 
 Single source of truth for values previously duplicated across
 ``grokbuild.validator``, ``grokbuild.runner``, ``grokbuild.dispatch``,
-and ``grokbuild.fetch_result_decode``. Each consumer still re-binds the
+``grokbuild.api_dispatch``, and ``grokbuild.fetch_result_decode``. Each
+consumer still re-binds the
 name at module scope (so test fixtures that monkeypatch per-module
 ``_SIDECAR_DIR`` continue to work — Python's ``from X import Y`` creates
 a per-module binding, not a live alias).
@@ -50,11 +51,16 @@ _MODE_BY_PERMISSION: Final[dict[str, str]] = {
 }
 
 
+# Caller-facing dispatch wall-clock limit when ``timeout_seconds`` is omitted.
+# Orthogonal to tier (reasoning/effort); tier must not hard-kill mid-edit.
+DEFAULT_TIMEOUT_SECONDS: Final[int] = 3600
+
+
 @dataclass(frozen=True, slots=True)
 class _TierPreset:
     reasoning_effort: str
     effort: str
-    timeout_seconds: int
+    default_model: str
 
 
 # Tier presets — canonical home so the validator's accepted-tier set
@@ -62,10 +68,10 @@ class _TierPreset:
 # hand-mirrored. Adding a tier here automatically updates the
 # validator's accept-set.
 _TIER_PRESETS: Final[dict[str, _TierPreset]] = {
-    "quick": _TierPreset("minimal", "low", 300),
-    "balanced": _TierPreset("medium", "medium", 600),
-    "thorough": _TierPreset("high", "high", 1200),
-    "max": _TierPreset("xhigh", "max", 1800),
+    "quick": _TierPreset("minimal", "low", "xai/grok-4.3"),
+    "balanced": _TierPreset("medium", "medium", "xai/grok-4.3"),
+    "thorough": _TierPreset("high", "high", "xai/grok-4.3"),
+    "max": _TierPreset("xhigh", "max", "xai/grok-4.3"),
 }
 _VALID_TIERS: Final[frozenset[str]] = frozenset(_TIER_PRESETS.keys())
 
@@ -85,7 +91,9 @@ class _ModelCapabilities:
 #
 # ∀ model ∉ MODEL_REGISTRY: both effort flags treated as supported (pass-
 # through — caller may still hit a CLI/API failure, but admission won't block).
-# model=None (CLI default) is resolved to "grok-build" before lookup.
+# dispatch_op resolves omitted model to each tier preset's default_model
+# (xai/grok-4.3) before RunnerSpec; RunnerSpec.model=None still maps to
+# "grok-build" here for capability lookup only.
 #
 # --effort is the grok CLI agent-loop tier flag (independent of reasoning API).
 # It is emitted for every model except those where the grok CLI rejects it
@@ -166,3 +174,15 @@ _XAI_GROK43_EFFORT_STANZA: Final[dict[str, str]] = {
 # ∀ m ∈ _XAI_EFFORT_INJECT_MODELS: _build_argv substitutes m with the
 # tier-appropriate effort stanza before emitting --model.
 _XAI_EFFORT_INJECT_MODELS: Final[frozenset[str]] = frozenset({"xai/grok-4.3"})
+
+
+def default_model_for_tier(tier: str) -> str:
+    """Resolve tier preset → effective model id (incl. xai effort stanzas).
+
+    Caller MUST validate ``tier ∈ _VALID_TIERS`` before calling; this helper
+    indexes ``_TIER_PRESETS`` directly.
+    """
+    base = _TIER_PRESETS[tier].default_model
+    if base in _XAI_EFFORT_INJECT_MODELS:
+        return _XAI_GROK43_EFFORT_STANZA.get(tier, base)
+    return base

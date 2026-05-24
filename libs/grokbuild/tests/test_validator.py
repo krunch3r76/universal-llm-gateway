@@ -377,10 +377,23 @@ def test_bad_timeout_seconds(admission: str) -> None:
         None,
         False,
         "streaming-json",
-        timeout_seconds=0,
+        timeout_seconds=86_401,
     )
     assert vr.ok is False
     assert vr.reason_code == "bad_timeout_seconds"
+
+
+def test_timeout_seconds_zero_admitted(admission: str) -> None:
+    vr = validate_dispatch(
+        "build",
+        admission,
+        "read_only",
+        None,
+        False,
+        "streaming-json",
+        timeout_seconds=0,
+    )
+    assert vr.ok is True
 
 
 def test_bad_resume_strict_without_session_id(admission: str) -> None:

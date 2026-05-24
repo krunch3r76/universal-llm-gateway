@@ -23,6 +23,7 @@ from grokbuild.constants import (
     _PERMISSION_BY_MODE,
     _SIDECAR_DIR,
     _VALID_TIERS,
+    DEFAULT_TIMEOUT_SECONDS,
 )
 from grokbuild.runner import _build_env
 
@@ -45,7 +46,7 @@ _VALID_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 # Inclusive bounds for integer-range params.
 _MAX_TURNS_MIN = 1
 _BEST_OF_N_MIN, _BEST_OF_N_MAX = 1, 16
-_TIMEOUT_SECONDS_MIN, _TIMEOUT_SECONDS_MAX = 1, 3600
+_TIMEOUT_SECONDS_MIN, _TIMEOUT_SECONDS_MAX = 1, 86_400
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +158,7 @@ def validate_dispatch(  # noqa: PLR0911, PLR0913 — long admission chain by des
     effort: str | None = None,
     max_turns: int | None = None,
     best_of_n: int | None = None,
-    timeout_seconds: int = 1200,
+    timeout_seconds: int | None = DEFAULT_TIMEOUT_SECONDS,
     resume_strict: bool = False,
 ) -> ValidationResult:
     """Run admission checks; short-circuit on first failure.
@@ -229,12 +230,16 @@ def validate_dispatch(  # noqa: PLR0911, PLR0913 — long admission chain by des
             f"best_of_n must be in [{_BEST_OF_N_MIN}, {_BEST_OF_N_MAX}] "
             f"or None, got {best_of_n!r}",
         )
-    if not (_TIMEOUT_SECONDS_MIN <= timeout_seconds <= _TIMEOUT_SECONDS_MAX):
+    if timeout_seconds == 0:
+        pass  # unlimited — matches dispatch resolution + GrokbuildDispatchRequest
+    elif timeout_seconds is not None and not (
+        _TIMEOUT_SECONDS_MIN <= timeout_seconds <= _TIMEOUT_SECONDS_MAX
+    ):
         return _reject(
             "bad_timeout_seconds",
-            f"timeout_seconds must be in "
-            f"[{_TIMEOUT_SECONDS_MIN}, {_TIMEOUT_SECONDS_MAX}], "
-            f"got {timeout_seconds!r}",
+            f"timeout_seconds must be 0 (no limit), in "
+            f"[{_TIMEOUT_SECONDS_MIN}, {_TIMEOUT_SECONDS_MAX}], or None "
+            f"(resolved default), got {timeout_seconds!r}",
         )
 
     # 4. Combination rules.

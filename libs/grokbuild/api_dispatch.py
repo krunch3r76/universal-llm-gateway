@@ -23,10 +23,13 @@ import httpx
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
-logger = get_logger(__name__)
+from grokbuild.constants import (
+    DEFAULT_TIMEOUT_SECONDS,
+    _VALID_TIERS,
+    default_model_for_tier,
+)
 
-_DEFAULT_MODEL = "xai/grok-4.3__effort_medium"
-_DEFAULT_TIMEOUT = 120.0
+logger = get_logger(__name__)
 
 
 async def api_dispatch_op(
@@ -36,6 +39,7 @@ async def api_dispatch_op(
     system_context: str | None,
     model: str | None,
     session_id: str | None,
+    tier: str = "thorough",
     dispatch_id: str | None = None,
     timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
@@ -49,23 +53,50 @@ async def api_dispatch_op(
         dispatch_id = str(uuid.uuid4())
 
     t0 = time.monotonic()
+
+    if tier not in _VALID_TIERS:
+        reason = f"tier must be one of {sorted(_VALID_TIERS)!r}, got {tier!r}"
+        return _envelope_failed(
+            dispatch_id,
+            t0,
+            reason_code="bad_tier",
+            reason=reason,
+            cwd=cwd,
+            session_id=session_id,
+            tier=tier,
+        )
+
+    effective_model = model if model is not None else default_model_for_tier(tier)
+
     messages: list[dict[str, str]] = []
     if system_context:
         messages.append({"role": "system", "content": system_context})
     messages.append({"role": "user", "content": prompt})
 
-    timeout = float(timeout_seconds) if timeout_seconds else _DEFAULT_TIMEOUT
+    if timeout_seconds == 0:
+        http_timeout: float | None = None
+    elif timeout_seconds is not None:
+        http_timeout = float(timeout_seconds)
+    else:
+        http_timeout = float(DEFAULT_TIMEOUT_SECONDS)
 
-    async with make_async_client(DEFAULT_STARGATE_URL, timeout=timeout) as client:
+    async with make_async_client(DEFAULT_STARGATE_URL, timeout=http_timeout) as client:
         try:
             resp = await client.post(
                 "/v1/chat/completions",
-                json={"model": model or _DEFAULT_MODEL, "messages": messages},
+                json={"model": effective_model, "messages": messages},
             )
         except httpx.RequestError as exc:
             logger.error("api_dispatch transport failure: %s", exc)
             return _envelope_failed(
-                dispatch_id, t0, reason_code="api_unreachable", reason=str(exc)
+                dispatch_id,
+                t0,
+                reason_code="api_unreachable",
+                reason=str(exc),
+                cwd=cwd,
+                session_id=session_id,
+                tier=tier,
+                model=effective_model,
             )
 
     duration_s = time.monotonic() - t0
@@ -77,6 +108,10 @@ async def api_dispatch_op(
             reason_code="api_error",
             reason=f"HTTP {resp.status_code}",
             duration_s=duration_s,
+            cwd=cwd,
+            session_id=session_id,
+            tier=tier,
+            model=effective_model,
         )
 
     try:
@@ -89,12 +124,16 @@ async def api_dispatch_op(
             reason_code="invalid_response",
             reason=str(exc),
             duration_s=duration_s,
+            cwd=cwd,
+            session_id=session_id,
+            tier=tier,
+            model=effective_model,
         )
 
     logger.info(
         "api_dispatch completed dispatch_id=%s model=%s duration_s=%.2f",
         dispatch_id,
-        model or _DEFAULT_MODEL,
+        effective_model,
         duration_s,
     )
 
@@ -110,7 +149,8 @@ async def api_dispatch_op(
             "reason_code": "",
             "reason": "",
             "mcp": False,
-            "model": model or _DEFAULT_MODEL,
+            "model": effective_model,
+            "tier": tier,
             "session_id": session_id,
             "mode": "read_only",
             "cwd": cwd,
@@ -125,7 +165,24 @@ def _envelope_failed(
     reason_code: str,
     reason: str,
     duration_s: float | None = None,
+    cwd: str | None = None,
+    session_id: str | None = None,
+    tier: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "reason_code": reason_code,
+        "reason": reason,
+        "mcp": False,
+    }
+    if tier is not None:
+        metadata["tier"] = tier
+    if model is not None:
+        metadata["model"] = model
+    if session_id is not None:
+        metadata["session_id"] = session_id
+    if cwd is not None:
+        metadata["cwd"] = cwd
     return {
         "dispatch_id": dispatch_id,
         "status": "failed",
@@ -134,5 +191,5 @@ def _envelope_failed(
         "exit_code": None,
         "duration_s": duration_s if duration_s is not None else time.monotonic() - t0,
         "sidecar_path": None,
-        "metadata": {"reason_code": reason_code, "reason": reason, "mcp": False},
+        "metadata": metadata,
     }

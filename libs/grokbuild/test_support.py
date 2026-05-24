@@ -122,9 +122,10 @@ def runner_spec(
     that don't care about overlay output. ``continue_recent`` is gone —
     Phase 4's validator rejects it before the runner can see it.
 
-    ``model=None`` → grok-build CLI default (suppresses --reasoning-effort
-    and --effort in argv). Pass a non-None model (e.g. ``model="grok-3"``)
-    to test reasoning-flag emission paths.
+    ``model=None`` → no ``--model`` flag (grok-build capability lookup only).
+    ``dispatch_op`` normally sets ``model`` from the tier preset before
+    ``run_dispatch``. Pass a non-None model (e.g. ``model="grok-3"``) to test
+    reasoning-flag emission paths.
     """
     return RunnerSpec(
         dispatch_id=dispatch_id,

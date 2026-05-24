@@ -36,7 +36,7 @@ class RunnerSpec:
     system_context: str | None
     model: str | None
     session_id: str | None
-    timeout_seconds: int
+    timeout_seconds: int | None
     grok_path: str
     git_status_pre: str
 
