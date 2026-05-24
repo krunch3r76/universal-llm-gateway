@@ -50,6 +50,12 @@ def build_manifest_from_metadata(
     for name in sorted(overflow_metadata):
         description, schema = overflow_metadata[name]
         ops, req = _extract_ops_and_required_args(description, schema)
+        # Prefer live schema properties over description parsing to avoid staleness
+        # after parameter renames (e.g. from -> from_agent in agent_bus tools).
+        props = (schema or {}).get("properties", {}) or {}
+        if props:
+            schema_req = (schema or {}).get("required", []) or []
+            req = {op: [k for k in props if k in schema_req] for op in (ops or ["default"])}
         manifest[name] = ManifestEntry(
             name=name,
             purpose=_first_sentence(description),

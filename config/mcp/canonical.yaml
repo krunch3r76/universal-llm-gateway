@@ -557,6 +557,218 @@ tools:
   cache_priority: on_demand
   introduced: 2026-05-22
 
+  # ─── cortex diagnostic / self-improvement ops (previously only in meta registry) ──
+  # These were declared in the cortex op registry (cortex.py) but lacked canonical
+  # entries, so they never appeared in the flattened Grok/Claude manifests.
+  # Adding them enables cortex_friction, cortex_observe, and rj_* on the client surfaces.
+
+- canonical_name: cortex_friction
+  domain: cortex
+  operation: friction
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: friction
+  flat_call_shape:
+    tool: cortex_friction
+    substrate_qualified: user-vortex__cortex_friction
+  fol_descriptor: |
+    ∀ service, category, note, suggestion?, agent?:
+      friction(...) ⟹ durable friction record for schema/boot/tool gaps.
+    Write. Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.
+  json_schema:
+    type: object
+    properties:
+      service: {type: string}
+      category: {type: string, enum: [tool_mismatch, schema_gap, boot_drift, lesson_gap, lesson_conflict, stale_context, tool_absent]}
+      note: {type: string}
+      suggestion: {type: string}
+      agent: {type: string}
+      session_id: {type: string}
+    required: [service, category, note, agent]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
+- canonical_name: cortex_observe
+  domain: cortex
+  operation: observe
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: observe
+  flat_call_shape:
+    tool: cortex_observe
+    substrate_qualified: user-vortex__cortex_observe
+  fol_descriptor: |
+    ∀ claim, entity_id?, agent?:
+      observe(...) ⟹ lightweight working-memory assertion / inline note.
+    Write. Preferred for session-local observations. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      claim: {type: string}
+      entity_id: {type: string}
+      agent: {type: string}
+      session_id: {type: string}
+    required: [claim, agent]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
+- canonical_name: cortex_rj_write
+  domain: cortex
+  operation: rj_write
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: rj_write
+  flat_call_shape:
+    tool: cortex_rj_write
+    substrate_qualified: user-vortex__cortex_rj_write
+  fol_descriptor: |
+    ∀ agent, register, entry, kind?, session_id?, revises?, links?, consolidation_data?:
+      rj_write(...) ⟹ reflective journal entry (kind="entry" | "consolidation").
+    Write. Primary surface for agent self-reflection and consolidation. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      agent: {type: string}
+      register: {type: string}
+      entry: {type: string}
+      kind: {type: string, default: "entry"}
+      session_id: {type: string}
+      revises: {type: integer}
+      links: {type: array, items: {type: object}}
+      consolidation_data: {type: object}
+    required: [agent, register, entry]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
+- canonical_name: cortex_rj_read
+  domain: cortex
+  operation: rj_read
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: rj_read
+  flat_call_shape:
+    tool: cortex_rj_read
+    substrate_qualified: user-vortex__cortex_rj_read
+  fol_descriptor: |
+    ∀ entry_id:
+      rj_read(entry_id) ⟹ reflective journal entry with links.
+    Read-only. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      entry_id: {type: integer}
+    required: [entry_id]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
+- canonical_name: cortex_rj_list
+  domain: cortex
+  operation: rj_list
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: rj_list
+  flat_call_shape:
+    tool: cortex_rj_list
+    substrate_qualified: user-vortex__cortex_rj_list
+  fol_descriptor: |
+    ∀ agent?, kind?, limit?, offset?:
+      rj_list(...) ⟹ list of reflective journal entries.
+    Read-only. Defaults: limit=20, offset=0. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      agent: {type: string}
+      kind: {type: string}
+      limit: {type: integer}
+      offset: {type: integer}
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
+- canonical_name: cortex_rj_link
+  domain: cortex
+  operation: rj_link
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: rj_link
+  flat_call_shape:
+    tool: cortex_rj_link
+    substrate_qualified: user-vortex__cortex_rj_link
+  fol_descriptor: |
+    ∀ entry_id, to_entry?, to_entity?, link_type?:
+      rj_link(...) ⟹ link between reflective journal entries or to entities.
+    Write. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      entry_id: {type: integer}
+      to_entry: {type: integer}
+      to_entity: {type: string}
+      link_type: {type: string, default: "related"}
+    required: [entry_id]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
+- canonical_name: cortex_rj_consolidate
+  domain: cortex
+  operation: rj_consolidate
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: rj_consolidate
+  flat_call_shape:
+    tool: cortex_rj_consolidate
+    substrate_qualified: user-vortex__cortex_rj_consolidate
+  fol_descriptor: |
+    ∀ agent, register, entry, throughline, before, now, tension_points?, contradiction_set?, falsifier?, rendered_shift?, confidence?, source_entry_ids?:
+      rj_consolidate(...) ⟹ high-quality consolidation entry (kind="consolidation").
+    Write. Structured synthesis of prior reflective entries. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      agent: {type: string}
+      register: {type: string}
+      entry: {type: string}
+      session_id: {type: string}
+      throughline: {type: string}
+      before: {type: string}
+      now: {type: string}
+      tension_points: {type: array, items: {type: string}}
+      contradiction_set: {type: array, items: {type: string}}
+      falsifier: {type: string}
+      rendered_shift: {type: string}
+      confidence: {type: string}
+      source_entry_ids: {type: array, items: {type: integer}}
+    required: [agent, register, entry, throughline, before, now]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-23
+
   # ─── domain: agent_bus ───────────────────────────────────────────────────────
   # Current dispatch: agent_bus(tool="<op>", arguments='...')
   # D8-normalized dispatch: agent_bus(op="<op>", arguments='...')
@@ -582,6 +794,9 @@ tools:
       status: {type: string}
       lifecycle_state: {type: string}
       tags: {type: array, items: {type: string}}
+      last: {type: integer}
+      limit: {type: integer}
+      has_unread: {type: boolean}
   skill_uri: agent_skill:agent_bus
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: read_only
@@ -653,17 +868,18 @@ tools:
     tool: agent_bus_reply
     substrate_qualified: user-vortex__agent_bus_reply
   fol_descriptor: |
-    ∀ thread ∈ ℕ ∧ body ∈ str ∧ from ∈ str:
-      reply(thread, body, from) ⟹ turn_number ∈ ℕ.
+    ∀ thread ∈ ℕ ∧ body ∈ str ∧ from_agent ∈ str:
+      reply(thread, body, from_agent) ⟹ turn_number ∈ ℕ.
     Mutating. ¬idempotent. See agent_skill:agent_bus.
   json_schema:
     type: object
     properties:
       thread: {type: string}
+      to: {type: string}
       body: {type: string}
-      from: {type: string}
+      from_agent: {type: string}
       subject: {type: string}
-    required: [thread, body, from]
+    required: [thread, body, from_agent]
   skill_uri: agent_skill:agent_bus
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: write
@@ -681,14 +897,14 @@ tools:
     tool: agent_bus_post
     substrate_qualified: user-vortex__agent_bus_post
   fol_descriptor: |
-    ∀ body ∈ str ∧ from ∈ str ∧ to ∈ str:
-      post(body, from, to) ⟹ thread_id ∈ ℕ ∧ turn_number = 1.
+    ∀ body ∈ str ∧ from_agent ∈ str ∧ to ∈ str:
+      post(body, from_agent, to) ⟹ thread_id ∈ ℕ ∧ turn_number = 1.
     Creates new thread. Mutating. ¬idempotent. See agent_skill:agent_bus.
   json_schema:
     type: object
     properties:
       body: {type: string}
-      from: {type: string}
+      from_agent: {type: string}
       to: {type: string}
       subject: {type: string}
     required: [body, from, to]
@@ -1694,15 +1910,15 @@ tools:
     tool: manage_wait_healthy
     substrate_qualified: user-vortex__manage_wait_healthy
   fol_descriptor: |
-    ∀ service ∈ ManagedServices ∧ timeout_s ∈ ℕ:
-      manage_wait_healthy(service, timeout_s) ⟹
-        (healthy = true ∧ elapsed ≤ timeout_s) ∨ raises Timeout.
+    ∀ service ∈ ManagedServices ∧ timeout ∈ ℕ:
+      manage_wait_healthy(service, timeout) ⟹
+        (healthy = true ∧ elapsed ≤ timeout) ∨ raises Timeout.
     Blocking poll. ¬side-effects. See agent_skill:manage.
   json_schema:
     type: object
     properties:
       service: {type: string}
-      timeout_s: {type: integer}
+      timeout: {type: number}
     required: [service]
   skill_uri: agent_skill:manage
   seat_visibility: [mcp, mcp_claude, mcp_grok]

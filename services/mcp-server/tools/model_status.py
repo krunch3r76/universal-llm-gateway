@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _TIMEOUT = 15.0
 
 
@@ -56,7 +56,7 @@ def register_model_status_tools(mcp: FastMCP) -> None:
             ``{"models": [{"id": str, "type": str, "owned_by": str}, ...],
             "total": int, "filter": str | None, "type": str | None}``
         """
-        url = f"{_STARGATE_URL}/v1/models"
+        url = f"{STARGATE_URL}/v1/models"
         try:
             resp = httpx.get(url, headers=_get_headers(), timeout=_TIMEOUT)
             resp.raise_for_status()
@@ -118,9 +118,9 @@ def register_model_status_tools(mcp: FastMCP) -> None:
         runtime load state, not the model catalog.
         """
         if model_id:
-            url = f"{_STARGATE_URL}/api/v1/model-status/{model_id}"
+            url = f"{STARGATE_URL}/api/v1/model-status/{model_id}"
         else:
-            url = f"{_STARGATE_URL}/api/v1/model-status"
+            url = f"{STARGATE_URL}/api/v1/model-status"
 
         params: dict[str, str] = {}
         if status_filter and not model_id:

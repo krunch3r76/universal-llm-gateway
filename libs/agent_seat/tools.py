@@ -136,8 +136,9 @@ _AGENT_BUS_TOOL_DEFINITION: dict[str, Any] = _fn(
     "the primary bus artifact.\n\n"
     "Operations:\n"
     "  fetch   (thread, last?, compact?, mark_read?) — get turns\n"
-    "  reply   (thread, to, subject, body, after_turn, from_agent?) — reply\n"
-    "  post    (slug, to, subject, body, from_agent?) — new thread\n"
+    "  reply   (thread, to, subject, body, after_turn, from?) — reply; from\n"
+    "          defaults to the dispatched persona when omitted in tool loops\n"
+    "  post    (slug, to, subject, body, from?) — new thread; same default\n"
     "  threads (status?) — list threads; status: active/archived/all\n"
     "  get     (thread, turn_number) — single turn lookup\n\n"
     "arguments MUST be a JSON string or an object.",

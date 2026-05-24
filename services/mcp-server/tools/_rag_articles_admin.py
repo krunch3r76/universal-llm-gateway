@@ -9,14 +9,14 @@ from typing import TYPE_CHECKING, Any
 import httpx
 from mcp_events import monotonic_now, record
 
-from ._rag_http import _handle_rag_call_error, _rag_get
+from ._rag_http import handle_rag_call_error, rag_get
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 
 
 def register_article_inventory_tools(mcp: FastMCP) -> None:
@@ -57,8 +57,8 @@ def register_article_inventory_tools(mcp: FastMCP) -> None:
         }
 
         try:
-            result = _rag_get(
-                _STARGATE_URL,
+            result = rag_get(
+                STARGATE_URL,
                 "api/v1/rag/articles",
                 timeout=20.0,
                 params=params,
@@ -70,7 +70,7 @@ def register_article_inventory_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="articles")
+            return handle_rag_call_error(exc, endpoint_name="articles")
 
         duration = monotonic_now() - t0
         count = result.get("count", 0) if isinstance(result, dict) else 0
@@ -99,8 +99,8 @@ def register_article_inventory_tools(mcp: FastMCP) -> None:
         record("mcp.rag.orphaned.articles.called")
 
         try:
-            result = _rag_get(
-                _STARGATE_URL,
+            result = rag_get(
+                STARGATE_URL,
                 "api/v1/rag/orphaned_articles",
                 timeout=15.0,
             )
@@ -111,7 +111,7 @@ def register_article_inventory_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="orphaned_articles")
+            return handle_rag_call_error(exc, endpoint_name="orphaned_articles")
 
         duration = monotonic_now() - t0
         count = result.get("count", 0) if isinstance(result, dict) else 0

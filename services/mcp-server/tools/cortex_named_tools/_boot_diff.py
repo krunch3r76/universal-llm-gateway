@@ -25,7 +25,7 @@ def _canonicalize_for_diff(text: str | None) -> str:
     return _ISO_TIMESTAMP_RE.sub("<TIMESTAMP>", text)
 
 
-def _build_boot_diff(
+def build_boot_diff(
     primary: dict[str, Any], secondary: dict[str, Any]
 ) -> dict[str, Any]:
     """Compare two inspect-mode boot payloads and return artifact-level deltas."""

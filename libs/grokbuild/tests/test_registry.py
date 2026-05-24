@@ -204,7 +204,7 @@ def _write_fake_registry(path: Path, *, pid: int, entries: list[str]) -> None:
             {
                 "schema_version": SCHEMA_VERSION,
                 "writer_pid": pid,
-                "entries": entries,
+                "entries": [{"cwd": cwd, "dispatch_id": ""} for cwd in entries],
             }
         )
     )

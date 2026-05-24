@@ -1,6 +1,6 @@
 """Filesystem tools package — sandboxed read/write/list in /data/files (cortex sandbox).
 
-All paths are resolved relative to _SANDBOX_ROOT. Traversal attempts
+All paths are resolved relative to SANDBOX_ROOT. Traversal attempts
 (../) are rejected before resolution so that the container volume mount
 is complemented by explicit code-level defense in depth.
 

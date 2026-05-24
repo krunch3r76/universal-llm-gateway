@@ -29,12 +29,12 @@ if TYPE_CHECKING:
 
 _DEFAULT_MAX_CHARS = 36_000
 
-_SANDBOX_ROOT = Path("/data/files")
-_SHARED_IMAGE_DIR = Path(
-    os.environ.get("MCP_SHARED_IMAGE_DIR", str(_SANDBOX_ROOT / ".shared-images"))
+SANDBOX_ROOT = Path("/data/files")
+SHARED_IMAGE_DIR = Path(
+    os.environ.get("MCP_SHARED_IMAGE_DIR", str(SANDBOX_ROOT / ".shared-images"))
 )
-_SHARED_IMAGE_HOST_ROOT = Path(
-    os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(_SHARED_IMAGE_DIR))
+SHARED_IMAGE_HOST_ROOT = Path(
+    os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(SHARED_IMAGE_DIR))
 )
 
 
@@ -50,10 +50,10 @@ def _copy_screenshot_to_shared(img_b64: str, img_format: str) -> dict[str, str]:
     fingerprint = hashlib.sha256(img_bytes).hexdigest()[:16]
     ts = int(time.time())
     filename = f"browse-{ts}-{fingerprint}.{ext}"
-    _SHARED_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    shared_path = _SHARED_IMAGE_DIR / filename
+    SHARED_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    shared_path = SHARED_IMAGE_DIR / filename
     shared_path.write_bytes(img_bytes)
-    host_path = _SHARED_IMAGE_HOST_ROOT / filename
+    host_path = SHARED_IMAGE_HOST_ROOT / filename
     return {
         "screenshot_path": str(shared_path),
         "screenshot_host_path": str(host_path),

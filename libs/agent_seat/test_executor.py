@@ -212,6 +212,44 @@ async def test_execute_agent_bus_fetch_builds_path(
 
 
 @pytest.mark.asyncio
+async def test_execute_agent_bus_reply_injects_active_persona(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_seat.context import bind_active_persona, reset_active_persona
+
+    captured: dict[str, Any] = {}
+
+    async def fake_request(method: str, path: str, body: dict | None = None) -> dict:
+        captured.update({"method": method, "path": path, "body": body})
+        return {"turn_number": 6}
+
+    monkeypatch.setattr(_ex, "_agent_bus_request", fake_request)
+
+    token = bind_active_persona("orion")
+    try:
+        await execute_tool(
+            "agent_bus",
+            {
+                "tool": "reply",
+                "arguments": json.dumps(
+                    {
+                        "thread": "480",
+                        "to": "cursor",
+                        "subject": "sub",
+                        "body": "content",
+                        "after_turn": 4,
+                    }
+                ),
+            },
+        )
+    finally:
+        reset_active_persona(token)
+
+    assert captured["body"] is not None
+    assert captured["body"]["from"] == "orion"
+
+
+@pytest.mark.asyncio
 async def test_execute_agent_bus_reply_posts_body(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

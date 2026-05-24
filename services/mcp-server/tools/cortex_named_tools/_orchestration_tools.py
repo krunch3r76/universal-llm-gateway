@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._boot_diff import _build_boot_diff
+from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_boot
 
 if TYPE_CHECKING:
@@ -136,7 +136,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         return {
             "primary": primary,
             "secondary": secondary,
-            "diff": _build_boot_diff(primary, secondary),
+            "diff": build_boot_diff(primary, secondary),
         }
 
     @mcp.tool(title="Session Close (Reminder)")

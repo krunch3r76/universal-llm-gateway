@@ -10,11 +10,11 @@ from mcp.types import ImageContent
 from mcp_events import record
 
 from ._image_render import (
-    _render_thumbnail_bytes,
-    _shared_image_name,
-    _write_shared_image,
+    render_thumbnail_bytes,
+    shared_image_name,
+    write_shared_image,
 )
-from ._paths import _ALLOWED_IMAGE_SUFFIXES, _normalize_files_reference, _safe_path
+from ._paths import ALLOWED_IMAGE_SUFFIXES, normalize_files_reference, safe_path
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +31,21 @@ def view_image_impl(
     can open local files without bloating the MCP payload. Use ``image`` only
     when the response itself must carry inline pixels.
     """
-    normalized_path = _normalize_files_reference(path)
-    src = _safe_path(normalized_path)
+    normalized_path = normalize_files_reference(path)
+    src = safe_path(normalized_path)
     if not src.exists():
         raise FileNotFoundError(f"Image not found: {path!r}")
     if not src.is_file():
         raise ValueError(f"Path is not a file: {path!r}")
 
     suffix = src.suffix.lower()
-    if suffix not in _ALLOWED_IMAGE_SUFFIXES:
+    if suffix not in ALLOWED_IMAGE_SUFFIXES:
         raise ValueError(
             f"Unsupported image format {suffix!r}. "
-            f"Allowed: {', '.join(sorted(_ALLOWED_IMAGE_SUFFIXES))}"
+            f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_SUFFIXES))}"
         )
 
-    jpeg_bytes, original_size, thumb_size = _render_thumbnail_bytes(
+    jpeg_bytes, original_size, thumb_size = render_thumbnail_bytes(
         src,
         max_dimension=max_dimension,
         quality=quality,
@@ -76,12 +76,12 @@ def view_image_impl(
             mimeType="image/jpeg",
         )
 
-    shared_name = _shared_image_name(
+    shared_name = shared_image_name(
         src,
         max_dimension=max_dimension,
         quality=quality,
     )
-    shared_path, shared_host_path = _write_shared_image(shared_name, jpeg_bytes)
+    shared_path, shared_host_path = write_shared_image(shared_name, jpeg_bytes)
     logger.info("view_image copy: %s", shared_path)
     return {
         "path": str(shared_host_path),

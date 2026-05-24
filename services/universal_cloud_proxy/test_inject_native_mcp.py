@@ -15,7 +15,9 @@ import pytest
 from services.universal_cloud_proxy.native_routes import _inject_native_mcp
 
 _PATCH_EXECUTOR = "services.universal_cloud_proxy.cloud_proxy._get_mcp_executor"
-_PATCH_CONFIG = "services.universal_cloud_proxy.native_routes._get_mcp_config_for_provider"
+_PATCH_CONFIG = (
+    "services.universal_cloud_proxy.native_routes._get_mcp_config_for_provider"
+)
 _FAKE_CONFIG = {"url": "https://mcp.example.com/mcp", "token": "test-token"}
 
 
@@ -35,7 +37,9 @@ def test_xai_mcp_injection_skipped() -> None:
 
 
 def test_xai_mcp_skip_logs_info(caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.INFO, logger="services.universal_cloud_proxy.native_routes"):
+    with caplog.at_level(
+        logging.INFO, logger="services.universal_cloud_proxy.native_routes"
+    ):
         _call_inject("xai")
     assert any(
         "xAI does not yet support type:mcp" in record.message

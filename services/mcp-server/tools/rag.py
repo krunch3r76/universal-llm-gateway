@@ -20,11 +20,11 @@ from provider_model_limits import local_model_inference_timeout, rag_pipeline_ti
 from transport_utils import make_sync_client
 
 from ._rag_http import (
-    _handle_rag_call_error,
-    _rag_get,
+    handle_rag_call_error,
+    rag_get,
 )
 from ._rag_http import (
-    _rag_post as _rag_post_http,
+    rag_post as _rag_post_http,
 )
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 # Default rerank/answer model names used by the rag-context and rag-answer pipelines.
 # Override via env vars when pipelines are reconfigured to use different models.
 _RERANK_MODEL_DEFAULT = os.environ.get("RAG_RERANK_MODEL", "qwen3_9b")
@@ -68,7 +68,7 @@ def _pipeline_call(
         body["pipeline_options"] = pipeline_options
 
     url = "/v1/chat/completions"
-    with make_sync_client(_STARGATE_URL, timeout=timeout) as client:
+    with make_sync_client(STARGATE_URL, timeout=timeout) as client:
         resp = client.post(url, json=body)
         resp.raise_for_status()
         return resp.json()
@@ -76,12 +76,12 @@ def _pipeline_call(
 
 def _rag_call(path: str, *, timeout: float) -> dict[str, Any]:
     """GET from Stargate passthrough and return parsed JSON."""
-    return _rag_get(_STARGATE_URL, path, timeout=timeout)
+    return rag_get(STARGATE_URL, path, timeout=timeout)
 
 
-def _rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+def rag_post(path: str, body: dict[str, Any], *, timeout: float) -> dict[str, Any]:
     """POST JSON to Stargate passthrough and return parsed object payload."""
-    return _rag_post_http(_STARGATE_URL, path, body, timeout=timeout)
+    return _rag_post_http(STARGATE_URL, path, body, timeout=timeout)
 
 
 def _handle_pipeline_error(
@@ -272,7 +272,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as e:
-            return _handle_rag_call_error(e, endpoint_name="scopes")
+            return handle_rag_call_error(e, endpoint_name="scopes")
 
         scopes_obj = payload.get("scopes", {})
         if not isinstance(scopes_obj, dict):
@@ -351,7 +351,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as e:
-            return _handle_rag_call_error(e, endpoint_name="coverage")
+            return handle_rag_call_error(e, endpoint_name="coverage")
 
         duration = monotonic_now() - t0
         scope_count = len(payload.get("scopes", {}))
@@ -669,7 +669,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
         t0 = monotonic_now()
         record("mcp.rag.preview.called", top_k=safe_k)
         try:
-            payload = _rag_post("api/v1/rag/search", body, timeout=_RAG_API_TIMEOUT)
+            payload = rag_post("api/v1/rag/search", body, timeout=_RAG_API_TIMEOUT)
         except (
             httpx.ConnectError,
             httpx.TimeoutException,
@@ -677,7 +677,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="search_preview")
+            return handle_rag_call_error(exc, endpoint_name="search_preview")
 
         chunks = payload.get("chunks", [])
         metadata = payload.get("metadata", [])
@@ -732,7 +732,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         body = {"groups": [{"source": source, "chunk_indices": normalized_indices}]}
         try:
-            payload = _rag_post(
+            payload = rag_post(
                 "api/v1/rag/chunks_by_index",
                 body,
                 timeout=_RAG_API_TIMEOUT,
@@ -744,7 +744,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="chunks_by_index")
+            return handle_rag_call_error(exc, endpoint_name="chunks_by_index")
 
         chunks = payload.get("chunks", [])
         count = len(chunks) if isinstance(chunks, list) else 0
@@ -800,7 +800,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         url = "/api/v1/rag/refresh_corpus_hints"
         try:
-            with make_sync_client(_STARGATE_URL, timeout=60.0) as client:
+            with make_sync_client(STARGATE_URL, timeout=60.0) as client:
                 resp = client.post(url, json=body)
                 resp.raise_for_status()
                 payload = resp.json()
@@ -810,7 +810,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             httpx.HTTPStatusError,
             httpx.RequestError,
         ) as e:
-            return _handle_rag_call_error(e, endpoint_name="refresh_corpus_hints")
+            return handle_rag_call_error(e, endpoint_name="refresh_corpus_hints")
 
         duration = monotonic_now() - t0
         record(

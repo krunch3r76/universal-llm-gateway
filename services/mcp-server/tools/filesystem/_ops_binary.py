@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp_events import record
 
-from ._paths import _BINARY_MAX_BYTES, _safe_path
+from ._paths import BINARY_MAX_BYTES, safe_path
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
     No extension restrictions — the container sandbox is the security
     boundary. Any file type is accepted.
     """
-    dest = _safe_path(rel_path)
+    dest = safe_path(rel_path)
     try:
         raw = base64.b64decode(content_base64, validate=True)
     except binascii.Error as exc:
@@ -32,10 +32,10 @@ def write_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
         )
         raise ValueError("content is not valid base64") from exc
 
-    if len(raw) > _BINARY_MAX_BYTES:
+    if len(raw) > BINARY_MAX_BYTES:
         raise ValueError(
             f"Decoded binary ({len(raw)} bytes) exceeds "
-            f"{_BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
+            f"{BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -63,9 +63,9 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
     """Decode base64 and append binary bytes to an existing sandbox file.
 
     Creates the file if it doesn't exist. Each chunk must be independently
-    valid base64. The total file size is capped at _BINARY_MAX_BYTES.
+    valid base64. The total file size is capped at BINARY_MAX_BYTES.
     """
-    dest = _safe_path(rel_path)
+    dest = safe_path(rel_path)
     try:
         raw = base64.b64decode(content_base64, validate=True)
     except binascii.Error as exc:
@@ -77,10 +77,10 @@ def append_binary_impl(rel_path: str, content_base64: str) -> dict[str, Any]:
         raise ValueError("content is not valid base64") from exc
 
     current_size = dest.stat().st_size if dest.exists() else 0
-    if current_size + len(raw) > _BINARY_MAX_BYTES:
+    if current_size + len(raw) > BINARY_MAX_BYTES:
         raise ValueError(
             f"Appending {len(raw)} bytes to {current_size}-byte file "
-            f"would exceed {_BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
+            f"would exceed {BINARY_MAX_BYTES // (1024 * 1024)}MB limit"
         )
 
     dest.parent.mkdir(parents=True, exist_ok=True)

@@ -10,7 +10,7 @@ responsible for canonicalizing inline content (stripping known
 boot-timestamp patterns) before comparison — see phase4.md.
 
 Concurrency: FetchRecorder.records is appended to from
-ThreadPoolExecutor workers in _boot_runner.py. Append is guarded by an
+ThreadPoolExecutor workers in boot_runner.py. Append is guarded by an
 explicit threading.Lock rather than relying on CPython GIL atomicity of
 list.append (forward-compat with free-threaded Python / PEP 703).
 """
@@ -100,7 +100,7 @@ class FetchRecorder:
 
     Usage:
         rec = FetchRecorder()
-        wrapped_cx = rec.wrap("cortex", _cx)
+        wrapped_cx = rec.wrap("cortex", cx)
         result = wrapped_cx("GET", "/assertions?...")
         # rec.records is now populated
     """

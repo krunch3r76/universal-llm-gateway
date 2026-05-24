@@ -1,7 +1,7 @@
 """Context file read MCP tools: list_context_directory and read_context_file.
 
 Supports text and binary (with auto-detection via extension/magic). Delegates binary
-handling and text extraction to .._file_helpers. Uses tasks_path_policy for safe
+handling and text extraction to ..file_helpers. Uses tasks_path_policy for safe
 resolution under the tasks root. All accesses record telemetry via mcp_events.
 """
 
@@ -14,11 +14,11 @@ from universal_logging import get_logger
 
 from .._file_helpers import (
     BINARY_EXTENSIONS,
-    _is_binary_by_magic,
+    is_binary_by_magic,
     build_binary_read_result,
     extract_text_content,
 )
-from .tasks_path_policy import _TASKS_ROOT, _safe_tasks_path
+from .tasks_path_policy import TASKS_ROOT, safe_tasks_path
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -42,7 +42,7 @@ def register_context_file_read_tools(mcp: FastMCP) -> None:
         Returns:
             {"entries": ["<name>", ...]}
         """
-        target = _safe_tasks_path(path) if path else _TASKS_ROOT
+        target = safe_tasks_path(path) if path else TASKS_ROOT
         if not target.exists():
             return {"error": f"Path not found: {path}"}
         if not target.is_dir():
@@ -74,7 +74,7 @@ def register_context_file_read_tools(mcp: FastMCP) -> None:
             Text mode: {"content": "<file contents>", "path": "<relative path>"}
             Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path"}
         """
-        target = _safe_tasks_path(path)
+        target = safe_tasks_path(path)
         if not target.exists():
             return {"error": f"File not found: {path}"}
         if not target.is_file():
@@ -94,12 +94,12 @@ def register_context_file_read_tools(mcp: FastMCP) -> None:
             return result
 
         suffix = target.suffix.lower()
-        if suffix in BINARY_EXTENSIONS or _is_binary_by_magic(target):
+        if suffix in BINARY_EXTENSIONS or is_binary_by_magic(target):
             result = build_binary_read_result(target, path_value=path)
             result["auto_binary"] = True
             if result.get("mime_type", "").startswith("image/"):
                 result["_next"] = (
-                    f'For text extraction: dispatch(tool="document_ocr", '
+                    f'For text extraction: dispatch(tool="extract_document", '
                     f'arguments=\'{{"path": "{path}"}}\').'
                     f' For visual inspection: view_image(path="{path}").'
                 )

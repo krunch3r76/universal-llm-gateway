@@ -17,7 +17,7 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _IMAGE_TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
 _VIDEO_SUBMIT_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
 _VIDEO_POLL_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
@@ -58,7 +58,7 @@ def execute_frontier_image(
     try:
         with httpx.Client(timeout=effective_timeout) as http:
             resp = http.post(
-                f"{_STARGATE_URL}{path}",
+                f"{STARGATE_URL}{path}",
                 json=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -127,7 +127,7 @@ def execute_frontier_video(
     try:
         with httpx.Client(timeout=_VIDEO_SUBMIT_TIMEOUT) as http:
             resp = http.post(
-                f"{_STARGATE_URL}{submit_path}",
+                f"{STARGATE_URL}{submit_path}",
                 json=body,
                 headers={"Content-Type": "application/json"},
             )
@@ -174,7 +174,7 @@ def execute_frontier_video(
             while time.monotonic() < deadline:
                 time.sleep(_VIDEO_POLL_INTERVAL)
                 poll_resp = http.get(
-                    f"{_STARGATE_URL}/api/v1/providers/{provider}/videos/{request_id}",
+                    f"{STARGATE_URL}/api/v1/providers/{provider}/videos/{request_id}",
                 )
                 if poll_resp.status_code >= 400:
                     logger.warning(

@@ -1,7 +1,7 @@
 """JS bundle analysis tool for security testing — regex-based extraction
 of API endpoints, secrets, auth patterns, and interesting code patterns.
 
-Split from security.py for SLOC compliance. Uses _exec_http from security
+Split from security.py for SLOC compliance. Uses exec_http from security
 module for URL fetching.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from tools.security import _exec_http
+from tools.security import exec_http
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -31,7 +31,7 @@ def register_security_js_tools(mcp: FastMCP) -> None:
             interesting_patterns, source_maps.
         """
         if len(source) <= 500 and source.startswith(("http://", "https://")):
-            resp = _exec_http("GET", source, timeout_ms=30000)
+            resp = exec_http("GET", source, timeout_ms=30000)
             if "error" in resp:
                 return {"error": f"Fetch failed: {resp['error']}"}
             js = resp["body"]

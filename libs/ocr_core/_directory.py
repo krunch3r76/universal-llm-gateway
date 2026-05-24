@@ -3,10 +3,10 @@
 Enumerates scannable files under a directory, OCRs each via :func:`ocr_pages`,
 accumulates results and per-file errors. The cortex-api ``POST
 /documents/ocr/directory`` endpoint thin-wraps this orchestrator; the thin MCP
-``document_ocr_directory`` tool relays to the cortex-api endpoint.
+``extract_directory`` MCP tool relays to the cortex-api endpoint.
 
 Structurally separated from ``_core`` so the per-file OCR primitive (used
-directly by the single-file ``document_ocr`` MCP tool) doesn't drag in the
+directly by ``extract_document`` in mcp-server) doesn't drag in the
 batch concerns (per-file error accumulation, summary aggregation, relative-path
 computation).
 """
@@ -35,7 +35,7 @@ def ocr_directory(
     """Batch OCR every scannable file under ``abs_dir``.
 
     Recurses one level (``iterdir``) — matches the existing single-directory
-    semantics of the MCP ``document_ocr_directory`` tool. Returns paths
+    semantics of the MCP ``extract_directory`` tool. Returns paths
     relative to ``files_root`` so cross-service references stay portable.
 
     ``stargate_url`` is threaded through to ``ocr_pages`` for every file. The

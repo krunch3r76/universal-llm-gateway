@@ -5,16 +5,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_SANDBOX_ROOT = Path("/data/files")
-_TRASH_ROOT = _SANDBOX_ROOT / "trash"
-_SHARED_IMAGE_DIR = Path(
-    os.environ.get("MCP_SHARED_IMAGE_DIR", str(_SANDBOX_ROOT / ".shared-images"))
+SANDBOX_ROOT = Path("/data/files")
+TRASH_ROOT = SANDBOX_ROOT / "trash"
+SHARED_IMAGE_DIR = Path(
+    os.environ.get("MCP_SHARED_IMAGE_DIR", str(SANDBOX_ROOT / ".shared-images"))
 )
-_SHARED_IMAGE_HOST_ROOT = Path(
-    os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(_SHARED_IMAGE_DIR))
+SHARED_IMAGE_HOST_ROOT = Path(
+    os.environ.get("MCP_SHARED_IMAGE_HOST_ROOT", str(SHARED_IMAGE_DIR))
 )
-_ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
-_EDITABLE_SUFFIXES = {
+ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"}
+EDITABLE_SUFFIXES = {
     ".md",
     ".txt",
     ".py",
@@ -36,9 +36,9 @@ _EDITABLE_SUFFIXES = {
     ".env",
     ".log",
 }
-_BINARY_MAX_BYTES = 20 * 1024 * 1024
+BINARY_MAX_BYTES = 20 * 1024 * 1024
 
-_FS_WORKFLOW_HINTS: dict[str, str] = {
+FS_WORKFLOW_HINTS: dict[str, str] = {
     "delete": (
         "file moved to trash/ — restore via fs(op='move', path='trash/<original>', target='<original>') "
         "or purge permanently via remove_directory('trash')"
@@ -62,18 +62,18 @@ _FS_WORKFLOW_HINTS: dict[str, str] = {
     ),
     "write_binary": (
         "next: cortex entity_create or assert with source_uri pointing to this "
-        "path; or use document_ocr for PDFs/images requiring text extraction"
+        "path; or use extract_document for PDFs/images requiring text extraction"
     ),
 }
 
-_DROPBOX_READ_HINT = (
+DROPBOX_READ_HINT = (
     "This file is in dropbox/ (temporary staging). After reading: "
     "(1) check if it has a document: entity in Cortex — if not, create one; "
     "(2) move to a permanent path via fs move; "
     "(3) seed cortex assertions with source_uri pointing to the permanent path"
 )
 
-_DROPBOX_COPY_WARNING = (
+DROPBOX_COPY_WARNING = (
     "dropbox/ is temporary staging — use op='move' to clear the source. "
     "Copying leaves the original in staging; the assertion API will reject "
     "evidence_uris pointing to dropbox paths (HTTP 422). "
@@ -81,20 +81,20 @@ _DROPBOX_COPY_WARNING = (
 )
 
 
-def _normalize_files_reference(path: str) -> str:
+def normalize_files_reference(path: str) -> str:
     """Accept either a relative sandbox path or a `files://` URI."""
     return path.removeprefix("files://")
 
 
-def _safe_path(relative: str) -> Path:
+def safe_path(relative: str) -> Path:
     """Resolve *relative* inside the sandbox, rejecting traversal attempts.
 
     Raises ValueError if the resolved path escapes the sandbox root.
     """
     clean = relative.lstrip("/")
-    candidate = (_SANDBOX_ROOT / clean).resolve()
+    candidate = (SANDBOX_ROOT / clean).resolve()
     try:
-        candidate.relative_to(_SANDBOX_ROOT)
+        candidate.relative_to(SANDBOX_ROOT)
     except ValueError:
         raise ValueError(
             f"Path {relative!r} resolves outside sandbox; traversal rejected"
@@ -102,7 +102,7 @@ def _safe_path(relative: str) -> Path:
     return candidate
 
 
-def _trash_destination(original_rel: str) -> Path:
+def trash_destination(original_rel: str) -> Path:
     """Return a non-colliding path inside trash/ for *original_rel*.
 
     Layout is path-preserving: trash/<original-rel>.  On collision the stem
@@ -111,7 +111,7 @@ def _trash_destination(original_rel: str) -> Path:
     ∀ n ∈ 1..99: candidate is tried in order; first free slot wins.
     Raises FileExistsError if all 99 slots are occupied (practically impossible).
     """
-    candidate = _TRASH_ROOT / original_rel.lstrip("/")
+    candidate = TRASH_ROOT / original_rel.lstrip("/")
     if not candidate.exists():
         return candidate
     stem = candidate.stem

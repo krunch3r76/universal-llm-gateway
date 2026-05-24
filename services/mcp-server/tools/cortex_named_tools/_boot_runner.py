@@ -16,10 +16,10 @@ from universal_logging import get_logger
 from .._boot_helpers import render_briefing_card, render_operational_context
 from ..filesystem._ops_text import list_files_impl as _list_files
 from ._boot_audit_dump import write_audit_dump
-from ._boot_data_fetch import _build_futures_spec, _extract_boot_results
+from ._boot_data_fetch import build_futures_spec, extract_boot_results
 from ._boot_manifest import FetchRecorder, InjectedArtifact, serialize_manifest
-from ._boot_summarize import _build_review_top, _build_unread_threads
-from ._boot_transcript import _resolve_transcript
+from ._boot_summarize import build_review_top, build_unread_threads
+from ._boot_transcript import resolve_transcript
 
 _LA = ZoneInfo("America/Los_Angeles")
 _OPS_CONTEXT_DIR = Path("/data/files/notes/system/shared")
@@ -116,12 +116,12 @@ def _materialize_views(
     """
     from urllib.parse import urlencode
 
-    from .._cortex_relay import _cx
+    from .._cortex_relay import cx
 
     results: list[dict[str, Any]] = []
     for entity_id in views:
         qs = urlencode({"root": entity_id, "hops": 1})
-        resp = _cx("GET", f"/subgraph/render?{qs}")
+        resp = cx("GET", f"/subgraph/render?{qs}")
         entity_count = int(resp.get("entity_count", 0)) if "entity_count" in resp else 0
         edge_count = int(resp.get("edge_count", 0)) if "edge_count" in resp else 0
         results.append(
@@ -168,7 +168,7 @@ def run_cortex_boot(
     # Seat slug for session IDs, op_ctx paths, and events — new {family}-{platform} format.
     seat_slug = f"{resolved_family}-{resolved_platform}"
 
-    transcript_continuation = _resolve_transcript(transcript_id)
+    transcript_continuation = resolve_transcript(transcript_id)
     _tc_warning: str | None = None
     if transcript_continuation and "error" in transcript_continuation:
         # Forward-reference: the dispatching session is still active and has not
@@ -189,7 +189,7 @@ def run_cortex_boot(
         if mode == BootMode.LIVE
         else f"inspect-{seat_slug}-{t_boot.strftime('%Y-%m-%d-%H%M%S')}"
     )
-    # Build a profile dict compatible with _build_futures_spec / _extract_boot_results.
+    # Build a profile dict compatible with build_futures_spec / extract_boot_results.
     # These helpers still expect a dict with specific keys; map from CapabilityProfile.
     profile_dict: dict[str, Any] = {
         "include_deadlines": profile.include_deadlines,
@@ -211,7 +211,7 @@ def run_cortex_boot(
     profile_dict["self_entity_id"] = self_entity_id
 
     recorder = FetchRecorder()
-    futures_spec = _build_futures_spec(seat_slug, profile_dict, recorder)
+    futures_spec = build_futures_spec(seat_slug, profile_dict, recorder)
     with ThreadPoolExecutor(max_workers=8) as pool:
         submitted = {k: pool.submit(*spec) for k, spec in futures_spec.items()}
         future_to_key = {f: k for k, f in submitted.items()}
@@ -219,7 +219,7 @@ def run_cortex_boot(
         for future in as_completed(submitted.values()):
             raw[future_to_key[future]] = future.result()
 
-    extracted = _extract_boot_results(seat_slug, raw, profile_dict)
+    extracted = extract_boot_results(seat_slug, raw, profile_dict)
 
     op_ctx_path = f"notes/system/shared/operational-context-{seat_slug}.md"
     if role is not None:
@@ -243,7 +243,9 @@ def run_cortex_boot(
             )
             op_ctx_written = True
         except OSError as exc:
-            logger.warning("Could not write operational context to %s: %s", op_ctx_path, exc)
+            logger.warning(
+                "Could not write operational context to %s: %s", op_ctx_path, exc
+            )
             record(
                 "mcp.cortex.boot.op_context.write_failed",
                 agent=seat_slug,
@@ -264,8 +266,8 @@ def run_cortex_boot(
             "summary": summary,
         }
 
-    unread_threads = _build_unread_threads(extracted["threads"])
-    review_top = _build_review_top(extracted["staging_items"])
+    unread_threads = build_unread_threads(extracted["threads"])
+    review_top = build_review_top(extracted["staging_items"])
 
     dropbox_files: list[str] = _list_files("dropbox/").get("files", [])
 

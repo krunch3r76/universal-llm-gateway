@@ -20,6 +20,13 @@ from model_id import ModelId
 # Path segment keys under ``/api/v1/providers/{key}/...``
 NATIVE_PROVIDER_KEYS = frozenset({"anthropic", "xai", "openai", "google"})
 
+# xAI effort-tier encoding — suffix appended to model ID out-of-band so that
+# callers (grok CLI, grokbuild) that cannot pass reasoning.effort directly can
+# encode the desired tier in the stanza model name.
+# Shared by native_routes, cloud_proxy, and catalog synthesis.
+_EFFORT_SUFFIX = "__effort_"
+_EFFORT_LEVELS = ("low", "medium", "high", "xhigh")
+
 
 def workspace_catalog_id_from_native(provider_key: str, raw_model_id: str) -> str:
     """Map (endpoint provider, raw model field) → workspace id string (``anthropic/...``)."""

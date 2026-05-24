@@ -91,6 +91,7 @@ models/
 !services/grokbuild_worker/models/**
 # Negation above re-includes bytecode; keep it untracked
 libs/cortex_store/models/**/__pycache__/
+services/grokbuild_worker/models/**/__pycache__/
 summaries/
 
 .git/

@@ -21,7 +21,7 @@ from ._extract_document_helpers import compute_source_sha256
 from ._file_helpers import FILES_ROOT
 from ._sidecar_schema import (
     SIDECAR_SUFFIX,
-    _parse_leading_frontmatter,
+    parse_leading_frontmatter,
     validate_sidecar_frontmatter,
 )
 
@@ -139,7 +139,7 @@ def load_and_validate_sidecar(
             f"Cannot read sidecar at {sidecar_path}: {exc}",
         ) from exc
 
-    frontmatter = _parse_leading_frontmatter(content)
+    frontmatter = parse_leading_frontmatter(content)
     if frontmatter is None:
         raise PromoteError(
             "sidecar_invalid",

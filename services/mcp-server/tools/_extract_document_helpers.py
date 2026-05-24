@@ -5,9 +5,9 @@ path composition, frontmatter build, atomic write, idempotency check, and
 the source-SHA hashing used at both extract-time and promote-time.
 
 Sidecar shape (validation, frontmatter parsing, suffix constant) lives in
-``_sidecar_schema``. Naming grammar (PageSpec, ArgsHash) lives in
+``sidecar_schema``. Naming grammar (PageSpec, ArgsHash) lives in
 ``_sidecar_naming``. Default-profile load + ``hash_prompt`` live in
-``_extraction_profile``.
+``extraction_profile``.
 
 Spec: cortex://notes/system/specs/document-ingestion-redesign.md
 """
@@ -25,8 +25,8 @@ from ocr_core import has_text_layer, ocr_pages
 
 from ._extraction_profile import DefaultProfile
 from ._sidecar_naming import ArgsHash, PageSpec
-from ._sidecar_schema import SIDECAR_SUFFIX, _parse_leading_frontmatter
-from .llm import _STARGATE_URL
+from ._sidecar_schema import SIDECAR_SUFFIX, parse_leading_frontmatter
+from .llm import STARGATE_URL
 
 # ─── Module-level constants ──────────────────────────────────────────────────
 
@@ -110,12 +110,12 @@ def extract_text(
     email parser, plain text via direct read).
     """
     if fmt == "text_pdf":
-        from ._file_helpers import _read_pdf
+        from ._file_helpers import read_pdf
 
-        return _read_pdf(path), None
+        return read_pdf(path), None
 
     if fmt in ("scanned_pdf", "image"):
-        kwargs: dict[str, Any] = {"stargate_url": _STARGATE_URL, "dpi": dpi}
+        kwargs: dict[str, Any] = {"stargate_url": STARGATE_URL, "dpi": dpi}
         if model:
             kwargs["model"] = model
         if prompt:
@@ -128,17 +128,17 @@ def extract_text(
     if fmt == "rich_text":
         suffix = path.suffix.lower()
         if suffix == ".docx":
-            from ._file_helpers import _read_docx
+            from ._file_helpers import read_docx
 
-            return _read_docx(path), None
+            return read_docx(path), None
         if suffix == ".odt":
-            from ._file_helpers import _read_odt
+            from ._file_helpers import read_odt
 
-            return _read_odt(path), None
+            return read_odt(path), None
         if suffix == ".eml":
-            from ._file_helpers import _read_eml
+            from ._file_helpers import read_eml
 
-            return _read_eml(path), None
+            return read_eml(path), None
         return path.read_text(encoding="utf-8", errors="replace"), None
 
     return path.read_text(encoding="utf-8", errors="replace"), None
@@ -273,7 +273,7 @@ def check_idempotent(
     except OSError:
         return False
 
-    fm = _parse_leading_frontmatter(content)
+    fm = parse_leading_frontmatter(content)
     if fm is None:
         return False
 

@@ -1,6 +1,6 @@
 """Context file mutation MCP tools: write, edit, move, delete under tasks/.
 
-Includes the editable suffix policy (_EDITABLE_SUFFIXES) for in-place edits.
+Includes the editable suffix policy (EDITABLE_SUFFIXES) for in-place edits.
 All write paths enforce TASKS_READ_ONLY via tasks_path_policy and record
 violations. Edit delegates to ..file_editor.perform_edit.
 """
@@ -15,10 +15,10 @@ from universal_logging import get_logger
 
 from ..file_editor import perform_edit
 from .tasks_path_policy import (
-    _TASKS_READ_ONLY,
-    _read_only_error,
-    _record_read_only_violation,
-    _safe_tasks_path,
+    TASKS_READ_ONLY,
+    read_only_error,
+    record_read_only_violation,
+    safe_tasks_path,
 )
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-_EDITABLE_SUFFIXES = {
+EDITABLE_SUFFIXES = {
     ".md",
     ".txt",
     ".py",
@@ -69,12 +69,12 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "written", "path": "<relative path>"}
         """
-        if _TASKS_READ_ONLY:
-            _record_read_only_violation(tool="write_context_file", path=path)
-            return _read_only_error()
+        if TASKS_READ_ONLY:
+            record_read_only_violation(tool="write_context_file", path=path)
+            return read_only_error()
 
         try:
-            target = _safe_tasks_path(path)
+            target = safe_tasks_path(path)
         except ValueError as exc:
             record("mcp.tool.context.write.failed", path=path, reason="path_error")
             return {"error": str(exc)}
@@ -124,22 +124,22 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
             For replace: includes "replacements_made".
             On error: {"error": "..."}
         """
-        if _TASKS_READ_ONLY:
-            _record_read_only_violation(
+        if TASKS_READ_ONLY:
+            record_read_only_violation(
                 tool="edit_context_file", path=path, operation=operation
             )
             # The cast here indicates a potential type mismatch or overly broad type.
-            # _read_only_error() returns dict[str, str], which is compatible with
+            # read_only_error() returns dict[str, str], which is compatible with
             # dict[str, str | int], so the cast might be unnecessary or indicate
             # a deeper type issue if 'int' is truly not expected in error returns.
-            return _read_only_error()  # Type checker should handle this implicitly.
+            return read_only_error()  # Type checker should handle this implicitly.
 
         try:
-            target_path = _safe_tasks_path(path)
+            target_path = safe_tasks_path(path)
         except ValueError as exc:
             return {"error": str(exc)}
 
-        if target_path.suffix.lower() not in _EDITABLE_SUFFIXES:
+        if target_path.suffix.lower() not in EDITABLE_SUFFIXES:
             return {
                 "error": f"Cannot edit binary format {target_path.suffix!r} in place. "
                 "Use write_context_file() instead."
@@ -210,15 +210,15 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Move Context File")
     def move_context_file(path: str, target: str) -> dict[str, str]:
         """Move or rename a file in the tasks/ workspace context."""
-        if _TASKS_READ_ONLY:
-            _record_read_only_violation(
+        if TASKS_READ_ONLY:
+            record_read_only_violation(
                 tool="move_context_file", path=path, operation="move"
             )
-            return _read_only_error()
+            return read_only_error()
 
         try:
-            src = _safe_tasks_path(path)
-            dst = _safe_tasks_path(target)
+            src = safe_tasks_path(path)
+            dst = safe_tasks_path(target)
         except ValueError as exc:
             return {"error": str(exc)}
         if not src.exists():
@@ -246,12 +246,12 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
             {"status": "deleted", "path": "<relative path>"}
             On error: {"error": "..."}
         """
-        if _TASKS_READ_ONLY:
-            _record_read_only_violation(tool="delete_context_file", path=path)
-            return _read_only_error()
+        if TASKS_READ_ONLY:
+            record_read_only_violation(tool="delete_context_file", path=path)
+            return read_only_error()
 
         try:
-            target = _safe_tasks_path(path)
+            target = safe_tasks_path(path)
         except ValueError as exc:
             record("mcp.tool.file.delete.failed", path=path, reason="path_error")
             return {"error": str(exc)}

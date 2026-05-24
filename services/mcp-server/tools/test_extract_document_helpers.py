@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 import yaml
 
-from tools import _extraction_profile
+from tools import _extraction_profile as extraction_profile
 from tools._extract_document_helpers import (
     TOOL_VERSION,
     atomic_write,
@@ -478,10 +478,10 @@ def _profile_in_tmp(
     profile_dir.mkdir(parents=True)
     profile_path = profile_dir / "document-extraction-v1.yaml"
     profile_path.write_text(_PROFILE_YAML, encoding="utf-8")
-    monkeypatch.setattr(_extraction_profile, "FILES_ROOT", tmp_path)
-    _extraction_profile.load_default_profile.cache_clear()
+    monkeypatch.setattr(extraction_profile, "FILES_ROOT", tmp_path)
+    extraction_profile.load_default_profile.cache_clear()
     yield profile_path
-    _extraction_profile.load_default_profile.cache_clear()
+    extraction_profile.load_default_profile.cache_clear()
 
 
 def test_load_default_profile_returns_dataclass(_profile_in_tmp: Path) -> None:
@@ -503,8 +503,8 @@ def test_load_default_profile_raises_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cold cache + missing file → FileNotFoundError."""
-    monkeypatch.setattr(_extraction_profile, "FILES_ROOT", tmp_path)
-    _extraction_profile.load_default_profile.cache_clear()
+    monkeypatch.setattr(extraction_profile, "FILES_ROOT", tmp_path)
+    extraction_profile.load_default_profile.cache_clear()
     with pytest.raises(FileNotFoundError, match="Default extraction profile"):
         load_default_profile()
 

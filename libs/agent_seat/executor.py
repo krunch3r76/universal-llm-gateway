@@ -29,6 +29,8 @@ from transport_utils import (
     make_async_client,
 )
 
+from agent_seat.context import get_active_persona
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30.0
@@ -276,6 +278,22 @@ async def _agent_bus_request(
         return {"error": f"agent-bus returned invalid JSON: {resp.text[:200]}"}
 
 
+def _inject_bus_from_agent(body: dict[str, Any], *, op: str) -> bool:
+    """Default ``from`` on post/reply when the dispatch loop bound active_persona."""
+    if body.get("from") or body.get("from_agent"):
+        return False
+    persona = get_active_persona()
+    if not persona:
+        return False
+    body["from"] = persona
+    logger.debug(
+        "agent_seat agent_bus %s: injected from=%r from active_persona context",
+        op,
+        persona,
+    )
+    return True
+
+
 async def _execute_agent_bus(args: dict[str, Any]) -> str:
     """Execute a unified agent_bus(tool=..., arguments=...) call."""
     tool = args.get("tool", "")
@@ -296,6 +314,8 @@ async def _execute_agent_bus(args: dict[str, Any]) -> str:
         body = None
     else:
         body = dict(parsed)
+        if tool in ("post", "reply") and body is not None:
+            _inject_bus_from_agent(body, op=tool)
 
     result = await _agent_bus_request(method, path, body)
     return json.dumps(result)

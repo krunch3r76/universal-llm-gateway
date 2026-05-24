@@ -85,8 +85,12 @@ def _make_dispatch_fn(
 def _safe_param_name(name: str) -> str:
     """Map a JSON property name to a safe Python identifier.
 
-    Appends '_' to Python keywords (e.g. 'from' → 'from_').
+    Special case: the agent_bus 'from' wire field is exposed as the documented
+    'from_agent' to match _reply_dispatch / _post_dispatch signatures and all
+    public documentation. Other keywords get the trailing underscore.
     """
+    if name == "from":
+        return "from_agent"
     if keyword.iskeyword(name) or keyword.issoftkeyword(name):
         return f"{name}_"
     return name

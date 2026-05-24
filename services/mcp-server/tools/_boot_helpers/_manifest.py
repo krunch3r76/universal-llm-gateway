@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 
-def _build_manifest(
+def build_manifest(
     *,
     plan_phases: list[dict[str, Any]] | None,
     in_flight_todos: list[dict[str, Any]] | None,

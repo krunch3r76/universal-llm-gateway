@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from mcp_events import record
 
-from .._cortex_relay import _cx
+from .._cortex_relay import cx
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -56,7 +56,7 @@ def register_data_tools(mcp: FastMCP) -> None:
             },
         }
 
-        result = _cx("POST", "/chunks", body)
+        result = cx("POST", "/chunks", body)
         if "error" not in result:
             logger.info("cortex_chunk_create: %s idx=%s", source_uri, chunk_index)
             record(
@@ -71,7 +71,7 @@ def register_data_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Cortex: Get Chunk")
     def cortex_chunk_get(chunk_id: int) -> dict[str, Any]:
         """Get a chunk by ID with its full content."""
-        return _cx("GET", f"/chunks/{chunk_id}")
+        return cx("GET", f"/chunks/{chunk_id}")
 
     @mcp.tool(title="Cortex: Create Surface Form")
     def cortex_surface_form_create(
@@ -113,7 +113,7 @@ def register_data_tools(mcp: FastMCP) -> None:
             },
         }
 
-        result = _cx("POST", "/surface-forms", body)
+        result = cx("POST", "/surface-forms", body)
         if "error" not in result:
             logger.info("cortex_surface_form_create: %s -> %s", mention, entity_id)
             record(
@@ -132,7 +132,7 @@ def register_data_tools(mcp: FastMCP) -> None:
 
         Returns {hit, entity_id, resolution_confidence, resolution_reasoning}.
         """
-        return _cx(
+        return cx(
             "GET",
             f"/surface-forms/cache?mention={quote(mention)}&context_hash={quote(context_hash)}",
         )

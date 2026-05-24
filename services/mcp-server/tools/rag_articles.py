@@ -19,10 +19,10 @@ from mcp_events import monotonic_now, record
 
 from ._rag_articles_admin import register_article_inventory_tools
 from ._rag_http import (
-    _handle_rag_call_error,
-    _rag_delete,
-    _rag_get,
-    _rag_post,
+    handle_rag_call_error,
+    rag_delete,
+    rag_get,
+    rag_post,
 )
 
 if TYPE_CHECKING:
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _ARTICLE_TIMEOUT = 15.0
 
 
@@ -117,8 +117,8 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             body["subdirectory"] = subdirectory
 
         try:
-            result = _rag_post(
-                _STARGATE_URL,
+            result = rag_post(
+                STARGATE_URL,
                 "api/v1/rag/article",
                 body,
                 timeout=_ARTICLE_TIMEOUT,
@@ -130,7 +130,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="article")
+            return handle_rag_call_error(exc, endpoint_name="article")
 
         duration = monotonic_now() - t0
         created = result.get("created", False) if isinstance(result, dict) else False
@@ -183,8 +183,8 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         record("mcp.rag.source.status.called", count=len(source_paths))
 
         try:
-            result = _rag_get(
-                _STARGATE_URL,
+            result = rag_get(
+                STARGATE_URL,
                 "api/v1/rag/source-status",
                 timeout=_ARTICLE_TIMEOUT,
                 params=[("sources", s) for s in source_paths],
@@ -196,7 +196,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="source_status")
+            return handle_rag_call_error(exc, endpoint_name="source_status")
 
         duration = monotonic_now() - t0
         count = len(result.get("sources", [])) if isinstance(result, dict) else 0
@@ -230,8 +230,8 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         record("mcp.rag.directory.delete.called", directory_path=directory_path)
 
         try:
-            result = _rag_delete(
-                _STARGATE_URL,
+            result = rag_delete(
+                STARGATE_URL,
                 "api/v1/rag/directory",
                 timeout=60.0,
                 params={"path": directory_path},
@@ -243,7 +243,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="directory")
+            return handle_rag_call_error(exc, endpoint_name="directory")
 
         duration = monotonic_now() - t0
         sources = result.get("sources_deleted", 0) if isinstance(result, dict) else 0
@@ -288,8 +288,8 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
         record("mcp.rag.source.delete.called", source_path=source_path)
 
         try:
-            result = _rag_delete(
-                _STARGATE_URL,
+            result = rag_delete(
+                STARGATE_URL,
                 "api/v1/rag/source",
                 timeout=_ARTICLE_TIMEOUT,
                 params={"path": source_path},
@@ -301,7 +301,7 @@ def register_rag_article_tools(mcp: FastMCP) -> None:
             httpx.RequestError,
             ValueError,
         ) as exc:
-            return _handle_rag_call_error(exc, endpoint_name="source")
+            return handle_rag_call_error(exc, endpoint_name="source")
 
         duration = monotonic_now() - t0
         chunks = result.get("chunks_deleted", 0) if isinstance(result, dict) else 0

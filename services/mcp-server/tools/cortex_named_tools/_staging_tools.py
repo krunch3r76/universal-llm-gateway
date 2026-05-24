@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlencode
 
-from .._cortex_relay import _cx
+from .._cortex_relay import cx
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -38,7 +38,7 @@ def register_staging_tools(mcp: FastMCP) -> None:
             params["status"] = status
         if source_uri is not None:
             params["source_uri"] = source_uri
-        return _cx("GET", f"/staging?{urlencode(params)}")
+        return cx("GET", f"/staging?{urlencode(params)}")
 
     @mcp.tool(title="Cortex: Reject Staging")
     def cortex_staging_reject(
@@ -53,7 +53,7 @@ def register_staging_tools(mcp: FastMCP) -> None:
         Returns:
             Updated StagingItem, or {"error": "<message>"}.
         """
-        result = _cx("POST", f"/staging/{staging_id}/reject", {"reviewer": reviewer})
+        result = cx("POST", f"/staging/{staging_id}/reject", {"reviewer": reviewer})
         if "error" not in result:
             logger.error(
                 "cortex_staging_reject failed for ID %d: %s",

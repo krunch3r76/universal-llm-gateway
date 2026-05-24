@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DispatchState = Literal["pending", "running", "succeeded", "failed", "cancelled"]
 
@@ -68,6 +68,47 @@ class GrokbuildDispatchRequest(BaseModel):
     # True (default) → grok CLI subprocess with dispatch bearer (grok-build-dispatch seat).
     # False → direct LLM API call via Stargate; no subprocess, no MCP inside dispatch.
     mcp: bool = Field(True, description="MCP-enabled path selector.")
+
+    @model_validator(mode="after")
+    def _validate_mcp_compatibility(self) -> "GrokbuildDispatchRequest":
+        """Reject grok-CLI-only fields when mcp=False (api path).
+
+        The api path (mcp=False) is a direct LLM API call via Stargate —
+        no subprocess, no MCP tooling, no agent loop. Fields that only
+        make sense for the grok CLI subprocess MUST NOT be set when
+        mcp=False; silently dropping them would rewrite caller intent
+        (see master @ cab52fa7 session review, finding F4).
+        """
+        if not self.mcp:
+            incompatible: list[str] = []
+            if self.mode == "edit":
+                incompatible.append(
+                    "mode='edit' (api path cannot edit; no subprocess)"
+                )
+            if self.continue_recent:
+                incompatible.append("continue_recent=True (grok CLI flag only)")
+            if self.reasoning_effort is not None:
+                incompatible.append("reasoning_effort (grok CLI flag only)")
+            if self.effort is not None:
+                incompatible.append("effort (grok CLI flag only)")
+            if self.check is not None:
+                incompatible.append("check (grok CLI flag only)")
+            if self.no_subagents:
+                incompatible.append("no_subagents=True (grok CLI flag only)")
+            if self.disable_web_search:
+                incompatible.append("disable_web_search=True (grok CLI flag only)")
+            if self.max_turns is not None:
+                incompatible.append("max_turns (grok CLI flag only)")
+            if self.best_of_n is not None:
+                incompatible.append("best_of_n (grok CLI flag only)")
+            if self.resume_strict:
+                incompatible.append("resume_strict=True (requires CLI session)")
+            if incompatible:
+                raise ValueError(
+                    "mcp=False (api path) is incompatible with: "
+                    + "; ".join(incompatible)
+                )
+        return self
 
 
 class GrokbuildDispatchAccepted(BaseModel):

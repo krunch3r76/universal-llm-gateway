@@ -7,7 +7,8 @@ MCP traffic to seat=grok-build-dispatch rather than to grok-direct.
 
 ∀ dispatch where MCP_GROK_BUILD_DISPATCH_TOKEN is configured:
   - dispatch HOME ≡ <sidecar_dir>/<dispatch_id>-home/
-  - config.toml written under dispatch HOME with dispatch bearer + dispatch_id
+  - config.toml = host ~/.grok/config.toml (all [model.*] stanzas preserved)
+    with [mcp_servers.user-vortex*] overlaid by the dispatch bearer + dispatch_id
   - auth.json symlinked from the real HOME (xAI login state re-used)
   - HOME added to subprocess env as an OVERRIDE (not pass-through)
   - pre-flight `grok inspect --json` verifies the override took effect
@@ -29,13 +30,9 @@ logger = get_logger(__name__)
 _MCP_URL = "https://mcp.k-1.me/mcp/grok"
 _MCP_SERVER_NAME = "user-vortex"
 
-# Config.toml template for the dispatch-scoped grok home.
-_CONFIG_TOML_TEMPLATE = """\
-[model.grok-build-dispatch]
-provider = "openai"
-base_url = "http://localhost:9999/providers/xai"
-api_key = "unused"
-
+# Overlay appended after host config.toml (with user-vortex sections stripped).
+# ∀ dispatch: [mcp_servers.user-vortex*] in host config is replaced by this block.
+_MCP_OVERLAY_TEMPLATE = """\
 [mcp_servers.{server_name}]
 url = "{mcp_url}"
 type = "http"
@@ -45,6 +42,66 @@ enabled = true
 Authorization = "Bearer {token}"
 X-Grokbuild-Dispatch-Id = "{dispatch_id}"
 """
+
+
+def _strip_toml_section(toml_text: str, section_prefix: str) -> str:
+    """Remove all TOML sections whose header starts with ``section_prefix``.
+
+    ∀ line L: L is section header ⟺ L.strip() starts with '['.
+    ∀ section S with header H: strip S ⟺ H starts with section_prefix.
+    Lines belonging to a stripped section (until the next '[') are omitted.
+    """
+    lines = toml_text.splitlines(keepends=True)
+    result: list[str] = []
+    in_stripped = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_stripped = stripped.startswith(section_prefix)
+        if not in_stripped:
+            result.append(line)
+    return "".join(result)
+
+
+def _build_config_toml(
+    token: str,
+    dispatch_id: str,
+    real_home: str | None,
+) -> str:
+    """Merge host config.toml with the dispatch MCP overlay.
+
+    Reads the host ~/.grok/config.toml (if present) to preserve [model.*]
+    stanzas and other host settings.  Strips any [mcp_servers.user-vortex*]
+    sections from the host config and appends the dispatch-specific block,
+    so the dispatch subprocess uses the correct bearer token and dispatch_id
+    while still being able to resolve xai/grok-4.3__effort_* model IDs.
+
+    ∀ result: result contains all host [model.*] stanzas ∧
+              result contains exactly one [mcp_servers.user-vortex] block ∧
+              that block carries the dispatch bearer token and dispatch_id.
+    """
+    host_config_path = Path(real_home) / ".grok" / "config.toml" if real_home else None
+    if host_config_path and host_config_path.exists():
+        base = host_config_path.read_text(encoding="utf-8")
+        base = _strip_toml_section(base, f"[mcp_servers.{_MCP_SERVER_NAME}")
+        if base and not base.endswith("\n"):
+            base += "\n"
+        logger.debug("dispatch_home: loaded host config.toml from %s", host_config_path)
+    else:
+        base = ""
+        logger.warning(
+            "dispatch_home: host config.toml not found at %s; "
+            "dispatch subprocess will lack [model.*] stanzas from host",
+            host_config_path,
+        )
+
+    overlay = _MCP_OVERLAY_TEMPLATE.format(
+        server_name=_MCP_SERVER_NAME,
+        mcp_url=_MCP_URL,
+        token=token,
+        dispatch_id=dispatch_id,
+    )
+    return base + overlay
 
 
 def dispatch_home_path(dispatch_id: str, sidecar_dir: Path) -> Path:
@@ -70,11 +127,10 @@ def setup_dispatch_home(
     grok_dir = home / ".grok"
     grok_dir.mkdir(parents=True, exist_ok=True)
 
-    config_content = _CONFIG_TOML_TEMPLATE.format(
-        server_name=_MCP_SERVER_NAME,
-        mcp_url=_MCP_URL,
+    config_content = _build_config_toml(
         token=token,
         dispatch_id=dispatch_id,
+        real_home=real_home,
     )
     (grok_dir / "config.toml").write_text(config_content, encoding="utf-8")
 

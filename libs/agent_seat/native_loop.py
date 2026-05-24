@@ -30,6 +30,7 @@ from llm_adapters import (
 )
 from model_id import ModelId
 
+from agent_seat.context import bind_active_persona, reset_active_persona
 from agent_seat.executor import execute_tool
 from agent_seat.tool_friction import ToolFrictionTracker
 
@@ -232,6 +233,7 @@ async def run_native_tool_loop(
     model: str,
     req: FrontierRequest,
     send_native: SendNativeFn,
+    agent: str | None = None,
     max_turns: int = 10,
     on_tool_event: ToolEventFn | None = None,
     cancel_check: CancelCheckFn | None = None,
@@ -244,6 +246,8 @@ async def run_native_tool_loop(
         send_native: Async ``(path, json_body) -> raw_response`` callable.
             Pipeline handler injects in-process ``CloudProxyClient``; MCP
             and tests inject httpx-based callables.
+        agent: Dispatched persona slug (e.g. ``orion``). When set, nested
+            ``agent_bus`` post/reply calls that omit ``from`` inherit this value.
         max_turns: Upper bound on model+tool rounds. ``exhausted=True`` in
             result if hit without terminal content.
         on_tool_event: Optional per-tool-call observability hook invoked as
@@ -296,6 +300,53 @@ async def run_native_tool_loop(
     # iteration's append_tool_round already ran and this stays None.
     pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None = None
 
+    persona_token = bind_active_persona(agent)
+    try:
+        return await _run_native_tool_loop_body(
+            model=model,
+            req=req,
+            send_native=send_native,
+            max_turns=max_turns,
+            on_tool_event=on_tool_event,
+            cancel_check=cancel_check,
+            adapter=adapter,
+            path=path,
+            provider=provider,
+            json_body=json_body,
+            captured=captured,
+            result=result,
+            raw=raw,
+            exhausted=exhausted,
+            cancelled=cancelled,
+            turns_used=turns_used,
+            friction=friction,
+            pending_round=pending_round,
+        )
+    finally:
+        reset_active_persona(persona_token)
+
+
+async def _run_native_tool_loop_body(
+    *,
+    model: str,
+    req: FrontierRequest,
+    send_native: SendNativeFn,
+    max_turns: int,
+    on_tool_event: ToolEventFn | None,
+    cancel_check: CancelCheckFn | None,
+    adapter: Any,
+    path: str,
+    provider: str,
+    json_body: dict[str, Any],
+    captured: list[NativeToolCall],
+    result: dict[str, Any],
+    raw: dict[str, Any] | None,
+    exhausted: bool,
+    cancelled: bool,
+    turns_used: int,
+    friction: ToolFrictionTracker,
+    pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None,
+) -> NativeLoopResult:
     for turn_idx in range(max_turns):
         turns_used = turn_idx + 1
 

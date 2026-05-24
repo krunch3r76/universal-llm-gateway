@@ -8,17 +8,17 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ._briefing_card_render import (
-    _PREVIEW_MAX_CHARS,
-    _deadline_line,
-    _filter_recent_self_reflections,
-    _truncate_at_sentence,
+    PREVIEW_MAX_CHARS,
+    deadline_line,
+    filter_recent_self_reflections,
+    truncate_at_sentence,
     render_async_dispatch_section,
     render_audit_alerts_section,
     render_skills_section,
     render_views_section,
 )
-from ._manifest import _build_manifest
-from ._time import _relative_time
+from ._manifest import build_manifest
+from ._time import relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
 
@@ -118,7 +118,7 @@ def render_briefing_card(
             parts.append("No active deadlines.")
         else:
             for d in dated:
-                parts.append(_deadline_line(d, now))
+                parts.append(deadline_line(d, now))
 
     if expired_unresolved:
         parts.append(f"\n## Expired — Action Needed ({len(expired_unresolved)})")
@@ -188,7 +188,7 @@ def render_briefing_card(
     if last_session:
         agent = last_session.get("agent", "?")
         ts = last_session.get("timestamp", "?")
-        rel = _relative_time(str(ts), now)
+        rel = relative_time(str(ts), now)
         parts.append(f"\n## Last Session — {agent} ({rel})")
         chain = (
             continuity.get("continuity_chain", [])
@@ -203,7 +203,7 @@ def render_briefing_card(
         # session web-2026-05-04-1057). The boot card surfaces only the
         # last-session summary; absence of a handoff is not a gap.
         _summary_raw = last_session.get("summary", "No summary.")
-        _summary_cut = _truncate_at_sentence(_summary_raw, _LAST_SESSION_SUMMARY_MAX)
+        _summary_cut = truncate_at_sentence(_summary_raw, _LAST_SESSION_SUMMARY_MAX)
         if len(_summary_raw) > len(_summary_cut):
             parts.append(
                 f"{_summary_cut} "
@@ -283,13 +283,13 @@ def render_briefing_card(
             entity_id = m.get("entity_id", "")
             cnt = m.get("inserted_count", 0)
             last_mentioned = m.get("last_mentioned_at")
-            rel = _relative_time(last_mentioned, now) if last_mentioned else "?"
+            rel = relative_time(last_mentioned, now) if last_mentioned else "?"
             cnt_tag = f", {cnt} new" if cnt else ", new entity"
             id_tag = f" `{entity_id}`" if entity_id else ""
             parts.append(f"- **{name}**{id_tag} ({etype}) — {rel}{cnt_tag}")
 
     if self_reflections:
-        recent_reflections = _filter_recent_self_reflections(self_reflections, now)
+        recent_reflections = filter_recent_self_reflections(self_reflections, now)
         if recent_reflections:
             parts.append(f"\n## Your Notes ({len(recent_reflections)})")
             for a in recent_reflections:
@@ -308,8 +308,8 @@ def render_briefing_card(
                     if m:
                         tag = m.group()
                 session_tag = f"[{tag}] " if tag else ""
-                claim_preview = _truncate_at_sentence(
-                    a.get("claim", ""), _PREVIEW_MAX_CHARS
+                claim_preview = truncate_at_sentence(
+                    a.get("claim", ""), PREVIEW_MAX_CHARS
                 )
                 parts.append(f"- {session_tag}{claim_preview}")
 
@@ -320,8 +320,8 @@ def render_briefing_card(
                 kind = e.get("kind", "entry")
                 kind_tag = f" [{kind}]" if kind != "entry" else ""
                 register = e.get("register", "?")
-                entry_preview = _truncate_at_sentence(
-                    e.get("entry") or "", _PREVIEW_MAX_CHARS
+                entry_preview = truncate_at_sentence(
+                    e.get("entry") or "", PREVIEW_MAX_CHARS
                 )
                 parts.append(f"- *{register}*{kind_tag}: {entry_preview}")
             if reflective_total > 5:
@@ -350,7 +350,7 @@ def render_briefing_card(
         parts.extend(render_audit_alerts_section(audit_counters))
 
     card = "\n".join(parts)
-    manifest = _build_manifest(
+    manifest = build_manifest(
         plan_phases=plan_phases,
         in_flight_todos=in_flight_todos,
         todo_total=todo_total,

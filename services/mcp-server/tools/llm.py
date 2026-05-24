@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=30.0, pool=10.0)
 
 
@@ -97,7 +97,7 @@ def _call_anthropic(
     return raw
 
 
-def _call_stargate(
+def call_stargate(
     messages: list[dict[str, Any]],
     *,
     model: str,
@@ -118,7 +118,7 @@ def _call_stargate(
         body["max_tokens"] = max_tokens
     try:
         with httpx.Client(timeout=_TIMEOUT) as client:
-            resp = client.post(f"{_STARGATE_URL}/v1/chat/completions", json=body)
+            resp = client.post(f"{STARGATE_URL}/v1/chat/completions", json=body)
     except httpx.TimeoutException:
         return {"error": "Stargate timeout"}
     except httpx.RequestError as exc:
@@ -139,7 +139,7 @@ def _call_stargate(
     return data
 
 
-def _extract_stargate_text(resp: dict[str, Any]) -> str:
+def extract_stargate_text(resp: dict[str, Any]) -> str:
     """Pull assistant text from an OpenAI-format chat completion response."""
     if "error" in resp:
         return ""
@@ -255,7 +255,7 @@ def register_llm_tools(mcp: FastMCP) -> None:
         if seed is not None:
             body["seed"] = seed
 
-        url = f"{_STARGATE_URL}/v1/chat/completions"
+        url = f"{STARGATE_URL}/v1/chat/completions"
         try:
             with httpx.Client(timeout=_TIMEOUT) as client:
                 resp = client.post(url, json=body)

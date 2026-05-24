@@ -62,7 +62,7 @@ BINARY_EXTENSIONS: frozenset[str] = frozenset(
 )
 
 
-def _is_binary_by_magic(path: Path) -> bool:
+def is_binary_by_magic(path: Path) -> bool:
     """Return True when magic bytes identify *path* as a binary format.
 
     Uses the `filetype` library (reads first 261 bytes) as a content-based
@@ -85,14 +85,14 @@ def _read_plain(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
-def _read_docx(path: Path) -> str:
+def read_docx(path: Path) -> str:
     from docx import Document
 
     doc = Document(str(path))
     return "\n".join(para.text for para in doc.paragraphs)
 
 
-def _read_odt(path: Path) -> str:
+def read_odt(path: Path) -> str:
     from odf import teletype
     from odf.opendocument import load as odf_load
     from odf.text import P
@@ -144,7 +144,7 @@ def _extract_pdf_markdown(path: Path) -> tuple[str, str]:
     return _extract_pdf_plaintext(path), PDF_METHOD_PLAINTEXT_EMPTY
 
 
-def _read_pdf(path: Path, timeout_s: float = PDF_READ_TIMEOUT_S) -> tuple[str, str]:
+def read_pdf(path: Path, timeout_s: float = PDF_READ_TIMEOUT_S) -> tuple[str, str]:
     """Read a PDF and return ``(text, method)`` where ``method`` names the route taken.
 
     pymupdf4llm ≥ 1.27 enables OCR by default via ``use_ocr=True``, causing
@@ -241,7 +241,7 @@ def _read_pdf(path: Path, timeout_s: float = PDF_READ_TIMEOUT_S) -> tuple[str, s
 
 def _read_pdf_text(path: Path) -> str:
     """Adapter for ``_FORMAT_READERS`` — returns text only, discards method tag."""
-    text, _method = _read_pdf(path)
+    text, _method = read_pdf(path)
     return text
 
 
@@ -266,7 +266,7 @@ def _read_html(path: Path) -> str:
         raise
 
 
-def _read_eml(path: Path) -> str:
+def read_eml(path: Path) -> str:
     """Reads the content of an EML file, extracting headers, body, and attachment content.
 
     Prioritizes plain text body over HTML. Extracts PDF attachments as markdown.
@@ -346,11 +346,11 @@ def _pdf_sidecar_candidates(path: Path) -> list[Path]:
 
 
 _FORMAT_READERS: dict[str, object] = {
-    ".docx": _read_docx,
+    ".docx": read_docx,
     ".html": _read_html,
     ".htm": _read_html,
-    ".odt": _read_odt,
-    ".eml": _read_eml,
+    ".odt": read_odt,
+    ".eml": read_eml,
     ".pdf": _read_pdf_text,
 }
 
@@ -428,7 +428,7 @@ def read_file_result(
     if suffix in BINARY_EXTENSIONS:
         auto_result = build_binary_read_result(src)
         auto_result["auto_binary"] = True
-    elif suffix not in _FORMAT_READERS and _is_binary_by_magic(src):
+    elif suffix not in _FORMAT_READERS and is_binary_by_magic(src):
         record("mcp.fs.binary.magic.match", path=str(src))
         auto_result = build_binary_read_result(src)
         auto_result["auto_binary"] = True
@@ -438,7 +438,7 @@ def read_file_result(
     if auto_result is not None:
         if auto_result.get("mime_type", "").startswith("image/"):
             auto_result["_next"] = (
-                f'For text extraction: dispatch(tool="document_ocr", '
+                f'For text extraction: dispatch(tool="extract_document", '
                 f'arguments=\'{{"path": "{path}"}}\').'
                 f' For visual inspection: view_image(path="{path}").'
             )
@@ -458,7 +458,7 @@ def read_file_result(
         # Direct call for method-tag visibility. The PDF reader returns
         # (text, method) so consumers can distinguish layout, plaintext-gated,
         # plaintext-timeout-fallback, and plaintext-empty-result routes.
-        content, pdf_method = _read_pdf(src)
+        content, pdf_method = read_pdf(src)
     elif sidecar_path is not None:
         content = sidecar_path.read_text(encoding="utf-8", errors="replace")
         pdf_method = PDF_METHOD_SIDECAR
@@ -508,10 +508,7 @@ def read_file_result(
             rel_path = str(Path(path))
             result["_next"] = (
                 f"This PDF has no text layer (scanned or image-only). "
-                f'Use dispatch(tool="document_ocr", '
-                f'arguments=\'{{"path": "{rel_path}"}}\') '
-                f"for vision-based OCR, or "
-                f'dispatch(tool="ingest_document", '
+                f'Use dispatch(tool="extract_document", '
                 f'arguments=\'{{"path": "{rel_path}"}}\') '
                 f"to OCR and persist as a reusable markdown sidecar."
             )

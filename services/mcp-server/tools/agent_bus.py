@@ -280,6 +280,9 @@ def _threads_impl(
     status: str,
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
+    last: int | None = None,
+    limit: int | None = None,
+    has_unread: bool | None = None,
 ) -> dict[str, Any]:
     params: list[tuple[str, str]] = []
     if status != "all":
@@ -289,6 +292,12 @@ def _threads_impl(
         params.append(("tags", tag))
     if lifecycle_state:
         params.append(("lifecycle_state", lifecycle_state))
+    # Support schema-declared params (last is ritual/boot alias for limit; backend uses limit)
+    effective_limit = limit if limit is not None else last
+    if effective_limit is not None:
+        params.append(("limit", str(effective_limit)))
+    if has_unread is not None:
+        params.append(("has_unread", "true" if has_unread else "false"))
     qs = urlencode(params)
     path = f"/threads?{qs}" if qs else "/threads"
     result = _relay("agent-bus", "GET", path)
@@ -667,8 +676,18 @@ def _threads_dispatch(
     status: str = "active",
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
+    last: int | None = None,
+    limit: int | None = None,
+    has_unread: bool | None = None,
 ) -> dict[str, Any]:
-    return _threads_impl(status=status, tags=tags, lifecycle_state=lifecycle_state)
+    return _threads_impl(
+        status=status,
+        tags=tags,
+        lifecycle_state=lifecycle_state,
+        last=last,
+        limit=limit,
+        has_unread=has_unread,
+    )
 
 
 def _create_thread_dispatch(
@@ -793,7 +812,7 @@ def _mark_read_dispatch(
     return {"status": "ok", "thread": thread, "turn_number": turn_number}
 
 
-_AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
+AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "post": _post_dispatch,
     "reply": _reply_dispatch,
     "fetch": _fetch_dispatch,
@@ -874,27 +893,27 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
         Examples:
           agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
-          agent_bus(tool="reply", arguments='{"thread": "111", "to": "cursor", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from_agent": "cursor"}')
+          agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: topic", "body": "## Reply\\n...", "after_turn": 5, "from_agent": "cursor"}')
           agent_bus(tool="reply", arguments='{"thread": "111", "to": "web", "subject": "Re: long-form handoff", "body": "...", "after_turn": 5, "from_agent": "cursor", "allow_long_body": true}')
           fs(sandbox="cortex", op="write", path="notes/system/threads/review-bug-details.md", content="...")
-          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from_agent": "cursor", "tags": ["project:ulg", "type:bug"]}')
+          agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "Details: cortex:notes/system/threads/review-bug-details.md", "from_agent": "claude-web", "tags": ["project:ulg", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"tags": ["project:claudeburst", "type:bug"]}')
           agent_bus(tool="threads", arguments='{"lifecycle_state": "pending"}')
           agent_bus(tool="create_thread", arguments='{"slug": "my-workflow", "lifecycle_state": "pending", "tags": ["project:ulg"]}')
           agent_bus(tool="update_thread", arguments='{"thread": "553", "tags": ["project:claudeburst", "type:restore"]}')
         """
-        from ._agent_tools import _parse_dispatch_arguments
+        from ._agent_tools import parse_dispatch_arguments
 
-        handler = _AGENT_BUS_OPS.get(tool)
+        handler = AGENT_BUS_OPS.get(tool)
         if handler is None:
             return {
                 "error": f"Unknown agent_bus tool {tool!r}. "
-                f"Available: {sorted(_AGENT_BUS_OPS.keys())}"
+                f"Available: {sorted(AGENT_BUS_OPS.keys())}"
             }
         t_prog, prog_timer = toolprogress_begin("agent_bus", inner_tool=tool)
         err: str | None = None
         try:
-            parsed = _parse_dispatch_arguments(arguments)
+            parsed = parse_dispatch_arguments(arguments)
             if parsed is None:
                 return {
                     "error": (

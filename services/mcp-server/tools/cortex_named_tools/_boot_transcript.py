@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from .._cortex_relay import _cx
+from .._cortex_relay import cx
 from .._file_helpers import read_files_batch
 
 
-def _resolve_transcript(
+def resolve_transcript(
     transcript_id: str,
 ) -> dict[str, Any] | None:
     """Verify transcript entity exists, load markdown, traverse continues chain.
@@ -23,7 +23,7 @@ def _resolve_transcript(
     clean_id = transcript_id.removeprefix("transcript:")
     entity_key = f"transcript:{clean_id}"
 
-    entity_raw = _cx("GET", f"/entities/{quote(entity_key, safe=':')}")
+    entity_raw = cx("GET", f"/entities/{quote(entity_key, safe=':')}")
     if "error" in entity_raw:
         return {
             "error": "transcript_not_found",
@@ -47,7 +47,7 @@ def _resolve_transcript(
             transcript_md = md_content
 
     chain_qs = urlencode({"node": entity_key, "edge_type": "continues", "hops": 5})
-    chain_raw = _cx("GET", f"/edges/traverse?{chain_qs}")
+    chain_raw = cx("GET", f"/edges/traverse?{chain_qs}")
     chain_edges: list[dict[str, Any]] = []
     if isinstance(chain_raw, dict):
         chain_edges = chain_raw.get("items", [])

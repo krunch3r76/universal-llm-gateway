@@ -14,11 +14,11 @@ from mcp_events import record
 from universal_logging import get_logger
 
 from .tasks_path_policy import (
-    _TASKS_READ_ONLY,
-    _TASKS_ROOT,
-    _read_only_error,
-    _record_read_only_violation,
-    _safe_tasks_path,
+    TASKS_READ_ONLY,
+    TASKS_ROOT,
+    read_only_error,
+    record_read_only_violation,
+    safe_tasks_path,
 )
 
 if TYPE_CHECKING:
@@ -47,7 +47,7 @@ def register_journal_tools(mcp: FastMCP) -> None:
         Returns:
             {"entries": [{"slug", "summary", "status", "domain", "opened"}, ...]}
         """
-        index_path = _TASKS_ROOT / "journal" / "index.yaml"
+        index_path = TASKS_ROOT / "journal" / "index.yaml"
         if not index_path.exists():
             return {"error": "journal/index.yaml not found"}
 
@@ -99,7 +99,7 @@ def register_journal_tools(mcp: FastMCP) -> None:
         Returns:
             {"content": "<full markdown content>", "slug": "<slug>"}
         """
-        entry_path = _safe_tasks_path(f"journal/{slug}.md")
+        entry_path = safe_tasks_path(f"journal/{slug}.md")
         if not entry_path.exists():
             return {"error": f"Journal entry not found: {slug}"}
         if not entry_path.is_file():
@@ -137,11 +137,11 @@ def register_journal_tools(mcp: FastMCP) -> None:
             {"status": "created", "path": "<journal entry path>"}
         """
         # Consider refactoring the read-only check into a decorator or helper.
-        if _TASKS_READ_ONLY:
-            _record_read_only_violation(tool="write_journal_entry")
-            return _read_only_error()
+        if TASKS_READ_ONLY:
+            record_read_only_violation(tool="write_journal_entry")
+            return read_only_error()
 
-        entry_path = _safe_tasks_path(f"journal/{slug}.md")
+        entry_path = safe_tasks_path(f"journal/{slug}.md")
         if entry_path.exists():
             return {"error": f"Journal entry already exists: {slug}"}
 
@@ -165,7 +165,7 @@ def register_journal_tools(mcp: FastMCP) -> None:
         entry_path.parent.mkdir(parents=True, exist_ok=True)
         entry_path.write_text(md_content, encoding="utf-8")
 
-        index_path = _TASKS_ROOT / "journal" / "index.yaml"
+        index_path = TASKS_ROOT / "journal" / "index.yaml"
         new_entry: dict[str, str | int | list[str]] = {
             "slug": slug,
             "summary": summary,

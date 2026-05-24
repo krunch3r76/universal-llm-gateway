@@ -1,15 +1,23 @@
 """Tool Search — runtime discovery for dispatched (non-primary) tools.
 
-The MCP catalog is intentionally lean: only ``{cortex, agent_bus, fs,
-dispatch, tool_search, retrieve}`` are advertised as primary tools. Everything
-else is reachable via ``dispatch(tool="...", arguments='...')``. ``tool_search``
-returns the metadata an agent needs to construct a valid dispatch call:
-name, purpose, ops, required-args-by-op, dispatch_template, example.
+The MCP catalog advertises a compact primary set (≤24 domain dispatchers from
+``config/mcp/canonical.yaml`` via ``_derive.get_claude_manifest``): ``agent_bus``,
+``cortex``, ``dispatch``, ``fs``, ``grokbuild``, ``manage``, ``observability``,
+``pipeline``, ``rag``, ``retrieve``, ``tool_search``. All other tools registered
+at boot — ``cortex_boot``, ``sql``, ``web_fetch``, ``quality_gate``, etc. — are
+pruned from ``tools/list`` but kept in the overflow registry. Gitignored
+``tools.local`` surfaces (e.g. ``email`` → email-bridge UDS relay) follow the
+same path when present: ``tool_search`` then ``dispatch(tool="email", ...)``.
+Domain tools such as ``email`` expose their op catalog at runtime
+(``op="list"``); those catalogs are intentionally omitted from boot prompts.
 
-The manifest is built once at server startup from the overflow_registry
-produced by ``_prune_to_primary``. Keys are inserted in sorted order so the
-``tools/list`` rendering and the manifest itself are byte-deterministic
-across boots — required for the Anthropic prompt-cache invariant.
+``tool_search`` returns the metadata needed for a valid dispatch call: name,
+purpose, ops, required-args-by-op, dispatch_template, example.
+
+The manifest is built once at server startup from tool descriptions captured
+*before* ``_prune_to_primary`` removes non-primary Tool objects. Keys are sorted
+so ``tools/list`` and the manifest are byte-deterministic across boots (Anthropic
+prompt-cache invariant).
 
 Module split (post-SLOC-gate, per master diff review):
   - ``tool_search_matcher`` — parser/scorer primitives, ``ManifestEntry`` use
@@ -26,6 +34,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from _derive import get_claude_manifest
 from fastmcp import FastMCP
 from mcp_events import record
 from tool_search_manifest import (
@@ -41,7 +50,7 @@ from tool_search_matcher import (
 )
 
 PRIMARY_TOOLS_FROZEN: frozenset[str] = frozenset(
-    {"cortex", "agent_bus", "fs", "dispatch", "tool_search", "retrieve"}
+    e["tool_name"] for e in get_claude_manifest()
 )
 
 _MANIFEST: dict[str, ManifestEntry] = {}
@@ -74,17 +83,17 @@ def register_tool_search_tool(
     def tool_search(query: str, limit: int = 5) -> dict[str, Any]:
         """Search for MCP tools not in your primary catalog.
 
-        The primary catalog (cortex, agent_bus, fs, dispatch, retrieve,
-        tool_search) is intentionally lean. Most other tools — pipelines,
-        dispatch surfaces (team/frontier/grok), service control (manage),
-        observability/debugging (events, traces), data (sql, rag, web_fetch,
-        web_search), session boot (cortex_boot, boot_inspect), code quality
-        (quality_gate) — require this search + ``dispatch(...)``.
+        Primary (in ``tools/list``): agent_bus, cortex, dispatch, fs, grokbuild,
+        manage, observability, pipeline, rag, retrieve, tool_search. Overflow
+        examples — session boot (cortex_boot, boot_inspect), data (sql,
+        web_fetch, web_search), codegen (quality_gate), frontier/team dispatch
+        surfaces, pipeline_consult, and ``tools.local`` domains (email →
+        email-bridge) when installed — use this search, then ``dispatch(...)``.
 
         Pass keywords matching what you want to do; results include ready-to-paste
         dispatch calls. Examples:
-          tool_search(query="restart service")
-          tool_search(query="poll pipeline")
+          tool_search(query="cortex boot")
+          tool_search(query="email mailbox")
           tool_search(query="raw sql")
         """
         record("mcp.tool.search.called", query=query, limit=limit)

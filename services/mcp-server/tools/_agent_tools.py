@@ -3,7 +3,7 @@
 Sync tool-call dispatcher used by MCP's ``frontier_dispatch``. Tool schema
 definitions are sourced from ``libs/agent_seat/tools.py`` (single source of
 truth shared with the pipeline ``frontier_dispatch_v1`` handler). Cortex ops
-relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus._AGENT_BUS_OPS``.
+relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus.AGENT_BUS_OPS``.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from agent_seat import (
     TOOL_DEFINITIONS as TOOL_DEFINITIONS,  # noqa: PLC0414 (re-export)
 )
 
-from ._cortex_relay import _cx
+from ._cortex_relay import cx
 
 SYSTEM_PROMPT = """\
 You are an advisory agent with access to a structured knowledge system (Cortex).
@@ -42,7 +42,7 @@ assertions, and relationships.
 """
 
 
-def _parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
+def parse_dispatch_arguments(raw: object) -> dict[str, Any] | None:
     """Parse dispatch-style arguments (JSON string or dict). None on failure.
 
     The MCP tool schemas declare ``arguments: string`` — that's the canonical
@@ -67,29 +67,29 @@ def _execute_cortex_dispatch(args: dict[str, Any]) -> str:
     if not tool:
         return json.dumps({"error": "cortex: 'tool' is required"})
 
-    parsed = _parse_dispatch_arguments(args.get("arguments", "{}"))
+    parsed = parse_dispatch_arguments(args.get("arguments", "{}"))
     if parsed is None:
         return json.dumps({"error": f"Invalid arguments JSON for cortex {tool!r}"})
 
-    result = _cx("POST", "/dispatch", {"tool": tool, "arguments": parsed})
+    result = cx("POST", "/dispatch", {"tool": tool, "arguments": parsed})
     return json.dumps(result)
 
 
 def _execute_agent_bus_dispatch(args: dict[str, Any]) -> str:
     """Execute the unified agent_bus dispatch tool via the agent-bus ops table."""
-    from .agent_bus import _AGENT_BUS_OPS
+    from .agent_bus import AGENT_BUS_OPS
 
     tool = args.get("tool", "")
-    handler = _AGENT_BUS_OPS.get(tool)
+    handler = AGENT_BUS_OPS.get(tool)
     if handler is None:
         return json.dumps(
             {
                 "error": f"Unknown agent_bus tool {tool!r}. "
-                f"Available: {sorted(_AGENT_BUS_OPS)}"
+                f"Available: {sorted(AGENT_BUS_OPS)}"
             }
         )
 
-    parsed = _parse_dispatch_arguments(args.get("arguments", "{}"))
+    parsed = parse_dispatch_arguments(args.get("arguments", "{}"))
     if parsed is None:
         return json.dumps({"error": f"Invalid arguments JSON for agent_bus {tool!r}"})
 

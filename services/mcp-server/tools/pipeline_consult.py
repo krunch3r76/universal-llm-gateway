@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _CONSULT_TIMEOUT = 300.0
 _CONSULT_PIPELINE = "consult-prompt-engineer"
 
@@ -236,7 +236,7 @@ def register_pipeline_consult_tools(mcp: FastMCP) -> None:
             body["pipeline_options"] = {"scope_override": effective_scope}
 
         try:
-            url = f"{_STARGATE_URL}/v1/chat/completions"
+            url = f"{STARGATE_URL}/v1/chat/completions"
             with httpx.Client(timeout=_CONSULT_TIMEOUT) as client:
                 resp = client.post(url, json=body)
                 resp.raise_for_status()

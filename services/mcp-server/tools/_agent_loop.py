@@ -16,7 +16,7 @@ from mcp_events import monotonic_now, record
 from universal_logging import get_logger
 
 from ._agent_tools import SYSTEM_PROMPT, TOOL_DEFINITIONS, execute_tool
-from ._cortex_relay import _cx
+from ._cortex_relay import cx
 
 logger = get_logger(__name__)
 
@@ -97,7 +97,7 @@ def _agent_loop(
     if context_entities:
         context_parts = []
         for eid in context_entities:
-            entity_data = _cx("GET", f"/entities/{eid}")
+            entity_data = cx("GET", f"/entities/{eid}")
             if "error" not in entity_data:
                 context_parts.append(
                     f"## Entity: {eid}\n```json\n"

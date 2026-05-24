@@ -37,7 +37,7 @@ _BUILD_PARAMS: frozenset[str] = frozenset(
 )
 
 # (HTTP method, path template, allowed param names)
-_OPS: dict[str, tuple[str, str, frozenset[str]]] = {
+OPS: dict[str, tuple[str, str, frozenset[str]]] = {
     "models": ("GET", "/api/v1/grokbuild/models", frozenset()),
     "worktree_create": (
         "POST",
@@ -178,10 +178,10 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
         return _reject_local(
             "retired_op", "op='dispatch' was retired in V1; use op='build'"
         )
-    if op not in _OPS:
+    if op not in OPS:
         return _reject_local("unknown_op", f"unsupported op: {op!r}")
 
-    method, path_template, allowed = _OPS[op]
+    method, path_template, allowed = OPS[op]
     timeout = _BUILD_TIMEOUT if op == "build" else _SYNC_TIMEOUT
     op_params = {k: _kwargs[k] for k in allowed}
     return await _relay(method, path_template, op_params, timeout)

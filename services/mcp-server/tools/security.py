@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import httpx
 
-from tools.web import _is_private_url
+from tools.web import is_private_url
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -61,7 +61,7 @@ def _profile_headers(profile: str) -> dict[str, str]:
     }
 
 
-def _exec_http(
+def exec_http(
     method: str = "GET",
     url: str = "",
     headers: dict[str, str] | None = None,
@@ -71,7 +71,7 @@ def _exec_http(
     session_profile: str | None = None,
 ) -> dict[str, Any]:
     """Core HTTP execution shared by http_request, http_diff, http_replay."""
-    if _is_private_url(url):
+    if is_private_url(url):
         return {
             "error": "URL targets a private/loopback address — blocked.",
             "url": url,
@@ -185,7 +185,7 @@ def register_security_tools(mcp: FastMCP) -> None:
         for security analysis. Use session_profile to auto-inject stored credentials.
         Binary responses returned as base64. Private/loopback addresses blocked.
         """
-        return _exec_http(
+        return exec_http(
             method=method,
             url=url,
             headers=headers,
@@ -207,10 +207,10 @@ def register_security_tools(mcp: FastMCP) -> None:
         diff_mode: full | status_only | body_only | headers_only.
         JSON bodies are sorted before diffing for semantic comparison.
         """
-        ra = _exec_http(**{k: v for k, v in request_a.items() if k in _HTTP_PARAMS})
+        ra = exec_http(**{k: v for k, v in request_a.items() if k in _HTTP_PARAMS})
         if "error" in ra:
             return {"error": f"Request A: {ra['error']}"}
-        rb = _exec_http(**{k: v for k, v in request_b.items() if k in _HTTP_PARAMS})
+        rb = exec_http(**{k: v for k, v in request_b.items() if k in _HTTP_PARAMS})
         if "error" in rb:
             return {"error": f"Request B: {rb['error']}"}
 
@@ -292,7 +292,7 @@ def register_security_tools(mcp: FastMCP) -> None:
                     "http_replay: body_params skipped — body is not valid JSON"
                 )
 
-        return _exec_http(
+        return exec_http(
             method=method,
             url=url,
             headers=hdrs,

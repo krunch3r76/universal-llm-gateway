@@ -40,7 +40,7 @@ _SERVICES: dict[str, dict[str, str]] = {
 }
 
 
-def _resolve_timeout(service: str, method: str, path: str) -> float:
+def resolve_timeout(service: str, method: str, path: str) -> float:
     """Return the client budget for a local relay route."""
     return _ROUTE_TIMEOUTS.get((service, method.upper(), path), _REQUEST_TIMEOUT)
 
@@ -74,7 +74,7 @@ def relay(
         }
 
     service_url = svc_config["url"]
-    request_timeout = _resolve_timeout(service, method, path)
+    request_timeout = resolve_timeout(service, method, path)
 
     token_env = svc_config.get("token_env", "")
     bearer = token or (os.environ.get(token_env, "") if token_env else "")

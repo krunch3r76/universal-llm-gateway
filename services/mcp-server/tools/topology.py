@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _TIMEOUT = 15.0
 
 
@@ -33,7 +33,7 @@ def _get_headers() -> dict[str, str]:
 def _get(path: str) -> dict[str, Any] | None:
     try:
         resp = httpx.get(
-            f"{_STARGATE_URL}{path}",
+            f"{STARGATE_URL}{path}",
             headers=_get_headers(),
             timeout=_TIMEOUT,
         )

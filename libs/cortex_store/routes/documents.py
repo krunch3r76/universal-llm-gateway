@@ -1,7 +1,7 @@
 """Document OCR routes — vision-model OCR via shared ``ocr_core``.
 
-Two endpoints, both used by thin MCP tool handlers (``document_ocr`` and
-``document_ocr_directory``) that pure-relay HTTP to here:
+Two endpoints used by MCP relays (``extract_directory`` → directory) and
+direct cortex-api callers (single-file ``POST /documents/ocr/file``):
 
 - ``POST /documents/ocr/file``      — single PDF or image
 - ``POST /documents/ocr/directory`` — batch every scannable file under a dir

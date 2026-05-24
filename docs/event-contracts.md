@@ -2455,6 +2455,9 @@ All signals: `role="observation"`, `scope="global"`.
 | `mcp.grokbuild.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum), `reason` (str), `mode`, `op`, `cwd`, `model` | Validator or registry rejected admission. No subprocess spawned. Correlation fields travel inline so no `.called` join required (admission-phase contract). |
 | `mcp.grokbuild.dispatch.toolcalls` | `dispatch_id`, `tool_count` (int), `tool_names` (list[str]) | C.1(ii) sidecar parse summary. Emitted after every dispatch that produced stdout (completed or non-zero exit). `tool_count == len(tool_names)`. JOIN with `mcp.request.completed` on `dispatch_id` to detect header-vs-sidecar discrepancy. Empty (tool_count=0) on spawn-failed/timeout — those paths never reach `communicate()`. |
 | `mcp.grokbuild.dispatch.zerotoolcalls` | `dispatch_id`, `mode` (str) | C.1(ii) anomaly. Fires when `tool_count == 0` AND `mode == 'edit'` AND `status == 'completed'`. In edit mode the grok subprocess is expected to call MCP tools; zero calls may indicate a silent HOME-override failure, the grok subprocess ignoring MCP, or a trivially-answerable task. Always co-emitted with `.toolcalls`. |
+| `mcp.grokbuild.apidispatch.called` | `dispatch_id` (str — uuid4), `cwd` (str), `model` (str — effective model id after tier-default resolution), `tier` (str — `quick` \| `balanced` \| `thorough` \| `max`), `session_id` (str) | Api-path (`mcp=False`) dispatch admitted. Emitted AFTER tier validation passes, BEFORE the Stargate `/v1/chat/completions` POST. No subprocess, no MCP tooling inside dispatch; no git audit fields. Lifecycle counterpart to `mcp.grokbuild.dispatch.called` for the direct-API path. |
+| `mcp.grokbuild.apidispatch.completed` | `dispatch_id`, `duration_s` (float), `cwd`, `model`, `tier`, `session_id`, `prompt_tokens` (int), `completion_tokens` (int), `total_tokens` (int), `reasoning_tokens` (int — 0 when the backing model does not surface reasoning-token accounting; non-zero indicates an xAI Responses-API-style reasoning trace was billed) | Api-path dispatch succeeded; Stargate returned HTTP 2xx and the response JSON parsed cleanly. Usage fields parsed from the OpenAI-compatible `usage` block; ALL default to 0 when absent so downstream JOINs are safe. |
+| `mcp.grokbuild.apidispatch.failed` | `dispatch_id`, `duration_s`, `cwd`, `reason_code` (str — `bad_tier` \| `api_unreachable` \| `api_error` \| `invalid_response`), `reason` (str), `tier`, `model` (str — empty `""` on `bad_tier` because resolution happens AFTER tier validation), `session_id` | Api-path dispatch failed. Covers all four failure modes: admission-phase `bad_tier`, transport `api_unreachable` (httpx.RequestError), upstream `api_error` (Stargate returned HTTP ≥400), and parse-phase `invalid_response` (response JSON missing `choices[0].message.content`). No CLI-side `.rejected` counterpart — api-path admission failures use the unified `.failed` signal. |
 | `mcp.grokbuild.create.called` | `dispatch_id`, `name`, `branch`, `source_repo`, `create_branch` (bool), `start_point` (str) | `worktree_create_op` admitted (V2: emits **after** name/branch/source-repo validation, review W9). |
 | `mcp.grokbuild.create.completed` | `dispatch_id`, `duration_s`, `exit_code` (0), `name`, `branch`, `source_repo`, `worktree_path`, `create_branch`, `start_point` | `git worktree add` succeeded. |
 | `mcp.grokbuild.create.failed` | Same as `.completed` plus `error` (str ≤200) | `git worktree add` non-zero exit OR setup OSError. |
@@ -2600,6 +2603,19 @@ scripts/query-events --sql "
   WHERE signal = 'mcp.grokbuild.dispatch.rejected'
     AND ts_unix_ms > (unixepoch()-86400)*1000
   GROUP BY reason ORDER BY n DESC"
+
+# Api-path token cost by tier (last 24h)
+scripts/query-events --sql "
+  SELECT json_extract(payload,'\$.tier') AS tier,
+         COUNT(*) AS dispatches,
+         SUM(CAST(json_extract(payload,'\$.prompt_tokens') AS INT)) AS prompt_total,
+         SUM(CAST(json_extract(payload,'\$.completion_tokens') AS INT)) AS completion_total,
+         SUM(CAST(json_extract(payload,'\$.reasoning_tokens') AS INT)) AS reasoning_total,
+         AVG(CAST(json_extract(payload,'\$.duration_s') AS REAL)) AS avg_duration_s
+  FROM events
+  WHERE signal = 'mcp.grokbuild.apidispatch.completed'
+    AND ts_unix_ms > (unixepoch()-86400)*1000
+  GROUP BY tier ORDER BY tier"
 ```
 
 

@@ -1,8 +1,8 @@
 """Per-section render helpers for the briefing card.
 
 Extracted from _briefing_card.py to keep that module under the 400-line
-SLOC limit. Callers import ``_truncate_at_sentence``,
-``_filter_recent_self_reflections``, and ``_deadline_line`` from here.
+SLOC limit. Callers import ``truncate_at_sentence``,
+``filter_recent_self_reflections``, and ``deadline_line`` from here.
 """
 
 from __future__ import annotations
@@ -13,13 +13,13 @@ from typing import Any
 # Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
 # the truncator prefers the last sentence boundary at-or-before the cap so the
 # preview doesn't chop mid-sentence ("If I sit with —" was the canonical bug).
-_PREVIEW_MAX_CHARS = 200
+PREVIEW_MAX_CHARS = 200
 # Self-reflection recency cap. Older notes drift out of the boot card — agents
 # can re-fetch via /assertions if they're chasing a specific historical claim.
 _SELF_REFLECTION_MAX_AGE_DAYS = 14
 
 
-def _truncate_at_sentence(text: str, max_chars: int) -> str:
+def truncate_at_sentence(text: str, max_chars: int) -> str:
     """Truncate `text` at the last sentence boundary at-or-before `max_chars`.
 
     Sentence boundaries: '. ', '! ', '? ', or terminal '.'/'!'/'?' at the cap.
@@ -45,7 +45,7 @@ def _truncate_at_sentence(text: str, max_chars: int) -> str:
     return window.rstrip() + "…"
 
 
-def _filter_recent_self_reflections(
+def filter_recent_self_reflections(
     self_reflections: list[dict[str, Any]],
     now: datetime,
     *,
@@ -225,7 +225,7 @@ def render_skills_section(
     return lines
 
 
-def _deadline_line(d: dict[str, Any], today: datetime) -> str:
+def deadline_line(d: dict[str, Any], today: datetime) -> str:
     """Render a single deadline as a compact markdown line."""
     dl_date = d.get("deadline_date", "")
     remaining = ""
@@ -246,10 +246,10 @@ def _deadline_line(d: dict[str, Any], today: datetime) -> str:
 
 
 __all__ = [
-    "_PREVIEW_MAX_CHARS",
-    "_deadline_line",
-    "_filter_recent_self_reflections",
-    "_truncate_at_sentence",
+    "PREVIEW_MAX_CHARS",
+    "deadline_line",
+    "filter_recent_self_reflections",
+    "truncate_at_sentence",
     "render_async_dispatch_section",
     "render_audit_alerts_section",
     "render_skills_section",

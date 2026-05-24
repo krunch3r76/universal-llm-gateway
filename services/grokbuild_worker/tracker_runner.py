@@ -47,7 +47,15 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
     entry.updated_at = iso_now()
     try:
         if not req.mcp:
-            # mcp=False: direct LLM API call — no subprocess, no MCP tooling inside dispatch.
+            # DEFERRED: mcp=False branch passes only the api_dispatch_op surface
+            # (cwd, prompt, system_context, model, session_id, tier, dispatch_id,
+            # timeout_seconds). Fields forwarded on the mcp=True path but absent
+            # here: mode, continue_recent, output_format, reasoning_effort, effort,
+            # check, no_subagents, disable_web_search, max_turns, best_of_n,
+            # resume_strict, recursion_depth, proc_pid_holder (14 fields).
+            # api_dispatch_op has no subprocess or git-audit surface, so most of
+            # these are inapplicable. Propagation deferred until api_dispatch gains
+            # a richer admission surface.
             envelope = await api_dispatch_op(
                 cwd=req.cwd,
                 prompt=req.prompt,

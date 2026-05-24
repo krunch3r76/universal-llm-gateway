@@ -1,7 +1,7 @@
 """Tests for ``promote_document_to_evidence`` (phase-d).
 
 Hermetic: monkeypatch ``FILES_ROOT`` across promote + extraction helpers and
-mock ``_cx`` for cortex entity operations.
+mock ``cx`` for cortex entity operations.
 
 Spec: cortex://notes/system/specs/document-ingestion-redesign.md
 """
@@ -16,7 +16,9 @@ from typing import Any
 import pytest
 import yaml
 
-from tools import _evidence_entity_ops, _promote_document_helpers, _sidecar_schema
+from tools import _evidence_entity_ops as evidence_entity_ops
+from tools import _promote_document_helpers as promote_document_helpers
+from tools import _sidecar_schema as sidecar_schema
 from tools._extract_document_helpers import format_sidecar
 from tools._sidecar_schema import SIDECAR_SUFFIX
 from tools._promote_document_helpers import (
@@ -86,17 +88,18 @@ def _files_root(
         encoding="utf-8",
     )
     for mod in (
-        _sidecar_schema,
-        _promote_document_helpers,
+        sidecar_schema,
+        promote_document_helpers,
     ):
         monkeypatch.setattr(mod, "FILES_ROOT", tmp_path)
-    from tools import _extraction_profile, _file_helpers
+    from tools import _extraction_profile as extraction_profile
+    from tools import _file_helpers as file_helpers
 
-    monkeypatch.setattr(_file_helpers, "FILES_ROOT", tmp_path)
-    monkeypatch.setattr(_extraction_profile, "FILES_ROOT", tmp_path)
-    _sidecar_schema._load_schema.cache_clear()
+    monkeypatch.setattr(file_helpers, "FILES_ROOT", tmp_path)
+    monkeypatch.setattr(extraction_profile, "FILES_ROOT", tmp_path)
+    sidecar_schema.load_schema.cache_clear()
     yield tmp_path
-    _sidecar_schema._load_schema.cache_clear()
+    sidecar_schema.load_schema.cache_clear()
 
 
 def _stage_dropbox(
@@ -171,7 +174,7 @@ def cortex_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "create_calls": 0,
     }
 
-    def _cx(
+    def cx(
         method: str, path: str, body: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         assert method == "POST" and path == "/dispatch"
@@ -204,7 +207,7 @@ def cortex_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             return {"id": eid, "created": True}
         raise AssertionError(f"unexpected tool {tool!r}")
 
-    monkeypatch.setattr(_evidence_entity_ops, "_cx", _cx)
+    monkeypatch.setattr(evidence_entity_ops, "cx", cx)
     return state
 
 

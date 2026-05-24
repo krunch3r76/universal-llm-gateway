@@ -22,6 +22,7 @@ from universal_logging import get_logger
 from .events import CloudProxyRequestFailed, CloudProxyRequestForwarded
 from .forwarder import ProviderForwarder
 from .native_boundary import (
+    _EFFORT_SUFFIX,
     model_id_from_native,
     raw_model_from_native_body,
     workspace_catalog_id_from_native,
@@ -33,7 +34,6 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/providers", tags=["provider-native"])
 
 _MCP_SERVER_NAME = "vortex"
-_EFFORT_SUFFIX = "__effort_"
 
 
 def _inject_native_mcp(provider_key: str, body: dict) -> None:

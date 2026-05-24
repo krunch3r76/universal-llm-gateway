@@ -55,7 +55,9 @@ class _RecordingForwarder:
         self.recorded.append(dict(request_body))
         return {
             "id": "resp_test",
-            "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "ok"}]}
+            ],
         }
 
 
@@ -101,7 +103,9 @@ async def test_effort_tier_injected(suffix: str, expected_effort: str) -> None:
     _, calls = await _run(body)
     assert calls, "forwarder not called"
     upstream = calls[0]
-    assert upstream["model"] == "grok-4.3", f"suffix not stripped — got {upstream['model']!r}"
+    assert upstream["model"] == "grok-4.3", (
+        f"suffix not stripped — got {upstream['model']!r}"
+    )
     assert upstream.get("reasoning", {}).get("effort") == expected_effort, (
         f"wrong effort injected: {upstream.get('reasoning')}"
     )

@@ -20,7 +20,9 @@ def _entity_crud():
         create_entity_impl,
         update_entity_impl,
     )
+
     return ENTITY_JSON_FIELDS, create_entity_impl, update_entity_impl
+
 
 _IF_EXISTS = frozenset({"fail", "update", "skip"})
 

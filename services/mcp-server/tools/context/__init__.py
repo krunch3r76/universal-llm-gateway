@@ -2,7 +2,7 @@
 
 Provides read/write access to journal entries, discoveries, lessons,
 and other workspace context files. The tasks/ directory is mounted
-read-write at _TASKS_ROOT (via tasks_path_policy).
+read-write at TASKS_ROOT (via tasks_path_policy).
 
 Split into:
 - journal_entries: list/read/write journal tools

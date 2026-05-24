@@ -14,7 +14,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from ._cortex_relay import _cx
+from ._cortex_relay import cx
 from ._promote_document_helpers import PromoteError, normalize_entity_content_hash
 
 logger = get_logger(__name__)
@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 
 def entity_get(entity_id: str) -> dict[str, Any] | None:
     """Fetch a cortex entity by id; return ``None`` on 404, raise on other errors."""
-    result = _cx(
+    result = cx(
         "POST",
         "/dispatch",
         {"tool": "entity_get", "arguments": {"entity_id": entity_id}},
@@ -46,7 +46,7 @@ def find_document_with_content_hash(
     cursor — beyond that boundary the gate degrades silently. See
     todo:F13 (paginate-content-hash-lookup) for the upstream change.
     """
-    result = _cx(
+    result = cx(
         "POST",
         "/dispatch",
         {
@@ -96,7 +96,7 @@ def entity_create(
     if attributes:
         payload["attributes"] = attributes
 
-    result = _cx(
+    result = cx(
         "POST",
         "/dispatch",
         {"tool": "entity_create", "arguments": payload},

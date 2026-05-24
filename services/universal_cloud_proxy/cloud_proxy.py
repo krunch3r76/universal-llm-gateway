@@ -62,6 +62,7 @@ from .events import (
 from .forwarder import ProviderForwarder
 from .local_catalog import LocalCatalogCache
 from .mcp_executor import McpToolExecutor
+from .native_boundary import _EFFORT_SUFFIX
 from .native_routes import router as native_router
 
 logger = logging.getLogger(__name__)
@@ -592,6 +593,13 @@ async def chat_completions(request: Request) -> Response:
         model_id = model_id[:-4]
         body["model"] = model_id
 
+    # Decode __effort_<level> suffix so resolve_provider sees a bare base ID.
+    # Caller-supplied reasoning.effort in the body takes precedence (caller wins).
+    _injected_effort: str | None = None
+    if _EFFORT_SUFFIX in model_id:
+        model_id, _injected_effort = model_id.split(_EFFORT_SUFFIX, 1)
+        body["model"] = model_id
+
     provider_catalog = catalog.resolve_provider(model_id)
     if provider_catalog is None:
         await _publish_request_failed_event(
@@ -639,6 +647,11 @@ async def chat_completions(request: Request) -> Response:
     ):
         body["_mcp_requested"] = True
         _xai_responses_api = True
+
+    # Inject reasoning.effort decoded from model suffix (xAI only).
+    # Caller-supplied reasoning.effort in the body takes precedence.
+    if _injected_effort is not None and "effort" not in body.get("reasoning", {}):
+        body.setdefault("reasoning", {})["effort"] = _injected_effort
 
     # Resolve cortex_boot directives in system prompt before any MCP path.
     # The proxy-side loop does this inside run_tool_loop; the Responses API

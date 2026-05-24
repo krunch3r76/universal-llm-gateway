@@ -1,4 +1,4 @@
-"""Tests for ``tools._sidecar_schema.validate_sidecar_frontmatter``.
+"""Tests for ``tools.sidecar_schema.validate_sidecar_frontmatter``.
 
 Covers phase-b acceptance criterion (2) — schema validation unit tests pass —
 for plan_phase:document-ingestion-redesign/phase-b. Verifies the helper's
@@ -7,7 +7,7 @@ cortex://configs/schemas/extraction-sidecar-v1.yaml.
 
 Hermetic by design: each test copies the schema fixture from
 ``services/mcp-server/testdata/extraction-sidecar-v1.yaml`` into ``tmp_path``
-and monkeypatches ``_sidecar_schema.FILES_ROOT`` to point there, so tests
+and monkeypatches ``sidecar_schema.FILES_ROOT`` to point there, so tests
 run without any /data/files mount. The fixture file mirrors the canonical
 schema verbatim — if the canonical schema bumps versions, the fixture moves
 with it.
@@ -21,16 +21,14 @@ from typing import Any
 
 import pytest
 
-from tools import _sidecar_schema
+from tools import _sidecar_schema as sidecar_schema
 from tools._sidecar_schema import (
     ValidationResult,
     validate_sidecar_frontmatter,
 )
 
 _SCHEMA_FIXTURE = (
-    Path(__file__).resolve().parents[1]
-    / "testdata"
-    / "extraction-sidecar-v1.yaml"
+    Path(__file__).resolve().parents[1] / "testdata" / "extraction-sidecar-v1.yaml"
 )
 
 # A reference SHA-256 hex string (64 lowercase hex chars) and 6-char prefix.
@@ -82,19 +80,19 @@ _REQUIRED_FIELDS: tuple[str, ...] = (
 
 
 @pytest.fixture(autouse=True)
-def _schema_in_tmp(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Path:
+def _schema_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Install the schema fixture under ``tmp_path`` and reset the loader cache."""
     schema_dir = tmp_path / "configs" / "schemas"
     schema_dir.mkdir(parents=True)
     schema_path = schema_dir / "extraction-sidecar-v1.yaml"
-    schema_path.write_text(_SCHEMA_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8")
+    schema_path.write_text(
+        _SCHEMA_FIXTURE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
 
-    monkeypatch.setattr(_sidecar_schema, "FILES_ROOT", tmp_path)
-    _sidecar_schema._load_schema.cache_clear()
+    monkeypatch.setattr(sidecar_schema, "FILES_ROOT", tmp_path)
+    sidecar_schema.load_schema.cache_clear()
     yield schema_path
-    _sidecar_schema._load_schema.cache_clear()
+    sidecar_schema.load_schema.cache_clear()
 
 
 def _frontmatter(**overrides: Any) -> dict[str, Any]:
@@ -131,8 +129,7 @@ def test_missing_required_field_fails(field: str) -> None:
     result = validate_sidecar_frontmatter(incomplete)
     assert result.ok is False
     assert any(field in err for err in result.errors), (
-        f"expected error message to name missing field {field!r}; "
-        f"got {result.errors!r}"
+        f"expected error message to name missing field {field!r}; got {result.errors!r}"
     )
 
 
@@ -218,9 +215,9 @@ def test_multiple_violations_all_surface() -> None:
 
 
 def test_schema_load_is_cached(_schema_in_tmp: Path) -> None:
-    """``_load_schema`` returns identical objects across calls (lru_cache)."""
-    first = _sidecar_schema._load_schema()
-    second = _sidecar_schema._load_schema()
+    """``load_schema`` returns identical objects across calls (lru_cache)."""
+    first = sidecar_schema.load_schema()
+    second = sidecar_schema.load_schema()
     assert first is second
 
 
@@ -231,7 +228,7 @@ def test_schema_load_survives_file_deletion(_schema_in_tmp: Path) -> None:
     holds its schema; on-disk swaps don't take effect until cache clear or
     process restart.
     """
-    _sidecar_schema._load_schema()  # prime the cache
+    sidecar_schema.load_schema()  # prime the cache
     _schema_in_tmp.unlink()
     # No FileNotFoundError because the schema is cached.
     result = validate_sidecar_frontmatter(_frontmatter())
@@ -240,12 +237,9 @@ def test_schema_load_survives_file_deletion(_schema_in_tmp: Path) -> None:
 
 def test_missing_schema_file_raises() -> None:
     """On a cold cache with no schema on disk, the loader raises."""
-    _sidecar_schema._load_schema.cache_clear()
+    sidecar_schema.load_schema.cache_clear()
     schema_path = (
-        _sidecar_schema.FILES_ROOT
-        / "configs"
-        / "schemas"
-        / "extraction-sidecar-v1.yaml"
+        sidecar_schema.FILES_ROOT / "configs" / "schemas" / "extraction-sidecar-v1.yaml"
     )
     schema_path.unlink()
 

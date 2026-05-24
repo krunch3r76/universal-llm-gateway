@@ -186,3 +186,24 @@ def default_model_for_tier(tier: str) -> str:
     if base in _XAI_EFFORT_INJECT_MODELS:
         return _XAI_GROK43_EFFORT_STANZA.get(tier, base)
     return base
+
+
+_XAI_GROK43_EFFORT_STANZA_VALUES: Final[frozenset[str]] = frozenset(
+    _XAI_GROK43_EFFORT_STANZA.values()
+)
+
+
+def envelope_metadata_model(*, model: str | None, tier: str) -> str:
+    """Resolve envelope / sidecar ``model`` field (base id, never effort stanza).
+
+    Caller MUST validate ``tier ∈ _VALID_TIERS`` when ``model`` is None.
+    Known xAI 4.3 effort stanzas collapse to the tier preset base via the
+    stanza registry — no string splitting on ``__effort_``.
+    """
+    if model is None:
+        return _TIER_PRESETS[tier].default_model
+    if model in _XAI_EFFORT_INJECT_MODELS:
+        return model
+    if model in _XAI_GROK43_EFFORT_STANZA_VALUES:
+        return _TIER_PRESETS[tier].default_model
+    return model

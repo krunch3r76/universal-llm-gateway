@@ -8,6 +8,9 @@ Caller contract:
   * ``system_context`` serves as the pre-staged corpus.
   * Response envelope shape mirrors the CLI path so callers can treat both
     paths uniformly; fields absent from the API path are set to safe defaults.
+  * Admission failures (``bad_tier``) return ``status="rejected"`` consistent
+    with the CLI path; runtime failures (transport, HTTP error, parse error)
+    return ``status="failed"``.
   * No git audit fields (``git_status_pre/post``, ``git_diff_stat``) — this
     path never touches the worktree filesystem.
   * ``sidecar_path`` is always None.
@@ -24,9 +27,17 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from grokbuild.constants import (
-    DEFAULT_TIMEOUT_SECONDS,
     _VALID_TIERS,
+    DEFAULT_TIMEOUT_SECONDS,
     default_model_for_tier,
+    envelope_metadata_model,
+)
+from grokbuild.envelope import _envelope_rejected
+from grokbuild.events import (
+    emit_grok_build_api_dispatch_called,
+    emit_grok_build_api_dispatch_completed,
+    emit_grok_build_api_dispatch_failed,
+    emit_grok_build_api_dispatch_rejected,
 )
 
 logger = get_logger(__name__)
@@ -56,17 +67,29 @@ async def api_dispatch_op(
 
     if tier not in _VALID_TIERS:
         reason = f"tier must be one of {sorted(_VALID_TIERS)!r}, got {tier!r}"
-        return _envelope_failed(
-            dispatch_id,
-            t0,
+        emit_grok_build_api_dispatch_rejected(
+            dispatch_id=dispatch_id,
             reason_code="bad_tier",
             reason=reason,
             cwd=cwd,
-            session_id=session_id,
             tier=tier,
+            session_id=session_id or "",
+        )
+        return _envelope_rejected(
+            dispatch_id, "read_only", cwd, session_id, model, "bad_tier", reason
         )
 
     effective_model = model if model is not None else default_model_for_tier(tier)
+    metadata_model = envelope_metadata_model(model=model, tier=tier)
+
+    emit_grok_build_api_dispatch_called(
+        dispatch_id=dispatch_id,
+        cwd=cwd,
+        model=metadata_model,
+        effective_model=effective_model,
+        tier=tier,
+        session_id=session_id or "",
+    )
 
     messages: list[dict[str, str]] = []
     if system_context:
@@ -88,6 +111,17 @@ async def api_dispatch_op(
             )
         except httpx.RequestError as exc:
             logger.error("api_dispatch transport failure: %s", exc)
+            emit_grok_build_api_dispatch_failed(
+                dispatch_id=dispatch_id,
+                duration_s=time.monotonic() - t0,
+                cwd=cwd,
+                reason_code="api_unreachable",
+                reason=str(exc),
+                tier=tier,
+                model=metadata_model,
+                effective_model=effective_model,
+                session_id=session_id or "",
+            )
             return _envelope_failed(
                 dispatch_id,
                 t0,
@@ -96,12 +130,23 @@ async def api_dispatch_op(
                 cwd=cwd,
                 session_id=session_id,
                 tier=tier,
-                model=effective_model,
+                model=metadata_model,
             )
 
     duration_s = time.monotonic() - t0
 
     if resp.status_code >= 400:
+        emit_grok_build_api_dispatch_failed(
+            dispatch_id=dispatch_id,
+            duration_s=duration_s,
+            cwd=cwd,
+            reason_code="api_error",
+            reason=f"HTTP {resp.status_code}",
+            tier=tier,
+            model=metadata_model,
+            effective_model=effective_model,
+            session_id=session_id or "",
+        )
         return _envelope_failed(
             dispatch_id,
             t0,
@@ -111,13 +156,30 @@ async def api_dispatch_op(
             cwd=cwd,
             session_id=session_id,
             tier=tier,
-            model=effective_model,
+            model=metadata_model,
         )
 
     try:
         data = resp.json()
         content: str = data["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError) as exc:
+        logger.warning(
+            "api_dispatch parse error dispatch_id=%s model=%s exc=%s",
+            dispatch_id,
+            effective_model,
+            exc,
+        )
+        emit_grok_build_api_dispatch_failed(
+            dispatch_id=dispatch_id,
+            duration_s=duration_s,
+            cwd=cwd,
+            reason_code="invalid_response",
+            reason=str(exc),
+            tier=tier,
+            model=metadata_model,
+            effective_model=effective_model,
+            session_id=session_id or "",
+        )
         return _envelope_failed(
             dispatch_id,
             t0,
@@ -127,7 +189,7 @@ async def api_dispatch_op(
             cwd=cwd,
             session_id=session_id,
             tier=tier,
-            model=effective_model,
+            model=metadata_model,
         )
 
     logger.info(
@@ -135,6 +197,21 @@ async def api_dispatch_op(
         dispatch_id,
         effective_model,
         duration_s,
+    )
+
+    usage = data.get("usage") or {}
+    emit_grok_build_api_dispatch_completed(
+        dispatch_id=dispatch_id,
+        duration_s=duration_s,
+        cwd=cwd,
+        model=metadata_model,
+        effective_model=effective_model,
+        tier=tier,
+        session_id=session_id or "",
+        prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+        completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+        total_tokens=int(usage.get("total_tokens", 0) or 0),
+        reasoning_tokens=int(usage.get("reasoning_tokens", 0) or 0),
     )
 
     return {
@@ -149,7 +226,7 @@ async def api_dispatch_op(
             "reason_code": "",
             "reason": "",
             "mcp": False,
-            "model": effective_model,
+            "model": metadata_model,
             "tier": tier,
             "session_id": session_id,
             "mode": "read_only",

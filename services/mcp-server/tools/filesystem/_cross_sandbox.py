@@ -9,7 +9,7 @@ from pathlib import Path
 from mcp_events import record
 from universal_logging import get_logger
 
-from ._paths import _SANDBOX_ROOT
+from ._paths import SANDBOX_ROOT
 
 logger = get_logger(__name__)
 
@@ -38,7 +38,7 @@ def _resolve_project_root() -> Path:
 
 
 _SANDBOX_ROOTS: dict[str, Path] = {
-    "cortex": _SANDBOX_ROOT,
+    "cortex": SANDBOX_ROOT,
     "workspaces": _resolve_project_root(),
 }
 

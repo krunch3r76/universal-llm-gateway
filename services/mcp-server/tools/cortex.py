@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ._cortex_relay import _cx
+from ._cortex_relay import cx
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -101,4 +101,4 @@ def register_cortex_tools(mcp: FastMCP) -> None:
                   cortex(tool="todo_candidates", arguments='{"query": "cortex retrieval", "limit": 5}')
                   cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
         """
-        return _cx("POST", "/dispatch", {"tool": tool, "arguments": arguments})
+        return cx("POST", "/dispatch", {"tool": tool, "arguments": arguments})

@@ -31,7 +31,7 @@ from mcp_events import record
 
 from ._file_helpers import read_file_result
 from .file_editor import perform_edit
-from .filesystem._paths import _SANDBOX_ROOT, _trash_destination
+from .filesystem._paths import SANDBOX_ROOT, trash_destination
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -136,7 +136,7 @@ def _is_binary(path: Path) -> bool:
     return path.suffix.lower() in _BINARY_SUFFIXES
 
 
-def _read_only_error() -> dict[str, str | int]:
+def read_only_error() -> dict[str, str | int]:
     return {
         "error": (
             "project is read-only (PROJECT_READ_ONLY=true); "
@@ -370,7 +370,7 @@ def register_project_tools(mcp: FastMCP) -> None:
         Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
         """
         if _PROJECT_READ_ONLY:
-            return cast("dict[str, str]", _read_only_error())
+            return cast("dict[str, str]", read_only_error())
 
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
@@ -403,7 +403,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             {"status": "copied", "from": "<source path>", "to": "<dest path>"}
         """
         if _PROJECT_READ_ONLY:
-            return cast("dict[str, str]", _read_only_error())
+            return cast("dict[str, str]", read_only_error())
 
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
@@ -438,7 +438,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             {"status": "trashed", "path": "<source>", "trash_path": "trash/<path>"}
         """
         if _PROJECT_READ_ONLY:
-            return cast("dict[str, str]", _read_only_error())
+            return cast("dict[str, str]", read_only_error())
 
         src = _safe_project_path(path)
         if not src.exists():
@@ -448,10 +448,10 @@ def register_project_tools(mcp: FastMCP) -> None:
                 "error": f"Path is not a file (directories not supported): {path!r}"
             }
 
-        dest = _trash_destination(path)
+        dest = trash_destination(path)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dest))
-        trash_rel = str(dest.relative_to(_SANDBOX_ROOT))
+        trash_rel = str(dest.relative_to(SANDBOX_ROOT))
         logger.info("delete_project_file: trashed %s → %s", src, dest)
         record(
             "mcp.tool.file.trashed",
@@ -639,7 +639,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             {"status": "written", "path": "<relative path>"}
         """
         if _PROJECT_READ_ONLY:
-            return _read_only_error()
+            return read_only_error()
 
         target = _safe_project_path(path)
         suffix = target.suffix.lower()
@@ -687,7 +687,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             For replace: includes "replacements_made".
         """
         if _PROJECT_READ_ONLY:
-            return cast("dict[str, str | int]", _read_only_error())
+            return cast("dict[str, str | int]", read_only_error())
 
         target = _safe_project_path(path)
         if not target.exists():

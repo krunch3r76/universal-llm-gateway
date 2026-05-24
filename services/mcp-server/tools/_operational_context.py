@@ -8,7 +8,7 @@ Deployment-specific content (owner name, vocabulary) is read from environment
 variables at import time. See CORTEX_OWNER_NAME, CORTEX_DEPLOYMENT_VOCABULARY,
 CORTEX_DEFAULT_USER_ENTITY.
 
-Static protocol templates live in ``_operational_context_templates`` so this
+Static protocol templates live in ``operational_context_templates`` so this
 module stays under SLOC budget per [quality]. Only env-var-dependent and
 runtime-computed content lives here.
 """

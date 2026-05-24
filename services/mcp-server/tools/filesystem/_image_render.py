@@ -7,10 +7,10 @@ import io
 import re
 from pathlib import Path
 
-from ._paths import _SANDBOX_ROOT, _SHARED_IMAGE_DIR, _SHARED_IMAGE_HOST_ROOT
+from ._paths import SANDBOX_ROOT, SHARED_IMAGE_DIR, SHARED_IMAGE_HOST_ROOT
 
 
-def _render_thumbnail_bytes(
+def render_thumbnail_bytes(
     src: Path, *, max_dimension: int, quality: int
 ) -> tuple[bytes, str, str]:
     from PIL import Image as PILImage
@@ -29,9 +29,9 @@ def _render_thumbnail_bytes(
     return buffer.getvalue(), original_size, thumb_size
 
 
-def _shared_image_name(src: Path, *, max_dimension: int, quality: int) -> str:
+def shared_image_name(src: Path, *, max_dimension: int, quality: int) -> str:
     safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", src.stem).strip("-.") or "image"
-    rel_path = src.relative_to(_SANDBOX_ROOT).as_posix()
+    rel_path = src.relative_to(SANDBOX_ROOT).as_posix()
     stat = src.stat()
     fingerprint = hashlib.sha256(
         f"{rel_path}:{stat.st_mtime_ns}:{stat.st_size}:{max_dimension}:{quality}".encode()
@@ -39,8 +39,8 @@ def _shared_image_name(src: Path, *, max_dimension: int, quality: int) -> str:
     return f"{safe_stem}-{fingerprint}.jpg"
 
 
-def _write_shared_image(filename: str, jpeg_bytes: bytes) -> tuple[Path, Path]:
-    _SHARED_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-    shared_path = _SHARED_IMAGE_DIR / filename
+def write_shared_image(filename: str, jpeg_bytes: bytes) -> tuple[Path, Path]:
+    SHARED_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    shared_path = SHARED_IMAGE_DIR / filename
     shared_path.write_bytes(jpeg_bytes)
-    return shared_path, _SHARED_IMAGE_HOST_ROOT / filename
+    return shared_path, SHARED_IMAGE_HOST_ROOT / filename

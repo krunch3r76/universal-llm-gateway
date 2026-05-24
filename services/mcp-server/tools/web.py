@@ -34,7 +34,7 @@ _DEFAULT_MAX_CHARS = 36_000
 _USER_AGENT = "Mozilla/5.0 (compatible; MCPFetcher/1.0; +https://mcp.k-1.me)"
 
 
-def _is_private_url(url: str) -> bool:
+def is_private_url(url: str) -> bool:
     """Return True if *url* targets a private/loopback address (SSRF guard)."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -156,7 +156,7 @@ def register_web_tools(mcp: FastMCP) -> None:
             {"title", "content", "url", "total_chars", "truncated"}
             or on error: {"error", "url", "status_code"}
         """
-        if _is_private_url(url):
+        if is_private_url(url):
             return {
                 "error": "URL targets a private or loopback address. Blocked for security.",
                 "url": url,

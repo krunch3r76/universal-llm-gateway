@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, cast
 
 import httpx
 from mcp_events import record
+from transport_utils import make_sync_client
+from universal_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+_RAG_FAILED_SIGNAL = "mcp.rag.endpoint.failed"
 
 
-def _rag_get(
+def rag_get(
     url_base: str,
     path: str,
     *,
@@ -19,9 +22,8 @@ def _rag_get(
     params: Any | None = None,
 ) -> dict[str, Any]:
     """GET from Stargate passthrough and return parsed JSON."""
-    url = f"{url_base.rstrip('/')}/{path.lstrip('/')}"
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.get(url, params=params)
+    with make_sync_client(url_base, timeout=timeout) as client:
+        resp = client.get(f"/{path.lstrip('/')}", params=params)
         resp.raise_for_status()
         payload_obj = cast(object, resp.json())
         if not isinstance(payload_obj, dict):
@@ -29,7 +31,7 @@ def _rag_get(
         return cast(dict[str, Any], payload_obj)
 
 
-def _rag_post(
+def rag_post(
     url_base: str,
     path: str,
     body: dict[str, Any],
@@ -37,9 +39,8 @@ def _rag_post(
     timeout: float,
 ) -> dict[str, Any]:
     """POST JSON to Stargate passthrough and return parsed object payload."""
-    url = f"{url_base.rstrip('/')}/{path.lstrip('/')}"
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.post(url, json=body)
+    with make_sync_client(url_base, timeout=timeout) as client:
+        resp = client.post(f"/{path.lstrip('/')}", json=body)
         resp.raise_for_status()
         payload_obj = cast(object, resp.json())
         if not isinstance(payload_obj, dict):
@@ -47,7 +48,7 @@ def _rag_post(
         return cast(dict[str, Any], payload_obj)
 
 
-def _rag_delete(
+def rag_delete(
     url_base: str,
     path: str,
     *,
@@ -55,9 +56,8 @@ def _rag_delete(
     params: Any | None = None,
 ) -> dict[str, Any]:
     """DELETE on Stargate passthrough and return parsed JSON object."""
-    url = f"{url_base.rstrip('/')}/{path.lstrip('/')}"
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.delete(url, params=params)
+    with make_sync_client(url_base, timeout=timeout) as client:
+        resp = client.delete(f"/{path.lstrip('/')}", params=params)
         resp.raise_for_status()
         payload_obj = cast(object, resp.json())
         if not isinstance(payload_obj, dict):
@@ -65,16 +65,15 @@ def _rag_delete(
         return cast(dict[str, Any], payload_obj)
 
 
-def _handle_rag_call_error(
-    exc: BaseException,
+def handle_rag_call_error(
+    exc: Exception,
     *,
     endpoint_name: str,
 ) -> dict[str, str]:
     """Record/log RAG passthrough errors and return a user-facing error payload."""
-    signal = f"mcp.rag.{endpoint_name}.failed"
     if isinstance(exc, httpx.ConnectError):
         logger.warning("RAG %s connection failed: %s", endpoint_name, exc)
-        record(signal, error=str(exc))
+        record(_RAG_FAILED_SIGNAL, endpoint=endpoint_name, error=str(exc))
         return {
             "error": (
                 f"RAG {endpoint_name} endpoint not reachable. "
@@ -83,11 +82,15 @@ def _handle_rag_call_error(
         }
     if isinstance(exc, httpx.TimeoutException):
         logger.warning("RAG %s request timed out: %s", endpoint_name, exc)
-        record(signal, error="timeout")
+        record(_RAG_FAILED_SIGNAL, endpoint=endpoint_name, error="timeout")
         return {"error": f"RAG {endpoint_name} request timed out."}
     if isinstance(exc, httpx.HTTPStatusError):
         logger.warning("RAG %s HTTP error: %s", endpoint_name, exc)
-        record(signal, error=f"{exc.response.status_code}")
+        record(
+            _RAG_FAILED_SIGNAL,
+            endpoint=endpoint_name,
+            error=f"{exc.response.status_code}",
+        )
         return {
             "error": (
                 f"RAG {endpoint_name} endpoint error: "
@@ -96,8 +99,8 @@ def _handle_rag_call_error(
         }
     if isinstance(exc, httpx.RequestError):
         logger.warning("RAG %s request error: %s", endpoint_name, exc)
-        record(signal, error=str(exc))
+        record(_RAG_FAILED_SIGNAL, endpoint=endpoint_name, error=str(exc))
         return {"error": f"RAG {endpoint_name} request failed: {exc}"}
     logger.warning("RAG %s invalid payload: %s", endpoint_name, exc)
-    record(signal, error="invalid_payload")
+    record(_RAG_FAILED_SIGNAL, endpoint=endpoint_name, error="invalid_payload")
     return {"error": f"RAG {endpoint_name} endpoint returned invalid payload."}

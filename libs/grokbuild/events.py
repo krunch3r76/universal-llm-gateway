@@ -1,14 +1,25 @@
 """Re-export facade for all grokbuild event factories and emitters.
 
 Sub-modules:
-  grokbuild.events_dispatch  — dispatch lifecycle (called/completed/failed/timeout/rejected)
-  grokbuild.events_create    — worktree-create lifecycle
-  grokbuild.events_worktree  — worktree remove / list / registry events
-  grokbuild.events_core      — shared ``_emit`` helper + ``record`` (monkeypatch target)
+  grokbuild.events_dispatch      — dispatch lifecycle (called/completed/failed/timeout/rejected)
+  grokbuild.events_api_dispatch  — api-dispatch lifecycle (called/completed/failed/rejected; mcp=False)
+  grokbuild.events_create        — worktree-create lifecycle
+  grokbuild.events_worktree      — worktree remove / list / registry events
+  grokbuild.events_core          — shared ``_emit`` helper + ``record`` (monkeypatch target)
 """
 
 from __future__ import annotations
 
+from grokbuild.events_api_dispatch import (
+    GrokBuildApiDispatchCalled,
+    GrokBuildApiDispatchCompleted,
+    GrokBuildApiDispatchFailed,
+    GrokBuildApiDispatchRejected,
+    emit_grok_build_api_dispatch_called,
+    emit_grok_build_api_dispatch_completed,
+    emit_grok_build_api_dispatch_failed,
+    emit_grok_build_api_dispatch_rejected,
+)
 from grokbuild.events_core import (
     _emit,  # noqa: F401 — re-exported
     record,  # noqa: F401 — monkeypatch target for tests
@@ -75,6 +86,14 @@ __all__ = [
     "GrokBuildDispatchZeroToolCallsWhenExpected",
     "emit_grok_build_dispatch_tool_calls",
     "emit_grok_build_dispatch_zero_tool_calls_when_expected",
+    "GrokBuildApiDispatchCalled",
+    "GrokBuildApiDispatchCompleted",
+    "GrokBuildApiDispatchFailed",
+    "GrokBuildApiDispatchRejected",
+    "emit_grok_build_api_dispatch_called",
+    "emit_grok_build_api_dispatch_completed",
+    "emit_grok_build_api_dispatch_failed",
+    "emit_grok_build_api_dispatch_rejected",
     "GrokBuildCreateCalled",
     "GrokBuildCreateCompleted",
     "GrokBuildCreateFailed",

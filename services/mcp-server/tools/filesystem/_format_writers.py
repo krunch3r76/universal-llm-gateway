@@ -5,12 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def _write_plain(path: Path, content: str) -> None:
+def write_plain(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
 
 
-def _write_docx(path: Path, content: str) -> None:
+def write_docx(path: Path, content: str) -> None:
     from docx import Document
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -20,7 +20,7 @@ def _write_docx(path: Path, content: str) -> None:
     doc.save(str(path))
 
 
-def _write_pdf(path: Path, content: str) -> None:
+def write_pdf(path: Path, content: str) -> None:
     from fpdf import FPDF
 
     path.parent.mkdir(parents=True, exist_ok=True)

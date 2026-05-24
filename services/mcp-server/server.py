@@ -52,15 +52,18 @@ from tools.browser import register_browser_tools
 from tools.context import register_context_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
-from tools.document_ocr import register_document_ocr_tools
 from tools.events import register_event_tools
+from tools.extract_directory import register_extract_directory_tools
+from tools.extract_document import register_extract_document_tools
+from tools.promote_document_to_evidence import (
+    register_promote_document_to_evidence_tools,
+)
 from tools.filesystem import register_filesystem_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
-from tools.filesystem._paths import _FS_WORKFLOW_HINTS
+from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.grokbuild import register_grokbuild_tools
-from tools.ingest_document import register_ingest_document_tools
 from tools.llm import register_llm_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
@@ -291,8 +294,9 @@ def _build_server() -> tuple[
             logger.info(f"{tool_name} disabled ({env_var}=false)")
     register_sqlite_tools(mcp)
     register_event_tools(mcp)
-    register_ingest_document_tools(mcp)
-    register_document_ocr_tools(mcp)
+    register_extract_document_tools(mcp)
+    register_promote_document_to_evidence_tools(mcp)
+    register_extract_directory_tools(mcp)
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_frontier_tools(mcp)
@@ -494,7 +498,7 @@ def _build_server() -> tuple[
                 target_sandbox,
                 target,
             )
-            result["_next"] = _FS_WORKFLOW_HINTS["copy"]
+            result["_next"] = FS_WORKFLOW_HINTS["copy"]
             return result
 
         if sandbox == "workspaces":
@@ -567,7 +571,7 @@ def _build_server() -> tuple[
                     return {"error": "delete_project_file tool not available"}
                 result = fn(path)
                 if "error" not in result:
-                    result["_next"] = _FS_WORKFLOW_HINTS["delete_workspaces"]
+                    result["_next"] = FS_WORKFLOW_HINTS["delete_workspaces"]
                 return result
             valid = "read, write, append, prepend, replace, insert_at_line, move, copy, delete, list, search"
             return {"error": f"Unknown workspaces op: {op!r}. Available: {valid}"}
@@ -637,7 +641,7 @@ def _build_server() -> tuple[
         Example:
           rag(op="search", arguments='{"query": "embedding strategies", "scope": "research"}')
         """
-        from tools._agent_tools import _parse_dispatch_arguments
+        from tools._agent_tools import parse_dispatch_arguments
 
         tool_name = rag_op_tool.get(op)
         if tool_name is None:
@@ -663,7 +667,7 @@ def _build_server() -> tuple[
         t_prog, prog_timer = toolprogress_begin("rag", op=op)
         err: str | None = None
         try:
-            args = _parse_dispatch_arguments(arguments)
+            args = parse_dispatch_arguments(arguments)
             if args is None:
                 return {
                     "error": (
@@ -690,7 +694,7 @@ def _build_server() -> tuple[
         arguments: JSON-encoded object string (e.g. '{"key": "value"}').
         Use tool_search(query="...") to locate the tool name and dispatch_template.
         """
-        from tools._agent_tools import _parse_dispatch_arguments
+        from tools._agent_tools import parse_dispatch_arguments
 
         profile = current_profile()
         if not is_dispatch_tool_allowed(profile, tool):
@@ -716,7 +720,7 @@ def _build_server() -> tuple[
                     )
                 },
             }
-        parsed = _parse_dispatch_arguments(arguments)
+        parsed = parse_dispatch_arguments(arguments)
         if parsed is None:
             return {
                 "tool": tool,

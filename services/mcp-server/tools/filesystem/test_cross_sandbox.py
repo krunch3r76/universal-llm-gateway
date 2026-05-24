@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.filesystem import _cross_sandbox
+from tools.filesystem import _cross_sandbox as cross_sandbox
 
 
 def _sandbox_roots(
@@ -15,9 +15,9 @@ def _sandbox_roots(
     workspaces_root = tmp_path / "project"
     cortex_root.mkdir()
     workspaces_root.mkdir()
-    monkeypatch.setitem(_cross_sandbox._SANDBOX_ROOTS, "cortex", cortex_root)
-    monkeypatch.setitem(_cross_sandbox._SANDBOX_ROOTS, "workspaces", workspaces_root)
-    monkeypatch.setattr(_cross_sandbox, "record", lambda *_args, **_kwargs: None)
+    monkeypatch.setitem(cross_sandbox._SANDBOX_ROOTS, "cortex", cortex_root)
+    monkeypatch.setitem(cross_sandbox._SANDBOX_ROOTS, "workspaces", workspaces_root)
+    monkeypatch.setattr(cross_sandbox, "record", lambda *_args, **_kwargs: None)
     return cortex_root, workspaces_root
 
 
@@ -30,7 +30,7 @@ def test_copy_between_sandboxes_workspaces_to_cortex(
     source.parent.mkdir()
     source.write_bytes(b"%PDF-1.7\nfixture")
 
-    result = _cross_sandbox.copy_between_sandboxes_impl(
+    result = cross_sandbox.copy_between_sandboxes_impl(
         "workspaces",
         "universal-llm-gateway/case.pdf",
         "cortex",
@@ -53,7 +53,7 @@ def test_copy_between_sandboxes_cortex_to_workspaces(
     source.parent.mkdir(parents=True)
     source.write_bytes(b"case bytes")
 
-    _cross_sandbox.copy_between_sandboxes_impl(
+    cross_sandbox.copy_between_sandboxes_impl(
         "cortex",
         "notes/legal/case.pdf",
         "workspaces",
@@ -71,7 +71,7 @@ def test_copy_between_sandboxes_rejects_traversal(
     _sandbox_roots(monkeypatch, tmp_path)
 
     with pytest.raises(ValueError, match="traversal rejected"):
-        _cross_sandbox.copy_between_sandboxes_impl(
+        cross_sandbox.copy_between_sandboxes_impl(
             "workspaces",
             "../outside.pdf",
             "cortex",

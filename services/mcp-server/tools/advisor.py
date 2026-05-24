@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0)
 
 _DEFAULT_MODEL = "anthropic/claude-opus-4-6"
@@ -111,7 +111,7 @@ def register_advisor_tools(mcp: FastMCP) -> None:
             "stream": False,
         }
 
-        url = f"{_STARGATE_URL}/v1/chat/completions"
+        url = f"{STARGATE_URL}/v1/chat/completions"
         try:
             with httpx.Client(timeout=_TIMEOUT) as client:
                 resp = client.post(url, json=body)

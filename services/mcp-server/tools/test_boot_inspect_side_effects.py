@@ -7,9 +7,9 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools.cortex_named_tools import (
-    _boot_audit_dump,
-    _boot_runner,
-    _orchestration_tools,
+    _boot_audit_dump as boot_audit_dump,
+    _boot_runner as boot_runner,
+    _orchestration_tools as orchestration_tools,
 )
 
 
@@ -30,15 +30,15 @@ def test_boot_inspect_has_no_live_side_effects(
 ) -> None:
     events: list[str] = []
 
-    monkeypatch.setattr(_boot_runner, "_resolve_transcript", lambda _tid: None)
+    monkeypatch.setattr(boot_runner, "resolve_transcript", lambda _tid: None)
     monkeypatch.setattr(
-        _boot_runner,
-        "_build_futures_spec",
+        boot_runner,
+        "build_futures_spec",
         lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
     )
     monkeypatch.setattr(
-        _boot_runner,
-        "_extract_boot_results",
+        boot_runner,
+        "extract_boot_results",
         lambda _agent, _raw, _profile: {
             "sessions": [],
             "deadlines": [],
@@ -61,15 +61,15 @@ def test_boot_inspect_has_no_live_side_effects(
             "async_dispatches": [],
         },
     )
-    monkeypatch.setattr(_boot_runner, "_build_unread_threads", lambda _threads: [])
-    monkeypatch.setattr(_boot_runner, "_build_review_top", lambda _items: [])
+    monkeypatch.setattr(boot_runner, "build_unread_threads", lambda _threads: [])
+    monkeypatch.setattr(boot_runner, "build_review_top", lambda _items: [])
     monkeypatch.setattr(
-        _boot_runner,
+        boot_runner,
         "render_operational_context",
         lambda **_kwargs: "operational context for inspect",
     )
     monkeypatch.setattr(
-        _boot_runner,
+        boot_runner,
         "render_briefing_card",
         lambda **_kwargs: (
             "briefing card 2026-05-04T02:52:19Z",
@@ -77,10 +77,10 @@ def test_boot_inspect_has_no_live_side_effects(
         ),
     )
     monkeypatch.setattr(
-        _boot_runner, "record", lambda signal, **_kwargs: events.append(signal)
+        boot_runner, "record", lambda signal, **_kwargs: events.append(signal)
     )
     monkeypatch.setattr(
-        _boot_runner,
+        boot_runner,
         "write_audit_dump",
         lambda **_kwargs: (_ for _ in ()).throw(
             AssertionError("write_audit_dump should not be called in inspect mode")
@@ -92,16 +92,16 @@ def test_boot_inspect_has_no_live_side_effects(
     ops_file = shared_dir / "operational-context-web.md"
     ops_file.write_text("preexisting context")
     mtime_before = ops_file.stat().st_mtime_ns
-    monkeypatch.setattr(_boot_runner, "_OPS_CONTEXT_DIR", shared_dir)
+    monkeypatch.setattr(boot_runner, "_OPS_CONTEXT_DIR", shared_dir)
 
     audit_dir = tmp_path / "audit-boots"
     audit_dir.mkdir(parents=True)
     (audit_dir / "existing.md").write_text("existing")
     files_before = sorted(p.name for p in audit_dir.iterdir())
-    monkeypatch.setattr(_boot_audit_dump, "AUDIT_DIR", audit_dir)
+    monkeypatch.setattr(boot_audit_dump, "AUDIT_DIR", audit_dir)
 
     mcp = _DummyMcp()
-    _orchestration_tools.register_orchestration_tools(mcp)
+    orchestration_tools.register_orchestration_tools(mcp)
     result = mcp.tools["boot_inspect"](family="claude", platform="web")
 
     assert ops_file.stat().st_mtime_ns == mtime_before
@@ -124,15 +124,15 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
     _stub_entity_count = 4
     _stub_edge_count = 3
 
-    monkeypatch.setattr(_boot_runner, "_resolve_transcript", lambda _tid: None)
+    monkeypatch.setattr(boot_runner, "resolve_transcript", lambda _tid: None)
     monkeypatch.setattr(
-        _boot_runner,
-        "_build_futures_spec",
+        boot_runner,
+        "build_futures_spec",
         lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
     )
     monkeypatch.setattr(
-        _boot_runner,
-        "_extract_boot_results",
+        boot_runner,
+        "extract_boot_results",
         lambda _agent, _raw, _profile: {
             "sessions": [],
             "deadlines": [],
@@ -154,27 +154,27 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
             "async_dispatches": [],
         },
     )
-    monkeypatch.setattr(_boot_runner, "_build_unread_threads", lambda _t: [])
-    monkeypatch.setattr(_boot_runner, "_build_review_top", lambda _i: [])
+    monkeypatch.setattr(boot_runner, "build_unread_threads", lambda _t: [])
+    monkeypatch.setattr(boot_runner, "build_review_top", lambda _i: [])
     monkeypatch.setattr(
-        _boot_runner,
+        boot_runner,
         "render_operational_context",
         lambda **_kw: "ctx",
     )
-    monkeypatch.setattr(_boot_runner, "record", lambda signal, **_kw: None)
-    monkeypatch.setattr(_boot_runner, "write_audit_dump", lambda **_kw: None)
+    monkeypatch.setattr(boot_runner, "record", lambda signal, **_kw: None)
+    monkeypatch.setattr(boot_runner, "write_audit_dump", lambda **_kw: None)
 
     shared_dir = tmp_path / "shared"
     shared_dir.mkdir(parents=True)
-    monkeypatch.setattr(_boot_runner, "_OPS_CONTEXT_DIR", shared_dir)
+    monkeypatch.setattr(boot_runner, "_OPS_CONTEXT_DIR", shared_dir)
     audit_dir = tmp_path / "audit"
     audit_dir.mkdir()
-    monkeypatch.setattr(_boot_audit_dump, "AUDIT_DIR", audit_dir)
+    monkeypatch.setattr(boot_audit_dump, "AUDIT_DIR", audit_dir)
 
     # Stub _materialize_views so no live HTTP calls are made.
     view_entity = "plan:test-roadmap"
     monkeypatch.setattr(
-        _boot_runner,
+        boot_runner,
         "_materialize_views",
         lambda _views: [
             {
@@ -190,7 +190,7 @@ def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
     )
 
     mcp = _DummyMcp()
-    _orchestration_tools.register_orchestration_tools(mcp)
+    orchestration_tools.register_orchestration_tools(mcp)
     result = mcp.tools["cortex_boot"](
         family="claude", platform="cursor", views=[view_entity]
     )

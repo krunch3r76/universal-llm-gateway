@@ -7,7 +7,7 @@ from typing import Any
 _UNREAD_THREAD_CAP = 10
 
 
-def _build_unread_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_unread_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Extract threads with unread counts for the briefing card.
 
     Capped at _UNREAD_THREAD_CAP — the briefing card surfaces a navigation
@@ -25,7 +25,7 @@ def _build_unread_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]
     return unread[:_UNREAD_THREAD_CAP]
 
 
-def _build_review_top(staging_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_review_top(staging_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Extract top staging items for the briefing card."""
     return [
         {

@@ -335,6 +335,7 @@ class FrontierDispatchHandler(BaseHandler):
                 model=model,
                 req=req,
                 send_native=send_native,
+                agent=agent,
                 max_turns=max_turns,
                 on_tool_event=on_tool_event,
                 cancel_check=cancel_check,

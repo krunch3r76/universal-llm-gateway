@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 
 from grokbuild.constants import (
-    DEFAULT_TIMEOUT_SECONDS,
     _TIER_PRESETS,
     _XAI_GROK43_EFFORT_STANZA,
+    DEFAULT_TIMEOUT_SECONDS,
     default_model_for_tier,
 )
 from grokbuild.dispatch import _resolve_params, dispatch_op
@@ -82,7 +82,7 @@ def test_default_model_for_tier_all_presets() -> None:
 
 
 def test_dispatch_op_model_none_becomes_tier_default() -> None:
-    """Mirrors dispatch_op: model=None → default_model_for_tier(tier) before argv."""
+    """Mirrors dispatch_op: model=None → tier preset base id for envelope/sidecar."""
     model: str | None = None
     resolved = _resolve_params(
         tier="balanced",
@@ -95,8 +95,8 @@ def test_dispatch_op_model_none_becomes_tier_default() -> None:
         mode="edit",
     )
     if model is None:
-        model = default_model_for_tier(resolved.tier)
-    assert model == _XAI_GROK43_EFFORT_STANZA["balanced"]
+        model = _TIER_PRESETS[resolved.tier].default_model
+    assert model == "xai/grok-4.3"
 
 
 def test_build_argv_tier_balanced_stanza_after_model_resolve() -> None:
@@ -112,7 +112,7 @@ def test_build_argv_tier_balanced_stanza_after_model_resolve() -> None:
     )
     spec = runner_spec(
         cwd="/tmp",
-        model=default_model_for_tier(resolved.tier),
+        model=_TIER_PRESETS[resolved.tier].default_model,
         tier=resolved.tier,
         reasoning_effort=resolved.reasoning_effort,
         effort=resolved.effort,

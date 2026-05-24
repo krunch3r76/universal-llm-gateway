@@ -14,7 +14,7 @@ from ._ops_text import (
     read_files_batch_impl,
     write_file_impl,
 )
-from ._paths import _DROPBOX_COPY_WARNING, _DROPBOX_READ_HINT, _FS_WORKFLOW_HINTS
+from ._paths import DROPBOX_COPY_WARNING, DROPBOX_READ_HINT, FS_WORKFLOW_HINTS
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -61,7 +61,7 @@ def register_files_tool(mcp: FastMCP) -> None:
           write  — create/overwrite file (path, content required)
           write_binary — write base64-encoded binary data (path required,
               content = base64 string). Use to stage PDFs, images, or other
-              binary files for downstream tools like document_ocr.
+              binary files for downstream tools like extract_document.
           append_binary — append base64-encoded bytes to a file (path required,
               content = base64 chunk). For chunked upload of large binaries:
               first call write_binary with chunk 1, then append_binary for
@@ -87,7 +87,7 @@ def register_files_tool(mcp: FastMCP) -> None:
           move   → cortex entity_update/assert (update source_uri to permanent path)
           copy   → cortex entity_create or assert (register the copy as a new document if needed)
           write  → cortex entity_create or assert (register the new document)
-          write_binary → cortex entity_create or assert; or document_ocr for PDFs/images
+          write_binary → cortex entity_create or assert; or extract_document for PDFs/images
 
         Args:
             op: Operation name (see above).
@@ -109,7 +109,7 @@ def register_files_tool(mcp: FastMCP) -> None:
                 raise ValueError("'path' is required for read")
             result = read_file_impl(path, binary=binary)
             if path.startswith("dropbox/"):
-                result["_next"] = _DROPBOX_READ_HINT
+                result["_next"] = DROPBOX_READ_HINT
             return result
         if op == "read_multi":
             if not paths:
@@ -121,7 +121,7 @@ def register_files_tool(mcp: FastMCP) -> None:
             if not content:
                 raise ValueError("'content' is required for write")
             result = write_file_impl(path, content)
-            result["_next"] = _FS_WORKFLOW_HINTS["write"]
+            result["_next"] = FS_WORKFLOW_HINTS["write"]
             return result
         if op == "write_binary":
             if not path:
@@ -129,7 +129,7 @@ def register_files_tool(mcp: FastMCP) -> None:
             if not content:
                 raise ValueError("'content' (base64) is required for write_binary")
             result = write_binary_impl(path, content)
-            result["_next"] = _FS_WORKFLOW_HINTS["write_binary"]
+            result["_next"] = FS_WORKFLOW_HINTS["write_binary"]
             return result
         if op == "append_binary":
             if not path:
@@ -169,7 +169,7 @@ def register_files_tool(mcp: FastMCP) -> None:
             if not target:
                 raise ValueError("'target' is required for move")
             result = move_file_impl(path, target)
-            result["_next"] = _FS_WORKFLOW_HINTS["move"]
+            result["_next"] = FS_WORKFLOW_HINTS["move"]
             return result
         if op == "copy":
             if not path:
@@ -177,15 +177,15 @@ def register_files_tool(mcp: FastMCP) -> None:
             if not target:
                 raise ValueError("'target' is required for copy")
             result = copy_file_impl(path, target)
-            result["_next"] = _FS_WORKFLOW_HINTS["copy"]
+            result["_next"] = FS_WORKFLOW_HINTS["copy"]
             if path.startswith("dropbox/"):
-                result["_warning"] = _DROPBOX_COPY_WARNING
+                result["_warning"] = DROPBOX_COPY_WARNING
             return result
         if op == "delete":
             if not path:
                 raise ValueError("'path' is required for delete")
             result = delete_file_impl(path)
-            result["_next"] = _FS_WORKFLOW_HINTS["delete"]
+            result["_next"] = FS_WORKFLOW_HINTS["delete"]
             return result
         raise ValueError(
             f"Unknown op: {op!r}. "

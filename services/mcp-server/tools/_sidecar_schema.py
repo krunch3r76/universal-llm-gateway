@@ -7,13 +7,13 @@ moving the sidecar into evidence).
 
 - ``validate_sidecar_frontmatter`` — JSON Schema 2020-12 validation against
   the pinned schema at ``cortex://configs/schemas/extraction-sidecar-v1.yaml``.
-- ``_parse_leading_frontmatter`` — extract the ``---``-delimited YAML block
+- ``parse_leading_frontmatter`` — extract the ``---``-delimited YAML block
   from a sidecar's text content.
 - ``SIDECAR_SUFFIX`` — canonical suffix (``.extracted.md``).
 
 Naming-grammar helpers (page-spec normalization, args-hash) live in
 ``_sidecar_naming``. Profile load and prompt hashing live in
-``_extraction_profile``.
+``extraction_profile``.
 
 Spec: cortex://notes/system/specs/document-ingestion-redesign.md
 """
@@ -66,7 +66,7 @@ class ValidationResult:
 
 
 @functools.lru_cache(maxsize=1)
-def _load_schema() -> dict[str, Any]:
+def load_schema() -> dict[str, Any]:
     """Load and cache the pinned sidecar schema.
 
     Cached for the process lifetime. Service restart is required after a
@@ -84,8 +84,7 @@ def _load_schema() -> dict[str, Any]:
         schema = yaml.safe_load(handle)
     if not isinstance(schema, dict):
         raise ValueError(
-            f"Sidecar schema root must be a mapping, got "
-            f"{type(schema).__name__}."
+            f"Sidecar schema root must be a mapping, got {type(schema).__name__}."
         )
     return schema
 
@@ -126,7 +125,7 @@ def validate_sidecar_frontmatter(
             ),
         )
 
-    schema = _load_schema()
+    schema = load_schema()
     validator = Draft202012Validator(schema)
     raw_errors: list[JsonSchemaValidationError] = sorted(
         validator.iter_errors(frontmatter_dict),
@@ -148,7 +147,7 @@ def _format_error(err: JsonSchemaValidationError) -> str:
     return f"{pointer}: {err.message}"
 
 
-def _parse_leading_frontmatter(content: str) -> dict[str, Any] | None:
+def parse_leading_frontmatter(content: str) -> dict[str, Any] | None:
     """Extract and parse the leading ``---``-delimited YAML block.
 
     Returns ``None`` when the block is absent, malformed, or non-mapping —

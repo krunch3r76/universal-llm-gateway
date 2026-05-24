@@ -55,7 +55,9 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:enrichment-quality-discipline",
         "agent_skill:entity-creation-discipline",
         "agent_skill:financial-reasoning",
+        "agent_skill:frontier-model-instructions",
         "agent_skill:grok-web-dispatch",
+        "agent_skill:grokbuild",
         "agent_skill:image-video-generation",
         "agent_skill:jupiter-browser-via-mcp",
         "agent_skill:lawyer-stance",
@@ -64,9 +66,12 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:named-entity-verification-gate",
         "agent_skill:no-silent-inference",
         "agent_skill:pre-deploy-gate-discipline",
+        "agent_skill:prose-discipline",
         "agent_skill:review-protocol-mandatory-chronology-verification",
         "agent_skill:session-close",
         "agent_skill:session-close-audit",
+        "agent_skill:skill-authoring",
+        "agent_skill:skill-document-writing",
         "agent_skill:thirdparty-api-mirror",
         # Case-specific skills — applicable across both seats since cases are
         # worked from whichever seat is convenient. Previously web-only.
@@ -81,7 +86,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:w2-ingestion",
         "agent_skill:xai-mcp-calling-shape",
     ],
-    "cursor": [
+    "claude-cursor": [
         "agent_skill:ulg-architecture",
     ],
 }
@@ -89,11 +94,11 @@ PARTITION: dict[str, list[str]] = {
 
 # Multi-agent assignments. Wins over the bucket-derived value above.
 OVERRIDES: dict[str, list[str]] = {
-    "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "cursor-claude"],
+    "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "claude-cursor"],
     "agent_skill:xai-mcp-calling-shape": [
         "grok-web",
         "claude-web",
-        "cursor-claude",
+        "claude-cursor",
     ],
 }
 
@@ -151,7 +156,7 @@ def _applicable_for(entity_id: str) -> tuple[list[str], str]:
         return agents, f"override → {agents}"
     slug = _slug_for(entity_id)
     applicable = ["*"] if slug == "*" else [slug]
-    label = {"*": "universal", "web": "web-only", "cursor": "cursor-only"}.get(
+    label = {"*": "universal", "web": "web-only", "claude-cursor": "cursor-only"}.get(
         slug, slug
     )
     return applicable, label

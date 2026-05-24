@@ -12,7 +12,7 @@ from transport_utils import make_sync_client
 from universal_logging import get_logger
 
 from .._boot_helpers import safe_list
-from .._cortex_relay import _cx
+from .._cortex_relay import cx as cortex_cx
 from .._local_relay import relay as _relay
 
 logger = get_logger(__name__)
@@ -74,15 +74,13 @@ def _fetch_async_dispatches_from_events(agent: str) -> list[dict[str, Any]]:
                 "pipeline_id": pid,
                 "started_at": row.get("started_at", ""),
                 "status": "running",
-                "retrieval_hint": (
-                    f"pipeline(op='result', execution_id='{eid}')"
-                ),
+                "retrieval_hint": (f"pipeline(op='result', execution_id='{eid}')"),
             }
         )
     return dispatches
 
 
-def _build_futures_spec(
+def build_futures_spec(
     agent: str,
     profile: dict[str, Any],
     recorder: Any,
@@ -93,7 +91,7 @@ def _build_futures_spec(
     to capture provenance. Imported via Any to avoid a circular import with
     _boot_manifest (which lives in the same package).
     """
-    cx = recorder.wrap("cortex", _cx)
+    wrapped_cx = recorder.wrap("cortex", cortex_cx)
     relay = recorder.wrap("agent-bus", _relay)
 
     unread_turns_qs = urlencode(
@@ -128,9 +126,13 @@ def _build_futures_spec(
     # Any mutating fetch in this graph is a hard blocker for INSPECT mode.
     futures_spec: dict[str, tuple[Any, ...]] = {
         # read-only: list recent session journals for boot continuity
-        "sessions": (cx, "GET", f"/session-journals?{session_qs}"),
+        "sessions": (wrapped_cx, "GET", f"/session-journals?{session_qs}"),
         # read-only: fetch last-session handoff + continuity chain
-        "continuity": (cx, "GET", f"/boot-continuity?{urlencode({'agent': agent})}"),
+        "continuity": (
+            wrapped_cx,
+            "GET",
+            f"/boot-continuity?{urlencode({'agent': agent})}",
+        ),
         # read-only: compact attention list — has_unread=true&limit=10
         "threads": (relay, "agent-bus", "GET", f"/threads?{threads_qs}"),
         # read-only: unread lookup only; query does not include mark_read
@@ -139,10 +141,10 @@ def _build_futures_spec(
 
     if profile.get("include_deadlines", True):
         # read-only: fetch pending deadline list
-        futures_spec["deadlines"] = (cx, "GET", "/deadlines")
+        futures_spec["deadlines"] = (wrapped_cx, "GET", "/deadlines")
     if profile.get("include_review_queue", True):
         # read-only: fetch pending staging queue slice
-        futures_spec["staging"] = (cx, "GET", "/staging?status=pending&limit=5")
+        futures_spec["staging"] = (wrapped_cx, "GET", "/staging?status=pending&limit=5")
 
     # Briefing card renders at most 5 todos and a count — ship the compact
     # projection (id, title, priority, domain) instead of the full description /
@@ -152,7 +154,11 @@ def _build_futures_spec(
     if len(_seat_parts) == 2 and _seat_parts[1] == "web":
         todo_qs_parts["domain_exclude"] = "infra,rag,pipeline,mcp,model_id"
     # read-only: fetch todo index for briefing card prioritization
-    futures_spec["todos"] = (cx, "GET", f"/boot-todos?{urlencode(todo_qs_parts)}")
+    futures_spec["todos"] = (
+        wrapped_cx,
+        "GET",
+        f"/boot-todos?{urlencode(todo_qs_parts)}",
+    )
     # read-only: fetch active/expired temporal assertions; briefing renders
     # only [:5] of each bucket — pass per-bucket limits so the API does the
     # slicing and we stop shipping 4×10 rows when we use 4×5.
@@ -164,7 +170,7 @@ def _build_futures_spec(
             "resolved_limit": 10,
         }
     )
-    futures_spec["temporal"] = (cx, "GET", f"/boot-temporal?{temporal_qs}")
+    futures_spec["temporal"] = (wrapped_cx, "GET", f"/boot-temporal?{temporal_qs}")
 
     # Phase 7: the reflective journal agent key is now the family slug
     # derived from the seat slug ({family}-{platform} → family part).
@@ -178,14 +184,14 @@ def _build_futures_spec(
     )
     # read-only: fetch reflective journal entries for agent continuity
     futures_spec["reflective_journal"] = (
-        cx,
+        wrapped_cx,
         "GET",
         f"/boot-reflective?{urlencode({'agent': rj_agent, 'limit': 5})}",
     )
 
     # read-only: fetch recent mentions for salience rendering
     futures_spec["recent_mentions"] = (
-        cx,
+        wrapped_cx,
         "GET",
         f"/boot-recent-mentions?{urlencode({'days': 7, 'limit': 10})}",
     )
@@ -197,15 +203,15 @@ def _build_futures_spec(
     # treated as universal so the filter is non-narrowing until each entity
     # opts in via `entity_update`.
     futures_spec["skills"] = (
-        cx,
+        wrapped_cx,
         "GET",
         f"/boot-skills?{urlencode({'limit': 50, 'for_agent': agent})}",
     )
     # read-only: fetch recent plan/todo activity summary
-    futures_spec["recent_work"] = (cx, "GET", "/boot-recent-work")
+    futures_spec["recent_work"] = (wrapped_cx, "GET", "/boot-recent-work")
     # read-only: graph-only audit (no filesystem) — surfaces critical alert counts
     futures_spec["audit"] = (
-        cx,
+        wrapped_cx,
         "POST",
         "/dispatch",
         {"tool": "audit", "arguments": {}},
@@ -232,12 +238,12 @@ def _build_futures_spec(
             }
         )
         # read-only: fetch non-superseded self-reflection assertions
-        futures_spec["self_reflections"] = (cx, "GET", f"/assertions?{refl_qs}")
+        futures_spec["self_reflections"] = (wrapped_cx, "GET", f"/assertions?{refl_qs}")
 
     return futures_spec
 
 
-def _extract_boot_results(
+def extract_boot_results(
     agent: str,
     raw: dict[str, Any],
     profile: dict[str, Any],

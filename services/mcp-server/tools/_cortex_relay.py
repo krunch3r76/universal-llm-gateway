@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 _REQUEST_TIMEOUT = 30.0
 
 
-def _cx(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+def cx(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     """Relay to cortex-api via UDS, normalizing error shape.
 
     Success: returns the parsed JSON body as a dict.

@@ -4,7 +4,7 @@ Covers phase-c.1 acceptance: ``normalize_page_spec`` + ``compute_args_hash``.
 
 Separate from ``test_extraction_helpers.py`` (which covers
 ``validate_sidecar_frontmatter`` and its schema-loader machinery in
-``tools._sidecar_schema``) to keep each test module under the ``[quality]``
+``tools.sidecar_schema``) to keep each test module under the ``[quality]``
 SLOC ceiling. No /data/files mount is needed for these tests — both helpers
 are pure functions.
 

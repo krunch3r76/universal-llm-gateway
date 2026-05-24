@@ -8,8 +8,8 @@ The sidecar grammar's write-time naming concerns:
   sort-keys JSON canonicalize, SHA-256, 6-char prefix for filename infix.
 
 Schema-validation helpers (frontmatter shape, leading-frontmatter parse,
-sidecar suffix) live in ``_sidecar_schema``. Profile load and prompt
-hashing live in ``_extraction_profile``.
+sidecar suffix) live in ``sidecar_schema``. Profile load and prompt
+hashing live in ``extraction_profile``.
 
 Spec: cortex://notes/system/specs/document-ingestion-redesign.md, sections
 "Sidecar naming, partial extractions, and variant artifacts" and "Args hash".

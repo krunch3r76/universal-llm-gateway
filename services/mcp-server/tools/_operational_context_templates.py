@@ -69,7 +69,7 @@ The `.eml`, `.pdf`, or other original file is the canonical source — use its p
 
 AGENT_BUS_COMPACT = """\
 ## Agent Bus Protocol
-Send: `agent_bus(tool="post", arguments='{{"slug": "topic", "to": "{agent}", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
+Send: `agent_bus(tool="post", arguments='{{"slug": "topic", "to": "TARGET", "subject": "…", "body": "…", "from_agent": "{agent}"}}')`
 Reply: `agent_bus(tool="reply", arguments='{{"thread": "ID", "to": "TARGET", "subject": "…", "body": "…", "after_turn": N, "from_agent": "{agent}"}}')`
 Fetch inbox: `agent_bus(tool="fetch", arguments='{{"to": "{agent}", "last": 5, "unread": true}}')`
 Always pass `mark_read: true` when fetching turns you intend to act on — stale unread counts create false urgency.

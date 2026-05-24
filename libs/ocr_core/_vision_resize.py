@@ -15,7 +15,7 @@ Design notes (agent-bus thread 557):
   level until we have ≥50 calibration calls.
 
 This module is the single source of truth for vision resize across
-mcp-server (document_ocr tools) and cortex-api (documents/ocr endpoint).
+mcp-server (``extract_document`` / ``extract_directory``) and cortex-api (documents/ocr).
 Originally extracted from ``services/mcp-server/tools/_vision_resize.py``.
 """
 

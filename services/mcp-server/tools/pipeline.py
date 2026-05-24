@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
+STARGATE_URL = os.environ.get("STARGATE_URL", "http://io:9999")
 _RUN_TIMEOUT_FALLBACK = 480.0
 _TIMEOUT_BUFFER = 30.0
 _VALIDATE_TIMEOUT = 15.0
@@ -48,14 +48,14 @@ def _fetch_pipelines_metadata() -> dict[str, Any]:
     """
     url = "/api/v1/pipelines"
     try:
-        with make_sync_client(_STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
+        with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return resp.json()
     except httpx.HTTPError:
         logger.warning(
             "Failed to fetch pipelines metadata from %s/%s",
-            _STARGATE_URL,
+            STARGATE_URL,
             url,
             exc_info=True,
         )
@@ -94,7 +94,7 @@ def _refresh_pipeline_timeouts() -> None:
     _last_timeout_refresh_monotonic = monotonic_now()
 
 
-def _resolve_timeout(pipeline_id: str, explicit: float | None) -> float:
+def resolve_timeout(pipeline_id: str, explicit: float | None) -> float:
     """Determine effective HTTP timeout for a pipeline call."""
     if explicit is not None:
         return explicit
@@ -150,7 +150,7 @@ def _pipeline_run(
     record("mcp.pipeline.run.called", pipeline=pipeline_id)
     tp_t0, tp_timer = toolprogress_begin("pipeline", pipeline=pipeline_id)
 
-    effective_timeout = _resolve_timeout(pipeline_id, timeout)
+    effective_timeout = resolve_timeout(pipeline_id, timeout)
     body: dict[str, Any] = {"model": pipeline_id, "messages": messages}
     if options:
         body["pipeline_options"] = options
@@ -160,7 +160,7 @@ def _pipeline_run(
     try:
         toolprogress_phase("pipeline", "stargate_post_begin", pipeline=pipeline_id)
         url = "/v1/chat/completions"
-        with make_sync_client(_STARGATE_URL, timeout=effective_timeout) as client:
+        with make_sync_client(STARGATE_URL, timeout=effective_timeout) as client:
             resp = client.post(url, json=body)
             resp.raise_for_status()
             data = resp.json()
@@ -259,7 +259,7 @@ def _pipeline_async(
 
     url = "/api/v1/pipelines/dispatch"
     try:
-        with make_sync_client(_STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
+        with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
             resp = client.post(url, json=body)
         if resp.status_code >= 400:
             try:
@@ -303,7 +303,7 @@ def _pipeline_stats() -> dict[str, Any]:
     """Fetch tracker occupancy snapshot from Stargate."""
     url = "/api/v1/pipelines/dispatch/stats"
     try:
-        with make_sync_client(_STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
+        with make_sync_client(STARGATE_URL, timeout=_VALIDATE_TIMEOUT) as client:
             resp = client.get(url)
             resp.raise_for_status()
             return resp.json()
@@ -315,7 +315,7 @@ def _pipeline_cancel(execution_id: str) -> dict[str, Any]:
     """Cancel an in-flight async-dispatched execution."""
     url = f"/api/v1/pipelines/executions/{execution_id}"
     try:
-        with make_sync_client(_STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
+        with make_sync_client(STARGATE_URL, timeout=_DISPATCH_TIMEOUT) as client:
             resp = client.delete(url)
             resp.raise_for_status()
             return resp.json()
@@ -331,7 +331,7 @@ def _pipeline_result(execution_id: str, wait_seconds: float) -> dict[str, Any]:
 
     url = f"/api/v1/pipelines/executions/{execution_id}"
     try:
-        with make_sync_client(_STARGATE_URL, timeout=http_timeout) as client:
+        with make_sync_client(STARGATE_URL, timeout=http_timeout) as client:
             resp = client.get(url, params={"wait": wait_clamped})
         if resp.status_code >= 400:
             try:

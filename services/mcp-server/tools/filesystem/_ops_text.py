@@ -9,12 +9,12 @@ from mcp_events import record
 
 from .._file_helpers import read_file_result, read_files_batch
 from ..file_editor import perform_edit
-from ._format_writers import _write_docx, _write_pdf, _write_plain
+from ._format_writers import write_docx, write_pdf, write_plain
 from ._paths import (
-    _EDITABLE_SUFFIXES,
-    _SANDBOX_ROOT,
-    _SHARED_IMAGE_DIR,
-    _safe_path,
+    EDITABLE_SUFFIXES,
+    SANDBOX_ROOT,
+    SHARED_IMAGE_DIR,
+    safe_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -25,14 +25,14 @@ def write_file_impl(path: str, content: str) -> dict[str, str]:
 
     Intermediate directories are created automatically.
     """
-    dest = _safe_path(path)
+    dest = safe_path(path)
     suffix = dest.suffix.lower()
     try:
         write_handlers = {
-            ".docx": _write_docx,
-            ".pdf": _write_pdf,
+            ".docx": write_docx,
+            ".pdf": write_pdf,
         }
-        write_handler = write_handlers.get(suffix, _write_plain)
+        write_handler = write_handlers.get(suffix, write_plain)
         write_handler(dest, content)
     except OSError as exc:
         record(
@@ -82,7 +82,7 @@ def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, A
             record(
                 "mcp.tool.file.read",
                 path=batch_path,
-                resolved=str(_safe_path(batch_path)),
+                resolved=str(safe_path(batch_path)),
                 chars=len(batch_result),
                 batched=True,
                 binary=False,
@@ -93,7 +93,7 @@ def read_files_batch_impl(paths: list[str], binary: bool = False) -> dict[str, A
             record(
                 "mcp.tool.file.read",
                 path=batch_path,
-                resolved=str(_safe_path(batch_path)),
+                resolved=str(safe_path(batch_path)),
                 bytes=batch_result.get("bytes", 0),
                 batched=True,
                 binary=True,
@@ -112,8 +112,8 @@ def edit_file_impl(
     all_occurrences: bool = False,
 ) -> dict[str, str | int]:
     """Atomically edit a text file in the sandboxed files directory."""
-    dest = _safe_path(path)
-    if dest.suffix.lower() not in _EDITABLE_SUFFIXES:
+    dest = safe_path(path)
+    if dest.suffix.lower() not in EDITABLE_SUFFIXES:
         raise ValueError(
             f"Cannot edit binary format {dest.suffix!r} in place. "
             f"Use write_file() instead."
@@ -162,15 +162,15 @@ def edit_file_impl(
 
 def list_files_impl(directory: str = "") -> dict[str, list[str]]:
     """List files in *directory* within the sandboxed files directory."""
-    target = _safe_path(directory) if directory else _SANDBOX_ROOT
+    target = safe_path(directory) if directory else SANDBOX_ROOT
     if not target.exists():
         return {"files": []}
     if not target.is_dir():
         raise ValueError(f"Path is not a directory: {directory!r}")
 
-    generated_dir = _SHARED_IMAGE_DIR.resolve()
+    generated_dir = SHARED_IMAGE_DIR.resolve()
     files = sorted(
-        str(p.relative_to(_SANDBOX_ROOT))
+        str(p.relative_to(SANDBOX_ROOT))
         for p in target.rglob("*")
         if p.is_file() and not p.is_relative_to(generated_dir)
     )

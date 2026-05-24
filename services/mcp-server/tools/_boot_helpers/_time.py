@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 
-def _relative_time(iso_str: str | None, now: datetime) -> str:
+def relative_time(iso_str: str | None, now: datetime) -> str:
     """Format an ISO timestamp as a human-readable relative time."""
     if not iso_str:
         return "unknown"

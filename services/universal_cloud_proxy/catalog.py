@@ -18,6 +18,7 @@ import httpx
 
 from .adapters.base import ProviderAdapter
 from .config import ProviderConfig
+from .native_boundary import _EFFORT_LEVELS, _EFFORT_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +154,11 @@ class CatalogManager:
             for m in catalog.models:
                 result.append(m.to_dict())
                 result.append({**m.to_dict(), "id": f"{m.id}-mcp", **_mcp_meta})
+                if catalog.provider == "xai":
+                    for level in _EFFORT_LEVELS:
+                        result.append(
+                            {**m.to_dict(), "id": f"{m.id}{_EFFORT_SUFFIX}{level}"}
+                        )
         return result
 
     def get_all_models_with_pricing(self) -> list[dict[str, Any]]:
