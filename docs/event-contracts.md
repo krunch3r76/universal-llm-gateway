@@ -2453,8 +2453,8 @@ All signals: `role="observation"`, `scope="global"`.
 | `mcp.grokbuild.dispatch.failed` | Same as `.completed` plus `error` (str, ≤200 chars) and `reason_code` (str — `spawn_failed` \| `sidecar_unwritable` \| `grok_nonzero_exit`) instead of `truncated` | Dispatch completed with non-zero exit OR sidecar `started`-write failed before subprocess spawn. |
 | `mcp.grokbuild.dispatch.timeout` | `dispatch_id`, `timeout_seconds`, `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation`, `audit_incomplete`, `sidecar_gaps` | Subprocess exceeded `timeout_seconds`; SIGTERM → 5s → SIGKILL via `os.killpg`. |
 | `mcp.grokbuild.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum), `reason` (str), `mode`, `op`, `cwd`, `model` | Validator or registry rejected admission. No subprocess spawned. Correlation fields travel inline so no `.called` join required (admission-phase contract). |
-| `mcp.grokbuild.dispatch.tool_calls` | `dispatch_id`, `tool_count` (int), `tool_names` (list[str]) | C.1(ii) sidecar parse summary. Emitted after every dispatch that produced stdout (completed or non-zero exit). `tool_count == len(tool_names)`. JOIN with `mcp.request.completed` on `dispatch_id` to detect header-vs-sidecar discrepancy. Empty (tool_count=0) on spawn-failed/timeout — those paths never reach `communicate()`. |
-| `mcp.grokbuild.dispatch.zero_tool_calls_when_expected` | `dispatch_id`, `mode` (str) | C.1(ii) anomaly. Fires when `tool_count == 0` AND `mode == 'edit'` AND `status == 'completed'`. In edit mode the grok subprocess is expected to call MCP tools; zero calls may indicate a silent HOME-override failure, the grok subprocess ignoring MCP, or a trivially-answerable task. Always co-emitted with `.tool_calls`. |
+| `mcp.grokbuild.dispatch.toolcalls` | `dispatch_id`, `tool_count` (int), `tool_names` (list[str]) | C.1(ii) sidecar parse summary. Emitted after every dispatch that produced stdout (completed or non-zero exit). `tool_count == len(tool_names)`. JOIN with `mcp.request.completed` on `dispatch_id` to detect header-vs-sidecar discrepancy. Empty (tool_count=0) on spawn-failed/timeout — those paths never reach `communicate()`. |
+| `mcp.grokbuild.dispatch.zerotoolcalls` | `dispatch_id`, `mode` (str) | C.1(ii) anomaly. Fires when `tool_count == 0` AND `mode == 'edit'` AND `status == 'completed'`. In edit mode the grok subprocess is expected to call MCP tools; zero calls may indicate a silent HOME-override failure, the grok subprocess ignoring MCP, or a trivially-answerable task. Always co-emitted with `.toolcalls`. |
 | `mcp.grokbuild.create.called` | `dispatch_id`, `name`, `branch`, `source_repo`, `create_branch` (bool), `start_point` (str) | `worktree_create_op` admitted (V2: emits **after** name/branch/source-repo validation, review W9). |
 | `mcp.grokbuild.create.completed` | `dispatch_id`, `duration_s`, `exit_code` (0), `name`, `branch`, `source_repo`, `worktree_path`, `create_branch`, `start_point` | `git worktree add` succeeded. |
 | `mcp.grokbuild.create.failed` | Same as `.completed` plus `error` (str ≤200) | `git worktree add` non-zero exit OR setup OSError. |
@@ -2499,7 +2499,7 @@ All signals: `role="observation"`, `scope="global"`.
 **C.1 header-vs-sidecar JOIN example (discrepancy detection).** Both the
 MCP-server header path (C.1(i): `mcp.request.completed` with
 `caller_identity=grok-build-dispatch` + `dispatch_id`) and the sidecar parse
-path (C.1(ii): `mcp.grokbuild.dispatch.tool_calls`) are CO-PRIMARY attribution
+path (C.1(ii): `mcp.grokbuild.dispatch.toolcalls`) are CO-PRIMARY attribution
 sources. Their disagreement is itself an anomaly signal:
 
 ```sql
@@ -2513,7 +2513,7 @@ LEFT JOIN events mrc
     ON json_extract(mrc.payload,'$.dispatch_id') = json_extract(tc.payload,'$.dispatch_id')
     AND mrc.signal = 'mcp.request.completed'
     AND json_extract(mrc.payload,'$.caller_identity') = 'grok-build-dispatch'
-WHERE tc.signal = 'mcp.grokbuild.dispatch.tool_calls'
+WHERE tc.signal = 'mcp.grokbuild.dispatch.toolcalls'
   AND tc.ts_unix_ms > (unixepoch()-86400)*1000
 GROUP BY tc.dispatch_id
 HAVING sidecar_count != header_count

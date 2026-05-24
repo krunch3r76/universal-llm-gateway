@@ -175,7 +175,7 @@ async def test_no_dispatch_token_fallback_completes(
     MCP traffic is attributed to seat=grok-direct (not grok-build-dispatch).
     This is the "unset header env" case in Phase C — the seat-attribution gap
     is detectable post-hoc via a JOIN query between mcp.request.* events and
-    mcp.grokbuild.dispatch.tool_calls.
+    mcp.grokbuild.dispatch.toolcalls.
 
     Assertions:
     - No pre-flight failure (status == completed with our fake proc).

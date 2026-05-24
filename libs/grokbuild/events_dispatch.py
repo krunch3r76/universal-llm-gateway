@@ -160,14 +160,14 @@ def GrokBuildDispatchToolCalls(  # noqa: N802
 
     Emitted after every completed/failed dispatch that had stdout to parse,
     even when tool_count == 0. The zero-count case is the raw signal; the
-    anomaly event (zero_tool_calls_when_expected) fires on top of it when
+    anomaly event (zerotoolcalls) fires on top of it when
     mode='edit' implies tool calls were expected.
 
     JOIN this event with ``mcp.request.completed`` (seat=grok-build-dispatch,
     dispatch_id) to detect header-vs-sidecar discrepancies.
     """
     return Event(
-        signal="mcp.grokbuild.dispatch.tool_calls",
+        signal="mcp.grokbuild.dispatch.toolcalls",
         payload={
             "dispatch_id": dispatch_id,
             "tool_count": tool_count,
@@ -191,7 +191,7 @@ def GrokBuildDispatchZeroToolCallsWhenExpected(  # noqa: N802
     the grok subprocess ignored MCP, or the task was trivially answerable.
     """
     return Event(
-        signal="mcp.grokbuild.dispatch.zero_tool_calls_when_expected",
+        signal="mcp.grokbuild.dispatch.zerotoolcalls",
         payload={
             "dispatch_id": dispatch_id,
             "mode": mode,
