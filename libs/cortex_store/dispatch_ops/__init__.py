@@ -38,6 +38,7 @@ from .ops_edges import (
 )
 from .ops_entities import (
     _op_entities,
+    _op_entities_by_content_hash,
     _op_entity_create,
     _op_entity_get,
     _op_entity_update,
@@ -90,6 +91,7 @@ logger = get_logger("cortex-api.dispatch_ops")
 
 _OPS: dict[str, Any] = {
     "entities": _op_entities,
+    "entities_by_content_hash": _op_entities_by_content_hash,
     "entity_get": _op_entity_get,
     "entity_create": _op_entity_create,
     "entities_bulk_upsert": _op_entities_bulk_upsert,

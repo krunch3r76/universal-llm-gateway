@@ -19,8 +19,8 @@ import yaml
 from tools import _evidence_entity_ops as evidence_entity_ops
 from tools import _promote_document_helpers as promote_document_helpers
 from tools import _sidecar_schema as sidecar_schema
+from tools import promote_document_to_evidence as promote_mod
 from tools._extract_document_helpers import format_sidecar
-from tools._sidecar_schema import SIDECAR_SUFFIX
 from tools._promote_document_helpers import (
     PromoteError,
     build_bundle_dir_name,
@@ -28,7 +28,7 @@ from tools._promote_document_helpers import (
     load_and_validate_sidecar,
     sanitize_bundle_name,
 )
-from tools import promote_document_to_evidence as promote_mod
+from tools._sidecar_schema import SIDECAR_SUFFIX
 
 _SCHEMA_FIXTURE = (
     Path(__file__).resolve().parents[1] / "testdata" / "extraction-sidecar-v1.yaml"
@@ -189,12 +189,19 @@ def cortex_mock(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                 }
             return copy.deepcopy(state["entities"][eid])
         if tool == "entities":
+            ch_filter = args.get("content_hash")
+            type_filter = args.get("type")
             rows = [
                 {"id": eid, "content_hash": row.get("content_hash")}
                 for eid, row in state["entities"].items()
-                if row.get("type") == "document"
+                if (type_filter is None or row.get("type") == type_filter)
+                and (
+                    ch_filter is None
+                    or row.get("content_hash") == ch_filter
+                    or row.get("content_hash") == ch_filter.removeprefix("sha256:")
+                )
             ]
-            return {"entities": rows}
+            return {"items": rows}
         if tool == "entity_create":
             state["create_calls"] += 1
             eid = args["id"]

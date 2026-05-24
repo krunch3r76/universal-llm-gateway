@@ -46,6 +46,7 @@ def _op_entities(
     limit: int | None = None,
     query: str | None = None,
     for_agent: str | None = None,
+    content_hash: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     _, _, _, _list_entities_impl, _ = _impls()
@@ -57,6 +58,26 @@ def _op_entities(
             limit=limit or 50,
             query=query,
             for_agent=for_agent,
+            content_hash=content_hash,
+        )
+
+
+def _op_entities_by_content_hash(
+    content_hash: str | None = None,
+    type: str | None = None,
+    limit: int | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    """Dedicated content-hash lookup op. Requires content_hash; defaults limit=5."""
+    if not content_hash:
+        return {"error": "content_hash is required"}
+    _, _, _, _list_entities_impl, _ = _impls()
+    with cortex_conn() as conn:
+        return _list_entities_impl(
+            conn,
+            entity_type=type,
+            limit=limit or 5,
+            content_hash=content_hash,
         )
 
 

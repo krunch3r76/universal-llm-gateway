@@ -41,17 +41,16 @@ def find_document_with_content_hash(
 ) -> str | None:
     """Return another ``document:`` entity id with the same ``content_hash``.
 
-    Used as the duplicate-evidence gate before ``entity_create``. The
-    underlying cortex ``entities`` op caps at ``limit=200`` and has no
-    cursor — beyond that boundary the gate degrades silently. See
-    todo:F13 (paginate-content-hash-lookup) for the upstream change.
+    Uses the server-side content_hash filter (limit=5) so this is an indexed
+    point-lookup rather than a full table scan. The result set is tiny by
+    design: any match beyond the first signals a pre-existing duplicate chain.
     """
     result = cx(
         "POST",
         "/dispatch",
         {
             "tool": "entities",
-            "arguments": {"type": "document", "limit": 200},
+            "arguments": {"type": "document", "content_hash": content_hash, "limit": 5},
         },
     )
     if result.get("error"):
@@ -60,13 +59,11 @@ def find_document_with_content_hash(
             result["error"],
         )
         return None
-    for row in result.get("entities", []):
+    for row in result.get("items", []):
         eid = row.get("id")
         if not eid or eid == exclude_entity_id:
             continue
-        stored = normalize_entity_content_hash(row.get("content_hash"))
-        if stored == content_hash:
-            return str(eid)
+        return str(eid)
     return None
 
 

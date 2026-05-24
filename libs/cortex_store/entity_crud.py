@@ -98,6 +98,7 @@ def list_entities_impl(
     limit: int = 50,
     for_agent: str | None = None,
     query: str | None = None,
+    content_hash: str | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -121,6 +122,14 @@ def list_entities_impl(
         )
         params.append(for_agent)
 
+    if content_hash is not None:
+        # Strip sha256: prefix — the column stores raw hex. Callers may
+        # pass either form; normalise here so both work.
+        normalized_hash = content_hash.removeprefix("sha256:")
+        if normalized_hash:
+            clauses.append("content_hash = ?")
+            params.append(normalized_hash)
+
     # Case-insensitive LITERAL substring filter on id and name. SQLite
     # LIKE is ASCII case-insensitive by default (no PRAGMA
     # case_sensitive_like changes assumed). `%` and `_` in user input are
@@ -132,14 +141,10 @@ def list_entities_impl(
         stripped = query.strip()
         if stripped:
             escaped = (
-                stripped.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_")
+                stripped.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             )
             pattern = f"%{escaped}%"
-            clauses.append(
-                "(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')"
-            )
+            clauses.append("(id LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\')")
             params.append(pattern)
             params.append(pattern)
 

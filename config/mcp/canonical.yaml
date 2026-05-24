@@ -55,7 +55,8 @@ tools:
     ∀ args ∈ EntitiesArgs: entities(args) ⟹
       result ∈ List[Entity]
       ∧ args.type ≠ ∅ ⟹ ∀ e ∈ result: e.type = args.type
-      ∧ args.workflow_state ≠ ∅ ⟹ ∀ e ∈ result: e.workflow_state = args.workflow_state.
+      ∧ args.workflow_state ≠ ∅ ⟹ ∀ e ∈ result: e.workflow_state = args.workflow_state
+      ∧ args.content_hash ≠ ∅ ⟹ ∀ e ∈ result: e.content_hash = args.content_hash.
     Read-only. ¬side-effects. See agent_skill:cortex.
   json_schema:
     type: object
@@ -65,6 +66,7 @@ tools:
       limit: {type: integer}
       query: {type: string}
       for_agent: {type: string}
+      content_hash: {type: string, description: "Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form."}
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: read_only

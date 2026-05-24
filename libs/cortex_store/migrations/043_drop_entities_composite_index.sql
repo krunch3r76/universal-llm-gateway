@@ -1,0 +1,11 @@
+-- Migration 043: Drop obsolete composite index on entities(type, content_hash)
+--
+-- Per agent-bus thread 1084 (turn 10, superseded by Gate 4 of lead-seat-boot).
+-- The idx_entities_content_hash (added in prior migration) is sufficient for
+-- the find_document_with_content_hash consumer. Composite index retained from
+-- pre-v3 state adds no value for current query patterns (content_hash-only
+-- filters) and is being removed to eliminate drift.
+--
+-- Gate 4 compliance: all schema changes via numbered migration only.
+-- Idempotent via IF EXISTS. Applied via manage_restart(cortex_api).
+DROP INDEX IF EXISTS idx_entities_type_content;

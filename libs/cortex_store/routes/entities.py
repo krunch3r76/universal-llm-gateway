@@ -73,6 +73,13 @@ def list_entities(
             "Whitespace-only values are treated as absent."
         ),
     ),
+    content_hash: str | None = Query(
+        None,
+        description=(
+            "Exact-match filter on the `content_hash` column. Accepts raw hex "
+            "or `sha256:<hex>` form; the prefix is stripped before matching."
+        ),
+    ),
 ) -> EntityList:
     """List entities, optionally constrained to one entity type / workflow_state."""
     with cortex_conn() as conn:
@@ -83,6 +90,7 @@ def list_entities(
             limit=limit,
             for_agent=for_agent,
             query=query,
+            content_hash=content_hash,
         )
     return EntityList(items=[EntitySummary(**item) for item in data["items"]])
 
