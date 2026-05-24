@@ -37,6 +37,7 @@ from ._detectors.cases import (
     detect_case_no_relationships,
     detect_document_not_wired_to_case,
 )
+from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
 from ._detectors.entity import (
     detect_agent_skill_not_in_canonical_sandbox,
     detect_entity_empty_description,
@@ -91,6 +92,7 @@ FS_TOUCHING_KINDS = {
     "agent_skill_not_in_canonical_sandbox",
     "unregistered_document_in_markdown",
     "markdown_section_drift",
+    "forbidden_surfaces",
 }
 
 INFO_KINDS = {"case_marker_absent"}
@@ -119,6 +121,7 @@ def get_all_detectors() -> dict[str, Any]:
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
         "unregistered_document_in_markdown": detect_unregistered_document_in_markdown,
         "markdown_section_drift": detect_markdown_section_drift,
+        "forbidden_surfaces": detect_forbidden_surfaces,
         "case_marker_absent": detect_case_marker_absent,
         "unresolved_bare_token_in_predicate_form": detect_unresolved_bare_token_in_predicate_form,
         "skill_binding_missing": detect_skill_binding_missing,
@@ -191,6 +194,7 @@ __all__ = [
     "detect_entity_empty_description",
     "detect_entity_source_uri_missing",
     "detect_entity_source_uri_unresolved",
+    "detect_forbidden_surfaces",
     "detect_markdown_section_drift",
     "detect_marker_nesting_violation",
     "detect_prior_session_id_omitted",

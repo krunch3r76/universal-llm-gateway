@@ -45,6 +45,7 @@ SEVERITY = {
     # skill_binding substrate (thread 1067 backfill, U2 audit-gate)
     "skill_binding_missing": "warning",
     "skill_binding_tool_unknown": "warning",
+    "forbidden_surfaces": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

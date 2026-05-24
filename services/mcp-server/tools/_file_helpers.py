@@ -500,7 +500,7 @@ def read_file_result(
             "advisory": advisory_prefix
             + (
                 "If output has garbled tables or columns, try "
-                "finance_extract_pdf(path=...) for pdfplumber-based "
+                'finance(op="inspect", path=...) for pdfplumber-based '
                 "tabular extraction."
             ),
         }

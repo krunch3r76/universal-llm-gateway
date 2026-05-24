@@ -1,8 +1,7 @@
-"""``extract_directory`` MCP tool — batch OCR relay (phase-c.3 / phase-e rename).
+"""``extract_directory`` MCP tool — batch OCR relay.
 
-Renamed from ``document_ocr_directory``. Thin HTTP relay to cortex-api
-``/documents/ocr/directory``; orchestration lives in :mod:`ocr_core` /
-``libs/cortex_store/routes/documents.py``.
+Thin HTTP relay to cortex-api ``/documents/ocr/directory``; orchestration
+lives in :mod:`ocr_core` / ``libs/cortex_store/routes/documents.py``.
 """
 
 from __future__ import annotations

@@ -1,10 +1,9 @@
-"""``extract_document`` MCP tool — phase-c.2 of the document ingestion redesign.
+"""``extract_document`` MCP tool — document ingestion redesign phase-c.
 
-Renamed from ``ingest_document`` per plan:document-ingestion-redesign phase-c.
 Writes a canonical sidecar markdown next to the source with YAML frontmatter
 binding to ``source_sha256``. No entity creation, no graph writes — those
-happen in ``promote_document_to_evidence`` (phase-d) after the operator has
-read the sidecar and chosen ``entity_id``.
+happen in ``promote_document_to_evidence`` after the operator has read the
+sidecar and chosen ``entity_id``.
 
 Spec: cortex://notes/system/specs/document-ingestion-redesign.md
 """

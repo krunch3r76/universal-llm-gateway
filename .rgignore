@@ -1,0 +1,3 @@
+# Ephemeral workspace scratch — 2.4GB of logs, consult-run dumps, and live sockets.
+# A Unix socket in tmp/event-store-test/ blocks rg indefinitely on open().
+tmp/

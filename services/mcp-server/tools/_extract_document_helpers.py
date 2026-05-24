@@ -31,9 +31,7 @@ from .llm import STARGATE_URL
 # ─── Module-level constants ──────────────────────────────────────────────────
 
 
-# Source formats accepted by extract_document. Mirrors the prior
-# ``ingest_document`` set verbatim — phase-c is rename + reduce, not
-# refactor of supported formats.
+# Source formats accepted by extract_document.
 _TEXT_EXTRACTABLE: Final[frozenset[str]] = frozenset(
     {".pdf", ".docx", ".odt", ".eml", ".html", ".txt", ".md"},
 )
@@ -74,9 +72,7 @@ def detect_format(path: Path) -> str:
     """Classify a file into a processing strategy.
 
     Returns one of: ``"text_pdf"``, ``"scanned_pdf"``, ``"image"``,
-    ``"rich_text"``, ``"plain_text"``. Identical to the prior
-    ``ingest_document`` classifier — phase-c is rename + reduce; format
-    handling is unchanged.
+    ``"rich_text"``, ``"plain_text"``.
     """
     suffix = path.suffix.lower()
     if suffix in _IMAGE_SUFFIXES:
@@ -100,10 +96,6 @@ def extract_text(
     pages: list[int] | None,
 ) -> tuple[str, int | None]:
     """Extract text and report ``total_tokens`` (None for deterministic parsers).
-
-    Same dispatch shape as the prior ``ingest_document._extract_text`` for
-    behavioral parity; adds ``pages``/``prompt`` forwarding so the OCR path
-    can scope to a subset of pages and accept a profile-overriding prompt.
 
     ``total_tokens`` is ``None`` whenever no model invocation occurred
     (text PDFs via pymupdf, DOCX via python-docx, ODT via odfpy, EML via

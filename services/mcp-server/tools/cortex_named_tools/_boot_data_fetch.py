@@ -172,21 +172,16 @@ def build_futures_spec(
     )
     futures_spec["temporal"] = (wrapped_cx, "GET", f"/boot-temporal?{temporal_qs}")
 
-    # Phase 7: the reflective journal agent key is now the family slug
-    # derived from the seat slug ({family}-{platform} → family part).
-    # Falls back to the full seat slug for unknown formats.
-    _parts = agent.split("-", 1)
-    rj_agent = (
-        _parts[0]
-        if len(_parts) == 2
-        and _parts[0] in {"claude", "gpt", "grok", "gemini", "subagent"}
-        else agent
-    )
-    # read-only: fetch reflective journal entries for agent continuity
+    # Reflective journal is seat-keyed (e.g. `claude-web`, `grok-direct`,
+    # `claude-cursor`) — pass the full seat slug. Stripping to the family
+    # slug returned 0 rows for every seat in the current data set
+    # (todo:cortex-boot-reflective-journal-seat-lookup, discovered
+    # claude-web-2026-05-24-0754). Cross-seat family-register lookup still
+    # works for callers that pass `agent=<family>` directly.
     futures_spec["reflective_journal"] = (
         wrapped_cx,
         "GET",
-        f"/boot-reflective?{urlencode({'agent': rj_agent, 'limit': 5})}",
+        f"/boot-reflective?{urlencode({'agent': agent, 'limit': 5})}",
     )
 
     # read-only: fetch recent mentions for salience rendering

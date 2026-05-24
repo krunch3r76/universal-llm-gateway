@@ -388,9 +388,10 @@ def _build_server() -> tuple[
 
         **PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).
         For tabular or columnar PDFs (statements, invoices, ledger exports),
-        prefer ``finance_extract_pdf(path=...)`` which uses pdfplumber and
-        preserves table structure. PDF reads include an ``extraction`` field
-        with method info and alternative suggestions.
+        prefer ``finance(op="inspect", path=...)`` which uses pdfplumber and
+        preserves table structure, or ``dispatch(tool="extract_document", ...)``
+        for scanned documents needing OCR sidecars. PDF reads include an
+        ``extraction`` field with method info and alternative suggestions.
 
         Sandboxes:
           cortex     — /data/files — user documents, notes, uploads, exports

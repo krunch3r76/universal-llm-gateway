@@ -5,14 +5,19 @@ MCP surface names that were retired in phase-c of the document ingestion
 redesign (ingest_document → extract_document; document_ocr_directory →
 extract_directory; document_ocr → extract_document).
 
-``ingest_binary`` is still a live private tool but is also included in the
-scan: any help text instructing agents to call the *old* public surfaces
-must use the new names instead.
+``ingest_binary`` is a live private tool under ``tools/local/`` and is
+outside this scan. To inventory ``ingest_binary`` mentions, exclude ephemeral
+``./tmp`` (consult-run JSON dumps reference the name heavily)::
 
-Allowlist: occurrences in `.retired` files, migration comments, and
-``# `` comment lines that document historical renames are exempt.  The
-detector catches agent-instructing phrases (dispatch call examples in
-docstrings) that slip through after a rename.
+    rg '\\bingest_binary\\b' services libs config .cursor --glob '!tmp/**'
+
+Help text must not instruct agents to call the *old* public surfaces — use
+the new names instead.
+
+Allowlist: migration paths, detector self-reference, ``#`` comment lines,
+and explicit provenance disclaimers (e.g. ``not a rename from``). Vestigial
+rename phrasing (``Renamed from``, ``formerly known as``, ``RETIRED``) is
+not exempt — [docs:no-vestigial].
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ logger = get_logger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _TOOLS_ROOT = Path(__file__).resolve().parent
+_SKIP_DIR_PARTS = frozenset({"tmp", "__pycache__", ".git"})
+_INGEST_BINARY_RE = re.compile(r"\bingest_binary\b")
 
 # Old names that must not appear as dispatch targets in agent-facing help text.
 # Each entry is (pattern, description).
@@ -40,33 +47,28 @@ _FORBIDDEN_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (
         re.compile(r"\bdocument_ocr_directory\b"),
-        "document_ocr_directory (renamed to extract_directory in phase-c)",
+        "document_ocr_directory (renamed to extract_directory)",
+    ),
+    (
+        re.compile(r"\bdocument_ocr_structured\b"),
+        "document_ocr_structured (renamed to extract_document_structured)",
     ),
 ]
 
 # Lines that are exempt from the detector even if they match a pattern.
 # A line is exempt if it matches any of these regexes.
 _EXEMPT_LINE_PATTERNS: list[re.Pattern[str]] = [
-    # Inline code comments — historical migration notes
     re.compile(r"^\s*#"),
-    # docstring sentences that document a rename
-    re.compile(r"\bRenamed from\b"),
-    re.compile(r"\b(formerly|previously) (called|named|known as)\b"),
-    # "not a rename from" — provenance disclaimer in promote_document_to_evidence
     re.compile(r"\bnot a rename from\b"),
-    # documentation references to historical context: "prior ``X``" idiom
-    # (RST/Markdown code reference) and the phase-c project tag.
     re.compile(r"\bprior\s+``"),
-    re.compile(r"\bphase-c\b"),
-    # migration files (ingest_document inside migration docstrings)
     re.compile(r"\b(ingest_chunker|routes/ingest)\b"),
 ]
 
 # Paths (relative to repo root) that are entirely exempt.
 _EXEMPT_PATH_SUFFIXES: tuple[str, ...] = (
-    ".retired",
     "migrations/",
     "test_forbidden_surfaces.py",  # this file itself
+    "forbidden_surfaces.py",
 )
 
 # Directories to scan (relative to repo root).
@@ -77,11 +79,32 @@ _SCAN_ROOTS: list[Path] = [
     _REPO_ROOT / ".cursor" / "skills",
 ]
 
+# ingest_binary inventory scope (B2 verification) — same roots, skip ./tmp.
+_INGEST_BINARY_SEARCH_ROOTS: list[Path] = [
+    _REPO_ROOT / "services",
+    _REPO_ROOT / "libs",
+    _REPO_ROOT / "config",
+    _REPO_ROOT / ".cursor",
+]
+_EXPECTED_INGEST_BINARY_FILES: frozenset[Path] = frozenset(
+    {
+        _REPO_ROOT / "services/mcp-server/tools/local/ingest_binary.py",
+        _REPO_ROOT / "services/mcp-server/tools/promote_document_to_evidence.py",
+        _REPO_ROOT / "services/mcp-server/tools/test_forbidden_surfaces.py",
+    }
+)
+
+
+def _skip_dir(path: Path) -> bool:
+    return any(part in _SKIP_DIR_PARTS for part in path.parts)
+
 
 def _is_exempt_path(path: Path) -> bool:
-    """True if the file is in an exempt path (retired, migrations, etc.)."""
+    """True if the file is in an exempt path (migrations, detector self-ref, etc.)."""
     path_str = str(path)
-    return any(exempt in path_str for exempt in _EXEMPT_PATH_SUFFIXES)
+    return any(exempt in path_str for exempt in _EXEMPT_PATH_SUFFIXES) or _skip_dir(
+        path
+    )
 
 
 def _is_exempt_line(line: str) -> bool:
@@ -114,7 +137,7 @@ def collect_violations() -> list[tuple[Path, int, str, str]]:
         if not root.exists():
             continue
         for path in root.rglob("*.py"):
-            if _is_exempt_path(path):
+            if _skip_dir(path) or _is_exempt_path(path):
                 continue
             for lineno, line, desc in _scan_file(path):
                 violations.append((path, lineno, line, desc))
@@ -122,11 +145,37 @@ def collect_violations() -> list[tuple[Path, int, str, str]]:
         if root.name in {"mcp", "skills"}:
             for ext in ("*.yaml", "*.yml", "*.md"):
                 for path in root.rglob(ext):
-                    if _is_exempt_path(path):
+                    if _skip_dir(path) or _is_exempt_path(path):
                         continue
                     for lineno, line, desc in _scan_file(path):
                         violations.append((path, lineno, line, desc))
     return violations
+
+
+def _collect_ingest_binary_files() -> set[Path]:
+    """Paths under live roots that mention ingest_binary; ./tmp excluded."""
+    found: set[Path] = set()
+    for root in _INGEST_BINARY_SEARCH_ROOTS:
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if _skip_dir(path) or not path.is_file():
+                continue
+            if path.suffix not in {".py", ".md", ".yaml", ".yml", ".json"}:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if _INGEST_BINARY_RE.search(text):
+                found.add(path.resolve())
+    return found
+
+
+def test_ingest_binary_reference_inventory_excludes_tmp() -> None:
+    """ingest_binary lives in tools/local; stray mentions must not hide in ./tmp."""
+    found = _collect_ingest_binary_files()
+    assert found == {p.resolve() for p in _EXPECTED_INGEST_BINARY_FILES}
 
 
 def test_no_forbidden_dispatch_surfaces() -> None:

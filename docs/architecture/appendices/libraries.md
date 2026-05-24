@@ -31,8 +31,8 @@ Used by the `cortex_api` service. Subpackages include `dispatch_ops/`
 `event_publisher.py` (standalone UDS publisher for cortex-api lifecycle signals
 when `mcp_events` is unavailable), `models/` (Pydantic request/response shapes
 shared by routes and dispatch),
-`entity_aliases.py`, HTTP `routes/` (assertions, ingest, resolve), optional
-`ingest_chunker/` for chunked ingest, and `type_schemas.py` for typed payloads.
+`entity_aliases.py`, HTTP `routes/` (assertions, resolve), and
+`type_schemas.py` for typed payloads.
 
 ---
 

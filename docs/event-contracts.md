@@ -2267,6 +2267,18 @@ MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 | `mcp.document.extract.empty` | `path`, `format` | Extraction succeeded but returned empty text; no sidecar written. `format` is the detected document format (e.g. `pdf`, `docx`, `image`). |
 | `mcp.document.extract.completed` | `path`, `format`, `sidecar_path`, `canonical`, `duration_s`, `total_tokens` | Extraction finished and sidecar written. `canonical=true` when full-file extraction with default args (no page spec, no args override). `total_tokens` is `null` for deterministic-parser paths (text PDFs, DOCX, ODT, EML, plain text). `sidecar_path` relative to `/data/files/`. |
 
+### Structured Document Extraction Signals
+
+Emitted by ``services/mcp-server/tools/local/extract_document_structured.py``.
+All signals: ``role="observation"``, ``scope="global"``.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.document.extract.structured.called` | `path`, `statement_type` | `extract_document_structured` invoked; path relative to `/data/files/`. |
+| `mcp.document.extract.structured.completed` | `path`, `statement_type`, `duration_s` | Structured JSON extraction finished. |
+| `mcp.document.extract.structured.error` | `path`, `statement_type`, `duration_s`, `error` | Structured extraction failed (JSON parse, vision error, etc.). |
+
+**Documentation Contract Audit (2026-05-24, phase-f):** Added structured extraction rows above; retired `mcp.document.ocr.structured.*` vocabulary (phase-e rename to `mcp.document.extract.structured.*`).
 
 
 ### Document Evidence Signals

@@ -22,8 +22,8 @@ Constants:
     OCR_MODEL — default vision model
     OCR_SYSTEM, DEFAULT_OCR_PROMPT — default prompts
 
-Internal helpers (re-exported for the mcp-server compatibility shim and
-``document_ocr_structured``): ``_call_stargate``, ``_call_vision``,
+Internal helpers (re-exported for ``extract_document_structured``):
+``_call_stargate``, ``_call_vision``,
 ``_build_image_blocks``, ``_extract_text_from_response``,
 ``_image_file_to_base64``, ``_pdf_page_to_base64``, ``_pdf_page_count``,
 ``_MAX_PAGES_PER_BATCH``, ``_OCR_MODEL``, ``_OCR_SYSTEM``,
@@ -77,7 +77,7 @@ __all__ = [
     "OCR_MODEL",
     "OCR_SYSTEM",
     "DEFAULT_OCR_PROMPT",
-    # Compat re-exports for the mcp-server shim and document_ocr_structured
+    # Internal re-exports for extract_document_structured
     "_IMAGE_SUFFIXES",
     "_SCANNABLE_SUFFIXES",
     "_MAX_PAGES_PER_BATCH",
