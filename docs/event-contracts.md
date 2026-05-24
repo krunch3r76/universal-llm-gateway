@@ -2237,22 +2237,49 @@ still running or failed. All signals: `role="observation"`, `scope="global"`.
 
 ### Document OCR Signals
 
-Single-file events (``mcp.document.ocr.called``, ``mcp.document.ocr.completed``)
-are emitted by ``services/mcp-server/tools/document_ocr.py``. Directory-batch
-events (``mcp.document.ocr.directory.*``, ``mcp.document.ocr.file.failed``) are
-emitted by ``libs/cortex_store/routes/documents.py`` — the cortex-api endpoint
-the thin MCP ``document_ocr_directory`` tool relays to. All signals:
+Single-file OCR events (``mcp.document.ocr.called``, ``mcp.document.ocr.completed``)
+are emitted by ``libs/cortex_store/routes/documents.py`` when the
+``POST /documents/ocr/file`` endpoint runs. Extraction sidecars use a separate
+family: ``mcp.document.extract.*`` from ``services/mcp-server/tools/extract_document.py``.
+Directory-batch events (``mcp.document.ocr.directory.*``, ``mcp.document.ocr.file.failed``)
+are emitted by ``libs/cortex_store/routes/documents.py`` — the cortex-api endpoint
+the MCP ``extract_directory`` tool relays to. All signals:
 ``role="observation"``, ``scope="global"``.
 
 | Signal | Required Payload | Description |
 |---|---|---|
-| `mcp.document.ocr.called` | `path` | `document_ocr` tool invoked; file path relative to `/data/files/`. Emitted by mcp-server. |
-| `mcp.document.ocr.completed` | `path`, `pages`, `total_tokens`, `duration_s` | `document_ocr` finished successfully. `pages` is the count of pages processed; `total_tokens` is the total vision-model token cost across all pages. Emitted by mcp-server. |
-| `mcp.document.ocr.directory.called` | `directory` | `document_ocr_directory` MCP tool invoked, relay reached cortex-api. Directory path relative to `CORTEX_FILES_ROOT`. Emitted by cortex-api. |
+| `mcp.document.ocr.called` | `path` | Single-file OCR endpoint invoked; path relative to `/data/files/`. Emitted by cortex-api. |
+| `mcp.document.ocr.completed` | `path`, `pages`, `total_tokens`, `duration_s` | Single-file OCR finished. Emitted by cortex-api. |
+| `mcp.document.ocr.directory.called` | `directory` | `extract_directory` MCP tool invoked, relay reached cortex-api. Directory path relative to `CORTEX_FILES_ROOT`. Emitted by cortex-api. |
 | `mcp.document.ocr.directory.completed` | `directory`, `file_count`, `success_count`, `error_count`, `duration_s` | Directory OCR batch finished. `file_count` is total scannable files discovered; `success_count`/`error_count` reflect per-file outcomes. Always emitted — even when `error_count > 0` (partial success is not a failure at the batch level). Emitted by cortex-api. |
-| `mcp.document.ocr.file.failed` | `path`, `error` | One file in a `document_ocr_directory` batch failed to OCR. `path` is relative to `CORTEX_FILES_ROOT`. Emitted once per failed file before the batch-level signal. Emitted by cortex-api. |
+| `mcp.document.ocr.file.failed` | `path`, `error` | One file in an `extract_directory` batch failed to OCR. `path` is relative to `CORTEX_FILES_ROOT`. Emitted once per failed file before the batch-level signal. Emitted by cortex-api. |
+
+### Document Extraction Signals
+
+Emitted by ``services/mcp-server/tools/extract_document.py`` (the ``extract_document``
+MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
+``role="observation"``, ``scope="global"``.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.document.extract.called` | `path` | `extract_document` invoked; path relative to `/data/files/`. |
+| `mcp.document.extract.idempotent` | `path`, `sidecar_path` | Existing sidecar found with matching source SHA, page spec, and args hash — extraction skipped, cached sidecar returned. `sidecar_path` is relative to `/data/files/`. |
+| `mcp.document.extract.empty` | `path`, `format` | Extraction succeeded but returned empty text; no sidecar written. `format` is the detected document format (e.g. `pdf`, `docx`, `image`). |
+| `mcp.document.extract.completed` | `path`, `format`, `sidecar_path`, `canonical`, `duration_s`, `total_tokens` | Extraction finished and sidecar written. `canonical=true` when full-file extraction with default args (no page spec, no args override). `total_tokens` is `null` for deterministic-parser paths (text PDFs, DOCX, ODT, EML, plain text). `sidecar_path` relative to `/data/files/`. |
 
 
+
+### Document Evidence Signals
+
+Emitted by ``services/mcp-server/tools/promote_document_to_evidence.py`` (the
+``promote_document_to_evidence`` MCP tool, phase-d of the document ingestion
+redesign). All signals: ``role="observation"``, ``scope="global"``.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.evidence.promote.called` | `path`, `entity_id` | `promote_document_to_evidence` invoked; `path` relative to `/data/files/`, `entity_id` is the target `document:` entity. |
+| `mcp.evidence.promote.failed` | `path`, `entity_id`, `code` | Promotion aborted with a structured `PromoteError`. `code` is the stable machine-readable failure reason (e.g. `entity_conflict`, `duplicate_evidence`, `source_sha_mismatch`, `sidecar_invalid`). Files remain in staging. |
+| `mcp.evidence.promote.completed` | `path`, `entity_id`, `bundle_path`, `entity_created`, `duration_s` | Source + sidecar atomically moved into `evidence/<date>_<hash>_<name>/` with `manifest.json`. `entity_created=true` when the `document:` entity was freshly created (idempotent re-promotion sets `false`). `bundle_path` is the evidence bundle directory relative to `/data/files/`. |
 
 ### Cortex Session Close Signals
 

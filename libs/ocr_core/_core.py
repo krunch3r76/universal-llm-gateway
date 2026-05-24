@@ -1,8 +1,7 @@
-"""Core OCR logic — extracted from services/mcp-server/tools/_document_ocr.py.
+"""Core OCR logic — PDF→image rendering, multi-provider vision, multi-page batching.
 
-PDF→image rendering, multi-provider vision, multi-page batching. Shared
-between mcp-server (single-file ``document_ocr`` tool) and cortex-api
-(``POST /documents/ocr/directory`` endpoint).
+Shared between mcp-server (``extract_document``) and cortex-api
+(``POST /documents/ocr/file`` and ``POST /documents/ocr/directory``).
 
 Key design: ``stargate_url`` is an explicit parameter on every function that
 needs to call a vision model. Callers resolve it once (typically from
@@ -26,16 +25,16 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 from pathlib import Path
 from typing import Any
 
 import httpx
 from transport_utils import make_sync_client
+from universal_logging import get_logger
 
 from ._vision_resize import profile_for_model, resize_to_budget
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEFAULT_DPI = 200
 _MAX_PAGES_PER_BATCH = 4
