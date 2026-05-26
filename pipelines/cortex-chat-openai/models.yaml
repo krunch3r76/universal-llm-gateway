@@ -1,0 +1,10 @@
+# Model alias mapping for cortex-chat-openai.
+#
+# The pipeline's `respond` step uses frontier_dispatch_v1 with a
+# pipeline-level model default (options.model: openai/gpt-5.5). This
+# file exists for registry-resolution coverage and to document the
+# expected wire model for the pipeline. Callers may override at
+# request time via pipeline_options.model.
+models:
+  openai_default:
+    model: openai/gpt-5.5

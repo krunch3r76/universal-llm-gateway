@@ -1,0 +1,119 @@
+# Virtual model id: cortex-chat-openai
+#
+# OpenAI-compatible chat pipeline with cortex-backed thread persistence.
+# Client-supplied messages[] are advisory; the messages bound to the
+# provider call are server-assembled from the
+# thread:openai-chat:{chat_id} anchor by assemble_thread_v1 (Phase 4).
+#
+# Four-step compaction DAG:
+#
+#     assemble   ── builds referential window prefix from cortex assertions
+#       │
+#       ├── archive_user ── persists this turn's user input pre-respond
+#       │
+#       └── respond ─── frontier_dispatch_v1 with handler_inputs.messages
+#                  │
+#                  └── archive_assistant ── persists assistant output
+#
+# archive_user runs in parallel with respond (both only depend on assemble).
+# archive_assistant runs after respond (binds respond.json.content); the
+# DAG executor's fail-fast policy (execution/dag_executor/executor.py:313;
+# _propagate_completion:516 excludes FAILED prereqs) means archive_assistant
+# is skipped when respond fails — no explicit condition: clause needed.
+#
+# Concurrency: pipeline-level lock keyed on chat_id (Phase 5 surface).
+# Two concurrent requests for the same chat_id serialise at the executor
+# boundary so the cortex turn_index never collides.
+#
+# Default wire model: openai/gpt-5.5 (override via pipeline_options.model
+# or generation_parameters at call time).
+schema_version: 6
+id: cortex-chat-openai
+version: "1"
+type: chat
+description: >
+  Public OpenAI-compatible chat pipeline with cortex-backed thread
+  persistence. Client messages[] are advisory; provider-bound messages
+  are server-assembled from thread:openai-chat:{chat_id}. Default wire
+  model openai/gpt-5.5; override via pipeline_options.model.
+
+output: respond
+
+options:
+  timeout_seconds: 300
+  model: openai/gpt-5.5
+  mcp: true
+  remote_mcp: false
+
+concurrency:
+  key: "chat:{context.chat_id}"
+  scope: execution
+  timeout_seconds: 30
+
+steps:
+  # 1) Resolve thread anchor + build referential message prefix from
+  #    cortex assertions on the anchor. window_size is a step-level
+  #    domain field (rag_search_v1's top_k precedent) — see
+  #    handlers/assemble_thread.py:_DEFAULT_WINDOW_SIZE.
+  - name: assemble
+    type: assemble_thread_v1
+    window_size: 8
+    handler_outputs:
+      messages: assemble.json.messages
+      anchor_id: assemble.json.anchor_id
+      turn_index: assemble.json.turn_index
+
+  # 2) Persist this turn's user input (always-on, pre-respond).
+  #    Writes a JSON artifact + confirmed cortex assertion with
+  #    predicate_form=user_turn(N). The next request's assemble step
+  #    will read this back as part of the referential window.
+  - name: archive_user
+    type: archive_user_turn_v1
+    handler_inputs:
+      anchor_id: assemble.json.anchor_id
+      turn_index: assemble.json.turn_index
+      user_text: sourceNs.text
+    handler_outputs:
+      artifact_uri: archive_user.json.artifact_uri
+
+  # 3) Frontier model call with server-assembled messages prefix +
+  #    current user turn (frontier_dispatch_request appends the
+  #    sourceNs.text turn to the assembled prefix per Phase 2 binding).
+  - name: respond
+    type: frontier_dispatch_v1
+    system_prompt: |
+      You are a helpful AI assistant with persistent memory in a Cortex
+      knowledge graph. The conversation history before this turn is
+      summarized in the assembled message prefix; full per-turn detail
+      and prior tool calls are recoverable via cortex assertions on the
+      thread anchor.
+
+      Use cortex tools when prior context is relevant. Cite assertion
+      ids or artifact uris when you reference them.
+    handler_inputs:
+      text: sourceNs.text
+      messages: assemble.json.messages
+    generation_parameters:
+      temperature: 0.7
+      reasoning_effort: medium
+    timeout_seconds: 240
+    retry_policy:
+      max_attempts: 2
+      backoff_strategy: exponential
+      initial_interval_seconds: 3.0
+      max_interval_seconds: 12.0
+      retry_on: ["ProxyClientError"]
+
+  # 4) Persist the assistant turn (executor-gated on respond success
+  #    via the DAG fail-fast policy — see header comment).
+  - name: archive_assistant
+    type: archive_assistant_turn_v1
+    handler_inputs:
+      anchor_id: assemble.json.anchor_id
+      turn_index: assemble.json.turn_index
+      assistant_text: respond.json.content
+      tool_calls: respond.json.tool_calls
+      finish_reason: respond.json.finish_reason
+      exhausted: respond.json.exhausted
+    handler_outputs:
+      artifact_uri: archive_assistant.json.artifact_uri

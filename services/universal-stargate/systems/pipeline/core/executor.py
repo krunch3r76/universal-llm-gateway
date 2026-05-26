@@ -61,6 +61,7 @@ from .events.step import (
     SubPipelineExpanded as BusSubPipelineExpanded,
 )
 from .execution import DAGExecutor
+from .execution.concurrency import maybe_concurrency_lock
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
 from .execution.map_reduce.map_executor.events import ProxyProtocol
 from .execution.outcome import PipelineExecutionOutcome, extract_model_entity_id
@@ -111,6 +112,22 @@ class PreparedPipelineExecution:
     dag_executor: DAGExecutor
     recorder: EventRecorder
     start_monotonic: float = field(default=0.0)
+
+
+def _extract_chat_id(context: _PipelineRequestContextProtocol) -> str | None:
+    """Lift ``chat_id`` from ``context.original_request`` for persistent chat
+    pipelines (e.g. ``cortex-chat-openai``).
+
+    Returns the stripped string when present and non-empty; ``None`` otherwise.
+    Non-string payloads silently coerce to ``None`` — the pipeline definition
+    decides whether absence is a hard error via step-level validation.
+    """
+    if not context.original_request:
+        return None
+    raw = context.original_request.get("chat_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
 
 
 def _normalize_pipeline_exception(
@@ -189,6 +206,13 @@ class PipelineExecutor:
         self.prompt_builder = get_prompt_builder()
         self.fragment_loader = get_fragment_loader()
         self._event_bus_warned: bool = False
+        # Phase 5 (cortex-chat-openai): per-key serialisation locks for
+        # pipelines that declare a ``concurrency:`` block. Plain dict
+        # leaks one Lock per distinct resolved key for the process
+        # lifetime; acceptable at Phase A scale (master Stargate
+        # restart cadence evicts). Substrate-level cleanup promotes to
+        # Phase B without YAML or pipeline-author impact.
+        self._concurrency_locks: dict[str, asyncio.Lock] = {}
 
     def _publish_event(self, context: PipelineContext, event: Event) -> None:
         """
@@ -281,6 +305,7 @@ class PipelineExecutor:
             execution_id=execution_id,
             runtime_options=runtime_options,
             _messages=messages,
+            chat_id=_extract_chat_id(context),
         )
 
         if runtime_options:
@@ -440,6 +465,30 @@ class PipelineExecutor:
         return runtime_options
 
     async def _run_prepared_execution(
+        self,
+        prepared: PreparedPipelineExecution,
+        *,
+        monitor_disconnect: bool = True,
+    ) -> PipelineExecutionOutcome:
+        """Acquire per-chat concurrency lock (if declared) and run the DAG.
+
+        Thin wrapper that serialises pipeline executions on a resolved
+        string key when ``pipeline.concurrency.key`` is declared in the
+        pipeline YAML. No-op when the pipeline carries no
+        ``concurrency:`` block — see ``execution.concurrency`` for the
+        resolution rules and ``ConcurrencyLockTimeoutError`` for the
+        timeout-failure shape.
+        """
+        async with maybe_concurrency_lock(
+            prepared.pipeline,
+            prepared.pipeline_context,
+            self._concurrency_locks,
+        ):
+            return await self._run_prepared_execution_inner(
+                prepared, monitor_disconnect=monitor_disconnect
+            )
+
+    async def _run_prepared_execution_inner(
         self,
         prepared: PreparedPipelineExecution,
         *,

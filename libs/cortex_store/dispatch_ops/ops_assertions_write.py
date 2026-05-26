@@ -74,6 +74,7 @@ def _op_assert(
     events_json: str | None = None,
     artifact_uri: str | None = None,
     artifact_storage: str | None = None,
+    predicate_form: str | None = None,
     force: bool = False,
     supersedes_id: int | None = None,
     acknowledge_audit_gaps: list[str] | None = None,
@@ -118,6 +119,7 @@ def _op_assert(
         ("events_json", events_json),
         ("artifact_uri", artifact_uri),
         ("artifact_storage", artifact_storage),
+        ("predicate_form", predicate_form),
     ]:
         if val is not None:
             body[key] = val

@@ -361,6 +361,12 @@ class StepConfig(BaseModel):
     @model_validator(mode="after")
     def validate_provenance_config(self) -> Self:
         """Preserve compatibility: handlers validate provenance requirements."""
+        if "messages" in self.handler_inputs:
+            if self.get_domain_field("pass_messages"):
+                raise ValueError(
+                    f"Step '{self.name}': handler_inputs.messages and pass_messages "
+                    f"are mutually exclusive. Choose only one."
+                )
         return self
 
     @property

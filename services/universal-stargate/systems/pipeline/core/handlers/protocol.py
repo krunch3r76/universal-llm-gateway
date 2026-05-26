@@ -176,6 +176,9 @@ class PipelineContext:
     # Mutable step outputs - ONLY DAGExecutor writes here
     outputs: dict[str, StepOutput] = field(default_factory=dict)
 
+    # Persistent thread chat_id identifier (None for non-chat or stateless pipelines)
+    chat_id: str | None = None
+
     # Execution metadata
     execution_id: str = ""
     started_at: datetime = field(default_factory=datetime.now)

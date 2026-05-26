@@ -1,0 +1,3 @@
+{"turn_index": 1, "role": "user", "content": "Hello", "tool_calls": [], "tool_results": [], "expected_window_card": null}
+{"turn_index": 1, "role": "assistant", "content": "Hello! I can search cortex for you.", "tool_calls": [], "tool_results": [], "expected_window_card": null}
+{"turn_index": 2, "role": "user", "content": "Search for active projects.", "tool_calls": [], "tool_results": [], "expected_window_card": null}

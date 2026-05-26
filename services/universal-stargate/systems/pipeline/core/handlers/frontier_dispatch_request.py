@@ -239,19 +239,69 @@ def resolve_user_prompt(step: StepConfig, context: PipelineContext) -> str:
     return str(value)
 
 
+def _validate_text_only_messages(
+    messages: list[Any], *, step_id: str
+) -> list[dict[str, Any]]:
+    """Validate that the message list contains only plain-text entries.
+
+    Rejects:
+    - Any message where 'content' is not a string (rejecting block-lists).
+    - Any message with role == 'tool' or anything other than 'user',
+      'assistant', 'system'.
+    - Any message containing 'tool_calls' or legacy 'function_call'.
+    """
+    allowed_roles = {"user", "assistant", "system"}
+    validated = []
+    for idx, msg in enumerate(messages):
+        if not isinstance(msg, dict):
+            raise ValueError(
+                f"Step '{step_id}': message at index {idx} must be a dict, "
+                f"got {type(msg).__name__}"
+            )
+        role = msg.get("role")
+        if role not in allowed_roles:
+            raise ValueError(
+                f"Step '{step_id}': invalid role '{role}' at index {idx}. "
+                f"Only {allowed_roles} are allowed in text-only messages."
+            )
+        if "tool_calls" in msg:
+            raise ValueError(
+                f"Step '{step_id}': message at index {idx} contains tool calls "
+                f"(forbidden in text-only)"
+            )
+        if "function_call" in msg:
+            raise ValueError(
+                f"Step '{step_id}': message at index {idx} contains legacy "
+                f"function_call (forbidden in text-only)"
+            )
+
+        content = msg.get("content")
+        if content is not None and not isinstance(content, str):
+            raise ValueError(
+                f"Step '{step_id}': content at index {idx} must be a plain string, "
+                f"got {type(content).__name__}"
+            )
+
+        # Ensure only safe keys are kept
+        safe_msg: dict[str, Any] = {"role": role}
+        if content is not None:
+            safe_msg["content"] = content
+        validated.append(safe_msg)
+    return validated
+
+
 def resolve_messages(
     step: StepConfig, context: PipelineContext, *, user_prompt: str
 ) -> list[dict[str, Any]]:
     """Resolve the wire message list for the FrontierRequest.
 
-    Two modes:
+    Three modes:
 
-    - Default (single-prompt): wraps ``user_prompt`` in a single
-      ``[{"role": "user", "content": ...}]``. Matches the historical
-      behaviour used by ``team_dispatch`` / ``frontier_dispatch`` admission
-      and by all consult-style pipelines that bind one prompt per step.
+    - Mode 1 (explicit assembled-prefix binding): resolves list[dict] from
+      ``handler_inputs.messages``, validates text-only structure, and appends
+      user_prompt.
 
-    - ``pass_messages: true`` (step domain field): forwards the full
+    - Mode 2 (``pass_messages: true`` step domain field): forwards the full
       ``context.messages`` list verbatim, filtered to drop ``role="system"``
       entries (system content is conveyed via ``FrontierRequest.system``,
       assembled separately upstream — duplicating it inside ``messages``
@@ -260,20 +310,48 @@ def resolve_messages(
       Falls back to the single-prompt list if ``context.messages`` is
       empty or absent — keeps behaviour defined for misrouted invocations.
 
+    - Mode 3 (single-prompt): wraps ``user_prompt`` in a single
+      ``[{"role": "user", "content": ...}]``. Matches the historical
+      behaviour used by ``team_dispatch`` / ``frontier_dispatch`` admission
+      and by all consult-style pipelines that bind one prompt per step.
+
     The opt-in form is intended for synchronous virtual-model pipelines
     (e.g. agent-seat surfaces exposed via ``/v1/chat/completions``) where
     the caller is a generic OpenAI client sending real conversation
     history. ¬change for any pipeline that does not set the field.
     """
-    if not bool(step.get_domain_field("pass_messages")):
-        return [{"role": "user", "content": user_prompt}]
-    raw = context.messages or []
-    forwarded: list[dict[str, Any]] = [
-        m for m in raw if isinstance(m, dict) and m.get("role") != "system"
-    ]
-    if not forwarded:
-        return [{"role": "user", "content": user_prompt}]
-    return forwarded
+    # Mode 1: explicit assembled-prefix binding via handler_inputs.messages
+    if "messages" in step.handler_inputs:
+        binding = step.handler_inputs["messages"]
+        resolver = NamespaceResolver(context)
+        prefix = traverse_path(
+            resolver.resolve(binding),
+            binding.field_path,
+            step_name=step.id,
+            field_name="messages",
+            binding_repr=str(binding),
+            resolver=resolver,
+        )
+        if not isinstance(prefix, list):
+            raise ValueError(
+                f"Step '{step.id}': handler_inputs.messages must resolve to "
+                f"list[dict], got {type(prefix).__name__}"
+            )
+        validated = _validate_text_only_messages(prefix, step_id=step.id)
+        return validated + [{"role": "user", "content": user_prompt}]
+
+    # Mode 2: existing pass_messages behavior — verbatim client forwarding
+    if bool(step.get_domain_field("pass_messages")):
+        raw = context.messages or []
+        forwarded: list[dict[str, Any]] = [
+            m for m in raw if isinstance(m, dict) and m.get("role") != "system"
+        ]
+        if not forwarded:
+            return [{"role": "user", "content": user_prompt}]
+        return forwarded
+
+    # Mode 3: default single-prompt
+    return [{"role": "user", "content": user_prompt}]
 
 
 def resolve_system_prompt(step: StepConfig, context: PipelineContext) -> str:

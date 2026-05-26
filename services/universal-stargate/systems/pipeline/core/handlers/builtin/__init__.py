@@ -14,6 +14,9 @@ register_handler(SelectWinnerHandler)
 
 # Import sibling handler modules to trigger their @register_handler
 # decorators. These live at the handlers/ level (one package up).
+from .. import archive_assistant_turn as _archive_assistant_turn  # noqa: E402, F401
+from .. import archive_user_turn as _archive_user_turn  # noqa: E402, F401
+from .. import assemble_thread as _assemble_thread  # noqa: E402, F401
 from .. import assess_loop as _assess_loop  # noqa: E402, F401
 from .. import data_sink as _data_sink  # noqa: E402, F401
 from .. import data_source as _data_source  # noqa: E402, F401
