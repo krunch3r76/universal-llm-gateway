@@ -200,6 +200,25 @@ profiles:
       - google/gemini-3-flash-preview
       - google/gemini-3.1-pro-preview
 
+  gemini/cursor:
+    # Cursor seat for Gemini.
+    provider: google
+    default_model: google/gemini-2.5-flash
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    addenda:
+      - session-close-pointer-cursor
+      - session-close-markdown-audit
+      - session-close-transcript
+    allowed_models:
+      - google/gemini-2.5-pro
+      - google/gemini-2.5-flash
+      - google/gemini-3-flash-preview
+      - google/gemini-3.1-pro-preview
+
   subagent/subagent:
     provider: anthropic
     default_model: null

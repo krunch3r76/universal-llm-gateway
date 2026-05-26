@@ -50,6 +50,8 @@ def normalize_agent_slug(slug: str) -> str:
         "grok": "grok-cursor",
         "web_grok": "grok-web",
         "superheavy": "grok-web",
+        "cursor_gemini": "gemini-cursor",
+        "gemini": "gemini-cursor",
         # New canonical seat slugs (hyphen form stored under underscore key
         # since norm replaces hyphens with underscores above)
         "claude_cursor": "claude-cursor",
@@ -64,6 +66,7 @@ def normalize_agent_slug(slug: str) -> str:
         "grok_build_dispatch": "grok-build-dispatch",
         "grok_web": "grok-web",
         "gemini_api": "gemini-api",
+        "gemini_cursor": "gemini-cursor",
         # Role slugs pass through unchanged
         "lead": "lead",
         "reviewer": "reviewer",

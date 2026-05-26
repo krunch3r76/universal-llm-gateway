@@ -183,13 +183,19 @@ def test_markdown_contains_spec_skeleton():
         "## Active Assertions (top 7)",
         "**[confirmed]** Root claim active.",
         "## Related Entities (5 found, 1-hop)",
-        "### depends_on",
-        "### references",
-        "\u2192",  # outbound arrow
-        "\u2190",  # inbound arrow
+        "Grokbuild V1 (`todo:grokbuild-v1`)",
+        "Other (`decision:other`)",
+        "**Connected via:**",
+        "depends_on \u2192",
+        "references \u2190",
+        "\u2194",  # mixed/cross direction arrow (sibling edge on v2)
         "**Hop:** 1",
     ):
         assert needle in md, f"missing from markdown: {needle!r}"
+    for obsolete in ("\n### depends_on\n", "\n### references\n"):
+        assert obsolete not in md, (
+            f"obsolete edge-type section still rendered: {obsolete!r}"
+        )
     conn.close()
 
 

@@ -44,6 +44,29 @@ you call MCP tools directly—no slash-command wrapper):
 Optional slim briefing: `cortex_boot(agent="grok-direct", family="Grok", session_id="grok-direct-YYYY-MM-DD-HHmm")`.
 
 **Investigation order:** for failures, query the Event Service first (`observability` or `scripts/query-events`), then logs under `/tmp/logs/`.
+### Schema-Change Discipline
+
+∀ schema modification (`CREATE INDEX`, `CREATE TABLE`, `ALTER TABLE`, `DROP INDEX`,
+`CREATE TRIGGER`, etc.) against any sqlite database in the ecosystem (cortex, RAG,
+events, agent-bus): land via `libs/<store>/migrations/NNN_*.sql` or `.py`.
+
+- ❌ Ad-hoc Python or `sqlite3` CLI against the live DB
+- ❌ "Verification" or "smoke-test" scripts that mutate live state
+- ✅ Migration file in `libs/<store>/migrations/` with `IF NOT EXISTS` for idempotency
+- ✅ Verification against `:memory:` or a tmp-copy DB
+- ✅ Apply via the migration runner (`manage` sync_restart of the owning service)
+
+**File-creation override.** The base system prompt's *"Do not create files unless
+absolutely necessary, prefer editing existing"* rule **does not apply** to migration
+files. A new schema state requires a new migration file by convention — this is a
+recognized exception, not a violation of the guideline.
+
+**Anti-pattern.** `python -c '...CREATE INDEX...'` against `~/.cortex/cortex.db` to
+"verify" or "smoke test", even with a backup taken first. That is a production
+mutation, not a verification. EXPLAIN / PRAGMA verification runs in code against
+`:memory:` or a tmp copy.
+
+Authoritative gate: `agent_skill:lead-seat-boot` Gate 4.
 <!-- gen-rules:end:boot-protocol -->
 
 ---

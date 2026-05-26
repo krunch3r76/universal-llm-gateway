@@ -177,6 +177,13 @@ def render_operational_context(
         sections.append(_CONFIRM_AND_PROCEED)
     sections.append(templates.CORTEX_RETRIEVAL_WORKFLOWS)
     sections.append(templates.BEHAVIORAL_RULES)
+    # Frontier reasoning posture (steelman / calibration / courage / framing /
+    # self-correction). Distilled from retired persona seeds after Phase 6
+    # birth-prompt retirement. Universal across frontier-class seats; skipped
+    # for inline-only subagent execution where the discipline belongs to the
+    # dispatcher, not the executor.
+    if not (family == "subagent" and platform == "subagent"):
+        sections.append(templates.FRONTIER_REASONING)
     sections.append(_render_observe_and_search(agent))
     sections.append(templates.ASSERTION_SEARCH)
     sections.append(templates.NOTES_TO_SELF)
