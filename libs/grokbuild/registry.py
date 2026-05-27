@@ -46,9 +46,16 @@ _lock = asyncio.Lock()
 _in_flight: dict[str, str] = {}
 
 SCHEMA_VERSION = 2
-REGISTRY_PATH = Path(
-    os.getenv("GROKBUILD_REGISTRY_PATH", "/var/lib/grokbuild-worker/registry.json")
-)
+_DEFAULT_REGISTRY_PATH = "~/.local/share/grokbuild-worker/registry.json"
+
+
+def _env_registry_path() -> Path:
+    """Resolve registry path from env with expanduser (tilde → $HOME)."""
+    raw = os.getenv("GROKBUILD_REGISTRY_PATH", _DEFAULT_REGISTRY_PATH)
+    return Path(raw).expanduser()
+
+
+REGISTRY_PATH = _env_registry_path()
 
 
 def _canonical(cwd: str) -> str:

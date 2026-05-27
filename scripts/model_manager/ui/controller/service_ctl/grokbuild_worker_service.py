@@ -26,11 +26,9 @@ _LOG_DIR = Path("/tmp/logs/grokbuild-worker")
 _DEFAULT_HOST = os.environ.get("GROKBUILD_WORKER_HOST", "127.0.0.1")
 _DEFAULT_PORT = int(os.environ.get("GROKBUILD_WORKER_PORT", "8090"))
 
-# XDG-compliant defaults (user-writable, no root required).  The lib
-# (`libs/grokbuild/constants.py`) and worker config both use the same tilde
-# string; Path.expanduser() is applied downstream (in config._env_path and
-# constants._SIDECAR_DIR).  Propagate unconditionally so the lib's default
-# never diverges from the worker's view when these env vars are absent.
+# XDG-compliant defaults (user-writable, no root required).  Docker compose
+# overrides with /var/lib/grokbuild-worker/*; bare-metal uses $HOME via
+# expanduser() here and in libs/grokbuild/{constants,registry}.py.
 _DEFAULT_SIDECAR_DIR = "~/.local/share/grokbuild-worker/sidecars"
 _DEFAULT_REGISTRY_PATH = "~/.local/share/grokbuild-worker/registry.json"
 
@@ -39,22 +37,25 @@ def _tcp_config() -> tuple[str, int]:
     return (_DEFAULT_HOST, _DEFAULT_PORT)
 
 
+def _expanded_env_path(key: str, default: str) -> str:
+    """Return an absolute path string for env propagation to the worker."""
+    return str(Path(os.environ.get(key, default)).expanduser())
+
+
 def _runtime_env() -> dict[str, str]:
     """Build runtime env exposing config knobs to the worker process.
 
     ``GROKBUILD_SIDECAR_DIR`` and ``GROKBUILD_REGISTRY_PATH`` are set
-    unconditionally to the operator-locked defaults; otherwise the lib's
-    constants.py / registry.py defaults would diverge from the worker's
-    ``WorkerConfig`` defaults when these env vars are missing in the
-    parent shell.
+    unconditionally to expanded absolute paths so child processes never
+    interpret ``~`` as a cwd-relative segment.
     """
     env: dict[str, str] = {
         "GROKBUILD_WORKER_HOST": _DEFAULT_HOST,
         "GROKBUILD_WORKER_PORT": str(_DEFAULT_PORT),
-        "GROKBUILD_SIDECAR_DIR": os.environ.get(
+        "GROKBUILD_SIDECAR_DIR": _expanded_env_path(
             "GROKBUILD_SIDECAR_DIR", _DEFAULT_SIDECAR_DIR
         ),
-        "GROKBUILD_REGISTRY_PATH": os.environ.get(
+        "GROKBUILD_REGISTRY_PATH": _expanded_env_path(
             "GROKBUILD_REGISTRY_PATH", _DEFAULT_REGISTRY_PATH
         ),
     }

@@ -7,6 +7,26 @@ unchanged from V1 — only the execution host moved to grokbuild-worker.
 Retired ops (``op='dispatch'``, unknown ops) are still rejected at the relay
 layer to preserve backwards-compatible envelope shapes for callers that
 pre-date the V2 cutover.
+
+Observability playbook (full detail: cortex ``agent-skills/grokbuild.md``,
+entity ``agent_skill:grokbuild``):
+
+* ``op='build'`` returns 202 immediately; the relay does **not** poll.
+* **While running:** ``op='build_status'`` (``state``, ``progress_summary``,
+  ``last_event``, ``result_available``). Poll every 2–5s.
+* **After terminal state:** ``op='fetch_result'`` (``format``: ``json`` |
+  ``text`` | ``summary``) — stdout/stderr/audit fields live here only.
+* **Cancel:** ``op='build_cancel'``.
+* **Live grok output (richest):** NDJSON sidecar at
+  ``$HOME/.local/share/grokbuild-worker/sidecars/{dispatch_id}.ndjson``
+  (append-only; ``tail -f`` during run). Survives worker restarts; ~7d retention.
+* **SSE lifecycle stream:** ``events_url`` from the 202 envelope → Stargate REST
+  ``GET /api/v1/grokbuild/dispatches/{id}/events``. **Not** an MCP op.
+  Coarse tracker events only; ``progress`` events are reserved/unused today.
+* **Worker process log:** ``/tmp/logs/grokbuild-worker/grokbuild-worker.log``
+  when started via manage — HTTP/startup errors, not grok subprocess stdout.
+* **Event Service audit:** ``observability`` on ``grokbuild.dispatch.*`` (tracker)
+  and ``mcp.grokbuild.dispatch.*`` (git diff, toolcalls); JOIN on ``dispatch_id``.
 """
 
 from __future__ import annotations
@@ -170,6 +190,31 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
       dispatch. ``False`` calls the LLM API directly via Stargate (no subprocess,
       no MCP tooling inside the dispatch); use when the prompt is self-contained
       and the response is a text answer rather than a tool-driven task.
+
+    Observability (``op='build'`` async dispatches only):
+
+    The relay returns 202 and does **not** block until grok finishes. Callers
+    MUST poll/stream/fetch explicitly. Full playbook:
+    ``agent-skills/grokbuild.md`` (cortex) / entity ``agent_skill:grokbuild``.
+
+    * **Poll:** ``build_status`` → ``state`` (``pending`` | ``running`` |
+      ``succeeded`` | ``failed`` | ``cancelled``), ``progress_summary``,
+      ``last_event``, ``result_available``, ``pid``, ``exit_code``.
+    * **Result:** ``fetch_result`` after terminal state — canonical envelope
+      (``stdout``, ``stderr``, ``git_diff_stat``, audit metadata). Formats:
+      ``json`` (default), ``text``, ``summary``.
+    * **Cancel:** ``build_cancel``.
+    * **Live grok output:** sidecar NDJSON at
+      ``~/.local/share/grokbuild-worker/sidecars/{dispatch_id}.ndjson``
+      (``tail -f`` while running; readable without tracker after restart).
+    * **SSE (REST only, not MCP):** ``events_url`` from the 202 response —
+      ``GET {STARGATE}/api/v1/grokbuild/dispatches/{id}/events``. Tracker
+      lifecycle events (``accepted``, terminal ``completed``); ``progress``
+      events reserved/unused.
+    * **Worker log:** ``/tmp/logs/grokbuild-worker/grokbuild-worker.log``
+      (process-level when started via manage; not grok stdout).
+    * **Event Service:** ``observability`` on ``grokbuild.dispatch.*`` and
+      ``mcp.grokbuild.dispatch.*``; JOIN on ``dispatch_id`` for audit forensics.
     """
     # Capture function params before any local variables are assigned.
     _kwargs = locals()

@@ -13,6 +13,7 @@ import pytest
 
 from grokbuild.registry import (
     SCHEMA_VERSION,
+    _env_registry_path,
     _load_registry_from_disk,
     _pid_running,
     _reset_for_tests,
@@ -393,3 +394,13 @@ def test_schema_mismatch_discards_entries(
     )
     assert recovery["entries_pruned"] == 1
     assert recovery["entries_recovered"] == 0
+
+
+def test_env_registry_path_expands_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: tilde in GROKBUILD_REGISTRY_PATH must resolve under $HOME."""
+    monkeypatch.setenv(
+        "GROKBUILD_REGISTRY_PATH", "~/.local/share/grokbuild-worker/registry.json"
+    )
+    resolved = _env_registry_path()
+    assert resolved.is_absolute()
+    assert resolved == Path.home() / ".local/share/grokbuild-worker/registry.json"
