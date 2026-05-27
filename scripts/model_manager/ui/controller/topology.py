@@ -46,6 +46,18 @@ _BUILD_MISMATCH_LABEL_KEYS: tuple[str, ...] = (
 _GATEWAY_DIR = Path.home() / ".gateway"
 _NODES_DIR = _GATEWAY_DIR / "nodes"
 _MASTER_CONFIG = _GATEWAY_DIR / "stargate.yaml"
+# Reserved for rsync filter exceptions where .gitignore root-anchoring is insufficient.
+_REMOTE_DEPLOY_RSYNC_FILTERS: tuple[str, ...] = ()
+
+_CRITICAL_DEPLOY_PATHS: tuple[str, ...] = (
+    "services/_universal-llm-gateway/src/routers/api/v1/models/__init__.py",
+    "services/_universal-llm-gateway/src/routers/api/v1/models/management.py",
+    "config/models/text_llm/llama-cpp/qwen3-14b-q4-k-m.yaml",
+    "libs/cortex_store/models/__init__.py",
+    "services/grokbuild_worker/models/__init__.py",
+    "config/templates/relay-stargate.yaml",
+)
+
 _FORWARDED_BUILD_ENV_KEYS = (
     "ENABLE_VLLM",
     "VLLM_FROM_SOURCE",
@@ -170,6 +182,31 @@ async def _stream_subprocess(
     if code != 0:
         yield f"{exit_failure_prefix} (exit {code}).[/red]"
         raise _StreamedCommandError
+
+
+async def _verify_deploy_paths(ssh_target: str) -> tuple[bool, list[str]]:
+    """Confirm critical source paths exist on the remote after rsync."""
+    check_cmd = " ; ".join(
+        f"test -e ~/universal-llm-gateway/{path} || echo MISSING:{path}"
+        for path in _CRITICAL_DEPLOY_PATHS
+    )
+    proc = await asyncio.create_subprocess_exec(
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        ssh_target,
+        check_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    stdout, _ = await proc.communicate()
+    lines = stdout.decode(errors="replace").splitlines()
+    missing = [
+        line.removeprefix("MISSING:")
+        for line in lines
+        if line.startswith("MISSING:")
+    ]
+    return not missing, missing
 
 
 def list_remotes() -> list[RemoteConfig]:
@@ -470,6 +507,10 @@ async def deploy_remote(
 
     Edge compose bind-mounts ``libs/`` and ``services/`` from the rsynced tree, so a
     restart without *build* picks up Python changes without rebuilding the image.
+
+    NOTE: ``.gitignore`` patterns merged via ``--filter=:-`` MUST be root-anchored
+    (``/foo/`` not ``foo/``) when ``foo/`` is also a source directory in the tree —
+    rsync does not honor git ``!`` negation syntax.
     """
     repo = workspace_root.resolve()
     node_env = _NODES_DIR / f"{hostname}.env"
@@ -485,12 +526,13 @@ async def deploy_remote(
     dest = f"{ssh_target}:~/universal-llm-gateway/"
 
     # Sync working tree (staged or not); exclude paths per .gitignore. .git is
-    # not listed in .gitignore — exclude explicitly.
+    # not listed in .gitignore — exclude explicitly. See docstring NOTE on anchoring.
     rsync_args = [
         "rsync",
         "-az",
         "--delete",
         "--exclude=.git",
+        *_REMOTE_DEPLOY_RSYNC_FILTERS,
         "--filter=:- .gitignore",
         f"{repo}/",
         dest,
@@ -505,6 +547,15 @@ async def deploy_remote(
         ):
             yield line
     except _StreamedCommandError:
+        return
+
+    ok, missing = await _verify_deploy_paths(ssh_target)
+    if not ok:
+        yield (
+            f"[red]Deploy sync incomplete — missing on {hostname}: "
+            f"{', '.join(missing)}. "
+            "Check .gitignore root-anchoring (/models/, /templates/).[/red]"
+        )
         return
 
     scp_args = [

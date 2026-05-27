@@ -74,24 +74,20 @@ prompts/
 tests/*
 !libs/inference_djinn/scripts/tests/
 !tests/predicate_form/
-templates/
-!config/templates/
+# Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
+# Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
+/templates/
+# Root-level model weight directory only — NOT */models/ Python source trees.
+/models/
+# Weight file extensions (any path; complements /models/ depth rule)
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.onnx
 .cursorignore
 .github/
 proposals/
-# Model weight/binary files — NOT the static catalog or source code
-models/
-!config/models/
-!services/_universal-llm-gateway/src/routers/**/models/
-# Pydantic schema modules under libs/cortex_store/models/ are source, not weights
-!libs/cortex_store/models/
-!libs/cortex_store/models/**
-# Pydantic models under services/grokbuild_worker/models/ are source, not weights
-!services/grokbuild_worker/models/
-!services/grokbuild_worker/models/**
-# Negation above re-includes bytecode; keep it untracked
-libs/cortex_store/models/**/__pycache__/
-services/grokbuild_worker/models/**/__pycache__/
 summaries/
 
 .git/

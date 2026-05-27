@@ -173,3 +173,144 @@ def build_step_output(
         max_tokens=resolved_config.get("max_tokens"),
         request_body=call_result.request_body,
     )
+
+
+async def invoke_model_streaming(
+    handler: Any,
+    step: StepConfig,
+    context: PipelineContext,
+    prompt_config: PromptConfig,
+    model_id: str,
+    user_prompt: str,
+    source_provenance: dict[str, Any] | None,
+    *,
+    model_profile: str | None = None,
+) -> StepOutput:
+    """Streaming counterpart to ``GenericGenerateHandler._invoke_model``.
+
+    Resolves execution config + builds messages identically to the buffered
+    path, then opens an SSE stream via ``proxy_client.chat_completion_stream``
+    and wraps the resulting async iterator in a streaming ``StepOutput``.
+    The handler returns immediately; the consumer (Phase 4 lifecycle) drives
+    iteration and aggregates ``usage`` from the final chunk.
+
+    No model fallback is attempted on this path. Terminal-passthrough
+    eligible pipelines have a single step and rely on first-chunk-on-iteration
+    semantics — synchronously retrying on an alternate model would require
+    materializing the first chunk, which defeats the streaming property.
+    Pre-first-yield errors (auth, 4xx, non-SSE response) propagate to the
+    consumer on the first ``__anext__()`` call, where the lifecycle owns
+    failed-pipeline event emission.
+
+    The buffered path's HTTP-timeout precedence, profile resolution,
+    skip-token-counting resolution, and pre-generated request-ID
+    consumption are mirrored exactly so the same step config produces the
+    same upstream request envelope regardless of branch.
+
+    No ``ModelInvocationStarted`` / ``ModelInvocation`` events are emitted
+    here; those are the consumer's responsibility (handler returns the
+    StepOutput, lifecycle emits when the iterator drains).
+    """
+    from ..builtin.generation_params import _build_generation_params
+
+    resolved = handler._resolve_execution_config_for_model(
+        step, prompt_config, model_id, context
+    )
+
+    resolved_cfg = {
+        "temperature": resolved["temperature"],
+        "max_tokens": resolved["max_tokens"],
+        "json_schema": resolved["json_schema"],
+    }
+    params, _removed = _build_generation_params(step, resolved_cfg)
+
+    system_prompt = resolved["system_prompt"]
+    messages: list[dict[str, str]] = (
+        [{"role": "system", "content": system_prompt}] if system_prompt else []
+    )
+    messages.append({"role": "user", "content": user_prompt})
+
+    # Mirror call_model's HTTP-timeout precedence: step → pipeline → None.
+    _http_timeout_buffer = 30
+    http_timeout: float | None = None
+    if step.handler_timeout_seconds:
+        http_timeout = step.handler_timeout_seconds + _http_timeout_buffer
+    elif step.timeout_seconds:
+        http_timeout = step.timeout_seconds + _http_timeout_buffer
+    elif context.pipeline and getattr(context.pipeline, "options", None):
+        pl_timeout = getattr(context.pipeline.options, "timeout_seconds", None)
+        if pl_timeout is not None and pl_timeout > 0:
+            http_timeout = pl_timeout + _http_timeout_buffer
+
+    # Mirror call_model's profile-resolution: step → ModelRef → pipeline.
+    effective_disable_profile = step.disable_profile
+    if effective_disable_profile is None:
+        effective_disable_profile = context.pipeline.options.disable_profile
+    effective_profile = (
+        step.profile or model_profile or context.pipeline.options.profile
+    )
+    if model_profile and step.disable_profile is not True:
+        effective_disable_profile = False
+
+    # Mirror call_model's skip-token-counting resolution.
+    skip_tc = step.skip_token_counting
+    if skip_tc is None:
+        skip_tc = context.pipeline.options.skip_token_counting
+
+    # Consume pre-generated inference request ID exactly once, mirroring
+    # call_model. Subsequent calls within the same map iteration generate
+    # fresh UUIDs inside chat_completion_stream.
+    inference_request_id = context.inference_request_id
+    if inference_request_id:
+        context.inference_request_id = None
+
+    client = context.get_proxy_client()
+    stream = client.chat_completion_stream(
+        model=resolved["model_id"],
+        messages=messages,
+        execution_id=context.execution_id,
+        step_id=step.id,
+        skip_token_counting=skip_tc,
+        disable_profile=effective_disable_profile,
+        profile=effective_profile,
+        timeout=http_timeout,
+        map_iteration_request_id=context.map_iteration_request_id,
+        request_id=inference_request_id,
+        **params,
+    )
+
+    # Provenance derives from model_id alone — safe to populate before
+    # any chunk has flowed.
+    if source_provenance:
+        from provenance import Provenance
+
+        prov = Provenance.from_dict(source_provenance).with_processor(
+            step_id=step.id,
+            processor_model_id=resolved["model_id"],
+        )
+        output_provenance = prov.to_dict()
+    else:
+        from provenance import create_provenance
+
+        output_provenance = create_provenance(
+            model_id=resolved["model_id"],
+            step_id=step.id,
+        ).to_dict()
+
+    return StepOutput(
+        raw="",
+        stream=stream,
+        model_id=resolved["model_id"],
+        step_id=step.id,
+        provenance=output_provenance,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=resolved["temperature"],
+        max_tokens=resolved["max_tokens"],
+        request_body={
+            "model": resolved["model_id"],
+            "messages": messages,
+            "stream": True,
+            **params,
+        },
+    )

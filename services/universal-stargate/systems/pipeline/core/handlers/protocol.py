@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -56,7 +57,16 @@ class StepOutput:
     Optional prompt fields (system_prompt, user_prompt) capture the exact
     prompts sent to the model for debugging and execution summaries.
 
-    Invariant: ∀ output.json: (json_schema specified) ⟹ (json ∈ dict[str, Any] | None)
+    For terminal-passthrough streaming steps (see
+    ``PipelineSpec.is_stream_passthrough_eligible``), ``stream`` carries an
+    async iterator of OpenAI ``chat.completion.chunk`` dicts. When ``stream``
+    is set, ``raw`` is ``""`` and ``prompt_tokens`` / ``completion_tokens`` /
+    ``latency_ms`` are 0 at handler-return time — the consumer drives the
+    iterator and aggregates from the final chunk's ``usage`` field.
+
+    Invariants:
+    - ∀ output.json: (json_schema specified) ⟹ (json ∈ dict[str, Any] | None)
+    - stream is not None ⟹ raw == "" ∧ prompt_tokens == 0 ∧ completion_tokens == 0
     """
 
     raw: str
@@ -80,6 +90,15 @@ class StepOutput:
 
     # Full request body sent to LLM (for complete reproducibility)
     request_body: dict[str, Any] | None = None
+
+    # Streaming-passthrough iterator. When set, the step is a
+    # terminal-passthrough-eligible generate step producing chunks for direct
+    # SSE forwarding. See PipelineSpec.is_stream_passthrough_eligible. The
+    # consumer (lifecycle layer) drives the iterator and aggregates from the
+    # final chunk's ``usage`` field. ``raw`` is ``""`` and token counts are
+    # 0 at handler-return time; provenance is populated normally because it
+    # derives from model_id alone (not from the streamed content).
+    stream: AsyncIterator[dict[str, Any]] | None = None
 
     # Reasoning trace from OpenAI-family reasoning models. Shape is whatever
     # the upstream returned (structured blocks or a flat string). ``None`` for

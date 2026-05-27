@@ -306,6 +306,19 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
          optional handoff entry.
       9. Compute ``content_hash`` of the on-disk markdown and return.
 
+    ``body.transcript_depth`` (default ``"verbatim"``) selects the
+    archival layer:
+
+      - ``verbatim``: steps 2–9 as documented (current behavior).
+      - ``light``: file content is ``session_summary_md`` alone; no
+        verbatim assembly. Transcript entity carries
+        ``attributes.transcript_depth="light"``.
+      - ``none``: no file, no transcript entity. Journal row written
+        with ``file_path=NULL``; continues edge + handoff entry written
+        per the universal continuity path (without ``handoff_for`` link).
+        Response transcript_entity_id / transcript_path / content_hash
+        are null.
+
     On any failure between steps 2 and 8 that occurs after the file is
     written, the file is unlinked before raising.
     On any failure after the transcript file is written, a best-effort
@@ -438,140 +451,191 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     # Verbatim source: either-of {transcript_jsonl_path, transcript_md}.
     # jsonl_path wins on conflict (cursor canonical path; web wouldn't
     # legitimately pass both). See agent-bus thread 1026.
-    if not body.transcript_jsonl_path and not body.transcript_md:
+    # Required only when transcript_depth ∈ {verbatim, light}; for
+    # transcript_depth=none, no transcript source is needed.
+    if (
+        body.transcript_depth != "none"
+        and not body.transcript_jsonl_path
+        and not body.transcript_md
+    ):
         _structured(
             "transcript_source.missing",
             "transcript_jsonl_path|transcript_md",
             None,
-            "exactly one of {transcript_jsonl_path (cursor), transcript_md (web)}",
+            (
+                f"exactly one of {{transcript_jsonl_path (cursor), "
+                f"transcript_md (web)}} for transcript_depth="
+                f"{body.transcript_depth!r}"
+            ),
             [],
             (
                 "Cursor agents pass transcript_jsonl_path under "
                 "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
-                "verbatim markdown via transcript_md."
+                "verbatim markdown via transcript_md. For mechanical or "
+                "bus-durable sessions where no transcript archival is "
+                'needed, pass transcript_depth="none".'
             ),
             (
-                "either transcript_jsonl_path (cursor) or transcript_md "
-                "(web) is required — neither was supplied"
+                f"either transcript_jsonl_path (cursor) or transcript_md "
+                f"(web) is required for transcript_depth="
+                f"{body.transcript_depth!r} — neither was supplied"
             ),
         )
 
-    if body.transcript_jsonl_path:
-        try:
-            resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
-        except TranscriptPathError as exc:
+    if body.transcript_depth == "none":
+        # No file, no assembly, no hollow guards. transcript_md is unused.
+        transcript_md = None
+        turn_count = 0
+    elif body.transcript_depth == "light":
+        # File content is the structural layer only. No verbatim
+        # assembly. Only the structural-headings hollow guard applies
+        # here; the '## Session Summary' presence check was already
+        # enforced upstream in _validate_session_close_args /
+        # session_summary.invalid, but defensive duplication keeps the
+        # atomic boundary self-sufficient.
+        transcript_md = body.session_summary_md
+        turn_count = 0
+        if "## Session Summary" not in transcript_md:
             _structured(
-                "transcript_jsonl.invalid",
-                "transcript_jsonl_path",
-                body.transcript_jsonl_path,
-                "absolute or relative path under CURSOR_AGENT_TRANSCRIPTS_ROOT",
+                "transcript.missing_structure",
+                "session_summary_md",
+                None,
+                "structural layer must contain '## Session Summary'",
                 [],
                 (
-                    "Pass the active session's JSONL path under the cursor "
-                    "agent-transcripts root; the server resolves + sandboxes it."
+                    "For transcript_depth=light, the structural layer is "
+                    "the entire transcript file — it must contain a "
+                    "'## Session Summary' heading."
                 ),
-                str(exc),
-            )
-
-        try:
-            verbatim_md, turn_count = assemble_verbatim_md(
-                jsonl_path=resolved_path,
-                session_id=body.session_id,
-                assistant_label=body.assistant_label,
-            )
-        except ValueError as exc:
-            _structured(
-                "transcript_jsonl.invalid",
-                "transcript_jsonl_path",
-                body.transcript_jsonl_path,
-                "well-formed JSONL parseable by assemble_verbatim_md",
-                [],
-                (
-                    "Confirm the JSONL is the cursor agent-transcripts "
-                    "format (one record per line, user/assistant roles)."
-                ),
-                f"JSONL parse error: {exc}",
+                "session_summary_md missing '## Session Summary' heading",
             )
     else:
-        # Web path: caller-supplied markdown is the verbatim layer as-is.
-        # turn_count is best-effort from H2 ``## Turn`` headings; the
-        # web preprocessor emits these per agent_skill:web-transcript-
-        # preprocessing.md.
-        assert body.transcript_md is not None
-        verbatim_md = body.transcript_md
-        turn_count = sum(
-            1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
-        )
+        # verbatim (default)
+        if body.transcript_jsonl_path:
+            try:
+                resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
+            except TranscriptPathError as exc:
+                _structured(
+                    "transcript_jsonl.invalid",
+                    "transcript_jsonl_path",
+                    body.transcript_jsonl_path,
+                    "absolute or relative path under CURSOR_AGENT_TRANSCRIPTS_ROOT",
+                    [],
+                    (
+                        "Pass the active session's JSONL path under the cursor "
+                        "agent-transcripts root; the server resolves + sandboxes it."
+                    ),
+                    str(exc),
+                )
 
-    transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
+            try:
+                verbatim_md, turn_count = assemble_verbatim_md(
+                    jsonl_path=resolved_path,
+                    session_id=body.session_id,
+                    assistant_label=body.assistant_label,
+                )
+            except ValueError as exc:
+                _structured(
+                    "transcript_jsonl.invalid",
+                    "transcript_jsonl_path",
+                    body.transcript_jsonl_path,
+                    "well-formed JSONL parseable by assemble_verbatim_md",
+                    [],
+                    (
+                        "Confirm the JSONL is the cursor agent-transcripts "
+                        "format (one record per line, user/assistant roles)."
+                    ),
+                    f"JSONL parse error: {exc}",
+                )
+        else:
+            # Web path: caller-supplied markdown is the verbatim layer as-is.
+            # turn_count is best-effort from H2 ``## Turn`` headings; the
+            # web preprocessor emits these per agent_skill:web-transcript-
+            # preprocessing.md.
+            assert body.transcript_md is not None
+            verbatim_md = body.transcript_md
+            turn_count = sum(
+                1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
+            )
 
-    # Defense-in-depth: assembled markdown must still satisfy the on-disk
-    # dual-layer doctrine.  These checks should ALWAYS pass when the JSONL
-    # was non-trivial; failure indicates an empty/corrupt JSONL or a caller
-    # somehow supplying an empty structural layer that slipped past earlier
-    # guards.  Surface as transcript.hollow / transcript.missing_structure
-    # so existing event consumers don't need new reasons.
-    if len(transcript_md) < 200:
-        _structured(
-            "transcript.missing_structure",
-            "transcript_md|transcript_jsonl_path",
-            len(transcript_md),
-            "composed transcript length >= 200",
-            [],
-            (
-                "Either JSONL is empty or session_summary_md is too thin; "
-                "check the JSONL path and re-run."
-            ),
-            (
-                f"composed transcript is {len(transcript_md)} chars "
-                "(< 200) — JSONL may be empty or session_summary_md too thin."
-            ),
-        )
-    if "## Turn" not in transcript_md and "## Session Summary" not in transcript_md:
-        _structured(
-            "transcript.missing_structure",
-            "transcript_md|session_summary_md",
-            None,
-            "composed transcript contains '## Turn' or '## Session Summary'",
-            [],
-            (
-                "JSONL produced no turn blocks and structural layer lacks "
-                "'## Session Summary' — verify both sources."
-            ),
-            (
-                "composed transcript missing structural headings — assembly "
-                "did not produce '## Turn' blocks and structural layer lacks "
-                "'## Session Summary'."
-            ),
-        )
-    if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
-        _structured(
-            "transcript.hollow",
-            "transcript_jsonl_path|transcript_md",
-            None,
-            "composed transcript contains >=1 User-voice block",
-            [],
-            (
-                "JSONL contained no user messages — likely pointing at a "
-                "continuation-with-no-prompt or tool-only record set."
-            ),
-            (
-                "composed transcript has zero User-voice blocks. The "
-                "supplied JSONL contained no user messages (or only "
-                "tool_result records). Confirm transcript_jsonl_path "
-                "points at the active session, not a continuation-with-"
-                "no-prompt or a tool-only record set."
-            ),
-        )
+        transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
+
+        # Defense-in-depth: assembled markdown must still satisfy the on-disk
+        # dual-layer doctrine.  These checks should ALWAYS pass when the JSONL
+        # was non-trivial; failure indicates an empty/corrupt JSONL or a caller
+        # somehow supplying an empty structural layer that slipped past earlier
+        # guards.  Surface as transcript.hollow / transcript.missing_structure
+        # so existing event consumers don't need new reasons. Verbatim-only —
+        # these checks are tuned for the dual-layer doctrine.
+        if len(transcript_md) < 200:
+            _structured(
+                "transcript.missing_structure",
+                "transcript_md|transcript_jsonl_path",
+                len(transcript_md),
+                "composed transcript length >= 200",
+                [],
+                (
+                    "Either JSONL is empty or session_summary_md is too thin; "
+                    "check the JSONL path and re-run."
+                ),
+                (
+                    f"composed transcript is {len(transcript_md)} chars "
+                    "(< 200) — JSONL may be empty or session_summary_md too thin."
+                ),
+            )
+        if "## Turn" not in transcript_md and "## Session Summary" not in transcript_md:
+            _structured(
+                "transcript.missing_structure",
+                "transcript_md|session_summary_md",
+                None,
+                "composed transcript contains '## Turn' or '## Session Summary'",
+                [],
+                (
+                    "JSONL produced no turn blocks and structural layer lacks "
+                    "'## Session Summary' — verify both sources."
+                ),
+                (
+                    "composed transcript missing structural headings — assembly "
+                    "did not produce '## Turn' blocks and structural layer lacks "
+                    "'## Session Summary'."
+                ),
+            )
+        if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
+            _structured(
+                "transcript.hollow",
+                "transcript_jsonl_path|transcript_md",
+                None,
+                "composed transcript contains >=1 User-voice block",
+                [],
+                (
+                    "JSONL contained no user messages — likely pointing at a "
+                    "continuation-with-no-prompt or tool-only record set."
+                ),
+                (
+                    "composed transcript has zero User-voice blocks. The "
+                    "supplied JSONL contained no user messages (or only "
+                    "tool_result records). Confirm transcript_jsonl_path "
+                    "points at the active session, not a continuation-with-"
+                    "no-prompt or a tool-only record set."
+                ),
+            )
 
     # ── derive values ──
-    transcript_entity_id = f"transcript:{body.session_id}"
-    transcript_path = f"notes/system/transcripts/{body.session_id}.md"
-    source_uri = f"files://{transcript_path}"
+    transcript_entity_id: str | None = (
+        None
+        if body.transcript_depth == "none"
+        else f"transcript:{body.session_id}"
+    )
+    transcript_path: str | None = (
+        None
+        if body.transcript_depth == "none"
+        else f"notes/system/transcripts/{body.session_id}.md"
+    )
+    source_uri = f"files://{transcript_path}" if transcript_path else None
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     opened_at = _parse_opened_at(body.session_id)
 
-    # ── idempotency gate ──
+    # ── idempotency gate (unchanged — UNIQUE(session_id) applies all depths) ──
     _idem_conn = cortex_conn()
     try:
         existing = _idem_conn.execute(
@@ -581,16 +645,35 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     finally:
         _idem_conn.close()
     if existing is not None:
+        # Echo the prior close's transcript_depth from the entity
+        # attributes (or infer 'none' when no entity exists).
+        prior_transcript_id = f"transcript:{body.session_id}"
+        prior_depth = "none"
+        with cortex_conn() as _depth_conn:
+            depth_row = _depth_conn.execute(
+                "SELECT attributes FROM entities WHERE id = ?",
+                (prior_transcript_id,),
+            ).fetchone()
+            if depth_row and depth_row["attributes"]:
+                try:
+                    prior_attrs = json.loads(depth_row["attributes"])
+                    prior_depth = prior_attrs.get("transcript_depth", "verbatim")
+                except (json.JSONDecodeError, AttributeError):
+                    prior_depth = "verbatim"
         already_detail = {
             "reason": "session.already_closed",
             "session_id": body.session_id,
-            "transcript_entity_id": transcript_entity_id,
-            "transcript_path": existing["file_path"] or transcript_path,
+            "transcript_entity_id": (
+                prior_transcript_id if prior_depth != "none" else None
+            ),
+            "transcript_path": existing["file_path"],
             "journal_row_id": existing["id"],
+            "transcript_depth": prior_depth,
             "message": (
                 f"session_close: {body.session_id} is already closed "
-                f"(journal_row_id={existing['id']}). The previous close is "
-                "the source of truth — do not retry; treat this as success."
+                f"(journal_row_id={existing['id']}, depth={prior_depth}). "
+                "The previous close is the source of truth — do not retry; "
+                "treat this as success."
             ),
         }
         _emit_rejected(
@@ -604,25 +687,28 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             detail=already_detail,
         )
 
-    # ── write transcript to disk under CORTEX_FILES_ROOT ──
-    abs_path = _FILES_ROOT / transcript_path
-    try:
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path.write_text(transcript_md, encoding="utf-8")
-    except OSError as exc:
-        logger.error(
-            "session_close: failed to write transcript to %s: %s", abs_path, exc
-        )
-        record(
-            "mcp.session.close.write.failed",
-            session_id=body.session_id,
-            agent=body.agent,
-            error=str(exc),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Transcript file write failed: {exc}",
-        )
+    # ── write transcript to disk under CORTEX_FILES_ROOT (skipped for depth=none) ──
+    abs_path = None
+    if transcript_path is not None:
+        assert transcript_md is not None
+        abs_path = _FILES_ROOT / transcript_path
+        try:
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            abs_path.write_text(transcript_md, encoding="utf-8")
+        except OSError as exc:
+            logger.error(
+                "session_close: failed to write transcript to %s: %s", abs_path, exc
+            )
+            record(
+                "mcp.session.close.write.failed",
+                session_id=body.session_id,
+                agent=body.agent,
+                error=str(exc),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Transcript file write failed: {exc}",
+            )
 
     handoff_prompt = body.handoff_prompt.strip() if body.handoff_prompt else None
 
@@ -636,27 +722,32 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     journal_row_id = 0
     audit_warnings: list[dict] | None = None
     try:
-        conn.execute(
-            "INSERT OR IGNORE INTO entities "
-            "(id, type, name, description, status, source_uri, attributes, "
-            "created_at, updated_at) "
-            "VALUES (?, 'transcript', ?, ?, 'confirmed', ?, ?, ?, ?)",
-            (
-                transcript_entity_id,
-                entity_name,
-                body.summary,
-                source_uri,
-                json_encode(
-                    {
-                        "opened_at": opened_at,
-                        "closed_at": now,
-                        "status": "confirmed",
-                    }
+        # Transcript entity created only when depth ∈ {verbatim, light};
+        # for depth=none, no entity is created (file_path is also NULL on
+        # the journal row).
+        if transcript_entity_id is not None:
+            conn.execute(
+                "INSERT OR IGNORE INTO entities "
+                "(id, type, name, description, status, source_uri, attributes, "
+                "created_at, updated_at) "
+                "VALUES (?, 'transcript', ?, ?, 'confirmed', ?, ?, ?, ?)",
+                (
+                    transcript_entity_id,
+                    entity_name,
+                    body.summary,
+                    source_uri,
+                    json_encode(
+                        {
+                            "opened_at": opened_at,
+                            "closed_at": now,
+                            "status": "confirmed",
+                            "transcript_depth": body.transcript_depth,
+                        }
+                    ),
+                    now,
+                    now,
                 ),
-                now,
-                now,
-            ),
-        )
+            )
         cur = conn.execute(
             "INSERT INTO session_journals "
             "(timestamp, agent, summary, domains, decisions, open_items, "
@@ -670,7 +761,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 json_encode(body.decisions),
                 json_encode(body.open_items),
                 json_encode(body.entity_ids),
-                transcript_path,
+                transcript_path,  # None for depth=none
                 body.session_id,
                 body.prior_session_id,
             ),
@@ -678,6 +769,11 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         journal_row_id = cur.lastrowid or 0
 
         if body.prior_session_id:
+            # Ensure prior transcript entity exists (for back-links) and
+            # write the continues edge. Safe for depth=none — session_edges
+            # has no FK enforcement on from_node, so the dangling
+            # transcript:{session_id} reference is harmless and preserves
+            # continuity-graph traversal.
             _ensure_transcript_entity(conn, body.prior_session_id, body.agent, now)
             _ensure_continues_edge(
                 conn, body.session_id, body.prior_session_id, body.agent, now
@@ -692,29 +788,34 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 kind="handoff",
                 session_id=body.session_id,
             )
-            _insert_journal_link_tx(
-                conn,
-                from_entry=handoff_entry_id,
-                to_entity=transcript_entity_id,
-                link_type="handoff_for",
-            )
+            # Link the handoff entry only when a transcript entity exists.
+            # For depth=none, the handoff entry stands alone with
+            # session_id set; retrieval-by-session is unaffected.
+            if transcript_entity_id is not None:
+                _insert_journal_link_tx(
+                    conn,
+                    from_entry=handoff_entry_id,
+                    to_entity=transcript_entity_id,
+                    link_type="handoff_for",
+                )
 
         conn.commit()
         findings = _audit_normalization_refusals_for_session(conn, body.session_id)
         audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()
-        try:
-            abs_path.unlink(missing_ok=True)
-        except OSError:
-            logger.warning(
-                "Failed to unlink transcript after DB rollback: %s", abs_path
-            )
-            record(
-                "mcp.session.close.cleanup.failed",
-                session_id=body.session_id,
-                agent=body.agent,
-            )
+        if abs_path is not None:
+            try:
+                abs_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Failed to unlink transcript after DB rollback: %s", abs_path
+                )
+                record(
+                    "mcp.session.close.cleanup.failed",
+                    session_id=body.session_id,
+                    agent=body.agent,
+                )
         logger.error(
             "session_close DB transaction failed for %s",
             body.session_id,
@@ -724,14 +825,18 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     finally:
         conn.close()
 
-    content_hash = compute_text_content_hash(transcript_md)
+    content_hash: str | None = (
+        compute_text_content_hash(transcript_md) if transcript_md is not None else None
+    )
+    byte_count = len(transcript_md.encode("utf-8")) if transcript_md is not None else 0
     logger.info(
-        "session_close: %s agent=%s entity=%s journal_row=%d hash=%s",
+        "session_close: %s agent=%s entity=%s journal_row=%d hash=%s depth=%s",
         body.session_id,
         body.agent,
         transcript_entity_id,
         journal_row_id,
         content_hash,
+        body.transcript_depth,
     )
     record(
         "mcp.session.close.atomic",
@@ -740,7 +845,8 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         transcript_path=transcript_path,
         content_hash=content_hash,
         turn_count=turn_count,
-        byte_count=len(transcript_md.encode("utf-8")),
+        byte_count=byte_count,
+        transcript_depth=body.transcript_depth,
     )
 
     return SessionCloseResponse(
@@ -749,9 +855,10 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         transcript_path=transcript_path,
         journal_row_id=journal_row_id,
         session_id=body.session_id,
+        transcript_depth=body.transcript_depth,
         content_hash=content_hash,
         turn_count=turn_count,
-        byte_count=len(transcript_md.encode("utf-8")),
+        byte_count=byte_count,
         audit_warnings=audit_warnings,
     )
 

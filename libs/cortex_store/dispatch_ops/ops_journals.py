@@ -273,6 +273,7 @@ def _op_session_close_preflight(
     transcript_md: str | None = None,
     session_summary_md: str | None = None,
     summary: str | None = None,
+    transcript_depth: str = "verbatim",
     entity_ids: list[str] | None = None,
     defer_gaps: dict[str, str] | None = None,
     **_: object,
@@ -284,6 +285,10 @@ def _op_session_close_preflight(
     otherwise.  Verbatim assembly is performed in-memory (no file
     written, no DB row) so the agent learns about a bad JSONL before
     paying for the audit and DB tx.
+
+    ``transcript_depth`` (default ``"verbatim"``) selects the archival
+    depth — ``none`` skips assembly entirely; ``light`` derives the
+    composed file from ``session_summary_md`` alone.
     """
     arg_error = _validate_session_close_args(
         session_id=session_id,
@@ -292,42 +297,58 @@ def _op_session_close_preflight(
         transcript_md=transcript_md,
         session_summary_md=session_summary_md,
         summary=summary,
+        transcript_depth=transcript_depth,
         emit_rejected=False,
     )
     if arg_error is not None:
         return {"ok": False, **arg_error}
     assert session_id and agent and session_summary_md and summary
 
-    if transcript_jsonl_path:
-        try:
-            resolved = resolve_jsonl_path(transcript_jsonl_path)
-            verbatim_md, turn_count = assemble_verbatim_md(
-                jsonl_path=resolved, session_id=session_id
-            )
-        except TranscriptPathError as exc:
-            return {
-                "ok": False,
-                "error": str(exc),
-                "reason": "transcript_jsonl.invalid",
-            }
-        except ValueError as exc:
-            return {
-                "ok": False,
-                "error": f"JSONL parse error: {exc}",
-                "reason": "transcript_jsonl.invalid",
-            }
+    if transcript_depth == "none":
+        # No assembly, no guards. Audit + structural-warnings still run
+        # against session_summary_md.
+        composed = session_summary_md
+        turn_count = 0
     else:
-        assert transcript_md is not None
-        verbatim_md = transcript_md
-        turn_count = sum(
-            1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
+        if transcript_jsonl_path:
+            try:
+                resolved = resolve_jsonl_path(transcript_jsonl_path)
+                verbatim_md, turn_count = assemble_verbatim_md(
+                    jsonl_path=resolved, session_id=session_id
+                )
+            except TranscriptPathError as exc:
+                return {
+                    "ok": False,
+                    "error": str(exc),
+                    "reason": "transcript_jsonl.invalid",
+                }
+            except ValueError as exc:
+                return {
+                    "ok": False,
+                    "error": f"JSONL parse error: {exc}",
+                    "reason": "transcript_jsonl.invalid",
+                }
+        elif transcript_depth == "light":
+            # Light depth: file content is session_summary_md alone.
+            verbatim_md = ""
+            turn_count = 0
+        else:
+            assert transcript_md is not None
+            verbatim_md = transcript_md
+            turn_count = sum(
+                1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
+            )
+
+        if transcript_depth == "light":
+            composed = session_summary_md
+        else:
+            composed = compose_full_transcript(verbatim_md, session_summary_md)
+
+        guard_error = _check_transcript_hollow_guards(
+            composed, transcript_depth=transcript_depth
         )
-
-    composed = compose_full_transcript(verbatim_md, session_summary_md)
-
-    guard_error = _check_transcript_hollow_guards(composed)
-    if guard_error is not None:
-        return {"ok": False, **guard_error}
+        if guard_error is not None:
+            return {"ok": False, **guard_error}
 
     audit_outcome = _safe_run_audit(
         session_id=session_id,
@@ -339,14 +360,17 @@ def _op_session_close_preflight(
         return {"ok": False, "reason": "session_audit_blocked", **audit_outcome}
 
     structural_warnings = _validate_transcript_structure(
-        composed, summary_len=len(summary)
+        composed, summary_len=len(summary), transcript_depth=transcript_depth
     )
     return {
         "ok": True,
         "audit": audit_outcome,
         "turn_count": turn_count,
-        "byte_count": len(composed.encode("utf-8")),
+        "byte_count": (
+            len(composed.encode("utf-8")) if transcript_depth != "none" else 0
+        ),
         "warnings": structural_warnings,
+        "transcript_depth": transcript_depth,
     }
 
 
@@ -357,6 +381,7 @@ def _op_session_close(
     transcript_md: str | None = None,
     session_summary_md: str | None = None,
     summary: str | None = None,
+    transcript_depth: str = "verbatim",
     domains: list[str] | None = None,
     decisions: list[str] | None = None,
     open_items: list[str] | None = None,
@@ -380,6 +405,13 @@ def _op_session_close(
       5. Append audit warnings + post-close detectors + structural
          warnings to the response.
 
+    ``transcript_depth`` (default ``"verbatim"``) selects the archival
+    layer — ``light`` writes a structural-only file with the transcript
+    entity flagged as non-enrichment-eligible; ``none`` writes no file
+    and no transcript entity, only the journal row (plus continues
+    edge / handoff entry without ``handoff_for`` link when applicable).
+    Continuity is preserved at all depths.
+
     See session-close-server-side-transcript Phase 2 for the architecture
     rewrite; the route handler in `routes/session_journals.py` is the
     single atomic boundary.
@@ -391,6 +423,7 @@ def _op_session_close(
         transcript_md=transcript_md,
         session_summary_md=session_summary_md,
         summary=summary,
+        transcript_depth=transcript_depth,
         emit_rejected=not dry_run,
     )
     if arg_error is not None:
@@ -411,40 +444,52 @@ def _op_session_close(
         return audit_outcome
 
     if dry_run:
-        if transcript_jsonl_path:
-            try:
-                resolved = resolve_jsonl_path(transcript_jsonl_path)
-                verbatim_md, turn_count = assemble_verbatim_md(
-                    jsonl_path=resolved,
-                    session_id=session_id,
-                    assistant_label=assistant_label,
-                )
-            except TranscriptPathError as exc:
-                return {
-                    "dry_run": True,
-                    "would_fail": True,
-                    "error": str(exc),
-                    "reason": "transcript_jsonl.invalid",
-                }
-            except ValueError as exc:
-                return {
-                    "dry_run": True,
-                    "would_fail": True,
-                    "error": f"JSONL parse error: {exc}",
-                    "reason": "transcript_jsonl.invalid",
-                }
+        if transcript_depth == "none":
+            composed = session_summary_md
+            turn_count = 0
         else:
-            assert transcript_md is not None
-            verbatim_md = transcript_md
-            turn_count = sum(
-                1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
+            if transcript_jsonl_path:
+                try:
+                    resolved = resolve_jsonl_path(transcript_jsonl_path)
+                    verbatim_md, turn_count = assemble_verbatim_md(
+                        jsonl_path=resolved,
+                        session_id=session_id,
+                        assistant_label=assistant_label,
+                    )
+                except TranscriptPathError as exc:
+                    return {
+                        "dry_run": True,
+                        "would_fail": True,
+                        "error": str(exc),
+                        "reason": "transcript_jsonl.invalid",
+                    }
+                except ValueError as exc:
+                    return {
+                        "dry_run": True,
+                        "would_fail": True,
+                        "error": f"JSONL parse error: {exc}",
+                        "reason": "transcript_jsonl.invalid",
+                    }
+            elif transcript_depth == "light":
+                verbatim_md = ""
+                turn_count = 0
+            else:
+                assert transcript_md is not None
+                verbatim_md = transcript_md
+                turn_count = sum(
+                    1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
+                )
+            if transcript_depth == "light":
+                composed = session_summary_md
+            else:
+                composed = compose_full_transcript(verbatim_md, session_summary_md)
+            guard_error = _check_transcript_hollow_guards(
+                composed, transcript_depth=transcript_depth
             )
-        composed = compose_full_transcript(verbatim_md, session_summary_md)
-        guard_error = _check_transcript_hollow_guards(composed)
-        if guard_error is not None:
-            return {"dry_run": True, "would_fail": True, **guard_error}
+            if guard_error is not None:
+                return {"dry_run": True, "would_fail": True, **guard_error}
         structural_warnings = _validate_transcript_structure(
-            composed, summary_len=len(summary)
+            composed, summary_len=len(summary), transcript_depth=transcript_depth
         )
         return {
             "dry_run": True,
@@ -452,7 +497,10 @@ def _op_session_close(
             "warnings": structural_warnings,
             "audit": audit_outcome,
             "turn_count": turn_count,
-            "byte_count": len(composed.encode("utf-8")),
+            "byte_count": (
+                len(composed.encode("utf-8")) if transcript_depth != "none" else 0
+            ),
+            "transcript_depth": transcript_depth,
         }
 
     body: dict[str, Any] = {
@@ -460,6 +508,7 @@ def _op_session_close(
         "agent": agent,
         "session_summary_md": session_summary_md,
         "summary": summary,
+        "transcript_depth": transcript_depth,
     }
     for key, val in [
         ("transcript_jsonl_path", transcript_jsonl_path),
@@ -507,7 +556,9 @@ def _op_session_close(
     if abs_path and abs_path.is_file():
         try:
             transcript_warnings = _validate_transcript_structure(
-                abs_path.read_text(encoding="utf-8"), summary_len=len(summary)
+                abs_path.read_text(encoding="utf-8"),
+                summary_len=len(summary),
+                transcript_depth=transcript_depth,
             )
         except OSError as exc:
             logger.warning(

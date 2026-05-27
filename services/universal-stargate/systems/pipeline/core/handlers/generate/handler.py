@@ -30,7 +30,11 @@ from ...execution.fallback_eligibility import get_fallback_suppression_reason
 from ..builtin import BaseHandler
 from ..protocol import StepOutput
 from ..registry import register_handler
-from .invoke import build_step_output, resolve_execution_config_for_model
+from .invoke import (
+    build_step_output,
+    invoke_model_streaming,
+    resolve_execution_config_for_model,
+)
 from .model_resolution import resolve_primary_model
 from .prompt_context import build_prompt_context, format_for_prompt, render_user_prompt
 from .provenance import extract_source_provenance, inject_provenance_into_claims
@@ -82,6 +86,31 @@ class GenericGenerateHandler(BaseHandler):
         model_id, model_profile, primary_resolution = await resolve_primary_model(
             step, context
         )
+
+        # Streaming branch: when both signals fire (terminal-passthrough
+        # eligible pipeline ∧ outer request set stream=True), bypass the
+        # buffered _invoke_model path and open an SSE stream. The defensive
+        # ``not step.is_map_step`` check is redundant with the eligibility
+        # predicate (which already excludes map steps) but documents the
+        # invariant locally and protects against future predicate drift.
+        # No model fallback on this branch — see invoke_model_streaming
+        # docstring.
+        outer_stream = bool(context.runtime_options.get("stream"))
+        if (
+            outer_stream
+            and context.pipeline.is_stream_passthrough_eligible
+            and not step.is_map_step
+        ):
+            return await invoke_model_streaming(
+                self,
+                step,
+                context,
+                prompt_config,
+                model_id,
+                user_prompt,
+                source_provenance,
+                model_profile=model_profile,
+            )
 
         try:
             return await self._invoke_model(

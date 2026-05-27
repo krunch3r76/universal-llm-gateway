@@ -113,7 +113,10 @@ else
     mkdir -p "$MODEL_DIR"
 fi
 
-
+# Host venv sitecustomize uses PROJECT_ROOT; some distros ship /usr/lib/.../sitecustomize.py
+# that shadows the venv copy — set PYTHONPATH so headless relay/topology always see libs/.
+export PROJECT_ROOT="$SCRIPT_DIR"
+export PYTHONPATH="${SCRIPT_DIR}/libs:${SCRIPT_DIR}/services/universal-stargate${PYTHONPATH:+:${PYTHONPATH}}"
 
 case "${1:-}" in
     relay)

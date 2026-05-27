@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 from universal_logging import get_logger
 
 from ...step_config import ResolvedTargetModel
+from ...step_config.model_resolution import get_requirements_source
 from .avoid_models import _resolve_avoid_models
 
 if TYPE_CHECKING:
@@ -86,7 +87,7 @@ async def resolve_primary_model(
             runtime_override,
             resolution_source="model_ref_override",
             model_ref=step.model_ref,
-            requirements_source=step._get_requirements_source(),
+            requirements_source=get_requirements_source(step),
         )
         logger.info(
             "[%s] Using runtime model override: %s",
@@ -150,7 +151,7 @@ async def resolve_primary_model(
             model_id,
             resolution_source="model_requirements",
             model_ref=step.model_ref,
-            requirements_source=step._get_requirements_source(),
+            requirements_source=get_requirements_source(step),
         )
         logger.info(
             "[%s] Auto-resolved model from requirements: %s",
@@ -171,7 +172,7 @@ async def resolve_primary_model(
             model_id,
             resolution_source="registry_model_ref",
             model_ref=step.model_ref,
-            requirements_source=step._get_requirements_source(),
+            requirements_source=get_requirements_source(step),
         )
         return model_id, model_profile, primary_resolution
     except KeyError:
@@ -180,7 +181,7 @@ async def resolve_primary_model(
             model_id,
             resolution_source="raw_model_ref",
             model_ref=step.model_ref,
-            requirements_source=step._get_requirements_source(),
+            requirements_source=get_requirements_source(step),
         )
         logger.info(
             "[%s] Using raw model ID (not in models.yaml): %s",

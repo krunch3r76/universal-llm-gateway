@@ -99,7 +99,7 @@ def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> 
 
 
 def _validate_transcript_structure(
-    transcript_md: str, summary_len: int = 0
+    transcript_md: str, summary_len: int = 0, transcript_depth: str = "verbatim"
 ) -> list[str]:
     """Return a list of structural warning strings (empty = clean).
 
@@ -109,8 +109,14 @@ def _validate_transcript_structure(
     handler's pre-write validation block). This advisory layer covers the
     secondary failure modes that don't gate the close: missing assistant voice,
     action-log pattern density, Canary 4 (transcript shorter than its summary).
-    ∀ summary_len > 0: Canary 4 checked.
+    ∀ summary_len > 0 ∧ transcript_depth == "verbatim": Canary 4 checked.
+
+    Non-verbatim depths short-circuit to empty — the file is structural-only
+    (``light``) or absent (``none``), so verbatim canaries don't apply.
     """
+    if transcript_depth != "verbatim":
+        return []
+
     violations: list[str] = []
 
     user_blocks = len(_USER_VOICE_RE.findall(transcript_md))
@@ -142,6 +148,7 @@ def _validate_session_close_args(
     session_summary_md: str | None,
     summary: str | None,
     transcript_md: str | None = None,
+    transcript_depth: str = "verbatim",
     emit_rejected: bool = True,
 ) -> dict[str, Any] | None:
     """Lightweight arg-presence + session_id pattern + summary length gate.
@@ -153,9 +160,12 @@ def _validate_session_close_args(
     suppresses ``mcp.session.close.rejected`` for preflight/dry_run
     probing.
 
-    The verbatim source is an **either-of** constraint:
-    ``{transcript_jsonl_path, transcript_md}`` — at least one MUST be
-    present.  Cursor passes the path; web passes the markdown directly.
+    The verbatim source is conditionally required: when
+    ``transcript_depth ∈ {"verbatim", "light"}``, one of
+    ``{transcript_jsonl_path, transcript_md}`` MUST be present. When
+    ``transcript_depth == "none"``, neither is required (the close
+    writes a journal row only, with no transcript file or entity).
+    Cursor passes the path; web passes the markdown directly.
     """
     required = {
         "session_id": session_id,
@@ -174,10 +184,11 @@ def _validate_session_close_args(
                 "examples": [],
                 "hint": (f"Supply a non-empty {field} on the session_close call."),
             }
-    if not transcript_jsonl_path and not transcript_md:
+    if transcript_depth != "none" and not transcript_jsonl_path and not transcript_md:
         detail = (
-            "either transcript_jsonl_path (cursor) or transcript_md (web) "
-            "is required — neither was supplied"
+            f"either transcript_jsonl_path (cursor) or transcript_md (web) "
+            f"is required for transcript_depth={transcript_depth!r} — "
+            "neither was supplied"
         )
         if emit_rejected and session_id and agent:
             _emit_rejected(
@@ -192,13 +203,18 @@ def _validate_session_close_args(
             "field": "transcript_jsonl_path|transcript_md",
             "received": None,
             "expected": (
-                "exactly one of {transcript_jsonl_path (cursor), transcript_md (web)}"
+                f"exactly one of {{transcript_jsonl_path (cursor), "
+                f"transcript_md (web)}} for transcript_depth="
+                f"{transcript_depth!r}; omit only when "
+                'transcript_depth="none"'
             ),
             "examples": [],
             "hint": (
                 "Cursor agents pass transcript_jsonl_path under "
                 "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
-                "verbatim markdown via transcript_md."
+                "verbatim markdown via transcript_md. For mechanical or "
+                "bus-durable sessions where no transcript archival is "
+                'needed, pass transcript_depth="none".'
             ),
         }
     assert session_id and agent and session_summary_md and summary
@@ -291,27 +307,46 @@ def _validate_session_close_args(
     return None
 
 
-def _check_transcript_hollow_guards(composed: str) -> dict[str, Any] | None:
+def _check_transcript_hollow_guards(
+    composed: str, transcript_depth: str = "verbatim"
+) -> dict[str, Any] | None:
     """Return a rejection payload when composed transcript fails a hard guard.
 
-    ∀ guards: exact thresholds mirrored from routes/session_journals.py close_session.
-    ∀ return None: all guards pass.
+    Guards by depth:
+      - ``verbatim``: all three guards (length >= 200, structural
+        headings present, >=1 User-voice block).
+      - ``light``: only the structural-headings guard (the file is the
+        ``session_summary_md`` content — no User-voice blocks expected).
+      - ``none``: no guards (no file is written; this function should
+        not be called, but is a no-op if it is).
+
+    ∀ return None: all applicable guards pass.
     """
-    if len(composed) < 200:
-        return {
-            "reason": "transcript.missing_structure",
-            "error": (
-                f"composed transcript is {len(composed)} chars "
-                "(< 200) — JSONL may be empty or session_summary_md too thin."
-            ),
-            "hollow": True,
-        }
+    if transcript_depth == "none":
+        return None
+    # Both verbatim and light require the structural-headings check
+    # (## Session Summary is always present in session_summary_md).
     if "## Turn" not in composed and "## Session Summary" not in composed:
         return {
             "reason": "transcript.missing_structure",
             "error": (
                 "composed transcript missing structural headings — "
                 "'## Turn' blocks and '## Session Summary' both absent."
+            ),
+            "hollow": True,
+        }
+    if transcript_depth == "light":
+        # Light-depth files contain only the structural layer; no
+        # verbatim turns are expected, so skip the length-200 check
+        # (a tight summary may be shorter) and the User-voice check.
+        return None
+    # Verbatim path: full guard set.
+    if len(composed) < 200:
+        return {
+            "reason": "transcript.missing_structure",
+            "error": (
+                f"composed transcript is {len(composed)} chars "
+                "(< 200) — JSONL may be empty or session_summary_md too thin."
             ),
             "hollow": True,
         }

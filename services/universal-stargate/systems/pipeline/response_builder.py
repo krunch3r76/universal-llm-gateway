@@ -93,6 +93,22 @@ class ResponseBuilder:
                 )
                 return prompt, completion
             if isinstance(output_obj, StepOutput):
+                # Streaming StepOutput at this layer indicates a
+                # lifecycle-branch-selection bug: ResponseBuilder is the
+                # buffered response path and should never observe streaming
+                # outputs (the lifecycle's streaming branch constructs a
+                # StreamingResponse directly without ever calling here). Log
+                # and return zeros — zeros aggregate correctly and the
+                # warning surfaces the bug to ops without crashing the call.
+                if output_obj.stream is not None:
+                    logger.warning(
+                        "ResponseBuilder._aggregate_tokens called on streaming "
+                        "StepOutput (step_id=%s, model_id=%s); this indicates a "
+                        "lifecycle branch-selection bug. Returning 0/0.",
+                        output_obj.step_id,
+                        output_obj.model_id,
+                    )
+                    return 0, 0
                 return output_obj.prompt_tokens, output_obj.completion_tokens
             return 0, 0
 

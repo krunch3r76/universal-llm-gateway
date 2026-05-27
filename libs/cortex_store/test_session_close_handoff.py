@@ -501,3 +501,314 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
 
     findings = second.get("_warning", {}).get("post_close_findings", [])
     assert any(f["kind"] == "prior_session_id_omitted" for f in findings)
+
+
+
+# ---- transcript_depth dial tests (Phase 1 of session-close-transcript-depth-dial) ----
+
+
+def test_close_verbatim_default_is_backward_compatible(
+    session_env: dict[str, Path],
+) -> None:
+    """No transcript_depth arg ⟹ defaults to verbatim; response carries field."""
+    files_root = session_env["files_root"]
+    payload = _payload(
+        session_id="cursor-2026-05-27-1000",
+        agent="cursor",
+        transcripts_root=session_env["transcripts_root"],
+    )
+    result = ops_journals._op_session_close(**payload)
+    assert "error" not in result, result
+    assert result["transcript_depth"] == "verbatim"
+    assert result["transcript_entity_id"] == "transcript:cursor-2026-05-27-1000"
+    assert result["transcript_path"] is not None
+    assert (files_root / result["transcript_path"]).is_file()
+    assert result["content_hash"].startswith("sha256:")
+
+
+def test_close_verbatim_explicit(session_env: dict[str, Path]) -> None:
+    """transcript_depth='verbatim' explicit ⟹ identical to default."""
+    payload = _payload(
+        session_id="cursor-2026-05-27-1001",
+        agent="cursor",
+        transcripts_root=session_env["transcripts_root"],
+    )
+    payload["transcript_depth"] = "verbatim"
+    result = ops_journals._op_session_close(**payload)
+    assert "error" not in result, result
+    assert result["transcript_depth"] == "verbatim"
+    assert result["transcript_entity_id"] is not None
+
+
+def test_close_light_writes_structural_layer_only(
+    session_env: dict[str, Path],
+) -> None:
+    """light ⟹ file contains session_summary_md only; entity attribute set; turn_count==0."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    summary = "Light-depth close — structural-layer-only file written."
+    summary_md = _session_summary(summary)
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1002",
+        agent="web",
+        transcript_md=_web_transcript_md("web-2026-05-27-1002"),
+        session_summary_md=summary_md,
+        summary=summary,
+        transcript_depth="light",
+    )
+    assert "error" not in result, result
+    assert result["transcript_depth"] == "light"
+    assert result["transcript_entity_id"] == "transcript:web-2026-05-27-1002"
+    assert result["transcript_path"] is not None
+    assert result["turn_count"] == 0
+    on_disk = (files_root / result["transcript_path"]).read_text(encoding="utf-8")
+    # Light file is the structural layer verbatim — no Turn blocks, no User voice.
+    assert on_disk == summary_md
+    # Entity attributes carry transcript_depth.
+    row = _query_one(
+        db_path,
+        "SELECT attributes FROM entities WHERE id = ?",
+        ("transcript:web-2026-05-27-1002",),
+    )
+    assert row is not None
+    attrs = json.loads(row["attributes"])
+    assert attrs["transcript_depth"] == "light"
+
+
+def test_close_light_without_transcript_source_succeeds(
+    session_env: dict[str, Path],
+) -> None:
+    """light derives content from session_summary_md ⟹ no 422 when source omitted."""
+    summary = "Light-depth close without any transcript source supplied."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1003",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="light",
+    )
+    assert "error" not in result, result
+    assert result["transcript_depth"] == "light"
+    assert result["transcript_entity_id"] is not None
+
+
+
+def test_close_none_skips_file_and_entity(session_env: dict[str, Path]) -> None:
+    """none ⟹ no file, no transcript entity, journal row with file_path=NULL."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    summary = "None-depth close — only the journal row is written."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1004",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="none",
+    )
+    assert "error" not in result, result
+    assert result["transcript_depth"] == "none"
+    assert result["transcript_entity_id"] is None
+    assert result["transcript_path"] is None
+    assert result["content_hash"] is None
+    assert result["turn_count"] == 0
+    assert result["byte_count"] == 0
+    # No file written under notes/system/transcripts/.
+    assert not (
+        files_root / "notes/system/transcripts/web-2026-05-27-1004.md"
+    ).exists()
+    # No transcript entity exists.
+    ent = _query_one(
+        db_path,
+        "SELECT id FROM entities WHERE id = ?",
+        ("transcript:web-2026-05-27-1004",),
+    )
+    assert ent is None
+    # Journal row exists with file_path NULL.
+    jr = _query_one(
+        db_path,
+        "SELECT file_path FROM session_journals WHERE session_id = ?",
+        ("web-2026-05-27-1004",),
+    )
+    assert jr is not None
+    assert jr["file_path"] is None
+
+
+def test_close_none_with_handoff_skips_link(session_env: dict[str, Path]) -> None:
+    """none + handoff ⟹ reflective entry created; no handoff_for link row."""
+    db_path = session_env["db_path"]
+    summary = "None-depth with handoff — reflective entry without link."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1005",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="none",
+        handoff_prompt="Resume by running the depth-dial verification suite.",
+    )
+    assert "error" not in result, result
+    assert result["handoff_entry_id"] is not None
+    # Reflective journal entry exists and is scoped to the session.
+    entry = _query_one(
+        db_path,
+        "SELECT * FROM reflective_journal WHERE id = ?",
+        (result["handoff_entry_id"],),
+    )
+    assert entry is not None
+    assert entry["kind"] == "handoff"
+    assert entry["session_id"] == "web-2026-05-27-1005"
+    # No journal_links row for this handoff entry (no transcript entity to link to).
+    assert (
+        _query_count(
+            db_path,
+            "SELECT COUNT(*) FROM journal_links WHERE from_entry = ?",
+            (result["handoff_entry_id"],),
+        )
+        == 0
+    )
+
+
+def test_close_none_with_prior_session_writes_edge(
+    session_env: dict[str, Path],
+) -> None:
+    """none + prior_session_id ⟹ continues edge written (FK-less, safe)."""
+    db_path = session_env["db_path"]
+    summary = "None-depth with prior_session_id — edge still written."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1006",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="none",
+        prior_session_id="web-2026-05-27-0959",
+    )
+    assert "error" not in result, result
+    edge = _query_one(
+        db_path,
+        "SELECT * FROM session_edges WHERE from_node = ? AND to_node = ? "
+        "AND edge_type = 'continues'",
+        (
+            "transcript:web-2026-05-27-1006",
+            "transcript:web-2026-05-27-0959",
+        ),
+    )
+    assert edge is not None
+
+
+def test_close_verbatim_missing_source_still_422(
+    session_env: dict[str, Path],
+) -> None:
+    """verbatim default + no source ⟹ 422 transcript_source.missing (preserved)."""
+    summary = "Verbatim missing source — still rejected after depth dial lands."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1007",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+    )
+    assert "error" in result
+    assert "transcript_jsonl_path" in result["error"]
+    assert "transcript_md" in result["error"]
+
+
+
+def test_close_depth_invalid_value_rejected(session_env: dict[str, Path]) -> None:
+    """transcript_depth='medium' ⟹ Pydantic Literal rejects at request validation."""
+    # The ops layer accepts depth as str and forwards it; the rejection
+    # surfaces when _close_session_impl calls SessionCloseRequest.model_validate
+    # — caught as a generic exception in the ops error-envelope branch.
+    payload = _payload(
+        session_id="cursor-2026-05-27-1008",
+        agent="cursor",
+        transcripts_root=session_env["transcripts_root"],
+    )
+    payload["transcript_depth"] = "medium"  # invalid Literal value
+    result = ops_journals._op_session_close(**payload)
+    assert "error" in result
+
+
+def test_close_already_closed_echoes_prior_depth(
+    session_env: dict[str, Path],
+) -> None:
+    """Second close attempt ⟹ 422 session.already_closed with prior depth echoed."""
+    summary_a = "First close — depth=none, no transcript artifact written."
+    first = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1009",
+        agent="web",
+        session_summary_md=_session_summary(summary_a),
+        summary=summary_a,
+        transcript_depth="none",
+    )
+    assert "error" not in first, first
+    assert first["transcript_depth"] == "none"
+
+    summary_b = "Second close attempt — should be rejected as already closed."
+    second = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1009",
+        agent="web",
+        transcript_md=_web_transcript_md("web-2026-05-27-1009"),
+        session_summary_md=_session_summary(summary_b),
+        summary=summary_b,
+        transcript_depth="verbatim",
+    )
+    assert "error" in second
+    assert second.get("reason") == "session.already_closed"
+    assert second.get("transcript_depth") == "none"
+    # No transcript entity existed for the prior depth=none close.
+    assert second.get("transcript_entity_id") is None
+
+
+def test_preflight_none_skips_source_check(session_env: dict[str, Path]) -> None:
+    """preflight with depth=none and no source ⟹ ok:true; zero turn/byte."""
+    summary = "Preflight depth=none — no transcript source required."
+    result = ops_journals._op_session_close_preflight(
+        session_id="web-2026-05-27-1010",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="none",
+    )
+    assert result["ok"] is True
+    assert result["turn_count"] == 0
+    assert result["byte_count"] == 0
+    assert result["transcript_depth"] == "none"
+
+
+def test_dry_run_none_succeeds_without_artifact(
+    session_env: dict[str, Path],
+) -> None:
+    """dry_run + depth=none ⟹ would_succeed; no file, no entity, no journal row."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    summary = "Dry run with depth=none — preview only, no writes."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1011",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="none",
+        dry_run=True,
+    )
+    assert result["dry_run"] is True
+    assert result["would_succeed"] is True
+    assert result["transcript_depth"] == "none"
+    assert result["byte_count"] == 0
+    # No side effects.
+    assert not (
+        files_root / "notes/system/transcripts/web-2026-05-27-1011.md"
+    ).exists()
+    assert (
+        _query_count(
+            db_path,
+            "SELECT COUNT(*) FROM session_journals WHERE session_id = ?",
+            ("web-2026-05-27-1011",),
+        )
+        == 0
+    )
+    assert (
+        _query_count(
+            db_path,
+            "SELECT COUNT(*) FROM entities WHERE id = ?",
+            ("transcript:web-2026-05-27-1011",),
+        )
+        == 0
+    )

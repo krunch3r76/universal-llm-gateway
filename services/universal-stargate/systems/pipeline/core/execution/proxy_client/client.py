@@ -12,6 +12,7 @@ import httpx
 
 from .cancellation import _ProxyCancellation
 from .chat_completion import _ProxyChatCompletion
+from .chat_completion_streaming import _ProxyChatCompletionStream
 from .configuration import ProxyClientConfig
 from .request_headers import _ProxyRequestHeaders
 from .timeout_diagnostics import _ProxyTimeoutDiagnostics
@@ -24,6 +25,7 @@ class ProxyClient(
     _ProxyRequestHeaders,
     _ProxyTimeoutDiagnostics,
     _ProxyChatCompletion,
+    _ProxyChatCompletionStream,
     _ProxyVectorRequests,
     _ProxyCancellation,
 ):

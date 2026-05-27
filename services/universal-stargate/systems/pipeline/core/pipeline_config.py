@@ -132,6 +132,51 @@ class PipelineSpec(BaseModel):
         """Alias for type - clarifies domain routing."""
         return self.type
 
+    @property
+    def is_stream_passthrough_eligible(self) -> bool:
+        """Return True iff this pipeline can stream end-to-end to the client.
+
+        Eligible pipelines have:
+          - exactly one step (no upstream preparation, no downstream templating)
+          - that step is type='generate' (single inference call)
+          - that step is not a map step (map produces a collection, not a single
+            completion)
+          - the pipeline's ``output`` references that step (the step's output
+            IS the response)
+          - no aggregation options enabled (``include_alternates``,
+            ``include_step_stats``) — those require post-collection across step
+            outputs that streaming pre-empts
+
+        When True, ``pipeline_lifecycle.execute_pipeline_chat_completion``
+        wires the streaming path: the inner ``proxy_client.chat_completion_stream``
+        method opens an SSE-consuming connection to the underlying model, and
+        the lifecycle returns a ``StreamingResponse`` that re-frames chunks as
+        ``chat.completion.chunk`` with the pipeline's ID.
+
+        When False, the existing single-chunk SSE wrapper
+        (``_wrap_pipeline_response_as_sse``) is used for streaming clients,
+        which buffers the full response and emits it as one SSE frame —
+        correct but not true per-token streaming.
+
+        This property is **pure** and **side-effect-free**: no logging, no
+        event emission, no registry calls. Safe to call at any time after
+        Pydantic validation.
+        """
+        if self.options.include_alternates:
+            return False
+        if self.options.include_step_stats:
+            return False
+        if len(self.steps) != 1:
+            return False
+        terminal = self.steps[0]
+        if terminal.type != "generate":
+            return False
+        if terminal.is_map_step:
+            return False
+        if self.output != terminal.name:
+            return False
+        return True
+
 
 class SubPipelineSpec(BaseModel):
     """Sub-pipeline specification loaded from a separate YAML file.
