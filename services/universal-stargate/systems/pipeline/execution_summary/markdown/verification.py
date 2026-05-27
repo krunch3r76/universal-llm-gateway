@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
-from ..execution_summary_inputs import resolve_handler_inputs
+from ...execution_summary_inputs import resolve_handler_inputs
 
 if TYPE_CHECKING:
     from ...core.handlers.protocol import PipelineContext

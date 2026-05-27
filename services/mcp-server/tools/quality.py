@@ -1,7 +1,10 @@
-"""Quality gate tools — ruff lint + compileall for code validation.
+"""Quality gate tools — ruff lint, compileall, and import resolution.
 
 Allows agents to verify code quality before committing changes.
 Runs against files in the project directory mounted at /data/project.
+
+compileall validates syntax only; import checking executes importlib so
+broken relative imports (e.g. package-shadow splits) fail before restart.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Quality Gate")
     def quality_gate(files: list[str]) -> dict[str, Any]:
-        """Run ruff lint + compileall on specified files. Returns {passed, ruff, compile}."""
+        """Run ruff lint, compileall, and import checks on specified files."""
         t0 = monotonic_now()
         record("mcp.quality.gate.called", file_count=len(files))
 
@@ -40,8 +43,13 @@ def register_quality_tools(mcp: FastMCP) -> None:
 
         ruff_result = _run_ruff(existing)
         compile_result = _run_compileall(existing)
+        import_result = _run_import_check(existing)
 
-        passed = ruff_result["passed"] and compile_result["passed"]
+        passed = (
+            ruff_result["passed"]
+            and compile_result["passed"]
+            and import_result["passed"]
+        )
         duration = monotonic_now() - t0
 
         record(
@@ -54,6 +62,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
             "passed": passed,
             "ruff": ruff_result,
             "compile": compile_result,
+            "imports": import_result,
         }
 
 
@@ -164,3 +173,40 @@ def _run_compileall(files: list[str]) -> dict[str, bool | str]:
         return {"passed": False, "output": "python executable not found in PATH"}
     except subprocess.TimeoutExpired:
         return {"passed": False, "output": "compileall timed out"}
+
+
+def _run_import_check(files: list[str]) -> dict[str, bool | str]:
+    """Execute scripts/check-imports on Python files (runtime import resolution)."""
+    py_files = [path for path in files if path.endswith(".py")]
+    if not py_files:
+        return {"passed": True, "output": "no Python files to import-check"}
+
+    check_script = _PROJECT_ROOT / "scripts" / "check-imports"
+    if not check_script.exists():
+        return {"passed": False, "output": f"check-imports script missing: {check_script}"}
+
+    stargate_root = (_PROJECT_ROOT / "services" / "universal-stargate").resolve()
+    needs_stargate_entry = any(
+        Path(path).resolve().is_relative_to(stargate_root) for path in py_files
+    )
+
+    cmd = [sys.executable, str(check_script)]
+    if needs_stargate_entry:
+        cmd.append("--stargate-entry")
+    cmd.extend(py_files)
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=max(_TIMEOUT, 60),
+            cwd=str(_PROJECT_ROOT),
+        )
+        output = (result.stdout + result.stderr).strip()
+        return {
+            "passed": result.returncode == 0,
+            "output": output[:4000] if output else "(no output)",
+        }
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "output": "check-imports timed out"}

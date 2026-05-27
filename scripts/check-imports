@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Verify Python modules import under service-correct PYTHONPATH.
+
+compileall checks syntax only; this script executes importlib.import_module for
+each target .py file so broken relative imports fail before service restart.
+
+Usage:
+  check-imports services/universal-stargate/systems/pipeline/execution_summary/
+  check-imports path/to/file.py path/to/other.py
+  check-imports --entry systems.proxy.app services/universal-stargate/systems/pipeline/
+
+Exit 0 when all imports succeed; exit 1 on first failure (stderr has traceback).
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+STARGATE_ROOT = REPO_ROOT / "services" / "universal-stargate"
+LIBS_ROOT = REPO_ROOT / "libs"
+
+# Match start-stargate.sh (PROJECT_ROOT) + stargate_service_manager (libs + workdir).
+STARGATE_PATH = [REPO_ROOT, LIBS_ROOT, STARGATE_ROOT]
+LIBS_PATH = [LIBS_ROOT, REPO_ROOT]
+
+DEFAULT_STARGATE_ENTRIES = (
+    "systems.proxy.app",
+)
+
+
+def _module_name(stargate_root: Path, py_file: Path) -> str:
+    rel = py_file.relative_to(stargate_root)
+    parts = list(rel.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _module_name_lib(py_file: Path) -> str:
+    rel = py_file.relative_to(LIBS_ROOT)
+    parts = list(rel.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _collect_py_files(paths: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for raw in paths:
+        path = raw.resolve()
+        if path.is_file() and path.suffix == ".py":
+            candidates = [path]
+        elif path.is_dir():
+            candidates = sorted(path.rglob("*.py"))
+        else:
+            raise SystemExit(f"check-imports: not a .py file or directory: {raw}")
+
+        for candidate in candidates:
+            if "__pycache__" in candidate.parts:
+                continue
+            norm = candidate.resolve()
+            if norm not in seen:
+                seen.add(norm)
+                files.append(norm)
+    return files
+
+
+def _classify(py_file: Path) -> tuple[list[Path], str]:
+    resolved = py_file.resolve()
+    try:
+        resolved.relative_to(STARGATE_ROOT)
+    except ValueError:
+        pass
+    else:
+        return STARGATE_PATH, _module_name(STARGATE_ROOT, resolved)
+
+    try:
+        resolved.relative_to(LIBS_ROOT)
+    except ValueError as exc:
+        raise SystemExit(
+            f"check-imports: path outside stargate/libs trees: {py_file}"
+        ) from exc
+    return LIBS_PATH, _module_name_lib(resolved)
+
+
+def _prepend_sys_path(parts: list[Path]) -> None:
+    for part in reversed(parts):
+        text = str(part)
+        if text not in sys.path:
+            sys.path.insert(0, text)
+
+
+def _import_module(module_name: str) -> None:
+    # Fresh import each time — drop cached subtree when re-run in-process.
+    for key in list(sys.modules):
+        if key == module_name or key.startswith(f"{module_name}."):
+            del sys.modules[key]
+    importlib.import_module(module_name)
+
+
+def _run_entries(entries: tuple[str, ...]) -> None:
+    _prepend_sys_path(STARGATE_PATH)
+    for name in entries:
+        print(f"check-imports: entry {name}", file=sys.stderr)
+        _import_module(name)
+
+
+def _run_files(py_files: list[Path]) -> None:
+    by_context: dict[tuple[tuple[str, ...], ...], list[tuple[str, Path]]] = {}
+    for py_file in py_files:
+        path_parts, module_name = _classify(py_file)
+        if not module_name:
+            continue
+        key = tuple(str(p) for p in path_parts)
+        by_context.setdefault(key, []).append((module_name, py_file))
+
+    for key, items in by_context.items():
+        _prepend_sys_path([Path(p) for p in key])
+        for module_name, py_file in sorted(items):
+            print(f"check-imports: {module_name}  ({py_file.relative_to(REPO_ROOT)})")
+            try:
+                _import_module(module_name)
+            except Exception as exc:
+                print(
+                    f"check-imports: FAILED {module_name}: {exc}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from exc
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "paths",
+        nargs="+",
+        type=Path,
+        help="Python files or directories to import-check",
+    )
+    parser.add_argument(
+        "--entry",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help="Also import a service entry module (repeatable)",
+    )
+    parser.add_argument(
+        "--stargate-entry",
+        action="store_true",
+        help=f"Import default Stargate entries: {', '.join(DEFAULT_STARGATE_ENTRIES)}",
+    )
+    args = parser.parse_args(argv)
+
+    py_files = _collect_py_files(args.paths)
+    if not py_files and not args.entry and not args.stargate_entry:
+        raise SystemExit("check-imports: no Python files to check")
+
+    entries = tuple(args.entry)
+    if args.stargate_entry:
+        entries = (*DEFAULT_STARGATE_ENTRIES, *entries)
+
+    if py_files:
+        _run_files(py_files)
+    if entries:
+        _run_entries(entries)
+
+
+if __name__ == "__main__":
+    main()

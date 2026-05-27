@@ -1012,6 +1012,7 @@ def _classify_result(msg: str) -> bool:
             "event service stopped",
             "mcp server started",
             "mcp server stopped",
+            "mcp rebuild scheduled",
             "cortex api started",
             "cortex api stopped",
             "agent bus started",
@@ -1030,6 +1031,7 @@ def _classify_result(msg: str) -> bool:
             "stopped (pid",
             "already exited",
             "sigkill'd after",
+            "rebuild_scheduled",
         )
     ):
         return True

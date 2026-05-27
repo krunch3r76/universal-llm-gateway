@@ -18,7 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from ...core.execution.map_reduce.collection import MapOutputCollection
-from ..execution_summary_inputs import (
+from ...execution_summary_inputs import (
     format_handler_inputs_section,
     format_map_iteration_inputs,
 )
