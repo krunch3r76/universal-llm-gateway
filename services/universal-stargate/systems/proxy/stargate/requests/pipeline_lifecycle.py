@@ -8,7 +8,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+from sse import format_sse
 from universal_logging import get_logger
 
 from .pipeline_request_events import (
@@ -96,6 +97,69 @@ def _format_recoverable_message(error_detail: dict[str, Any]) -> str:
         for item in suggested[:3]:
             lines.append(f"- {item}")
     return "\n".join(lines)
+
+
+def _wrap_pipeline_response_as_sse(
+    json_response: Response,
+) -> StreamingResponse:
+    """Convert a pipeline JSON Response into single-chunk SSE for streaming clients.
+
+    Pipelines today buffer the inner inference call (``stream=False`` enforced in
+    ``proxy_client.chat_completion``) and ``ResponseBuilder`` emits one
+    ``application/json`` ``chat.completion`` body. OpenAI-compatible clients that
+    set ``stream: true`` (Open WebUI, others) engage an SSE parser that cannot
+    consume a JSON body; the assistant turn is silently dropped.
+
+    This wrapper re-frames that buffered output as a two-frame SSE response
+    (``chat.completion.chunk`` with content + finish chunk + ``[DONE]`` sentinel)
+    so streaming clients render correctly. The body is identical; only the
+    transport changes.
+
+    For per-token passthrough on eligible single-step terminal pipelines, see
+    ``plan:pipeline-terminal-passthrough-streaming``.
+    """
+    body = json.loads(json_response.body)
+    base = {
+        "id": body["id"],
+        "object": "chat.completion.chunk",
+        "created": body["created"],
+        "model": body["model"],
+    }
+    content_chunk = {
+        **base,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": body["choices"][0]["message"]["content"],
+                },
+                "finish_reason": None,
+            }
+        ],
+    }
+    finish_chunk = {
+        **base,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+
+    async def gen() -> Any:
+        yield format_sse(content_chunk)
+        yield format_sse(finish_chunk)
+        yield "data: [DONE]\n\n"
+
+    # Preserve pipeline execution header only; StreamingResponse sets its own
+    # Content-Type and omits Content-Length (chunked transfer encoding).
+    headers: dict[str, str] = {}
+    exec_id = json_response.headers.get("X-Pipeline-Execution-Id")
+    if exec_id:
+        headers["X-Pipeline-Execution-Id"] = exec_id
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
 
 
 def _build_recoverable_failure_response(
@@ -187,6 +251,8 @@ async def execute_pipeline_chat_completion(
             response=response,
             start_time=start_time,
         )
+        if context.original_request.get("stream") is True:
+            response = _wrap_pipeline_response_as_sse(response)
         return response
     except PipelineError as exc:
         execution_id = getattr(exc, "execution_id", None)

@@ -71,7 +71,6 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:review-protocol-mandatory-chronology-verification",
         "agent_skill:session-close",
         "agent_skill:session-close-audit",
-        "agent_skill:skill-authoring",
         "agent_skill:skill-document-writing",
         "agent_skill:thirdparty-api-mirror",
         # Case-specific skills — applicable across both seats since cases are
