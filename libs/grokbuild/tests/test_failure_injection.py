@@ -168,19 +168,10 @@ async def test_no_dispatch_token_fallback_completes(
     sidecar_root: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No MCP_GROK_BUILD_DISPATCH_TOKEN → runner falls back to inherited HOME.
+    """No MCP_GROK_BUILD_DISPATCH_TOKEN → dispatch HOME without MCP overlay.
 
-    In this mode no dispatch-scoped config.toml is generated and no pre-flight
-    runs.  The grok subprocess will use the real ~/.grok/config.toml, so inner
-    MCP traffic is attributed to seat=grok-direct (not grok-build-dispatch).
-    This is the "unset header env" case in Phase C — the seat-attribution gap
-    is detectable post-hoc via a JOIN query between mcp.request.* events and
-    mcp.grokbuild.dispatch.toolcalls.
-
-    Assertions:
-    - No pre-flight failure (status == completed with our fake proc).
-    - dispatch_id embedded in sidecar path for post-hoc attribution audit.
-    - tool_call_names parses correctly from the fake streaming-JSON stdout.
+    Dispatch-scoped config.toml is still generated with [model.*] stanzas
+    stripped; host MCP sections are preserved. No pre-flight runs without token.
     """
     sidecar_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.delenv("MCP_GROK_BUILD_DISPATCH_TOKEN", raising=False)

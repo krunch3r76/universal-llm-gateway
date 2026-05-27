@@ -13,6 +13,7 @@ import uuid
 from typing import Any, Literal
 
 from grokbuild.constants import (
+    DISPATCH_MODEL_ID,
     _TIER_PRESETS,
     _VALID_TIERS,
 )
@@ -121,6 +122,21 @@ async def dispatch_op(
     )
     if model is None:
         model = _TIER_PRESETS[resolved.tier].default_model
+
+    if model != DISPATCH_MODEL_ID:
+        reason = f"model must be {DISPATCH_MODEL_ID!r}, got {model!r}"
+        emit_grok_build_dispatch_rejected(
+            dispatch_id=dispatch_id,
+            reason_code="bad_model",
+            reason=reason,
+            mode=mode,
+            op="build",
+            cwd=cwd,
+            model=model,
+        )
+        return _envelope_rejected(
+            dispatch_id, mode, cwd, session_id, model, "bad_model", reason
+        )
 
     vr = await asyncio.get_running_loop().run_in_executor(
         None,

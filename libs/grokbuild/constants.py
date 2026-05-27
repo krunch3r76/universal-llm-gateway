@@ -55,6 +55,11 @@ _MODE_BY_PERMISSION: Final[dict[str, str]] = {
 # Orthogonal to tier (reasoning/effort); tier must not hard-kill mid-edit.
 DEFAULT_TIMEOUT_SECONDS: Final[int] = 3600
 
+# Sole admitted model for grokbuild dispatches (CLI subprocess path).
+# Host ~/.grok/config.toml [model.*] pipeline aliases are stripped from
+# dispatch-scoped config so subagents cannot route to Stargate API models.
+DISPATCH_MODEL_ID: Final[str] = "grok-build"
+
 
 @dataclass(frozen=True, slots=True)
 class _TierPreset:
@@ -68,10 +73,10 @@ class _TierPreset:
 # hand-mirrored. Adding a tier here automatically updates the
 # validator's accept-set.
 _TIER_PRESETS: Final[dict[str, _TierPreset]] = {
-    "quick": _TierPreset("minimal", "low", "grok-4.3"),
-    "balanced": _TierPreset("medium", "medium", "grok-4.3"),
-    "thorough": _TierPreset("high", "high", "grok-4.3"),
-    "max": _TierPreset("xhigh", "max", "grok-4.3"),
+    "quick": _TierPreset("minimal", "low", DISPATCH_MODEL_ID),
+    "balanced": _TierPreset("medium", "medium", DISPATCH_MODEL_ID),
+    "thorough": _TierPreset("high", "high", DISPATCH_MODEL_ID),
+    "max": _TierPreset("xhigh", "max", DISPATCH_MODEL_ID),
 }
 _VALID_TIERS: Final[frozenset[str]] = frozenset(_TIER_PRESETS.keys())
 
@@ -92,8 +97,8 @@ class _ModelCapabilities:
 # ∀ model ∉ MODEL_REGISTRY: both effort flags treated as supported (pass-
 # through — caller may still hit a CLI/API failure, but admission won't block).
 # dispatch_op resolves omitted model to each tier preset's default_model
-# (grok-4.3) before RunnerSpec; RunnerSpec.model=None still maps to
-# "grok-build" here for capability lookup only.
+# (grok-build) before RunnerSpec; explicit model overrides are rejected
+# at admission unless they equal DISPATCH_MODEL_ID.
 #
 # --effort is the grok CLI agent-loop tier flag (independent of reasoning API).
 # It is emitted for every model except those where the grok CLI rejects it

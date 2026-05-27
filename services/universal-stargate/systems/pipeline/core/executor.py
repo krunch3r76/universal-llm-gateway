@@ -61,7 +61,11 @@ from .events.step import (
     SubPipelineExpanded as BusSubPipelineExpanded,
 )
 from .execution import DAGExecutor
-from .execution.concurrency import maybe_concurrency_lock
+from .execution.concurrency import maybe_concurrency_gate
+from .execution.concurrency_backend import (
+    ConcurrencyBackend,
+    InProcessConcurrencyBackend,
+)
 from .execution.disconnect_monitor import execute_with_disconnect_monitoring
 from .execution.map_reduce.map_executor.events import ProxyProtocol
 from .execution.outcome import PipelineExecutionOutcome, extract_model_entity_id
@@ -206,13 +210,14 @@ class PipelineExecutor:
         self.prompt_builder = get_prompt_builder()
         self.fragment_loader = get_fragment_loader()
         self._event_bus_warned: bool = False
-        # Phase 5 (cortex-chat-openai): per-key serialisation locks for
-        # pipelines that declare a ``concurrency:`` block. Plain dict
-        # leaks one Lock per distinct resolved key for the process
-        # lifetime; acceptable at Phase A scale (master Stargate
-        # restart cadence evicts). Substrate-level cleanup promotes to
-        # Phase B without YAML or pipeline-author impact.
-        self._concurrency_locks: dict[str, asyncio.Lock] = {}
+        # Phase A closure (cortex-chat-openai): per-key FIFO
+        # serialisation for pipelines that declare a ``concurrency:``
+        # block. ``InProcessConcurrencyBackend`` wraps
+        # ``FifoCapacityGate(limit=1)`` per resolved key with TTL
+        # eviction on release-when-idle. Phase B / slice 1c swaps the
+        # backend impl (distributed) without touching this site or
+        # the YAML surface.
+        self._concurrency_backend: ConcurrencyBackend = InProcessConcurrencyBackend()
 
     def _publish_event(self, context: PipelineContext, event: Event) -> None:
         """
@@ -470,19 +475,20 @@ class PipelineExecutor:
         *,
         monitor_disconnect: bool = True,
     ) -> PipelineExecutionOutcome:
-        """Acquire per-chat concurrency lock (if declared) and run the DAG.
+        """Acquire per-chat concurrency gate (if declared) and run the DAG.
 
         Thin wrapper that serialises pipeline executions on a resolved
         string key when ``pipeline.concurrency.key`` is declared in the
-        pipeline YAML. No-op when the pipeline carries no
-        ``concurrency:`` block — see ``execution.concurrency`` for the
-        resolution rules and ``ConcurrencyLockTimeoutError`` for the
-        timeout-failure shape.
+        pipeline YAML, via the ``ConcurrencyBackend`` instance on
+        ``self._concurrency_backend``. No-op when the pipeline carries
+        no ``concurrency:`` block — see ``execution.concurrency`` for
+        the resolution rules and ``ConcurrencyLockTimeoutError`` for
+        the timeout-failure shape.
         """
-        async with maybe_concurrency_lock(
+        async with maybe_concurrency_gate(
             prepared.pipeline,
             prepared.pipeline_context,
-            self._concurrency_locks,
+            self._concurrency_backend,
         ):
             return await self._run_prepared_execution_inner(
                 prepared, monitor_disconnect=monitor_disconnect

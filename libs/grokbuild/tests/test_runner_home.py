@@ -46,7 +46,7 @@ class TestStripTomlSection:
 
 class TestBuildConfigToml:
     def test_no_host_config(self, tmp_path: Path) -> None:
-        result = _build_config_toml("tok", "d1", str(tmp_path / "nonexistent"))
+        result = _build_config_toml("tok", "d1", str(tmp_path / "nonexistent"), overlay_mcp=True)
         assert "[mcp_servers.user-vortex]" in result
         assert 'X-Grokbuild-Dispatch-Id = "d1"' in result
         assert 'Authorization = "Bearer tok"' in result
@@ -59,11 +59,27 @@ class TestBuildConfigToml:
             'model = "grok-4.3__effort_high"\n'
             'base_url = "http://localhost:9999/api/v1/providers/xai"\n'
         )
-        result = _build_config_toml("tok", "d1", str(fake_home))
-        assert "xai/grok-4.3__effort_high" in result
-        assert 'base_url = "http://localhost:9999/api/v1/providers/xai"' in result
+        result = _build_config_toml("tok", "d1", str(fake_home), overlay_mcp=True)
+        assert "xai/grok-4.3__effort_high" not in result
+        assert 'base_url = "http://localhost:9999/api/v1/providers/xai"' not in result
         assert "[mcp_servers.user-vortex]" in result
         assert 'X-Grokbuild-Dispatch-Id = "d1"' in result
+
+    def test_no_overlay_keeps_host_mcp_strips_models(self, tmp_path: Path) -> None:
+        fake_home = tmp_path / "real"
+        (fake_home / ".grok").mkdir(parents=True)
+        (fake_home / ".grok" / "config.toml").write_text(
+            '[model."xai/grok-4.3__effort_high"]\n'
+            'model = "grok-4.3"\n'
+            "[mcp_servers.user-vortex]\n"
+            'url = "https://mcp.k-1.me/mcp/grok"\n'
+            "enabled = true\n"
+        )
+        result = _build_config_toml("tok", "d1", str(fake_home), overlay_mcp=False)
+        assert "xai/grok-4.3__effort_high" not in result
+        assert "[mcp_servers.user-vortex]" in result
+        assert "https://mcp.k-1.me/mcp/grok" in result
+        assert "X-Grokbuild-Dispatch-Id" not in result
 
     def test_host_mcp_section_replaced(self, tmp_path: Path) -> None:
         fake_home = tmp_path / "real"
@@ -75,13 +91,13 @@ class TestBuildConfigToml:
             "[mcp_servers.user-vortex.headers]\n"
             'Authorization = "Bearer old-token"\n'
         )
-        result = _build_config_toml("new-token", "d2", str(fake_home))
+        result = _build_config_toml("new-token", "d2", str(fake_home), overlay_mcp=True)
         assert "old-token" not in result
         assert 'Authorization = "Bearer new-token"' in result
         assert result.count("[mcp_servers.user-vortex]") == 1
 
 
-def test_dispatch_home_preserves_host_model_stanzas(tmp_path: Path) -> None:
+def test_dispatch_home_strips_host_model_stanzas(tmp_path: Path) -> None:
     fake_home = tmp_path / "real"
     (fake_home / ".grok").mkdir(parents=True)
     (fake_home / ".grok" / "config.toml").write_text(
@@ -93,5 +109,5 @@ def test_dispatch_home_preserves_host_model_stanzas(tmp_path: Path) -> None:
         "d1", tmp_path / "sidecar", token="t", real_home=str(fake_home)
     )
     txt = (home / ".grok" / "config.toml").read_text()
-    assert "xai/grok-4.3__effort_high" in txt
+    assert "xai/grok-4.3__effort_high" not in txt
     assert 'X-Grokbuild-Dispatch-Id = "d1"' in txt

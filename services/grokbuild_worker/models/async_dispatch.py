@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from grokbuild.constants import DISPATCH_MODEL_ID
+
 DispatchState = Literal["pending", "running", "succeeded", "failed", "cancelled"]
 
 
@@ -80,7 +82,10 @@ class GrokbuildDispatchRequest(BaseModel):
         (see master @ cab52fa7 session review, finding F4).
         """
         if not self.mcp:
-            incompatible: list[str] = []
+            incompatible: list[str] = [
+                "mcp=False (api path disabled; grokbuild admits only "
+                f"model={DISPATCH_MODEL_ID!r} via CLI subprocess)"
+            ]
             if self.mode == "edit":
                 incompatible.append(
                     "mode='edit' (api path cannot edit; no subprocess)"

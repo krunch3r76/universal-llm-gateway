@@ -6,7 +6,7 @@ and future worker processes (Phase A.3/B).
 
 from __future__ import annotations
 
-from grokbuild.constants import MODEL_REGISTRY
+from grokbuild.constants import DISPATCH_MODEL_ID, MODEL_REGISTRY
 from grokbuild.dispatch import dispatch_op
 from grokbuild.events import emit_grok_build_dispatch_rejected
 from grokbuild.fetch_result import fetch_result_op
@@ -18,6 +18,7 @@ from grokbuild.worktree_list import worktree_list_op
 from grokbuild.worktree_remove import worktree_remove_op
 
 __all__ = [
+    "DISPATCH_MODEL_ID",
     "MODEL_REGISTRY",
     "dispatch_op",
     "emit_grok_build_dispatch_rejected",

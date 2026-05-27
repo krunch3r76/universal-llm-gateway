@@ -42,9 +42,9 @@ async def test_api_dispatch_balanced_tier_resolves_effort_medium() -> None:
         )
 
     assert envelope["status"] == "completed"
-    assert captured["model"] == "grok-4.3"
-    assert captured["reasoning"] == {"effort": "medium"}
-    assert envelope["metadata"]["model"] == "grok-4.3"
+    assert captured["model"] == "grok-build"
+    assert captured["reasoning"] is None
+    assert envelope["metadata"]["model"] == "grok-build"
 
 
 @pytest.mark.asyncio
@@ -78,54 +78,32 @@ async def test_api_dispatch_max_tier_resolves_effort_xhigh() -> None:
         )
 
     assert envelope["status"] == "completed"
-    assert captured["model"] == "grok-4.3"
-    assert captured["reasoning"] == {"effort": "xhigh"}
-    assert envelope["metadata"]["model"] == "grok-4.3"
-    assert default_model_for_tier("max") == "grok-4.3"
+    assert captured["model"] == "grok-build"
+    assert captured["reasoning"] is None
+    assert envelope["metadata"]["model"] == "grok-build"
+    assert default_model_for_tier("max") == "grok-build"
 
 
 @pytest.mark.asyncio
-async def test_api_dispatch_explicit_grok43_model_still_injects_reasoning_effort() -> (
-    None
-):
-    captured: dict[str, Any] = {}
-
-    async def _post(_path: str, *, json: dict[str, Any]) -> MagicMock:
-        captured["model"] = json["model"]
-        captured["reasoning"] = json.get("reasoning")
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
-        return resp
-
-    client = MagicMock()
-    client.post = AsyncMock(side_effect=_post)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-
-    with patch(
-        "grokbuild.api_dispatch.make_async_client",
-        return_value=client,
-    ):
-        envelope = await api_dispatch_op(
-            cwd="/tmp",
-            prompt="x",
-            system_context=None,
-            model="grok-4.3",
-            session_id=None,
-            tier="balanced",
-        )
-
-    assert envelope["status"] == "completed"
-    assert captured["model"] == "grok-4.3"
-    assert captured["reasoning"] == {"effort": "medium"}
+async def test_api_dispatch_rejects_non_grok_build_model() -> None:
+    envelope = await api_dispatch_op(
+        cwd="/tmp",
+        prompt="x",
+        system_context=None,
+        model="grok-4.3",
+        session_id=None,
+        tier="balanced",
+    )
+    assert envelope["status"] == "rejected"
+    assert envelope["metadata"]["reason_code"] == "bad_model"
+    assert "grok-4.3" in envelope["metadata"]["reason"]
 
 
 @pytest.mark.asyncio
 async def test_api_dispatch_events_carry_model(
     event_log: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    """apidispatch.* events carry model=grok-4.3; model and effective_model are equal."""
+    """apidispatch.* events carry model=grok-build; model and effective_model are equal."""
 
     async def _post(_path: str, *, json: dict[str, Any]) -> MagicMock:
         resp = MagicMock()
@@ -154,8 +132,8 @@ async def test_api_dispatch_events_carry_model(
 
     called = [(s, p) for s, p in event_log if s == "mcp.grokbuild.apidispatch.called"]
     assert len(called) == 1
-    assert called[0][1]["model"] == "grok-4.3"
-    assert called[0][1]["effective_model"] == "grok-4.3"
+    assert called[0][1]["model"] == "grok-build"
+    assert called[0][1]["effective_model"] == "grok-build"
 
 
 @pytest.mark.asyncio
@@ -224,14 +202,14 @@ async def test_api_dispatch_emits_called_and_completed_with_usage(
 
     assert called[0][1]["dispatch_id"] == "evt-1"
     assert called[0][1]["tier"] == "max"
-    assert called[0][1]["model"] == "grok-4.3"
-    assert called[0][1]["effective_model"] == "grok-4.3"
+    assert called[0][1]["model"] == "grok-build"
+    assert called[0][1]["effective_model"] == "grok-build"
 
     payload = completed[0][1]
     assert payload["dispatch_id"] == "evt-1"
     assert payload["tier"] == "max"
-    assert payload["model"] == "grok-4.3"
-    assert payload["effective_model"] == "grok-4.3"
+    assert payload["model"] == "grok-build"
+    assert payload["effective_model"] == "grok-build"
     assert payload["prompt_tokens"] == 123
     assert payload["completion_tokens"] == 45
     assert payload["total_tokens"] == 168

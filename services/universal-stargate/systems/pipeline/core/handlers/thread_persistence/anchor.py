@@ -17,8 +17,6 @@ logger = get_logger(__name__)
 
 async def resolve_or_create_anchor(
     chat_id: str,
-    *,
-    client_label: str | None = None,
 ) -> tuple[str, int]:
     """Return ``(entity_id, current_turn_index)``.
 

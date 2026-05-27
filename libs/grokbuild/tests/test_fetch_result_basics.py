@@ -25,7 +25,7 @@ async def test_fetch_result_json_reconstructs_dispatch_envelope(
     assert out["exit_code"] == 0
     assert out["metadata"]["cwd"] == "/tmp/repo"
     assert out["metadata"]["mode"] == "read_only"
-    assert out["metadata"]["model"] == "grok-4.3"
+    assert out["metadata"]["model"] == "grok-build"
     assert out["metadata"]["format"] == "json"
     assert out["metadata"]["record_count"] == 4
     assert out["metadata"]["http_status"] == 200

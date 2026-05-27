@@ -52,7 +52,7 @@ def completed_records(
             "cwd": cwd,
             "mode": "read_only",
             "permission_mode": "plan",
-            "model": "grok-4.3",
+            "model": "grok-build",
             "session_id": None,
             "continue_recent": False,
             "output_format": "json",

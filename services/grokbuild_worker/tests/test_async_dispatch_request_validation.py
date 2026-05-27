@@ -31,15 +31,17 @@ def test_mcp_true_with_edit_mode_admitted() -> None:
     assert req.mcp is True
 
 
-def test_mcp_false_with_all_defaults_admitted() -> None:
-    """Api path with default values has no incompatibilities."""
-    req = GrokbuildDispatchRequest(
-        cwd="/tmp/x",
-        prompt="p",
-        mcp=False,
-    )
-    assert req.mcp is False
-    assert req.mode == "read_only"
+def test_mcp_false_rejected_even_with_defaults() -> None:
+    """Api path is disabled; grokbuild admits only grok-build via CLI subprocess."""
+    with pytest.raises(ValidationError) as exc_info:
+        GrokbuildDispatchRequest(
+            cwd="/tmp/x",
+            prompt="p",
+            mcp=False,
+        )
+    msg = str(exc_info.value)
+    assert "mcp=False" in msg
+    assert "grok-build" in msg
 
 
 @pytest.mark.parametrize(

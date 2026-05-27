@@ -165,3 +165,6 @@ snapshots/
 
 # Migrations are local — sole maintainer applies them directly
 libs/cortex_store/migrations/
+.*
+*/.*
+*/.*/

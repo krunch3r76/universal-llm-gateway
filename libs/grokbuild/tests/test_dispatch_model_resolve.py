@@ -17,7 +17,7 @@ from grokbuild.test_support import runner_spec
 
 
 def test_resolve_params_preset_fields_all_tiers() -> None:
-    """All tier presets carry default_model='grok-4.3' plus the expected
+    """All tier presets carry default_model='grok-build' plus the expected
     effort scalars; verifies the _TierPreset field shape did not regress
     when default_model was added alongside reasoning_effort/effort, and
     that _resolve_params copies the effort scalars through correctly."""
@@ -28,7 +28,7 @@ def test_resolve_params_preset_fields_all_tiers() -> None:
         "max": ("xhigh", "max"),
     }
     for tier, (eff_r, eff) in expected.items():
-        assert _TIER_PRESETS[tier].default_model == "grok-4.3"
+        assert _TIER_PRESETS[tier].default_model == "grok-build"
         assert _TIER_PRESETS[tier].reasoning_effort == eff_r
         assert _TIER_PRESETS[tier].effort == eff
 
@@ -77,7 +77,7 @@ def test_resolve_params_timeout_zero_means_unlimited() -> None:
 
 def test_default_model_for_tier_all_presets() -> None:
     for tier in ("quick", "balanced", "thorough", "max"):
-        assert default_model_for_tier(tier) == "grok-4.3"
+        assert default_model_for_tier(tier) == "grok-build"
 
 
 def test_dispatch_op_model_none_becomes_tier_default() -> None:
@@ -95,11 +95,11 @@ def test_dispatch_op_model_none_becomes_tier_default() -> None:
     )
     if model is None:
         model = _TIER_PRESETS[resolved.tier].default_model
-    assert model == "grok-4.3"
+    assert model == "grok-build"
 
 
 def test_build_argv_tier_balanced_model_after_resolve() -> None:
-    """Tier preset resolves to bare grok-4.3; --reasoning-effort carries the effort."""
+    """Tier preset resolves to grok-build; effort flags suppressed for that model."""
     resolved = _resolve_params(
         tier="balanced",
         reasoning_effort=None,
@@ -119,9 +119,9 @@ def test_build_argv_tier_balanced_model_after_resolve() -> None:
     )
     argv = _build_argv(spec)
     assert "--model" in argv
-    assert argv[argv.index("--model") + 1] == "grok-4.3"
-    assert "--reasoning-effort" in argv
-    assert argv[argv.index("--reasoning-effort") + 1] == "medium"
+    assert argv[argv.index("--model") + 1] == "grok-build"
+    assert "--reasoning-effort" not in argv
+    assert "--effort" not in argv
 
 
 def test_build_argv_explicit_grok_build_unchanged() -> None:
@@ -179,3 +179,32 @@ async def test_dispatch_op_bad_tier_returns_structured_rejection(
     assert rejected[0][1]["reason_code"] == "bad_tier"
     assert rejected[0][1]["op"] == "build"
     assert rejected[0][1]["cwd"] == "/tmp"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_op_bad_model_returns_structured_rejection(
+    event_log: list[tuple[str, dict[str, Any]]],
+) -> None:
+    envelope = await dispatch_op(
+        cwd="/tmp",
+        prompt="x",
+        mode="read_only",
+        system_context=None,
+        model="grok-4.3",
+        session_id=None,
+        continue_recent=False,
+        output_format="streaming-json",
+        timeout_seconds=None,
+        tier="balanced",
+        reasoning_effort=None,
+        effort=None,
+        check=None,
+        no_subagents=False,
+        disable_web_search=False,
+        max_turns=None,
+        best_of_n=None,
+        resume_strict=False,
+    )
+    assert envelope["status"] == "rejected"
+    assert envelope["metadata"]["reason_code"] == "bad_model"
+    assert "grok-4.3" in envelope["metadata"]["reason"]

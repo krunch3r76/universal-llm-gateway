@@ -7,8 +7,9 @@ MCP traffic to seat=grok-build-dispatch rather than to grok-direct.
 
 ∀ dispatch where MCP_GROK_BUILD_DISPATCH_TOKEN is configured:
   - dispatch HOME ≡ <sidecar_dir>/<dispatch_id>-home/
-  - config.toml = host ~/.grok/config.toml (all [model.*] stanzas preserved)
-    with [mcp_servers.user-vortex*] overlaid by the dispatch bearer + dispatch_id
+  - config.toml = host ~/.grok/config.toml with [model.*] stanzas stripped and
+    [mcp_servers.user-vortex*] overlaid by the dispatch bearer + dispatch_id
+    when MCP_GROK_BUILD_DISPATCH_TOKEN is configured; host MCP kept when not
   - auth.json symlinked from the real HOME (xAI login state re-used)
   - HOME added to subprocess env as an OVERRIDE (not pass-through)
   - pre-flight `grok inspect --json` verifies the override took effect
@@ -67,23 +68,27 @@ def _build_config_toml(
     token: str,
     dispatch_id: str,
     real_home: str | None,
+    *,
+    overlay_mcp: bool,
 ) -> str:
-    """Merge host config.toml with the dispatch MCP overlay.
+    """Merge host config.toml with optional dispatch MCP overlay.
 
-    Reads the host ~/.grok/config.toml (if present) to preserve [model.*]
-    stanzas and other host settings.  Strips any [mcp_servers.user-vortex*]
-    sections from the host config and appends the dispatch-specific block,
-    so the dispatch subprocess uses the correct bearer token and dispatch_id
-    while still being able to resolve any model stanzas from the host config.
+    Reads the host ~/.grok/config.toml (if present) to preserve non-model
+    host settings.  Strips all ``[model.*]`` stanzas so dispatch subprocesses
+    cannot route subagents to Stargate pipeline aliases (e.g.
+    ``xai/grok-4.3__effort_*``).  When ``overlay_mcp`` is True, strips any
+    ``[mcp_servers.user-vortex*]`` sections from the host config and appends
+    the dispatch-specific block.  When False, host MCP sections are kept as-is.
 
-    ∀ result: result contains all host [model.*] stanzas ∧
-              result contains exactly one [mcp_servers.user-vortex] block ∧
-              that block carries the dispatch bearer token and dispatch_id.
+    ∀ result: ¬∃ ``[model.*]`` stanza in result ∧
+              (overlay_mcp ⟹ exactly one dispatch ``[mcp_servers.user-vortex]``).
     """
     host_config_path = Path(real_home) / ".grok" / "config.toml" if real_home else None
     if host_config_path and host_config_path.exists():
         base = host_config_path.read_text(encoding="utf-8")
-        base = _strip_toml_section(base, f"[mcp_servers.{_MCP_SERVER_NAME}")
+        base = _strip_toml_section(base, "[model.")
+        if overlay_mcp:
+            base = _strip_toml_section(base, f"[mcp_servers.{_MCP_SERVER_NAME}")
         if base and not base.endswith("\n"):
             base += "\n"
         logger.debug("dispatch_home: loaded host config.toml from %s", host_config_path)
@@ -91,9 +96,12 @@ def _build_config_toml(
         base = ""
         logger.warning(
             "dispatch_home: host config.toml not found at %s; "
-            "dispatch subprocess will lack [model.*] stanzas from host",
+            "dispatch subprocess will lack host MCP/model stanzas",
             host_config_path,
         )
+
+    if not overlay_mcp:
+        return base
 
     overlay = _MCP_OVERLAY_TEMPLATE.format(
         server_name=_MCP_SERVER_NAME,
@@ -113,12 +121,16 @@ def setup_dispatch_home(
     dispatch_id: str,
     sidecar_dir: Path,
     *,
-    token: str,
+    token: str | None,
     real_home: str | None,
 ) -> Path:
-    """Create per-dispatch HOME with config.toml and optional auth.json symlink.
+    """Create per-dispatch HOME with stripped config.toml and auth.json symlink.
 
     Returns the dispatch home path. Raises OSError on filesystem failure.
+
+    When ``token`` is set, overlays dispatch MCP bearer + dispatch_id header.
+    When ``token`` is None, preserves host MCP sections but still strips
+    ``[model.*]`` pipeline aliases from the copied config.
 
     ∀ dispatch_id: home = <sidecar_dir>/<dispatch_id>-home/
     Idempotent: if the directory already exists the config is overwritten.
@@ -127,10 +139,12 @@ def setup_dispatch_home(
     grok_dir = home / ".grok"
     grok_dir.mkdir(parents=True, exist_ok=True)
 
+    overlay_mcp = bool(token and token.strip())
     config_content = _build_config_toml(
-        token=token,
+        token=token or "",
         dispatch_id=dispatch_id,
         real_home=real_home,
+        overlay_mcp=overlay_mcp,
     )
     (grok_dir / "config.toml").write_text(config_content, encoding="utf-8")
 

@@ -31,6 +31,7 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from grokbuild.constants import (
+    DISPATCH_MODEL_ID,
     _TIER_PRESETS,
     _VALID_TIERS,
     DEFAULT_TIMEOUT_SECONDS,
@@ -86,6 +87,23 @@ async def api_dispatch_op(
         )
 
     effective_model = model if model is not None else default_model_for_tier(tier)
+    if effective_model != DISPATCH_MODEL_ID:
+        reason = (
+            f"model must be {DISPATCH_MODEL_ID!r}, got {effective_model!r}; "
+            "grokbuild api path does not admit Stargate pipeline models"
+        )
+        emit_grok_build_api_dispatch_rejected(
+            dispatch_id=dispatch_id,
+            reason_code="bad_model",
+            reason=reason,
+            cwd=cwd,
+            tier=tier,
+            session_id=session_id or "",
+        )
+        return _envelope_rejected(
+            dispatch_id, "read_only", cwd, session_id, model, "bad_model", reason
+        )
+
     metadata_model = envelope_metadata_model(model=model, tier=tier)
 
     # Inject reasoning.effort when the selected model supports it. api_dispatch
