@@ -61,8 +61,8 @@ def _patch_client(
     monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport
 ) -> None:
     monkeypatch.setattr(
-        "systems.pipeline.core.execution.async_tracker_delivery.make_async_client",
-        lambda *a, **k: httpx.AsyncClient(
+        "systems.pipeline.core.execution.async_tracker_delivery.agent_bus_http.make_async_client",
+        lambda *_a, **_k: httpx.AsyncClient(
             transport=transport, base_url="http://localhost"
         ),
     )
