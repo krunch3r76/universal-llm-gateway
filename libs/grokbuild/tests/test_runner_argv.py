@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 
 import pytest
 
@@ -11,7 +12,7 @@ from grokbuild.runner import (
     _build_argv,
     _build_env,
 )
-from grokbuild.runner_argv import _VENV_BIN, _VENV_ROOT
+from grokbuild.runner_argv import _PYTHONPATH, _REPO_ROOT, _VENV_BIN, _VENV_ROOT
 from grokbuild.test_support import (
     PROMPT,
     runner_spec,
@@ -94,9 +95,53 @@ def test_env_allow_list(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert env["TERM"] == "dumb"
     assert env["VIRTUAL_ENV"] == _VENV_ROOT
+    assert env["PROJECT_ROOT"] == str(_REPO_ROOT)
+    assert env["PYTHONPATH"] == _PYTHONPATH
     assert env["PATH"].split(os.pathsep)[0] == _VENV_BIN
-    assert set(env) == {"PATH", "TERM", "VIRTUAL_ENV"}
+    assert set(env) == {"PATH", "TERM", "VIRTUAL_ENV", "PROJECT_ROOT", "PYTHONPATH"}
     assert "SECRET" not in env
+
+
+def test_dispatch_env_imports_universal_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Inner grok shells must resolve libs/ imports without sourcing activate."""
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    env = _build_env()
+    env["HOME"] = "/tmp/grokbuild-dispatch-home"
+    result = subprocess.run(
+        ["python", "-c", "import universal_logging; print(universal_logging.__file__)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "universal_logging" in result.stdout
+
+
+def test_dispatch_env_imports_libs_namespace_from_stargate_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PEP-420 ``from libs.*`` imports need repo root on PYTHONPATH, not just libs/."""
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    env = _build_env()
+    env["HOME"] = "/tmp/grokbuild-dispatch-home"
+    stargate_cwd = str(_REPO_ROOT / "services" / "universal-stargate")
+    result = subprocess.run(
+        [
+            "python",
+            "-c",
+            "from libs.universal_concurrency import FifoCapacityGate; print(FifoCapacityGate)",
+        ],
+        env=env,
+        cwd=stargate_cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "FifoCapacityGate" in result.stdout
 
 
 @pytest.mark.parametrize(

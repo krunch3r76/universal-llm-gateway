@@ -38,7 +38,7 @@ from ..execution.concurrency_backend import (
 from ..execution.map_reduce.map_executor.events import ProxyProtocol
 from ..execution.outcome import PipelineExecutionOutcome
 from ..fragments import get_fragment_loader
-from ..handlers import PipelineContext
+from ..handlers import PipelineContext, StepOutput
 from ..prompts import get_prompt_builder
 from .exception_mapping import _normalize_pipeline_exception
 from .execution_loop import run_prepared_execution, run_prepared_execution_inner
@@ -182,11 +182,40 @@ class PipelineExecutor:
 
         Returns an OpenAI-compatible chat completion ``Response`` with the
         ``X-Pipeline-Execution-Id`` header set.
+
+        Terminal-passthrough streaming: when the terminal step's ``StepOutput``
+        carries a non-None ``stream`` (set by the generate handler's streaming
+        branch for stream-eligible single-step pipelines), surfaces the
+        pipeline spec and step-output dict on ``context`` and returns a
+        placeholder Response whose only payload is the
+        ``X-Pipeline-Execution-Id`` header. The proxy lifecycle
+        (``execute_pipeline_chat_completion``) detects the surfaced attributes
+        and replaces the placeholder with a ``StreamingResponse`` that drives
+        the chunk iterator. ``ResponseBuilder`` is intentionally NOT invoked
+        on this branch — its ``_aggregate_tokens`` canary exists precisely to
+        flag this code path being mis-selected. See
+        ``plan:pipeline-terminal-passthrough-streaming`` Phase 4.
         """
         execution_id = self.generate_execution_id()
         prepared = self.prepare_execution(context, execution_id=execution_id)
         try:
             outcome = await self._run_prepared_execution(prepared)
+            terminal = prepared.pipeline_context.outputs.get(prepared.pipeline.output)
+            if isinstance(terminal, StepOutput) and terminal.stream is not None:
+                context.pipeline_spec = prepared.pipeline  # type: ignore[attr-defined]
+                context._pipeline_outputs = (  # type: ignore[attr-defined]
+                    prepared.pipeline_context.outputs
+                )
+                return Response(
+                    content=b"",
+                    status_code=200,
+                    media_type="application/json",
+                    headers={
+                        "X-Pipeline-Execution-Id": (
+                            prepared.pipeline_context.execution_id
+                        ),
+                    },
+                )
             return self._build_chat_completion_response(prepared, outcome)
         finally:
             prepared.recorder.close()

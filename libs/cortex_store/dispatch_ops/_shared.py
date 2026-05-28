@@ -103,7 +103,25 @@ def record(signal: str, **payload: Any) -> None:
 
 
 def _compute_content_hash(source_uri: str) -> str | None:
-    """SHA-256 of a local file under CORTEX_FILES_ROOT. None if not local or missing."""
+    """SHA-256 of a local file under CORTEX_FILES_ROOT. None if not local or missing.
+
+    Strips the ``cortex://`` scheme prefix so callers can pass either a bare
+    relative path (e.g. ``agent-skills/foo.md``) or the canonical URI form
+    (e.g. ``cortex://agent-skills/foo.md``). Other schemes (``workspaces://``,
+    ``files://``, ``https://``) return None — those files are not under
+    CORTEX_FILES_ROOT and this helper does not resolve them.
+
+    Prior to the cortex:// strip, every entity_update that passed
+    ``source_uri="cortex://..."`` (the corpus convention for skill files
+    under ``agent-skills/``) silently produced None and skipped the
+    auto-recompute — see ``test_compute_content_hash.py`` for the
+    regression test that pins the bug at the corpus-convention URI shape.
+    """
+    if source_uri.startswith("cortex://"):
+        source_uri = source_uri.removeprefix("cortex://")
+    elif "://" in source_uri:
+        # workspaces://, files://, https://, … — not under CORTEX_FILES_ROOT.
+        return None
     local_path = _FILES_ROOT / source_uri
     if not local_path.is_file():
         return None

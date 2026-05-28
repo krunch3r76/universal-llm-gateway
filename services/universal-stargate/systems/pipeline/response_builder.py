@@ -85,6 +85,7 @@ class ResponseBuilder:
             Clients maintain conversation history as with standard OpenAI API.
             No conversation history is returned in the response.
         """
+
         def _aggregate_tokens(output_obj: Any) -> tuple[int, int]:
             if isinstance(output_obj, MapOutputCollection):
                 prompt = sum(inner.prompt_tokens for inner in output_obj.all_outputs())
@@ -175,6 +176,7 @@ class ResponseBuilder:
         # Optional: per-step token breakdown (order by execution_order when provided)
         include_step_stats = pipeline.options.get("include_step_stats", False)
         if include_step_stats:
+
             def _build_step_stats(
                 step_id: str, output_obj: Any
             ) -> dict[str, Any] | None:

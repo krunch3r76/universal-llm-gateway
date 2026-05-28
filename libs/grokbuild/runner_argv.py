@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from grokbuild.constants import MODEL_REGISTRY
 from grokbuild.runner_types import RunnerSpec
@@ -41,6 +42,16 @@ _OVERRIDE = ("HOME",)
 
 _VENV_ROOT = os.path.join(os.path.expanduser("~"), ".venvs", "universal")
 _VENV_BIN = os.path.join(_VENV_ROOT, "bin")
+# libs/grokbuild/runner_argv.py → repo root; used for PYTHONPATH/PROJECT_ROOT
+# so inner grok shell commands see the same import surface as an activated venv.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PYTHONPATH = os.pathsep.join(
+    (
+        str(_REPO_ROOT),
+        str(_REPO_ROOT / "libs"),
+        str(_REPO_ROOT / "services" / "universal-stargate"),
+    )
+)
 
 
 def _build_env() -> dict[str, str]:
@@ -48,6 +59,8 @@ def _build_env() -> dict[str, str]:
     env = {k: src[k] for k in _ALLOW if k in src}
     env["TERM"] = "dumb"
     env["VIRTUAL_ENV"] = _VENV_ROOT
+    env["PROJECT_ROOT"] = str(_REPO_ROOT)
+    env["PYTHONPATH"] = _PYTHONPATH
     parent_path = env.get("PATH", "")
     if _VENV_BIN not in parent_path.split(os.pathsep):
         env["PATH"] = (

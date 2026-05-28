@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from fastapi.responses import Response, StreamingResponse
 from sse import format_sse
 from universal_logging import get_logger
+
+from systems.pipeline.core.handlers.protocol import StepOutput
 
 from .pipeline_request_events import (
     emit_pipeline_completed_events,
@@ -97,6 +100,210 @@ def _format_recoverable_message(error_detail: dict[str, Any]) -> str:
         for item in suggested[:3]:
             lines.append(f"- {item}")
     return "\n".join(lines)
+
+
+def _terminal_step_output(context: RequestContext) -> StepOutput | None:
+    """Return the terminal-step ``StepOutput`` surfaced by the executor, if any.
+
+    ``PipelineExecutor.execute()`` writes ``pipeline_spec`` and
+    ``_pipeline_outputs`` onto the proxy ``RequestContext`` only when the
+    terminal step produced a streaming ``StepOutput`` (i.e.
+    ``output.stream is not None``). Returns ``None`` otherwise so the caller
+    falls through to the buffered path.
+
+    See ``plan:pipeline-terminal-passthrough-streaming`` Phase 4.
+    """
+    pipeline_spec = getattr(context, "pipeline_spec", None)
+    if pipeline_spec is None:
+        return None
+    pipeline_outputs = getattr(context, "_pipeline_outputs", None)
+    if pipeline_outputs is None:
+        return None
+    output = pipeline_outputs.get(pipeline_spec.output)
+    if isinstance(output, StepOutput):
+        return output
+    return None
+
+
+def _build_passthrough_streaming_response(
+    *,
+    proxy: StargateProxy,
+    context: RequestContext,
+    model_id: str,
+    terminal_output: StepOutput,
+    pipeline_id: str,
+    execution_id: str | None,
+    start_time: float,
+) -> StreamingResponse:
+    """Build a StreamingResponse that drives the terminal step's chunk iterator.
+
+    Re-frames each upstream chunk's ``model`` field to the pipeline ID
+    (matching ``ResponseBuilder`` buffered-path convention), formats via
+    ``libs/sse``'s ``format_sse``, accumulates content + final ``usage`` for
+    the stream-end snapshot event, and emits the lifecycle events at
+    stream-end via ``_emit_streaming_completion``.
+
+    Error handling distinguishes pre-first-yield (raised to caller, no
+    partial bytes on wire) from mid-stream (failure event emitted with
+    ``partial_content=True``, stream terminates without ``[DONE]``). See
+    Phase 3 carry-over #7 in the Phase 4 kickoff for the rationale and
+    Phase 2's failure-mode vocabulary contract.
+    """
+    accumulated_content_parts: list[str] = []
+    final_usage: dict[str, Any] | None = None
+
+    async def gen() -> AsyncIterator[str]:
+        nonlocal final_usage
+        chunks_yielded = 0
+        assert terminal_output.stream is not None  # guard; eligibility checked
+        try:
+            async for chunk in terminal_output.stream:
+                # Re-frame ``model`` to the pipeline ID (matches
+                # ResponseBuilder.build_response buffered-path convention,
+                # which sets ``body["model"] = pipeline.id``).
+                chunk["model"] = pipeline_id
+
+                # Accumulate content for the stream-end snapshot event.
+                choices = chunk.get("choices") or []
+                if choices:
+                    delta = choices[0].get("delta") or {}
+                    content_part = delta.get("content")
+                    if isinstance(content_part, str):
+                        accumulated_content_parts.append(content_part)
+
+                # Capture final usage (vLLM emits on the terminal chunk when
+                # ``stream_options.include_usage`` is set; Phase 2 contract).
+                usage = chunk.get("usage")
+                if isinstance(usage, dict):
+                    final_usage = usage
+
+                yield format_sse(chunk)
+                chunks_yielded += 1
+        except BaseException as exc:
+            # Mid-stream: emit pipeline.failed with partial_content=True and
+            # close the connection (no [DONE]). Pre-first-yield: emit failure
+            # event then re-raise so the lifecycle's outer handler returns a
+            # clean 5xx to the client (no bytes on the wire yet).
+            await _emit_streaming_completion(
+                proxy=proxy,
+                context=context,
+                model_id=model_id,
+                content="".join(accumulated_content_parts),
+                usage=final_usage,
+                start_time=start_time,
+                error=exc,
+            )
+            if chunks_yielded == 0:
+                raise
+            return
+        # Clean stream-end: emit lifecycle completion + DONE sentinel.
+        await _emit_streaming_completion(
+            proxy=proxy,
+            context=context,
+            model_id=model_id,
+            content="".join(accumulated_content_parts),
+            usage=final_usage,
+            start_time=start_time,
+            error=None,
+        )
+        yield "data: [DONE]\n\n"
+
+    headers: dict[str, str] = {}
+    if execution_id:
+        headers["X-Pipeline-Execution-Id"] = execution_id
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers=headers,
+    )
+
+
+async def _emit_streaming_completion(
+    *,
+    proxy: StargateProxy,
+    context: RequestContext,
+    model_id: str,
+    content: str,
+    usage: dict[str, Any] | None,
+    start_time: float,
+    error: BaseException | None,
+) -> None:
+    """Emit ``pipeline.completed`` / ``pipeline.failed`` at stream-end.
+
+    On success: builds a synthetic ``Response`` carrying the aggregated
+    ``content`` + final ``usage``, in the shape ``_response_snapshot`` reads
+    (``choices[0].message.content`` and ``usage``), and forwards to
+    ``emit_pipeline_completed_events`` so observability sees the same
+    snapshot shape as the buffered path.
+
+    On error: extracts Phase 2 failure-mode vocabulary fields from
+    ``ProxyClientError.detail`` when present (``code``, ``content_type``,
+    ``body_preview``, ``stall_timeout_seconds``, ``chunks_received``,
+    ``partial_content``) and emits ``pipeline.failed``. Falls back to
+    ``streaming_upstream_error`` when no ``detail.code`` is available.
+    """
+    if error is None:
+        synthetic_body = {
+            "id": f"chatcmpl-pipeline-stream-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "created": int(start_time),
+            "model": str(context.selected_model),
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": usage or {},
+        }
+        synthetic_response = Response(
+            content=json.dumps(synthetic_body),
+            media_type="application/json",
+            status_code=200,
+        )
+        await emit_pipeline_completed_events(
+            proxy.event_bus,
+            context,
+            model_id=model_id,
+            gateway_url=proxy.gateway_url,
+            response=synthetic_response,
+            start_time=start_time,
+        )
+        return
+
+    error_detail: dict[str, Any] = {
+        "error_type": type(error).__name__,
+        "message": str(error),
+        "pipeline_id": str(context.selected_model),
+        "partial_content": bool(content),
+    }
+    detail = getattr(error, "detail", None)
+    if isinstance(detail, dict):
+        code = detail.get("code")
+        if isinstance(code, str):
+            error_detail["code"] = code
+        for key in (
+            "content_type",
+            "body_preview",
+            "stall_timeout_seconds",
+            "chunks_received",
+        ):
+            if key in detail:
+                error_detail[key] = detail[key]
+        if "partial_content" in detail:
+            error_detail["partial_content"] = bool(detail["partial_content"])
+    error_detail.setdefault("code", "streaming_upstream_error")
+
+    await emit_pipeline_failed_events(
+        proxy.event_bus,
+        context,
+        model_id=model_id,
+        gateway_url=proxy.gateway_url,
+        error=error,
+        error_detail=error_detail,
+    )
 
 
 def _wrap_pipeline_response_as_sse(
@@ -243,6 +450,28 @@ async def execute_pipeline_chat_completion(
     )
     try:
         response = await proxy.pipeline_executor.execute(context)
+
+        # Terminal-passthrough streaming: when the executor surfaced a
+        # streaming StepOutput on the terminal step (via
+        # ``context.pipeline_spec`` + ``context._pipeline_outputs``), build a
+        # StreamingResponse driven by the chunk iterator. Lifecycle events
+        # emit at stream-end inside the generator. Falls through to the
+        # buffered path otherwise.
+        # See ``plan:pipeline-terminal-passthrough-streaming`` Phase 4.
+        terminal_output = _terminal_step_output(context)
+        if terminal_output is not None and terminal_output.stream is not None:
+            pipeline_spec = context.pipeline_spec  # type: ignore[attr-defined]
+            execution_id_header = response.headers.get("X-Pipeline-Execution-Id")
+            return _build_passthrough_streaming_response(
+                proxy=proxy,
+                context=context,
+                model_id=model_id,
+                terminal_output=terminal_output,
+                pipeline_id=pipeline_spec.id,
+                execution_id=execution_id_header,
+                start_time=start_time,
+            )
+
         await emit_pipeline_completed_events(
             proxy.event_bus,
             context,
