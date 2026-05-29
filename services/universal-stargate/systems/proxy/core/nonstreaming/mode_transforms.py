@@ -218,7 +218,6 @@ async def prepare_master_mode(
     context.modified_request = build_federation_forward_payload(
         preparer, context, filtered_messages
     )
-    context.client_wants_streaming = context.original_request.get("stream", False)
 
     logger.debug(
         f"Master mode preparation complete: {len(filtered_messages)} messages, "
@@ -372,4 +371,3 @@ async def prepare_normal_mode(
     preparer.builder.build_request_data(
         context, processed_messages, transformation_metadata
     )
-    context.client_wants_streaming = context.raw_client_fields.get("stream", False)

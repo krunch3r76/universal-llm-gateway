@@ -19,6 +19,8 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from universal_logging import get_logger
 
+from src.core.streaming.stream_flag import client_requested_stream
+
 from ..cloud_passthrough import _get_cloud_forwarder
 
 logger = get_logger(__name__)
@@ -102,7 +104,7 @@ async def _passthrough(
         if val is not None:
             forwarded_headers[header_name] = val
 
-    streaming = bool(body.get("stream", False))
+    streaming = client_requested_stream(body)
     try:
         if streaming:
 

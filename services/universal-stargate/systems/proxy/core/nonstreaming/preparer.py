@@ -398,7 +398,6 @@ class RequestPreparer:
             )
 
         context.modified_request = request_data
-        context.client_wants_streaming = request_data.get("stream", False)
         context.model_metadata = None
 
     def _set_sticky_policy(self, context: RequestContext) -> None:

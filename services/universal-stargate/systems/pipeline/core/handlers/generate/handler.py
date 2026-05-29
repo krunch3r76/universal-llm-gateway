@@ -95,7 +95,7 @@ class GenericGenerateHandler(BaseHandler):
         # invariant locally and protects against future predicate drift.
         # No model fallback on this branch — see invoke_model_streaming
         # docstring.
-        outer_stream = bool(context.runtime_options.get("stream"))
+        outer_stream = context.runtime_options.get("stream", False)
         if (
             outer_stream
             and context.pipeline.is_stream_passthrough_eligible

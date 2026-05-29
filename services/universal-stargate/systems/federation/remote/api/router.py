@@ -15,6 +15,8 @@ from model_id import ModelId, get_compute_type
 from universal_logging import get_logger
 from universal_protocol import ErrorCode, error_envelope, get_http_status
 
+from src.core.streaming.stream_flag import client_requested_stream
+
 from ...common.config import FederationConfig
 from ...common.types import HEADER_REQUEST_ID
 from .edge_relay_forwarding import (
@@ -89,7 +91,7 @@ def create_inference_router(
                 request_id = federation.get("request_id", request_id)
 
                 # Check if client requested streaming
-                is_streaming = original_request.get("stream", False)
+                is_streaming = client_requested_stream(original_request)
 
                 logger.debug(
                     "📡 Forwarding inference to Edge (Unix): %s streaming=%s",
@@ -246,7 +248,7 @@ def create_inference_router(
                 )
 
             # Step 4: Forward to gateway
-            stream = original_request.get("stream", False)
+            stream = client_requested_stream(original_request)
 
             # Embeddings and rerank are always non-streaming
             if endpoint in ("/v1/embeddings", "/v1/rerank"):

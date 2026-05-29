@@ -20,9 +20,16 @@ if TYPE_CHECKING:
 
     from src.schemas.chat_completion import ChatCompletionRequest
 
+from src.core.streaming.stream_flag import client_requested_stream
+
 from ..errors import RequestErrorBuilder
 
 logger = get_logger(__name__)
+
+
+def _coerce_stream_flag(request_body: dict[str, Any]) -> None:
+    """Single normalization boundary: only JSON boolean true enables streaming."""
+    request_body["stream"] = client_requested_stream(request_body)
 
 
 async def extract_original_request(
@@ -53,21 +60,18 @@ async def extract_original_request(
     """
     # Method 1: Try raw body bytes from middleware (BEFORE FastAPI/Pydantic processing)
     result = _try_raw_body_bytes(request)
-    if result is not None:
-        return result
+    if result is None:
+        # Method 2: Try request.json() (may be corrupted by FastAPI caching)
+        result = await _try_request_json(request)
+    if result is None:
+        # Method 3: Fallback to Pydantic __pydantic_extra__ (for extra="allow" fields)
+        result = _try_pydantic_extra(chat_request)
+    if result is None:
+        # Method 4: Last resort - model_dump (will be corrupted)
+        result = _fallback_model_dump(chat_request)
 
-    # Method 2: Try request.json() (may be corrupted by FastAPI caching)
-    result = await _try_request_json(request)
-    if result is not None:
-        return result
-
-    # Method 3: Fallback to Pydantic __pydantic_extra__ (for extra="allow" fields)
-    result = _try_pydantic_extra(chat_request)
-    if result is not None:
-        return result
-
-    # Method 4: Last resort - model_dump (will be corrupted)
-    return _fallback_model_dump(chat_request)
+    _coerce_stream_flag(result)
+    return result
 
 
 def _try_raw_body_bytes(request: Request) -> dict[str, Any] | None:
