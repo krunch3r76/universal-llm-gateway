@@ -42,6 +42,14 @@ from .workflow_state import (
 
 logger = get_logger("cortex-api.entity_crud")
 
+# Mirror of _COHERENCE_RULES keys in dispatch_ops/_detectors/workflow_coherence.py.
+# A workflow-typed entity whose status='confirmed' carries adopted/canonical
+# semantics is born PROVISIONAL so its birth state (provisional+initial_state)
+# is coherent; adoption advances both axes together via entity_update.
+# ∀ type ∈ _PROVISIONAL_BIRTH_TYPES: birth default = "provisional" (not "confirmed").
+# Widen this set only after a dependency check scoped to the candidate type.
+_PROVISIONAL_BIRTH_TYPES = frozenset({"decision"})
+
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
 
 
@@ -339,6 +347,11 @@ def create_entity_impl(
         if schema is not None:
             workflow_state = str(schema["initial_state"])
 
+    default_status = (
+        "provisional" if body.type in _PROVISIONAL_BIRTH_TYPES else "confirmed"
+    )
+    status = body.status or default_status
+
     conn.execute(
         "INSERT INTO entities (id, type, name, description, status, "
         "workflow_state, aliases, "
@@ -351,7 +364,7 @@ def create_entity_impl(
             body.type,
             body.name,
             body.description,
-            body.status or "confirmed",
+            status,
             workflow_state,
             json_encode(body.aliases),
             json_encode(body.attributes),
