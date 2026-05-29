@@ -207,12 +207,14 @@ def register_manage_tools(mcp: FastMCP) -> None:
         action: str,
         service: str = "",
         timeout: float = 120.0,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
         action: lifecycle action (see table below)
         service: service name (required for most actions)
         timeout: seconds to wait for wait_healthy (default 120)
+        force: bypass the drain check for stop/restart/sync_restart (default False)
 
         Actions:
           status        (no service needed) — running/stopped for all services
@@ -231,6 +233,13 @@ def register_manage_tools(mcp: FastMCP) -> None:
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, grokbuild_worker
+
+        Drain gate: stop/restart/sync_restart are deferred when the target has
+        in-flight work (e.g. a running async pipeline on stargate, a build on
+        grokbuild_worker). A deferral returns
+        {"status":"deferred","state","service","reason","retry_after_s",
+        "active_work"} where state ∈ {busy, in_progress, probe_error}. Honor
+        retry_after_s and retry, or pass force=true to preempt in-flight work.
 
         Self-restart caveat: sync_restart(service="mcp") returns
         "rebuild_scheduled" then recreates the container in background. During
@@ -275,6 +284,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["service"] = service
         if action == "wait_healthy":
             params["timeout"] = timeout
+        if force and action in {"stop", "restart", "sync_restart"}:
+            params["force"] = True
 
         # Long-running actions hold the connection open until done; extend socket timeout.
         sock_timeout = (

@@ -408,8 +408,9 @@ def _op_session_close(
     ``transcript_depth`` (default ``"verbatim"``) selects the archival
     layer — ``light`` writes a structural-only file with the transcript
     entity flagged as non-enrichment-eligible; ``none`` writes no file
-    and no transcript entity, only the journal row (plus continues
-    edge / handoff entry without ``handoff_for`` link when applicable).
+    and no transcript entity, only the journal row (plus the continues
+    edge; ``handoff_prompt``, when supplied, is persisted on the journal
+    row regardless of depth).
     Continuity is preserved at all depths.
 
     See session-close-server-side-transcript Phase 2 for the architecture

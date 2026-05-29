@@ -4,6 +4,7 @@ Remote operations (deploy, restart remotes) live on the Home topology panel.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -13,6 +14,7 @@ from textual.timer import Timer
 from textual.widgets import Button, Footer, Header, Select, Static
 
 from ...controller.operation_log import tee_with_summary
+from ...controller.restart_drain import run_gated
 from ...controller.service_config import (
     is_agent_bus_configured,
     is_cloud_proxy_configured,
@@ -21,6 +23,7 @@ from ...controller.service_config import (
     is_mcp_configured,
     is_rag_configured,
 )
+from ...manage_events import ManageRestartDeferred
 from ...model.service_state import ServiceOwnership, ServiceStatus
 from ..widgets.log_stream import LogStream
 
@@ -44,6 +47,7 @@ class ServicesScreen(Screen):
 
     _poll_timer: Timer | None = None
     _POLL_INTERVAL = 2.0
+    _force_armed: bool = False
 
     def action_pop_screen(self) -> None:
         self.app.pop_screen()
@@ -192,6 +196,7 @@ class ServicesScreen(Screen):
                 yield Button(
                     "Sync + Restart Local", id="btn-restart-local", variant="warning"
                 )
+                yield Button("Force: OFF", id="btn-force-toggle", variant="default")
             with Horizontal(classes="svc-button-row"):
                 yield Button(
                     "Start Email Bridge",
@@ -340,6 +345,11 @@ class ServicesScreen(Screen):
                     self.run_worker(self._stop_grokbuild_worker(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
+            case "btn-force-toggle":
+                self._force_armed = not self._force_armed
+                btn = self.query_one("#btn-force-toggle", Button)
+                btn.label = f"Force: {'ON' if self._force_armed else 'OFF'}"
+                btn.variant = "warning" if self._force_armed else "default"
             case "btn-refresh":
                 self._refresh_status()
             case "btn-back":
@@ -444,7 +454,9 @@ class ServicesScreen(Screen):
         mcp = svc.service_state.check_mcp() if mcp_cfg else None
         cortex = svc.service_state.check_cortex_api() if cortex_cfg else None
         agent_bus = svc.service_state.check_agent_bus() if bus_cfg else None
-        email_bridge = svc.service_state.check_email_bridge() if email_bridge_cfg else None
+        email_bridge = (
+            svc.service_state.check_email_bridge() if email_bridge_cfg else None
+        )
 
         if mcp is not None:
             self.query_one("#svc-mcp", Static).update(
@@ -571,21 +583,89 @@ class ServicesScreen(Screen):
         val = self.query_one("#cache-target", Select).value
         return str(val) if val != Select.BLANK else "gateway"
 
+    async def _render_deferral(self, action: str, service: str, result: dict) -> None:
+        """Log a drain-gate deferral and emit manage.restart.deferred (TUI path)."""
+        log = self.query_one("#svc-log", LogStream)
+        log.write_line(
+            f"[{service}] {action} deferred ({result.get('state')}): "
+            f"{result.get('reason')} — enable Force to override."
+        )
+        bus = self.app.event_bus  # type: ignore[attr-defined]
+        if bus is not None:
+            await bus.publish(
+                ManageRestartDeferred(
+                    method=action,
+                    service=service,
+                    state=str(result.get("state", "")),
+                    reason=str(result.get("reason", "")),
+                    retry_after_s=int(result.get("retry_after_s", 30)),
+                )
+            )
+
+    def _consume_force(self) -> None:
+        """One-shot: disarm Force after a forced action actually ran."""
+        if not self._force_armed:
+            return
+        self._force_armed = False
+        tbtn = self.query_one("#btn-force-toggle", Button)
+        tbtn.label = "Force: OFF"
+        tbtn.variant = "default"
+
+    async def _run_gated_action(
+        self,
+        action: str,
+        service: str,
+        lifecycle: Callable[[], Awaitable[str]],
+    ) -> bool:
+        """Run a single-service gated TUI lifecycle action through the shared gate.
+
+        Renders the lifecycle message (proceed) or the deferral reason; emits
+        manage.restart.deferred on a deferral; consumes the one-shot Force arming.
+        Returns True iff it proceeded.
+        """
+        svc = self.app.service_controller  # type: ignore[attr-defined]
+        force = self._force_armed
+        result = await run_gated(
+            svc.restart_gate, action, service, force=force, lifecycle=lifecycle
+        )
+        if result.get("status") == "deferred":
+            await self._render_deferral(action, service, result)
+            return False
+        self.query_one("#svc-log", LogStream).write_line(str(result.get("message", "")))
+        self._consume_force()
+        return True
+
     async def _restart_local(self) -> None:
-        """Stop and restart local gateway + stargate only."""
+        """Stop and restart local gateway + stargate only (drain-gated)."""
         log = self.query_one("#svc-log", LogStream)
         log.clear()
         svc = self.app.service_controller  # type: ignore[attr-defined]
+        gate = svc.restart_gate
+        force = self._force_armed
 
-        log.write_line("[localhost] Stopping services...")
-        log.write_line(await svc.stop_stargate())
-        log.write_line(await svc.stop_gateway())
-        await asyncio.sleep(1)
-        log.write_line("[localhost] Starting gateway...")
-        log.write_line(await svc.start_gateway())
-        await asyncio.sleep(2)
-        log.write_line("[localhost] Starting stargate...")
-        log.write_line(await svc.start_stargate())
+        sg = await gate.evaluate("stargate", force=force)
+        if sg is not None:
+            await self._render_deferral("restart", "stargate", sg.to_result())
+            return
+        gw = await gate.evaluate("gateway", force=force)
+        if gw is not None:
+            await gate.release("stargate")
+            await self._render_deferral("restart", "gateway", gw.to_result())
+            return
+        try:
+            log.write_line("[localhost] Stopping services...")
+            log.write_line(await svc.stop_stargate())
+            log.write_line(await svc.stop_gateway())
+            await asyncio.sleep(1)
+            log.write_line("[localhost] Starting gateway...")
+            log.write_line(await svc.start_gateway())
+            await asyncio.sleep(2)
+            log.write_line("[localhost] Starting stargate...")
+            log.write_line(await svc.start_stargate())
+        finally:
+            await gate.release("gateway")
+            await gate.release("stargate")
+        self._consume_force()
         self._refresh_status()
 
     async def _build(self, scope: str) -> None:
@@ -616,8 +696,7 @@ class ServicesScreen(Screen):
 
     async def _stop_gateway(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_gateway()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action("stop", "gateway", lambda: svc.stop_gateway())
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -632,10 +711,13 @@ class ServicesScreen(Screen):
 
     async def _stop_stargate(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        sidecar_result = await svc.sidecar.stop()
-        self.query_one("#svc-log", LogStream).write_line(sidecar_result)
-        result = await svc.stop_stargate()
-        self.query_one("#svc-log", LogStream).write_line(result)
+
+        async def _lifecycle() -> str:
+            sidecar_result = await svc.sidecar.stop()
+            stop_result = await svc.stop_stargate()
+            return f"{sidecar_result}\n{stop_result}"
+
+        await self._run_gated_action("stop", "stargate", _lifecycle)
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -648,8 +730,7 @@ class ServicesScreen(Screen):
 
     async def _stop_rag(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_rag()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action("stop", "rag", lambda: svc.stop_rag())
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -662,8 +743,9 @@ class ServicesScreen(Screen):
 
     async def _stop_cloud_proxy(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_cloud_proxy()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action(
+            "stop", "cloud_proxy", lambda: svc.stop_cloud_proxy()
+        )
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -690,8 +772,9 @@ class ServicesScreen(Screen):
 
     async def _stop_event_service(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_event_service()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action(
+            "stop", "event_service", lambda: svc.stop_event_service()
+        )
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -704,8 +787,7 @@ class ServicesScreen(Screen):
 
     async def _stop_mcp(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_mcp()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action("stop", "mcp", lambda: svc.stop_mcp())
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -718,8 +800,9 @@ class ServicesScreen(Screen):
 
     async def _stop_cortex_api(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_cortex_api()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action(
+            "stop", "cortex_api", lambda: svc.stop_cortex_api()
+        )
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -732,8 +815,7 @@ class ServicesScreen(Screen):
 
     async def _stop_agent_bus(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_agent_bus()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action("stop", "agent_bus", lambda: svc.stop_agent_bus())
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -746,8 +828,9 @@ class ServicesScreen(Screen):
 
     async def _stop_email_bridge(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_email_bridge()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action(
+            "stop", "email_bridge", lambda: svc.stop_email_bridge()
+        )
         await asyncio.sleep(2)
         self._refresh_status()
 
@@ -760,8 +843,9 @@ class ServicesScreen(Screen):
 
     async def _stop_grokbuild_worker(self) -> None:
         svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.stop_grokbuild_worker()
-        self.query_one("#svc-log", LogStream).write_line(result)
+        await self._run_gated_action(
+            "stop", "grokbuild_worker", lambda: svc.stop_grokbuild_worker()
+        )
         await asyncio.sleep(2)
         self._refresh_status()
 

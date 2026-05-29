@@ -21,6 +21,7 @@ from scripts.model_manager.observation_event import (
 
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
 from ...model.service_state import ServiceState
+from ..restart_drain import RestartDrainGate
 from ..service_config import (
     GATEWAY_DIR,
     NODES_DIR,
@@ -110,10 +111,18 @@ class ServiceController:
         # must skip until the new container is healthy). Avoids substring-matching
         # against the user-facing rebuild_mcp return string in api_dispatch.
         self._last_mcp_rebuild_scheduled: bool = False
+        # Drain-aware restart coordination — persists across manage calls so the
+        # per-service restart mutex coalesces concurrent agents / TUI.
+        self._restart_gate = RestartDrainGate()
 
     @property
     def service_state(self) -> ServiceState:
         return self._service_state
+
+    @property
+    def restart_gate(self) -> RestartDrainGate:
+        """Shared drain-aware restart gate (busy probe + per-service mutex)."""
+        return self._restart_gate
 
     @property
     def mcp_rebuild_scheduled(self) -> bool:

@@ -225,6 +225,14 @@ class InFlightRequestTracker:
         """Get count of in-flight requests on a gateway."""
         return len(self._in_flight_requests.get(gateway_id, set()))
 
+    def get_total_in_flight(self) -> int:
+        """Count in-flight requests across ALL gateways.
+
+        Used by the drain-aware restart gate to decide whether Stargate has
+        active request work before a manage-initiated stop/restart.
+        """
+        return sum(len(reqs) for reqs in self._in_flight_requests.values())
+
     def get_routing_keys_in_use_globally(self) -> set[str]:
         """
         Get routing_keys with in-flight requests across ALL gateways.

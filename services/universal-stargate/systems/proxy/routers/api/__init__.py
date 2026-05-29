@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from .admin_active_work import router as admin_active_work_router
 from .admission_state import router as admission_state_router
 from .gateways import router as gateways_router
 from .grokbuild import router as grokbuild_router
@@ -38,6 +39,7 @@ router.include_router(rag_coverage_router)
 router.include_router(rag_chunks_by_index_router)
 router.include_router(rag_articles_router)
 router.include_router(rerank_router)
+router.include_router(admin_active_work_router)
 router.include_router(admission_state_router)
 router.include_router(model_capacity_router)
 router.include_router(grokbuild_router)

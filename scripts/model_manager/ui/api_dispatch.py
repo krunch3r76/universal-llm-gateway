@@ -12,6 +12,8 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from .controller.restart_drain import run_gated
+
 if TYPE_CHECKING:
     from .controller.service_ctl.core import ServiceController
     from .model.service_state import ServiceInfo, ServiceState
@@ -97,14 +99,23 @@ async def execute(
 
         case "stop":
             require_service(service)
-            msg = await _stop(ctl, service)
-            return {"status": "ok", "message": msg}
+            return await run_gated(
+                ctl.restart_gate,
+                "stop",
+                service,
+                force=bool(params.get("force", False)),
+                lifecycle=lambda: _stop(ctl, service),
+            )
 
         case "restart":
             require_service(service)
-            stop_msg = await _stop(ctl, service)
-            start_msg = await _start(ctl, service)
-            return {"status": "ok", "message": f"{stop_msg}\n{start_msg}"}
+            return await run_gated(
+                ctl.restart_gate,
+                "restart",
+                service,
+                force=bool(params.get("force", False)),
+                lifecycle=lambda: _restart_cycle(ctl, service),
+            )
 
         case "rebuild":
             require_service(service)
@@ -123,8 +134,13 @@ async def execute(
                     f"sync_restart not supported for '{service}'; "
                     f"supported: {', '.join(sorted(SYNC_RESTART_SERVICES))}"
                 )
-            msg = await _sync_restart(ctl, service)
-            return {"status": "ok", "message": msg}
+            return await run_gated(
+                ctl.restart_gate,
+                "sync_restart",
+                service,
+                force=bool(params.get("force", False)),
+                lifecycle=lambda: _sync_restart(ctl, service),
+            )
 
         case _:
             raise ValueError(
@@ -199,6 +215,17 @@ async def _stop(ctl: ServiceController, service: str) -> str:
     if service not in VALID_SERVICES:
         raise ValueError(f"Unknown service: '{service}'")
     return await getattr(ctl, f"stop_{service}")()
+
+
+async def _restart_cycle(ctl: ServiceController, service: str) -> str:
+    """Stop then start a service (the 'restart' action), returning a combined message.
+
+    Packaged so `run_gated` holds the restart-mutex slot across the full
+    stop→start cycle and releases it once both complete.
+    """
+    stop_msg = await _stop(ctl, service)
+    start_msg = await _start(ctl, service)
+    return f"{stop_msg}\n{start_msg}"
 
 
 async def _rebuild(ctl: ServiceController, service: str) -> str:

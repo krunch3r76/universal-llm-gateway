@@ -54,9 +54,7 @@ def _configure_manage_api_logging() -> None:
     agents can read after the fact.
     """
     api_logger = logging.getLogger("scripts.model_manager.ui.api_server")
-    if any(
-        getattr(h, "_manage_api_handler", False) for h in api_logger.handlers
-    ):
+    if any(getattr(h, "_manage_api_handler", False) for h in api_logger.handlers):
         return
     _MANAGE_API_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(
@@ -133,6 +131,11 @@ class ModelManagerApp(App):
     @property
     def service_controller(self) -> ServiceController:
         return self._service_controller
+
+    @property
+    def event_bus(self) -> EventBus | None:
+        """Shared manage EventBus (None until on_mount wires it)."""
+        return self._event_bus
 
     @property
     def onboarding(self) -> OnboardingController:

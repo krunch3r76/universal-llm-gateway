@@ -15,6 +15,7 @@ from pathlib import Path
 from ...model.service_state import ServiceState
 from ..service_config import (
     GATEWAY_DIR,
+    apply_host_service_logging_env,
     build_service_env,
     ensure_event_service_config,
     ensure_socket_dir,
@@ -117,6 +118,9 @@ async def start_event_service(
         existing_pythonpath = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = (
             f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
+        )
+        apply_host_service_logging_env(
+            env, log_dir=_LOG_DIR, log_filename=_LOG_FILENAME
         )
 
         cmd_args: list[str] = [

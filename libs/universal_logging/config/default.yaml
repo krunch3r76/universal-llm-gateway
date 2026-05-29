@@ -1,10 +1,6 @@
 version: 1
 disable_existing_loggers: false
-
-# Global logging settings
-logging:
-  level: ${LOG_LEVEL:-INFO}
-  truncate_logs: ${TRUNCATE_LOGS:-false}
+truncate_logs: ${TRUNCATE_LOGS:-false}
 
 formatters:
   json:
@@ -33,6 +29,16 @@ handlers:
     mode: a
 
 loggers:
+  aiosqlite:
+    level: WARNING
+  httpcore:
+    level: WARNING
+  httpx:
+    level: WARNING
+  watchfiles:
+    level: WARNING
+  urllib3:
+    level: WARNING
   universal_logging:
     level: ${LOG_LEVEL:-INFO}
     handlers: [console, file]
@@ -40,4 +46,4 @@ loggers:
 
 root:
   level: ${LOG_LEVEL:-INFO}
-  handlers: [console, file, error_file] 
+  handlers: [console, file, error_file]

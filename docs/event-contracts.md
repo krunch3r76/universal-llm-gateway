@@ -2697,12 +2697,14 @@ on every lifecycle operation received over `manage.sock`.
 | `manage.service.requested` | observation | global | API request received, before execution |
 | `manage.service.completed` | observation | global | Operation finished successfully |
 | `manage.service.failed` | observation | global | Operation raised an error |
+| `manage.restart.deferred` | observation | global | Stop/restart/sync_restart deferred by the drain gate (busy / in_progress / probe_error) |
 
 ### Payload Keys
 
 `manage.service.requested`: `method` (str), `service` (str)
 `manage.service.completed`: `method` (str), `service` (str), `duration_s` (float)
 `manage.service.failed`: `method` (str), `service` (str), `error` (str), `duration_s` (float)
+`manage.restart.deferred`: `method` (str), `service` (str), `state` (str ∈ {busy, in_progress, probe_error}), `reason` (str), `retry_after_s` (int)
 
 ### MCP Layer Signals
 

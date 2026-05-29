@@ -12,7 +12,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from ...model.service_state import ServiceState
-from ..service_config import GATEWAY_DIR, build_service_env, ensure_socket_dir
+from ..service_config import (
+    GATEWAY_DIR,
+    apply_host_service_logging_env,
+    build_service_env,
+    ensure_socket_dir,
+)
 from .utils import (
     _acquire_lock,
     _find_uvicorn_pid_by_cmdline,
@@ -125,6 +130,7 @@ async def _start_uvicorn_service(
         )
         if extra_env:
             env.update(extra_env)
+        apply_host_service_logging_env(env, log_dir=log_dir, log_filename=log_filename)
 
         uvicorn_args: list[str] = ["-m", "uvicorn", app_module]
         if uds_mode and socket_path is not None:

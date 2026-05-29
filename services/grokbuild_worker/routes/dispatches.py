@@ -83,6 +83,28 @@ def _get_tracker(request: Request) -> GrokbuildExecutionTracker:
 
 
 @router.get(
+    "/active-work",
+    summary="Aggregate in-flight build count for drain-aware restart.",
+    responses={
+        503: {"model": _DispatchErrorResponse, "description": "Tracker unavailable"}
+    },
+)
+async def get_active_work(request: Request) -> JSONResponse:
+    """Return pending+running dispatch count so the manage drain gate can
+    defer a grokbuild-worker restart while builds are in flight."""
+    tracker = _get_tracker(request)
+    running = tracker.running_count
+    return JSONResponse(
+        status_code=200,
+        content={
+            "running": running,
+            "capacity": tracker.capacity,
+            "busy": running > 0,
+        },
+    )
+
+
+@router.get(
     "/dispatches/{dispatch_id}/result",
     summary="Fetch the result envelope for a completed dispatch.",
     responses={

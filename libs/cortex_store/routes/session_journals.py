@@ -38,7 +38,6 @@ from ..transcript_assembly import (
     compute_text_content_hash,
     resolve_jsonl_path,
 )
-from .reflective_journal import _insert_journal_link_tx, _insert_reflective_entry_tx
 
 logger = get_logger("cortex-api.session_journals")
 router = APIRouter(prefix="/session-journals", tags=["session-journals"])
@@ -223,8 +222,8 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
         cur = conn.execute(
             "INSERT INTO session_journals "
             "(timestamp, agent, summary, domains, decisions, open_items, "
-            "entity_ids, file_path, session_id, prior_session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "entity_ids, file_path, session_id, prior_session_id, handoff_prompt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 body.timestamp,
                 body.agent,
@@ -236,6 +235,7 @@ def create_session_journal(body: SessionJournalCreate) -> SessionJournalItem:
                 body.file_path,
                 transcript_id,
                 body.prior_session_id,
+                body.handoff_prompt,
             ),
         )
         conn.commit()
@@ -622,9 +622,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
     # ── derive values ──
     transcript_entity_id: str | None = (
-        None
-        if body.transcript_depth == "none"
-        else f"transcript:{body.session_id}"
+        None if body.transcript_depth == "none" else f"transcript:{body.session_id}"
     )
     transcript_path: str | None = (
         None
@@ -718,7 +716,6 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         entity_name += "…"
 
     conn = cortex_conn()
-    handoff_entry_id: int | None = None
     journal_row_id = 0
     audit_warnings: list[dict] | None = None
     try:
@@ -751,8 +748,8 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         cur = conn.execute(
             "INSERT INTO session_journals "
             "(timestamp, agent, summary, domains, decisions, open_items, "
-            "entity_ids, file_path, session_id, prior_session_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "entity_ids, file_path, session_id, prior_session_id, handoff_prompt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 now,
                 body.agent,
@@ -764,6 +761,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 transcript_path,  # None for depth=none
                 body.session_id,
                 body.prior_session_id,
+                handoff_prompt,
             ),
         )
         journal_row_id = cur.lastrowid or 0
@@ -779,25 +777,10 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 conn, body.session_id, body.prior_session_id, body.agent, now
             )
 
-        if handoff_prompt:
-            handoff_entry_id = _insert_reflective_entry_tx(
-                conn,
-                agent=body.agent,
-                register="self",
-                entry=handoff_prompt,
-                kind="handoff",
-                session_id=body.session_id,
-            )
-            # Link the handoff entry only when a transcript entity exists.
-            # For depth=none, the handoff entry stands alone with
-            # session_id set; retrieval-by-session is unaffected.
-            if transcript_entity_id is not None:
-                _insert_journal_link_tx(
-                    conn,
-                    from_entry=handoff_entry_id,
-                    to_entity=transcript_entity_id,
-                    link_type="handoff_for",
-                )
+        # handoff_prompt is persisted on the session_journals row above
+        # (see the INSERT). No reflective_journal entry is written —
+        # forward-pickup is session continuity, not reflection
+        # (decision:rj-handoff-kind-retirement, agent-bus thread 1107).
 
         conn.commit()
         findings = _audit_normalization_refusals_for_session(conn, body.session_id)
@@ -851,7 +834,6 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
     return SessionCloseResponse(
         transcript_entity_id=transcript_entity_id,
-        handoff_entry_id=handoff_entry_id,
         transcript_path=transcript_path,
         journal_row_id=journal_row_id,
         session_id=body.session_id,
