@@ -75,7 +75,8 @@ GRAPH_ONLY_KINDS = {
     # entities touched in the session. Advisory, never blocking.
     "confirmed_entity_no_assertions",
     "confirmed_attribute_no_assertion",
-    # Skill-manifest structural drift — see migration 041.
+    # Skill-manifest structural drift — see migrations 041 + 045 (covers
+    # project / plan / plan_phase / todo).
     "project_required_skills_no_relationship",
     # v1.3.1 normalization ledger Path 2 detector
     "unresolved_bare_token_in_predicate_form",
