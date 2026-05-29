@@ -302,8 +302,7 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
          in depth; should always pass when assembly succeeded).
       6. Idempotency check on ``session_journals.session_id``.
       7. Write the file under ``notes/system/transcripts/{session_id}.md``.
-      8. Atomic DB tx: entity + journal row + ``continues`` edge +
-         optional handoff entry.
+      8. Atomic DB tx: entity + journal row + ``continues`` edge.
       9. Compute ``content_hash`` of the on-disk markdown and return.
 
     ``body.transcript_depth`` (default ``"verbatim"``) selects the
@@ -314,8 +313,9 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         verbatim assembly. Transcript entity carries
         ``attributes.transcript_depth="light"``.
       - ``none``: no file, no transcript entity. Journal row written
-        with ``file_path=NULL``; continues edge + handoff entry written
-        per the universal continuity path (without ``handoff_for`` link).
+        with ``file_path=NULL``; continues edge written per the universal
+        continuity path. handoff_prompt, when supplied, is persisted on
+        the journal row.
         Response transcript_entity_id / transcript_path / content_hash
         are null.
 

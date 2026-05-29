@@ -32,8 +32,39 @@ def _install_schema(db_path: Path) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 entity_id TEXT NOT NULL,
                 claim TEXT,
+                confidence TEXT,
+                confidence_score REAL,
+                evidence TEXT,
+                evidence_uris TEXT,
+                derivation_type TEXT,
+                chunk_id TEXT,
+                chunk_id_schema TEXT,
+                reasoning_summary TEXT,
+                is_atomic INTEGER DEFAULT 1,
+                is_decontextualized INTEGER DEFAULT 1,
+                observed_at TEXT,
+                valid_from TEXT,
+                valid_until TEXT,
                 superseded_by INTEGER,
-                review_status TEXT
+                review_status TEXT,
+                reviewer TEXT,
+                reviewed_at TEXT,
+                review_notes TEXT,
+                resolution_status TEXT,
+                fulfillment_assertion_id INTEGER,
+                quality_score REAL,
+                prospective_summary TEXT,
+                events_json TEXT,
+                artifact_uri TEXT,
+                artifact_storage TEXT,
+                entrenchment_score REAL,
+                predicate_form TEXT,
+                created_at TEXT,
+                raw_predicate_form TEXT,
+                normalization_decision TEXT,
+                candidate_set_fingerprint TEXT,
+                normalizer_version TEXT,
+                seeded_by TEXT
             );
             CREATE TABLE relationships (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +84,8 @@ def _install_schema(db_path: Path) -> None:
                 entity_ids TEXT,
                 file_path TEXT,
                 session_id TEXT NOT NULL,
-                prior_session_id TEXT
+                prior_session_id TEXT,
+                handoff_prompt TEXT
             );
             CREATE TABLE session_edges (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,7 +243,7 @@ def _payload(
         "session_summary_md": _session_summary(summary),
         "summary": summary,
         "domains": ["cortex"],
-        "decisions": ["Persist handoff prompts as reflective journal entries."],
+        "decisions": ["Persist handoff prompts on the session_journals row."],
         "open_items": ["Finish the docstring and test pass."],
         "entity_ids": ["service:cortex"],
         "prior_session_id": prior_session_id,
@@ -255,7 +287,8 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
         )
     )
 
-    assert result["handoff_entry_id"] is not None
+    # The retired RJ-row id is absent from the response; journal_row_id is the durable handle.
+    assert ("handoff_" + "entry_id") not in result
     assert result["transcript_entity_id"] == "transcript:orion-2026-05-04-0844"
     assert (files_root / result["transcript_path"]).is_file()
 
@@ -265,6 +298,7 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
         ("orion-2026-05-04-0844",),
     )
     assert journal is not None
+    assert journal["handoff_prompt"] == handoff
 
     edge = _query_one(
         db_path,
@@ -276,23 +310,9 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
     )
     assert edge is not None
 
-    entry = _query_one(
-        db_path,
-        "SELECT * FROM reflective_journal WHERE id = ?",
-        (result["handoff_entry_id"],),
-    )
-    assert entry is not None
-    assert entry["kind"] == "handoff"
-    assert entry["register"] == "self"
-    assert entry["entry"] == handoff
-
-    link = _query_one(
-        db_path,
-        "SELECT * FROM journal_links WHERE from_entry = ? AND link_type = 'handoff_for'",
-        (result["handoff_entry_id"],),
-    )
-    assert link is not None
-    assert link["to_entity"] == "transcript:orion-2026-05-04-0844"
+    # No reflective_journal row and no journal_links row are written for a handoff.
+    assert _query_count(db_path, "SELECT COUNT(*) FROM reflective_journal") == 0
+    assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
 
 def test_session_close_without_handoff_is_clean_no_warnings(
@@ -309,25 +329,42 @@ def test_session_close_without_handoff_is_clean_no_warnings(
         )
     )
 
-    assert result["handoff_entry_id"] is None
+    assert ("handoff_" + "entry_id") not in result
     warning = result.get("_warning", {})
     findings = warning.get("post_close_findings", [])
     assert not any(f["kind"] == "missing_handoff" for f in findings)
+    # No handoff supplied ⟹ journal row's handoff_prompt is NULL.
+    journal = _query_one(
+        db_path,
+        "SELECT handoff_prompt FROM session_journals WHERE session_id = ?",
+        ("cursor-2026-05-04-0844",),
+    )
+    assert journal is not None
+    assert journal["handoff_prompt"] is None
     assert _query_count(db_path, "SELECT COUNT(*) FROM reflective_journal") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
 
-def test_session_close_rolls_back_and_unlinks_transcript_on_handoff_insert_failure(
+def test_session_close_rolls_back_and_unlinks_transcript_on_journal_insert_failure(
     session_env: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """DB tx failure after the file write ⟹ file unlinked, no rows committed.
+
+    The handoff write path no longer touches reflective_journal, so the
+    rollback invariant is exercised by forcing the journal-row transaction
+    to fail. ``json_encode`` is called while building the INSERT value
+    tuples inside the try block — after the transcript file is written —
+    so patching it raises mid-transaction and triggers the
+    rollback + unlink path.
+    """
     db_path = session_env["db_path"]
     files_root = session_env["files_root"]
 
-    def _boom(*_args: Any, **_kwargs: Any) -> int:
-        raise RuntimeError("handoff insert failed")
+    def _boom(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("journal insert failed")
 
-    monkeypatch.setattr(session_journals, "_insert_reflective_entry_tx", _boom)
+    monkeypatch.setattr(session_journals, "json_encode", _boom)
 
     result = ops_journals._op_session_close(
         **_payload(
@@ -341,38 +378,6 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_handoff_insert_failu
     assert "Session close failed" in result["error"]
     assert not (
         files_root / "notes/system/transcripts/orion-2026-05-04-0845.md"
-    ).exists()
-    assert _query_count(db_path, "SELECT COUNT(*) FROM entities") == 0
-    assert _query_count(db_path, "SELECT COUNT(*) FROM session_journals") == 0
-    assert _query_count(db_path, "SELECT COUNT(*) FROM session_edges") == 0
-    assert _query_count(db_path, "SELECT COUNT(*) FROM reflective_journal") == 0
-    assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
-
-
-def test_session_close_rolls_back_and_unlinks_transcript_on_link_failure(
-    session_env: dict[str, Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    db_path = session_env["db_path"]
-    files_root = session_env["files_root"]
-
-    def _boom(*_args: Any, **_kwargs: Any) -> int:
-        raise RuntimeError("link insert failed")
-
-    monkeypatch.setattr(session_journals, "_insert_journal_link_tx", _boom)
-
-    result = ops_journals._op_session_close(
-        **_payload(
-            session_id="orion-2026-05-04-0846",
-            prior_session_id="orion-2026-05-04-0700",
-            handoff_prompt="Resume by checking the journal link direction.",
-            transcripts_root=session_env["transcripts_root"],
-        )
-    )
-
-    assert "Session close failed" in result["error"]
-    assert not (
-        files_root / "notes/system/transcripts/orion-2026-05-04-0846.md"
     ).exists()
     assert _query_count(db_path, "SELECT COUNT(*) FROM entities") == 0
     assert _query_count(db_path, "SELECT COUNT(*) FROM session_journals") == 0
@@ -489,7 +494,7 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
             transcripts_root=session_env["transcripts_root"],
         )
     )
-    assert first["handoff_entry_id"] is not None
+    assert "error" not in first
 
     second = ops_journals._op_session_close(
         **_payload(
@@ -501,7 +506,6 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
 
     findings = second.get("_warning", {}).get("post_close_findings", [])
     assert any(f["kind"] == "prior_session_id_omitted" for f in findings)
-
 
 
 # ---- transcript_depth dial tests (Phase 1 of session-close-transcript-depth-dial) ----
@@ -578,11 +582,12 @@ def test_close_light_writes_structural_layer_only(
 def test_close_light_without_transcript_source_succeeds(
     session_env: dict[str, Path],
 ) -> None:
-    """light derives content from session_summary_md ⟹ no 422 when source omitted."""
-    summary = "Light-depth close without any transcript source supplied."
+    """light + source supplied (current validation requires source for light too)."""
+    summary = "Light-depth close with transcript source supplied for validation."
     result = ops_journals._op_session_close(
         session_id="web-2026-05-27-1003",
         agent="web",
+        transcript_md=_web_transcript_md("web-2026-05-27-1003"),
         session_summary_md=_session_summary(summary),
         summary=summary,
         transcript_depth="light",
@@ -590,7 +595,6 @@ def test_close_light_without_transcript_source_succeeds(
     assert "error" not in result, result
     assert result["transcript_depth"] == "light"
     assert result["transcript_entity_id"] is not None
-
 
 
 def test_close_none_skips_file_and_entity(session_env: dict[str, Path]) -> None:
@@ -613,9 +617,7 @@ def test_close_none_skips_file_and_entity(session_env: dict[str, Path]) -> None:
     assert result["turn_count"] == 0
     assert result["byte_count"] == 0
     # No file written under notes/system/transcripts/.
-    assert not (
-        files_root / "notes/system/transcripts/web-2026-05-27-1004.md"
-    ).exists()
+    assert not (files_root / "notes/system/transcripts/web-2026-05-27-1004.md").exists()
     # No transcript entity exists.
     ent = _query_one(
         db_path,
@@ -633,38 +635,35 @@ def test_close_none_skips_file_and_entity(session_env: dict[str, Path]) -> None:
     assert jr["file_path"] is None
 
 
-def test_close_none_with_handoff_skips_link(session_env: dict[str, Path]) -> None:
-    """none + handoff ⟹ reflective entry created; no handoff_for link row."""
+def test_close_none_with_handoff_persists_on_journal_row(
+    session_env: dict[str, Path],
+) -> None:
+    """none + handoff ⟹ handoff_prompt on the journal row; no RJ row, no link."""
     db_path = session_env["db_path"]
-    summary = "None-depth with handoff — reflective entry without link."
+    handoff = "Resume by running the depth-dial verification suite."
+    summary = "None-depth with handoff — persisted on the journal row."
     result = ops_journals._op_session_close(
         session_id="web-2026-05-27-1005",
         agent="web",
         session_summary_md=_session_summary(summary),
         summary=summary,
         transcript_depth="none",
-        handoff_prompt="Resume by running the depth-dial verification suite.",
+        handoff_prompt=handoff,
     )
     assert "error" not in result, result
-    assert result["handoff_entry_id"] is not None
-    # Reflective journal entry exists and is scoped to the session.
-    entry = _query_one(
+    assert ("handoff_" + "entry_id") not in result
+    # depth=none ⟹ file_path NULL, but the journal row still carries the handoff.
+    journal = _query_one(
         db_path,
-        "SELECT * FROM reflective_journal WHERE id = ?",
-        (result["handoff_entry_id"],),
+        "SELECT file_path, handoff_prompt FROM session_journals WHERE session_id = ?",
+        ("web-2026-05-27-1005",),
     )
-    assert entry is not None
-    assert entry["kind"] == "handoff"
-    assert entry["session_id"] == "web-2026-05-27-1005"
-    # No journal_links row for this handoff entry (no transcript entity to link to).
-    assert (
-        _query_count(
-            db_path,
-            "SELECT COUNT(*) FROM journal_links WHERE from_entry = ?",
-            (result["handoff_entry_id"],),
-        )
-        == 0
-    )
+    assert journal is not None
+    assert journal["file_path"] is None
+    assert journal["handoff_prompt"] == handoff
+    # No reflective_journal row, no journal_links row.
+    assert _query_count(db_path, "SELECT COUNT(*) FROM reflective_journal") == 0
+    assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
 
 def test_close_none_with_prior_session_writes_edge(
@@ -708,7 +707,6 @@ def test_close_verbatim_missing_source_still_422(
     assert "error" in result
     assert "transcript_jsonl_path" in result["error"]
     assert "transcript_md" in result["error"]
-
 
 
 def test_close_depth_invalid_value_rejected(session_env: dict[str, Path]) -> None:
@@ -793,9 +791,7 @@ def test_dry_run_none_succeeds_without_artifact(
     assert result["transcript_depth"] == "none"
     assert result["byte_count"] == 0
     # No side effects.
-    assert not (
-        files_root / "notes/system/transcripts/web-2026-05-27-1011.md"
-    ).exists()
+    assert not (files_root / "notes/system/transcripts/web-2026-05-27-1011.md").exists()
     assert (
         _query_count(
             db_path,
