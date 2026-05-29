@@ -252,7 +252,10 @@ def validate_dispatch(  # noqa: PLR0911, PLR0913 — long admission chain by des
     # 5. cwd + git preconditions (UNCHANGED from prior implementation).
     if not cwd or not os.path.isabs(cwd) or not os.path.isdir(cwd):
         return _reject(
-            "cwd_missing", f"cwd must be an existing absolute directory: {cwd!r}"
+            "cwd_missing",
+            f"cwd must be an existing absolute directory under the host "
+            f"projects root (e.g. /mnt/torus/projects/<repo>); got {cwd!r}. "
+            f'Tip: pass source_repo="<repo-name>" to let the worker resolve it.',
         )
 
     try:

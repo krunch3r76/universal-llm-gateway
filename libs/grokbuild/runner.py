@@ -14,7 +14,10 @@ import signal
 import time
 from typing import Literal
 
+from universal_logging import get_logger
+
 from grokbuild.constants import _SIDECAR_DIR
+from grokbuild.registry import record_pid
 from grokbuild.runner_argv import (  # noqa: F401 — re-exported
     _ALLOW,
     _OVERRIDE,
@@ -39,7 +42,6 @@ from grokbuild.runner_types import (  # noqa: F401 — re-exported
     RunnerResult,
     RunnerSpec,
 )
-from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -235,6 +237,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
 
     if spec.proc_pid_holder is not None:
         spec.proc_pid_holder.append(proc.pid)
+    await record_pid(spec.cwd, spec.dispatch_id, proc.pid)
 
     try:
         if spec.timeout_seconds is None:

@@ -1,11 +1,12 @@
 """Worktree and git-op routes for grokbuild-worker.
 
-Handles five endpoints:
+Handles six endpoints:
   POST   /worktrees                      → worktree_create_op
   GET    /worktrees                      → worktree_list_op
   DELETE /worktrees/{name}               → worktree_remove_op
   POST   /worktrees/{name}/push          → push_op
   POST   /worktrees/{name}/pull-requests → pr_create_op
+  POST   /snapshots                      → snapshot_op
 
 ``{name}`` is the short worktree name; the handler derives the cwd from
 ``WORKTREE_ROOT/<name>``. All responses surface the raw lib envelope so
@@ -24,6 +25,7 @@ from fastapi.responses import JSONResponse
 from grokbuild import (
     pr_create_op,
     push_op,
+    snapshot_op,
     worktree_create_op,
     worktree_list_op,
     worktree_remove_op,
@@ -33,6 +35,8 @@ from services.grokbuild_worker.error_map import raise_if_error
 from services.grokbuild_worker.events import (
     GrokbuildPRCreated,
     GrokbuildPushCompleted,
+    GrokbuildSnapshotCreated,
+    GrokbuildSnapshotMainReset,
     GrokbuildWorktreeCreated,
     GrokbuildWorktreeListed,
     GrokbuildWorktreeRemoved,
@@ -42,6 +46,7 @@ from services.grokbuild_worker.events import (
 from services.grokbuild_worker.models.sync import (
     PRCreateRequest,
     PushRequest,
+    SnapshotRequest,
     WorktreeCreateRequest,
 )
 
@@ -82,6 +87,38 @@ async def create_worktree(req: WorktreeCreateRequest) -> JSONResponse:
             outcome=envelope_outcome(envelope),
         )
     )
+    return JSONResponse(content=envelope)
+
+
+@router.post("/snapshots")
+async def create_snapshot(req: SnapshotRequest) -> JSONResponse:
+    """Snapshot the main-tree diff into an arc/<slug> worktree."""
+    t0 = time.monotonic()
+    envelope = await snapshot_op(
+        source_repo=req.source_repo,
+        slug=req.slug,
+        name=req.name,
+        reset_main=req.reset_main,
+    )
+    raise_if_error(envelope)
+    duration_s = time.monotonic() - t0
+    meta = envelope.get("metadata", {})
+    publish_nowait(
+        GrokbuildSnapshotCreated(
+            slug=req.slug,
+            branch=meta.get("branch", ""),
+            worktree_path=meta.get("worktree_path", ""),
+            snapshot_sha=meta.get("snapshot_sha", ""),
+            duration_s=duration_s,
+            outcome=envelope_outcome(envelope),
+        )
+    )
+    if meta.get("main_reset") == "ok":
+        publish_nowait(
+            GrokbuildSnapshotMainReset(
+                slug=req.slug, source_repo=meta.get("source_repo", "")
+            )
+        )
     return JSONResponse(content=envelope)
 
 

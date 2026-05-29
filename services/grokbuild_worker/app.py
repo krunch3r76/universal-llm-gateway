@@ -23,22 +23,23 @@ from __future__ import annotations
 
 import subprocess
 import time
+import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from build_results import prune_spool
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from grokbuild.events_core import register_uds_publisher
 from universal_logging import get_logger
-import traceback
 
 from services.grokbuild_worker.config import WorkerConfig, load_config
 from services.grokbuild_worker.events import (
-    publish_lib_signal,
     emit_degraded,
     emit_started,
     emit_stopped,
+    publish_lib_signal,
 )
 from services.grokbuild_worker.routes.dispatches import router as dispatches_router
 from services.grokbuild_worker.routes.health import _evaluate
@@ -135,6 +136,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001 — orphan cleanup must not block boot
         logger.exception("Failed to run grokbuild tracker cleanup_orphans")
 
+    try:
+        pruned = prune_spool()
+        logger.info("build_results prune_spool removed %d aged spool dirs", pruned)
+    except Exception:  # noqa: BLE001 — spool prune must not block boot
+        logger.exception("Failed to run build_results prune_spool")
+
     logger.info(
         "grokbuild-worker started: version=%s deploy_shape=%s port=%d degraded=%s",
         app.state.worker_version,
@@ -171,10 +178,16 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def _log_unhandled(request: Request, exc: Exception) -> JSONResponse:
         tb = traceback.format_exc()
-        logger.error("UNHANDLED %s %s: %s\n%s", request.method, request.url.path, exc, tb)
+        logger.error(
+            "UNHANDLED %s %s: %s\n%s", request.method, request.url.path, exc, tb
+        )
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal Server Error", "error": str(exc), "path": str(request.url.path)},
+            content={
+                "detail": "Internal Server Error",
+                "error": str(exc),
+                "path": str(request.url.path),
+            },
         )
 
     app.include_router(health_router)

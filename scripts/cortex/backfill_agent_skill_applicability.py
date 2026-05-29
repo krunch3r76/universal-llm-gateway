@@ -95,6 +95,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:auditor-validatable-confidence",
         "agent_skill:corpus-cross-reference-discipline",
         "agent_skill:agent-bus-discipline",
+        "agent_skill:agent-build",
         "agent_skill:evidence-review-discipline",
         "agent_skill:dispatch-workflow",
         "agent_skill:modularize-discipline",
@@ -122,6 +123,13 @@ PARTITION: dict[str, list[str]] = {
 OVERRIDES: dict[str, list[str]] = {
     # Reconciled 2026-05-29 (direct-verify): cursor+web, not universal; matches live attr.
     "agent_skill:mcp-surface-change": ["claude-cursor", "claude-web"],
+    "agent_skill:agent-build": [
+        "claude-web",
+        "claude-cursor",
+        "grok-direct",
+        "gpt-cursor",
+        "subagent",
+    ],
     "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "claude-cursor"],
     "agent_skill:xai-mcp-calling-shape": [
         "grok-web",

@@ -20,6 +20,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
+from build_results import result_ref
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from grokbuild.fetch_result import fetch_result_op
@@ -118,7 +119,7 @@ async def get_active_work(request: Request) -> JSONResponse:
 async def get_dispatch_result(
     dispatch_id: str,
     format: ResultFormat = Query(
-        "json", description="Result format: json, text, or summary."
+        "json", description="Result format: json, text, summary, or signals."
     ),
 ) -> JSONResponse:
     """Fetch the completed result for a dispatch by ID."""
@@ -227,6 +228,7 @@ async def start_dispatch(
         status_url=location,
         events_url=f"{location}/events",
         state="pending",
+        result_ref=result_ref(dispatch_id),
     )
 
 

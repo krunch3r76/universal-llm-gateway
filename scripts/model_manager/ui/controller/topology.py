@@ -163,6 +163,7 @@ async def _stream_subprocess(
     """Run a subprocess and yield decoded stdout lines as they arrive."""
     proc = await asyncio.create_subprocess_exec(
         *args,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=cwd,
@@ -196,6 +197,7 @@ async def _verify_deploy_paths(ssh_target: str) -> tuple[bool, list[str]]:
         "BatchMode=yes",
         ssh_target,
         check_cmd,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
@@ -334,6 +336,7 @@ async def _docker_inspect_labels_local(image: str) -> dict[str, str] | None:
         image,
         "--format",
         "{{json .Config.Labels}}",
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )
@@ -366,6 +369,7 @@ async def _docker_inspect_labels_remote(
         image,
         "--format",
         "{{json .Config.Labels}}",
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
     )

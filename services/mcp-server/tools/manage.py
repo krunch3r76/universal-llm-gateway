@@ -35,6 +35,7 @@ _VALID_ACTIONS = frozenset(
         "sync_restart",
         "rebuild",
         "wait_healthy",
+        "busy_status",
     }
 )
 
@@ -230,6 +231,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              for gateway/mcp via this tool — use
                                              sync_restart. Ops-only via TUI.
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
+          busy_status   (no service needed) — per-service busy read model: for
+                                             each service {busy, restart_would_defer,
+                                             active_work} plus a process block
+                                             {manage_inflight, activities}. Reads
+                                             the drain probes WITHOUT acquiring any
+                                             restart slot — safe to poll live.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
                   cortex_api, agent_bus, email_bridge, grokbuild_worker

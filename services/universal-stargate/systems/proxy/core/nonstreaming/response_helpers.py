@@ -30,7 +30,7 @@ def extract_remote_headers(response: Any) -> dict[str, str]:
 
 
 def prepare_federation_headers(
-    fed_gateway: "FederatedGateway",
+    fed_gateway: FederatedGateway,
     base_headers: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Prepare response headers with federation metadata."""

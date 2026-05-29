@@ -53,7 +53,7 @@ _BUILD_PARAMS: frozenset[str] = frozenset(
     "cwd prompt mode system_context model session_id continue_recent output_format "
     "timeout_seconds tier reasoning_effort effort check no_subagents "
     "disable_web_search max_turns best_of_n resume_strict "
-    "seat role recursion_depth mcp".split()
+    "seat role recursion_depth mcp source_repo".split()
 )
 
 # (HTTP method, path template, allowed param names)
@@ -79,6 +79,11 @@ OPS: dict[str, tuple[str, str, frozenset[str]]] = {
         "POST",
         "/api/v1/grokbuild/worktrees/{name}/pull-requests",
         frozenset({"name", "pr_title", "pr_body", "pr_base", "pr_head", "draft"}),
+    ),
+    "snapshot": (
+        "POST",
+        "/api/v1/grokbuild/snapshots",
+        frozenset({"source_repo", "slug", "name", "reset_main"}),
     ),
     "fetch_result": (
         "GET",
@@ -135,9 +140,12 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     source_repo: str = "",
     create_branch: bool = False,
     start_point: str = "",
+    # snapshot op surface.
+    slug: str = "",
+    reset_main: bool = False,
     # fetch_result surface.
     dispatch_id: str = "",
-    format: Literal["json", "text", "summary"] = "json",
+    format: Literal["json", "text", "summary", "signals"] = "json",
     # git ops surface.
     remote: str = "origin",
     set_upstream: bool = True,
@@ -202,7 +210,10 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
       ``last_event``, ``result_available``, ``pid``, ``exit_code``.
     * **Result:** ``fetch_result`` after terminal state — canonical envelope
       (``stdout``, ``stderr``, ``git_diff_stat``, audit metadata). Formats:
-      ``json`` (default), ``text``, ``summary``.
+      ``json`` (default), ``text``, ``summary``, ``signals`` (bounded:
+      exit_code + stdout tail + failure lines — the fast path for gate checks).
+      Every successful result also carries ``result_ref`` (fs-reachable spool
+      pointer readable from any seat).
     * **Cancel:** ``build_cancel``.
     * **Live grok output:** sidecar NDJSON at
       ``~/.local/share/grokbuild-worker/sidecars/{dispatch_id}.ndjson``

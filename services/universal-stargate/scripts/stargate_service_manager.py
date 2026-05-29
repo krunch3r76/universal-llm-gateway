@@ -664,7 +664,10 @@ class StargateServiceManager:
         # Start proxy process
         try:
             process = subprocess.Popen(
-                cmd, cwd=self.config.workdir, env=os.environ.copy()
+                cmd,
+                cwd=self.config.workdir,
+                env=os.environ.copy(),
+                stdin=subprocess.DEVNULL,
             )
 
             # Wrap in psutil for better management

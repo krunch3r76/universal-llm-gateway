@@ -35,6 +35,7 @@ from ..service_config import (
     load_mcp_config,
     mcp_browser_override_path,
 )
+from ..shutdown_gate import ManageShutdownGate
 from ..sidecar_ctl import SidecarController
 from . import (
     agent_bus_service,
@@ -44,6 +45,7 @@ from . import (
     grokbuild_worker_service,
     rag_service,
 )
+from .startup_probe import StartupOutcome, await_subprocess_started
 
 try:
     from .local import email_bridge_service as _email_bridge_svc
@@ -55,9 +57,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# ∀ host subprocess: detach stdin so children do not share the manage TUI tty.
+_DETACHED_STDIN = asyncio.subprocess.DEVNULL
+
 _PGID_KILL_TIMEOUT = 5
 _CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
 _GATEWAY_CRASH_DETECT_S = 5.0
+_GATEWAY_STOP_TIMEOUT_S = 3
 _MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
 _MCP_STOP_GRACE_S = 30
@@ -114,6 +120,14 @@ class ServiceController:
         # Drain-aware restart coordination — persists across manage calls so the
         # per-service restart mutex coalesces concurrent agents / TUI.
         self._restart_gate = RestartDrainGate()
+        # Process-level quit guard — tracks in-flight manage.sock JSON-RPC and
+        # long-running TUI activities so ./manage cannot exit mid-operation.
+        self._shutdown_gate = ManageShutdownGate()
+
+    @property
+    def root(self) -> Path:
+        """Workspace root (read-only); fleet orchestration needs it headless."""
+        return self._root
 
     @property
     def service_state(self) -> ServiceState:
@@ -123,6 +137,11 @@ class ServiceController:
     def restart_gate(self) -> RestartDrainGate:
         """Shared drain-aware restart gate (busy probe + per-service mutex)."""
         return self._restart_gate
+
+    @property
+    def shutdown_gate(self) -> ManageShutdownGate:
+        """Shared quit guard (manage.sock in-flight + TUI activity tracking)."""
+        return self._shutdown_gate
 
     @property
     def mcp_rebuild_scheduled(self) -> bool:
@@ -236,6 +255,7 @@ class ServiceController:
         with build_log.open("a", encoding="utf-8", errors="replace") as build_fh:
             process = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=_DETACHED_STDIN,
                 stdout=build_fh,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(self._root),
@@ -303,6 +323,7 @@ class ServiceController:
         proc = await asyncio.create_subprocess_exec(
             "bash",
             *args,
+            stdin=_DETACHED_STDIN,
             env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -343,6 +364,7 @@ class ServiceController:
             "up",
             "-d",
             "--force-recreate",
+            stdin=_DETACHED_STDIN,
             env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -373,7 +395,10 @@ class ServiceController:
         stop = await asyncio.create_subprocess_exec(
             "docker",
             "stop",
+            "-t",
+            str(_GATEWAY_STOP_TIMEOUT_S),
             container_name,
+            stdin=_DETACHED_STDIN,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -392,6 +417,7 @@ class ServiceController:
             "docker",
             "rm",
             container_name,
+            stdin=_DETACHED_STDIN,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -435,6 +461,7 @@ class ServiceController:
             process = await asyncio.create_subprocess_exec(
                 str(script),
                 "debug",
+                stdin=_DETACHED_STDIN,
                 env=env,
                 cwd=str(self._root),
                 stdout=log_fh,
@@ -453,14 +480,20 @@ class ServiceController:
             return f"Stargate failed (exit {process.returncode}).\n{tail}"
 
         self._write_pid_file(process.pid)
-        try:
-            exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
+        port = ServiceState.STARGATE_PORT
+
+        def _stargate_ready() -> bool:
+            return self._service_state._port_open(port)
+
+        outcome, exit_code = await await_subprocess_started(
+            process, ready=_stargate_ready
+        )
+        if outcome is StartupOutcome.CRASHED:
             tail = log_path.read_text(errors="replace")[-1500:]
             pid_path = GATEWAY_DIR / "stargate.pid"
             pid_path.unlink(missing_ok=True)
             return f"Stargate failed (exit {exit_code}).\n{tail}"
-        except TimeoutError:
-            return f"Stargate starting (PID {process.pid})."
+        return f"Stargate starting (PID {process.pid})."
 
     async def start_rag(self) -> str:
         """Start RAG service as host process via uvicorn."""
@@ -521,6 +554,7 @@ class ServiceController:
             "-t",
             str(_MCP_STOP_GRACE_S),
             "mcp-server",
+            stdin=_DETACHED_STDIN,
             env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -544,6 +578,7 @@ class ServiceController:
             "up",
             "-d",
             "--force-recreate",
+            stdin=_DETACHED_STDIN,
             env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -572,6 +607,7 @@ class ServiceController:
         result = await asyncio.create_subprocess_exec(
             *args,
             "down",
+            stdin=_DETACHED_STDIN,
             env=env,
             cwd=str(self._root),
             stdout=asyncio.subprocess.PIPE,
@@ -774,6 +810,7 @@ class ServiceController:
             proc = await asyncio.create_subprocess_exec(
                 "bash",
                 str(script),
+                stdin=_DETACHED_STDIN,
                 cwd=str(self._root),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -847,6 +884,7 @@ class ServiceController:
             "--format",
             "{{.State.Status}}",
             container_name,
+            stdin=_DETACHED_STDIN,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -874,6 +912,7 @@ class ServiceController:
                 "--format",
                 "{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}",
                 container_name,
+                stdin=_DETACHED_STDIN,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
@@ -905,6 +944,7 @@ class ServiceController:
             "name=mcp-server",
             "--format",
             "table {{.Names}}\t{{.Status}}\t{{.Ports}}",
+            stdin=_DETACHED_STDIN,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )

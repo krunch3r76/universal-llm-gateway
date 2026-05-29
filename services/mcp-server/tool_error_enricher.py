@@ -79,7 +79,9 @@ class ToolErrorEnricher(Middleware):
                         schema = getattr(tool_obj, "parameters", {}) or {}
             except Exception as exc:
                 # lookup failure must never poison the error path
-                logger.debug("ToolErrorEnricher schema lookup failed for %s: %s", tool_name, exc)
+                logger.debug(
+                    "ToolErrorEnricher schema lookup failed for %s: %s", tool_name, exc
+                )
 
             schema_props_raw = (
                 schema.get("properties", {}) if isinstance(schema, dict) else {}

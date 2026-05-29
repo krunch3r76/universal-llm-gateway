@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_seat.registry import normalize_agent_slug
+from agent_seat.profiles import resolve_seat
+
 from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_boot
 
@@ -28,11 +31,33 @@ def _parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _resolve_boot_family_platform(
+    *,
+    agent: str | None = None,
+    family: str | None = None,
+    platform: str | None = None,
+) -> tuple[str, str]:
+    """Map boot call axes to canonical (family, platform).
+
+    ``agent`` is the primary seat slug (e.g. ``cursor`` → ``claude-cursor``,
+    ``grok-direct``). Explicit ``family`` / ``platform`` apply only when
+    ``agent`` is absent or does not parse as ``{family}-{platform}``.
+    """
+    if agent:
+        slug = normalize_agent_slug(agent)
+        parsed_family, parsed_platform = _parse_seat_slug(slug)
+        if parsed_family is not None:
+            return parsed_family, parsed_platform
+    fam = family.lower() if family else None
+    return resolve_seat(family=fam, platform=platform)
+
+
 def register_orchestration_tools(mcp: FastMCP) -> None:
     """Register boot and session-close tools on *mcp*."""
 
     @mcp.tool(title="Cortex Boot")
     def cortex_boot(
+        agent: str | None = None,
         family: str | None = None,
         platform: str | None = None,
         role: str | None = None,
@@ -55,6 +80,10 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
+          agent         — seat slug (primary): cursor, claude-web, grok-direct, etc.
+                          Legacy aliases (cursor → claude-cursor) normalize via
+                          agent_seat.registry. When set, overrides family/platform
+                          unless the slug does not parse as {family}-{platform}.
           family        — model family: claude / gpt / grok / gemini (default: claude)
           platform      — platform surface: cursor / api / web (default: cursor)
           role          — optional functional team seat: lead / reviewer / gatherer /
@@ -83,9 +112,12 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           sections_available     — manifest of deeper-pull sections with fetch hints
           operational_context_ref — path to operational context file (read on demand)
         """
+        boot_family, boot_platform = _resolve_boot_family_platform(
+            agent=agent, family=family, platform=platform
+        )
         return run_cortex_boot(
-            family=family,
-            platform=platform,
+            family=boot_family,
+            platform=boot_platform,
             role=role,
             transcript_id=transcript_id,
             views=views,
@@ -93,6 +125,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Boot Inspect")
     def boot_inspect(
+        agent: str | None = None,
         family: str | None = None,
         platform: str | None = None,
         role: str | None = None,
@@ -108,6 +141,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         profile diffs without mutating boot state.
 
         Args:
+          agent         — seat slug (same semantics as cortex_boot)
           family        — model family: claude / gpt / grok / gemini
           platform      — platform surface: cursor / api / web
           role          — optional functional team seat
@@ -115,9 +149,12 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           diff_with     — optional secondary seat slug ({family}-{platform}, e.g.
                           "claude-web", "grok-api") to diff against primary
         """
+        boot_family, boot_platform = _resolve_boot_family_platform(
+            agent=agent, family=family, platform=platform
+        )
         primary = run_cortex_boot(
-            family=family,
-            platform=platform,
+            family=boot_family,
+            platform=boot_platform,
             role=role,
             transcript_id=transcript_id,
             mode=BootMode.INSPECT,

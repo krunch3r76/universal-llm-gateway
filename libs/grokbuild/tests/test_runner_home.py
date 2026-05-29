@@ -46,7 +46,9 @@ class TestStripTomlSection:
 
 class TestBuildConfigToml:
     def test_no_host_config(self, tmp_path: Path) -> None:
-        result = _build_config_toml("tok", "d1", str(tmp_path / "nonexistent"), overlay_mcp=True)
+        result = _build_config_toml(
+            "tok", "d1", str(tmp_path / "nonexistent"), overlay_mcp=True
+        )
         assert "[mcp_servers.user-vortex]" in result
         assert 'X-Grokbuild-Dispatch-Id = "d1"' in result
         assert 'Authorization = "Bearer tok"' in result

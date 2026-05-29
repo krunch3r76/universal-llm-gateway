@@ -142,11 +142,21 @@ async def execute(
                 lifecycle=lambda: _sync_restart(ctl, service),
             )
 
+        case "busy_status":
+            return await _busy_status(ctl)
+
+        case "fleet_sync_restart":
+            return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
+
+        case "fleet_rebuild_deploy":
+            return await _fleet(ctl, build=True, scope=str(params.get("scope", "all")))
+
         case _:
             raise ValueError(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild"
+                "sync_restart, rebuild, busy_status, fleet_sync_restart, "
+                "fleet_rebuild_deploy"
             )
 
 
@@ -156,6 +166,47 @@ def require_service(service: str) -> None:
         raise ValueError(
             f"Unknown service: '{service}'. Valid: {', '.join(sorted(VALID_SERVICES))}"
         )
+
+
+async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
+    """Per-service busy read model + process-level busy snapshot (no mutation).
+
+    Reports, for every restart-eligible service, whether it is busy and whether a
+    non-force restart would defer right now — computed from the same probe path
+    ``run_gated`` uses, but WITHOUT acquiring any restart slot. The ``process``
+    block surfaces the quit-guard accounting (``ManageShutdownGate``) so a UI can
+    also reflect "the manage host itself is busy".
+    """
+    report = await ctl.restart_gate.busy_report(sorted(SYNC_RESTART_SERVICES))
+    extra = ("build_image",) if ctl.build_running else ()
+    snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
+    return {
+        "services": report,
+        "process": {
+            "manage_inflight": snap.manage_inflight,
+            "activities": list(snap.activities),
+        },
+    }
+
+
+async def _fleet(ctl: ServiceController, *, build: bool, scope: str) -> dict[str, Any]:
+    """Drive a headless fleet operation; agents observe progress via fleet.* events.
+
+    Uses a no-op progress sink: the per-node log stream is a TUI affordance, while
+    the coarse fleet.operation.*/fleet.service.* events already carry the structured
+    outcome an agent needs. Phase 4 replaces the no-op sink with a streaming bridge.
+    """
+    from .controller.fleet import FleetOrchestrator, NullFleetSink
+
+    orch = FleetOrchestrator(ctl=ctl, root=ctl.root, sink=NullFleetSink())
+    result = await orch.sync_restart_all(build=build, scope=scope)
+    return {
+        "status": "ok" if result.success else "partial",
+        "operation": result.operation,
+        "build": result.build,
+        "duration_s": round(result.duration_s, 1),
+        "failures": result.failures,
+    }
 
 
 def write_json(writer: asyncio.StreamWriter, obj: dict[str, Any]) -> None:

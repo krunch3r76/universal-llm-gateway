@@ -156,6 +156,7 @@ class BuildState:
                 str(script),
                 "prune",
                 target,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )

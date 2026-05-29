@@ -340,13 +340,20 @@
   {
     "cache_priority": "always_loaded",
     "canonical_name": "cortex_entities",
-    "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  result \u2208 List[Entity]\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state\n  \u2227 args.content_hash \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.content_hash = args.content_hash.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  (args.fields = \u2205 \u27f9 result \u2208 List[EntitySummary]\n   \u2227 args.fields \u2260 \u2205 \u27f9 result \u2208 List[ProjectedRow]\n   \u2227 \u2200 k \u2208 keys(result[0]): k \u2208 {id} \u222a args.fields)\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state\n  \u2227 args.content_hash \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.content_hash = args.content_hash.\nProjectedRow: id always present; base columns pass through; other names\nresolve via json_extract(attributes,'$.<name>'). Read-only. \u00acside-effects.\nSee agent_skill:cortex.",
     "domain": "cortex",
     "inputSchema": {
       "properties": {
         "content_hash": {
           "description": "Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form.",
           "type": "string"
+        },
+        "fields": {
+          "description": "Project only these fields. Base columns pass through; other names resolve from attributes JSON (e.g. applicable_agents). Collapses an N+1 attribute audit to one query.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "for_agent": {
           "type": "string"
@@ -497,10 +504,14 @@
   {
     "cache_priority": "always_loaded",
     "canonical_name": "cortex_entity_update",
-    "description": "\u2200 entity_id \u2208 Cortex: entity_update(entity_id, \u0394) \u27f9\n  entity.fields \u2190 entity.fields \u222a \u0394.\n\u00accreates. Partial-patch semantics. Mutating. See agent_skill:cortex.",
+    "description": "\u2200 entity_id \u2208 Cortex: entity_update(entity_id, \u0394) \u27f9\n  entity.fields \u2190 entity.fields \u222a \u0394\n  \u2227 \u0394.attributes \u2260 \u2205 \u27f9 attributes' = attributes \u228e \u0394.attributes\n    (shallow top-level merge; \u00acdeletes keys by omission).\n\u00accreates. Partial-patch semantics. Mutating. See agent_skill:cortex.",
     "domain": "cortex",
     "inputSchema": {
       "properties": {
+        "attributes": {
+          "description": "Shallow top-level merge into existing attributes; omitted keys are preserved. Cannot delete attribute keys via PATCH \u2014 use explicit null only where the API documents field clearing.",
+          "type": "object"
+        },
         "description": {
           "type": "string"
         },
@@ -1688,6 +1699,37 @@
     },
     "mandate_safety": "read_only",
     "name": "grokbuild_fetch_result",
+    "skill_uri": "agent_skill:grokbuild"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "grokbuild_snapshot",
+    "description": "\u2200 source_repo \u2208 Workspaces \u2227 slug \u2208 valid_names:\n  grokbuild_snapshot(source_repo, slug) \u27f9\n    arc/<slug> worktree at snapshot commit \u2227 main tree unchanged\n    \u2228 (reset_main \u2227 main tree clean).\nMutating. Snapshot commit durable before main tree touched. See decision:worktree-everywhere-isolation.",
+    "domain": "grokbuild",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "reset_main": {
+          "default": false,
+          "type": "boolean"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "source_repo": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_repo",
+        "slug"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "grokbuild_snapshot",
     "skill_uri": "agent_skill:grokbuild"
   },
   {

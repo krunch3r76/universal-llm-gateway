@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from build_results import compute_signals, result_ref
 
 from grokbuild.fetch_result import fetch_result_op
 
@@ -57,6 +58,27 @@ async def test_fetch_result_text_and_summary_formats_are_distinct(
     assert "records" not in summary
     assert summary["summary"]["exit_code"] == 2
     assert summary["summary"]["stderr_preview"] == "warning\n"
+
+
+@pytest.mark.asyncio
+async def test_fetch_result_signals_format_and_result_ref(
+    sidecar_root: Path,
+) -> None:
+    write_sidecar(sidecar_root, "fetch-signals", completed_records(cwd="/tmp/repo"))
+
+    out = await fetch_result_op(dispatch_id="fetch-signals", format="signals")
+
+    assert out["status"] == "completed"
+    assert out["metadata"]["format"] == "signals"
+    assert "signals" in out
+    assert "records" not in out
+    assert out["signals"]["exit_code"] == 0
+    assert out["signals"]["stdout_tail"] == ["hello"]
+    assert out["signals"] == compute_signals(out)
+    ref = out["result_ref"]
+    assert ref == result_ref("fetch-signals")
+    assert ref["signals_path"] == "ulg-build-results/fetch-signals/signals.json"
+    assert ref["sandbox"] == "workspaces"
 
 
 @pytest.mark.asyncio

@@ -47,7 +47,7 @@ logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
 
 
-@router.get("", response_model=EntityList)
+@router.get("")
 def list_entities(
     type: str | None = None,
     workflow_state: str | None = Query(
@@ -80,8 +80,19 @@ def list_entities(
             "or `sha256:<hex>` form; the prefix is stripped before matching."
         ),
     ),
-) -> EntityList:
+    fields: str | None = Query(
+        None,
+        description=(
+            "Comma-separated field projection. Base columns pass through; "
+            "other names resolve from the attributes JSON blob (e.g. "
+            "applicable_agents). Returns raw dict rows, not EntitySummary."
+        ),
+    ),
+) -> EntityList | dict[str, object]:
     """List entities, optionally constrained to one entity type / workflow_state."""
+    field_list: list[str] | None = None
+    if fields is not None:
+        field_list = [part.strip() for part in fields.split(",") if part.strip()]
     with cortex_conn() as conn:
         data = list_entities_impl(
             conn,
@@ -91,7 +102,10 @@ def list_entities(
             for_agent=for_agent,
             query=query,
             content_hash=content_hash,
+            fields=field_list,
         )
+    if field_list:
+        return data
     return EntityList(items=[EntitySummary(**item) for item in data["items"]])
 
 

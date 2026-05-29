@@ -56,11 +56,15 @@ tools:
     substrate_qualified: user-vortex__cortex_entities
   fol_descriptor: |
     ∀ args ∈ EntitiesArgs: entities(args) ⟹
-      result ∈ List[Entity]
+      (args.fields = ∅ ⟹ result ∈ List[EntitySummary]
+       ∧ args.fields ≠ ∅ ⟹ result ∈ List[ProjectedRow]
+       ∧ ∀ k ∈ keys(result[0]): k ∈ {id} ∪ args.fields)
       ∧ args.type ≠ ∅ ⟹ ∀ e ∈ result: e.type = args.type
       ∧ args.workflow_state ≠ ∅ ⟹ ∀ e ∈ result: e.workflow_state = args.workflow_state
       ∧ args.content_hash ≠ ∅ ⟹ ∀ e ∈ result: e.content_hash = args.content_hash.
-    Read-only. ¬side-effects. See agent_skill:cortex.
+    ProjectedRow: id always present; base columns pass through; other names
+    resolve via json_extract(attributes,'$.<name>'). Read-only. ¬side-effects.
+    See agent_skill:cortex.
   json_schema:
     type: object
     properties:
@@ -70,6 +74,7 @@ tools:
       query: {type: string}
       for_agent: {type: string}
       content_hash: {type: string, description: "Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form."}
+      fields: {type: array, items: {type: string}, description: "Project only these fields. Base columns pass through; other names resolve from attributes JSON (e.g. applicable_agents). Collapses an N+1 attribute audit to one query."}
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: read_only
@@ -179,7 +184,9 @@ tools:
     substrate_qualified: user-vortex__cortex_entity_update
   fol_descriptor: |
     ∀ entity_id ∈ Cortex: entity_update(entity_id, Δ) ⟹
-      entity.fields ← entity.fields ∪ Δ.
+      entity.fields ← entity.fields ∪ Δ
+      ∧ Δ.attributes ≠ ∅ ⟹ attributes' = attributes ⊎ Δ.attributes
+        (shallow top-level merge; ¬deletes keys by omission).
     ¬creates. Partial-patch semantics. Mutating. See agent_skill:cortex.
   json_schema:
     type: object
@@ -188,6 +195,7 @@ tools:
       name: {type: string}
       description: {type: string}
       workflow_state: {type: string}
+      attributes: {type: object, description: "Shallow top-level merge into existing attributes; omitted keys are preserved. Cannot delete attribute keys via PATCH — use explicit null only where the API documents field clearing."}
     required: [entity_id]
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude, mcp_grok]
@@ -1748,6 +1756,36 @@ tools:
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
+
+- canonical_name: grokbuild_snapshot
+  domain: grokbuild
+  operation: snapshot
+  dispatcher_call_shape:
+    tool: grokbuild
+    dispatch_key: op
+    dispatch_value: snapshot
+  flat_call_shape:
+    tool: grokbuild_snapshot
+    substrate_qualified: user-vortex__grokbuild_snapshot
+  fol_descriptor: |
+    ∀ source_repo ∈ Workspaces ∧ slug ∈ valid_names:
+      grokbuild_snapshot(source_repo, slug) ⟹
+        arc/<slug> worktree at snapshot commit ∧ main tree unchanged
+        ∨ (reset_main ∧ main tree clean).
+    Mutating. Snapshot commit durable before main tree touched. See decision:worktree-everywhere-isolation.
+  json_schema:
+    type: object
+    properties:
+      source_repo: {type: string}
+      slug: {type: string}
+      name: {type: string}
+      reset_main: {type: boolean, default: false}
+    required: [source_repo, slug]
+  skill_uri: agent_skill:grokbuild
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-29
 
   # ─── domain: git_integrate / git_status / git_diff ───────────────────────────
   # Thin Stargate relay to git-integration-worker (harness-agnostic lead merge).

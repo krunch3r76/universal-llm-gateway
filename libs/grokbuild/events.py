@@ -4,6 +4,7 @@ Sub-modules:
   grokbuild.events_dispatch      — dispatch lifecycle (called/completed/failed/timeout/rejected)
   grokbuild.events_api_dispatch  — api-dispatch lifecycle (called/completed/failed/rejected; mcp=False)
   grokbuild.events_create        — worktree-create lifecycle
+  grokbuild.events_snapshot      — snapshot lifecycle
   grokbuild.events_worktree      — worktree remove / list / registry events
   grokbuild.events_core          — shared ``_emit`` helper + ``record`` (monkeypatch target)
 """
@@ -34,6 +35,16 @@ from grokbuild.events_create import (
     emit_grok_build_create_failed,
     emit_grok_build_create_rejected,
 )
+from grokbuild.events_snapshot import (
+    GrokBuildSnapshotCalled,
+    GrokBuildSnapshotCompleted,
+    GrokBuildSnapshotFailed,
+    GrokBuildSnapshotRejected,
+    emit_grok_build_snapshot_called,
+    emit_grok_build_snapshot_completed,
+    emit_grok_build_snapshot_failed,
+    emit_grok_build_snapshot_rejected,
+)
 from grokbuild.events_dispatch import (
     GrokBuildDispatchCalled,
     GrokBuildDispatchCompleted,
@@ -54,6 +65,7 @@ from grokbuild.events_worktree import (
     GrokBuildListCalled,
     GrokBuildListCompleted,
     GrokBuildListFailed,
+    GrokBuildLockReaped,
     GrokBuildRegistryRecovered,
     GrokBuildRemoveCalled,
     GrokBuildRemoveCompleted,
@@ -62,6 +74,7 @@ from grokbuild.events_worktree import (
     emit_grok_build_list_called,
     emit_grok_build_list_completed,
     emit_grok_build_list_failed,
+    emit_grok_build_lock_reaped,
     emit_grok_build_registry_recovered,
     emit_grok_build_remove_called,
     emit_grok_build_remove_completed,
@@ -102,6 +115,14 @@ __all__ = [
     "emit_grok_build_create_completed",
     "emit_grok_build_create_failed",
     "emit_grok_build_create_rejected",
+    "GrokBuildSnapshotCalled",
+    "GrokBuildSnapshotCompleted",
+    "GrokBuildSnapshotFailed",
+    "GrokBuildSnapshotRejected",
+    "emit_grok_build_snapshot_called",
+    "emit_grok_build_snapshot_completed",
+    "emit_grok_build_snapshot_failed",
+    "emit_grok_build_snapshot_rejected",
     "GrokBuildRemoveCalled",
     "GrokBuildRemoveCompleted",
     "GrokBuildRemoveFailed",
@@ -110,6 +131,8 @@ __all__ = [
     "GrokBuildListCompleted",
     "GrokBuildListFailed",
     "GrokBuildRegistryRecovered",
+    "GrokBuildLockReaped",
+    "emit_grok_build_lock_reaped",
     "emit_grok_build_remove_called",
     "emit_grok_build_remove_completed",
     "emit_grok_build_remove_failed",

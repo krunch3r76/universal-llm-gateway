@@ -55,7 +55,9 @@ def build_manifest_from_metadata(
         props = (schema or {}).get("properties", {}) or {}
         if props:
             schema_req = (schema or {}).get("required", []) or []
-            req = {op: [k for k in props if k in schema_req] for op in (ops or ["default"])}
+            req = {
+                op: [k for k in props if k in schema_req] for op in (ops or ["default"])
+            }
         manifest[name] = ManifestEntry(
             name=name,
             purpose=_first_sentence(description),
@@ -110,9 +112,7 @@ async def capture_overflow_metadata(
         try:
             tool_obj = await mcp.get_tool(tool.name)
         except Exception as exc:
-            logger.warning(
-                "capture_overflow_metadata skipped %s: %s", tool.name, exc
-            )
+            logger.warning("capture_overflow_metadata skipped %s: %s", tool.name, exc)
             record(
                 "mcp.tool_search.capture.failed",
                 tool=tool.name,

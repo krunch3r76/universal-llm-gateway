@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -186,7 +186,7 @@ class RestartDrainGate:
                 return None  # slot held; proceed
 
             try:
-                work = await self._probe(service).snapshot()
+                work = await self.probe(service)
             except (httpx.HTTPError, ValueError, OSError) as exc:
                 # Probe failure must not kill a maybe-busy service. Fail closed: defer.
                 logger.warning("active-work probe failed for %s: %s", service, exc)
@@ -213,6 +213,62 @@ class RestartDrainGate:
     async def release(self, service: str) -> None:
         """Release the restart-mutex slot held by a proceeding restart."""
         await self._gate(service).release()
+
+    async def probe(self, service: str) -> ActiveWork:
+        """Run a service's busy probe WITHOUT acquiring the restart slot.
+
+        Single shared probe call site: both ``evaluate`` (acquiring path) and
+        ``busy_report`` (read-only path) reach the probe through here, so there
+        is exactly one place that invokes ``BusyProbe.snapshot`` — no second
+        probe implementation. Probe exceptions propagate to the caller, which
+        decides how to render them (``evaluate`` → ``state=probe_error`` deferral;
+        ``busy_report`` → ``restart_would_defer=True`` with an error detail).
+        """
+        return await self._probe(service).snapshot()
+
+    def restart_in_progress(self, service: str) -> bool:
+        """True iff the per-service restart slot is currently held (no free slot).
+
+        Read-only: inspects gate occupancy without acquiring, so the busy read
+        model can set ``restart_would_defer`` for a service whose restart is
+        already in flight — mirroring the ``state="in_progress"`` deferral that
+        ``evaluate`` would return for a concurrent caller.
+        """
+        gate = self._gate(service)
+        return gate.active_count >= gate.current_limit
+
+    async def busy_report(
+        self, services: Iterable[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Per-service busy read model (pull). Probes WITHOUT acquiring any slot.
+
+        For each service, returns
+        ``{"busy": bool, "restart_would_defer": bool, "active_work": {...}}``.
+
+        ``restart_would_defer`` ⟺ ``busy`` ∨ a restart is already in progress ∨
+        the probe failed. Probe failure is reported as ``busy=False`` with
+        ``restart_would_defer=True`` (fail closed: a non-force restart would
+        defer with ``state=probe_error``) and an ``error`` entry in
+        ``active_work`` — identical fail-closed posture to ``evaluate``.
+        """
+        report: dict[str, dict[str, Any]] = {}
+        for service in services:
+            in_progress = self.restart_in_progress(service)
+            try:
+                work = await self.probe(service)
+            except (httpx.HTTPError, ValueError, OSError) as exc:
+                report[service] = {
+                    "busy": False,
+                    "restart_would_defer": True,
+                    "active_work": {"error": str(exc)},
+                }
+                continue
+            report[service] = {
+                "busy": work.busy,
+                "restart_would_defer": work.busy or in_progress,
+                "active_work": work.detail,
+            }
+        return report
 
 
 async def run_gated(

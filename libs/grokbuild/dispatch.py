@@ -13,9 +13,9 @@ import uuid
 from typing import Any, Literal
 
 from grokbuild.constants import (
-    DISPATCH_MODEL_ID,
     _TIER_PRESETS,
     _VALID_TIERS,
+    DISPATCH_MODEL_ID,
 )
 from grokbuild.dispatch_helpers import (
     _resolve_params,
@@ -176,7 +176,7 @@ async def dispatch_op(
             dispatch_id, mode, cwd, session_id, model, vr.reason_code, vr.reason
         )
 
-    if not await try_acquire_cwd(cwd, dispatch_id):
+    if not await try_acquire_cwd(cwd, dispatch_id, mode=mode):
         conflicting = await get_dispatch_id(cwd)
         reason = f"another dispatch is already in flight for cwd: {cwd!r}"
         emit_grok_build_dispatch_rejected(
@@ -226,7 +226,7 @@ async def dispatch_op(
             recursion_depth=recursion_depth,
         )
     finally:
-        await release_cwd(cwd)
+        await release_cwd(cwd, dispatch_id)
 
 
 async def _run_and_envelope(

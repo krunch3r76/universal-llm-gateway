@@ -175,7 +175,9 @@ def test_grok_golden_unchanged_after_claude_registry_diff() -> None:
     """Regression: Claude registry diff must not perturb grok manifest bytes."""
     grok_manifest = derive_grok_manifest(_CANONICAL_YAML)
     golden = json.loads((_TESTDATA / "golden_grok_manifest.json").read_text())
-    assert grok_manifest == golden, "grok manifest drifted — Phase D broke grok partition"
+    assert grok_manifest == golden, (
+        "grok manifest drifted — Phase D broke grok partition"
+    )
 
 
 if __name__ == "__main__":

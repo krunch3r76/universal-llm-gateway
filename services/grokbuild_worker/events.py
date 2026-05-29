@@ -12,6 +12,8 @@ Sync-endpoint signals:
 * ``grokbuild.worktree.removed``   — DELETE /worktrees/{name} completed/rejected
 * ``grokbuild.push.completed``     — POST /worktrees/{name}/push completed/rejected
 * ``grokbuild.pr.created``         — POST /worktrees/{name}/pull-requests
+* ``grokbuild.snapshot.created``   — POST /snapshots completed
+* ``grokbuild.snapshot.main_reset`` — main tree reset after snapshot (iff reset_main ok)
 * ``grokbuild.dispatch.fetched``   — GET /dispatches/{id}/result
 
 ``publish_nowait`` submits UDS I/O to the default thread-pool executor
@@ -232,6 +234,38 @@ def GrokbuildPRCreated(  # noqa: N802
 
 
 @event_factory
+def GrokbuildSnapshotCreated(  # noqa: N802
+    slug: str,
+    branch: str,
+    worktree_path: str,
+    snapshot_sha: str,
+    duration_s: float,
+    outcome: str,
+) -> Event:
+    return Event(
+        signal="grokbuild.snapshot.created",
+        payload={
+            "slug": slug,
+            "branch": branch,
+            "worktree_path": worktree_path,
+            "snapshot_sha": snapshot_sha,
+            "duration_s": duration_s,
+            "outcome": outcome,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokbuildSnapshotMainReset(slug: str, source_repo: str) -> Event:  # noqa: N802
+    return Event(
+        signal="grokbuild.snapshot.main_reset",
+        payload={"slug": slug, "source_repo": source_repo},
+        scope="global",
+    )
+
+
+@event_factory
 def GrokbuildDispatchFetched(  # noqa: N802
     dispatch_id: str, outcome: str, duration_s: float, result_size_bytes: int
 ) -> Event:
@@ -300,6 +334,26 @@ def GrokbuildDispatchCompleted(  # noqa: N802
             "outcome": outcome,
             "duration_s": duration_s,
             "exit_code": exit_code,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokbuildResultSpooled(  # noqa: N802
+    dispatch_id: str, status: str, failure_count: int
+) -> Event:
+    """Emitted when a terminal dispatch result is written to the build-result spool.
+
+    Signal: grokbuild.result.spooled
+    Fields: dispatch_id, status, failure_count.
+    """
+    return Event(
+        signal="grokbuild.result.spooled",
+        payload={
+            "dispatch_id": dispatch_id,
+            "status": status,
+            "failure_count": failure_count,
         },
         scope="global",
     )

@@ -11,6 +11,10 @@ Operator-locked decisions encoded here:
 * No ``GROKBUILD_AUTH_TOKEN`` — Stargate enforces auth at its edge and
   the worker trusts requests arriving from Stargate (same pattern as
   ``cortex-api`` / ``agent-bus``).
+* Build-result spool dir is owned by ``libs/build_results`` (env
+  ``BUILD_RESULTS_DIR``, default ``/mnt/torus/projects/ulg-build-results``),
+  NOT by ``WorkerConfig`` — it is shared with cursorbuild above the
+  grokbuild/cursorbuild fork line, so it is intentionally not duplicated here.
 
 ``GROKBUILD_SIDECAR_DIR`` / ``GROKBUILD_REGISTRY_PATH`` env var overrides
 always take precedence over the defaults.

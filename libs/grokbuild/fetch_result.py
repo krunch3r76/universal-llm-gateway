@@ -12,6 +12,8 @@ import os
 import re
 from typing import Any, Literal
 
+from build_results import compute_signals, result_ref
+
 from grokbuild.envelope import _envelope_rejected
 from grokbuild.events import emit_grok_build_dispatch_rejected
 from grokbuild.fetch_result_decode import (
@@ -33,7 +35,8 @@ _RETENTION_SECONDS = int(
 
 
 async def fetch_result_op(
-    dispatch_id: str, format: Literal["json", "text", "summary"] = "json"
+    dispatch_id: str,
+    format: Literal["json", "text", "summary", "signals"] = "json",
 ) -> dict[str, Any]:
     """Return the sidecar contents and dispatch metadata for a completed dispatch.
 
@@ -139,11 +142,19 @@ async def fetch_result_op(
         result_format=format,
         retention_seconds=_RETENTION_SECONDS,
     )
+    # The common-channel pointer rides on every successful fetch_result so a
+    # caller that fetched the envelope already knows where the fs-reachable
+    # spool lives (decision:build-result-common-channel).
+    out["result_ref"] = result_ref(dispatch_id)
     if format == "json":
         out["records"] = records
     elif format == "summary":
         out["summary"] = summary(out)
-    else:
+    elif format == "signals":
+        # Same dict the worker wrote to signals.json — computed once, here from
+        # the just-reconstructed envelope. Bounded; never trips the size guard.
+        out["signals"] = compute_signals(out)
+    else:  # text
         out["text"] = text_result(out)
     return out
 

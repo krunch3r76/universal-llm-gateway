@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
+from grokbuild.lock_state import _Holder, _LockState
 from grokbuild.registry import (
+    _STALE_TTL_SECONDS,
     SCHEMA_VERSION,
     _env_registry_path,
     _load_registry_from_disk,
@@ -158,7 +161,8 @@ async def test_acquire_writes_cwd_to_disk(
     cwds = [e["cwd"] for e in data["entries"]]
     assert os.path.realpath(cwd) in cwds
     matched = next(e for e in data["entries"] if e["cwd"] == os.path.realpath(cwd))
-    assert matched["dispatch_id"] == "dispatch-abc"
+    assert matched["writer"]["dispatch_id"] == "dispatch-abc"
+    assert matched["writer"]["mode"] == "edit"
 
 
 @pytest.mark.asyncio
@@ -198,14 +202,46 @@ async def test_registry_write_is_atomic(
 # ---------------------------------------------------------------------------
 
 
-def _write_fake_registry(path: Path, *, pid: int, entries: list[str]) -> None:
+def _write_fake_registry(
+    path: Path,
+    *,
+    pid: int,
+    entries: list[str],
+    dispatch_id: str = "",
+    mode: str = "edit",
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {
                 "schema_version": SCHEMA_VERSION,
                 "writer_pid": pid,
-                "entries": [{"cwd": cwd, "dispatch_id": ""} for cwd in entries],
+                "entries": [
+                    {
+                        "cwd": cwd,
+                        "writer": (
+                            {
+                                "dispatch_id": dispatch_id,
+                                "mode": mode,
+                                "pid": None,
+                            }
+                            if mode == "edit"
+                            else None
+                        ),
+                        "readers": (
+                            [
+                                {
+                                    "dispatch_id": dispatch_id,
+                                    "mode": "read_only",
+                                    "pid": None,
+                                }
+                            ]
+                            if mode == "read_only"
+                            else []
+                        ),
+                    }
+                    for cwd in entries
+                ],
             }
         )
     )
@@ -333,7 +369,7 @@ async def test_get_dispatch_id_returns_recorded_value(
     monkeypatch.setattr("grokbuild.registry.REGISTRY_PATH", tmp_path / "r.json")
     assert await try_acquire_cwd("/tmp", "uuid-xyz") is True
     assert await get_dispatch_id("/tmp") == "uuid-xyz"
-    await release_cwd("/tmp")
+    await release_cwd("/tmp", "uuid-xyz")
     assert await get_dispatch_id("/tmp") is None
 
 
@@ -359,7 +395,7 @@ async def test_cwds_under_carries_dispatch_id(
     assert await try_acquire_cwd(nested, "did-1") is True
     found = await cwds_under(root)
     assert found[os.path.realpath(nested)] == "did-1"
-    await release_cwd(nested)
+    await release_cwd(nested, "did-1")
 
 
 def test_schema_mismatch_discards_entries(
@@ -404,3 +440,81 @@ def test_env_registry_path_expands_tilde(monkeypatch: pytest.MonkeyPatch) -> Non
     resolved = _env_registry_path()
     assert resolved.is_absolute()
     assert resolved == Path.home() / ".local/share/grokbuild-worker/registry.json"
+
+
+# ---------------------------------------------------------------------------
+# Reader/writer lock semantics (Phase 1 — grokbuild-fluidity)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_read_only_acquires_coexist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("grokbuild.registry.REGISTRY_PATH", tmp_path / "r.json")
+    assert await try_acquire_cwd("/tmp", "read-1", mode="read_only") is True
+    assert await try_acquire_cwd("/tmp", "read-2", mode="read_only") is True
+    assert await try_acquire_cwd("/tmp", "edit-1", mode="edit") is False
+    await release_cwd("/tmp", "read-1")
+    await release_cwd("/tmp", "read-2")
+
+
+@pytest.mark.asyncio
+async def test_edit_blocks_read_only_and_second_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("grokbuild.registry.REGISTRY_PATH", tmp_path / "r.json")
+    assert await try_acquire_cwd("/tmp", "edit-1", mode="edit") is True
+    assert await try_acquire_cwd("/tmp", "read-1", mode="read_only") is False
+    assert await try_acquire_cwd("/tmp", "edit-2", mode="edit") is False
+    await release_cwd("/tmp", "edit-1")
+
+
+@pytest.mark.asyncio
+async def test_dead_pid_holder_reaped_on_conflict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("grokbuild.registry.REGISTRY_PATH", tmp_path / "r.json")
+    import grokbuild.registry as reg_mod
+
+    key = os.path.realpath("/tmp")
+    dead_pid = 99999999
+    reg_mod._in_flight[key] = _LockState(
+        writer=_Holder(dispatch_id="stale-edit", mode="edit", pid=dead_pid)
+    )
+    assert await try_acquire_cwd("/tmp", "fresh-edit", mode="edit") is True
+    await release_cwd("/tmp", "fresh-edit")
+
+
+@pytest.mark.asyncio
+async def test_ttl_backstop_reaps_none_pid_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("grokbuild.registry.REGISTRY_PATH", tmp_path / "r.json")
+    import grokbuild.registry as reg_mod
+
+    key = os.path.realpath("/tmp")
+    stale_at = time.monotonic() - _STALE_TTL_SECONDS - 1.0
+    reg_mod._in_flight[key] = _LockState(
+        writer=_Holder(
+            dispatch_id="never-spawned",
+            mode="edit",
+            pid=None,
+            acquired_at=stale_at,
+        )
+    )
+    assert await try_acquire_cwd("/tmp", "fresh-edit", mode="edit") is True
+    await release_cwd("/tmp", "fresh-edit")
+
+
+@pytest.mark.asyncio
+async def test_release_by_dispatch_id_drops_only_that_holder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("grokbuild.registry.REGISTRY_PATH", tmp_path / "r.json")
+    assert await try_acquire_cwd("/tmp", "read-1", mode="read_only") is True
+    assert await try_acquire_cwd("/tmp", "read-2", mode="read_only") is True
+    await release_cwd("/tmp", "read-1")
+    assert await get_dispatch_id("/tmp") == "read-2"
+    await release_cwd("/tmp", "read-2")
+    assert await get_dispatch_id("/tmp") is None

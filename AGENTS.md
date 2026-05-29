@@ -200,6 +200,7 @@ These encode *procedures*—in Cursor they appear as slash-commands or session p
 | Cursor affordance | grok-direct equivalent |
 |---|---|
 | `/cortex-boot`, Universal boot | § Cortex boot above; `cortex_boot` when needed |
+| `/plan-seed {slug}` | `fs` write `tasks/specs/{slug}.md`, then `pipeline(op="run", pipeline_id="plan-seed", options={slug, name, ...})` — atomic `todo:`+`plan:`+`derived_from` |
 | `/session-end`, `session-close.mdc` | `cortex(tool="session_close", transcript_md=..., ...)` — see § Session close |
 | `/agent-bus` | `agent_bus(...)` directly |
 | `/implement-plan`, phase prompts | MCP + `fs`; no Plan-mode switch |

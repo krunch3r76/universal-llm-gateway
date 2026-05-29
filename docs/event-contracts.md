@@ -2481,6 +2481,10 @@ All signals: `role="observation"`, `scope="global"`.
 | `mcp.grokbuild.list.called` | `dispatch_id`, `worktree_root` | `worktree_list_op` admitted (V2: emits after root-existence check; fires whether root is missing or present, review W9). |
 | `mcp.grokbuild.list.completed` | `dispatch_id`, `duration_s`, `worktree_root`, `count` (int) | Enumeration succeeded. `count=0` is valid (missing or empty root). |
 | `mcp.grokbuild.list.failed` | `dispatch_id`, `duration_s`, `error` (str ≤200), `worktree_root` | `os.listdir` raised OSError. |
+| `mcp.grokbuild.snapshot.called` | `dispatch_id`, `source_repo`, `slug`, `branch`, `reset_main` (bool) | `snapshot_op` admitted after slug/source_repo validation. |
+| `mcp.grokbuild.snapshot.completed` | `dispatch_id`, `duration_s`, `source_repo`, `slug`, `branch`, `worktree_path`, `snapshot_sha`, `main_reset` (str — `skipped` \| `ok` \| `failed`) | Snapshot commit + arc worktree created. |
+| `mcp.grokbuild.snapshot.failed` | `dispatch_id`, `duration_s`, `error` (str ≤200), `source_repo`, `slug`, `branch` | Capture or worktree-create failed after admission. |
+| `mcp.grokbuild.snapshot.rejected` | `dispatch_id`, `reason_code` (str — `slug_invalid` \| `source_repo_invalid` \| `clean_tree` \| …), `reason`, `source_repo`, `slug`, `branch` | Admission failed (clean tree, invalid slug/source_repo, branch exists). |
 | `mcp.grokbuild.registry.recovered` | `entries_recovered` (int), `entries_pruned` (int — see sentinel below), `schema_version` (int) | Persistent-registry load at module import. `entries_pruned=N` (N≥0) means the previous writer PID was dead and N stale entries were dropped. **Sentinel: `entries_pruned=-1` means a registry write failed at runtime** (review W12 — replaces the prior silent `except OSError: pass`); operator should investigate `GROKBUILD_REGISTRY_PATH` permissions / disk pressure. |
 
 `.rejected` `reason_code` enum (validator side, unchanged from V1; V2 added `capacity_exhausted` on the worker-side `grokbuild.dispatch.rejected`, see below): `retired_op`, `retired_output_format`, `retired_param`, `unknown_op`, `bad_tier`, `bad_reasoning_effort`, `bad_effort`, `bad_max_turns`, `bad_best_of_n`, `bad_timeout_seconds`, `bad_resume_strict_without_session_id`, `bad_output_format`, `cwd_missing`, `not_a_git_repo`, `git_unreachable`, `working_tree_dirty`, `grok_not_in_path`, `missing_grok_auth`, `sidecar_unavailable`, `dispatch_conflict`.
@@ -2522,9 +2526,14 @@ All signals: `role="observation"`, `scope="global"`.
 | `grokbuild.worktree.listed` | `count` (int), `duration_s` | `GET /worktrees` succeeded. |
 | `grokbuild.worktree.removed` | `name`, `duration_s`, `outcome` | `DELETE /worktrees/{name}` succeeded. |
 | `grokbuild.push.completed` | `name`, `branch`, `duration_s`, `outcome`, `commits_pushed` (int — **typed**, no longer hardcoded 0 per review W10; computed via `git rev-list --count @{u}..HEAD`) | `POST /worktrees/{name}/push` succeeded. |
+| `grokbuild.snapshot.created` | `slug`, `branch`, `worktree_path`, `snapshot_sha`, `duration_s`, `outcome` | `POST /snapshots` succeeded; lib also emits `mcp.grokbuild.snapshot.*` audit signals. |
+| `grokbuild.snapshot.main_reset` | `slug`, `source_repo` | Main tree reset clean after snapshot (`reset_main=True` and reset succeeded). |
 | `grokbuild.pr.created` | `name`, `pr_number` (int \| null — **typed**, surfaced from envelope metadata per review W8), `duration_s`, `outcome` | `POST /worktrees/{name}/pull-requests` succeeded. |
 | `grokbuild.models.listed` | `count` (int), `duration_s` | `GET /models` succeeded. |
 | `grokbuild.tracker.orphan.cleaned` | `count` (int), `dispatch_ids` (list[str]) | Lifespan startup hook (`cleanup_orphans`) purged tracker entries whose subprocess PID is dead. With pure-in-memory storage this is usually a no-op; test harnesses pre-seed dead entries to exercise the path. |
+| `grokbuild.result.spooled` | `dispatch_id` (str), `status` (str — terminal envelope status), `failure_count` (int — from computed signals) | Worker wrote the build-result spool at terminal (`ulg-build-results/{dispatch_id}/`). Emitted after `write_spool` in `tracker_runner._finalize`. |
+
+**Spool prune (log-only).** Startup `prune_spool()` removes aged dispatch dirs by mtime; it logs `removed_count` only — no `grokbuild.result.pruned` event (Phase 2 chose log-only over UDS publish).
 
 **C.1 header-vs-sidecar JOIN example (discrepancy detection).** Both the
 MCP-server header path (C.1(i): `mcp.request.completed` with

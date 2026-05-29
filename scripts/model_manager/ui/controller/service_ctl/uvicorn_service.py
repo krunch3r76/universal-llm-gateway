@@ -18,6 +18,7 @@ from ..service_config import (
     build_service_env,
     ensure_socket_dir,
 )
+from .startup_probe import StartupOutcome, await_subprocess_started, uds_socket_live
 from .utils import (
     _acquire_lock,
     _find_uvicorn_pid_by_cmdline,
@@ -31,8 +32,7 @@ logger = logging.getLogger(__name__)
 # Per-service asyncio locks keyed by app_module.
 # ∀ concurrent start_rag() calls: serialized within the same process.
 # The file lock in _pre_launch() guards cross-process safety; this covers
-# the intra-process race between _pre_launch() and PID file registration
-# (a 3-second window where concurrent calls both find no valid PID).
+# the intra-process race between _pre_launch() and PID file registration.
 _service_start_locks: dict[str, asyncio.Lock] = {}
 
 
@@ -143,6 +143,7 @@ async def _start_uvicorn_service(
             process = await asyncio.create_subprocess_exec(
                 python,
                 *uvicorn_args,
+                stdin=asyncio.subprocess.DEVNULL,
                 env=env,
                 cwd=str(root),
                 stdout=log_fh,
@@ -150,26 +151,32 @@ async def _start_uvicorn_service(
                 start_new_session=True,
             )
 
-        try:
-            exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
+        def _ready() -> bool:
+            if uds_mode and socket_path is not None:
+                return uds_socket_live(socket_path)
+            if tcp_config is not None:
+                host, port = tcp_config
+                return service_state._port_open(port, host)
+            return False
+
+        outcome, exit_code = await await_subprocess_started(process, ready=_ready)
+        if outcome is StartupOutcome.CRASHED:
             tail = _read_log_tail(log_file)
             return f"{service_name} failed (exit {exit_code}).\n{tail}"
-        except TimeoutError:
-            logger.info(
-                "%s subprocess remained alive after startup probe", service_name
-            )
-            if on_timeout_success is not None:
-                on_timeout_success(socket_path, tcp_config, process.pid)
-            fd = _acquire_lock(lock_file)
-            try:
-                GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
-                pid_file.write_text(str(process.pid) + "\n")
-            finally:
-                _release_lock(fd)
-            msg = f"{service_name} starting (PID {process.pid})."
-            if not uds_mode and tcp_config is not None:
-                msg += f" on {tcp_config[0]}:{tcp_config[1]}"
-            return msg
+
+        logger.info("%s subprocess startup probe: %s", service_name, outcome.value)
+        if on_timeout_success is not None:
+            on_timeout_success(socket_path, tcp_config, process.pid)
+        fd = _acquire_lock(lock_file)
+        try:
+            GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+            pid_file.write_text(str(process.pid) + "\n")
+        finally:
+            _release_lock(fd)
+        msg = f"{service_name} starting (PID {process.pid})."
+        if not uds_mode and tcp_config is not None:
+            msg += f" on {tcp_config[0]}:{tcp_config[1]}"
+        return msg
 
 
 async def _stop_uvicorn_service(
