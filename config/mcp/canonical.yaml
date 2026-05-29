@@ -28,6 +28,9 @@ domains:
 - pipeline
 - rag
 - grokbuild
+- git_integrate
+- git_status
+- git_diff
 - observability
 - manage
 - dispatch
@@ -1745,6 +1748,90 @@ tools:
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
+
+  # ─── domain: git_integrate / git_status / git_diff ───────────────────────────
+  # Thin Stargate relay to git-integration-worker (harness-agnostic lead merge).
+
+- canonical_name: git_integrate_integrate
+  domain: git_integrate
+  operation: integrate
+  dispatcher_call_shape:
+    tool: git_integrate
+    dispatch_key: op
+    dispatch_value: integrate
+  flat_call_shape:
+    tool: git_integrate
+    substrate_qualified: user-vortex__git_integrate
+  fol_descriptor: |
+    ∀ arc ∈ PlanSlugs ∧ worktree ∈ ArcWorktrees ∧ sha256 ∈ DiffFingerprints:
+      git_integrate(arc, phase, worktree, approval, sha256) ⟹
+        master advanced at ref level ∨ status = rejected.
+    Mutating. Atomic. ¬green_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.
+  json_schema:
+    type: object
+    properties:
+      arc: {type: string}
+      phase: {type: string}
+      worktree_path: {type: string}
+      approval: {type: string}
+      expected_diff_sha256: {type: string}
+      remove_worktree: {type: boolean, default: true}
+    required: [arc, phase, worktree_path, approval, expected_diff_sha256]
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-29
+
+- canonical_name: git_status_query
+  domain: git_status
+  operation: status
+  dispatcher_call_shape:
+    tool: git_status
+    dispatch_key: op
+    dispatch_value: status
+  flat_call_shape:
+    tool: git_status
+    substrate_qualified: user-vortex__git_status
+  fol_descriptor: |
+    ∀ worktree ∈ ArcWorktrees:
+      git_status(worktree) ⟹
+        result ∈ {ok, rejected} ∧ branch ∈ str ∧ dirty ∈ bool.
+    Read-only. ¬acquires integrate gate. See decision:lead-agent-git-integration.
+  json_schema:
+    type: object
+    properties:
+      worktree_path: {type: string}
+    required: [worktree_path]
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-05-29
+
+- canonical_name: git_diff_query
+  domain: git_diff
+  operation: diff
+  dispatcher_call_shape:
+    tool: git_diff
+    dispatch_key: op
+    dispatch_value: diff
+  flat_call_shape:
+    tool: git_diff
+    substrate_qualified: user-vortex__git_diff
+  fol_descriptor: |
+    ∀ worktree ∈ ArcWorktrees:
+      git_diff(worktree) ⟹
+        diff_sha256 ∈ SHA256Hex ∧ diff ∈ str.
+    Read-only. Fingerprint feeds git_integrate approval binding.
+  json_schema:
+    type: object
+    properties:
+      worktree_path: {type: string}
+      path_filter: {type: string, default: ""}
+    required: [worktree_path]
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-05-29
 
   # ─── domain: observability ───────────────────────────────────────────────────
   # Current: observability(operation="...", ...)

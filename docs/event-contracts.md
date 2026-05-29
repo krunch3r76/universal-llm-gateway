@@ -2489,6 +2489,21 @@ All signals: `role="observation"`, `scope="global"`.
 
 `audit_incomplete` semantics: `True` iff a git invocation in `_capture_post_state` failed (`subprocess.CalledProcessError`, `TimeoutExpired`, or `OSError`). Subscribers MUST treat `audit_incomplete=true` as "do not trust this dispatch's `read_only_violation` verdict" — distinct from a clean repo (`git_status_post=""`, `audit_incomplete=false`), which is a TRUE clean signal.
 
+**Lib signals (`git.integrate.*`).** Source: `git-integration-worker` in Phase 4 (via UDS publisher hook on `libs/git_integrate/events.py`, mirroring grokbuild). Payload contracts established Phase 2; emitters wired in Phase 3 (`integrate_op`, `status_op`).
+
+All signals: `role="observation"`, `scope="global"`.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `git.integrate.requested` | `integration_id` (str — uuid4), `arc` (str — plan slug), `phase` (str — phase label), `worktree_path` (str), `diff_sha256` (str — sha256 of approved unified diff) | Integration admitted past validation; retry loop entered. Emitted by `integrate_op` after admission succeeds. |
+| `git.integrate.completed` | `integration_id`, `arc`, `phase`, `merge_commit` (str — arc-branch tip after merge), `master_sha` (str — master ref after CAS advance), `duration_s` (float) | Master advanced at ref level; optional worktree teardown follows. Emitted by `integrate_op` on success. |
+| `git.integrate.rejected` | `integration_id`, `reason_code` (str enum), `reason` (str), `arc`, `phase` | Admission or merge-phase refusal. No master advance. Correlation fields inline so no `.requested` join required for admission rejects. Emitted by `validate_integrate` / `integrate_op`. |
+| `git.integrate.gate.failed` | `integration_id`, `arc`, `phase`, `gate_cmd` (str — joined server-configured command), `gate_exit` (int), `duration_s` (float) | Green-gate returned non-zero on the integrated tree; arc worktree reset to pre-merge tip. Emitted by `integrate_op`. |
+| `git.integrate.retried` | `integration_id`, `arc`, `attempt` (int — 1-based loop index), `reason` (str — typically `master_advanced_mid_span`) | Non-ff CAS advance; optimistic retry loop continues. Emitted by `integrate_op`. |
+| `git.status.read` | `worktree_path` (str), `dirty` (bool), `branch` (str) | Read-only status probe served (MCP `git_status` path). Emitted by `status_op`. |
+
+`.rejected` `reason_code` enum (Phase 3): `arc_branch_mismatch`, `approval_missing`, `diff_mismatch`, `integrate_conflict`, `gate_failed`, `max_attempts_exhausted`, `worktree_not_found`, `not_a_git_repo`.
+
 **Worker signals (`grokbuild.*`).** Source: `grokbuild-worker`. Added V2. SSE-friendly tracker vocabulary plus per-op tracking events; does NOT carry the lib's audit fields (those live on the parallel `mcp.grokbuild.dispatch.completed`).
 
 | Signal | Payload fields | Description |

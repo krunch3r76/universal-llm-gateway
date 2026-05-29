@@ -9,7 +9,6 @@ from fastapi import APIRouter, Query
 
 from ...db import cortex_conn
 from ...db import query as db_query
-from ._render import _table_exists
 
 router = APIRouter(tags=["boot"])
 
@@ -53,31 +52,6 @@ def _build_continuity_chain(conn: object, latest_session_id: str) -> list[str]:
     return list(reversed(chain))
 
 
-def _get_handoff(conn: object, transcript_entity_id: str) -> dict[str, Any] | None:
-    if not (
-        _table_exists(conn, "reflective_journal")
-        and _table_exists(conn, "journal_links")
-    ):
-        return None
-    rows = db_query(
-        conn,  # type: ignore[arg-type]
-        """
-        SELECT rj.id AS entry_id, rj.entry AS text
-        FROM journal_links jl
-        JOIN reflective_journal rj ON rj.id = jl.from_entry
-        WHERE jl.link_type = 'handoff_for'
-          AND jl.to_entity = ?
-          AND rj.kind = 'handoff'
-        ORDER BY rj.id DESC
-        LIMIT 1
-        """,
-        (transcript_entity_id,),
-    )
-    if not rows:
-        return None
-    return {"entry_id": rows[0]["entry_id"], "text": rows[0]["text"]}
-
-
 def _get_sibling_continuations(
     conn: object,
     *,
@@ -114,7 +88,8 @@ def get_boot_continuity(
         rows = db_query(
             conn,
             """
-            SELECT id, session_id, agent, timestamp, summary, open_items, prior_session_id
+            SELECT id, session_id, agent, timestamp, summary, open_items,
+                   prior_session_id, handoff_prompt
             FROM session_journals
             WHERE agent = ?
             ORDER BY id DESC
@@ -133,7 +108,8 @@ def get_boot_continuity(
 
         row = rows[0]
         transcript_entity_id = f"transcript:{row['session_id']}"
-        handoff = _get_handoff(conn, transcript_entity_id)
+        handoff_text = row.get("handoff_prompt")
+        handoff = {"text": handoff_text} if handoff_text else None
         continuity_chain = _build_continuity_chain(conn, row["session_id"])
         continuations = _get_sibling_continuations(
             conn,

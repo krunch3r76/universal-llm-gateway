@@ -52,7 +52,7 @@
   {
     "cache_priority": "on_demand",
     "canonical_name": "agent_bus_post",
-    "description": "\u2200 body \u2208 str \u2227 from \u2208 str \u2227 to \u2208 str:\n  post(body, from, to) \u27f9 thread_id \u2208 \u2115 \u2227 turn_number = 1.\nCreates new thread. Mutating. \u00acidempotent. See agent_skill:agent_bus.",
+    "description": "\u2200 body \u2208 str \u2227 from_agent \u2208 str \u2227 to \u2208 str:\n  post(body, from_agent, to) \u27f9 thread_id \u2208 \u2115 \u2227 turn_number = 1.\nCreates new thread. Mutating. \u00acidempotent. See agent_skill:agent_bus.",
     "domain": "agent_bus",
     "inputSchema": {
       "properties": {
@@ -83,7 +83,7 @@
   {
     "cache_priority": "always_loaded",
     "canonical_name": "agent_bus_reply",
-    "description": "\u2200 thread \u2208 \u2115 \u2227 body \u2208 str \u2227 from \u2208 str:\n  reply(thread, body, from) \u27f9 turn_number \u2208 \u2115.\nMutating. \u00acidempotent. See agent_skill:agent_bus.",
+    "description": "\u2200 thread \u2208 \u2115 \u2227 body \u2208 str \u2227 from_agent \u2208 str:\n  reply(thread, body, from_agent) \u27f9 turn_number \u2208 \u2115.\nMutating. \u00acidempotent. See agent_skill:agent_bus.",
     "domain": "agent_bus",
     "inputSchema": {
       "properties": {
@@ -98,12 +98,15 @@
         },
         "thread": {
           "type": "string"
+        },
+        "to": {
+          "type": "string"
         }
       },
       "required": [
         "thread",
         "body",
-        "from"
+        "from_agent"
       ],
       "type": "object"
     },
@@ -118,8 +121,17 @@
     "domain": "agent_bus",
     "inputSchema": {
       "properties": {
+        "has_unread": {
+          "type": "boolean"
+        },
+        "last": {
+          "type": "integer"
+        },
         "lifecycle_state": {
           "type": "string"
+        },
+        "limit": {
+          "type": "integer"
         },
         "status": {
           "type": "string"
@@ -328,10 +340,14 @@
   {
     "cache_priority": "always_loaded",
     "canonical_name": "cortex_entities",
-    "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  result \u2208 List[Entity]\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
+    "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  result \u2208 List[Entity]\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state\n  \u2227 args.content_hash \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.content_hash = args.content_hash.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
     "domain": "cortex",
     "inputSchema": {
       "properties": {
+        "content_hash": {
+          "description": "Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form.",
+          "type": "string"
+        },
         "for_agent": {
           "type": "string"
         },
@@ -380,6 +396,35 @@
     },
     "mandate_safety": "write",
     "name": "cortex_entities_bulk_upsert",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_entities_by_content_hash",
+    "description": "\u2200 content_hash \u2208 str \u2227 content_hash \u2260 \u2205:\n  entities_by_content_hash(content_hash) \u27f9\n    result \u2208 List[Entity]\n    \u2227 \u2200 e \u2208 result: e.content_hash = content_hash.removeprefix(\"sha256:\")\n    \u2227 |result| \u2264 (limit \u2228 5).\n\u2200 content_hash = \u2205 \u27f9 error(\"content_hash is required\").\nRead-only. Dedicated lookup op for duplicate-detection callers\n(default limit=5, no full-list semantics). See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "content_hash": {
+          "description": "Required. Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "Result cap (default 5).",
+          "type": "integer"
+        },
+        "type": {
+          "description": "Optional entity type filter (e.g. \"document\").",
+          "type": "string"
+        }
+      },
+      "required": [
+        "content_hash"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_entities_by_content_hash",
     "skill_uri": "agent_skill:cortex"
   },
   {
@@ -479,6 +524,53 @@
     "skill_uri": "agent_skill:cortex"
   },
   {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_friction",
+    "description": "\u2200 service, category, note, suggestion?, agent?:\n  friction(...) \u27f9 durable friction record for schema/boot/tool gaps.\nWrite. Used for agent self-diagnosis. See agent_skill:cortex and operational-context-*.md.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "category": {
+          "enum": [
+            "tool_mismatch",
+            "schema_gap",
+            "boot_drift",
+            "lesson_gap",
+            "lesson_conflict",
+            "stale_context",
+            "tool_absent"
+          ],
+          "type": "string"
+        },
+        "note": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "suggestion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "service",
+        "category",
+        "note",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_friction",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
     "cache_priority": "always_loaded",
     "canonical_name": "cortex_journal_read",
     "description": "\u2200 limit \u2208 \u2115: journal_read(limit) \u27f9\n  result \u2208 List[JournalEntry]\n  \u2227 |result| \u2264 limit \u2227 ordered by timestamp DESC.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
@@ -493,6 +585,36 @@
     },
     "mandate_safety": "read_only",
     "name": "cortex_journal_read",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_observe",
+    "description": "\u2200 claim, entity_id?, agent?:\n  observe(...) \u27f9 lightweight working-memory assertion / inline note.\nWrite. Preferred for session-local observations. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "claim": {
+          "type": "string"
+        },
+        "entity_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim",
+        "agent"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_observe",
     "skill_uri": "agent_skill:cortex"
   },
   {
@@ -550,6 +672,199 @@
     },
     "mandate_safety": "read_only",
     "name": "cortex_relationships",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_rj_consolidate",
+    "description": "\u2200 agent, register, entry, throughline, before, now, tension_points?, contradiction_set?, falsifier?, rendered_shift?, confidence?, source_entry_ids?:\n  rj_consolidate(...) \u27f9 high-quality consolidation entry (kind=\"consolidation\").\nWrite. Structured synthesis of prior reflective entries. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "before": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string"
+        },
+        "contradiction_set": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "falsifier": {
+          "type": "string"
+        },
+        "now": {
+          "type": "string"
+        },
+        "register": {
+          "type": "string"
+        },
+        "rendered_shift": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "source_entry_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "tension_points": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "throughline": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "register",
+        "entry",
+        "throughline",
+        "before",
+        "now"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_rj_consolidate",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_rj_link",
+    "description": "\u2200 entry_id, to_entry?, to_entity?, link_type?:\n  rj_link(...) \u27f9 link between reflective journal entries or to entities.\nWrite. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "entry_id": {
+          "type": "integer"
+        },
+        "link_type": {
+          "default": "related",
+          "type": "string"
+        },
+        "to_entity": {
+          "type": "string"
+        },
+        "to_entry": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entry_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_rj_link",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_rj_list",
+    "description": "\u2200 agent?, kind?, limit?, offset?:\n  rj_list(...) \u27f9 list of reflective journal entries.\nRead-only. Defaults: limit=20, offset=0. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_rj_list",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_rj_read",
+    "description": "\u2200 entry_id:\n  rj_read(entry_id) \u27f9 reflective journal entry with links.\nRead-only. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "entry_id": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entry_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_rj_read",
+    "skill_uri": "agent_skill:cortex"
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "cortex_rj_write",
+    "description": "\u2200 agent, register, entry, kind?, session_id?, revises?, links?, consolidation_data?:\n  rj_write(...) \u27f9 reflective journal entry (kind=\"entry\" | \"consolidation\").\nWrite. Primary surface for agent self-reflection and consolidation. See agent_skill:cortex.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "consolidation_data": {
+          "type": "object"
+        },
+        "entry": {
+          "type": "string"
+        },
+        "kind": {
+          "default": "entry",
+          "type": "string"
+        },
+        "links": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "register": {
+          "type": "string"
+        },
+        "revises": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "register",
+        "entry"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "cortex_rj_write",
     "skill_uri": "agent_skill:cortex"
   },
   {
@@ -1217,6 +1532,90 @@
   },
   {
     "cache_priority": "on_demand",
+    "canonical_name": "git_diff_query",
+    "description": "\u2200 worktree \u2208 ArcWorktrees:\n  git_diff(worktree) \u27f9\n    diff_sha256 \u2208 SHA256Hex \u2227 diff \u2208 str.\nRead-only. Fingerprint feeds git_integrate approval binding.",
+    "domain": "git_diff",
+    "inputSchema": {
+      "properties": {
+        "path_filter": {
+          "default": "",
+          "type": "string"
+        },
+        "worktree_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "worktree_path"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "git_diff",
+    "skill_uri": ""
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "git_integrate_integrate",
+    "description": "\u2200 arc \u2208 PlanSlugs \u2227 worktree \u2208 ArcWorktrees \u2227 sha256 \u2208 DiffFingerprints:\n  git_integrate(arc, phase, worktree, approval, sha256) \u27f9\n    master advanced at ref level \u2228 status = rejected.\nMutating. Atomic. \u00acgreen_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.",
+    "domain": "git_integrate",
+    "inputSchema": {
+      "properties": {
+        "approval": {
+          "type": "string"
+        },
+        "arc": {
+          "type": "string"
+        },
+        "expected_diff_sha256": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "remove_worktree": {
+          "default": true,
+          "type": "boolean"
+        },
+        "worktree_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "arc",
+        "phase",
+        "worktree_path",
+        "approval",
+        "expected_diff_sha256"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "git_integrate",
+    "skill_uri": ""
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "git_status_query",
+    "description": "\u2200 worktree \u2208 ArcWorktrees:\n  git_status(worktree) \u27f9\n    result \u2208 {ok, rejected} \u2227 branch \u2208 str \u2227 dirty \u2208 bool.\nRead-only. \u00acacquires integrate gate. See decision:lead-agent-git-integration.",
+    "domain": "git_status",
+    "inputSchema": {
+      "properties": {
+        "worktree_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "worktree_path"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "git_status",
+    "skill_uri": ""
+  },
+  {
+    "cache_priority": "on_demand",
     "canonical_name": "grokbuild_build",
     "description": "\u2200 args \u2208 BuildArgs:\n  grokbuild_build(args) \u27f9\n    202 \u2227 dispatch_id \u2208 UUIDv4.\n  \u2227 subsequent grokbuild_build_status(dispatch_id) \u27f9 progress.\n  \u2227 \u2203 T \u2264 args.timeout_s: grokbuild_fetch_result(dispatch_id) \u27f9 artifact \u2228 error.\nargs.source_repo \u2208 Workspaces \u2227 args.name \u2208 valid_worktree_names.\nAsync. Mutating. \u00acidempotent across distinct dispatch_ids. See agent_skill:grokbuild.",
     "domain": "grokbuild",
@@ -1431,15 +1830,15 @@
   {
     "cache_priority": "on_demand",
     "canonical_name": "manage_wait_healthy",
-    "description": "\u2200 service \u2208 ManagedServices \u2227 timeout_s \u2208 \u2115:\n  manage_wait_healthy(service, timeout_s) \u27f9\n    (healthy = true \u2227 elapsed \u2264 timeout_s) \u2228 raises Timeout.\nBlocking poll. \u00acside-effects. See agent_skill:manage.",
+    "description": "\u2200 service \u2208 ManagedServices \u2227 timeout \u2208 \u2115:\n  manage_wait_healthy(service, timeout) \u27f9\n    (healthy = true \u2227 elapsed \u2264 timeout) \u2228 raises Timeout.\nBlocking poll. \u00acside-effects. See agent_skill:manage.",
     "domain": "manage",
     "inputSchema": {
       "properties": {
         "service": {
           "type": "string"
         },
-        "timeout_s": {
-          "type": "integer"
+        "timeout": {
+          "type": "number"
         }
       },
       "required": [
