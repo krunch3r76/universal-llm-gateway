@@ -40,6 +40,7 @@ class _SessionJournalCommon(BaseModel):
     file_path: str | None = None
     session_id: str | None = None
     prior_session_id: str | None = None
+    handoff_prompt: str | None = None
 
 
 class SessionJournalCreate(_SessionJournalCommon):
@@ -103,7 +104,12 @@ class SessionCloseRequest(BaseModel):
         ``"verbatim"``.
       domains / decisions / open_items / entity_ids: journal metadata.
       prior_session_id:   creates a ``continues`` edge.
-      handoff_prompt:     reflective journal handoff entry.
+      handoff_prompt:     forward-pickup narrative for the next session;
+        persisted on the ``session_journals`` row in the
+        ``handoff_prompt`` column (added in migration 044) and surfaced
+        via ``GET /boot-continuity``. Replaces the prior write path
+        through ``reflective_journal`` (retired per
+        ``decision:rj-handoff-kind-retirement``, agent-bus thread 1107).
       assistant_label:    H3 heading label for assistant blocks in the
         assembled verbatim layer (default ``"Assistant"``).
     """
@@ -142,10 +148,15 @@ class SessionCloseResponse(BaseModel):
     Agents reading the response use ``transcript_depth`` to gate
     enrichment per ``agent-skills/enrichment-quality-discipline.md``:
     only ``verbatim`` is enrichment-eligible.
+
+    The ``handoff_prompt`` (when supplied on the request) is persisted
+    on the ``session_journals`` row; no separate response field carries
+    its identifier — ``journal_row_id`` is the durable handle. The
+    legacy ``handoff_entry_id`` (RJ row id) was retired per
+    ``decision:rj-handoff-kind-retirement`` (agent-bus thread 1107).
     """
 
     transcript_entity_id: str | None = None
-    handoff_entry_id: int | None = None
     transcript_path: str | None = None
     journal_row_id: int
     session_id: str

@@ -26,9 +26,7 @@ from ..models import (
 logger = get_logger("cortex-api.reflective_journal")
 router = APIRouter(prefix="/reflective-journal", tags=["reflective-journal"])
 
-_VALID_KINDS = frozenset(
-    {"entry", "reflection", "revision", "consolidation", "handoff"}
-)
+_VALID_KINDS = frozenset({"entry", "reflection", "revision", "consolidation"})
 _VALID_LINK_TYPES = frozenset(
     {
         "contradicts",

@@ -6,6 +6,19 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+# ``"handoff"`` is retained in the read-side Literal so historical
+# ``reflective_journal`` rows (kind="handoff" entries written before
+# ``decision:rj-handoff-kind-retirement`` landed on 2026-05-27) continue
+# to deserialize via ``ReflectiveEntryItem.model_validate`` without
+# ``ValidationError``. The write surface in ``routes/reflective_journal.py``
+# narrows ``_VALID_KINDS`` to ``{"entry", "reflection", "revision",
+# "consolidation"}`` — new writes via ``POST /reflective-journal`` or via
+# ``_insert_reflective_entry_tx(kind="handoff", ...)`` get rejected.
+# The DB CHECK constraint (migration 033) still permits ``'handoff'``
+# values for the same read-compat reason. The same asymmetry applies to
+# ``"handoff_for"`` in ``JournalLinkType`` — historical link rows remain
+# queryable; no new ones get written after Phase 3 of plan
+# session-close-handoff-session-journals.
 ReflectiveKind = Literal["entry", "reflection", "revision", "consolidation", "handoff"]
 JournalLinkType = Literal[
     "contradicts",

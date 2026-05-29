@@ -89,6 +89,9 @@ PARTITION: dict[str, list[str]] = {
     "claude-cursor": [
         "agent_skill:ulg-architecture",
     ],
+    "claude-web": [
+        "agent_skill:implement-todo",
+    ],
 }
 
 
