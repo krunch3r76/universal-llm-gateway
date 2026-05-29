@@ -37,13 +37,13 @@ from ._detectors.cases import (
     detect_case_no_relationships,
     detect_document_not_wired_to_case,
 )
-from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
 from ._detectors.entity import (
     detect_agent_skill_not_in_canonical_sandbox,
     detect_entity_empty_description,
     detect_entity_source_uri_missing,
     detect_entity_source_uri_unresolved,
 )
+from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
 from ._detectors.markdown_render import (
     detect_markdown_section_drift,
     detect_marker_nesting_violation,
@@ -56,6 +56,10 @@ from ._detectors.session import detect_prior_session_id_omitted
 from ._detectors.skill_binding import (
     detect_skill_binding_missing,
     detect_skill_binding_tool_unknown,
+)
+from ._detectors.workflow_coherence import (
+    detect_decision_deprecated_not_terminal,
+    detect_decision_workflow_state_incoherent,
 )
 
 # Gap taxonomy per v2 plan §6
@@ -83,6 +87,9 @@ GRAPH_ONLY_KINDS = {
     # skill_binding substrate (thread 1067)
     "skill_binding_missing",
     "skill_binding_tool_unknown",
+    # entity-state coherence (thread 1116) — confirmed decision resting at
+    # NULL/proposed. Parameterized engine; decision landed first.
+    "decision_workflow_state_incoherent",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -96,7 +103,7 @@ FS_TOUCHING_KINDS = {
     "forbidden_surfaces",
 }
 
-INFO_KINDS = {"case_marker_absent"}
+INFO_KINDS = {"case_marker_absent", "decision_deprecated_not_terminal"}
 
 ALL_KINDS = GRAPH_ONLY_KINDS | FS_TOUCHING_KINDS | INFO_KINDS
 
@@ -127,6 +134,8 @@ def get_all_detectors() -> dict[str, Any]:
         "unresolved_bare_token_in_predicate_form": detect_unresolved_bare_token_in_predicate_form,
         "skill_binding_missing": detect_skill_binding_missing,
         "skill_binding_tool_unknown": detect_skill_binding_tool_unknown,
+        "decision_workflow_state_incoherent": detect_decision_workflow_state_incoherent,
+        "decision_deprecated_not_terminal": detect_decision_deprecated_not_terminal,
     }
 
 
@@ -191,6 +200,8 @@ __all__ = [
     "detect_confirmed_attribute_no_assertion",
     "detect_confirmed_entity_no_assertions",
     "detect_dangling_relationship_target",
+    "detect_decision_deprecated_not_terminal",
+    "detect_decision_workflow_state_incoherent",
     "detect_document_not_wired_to_case",
     "detect_entity_empty_description",
     "detect_entity_source_uri_missing",

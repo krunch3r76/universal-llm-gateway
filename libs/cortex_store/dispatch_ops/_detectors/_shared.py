@@ -47,6 +47,11 @@ SEVERITY = {
     "skill_binding_missing": "warning",
     "skill_binding_tool_unknown": "warning",
     "forbidden_surfaces": "warning",
+    # entity-state coherence — adopted entity resting at pre-adoption/unset
+    # workflow_state (thread 1116; entity-lifecycle-discipline). Parameterized
+    # engine, decision landed first.
+    "decision_workflow_state_incoherent": "warning",
+    "decision_deprecated_not_terminal": "info",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by
