@@ -49,6 +49,50 @@ def turn_body_limit_error(
         body_chars=len(body),
     )
 
+
+def post_continuation_misuse_error(
+    slug: str, after_turn: int | None
+) -> dict[str, object] | None:
+    """Reject continuation-shaped misuse of the create-thread (`post`) path.
+
+    `post` (POST /threads/with-turn) always mints a NEW thread. Two arg shapes
+    signal the caller actually meant to continue an existing thread via `reply`
+    (POST /turns); silently creating a forked thread is the 1140->1142 footgun.
+
+      - slug all-digits -> a thread ID jammed into the slug field
+      - after_turn set  -> a continuation field; inert on create (the unread
+                           check in create_thread_with_turn runs against the
+                           freshly created empty thread, so it never fires)
+
+    Returns a structured 400 envelope, or None for a legitimate new-thread post.
+    """
+    if slug.isdigit():
+        return {
+            "reason": "slug_looks_like_thread_id",
+            "slug": slug,
+            "message": (
+                f"slug {slug!r} is all digits and looks like a thread ID. "
+                "post always creates a NEW thread (id is auto-assigned; slug is "
+                "a human label). To continue an existing thread use "
+                "reply(thread=<id>, after_turn=<n>). To create a new thread, "
+                "pick a descriptive non-numeric slug."
+            ),
+            "suggestion": "use_reply_to_continue",
+        }
+    if after_turn is not None:
+        return {
+            "reason": "after_turn_not_valid_on_post",
+            "after_turn": after_turn,
+            "message": (
+                "after_turn is a continuation field and has no effect on post, "
+                "which always creates a new thread. To continue an existing "
+                "thread use reply(thread=<id>, after_turn=<n>)."
+            ),
+            "suggestion": "use_reply_to_continue",
+        }
+    return None
+
+
 # --- Attachment schemas ---
 
 

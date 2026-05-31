@@ -85,18 +85,51 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:tax",
         "agent_skill:w2-ingestion",
         "agent_skill:xai-mcp-calling-shape",
+        # Reconciled 2026-05-29 (todo:agent-skill-applicability-partition-
+        # reconciliation): active, seat-agnostic skills previously unpartitioned.
+        "agent_skill:implementation-plan-workflow",
+        "agent_skill:frontier-reasoning-discipline",
+        "agent_skill:subgraph-render",
+        "agent_skill:lead-seat-boot",
+        "agent_skill:srm",
+        "agent_skill:auditor-validatable-confidence",
+        "agent_skill:corpus-cross-reference-discipline",
+        "agent_skill:agent-bus-discipline",
+        "agent_skill:agent-build",
+        "agent_skill:evidence-review-discipline",
+        "agent_skill:dispatch-workflow",
+        "agent_skill:modularize-discipline",
+        "agent_skill:provenance-granularity",
+        # Partitioned here for backfill membership; OVERRIDDEN below to its true
+        # multi-agent value ['claude-cursor', 'claude-web'] (not universal).
+        "agent_skill:mcp-surface-change",
     ],
     "claude-cursor": [
         "agent_skill:ulg-architecture",
+        # Reconciled 2026-05-29 (direct-verify caught it): cursor-workspace skill
+        # (.cursor/skills/); live applicable_agents=['claude-cursor'], not universal.
+        "agent_skill:delegate-to-grok",
     ],
     "claude-web": [
         "agent_skill:implement-todo",
+        # Reconciled 2026-05-29: web-only by skill definition.
+        "agent_skill:claude-web-boot",
+        "agent_skill:mode-b-web-orchestrator",
     ],
 }
 
 
 # Multi-agent assignments. Wins over the bucket-derived value above.
 OVERRIDES: dict[str, list[str]] = {
+    # Reconciled 2026-05-29 (direct-verify): cursor+web, not universal; matches live attr.
+    "agent_skill:mcp-surface-change": ["claude-cursor", "claude-web"],
+    "agent_skill:agent-build": [
+        "claude-web",
+        "claude-cursor",
+        "grok-direct",
+        "gpt-cursor",
+        "subagent",
+    ],
     "agent_skill:grok-web-dispatch": ["grok-web", "claude-web", "claude-cursor"],
     "agent_skill:xai-mcp-calling-shape": [
         "grok-web",
@@ -186,7 +219,16 @@ def _audit(client: _UDSConnection) -> int:
         print(f"AUDIT FAIL: GET /entities {status} → {body}")
         return 2
     live_summaries = body.get("items", [])
-    live_ids = {row["id"] for row in live_summaries}
+    # Deprecated/superseded skills will never be partitioned; counting them as
+    # "unpartitioned" keeps --audit permanently red (the always-red-detector
+    # bug). Exclude them from the active universe. They remain as entities
+    # (tombstones) for supersession provenance — out of scope for partitioning.
+    excluded_deprecated = sorted(
+        row["id"] for row in live_summaries if row.get("status") == "deprecated"
+    )
+    live_ids = {
+        row["id"] for row in live_summaries if row.get("status") != "deprecated"
+    }
     partitioned = set(OVERRIDES.keys()) | {
         eid for ids in PARTITION.values() for eid in ids
     }
@@ -208,7 +250,8 @@ def _audit(client: _UDSConnection) -> int:
             drifted.append((entity_id, actual, expected))
 
     print("Audit: agent_skill applicability")
-    print(f"  Live skills total       : {len(live_ids)}")
+    print(f"  Active skills total     : {len(live_ids)}")
+    print(f"  Excluded (deprecated)   : {len(excluded_deprecated)}")
     print(f"  In partition / overrides: {len(partitioned & live_ids)}")
     print(f"  Unpartitioned (default ['*'] via COALESCE): {len(unpartitioned)}")
     for eid in unpartitioned:

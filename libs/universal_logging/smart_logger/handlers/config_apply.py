@@ -26,8 +26,11 @@ def apply_logging_config_with_cleanup(config: dict[str, Any]) -> None:
     # Make a deep copy to avoid mutating the original config
     config_copy = copy.deepcopy(config)
 
-    # Extract truncate_logs setting
+    # Extract truncate_logs setting (top-level or legacy nested under "logging")
     truncate_logs = config_copy.pop("truncate_logs", False)
+    nested_logging = config_copy.pop("logging", None)
+    if not truncate_logs and isinstance(nested_logging, dict):
+        truncate_logs = nested_logging.pop("truncate_logs", False)
 
     # Automatic handler cleanup and mode setting if truncation requested
     if truncate_logs:

@@ -1,0 +1,42 @@
+# plan-seed — atomic plannable-item seeding pipeline
+#
+# Per architecture (mirrors todo-close, assertions 220/221/5184):
+#   Agent → MCP (thin proxy) → Stargate pipeline:plan-seed → cortex-api (pure data)
+#
+# Seeds a plannable item: one entity_create for todo:{slug}, one for
+# plan:{slug}, and a derived_from edge (plan → todo). Slug coherence is
+# guaranteed by construction (single slug option). Best-effort with structured
+# per-call results; partial failures are reported, not retried.
+#
+# The spec file (tasks/specs/{slug}.md) is written by the /plan-seed command
+# BEFORE invocation — it is a workspace filesystem op, not a cortex op.
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="plan-seed",
+#            messages=[{"role":"user","content":"seed"}],  # marker
+#            options={
+#              "slug": "my-feature",               # required (lowercase-hyphenated)
+#              "name": "My Feature",               # required (entity display name)
+#              "description": "...",               # optional
+#              "domain": "tooling",                # optional → attributes.domain
+#              "priority": "medium",               # optional → attributes.priority
+#              "agent": "cursor",                  # optional, for edge attribution
+#              "session_id": "cursor-...",         # optional, for edge attribution
+#            })
+
+schema_version: 6
+id: plan-seed
+version: "1.0"
+type: plan_seed
+description: >
+  Atomic plannable-item seeding. Orchestrates entity_create(todo) +
+  entity_create(plan) + derived_from edge against cortex-api in one call.
+  Best-effort; partial failures returned per step.
+output: apply
+
+options:
+  timeout_seconds: 60
+
+steps:
+  - name: apply
+    type: plan_seed_apply_v1

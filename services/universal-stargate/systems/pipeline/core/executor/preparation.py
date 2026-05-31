@@ -249,13 +249,10 @@ def extract_runtime_options(
     if top_d or inner_d:
         runtime_options["model_ref_overrides"] = {**top_d, **inner_d}
 
-    # Surface the outer ``stream`` flag so the generate handler's streaming
-    # branch (terminal-passthrough eligible pipelines, see Phase 3 of
-    # plan:pipeline-terminal-passthrough-streaming) can detect it via
-    # ``context.runtime_options.get("stream")``. Coerced to plain bool so
-    # downstream code does not need to handle truthy/falsy strings.
+    # Surface the outer ``stream`` flag (coerced at proxy ingress) for the
+    # generate handler's streaming branch.
     if "stream" in context.original_request:
-        runtime_options["stream"] = bool(context.original_request.get("stream"))
+        runtime_options["stream"] = context.original_request["stream"]
 
     if runtime_options:
         option_keys = list(runtime_options.keys())

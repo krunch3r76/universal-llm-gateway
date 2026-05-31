@@ -96,7 +96,7 @@ def test_derive_mcp_grok_visibility_only() -> None:
 def test_derive_claude_manifest_count() -> None:
     """D1: derived Claude manifest returns exactly one entry per domain."""
     manifest = derive_claude_manifest(_CANONICAL_YAML)
-    assert len(manifest) == 11  # update if domains change
+    assert len(manifest) == 14  # update if domains change
     tool_names = [e["tool_name"] for e in manifest]
     assert len(tool_names) == len(set(tool_names)), "duplicate tool_names in manifest"
 
@@ -175,7 +175,9 @@ def test_grok_golden_unchanged_after_claude_registry_diff() -> None:
     """Regression: Claude registry diff must not perturb grok manifest bytes."""
     grok_manifest = derive_grok_manifest(_CANONICAL_YAML)
     golden = json.loads((_TESTDATA / "golden_grok_manifest.json").read_text())
-    assert grok_manifest == golden, "grok manifest drifted — Phase D broke grok partition"
+    assert grok_manifest == golden, (
+        "grok manifest drifted — Phase D broke grok partition"
+    )
 
 
 if __name__ == "__main__":

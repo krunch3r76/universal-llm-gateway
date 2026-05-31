@@ -11,6 +11,10 @@ Operator-locked decisions encoded here:
 * No ``GROKBUILD_AUTH_TOKEN`` — Stargate enforces auth at its edge and
   the worker trusts requests arriving from Stargate (same pattern as
   ``cortex-api`` / ``agent-bus``).
+* Build-result spool dir is owned by ``libs/build_results`` (env
+  ``BUILD_RESULTS_DIR``, default ``/mnt/torus/projects/ulg-build-results``),
+  NOT by ``WorkerConfig`` — it is shared with cursorbuild above the
+  grokbuild/cursorbuild fork line, so it is intentionally not duplicated here.
 
 ``GROKBUILD_SIDECAR_DIR`` / ``GROKBUILD_REGISTRY_PATH`` env var overrides
 always take precedence over the defaults.
@@ -34,6 +38,18 @@ class WorkerConfig:
     grok_bin_path: Path
     grok_auth_dir: Path
     projects_root: Path
+    # Agent-bus notification config (Phase 2).
+    # ∀ agent_bus_token == "": notifier is disabled (no-op).
+    agent_bus_url: str
+    agent_bus_token: str
+    grok_auth_notify_slug: (
+        str  # review §F2: slug for /threads/with-turn, NOT a thread id
+    )
+    grok_auth_notify_to: str
+    grok_auth_debounce_h: int
+    # Cortex integration (Phase 3 — optional).  Token empty = disabled.
+    cortex_api_url: str
+    cortex_api_token: str
 
     @property
     def deploy_shape(self) -> str:
@@ -61,4 +77,18 @@ def load_config() -> WorkerConfig:
         grok_bin_path=_env_path("GROK_BIN_PATH", "/home/io/.local/bin/grok"),
         grok_auth_dir=_env_path("GROK_AUTH_DIR", "/home/io/.grok"),
         projects_root=_env_path("PROJECTS_ROOT", "/mnt/torus/projects"),
+        # Agent-bus notification (Phase 2).  Token empty = notifier disabled.
+        agent_bus_url=os.environ.get(
+            "AGENT_BUS_URL",
+            "unix:///tmp/universal-protocol/agent-bus.sock",
+        ),
+        agent_bus_token=os.environ.get("AGENT_BUS_TOKEN", ""),
+        grok_auth_notify_slug=os.environ.get("GROK_AUTH_NOTIFY_SLUG", "grokbuild-auth"),
+        grok_auth_notify_to=os.environ.get("GROK_AUTH_NOTIFY_TO", "web"),
+        grok_auth_debounce_h=int(os.environ.get("GROKBUILD_AUTH_DEBOUNCE_H", "4")),
+        cortex_api_url=os.environ.get(
+            "CORTEX_API_URL",
+            "unix:///tmp/universal-protocol/cortex-api.sock",
+        ),
+        cortex_api_token=os.environ.get("CORTEX_API_TOKEN", ""),
     )

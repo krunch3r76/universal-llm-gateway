@@ -188,9 +188,11 @@ def apply_environment_overrides(config: dict[str, Any]) -> dict[str, Any]:
                 if "use_effects" in formatter_config:
                     formatter_config["use_effects"] = use_effects
 
-    # Override truncate setting
-    if "logging" in config:
-        config["logging"]["truncate_logs"] = get_truncate_logs()
+    # Override truncate setting (top-level flag consumed by apply_logging_config)
+    truncate_logs = get_truncate_logs()
+    config["truncate_logs"] = truncate_logs
+    if "logging" in config and isinstance(config["logging"], dict):
+        config["logging"]["truncate_logs"] = truncate_logs
 
     return config
 

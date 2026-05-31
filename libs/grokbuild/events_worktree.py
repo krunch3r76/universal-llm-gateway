@@ -265,3 +265,19 @@ def emit_grok_build_registry_recovered(
             schema_version=schema_version,
         )
     )
+
+
+@event_factory
+def GrokBuildLockReaped(  # noqa: N802
+    cwd: str,
+    holders_reaped: int,
+) -> Event:
+    return Event(
+        signal="mcp.grokbuild.lock.reaped",
+        payload={"cwd": cwd, "holders_reaped": holders_reaped},
+        scope="global",
+    )
+
+
+def emit_grok_build_lock_reaped(*, cwd: str, holders_reaped: int) -> None:
+    _emit(GrokBuildLockReaped(cwd=cwd, holders_reaped=holders_reaped))

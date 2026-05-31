@@ -37,3 +37,65 @@ def ManageServiceFailed(  # noqa: N802
             "duration_s": duration_s,
         },
     )
+
+
+@event_factory
+def ManageRestartDeferred(  # noqa: N802
+    method: str, service: str, state: str, reason: str, retry_after_s: int
+) -> Event:
+    """Emitted when a stop/restart/sync_restart is deferred by the drain gate.
+
+    state ∈ {"busy", "in_progress", "probe_error"}.
+    """
+    return Event(
+        signal="manage.restart.deferred",
+        payload={
+            "method": method,
+            "service": service,
+            "state": state,
+            "reason": reason,
+            "retry_after_s": retry_after_s,
+        },
+    )
+
+
+@event_factory
+def ManageQuitDrainStarted(busy_count: int, sources: list[str]) -> Event:  # noqa: N802
+    """Emitted when a quit-while-busy flips the shutdown gate to draining.
+
+    The manage host refuses to exit until in-flight work completes; new
+    manage.sock JSON-RPC is rejected with -32099 (manage_shutting_down).
+    """
+    return Event(
+        signal="manage.quit.drain.started",
+        payload={"busy_count": busy_count, "sources": sources},
+    )
+
+
+@event_factory
+def ManageQuitDrainCompleted(  # noqa: N802
+    timed_out: bool, waited_s: float, remaining: int
+) -> Event:
+    """Emitted just before the manage host exits after a quit-drain.
+
+    timed_out=True means the bounded ceiling elapsed with work still in flight
+    and the process is exiting anyway (forced, but logged/evented — never a
+    silent mid-response truncation).
+    """
+    return Event(
+        signal="manage.quit.drain.completed",
+        payload={
+            "timed_out": timed_out,
+            "waited_s": waited_s,
+            "remaining": remaining,
+        },
+    )
+
+
+@event_factory
+def ManageQuitRequestRejected(method: str, service: str) -> Event:  # noqa: N802
+    """Emitted when a new manage.sock JSON-RPC is rejected during quit-drain."""
+    return Event(
+        signal="manage.quit.request.rejected",
+        payload={"method": method, "service": service},
+    )

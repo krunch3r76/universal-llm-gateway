@@ -21,24 +21,35 @@ build-time stamp in the wheel).
 
 from __future__ import annotations
 
+import asyncio
+import os
 import subprocess
 import time
+import traceback
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from build_results import prune_spool
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from grokbuild.auth_notifier import (
+    clear_notification_latch,
+    notify_if_needed,
+    notify_if_needed_async,
+)
+from grokbuild.auth_probe import AuthStatus, probe_grok_auth
 from grokbuild.events_core import register_uds_publisher
 from universal_logging import get_logger
-import traceback
 
 from services.grokbuild_worker.config import WorkerConfig, load_config
 from services.grokbuild_worker.events import (
-    publish_lib_signal,
+    emit_auth_required,
+    emit_auth_restored,
     emit_degraded,
     emit_started,
     emit_stopped,
+    publish_lib_signal,
 )
 from services.grokbuild_worker.routes.dispatches import router as dispatches_router
 from services.grokbuild_worker.routes.health import _evaluate
@@ -95,6 +106,91 @@ def _prepare_directories(cfg: WorkerConfig) -> list[str]:
     return failures
 
 
+async def _periodic_auth_probe(
+    app: FastAPI,
+    cfg: WorkerConfig,
+    interval_s: int,
+) -> None:
+    """Periodic T3 auth probe: update app.state.grok_auth_status every interval_s.
+
+    Runs until cancelled by lifespan shutdown.  Updates grok_auth_status so
+    /health reflects the current auth state without blocking the request path.
+    Emits grokbuild.auth.required on transition to non-OK;
+    emits grokbuild.auth.restored on transition back to OK.
+    """
+    prior_status: AuthStatus | None = getattr(app.state, "grok_auth_status", None)
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+        except asyncio.CancelledError:
+            return
+
+        try:
+            result = probe_grok_auth()
+        except Exception:  # noqa: BLE001
+            logger.exception("Periodic auth probe raised unexpectedly")
+            continue
+
+        app.state.grok_auth_status = result.status
+
+        if result.status != AuthStatus.OK and (
+            prior_status == AuthStatus.OK or prior_status is None
+        ):
+            if getattr(app.state, "grok_auth_failed_at", None) is None:
+                app.state.grok_auth_failed_at = time.monotonic()
+            logger.warning(
+                "Periodic probe: grok auth %s: %s", result.status, result.detail
+            )
+            try:
+                await notify_if_needed_async(
+                    sidecar_dir=cfg.sidecar_dir,
+                    agent_bus_url=cfg.agent_bus_url,
+                    agent_bus_token=cfg.agent_bus_token,
+                    notify_slug=cfg.grok_auth_notify_slug,
+                    notify_to=cfg.grok_auth_notify_to,
+                    debounce_h=cfg.grok_auth_debounce_h,
+                    trigger="periodic",
+                    grok_auth_dir=str(cfg.grok_auth_dir),
+                    deploy_shape=cfg.deploy_shape,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "auth_notifier.notify_if_needed_async failed (periodic)"
+                )
+            try:
+                emit_auth_required(
+                    reason_code=result.status,
+                    grok_auth_dir=str(cfg.grok_auth_dir),
+                    deploy_shape=cfg.deploy_shape,
+                    trigger="periodic",
+                    debounce_key="",
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed to emit grokbuild.auth.required (periodic)")
+        elif (
+            result.status == AuthStatus.OK
+            and prior_status is not None
+            and prior_status != AuthStatus.OK
+        ):
+            logger.info("Periodic probe: grok auth restored")
+            failed_at = getattr(app.state, "grok_auth_failed_at", None)
+            downtime_s = time.monotonic() - failed_at if failed_at is not None else 0.0
+            app.state.grok_auth_failed_at = None
+            try:
+                clear_notification_latch(cfg.sidecar_dir)
+                emit_auth_restored(str(cfg.grok_auth_dir), downtime_s)
+            except Exception:  # noqa: BLE001
+                logger.exception("Failed on auth restore (periodic)")
+            from grokbuild.auth_notifier import _cortex_todo_close
+
+            try:
+                _cortex_todo_close(cfg.cortex_api_url, cfg.cortex_api_token)
+            except Exception:  # noqa: BLE001
+                logger.exception("_cortex_todo_close failed (periodic restore)")
+
+        prior_status = result.status
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup: prep dirs + run health checks; shutdown: emit stopped event."""
@@ -108,8 +204,65 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.worker_started_at = time.monotonic()
 
     _prepare_directories(cfg)
-    checks = _evaluate(cfg)
-    degraded = [name for name, status in checks.items() if status != "ok"]
+
+    # T1: startup auth probe — sets app.state.grok_auth_status so _evaluate()
+    # and the /health endpoint can surface grok_auth without a blocking
+    # subprocess call on every poll.
+    auth_result = probe_grok_auth()
+    app.state.grok_auth_status = auth_result.status
+    app.state.grok_auth_failed_at: float | None = (
+        time.monotonic() if auth_result.status != AuthStatus.OK else None
+    )
+    if auth_result.status != AuthStatus.OK:
+        logger.warning(
+            "grokbuild-worker: startup auth probe %s: %s",
+            auth_result.status,
+            auth_result.detail,
+        )
+        debounce_key_out: list[str] = []
+        notified = False
+        try:
+            notified = notify_if_needed(
+                sidecar_dir=cfg.sidecar_dir,
+                agent_bus_url=cfg.agent_bus_url,
+                agent_bus_token=cfg.agent_bus_token,
+                notify_slug=cfg.grok_auth_notify_slug,
+                notify_to=cfg.grok_auth_notify_to,
+                debounce_h=cfg.grok_auth_debounce_h,
+                trigger="startup",
+                grok_auth_dir=str(cfg.grok_auth_dir),
+                deploy_shape=cfg.deploy_shape,
+                debounce_key_out=debounce_key_out,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("auth_notifier.notify_if_needed failed at startup")
+        if notified:
+            from grokbuild.auth_notifier import _cortex_todo_open
+
+            try:
+                _cortex_todo_open(cfg.cortex_api_url, cfg.cortex_api_token)
+            except Exception:  # noqa: BLE001
+                logger.exception("_cortex_todo_open failed at startup")
+        try:
+            emit_auth_required(
+                reason_code=auth_result.status,
+                grok_auth_dir=str(cfg.grok_auth_dir),
+                deploy_shape=cfg.deploy_shape,
+                trigger="startup",
+                debounce_key=debounce_key_out[0] if debounce_key_out else "",
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Failed to emit grokbuild.auth.required (startup)")
+
+    checks = _evaluate(cfg, app.state)
+    # Option A (OQ-1): grok_auth is informational — it must NOT contribute to the
+    # worker.degraded signal or worker.started.degraded_checks. Auth expiry is
+    # surfaced via grokbuild.auth.required + the agent-bus notification instead.
+    degraded = [
+        name
+        for name, status in checks.items()
+        if status != "ok" and name != "grok_auth"
+    ]
     if degraded:
         logger.warning("grokbuild-worker booting degraded: %s", degraded)
         try:
@@ -135,6 +288,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001 — orphan cleanup must not block boot
         logger.exception("Failed to run grokbuild tracker cleanup_orphans")
 
+    try:
+        pruned = prune_spool()
+        logger.info("build_results prune_spool removed %d aged spool dirs", pruned)
+    except Exception:  # noqa: BLE001 — spool prune must not block boot
+        logger.exception("Failed to run build_results prune_spool")
+
     logger.info(
         "grokbuild-worker started: version=%s deploy_shape=%s port=%d degraded=%s",
         app.state.worker_version,
@@ -143,9 +302,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         degraded,
     )
 
+    # T3: optional periodic auth probe task.
+    # ∀ interval > 0: asyncio task polls grok models every interval seconds
+    # and updates app.state.grok_auth_status.  Default 0 = disabled.
+    _probe_interval_s = int(os.environ.get("GROKBUILD_AUTH_PROBE_INTERVAL_S", "0"))
+    _periodic_task: asyncio.Task[None] | None = None
+    if _probe_interval_s > 0:
+        _periodic_task = asyncio.create_task(
+            _periodic_auth_probe(app, cfg, _probe_interval_s),
+            name="grokbuild-auth-probe",
+        )
+        logger.info(
+            "grokbuild-worker: periodic auth probe enabled, interval=%ds",
+            _probe_interval_s,
+        )
+
     try:
         yield
     finally:
+        if _periodic_task is not None and not _periodic_task.done():
+            _periodic_task.cancel()
+            try:
+                await _periodic_task
+            except asyncio.CancelledError:
+                pass
         try:
             await tracker.drain(timeout_seconds=30.0)
         except Exception:  # noqa: BLE001 — drain failures must not mask shutdown
@@ -171,10 +351,16 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def _log_unhandled(request: Request, exc: Exception) -> JSONResponse:
         tb = traceback.format_exc()
-        logger.error("UNHANDLED %s %s: %s\n%s", request.method, request.url.path, exc, tb)
+        logger.error(
+            "UNHANDLED %s %s: %s\n%s", request.method, request.url.path, exc, tb
+        )
         return JSONResponse(
             status_code=500,
-            content={"detail": "Internal Server Error", "error": str(exc), "path": str(request.url.path)},
+            content={
+                "detail": "Internal Server Error",
+                "error": str(exc),
+                "path": str(request.url.path),
+            },
         )
 
     app.include_router(health_router)

@@ -1,4 +1,4 @@
-"""Worker-level tests for the seven synchronous REST endpoints.
+"""Worker-level tests for the synchronous REST endpoints.
 
 Coverage strategy: happy-path + one error-path per endpoint.
 ``libs/grokbuild`` calls are mocked (lib correctness is tested in
@@ -31,6 +31,20 @@ _COMPLETED: dict[str, Any] = {
         "count": 1,
         "worktrees": [],
         "branch": "main",
+    },
+}
+
+_SNAPSHOT_COMPLETED: dict[str, Any] = {
+    **_COMPLETED,
+    "stdout": "abc123",
+    "metadata": {
+        **_COMPLETED["metadata"],
+        "slug": "my-arc",
+        "branch": "arc/my-arc",
+        "worktree_path": "/mnt/torus/projects/ulg-grok-worktrees/my-arc",
+        "snapshot_sha": "abc123",
+        "source_repo": "/mnt/torus/projects/foo",
+        "main_reset": "skipped",
     },
 }
 
@@ -142,6 +156,44 @@ async def test_create_worktree_rejected(app):
     assert resp.status_code == 400
     detail = resp.json()["detail"]
     assert detail["reason_code"] == "name_invalid"
+
+
+# ──────────────────────── POST /snapshots ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_snapshot_happy(app):
+    with patch(
+        "services.grokbuild_worker.routes.worktrees.snapshot_op",
+        new=AsyncMock(return_value=_SNAPSHOT_COMPLETED),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url=BASE
+        ) as client:
+            resp = await client.post(
+                "/api/v1/grokbuild/snapshots",
+                json={
+                    "source_repo": "/mnt/torus/projects/foo",
+                    "slug": "my-arc",
+                },
+            )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "completed"
+    assert resp.json()["metadata"]["snapshot_sha"] == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_create_snapshot_extra_field_rejected(app):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=BASE) as client:
+        resp = await client.post(
+            "/api/v1/grokbuild/snapshots",
+            json={
+                "source_repo": "/mnt/torus/projects/foo",
+                "slug": "my-arc",
+                "unknown_field": True,
+            },
+        )
+    assert resp.status_code == 422
 
 
 # ───────────────────────── GET /worktrees ──────────────────────────────────

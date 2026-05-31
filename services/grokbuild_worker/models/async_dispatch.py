@@ -14,9 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from grokbuild.constants import DISPATCH_MODEL_ID
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 DispatchState = Literal["pending", "running", "succeeded", "failed", "cancelled"]
 
@@ -26,7 +25,20 @@ class GrokbuildDispatchRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    cwd: str = Field(..., description="Absolute path to the dispatch worktree.")
+    cwd: str | None = Field(
+        None,
+        description=(
+            "Absolute path to the dispatch worktree. Optional when "
+            "source_repo is supplied."
+        ),
+    )
+    source_repo: str | None = Field(
+        None,
+        description=(
+            "Repo-name alias or absolute path; worker resolves to host "
+            "projects root before dispatch."
+        ),
+    )
     prompt: str = Field(..., description="Prompt text passed to grok.")
     mode: Literal["read_only", "edit"] = Field(
         "read_only", description="Dispatch mode (validator enforces semantics)."
@@ -72,7 +84,13 @@ class GrokbuildDispatchRequest(BaseModel):
     mcp: bool = Field(True, description="MCP-enabled path selector.")
 
     @model_validator(mode="after")
-    def _validate_mcp_compatibility(self) -> "GrokbuildDispatchRequest":
+    def _validate_cwd_or_source_repo(self) -> GrokbuildDispatchRequest:
+        if not self.cwd and not self.source_repo:
+            raise ValueError("one of cwd or source_repo is required")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_mcp_compatibility(self) -> GrokbuildDispatchRequest:
         """Reject grok-CLI-only fields when mcp=False (api path).
 
         The api path (mcp=False) is a direct LLM API call via Stargate —
@@ -87,9 +105,7 @@ class GrokbuildDispatchRequest(BaseModel):
                 f"model={DISPATCH_MODEL_ID!r} via CLI subprocess)"
             ]
             if self.mode == "edit":
-                incompatible.append(
-                    "mode='edit' (api path cannot edit; no subprocess)"
-                )
+                incompatible.append("mode='edit' (api path cannot edit; no subprocess)")
             if self.continue_recent:
                 incompatible.append("continue_recent=True (grok CLI flag only)")
             if self.reasoning_effort is not None:
@@ -123,6 +139,10 @@ class GrokbuildDispatchAccepted(BaseModel):
     status_url: str
     events_url: str
     state: DispatchState = "pending"
+    # Common-channel pointer (decision:build-result-common-channel): where the
+    # fs-reachable spool WILL be once the dispatch reaches terminal state. Keys:
+    # sandbox, result_dir, signals_path, envelope_path, sidecar_path.
+    result_ref: dict[str, Any] = Field(default_factory=dict)
 
 
 class GrokbuildDispatchStatus(BaseModel):

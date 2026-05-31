@@ -110,8 +110,7 @@ def normalize_page_spec(
         )
     if not isinstance(pages, list):
         raise ValueError(
-            f"pages must be None, 'all', or list[int], got "
-            f"{type(pages).__name__}",
+            f"pages must be None, 'all', or list[int], got {type(pages).__name__}",
         )
     if not pages:
         raise ValueError("pages list must be non-empty (use None for 'all')")
@@ -121,8 +120,7 @@ def normalize_page_spec(
         # ``pages=[True, False]`` cannot smuggle bogus page numbers in.
         if not isinstance(entry, int) or isinstance(entry, bool) or entry < 1:
             raise ValueError(
-                f"pages entries must be positive 1-based ints, got "
-                f"{entry!r}",
+                f"pages entries must be positive 1-based ints, got {entry!r}",
             )
 
     normalized: list[int] = sorted(set(pages))
@@ -286,8 +284,7 @@ def compute_args_hash(
         )
     if not isinstance(default_profile, dict):
         raise ValueError(
-            f"default_profile must be a dict, got "
-            f"{type(default_profile).__name__}",
+            f"default_profile must be a dict, got {type(default_profile).__name__}",
         )
 
     normalized: dict[str, Any] = {}

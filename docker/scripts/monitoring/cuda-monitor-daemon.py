@@ -35,7 +35,7 @@ class CudaMonitor:
         self.container_name = container_name
         self.dry_run = dry_run
         self.consecutive_failures = 0
-        self.last_restart_time: Optional[datetime] = None
+        self.last_restart_time: datetime | None = None
         self.restart_count_hourly = 0
         self.restart_count_hourly_reset_time = datetime.now()
 

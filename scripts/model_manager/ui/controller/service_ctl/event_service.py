@@ -15,11 +15,13 @@ from pathlib import Path
 from ...model.service_state import ServiceState
 from ..service_config import (
     GATEWAY_DIR,
+    apply_host_service_logging_env,
     build_service_env,
     ensure_event_service_config,
     ensure_socket_dir,
     load_event_service_config,
 )
+from .startup_probe import StartupOutcome, await_subprocess_started
 from .utils import (
     _acquire_lock,
     _find_module_pid_by_cmdline,
@@ -118,6 +120,9 @@ async def start_event_service(
         env["PYTHONPATH"] = (
             f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
         )
+        apply_host_service_logging_env(
+            env, log_dir=_LOG_DIR, log_filename=_LOG_FILENAME
+        )
 
         cmd_args: list[str] = [
             python,
@@ -143,6 +148,7 @@ async def start_event_service(
         with log_file.open("w") as log_fh:
             process = await asyncio.create_subprocess_exec(
                 *cmd_args,
+                stdin=asyncio.subprocess.DEVNULL,
                 env=env,
                 cwd=str(root),
                 stdout=log_fh,
@@ -150,26 +156,27 @@ async def start_event_service(
                 start_new_session=True,
             )
 
-        try:
-            exit_code = await asyncio.wait_for(process.wait(), timeout=3.0)
+        def _ready() -> bool:
+            if not query_sock.exists():
+                return False
+            return service_state._probe_uds_health(query_sock, "/health")
+
+        outcome, exit_code = await await_subprocess_started(process, ready=_ready)
+        if outcome is StartupOutcome.CRASHED:
             tail = _read_log_tail(log_file)
             return f"{_SERVICE_NAME} failed (exit {exit_code}).\n{tail}"
-        except TimeoutError:
-            logger.info(
-                "%s subprocess remained alive after startup probe", _SERVICE_NAME
-            )
-            fd = _acquire_lock(_LOCK_FILE)
-            try:
-                GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
-                _PID_FILE.write_text(str(process.pid) + "\n")
-            finally:
-                _release_lock(fd)
-            msg = f"{_SERVICE_NAME} starting (PID {process.pid})."
-            if cfg is not None and cfg.tcp_enabled:
-                msg += (
-                    f" TCP: ingest=:{cfg.tcp_ingest_port}, query=:{cfg.tcp_query_port}"
-                )
-            return msg
+
+        logger.info("%s subprocess startup probe: %s", _SERVICE_NAME, outcome.value)
+        fd = _acquire_lock(_LOCK_FILE)
+        try:
+            GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+            _PID_FILE.write_text(str(process.pid) + "\n")
+        finally:
+            _release_lock(fd)
+        msg = f"{_SERVICE_NAME} starting (PID {process.pid})."
+        if cfg is not None and cfg.tcp_enabled:
+            msg += f" TCP: ingest=:{cfg.tcp_ingest_port}, query=:{cfg.tcp_query_port}"
+        return msg
 
 
 async def stop_event_service(

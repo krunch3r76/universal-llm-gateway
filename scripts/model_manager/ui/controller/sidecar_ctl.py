@@ -61,6 +61,7 @@ class SidecarController:
             "-v",
             f"{self._root}:{self._root}:ro",
             SIDECAR_IMAGE,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -79,6 +80,7 @@ class SidecarController:
             "docker",
             "stop",
             SIDECAR_NAME,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -88,6 +90,7 @@ class SidecarController:
             "docker",
             "rm",
             SIDECAR_NAME,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )

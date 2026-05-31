@@ -158,6 +158,32 @@ def build_service_env(
     return env
 
 
+_MANAGE_TUI_LOG_DIR = Path("/tmp/logs/tui")
+
+
+def bootstrap_manage_process_logging_env() -> None:
+    """Set LOG_DIR before any ``universal_logging`` import in the manage TUI."""
+    _MANAGE_TUI_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("LOG_DIR", str(_MANAGE_TUI_LOG_DIR))
+    os.environ.setdefault("SERVICE_NAME", "manage_tui")
+    os.environ.setdefault("TRUNCATE_LOGS", "true")
+
+
+def apply_host_service_logging_env(
+    env: dict[str, str],
+    *,
+    log_dir: Path | str,
+    log_filename: str,
+) -> None:
+    """Wire ``universal_logging`` file handlers to the manage launcher log dir."""
+    log_path = Path(log_dir)
+    log_path.mkdir(parents=True, exist_ok=True)
+    service_name = Path(log_filename).stem.replace("-", "_")
+    env["LOG_DIR"] = str(log_path)
+    env["SERVICE_NAME"] = service_name
+    env["TRUNCATE_LOGS"] = "true"
+
+
 _MCP_CONFIG_PATH = GATEWAY_DIR / "mcp.yaml"
 _EVENT_SERVICE_CONFIG_PATH = GATEWAY_DIR / "event-service.yaml"
 

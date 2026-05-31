@@ -60,7 +60,6 @@ class RequestContext:
         self.modified_request: dict[str, Any] | None = None
         # Canonical ModelMetadata object
         self.model_metadata: ModelMetadata | None = None
-        self.client_wants_streaming: bool = False
         # One-shot per-request profile name (if any)
         self.request_profile: str | None = None
         self.selected_gateway_instance: GatewayInstance | None = None
@@ -113,6 +112,10 @@ class RequestContext:
         # remove it as dead code once that branch is retired.
         self._overflow_failed_tried_gateways: list[str] | None = None
         self._overflow_failed_reason: str | None = None
+
+    @property
+    def client_wants_streaming(self) -> bool:
+        return self.original_request.get("stream", False)
 
     @property
     def is_federated(self) -> bool:

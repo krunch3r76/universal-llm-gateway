@@ -12,6 +12,8 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
+from .controller.restart_drain import run_gated
+
 if TYPE_CHECKING:
     from .controller.service_ctl.core import ServiceController
     from .model.service_state import ServiceInfo, ServiceState
@@ -28,6 +30,7 @@ VALID_SERVICES = frozenset(
         "cortex_api",
         "agent_bus",
         "grokbuild_worker",
+        "git_integration_worker",
         "email_bridge",
     }
 )
@@ -38,6 +41,7 @@ REBUILD_SERVICES = frozenset(
         "cortex_api",
         "agent_bus",
         "grokbuild_worker",
+        "git_integration_worker",
         "email_bridge",
     }
 )
@@ -51,6 +55,7 @@ SYNC_RESTART_SERVICES = frozenset(
         "cortex_api",
         "agent_bus",
         "grokbuild_worker",
+        "git_integration_worker",
         "event_service",
     }
 )
@@ -97,14 +102,23 @@ async def execute(
 
         case "stop":
             require_service(service)
-            msg = await _stop(ctl, service)
-            return {"status": "ok", "message": msg}
+            return await run_gated(
+                ctl.restart_gate,
+                "stop",
+                service,
+                force=bool(params.get("force", False)),
+                lifecycle=lambda: _stop(ctl, service),
+            )
 
         case "restart":
             require_service(service)
-            stop_msg = await _stop(ctl, service)
-            start_msg = await _start(ctl, service)
-            return {"status": "ok", "message": f"{stop_msg}\n{start_msg}"}
+            return await run_gated(
+                ctl.restart_gate,
+                "restart",
+                service,
+                force=bool(params.get("force", False)),
+                lifecycle=lambda: _restart_cycle(ctl, service),
+            )
 
         case "rebuild":
             require_service(service)
@@ -123,14 +137,29 @@ async def execute(
                     f"sync_restart not supported for '{service}'; "
                     f"supported: {', '.join(sorted(SYNC_RESTART_SERVICES))}"
                 )
-            msg = await _sync_restart(ctl, service)
-            return {"status": "ok", "message": msg}
+            return await run_gated(
+                ctl.restart_gate,
+                "sync_restart",
+                service,
+                force=bool(params.get("force", False)),
+                lifecycle=lambda: _sync_restart(ctl, service),
+            )
+
+        case "busy_status":
+            return await _busy_status(ctl)
+
+        case "fleet_sync_restart":
+            return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
+
+        case "fleet_rebuild_deploy":
+            return await _fleet(ctl, build=True, scope=str(params.get("scope", "all")))
 
         case _:
             raise ValueError(
                 f"Unknown method: '{method}'. "
                 "Valid: status, health, wait_healthy, start, stop, restart, "
-                "sync_restart, rebuild"
+                "sync_restart, rebuild, busy_status, fleet_sync_restart, "
+                "fleet_rebuild_deploy"
             )
 
 
@@ -140,6 +169,47 @@ def require_service(service: str) -> None:
         raise ValueError(
             f"Unknown service: '{service}'. Valid: {', '.join(sorted(VALID_SERVICES))}"
         )
+
+
+async def _busy_status(ctl: ServiceController) -> dict[str, Any]:
+    """Per-service busy read model + process-level busy snapshot (no mutation).
+
+    Reports, for every restart-eligible service, whether it is busy and whether a
+    non-force restart would defer right now — computed from the same probe path
+    ``run_gated`` uses, but WITHOUT acquiring any restart slot. The ``process``
+    block surfaces the quit-guard accounting (``ManageShutdownGate``) so a UI can
+    also reflect "the manage host itself is busy".
+    """
+    report = await ctl.restart_gate.busy_report(sorted(SYNC_RESTART_SERVICES))
+    extra = ("build_image",) if ctl.build_running else ()
+    snap = ctl.shutdown_gate.snapshot(extra_activities=extra)
+    return {
+        "services": report,
+        "process": {
+            "manage_inflight": snap.manage_inflight,
+            "activities": list(snap.activities),
+        },
+    }
+
+
+async def _fleet(ctl: ServiceController, *, build: bool, scope: str) -> dict[str, Any]:
+    """Drive a headless fleet operation; agents observe progress via fleet.* events.
+
+    Uses a no-op progress sink: the per-node log stream is a TUI affordance, while
+    the coarse fleet.operation.*/fleet.service.* events already carry the structured
+    outcome an agent needs. Phase 4 replaces the no-op sink with a streaming bridge.
+    """
+    from .controller.fleet import FleetOrchestrator, NullFleetSink
+
+    orch = FleetOrchestrator(ctl=ctl, root=ctl.root, sink=NullFleetSink())
+    result = await orch.sync_restart_all(build=build, scope=scope)
+    return {
+        "status": "ok" if result.success else "partial",
+        "operation": result.operation,
+        "build": result.build,
+        "duration_s": round(result.duration_s, 1),
+        "failures": result.failures,
+    }
 
 
 def write_json(writer: asyncio.StreamWriter, obj: dict[str, Any]) -> None:
@@ -201,6 +271,17 @@ async def _stop(ctl: ServiceController, service: str) -> str:
     return await getattr(ctl, f"stop_{service}")()
 
 
+async def _restart_cycle(ctl: ServiceController, service: str) -> str:
+    """Stop then start a service (the 'restart' action), returning a combined message.
+
+    Packaged so `run_gated` holds the restart-mutex slot across the full
+    stop→start cycle and releases it once both complete.
+    """
+    stop_msg = await _stop(ctl, service)
+    start_msg = await _start(ctl, service)
+    return f"{stop_msg}\n{start_msg}"
+
+
 async def _rebuild(ctl: ServiceController, service: str) -> str:
     """Full --no-cache rebuild + restart of a managed service.
 
@@ -223,6 +304,8 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         return await ctl.rebuild_agent_bus()
     if service == "grokbuild_worker":
         return await ctl.rebuild_grokbuild_worker()
+    if service == "git_integration_worker":
+        return await ctl.rebuild_git_integration_worker()
     if service == "email_bridge":
         return await ctl.rebuild_email_bridge(no_cache=True)
     raise ValueError(f"rebuild not supported for '{service}'")

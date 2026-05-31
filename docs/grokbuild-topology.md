@@ -33,6 +33,7 @@ This document describes the **runtime call graph and process topology** for the 
            │  GET  /api/v1/grokbuild/dispatches/{id}/result      → fetch envelope
            │  DELETE /api/v1/grokbuild/dispatches/{id}           → cancel
            │  POST/GET/DELETE /api/v1/grokbuild/worktrees[/{n}]  → worktree ops
+           │  POST /api/v1/grokbuild/snapshots                   → snapshot
            │  POST /api/v1/grokbuild/worktrees/{n}/push          → push
            │  POST /api/v1/grokbuild/worktrees/{n}/pull-requests → PR
            │  GET  /api/v1/grokbuild/health                      → readiness

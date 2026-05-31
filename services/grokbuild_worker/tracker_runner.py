@@ -13,12 +13,15 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 
+from build_results import write_spool
 from grokbuild.api_dispatch import api_dispatch_op
+from grokbuild.cwd_resolve import resolve_cwd
 from grokbuild.dispatch import dispatch_op
 from universal_logging import get_logger
 
 from services.grokbuild_worker.events import (
     GrokbuildDispatchCompleted,
+    GrokbuildResultSpooled,
     publish_nowait,
 )
 from services.grokbuild_worker.tracker_state import Entry, iso_now
@@ -45,6 +48,18 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
     t0 = time.monotonic()
     entry.state = "running"
     entry.updated_at = iso_now()
+    resolved_cwd, cwd_reason = resolve_cwd(req.cwd, req.source_repo)
+    if cwd_reason:
+        _finalize(
+            tracker,
+            entry,
+            state="failed",
+            error=f"cwd_unresolved: {cwd_reason}",
+            outcome="external_failure",
+            duration_s=time.monotonic() - t0,
+            exit_code=None,
+        )
+        return
     try:
         if not req.mcp:
             # DEFERRED: mcp=False branch passes only the api_dispatch_op surface
@@ -57,7 +72,7 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
             # these are inapplicable. Propagation deferred until api_dispatch gains
             # a richer admission surface.
             envelope = await api_dispatch_op(
-                cwd=req.cwd,
+                cwd=resolved_cwd,
                 prompt=req.prompt,
                 system_context=req.system_context,
                 model=req.model,
@@ -68,7 +83,7 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
             )
         else:
             envelope = await dispatch_op(
-                cwd=req.cwd,
+                cwd=resolved_cwd,
                 prompt=req.prompt,
                 mode=req.mode,
                 system_context=req.system_context,
@@ -123,6 +138,22 @@ async def run_dispatch_task(tracker: GrokbuildExecutionTracker, entry: Entry) ->
         terminal_state = "failed"
     entry.envelope = envelope
     meta = envelope.get("metadata", {})
+    # Write the common-channel spool (signals.json + envelope.json + copied
+    # sidecar) keyed by dispatch_id. Best-effort: write_spool swallows OSError so
+    # a spool miss never changes the terminal outcome. The sidecar copy makes the
+    # full trace fs-reachable from every seat (decision:build-result-common-channel).
+    spooled_signals = write_spool(
+        entry.dispatch_id,
+        envelope,
+        sidecar_src=envelope.get("sidecar_path"),
+    )
+    publish_nowait(
+        GrokbuildResultSpooled(
+            dispatch_id=entry.dispatch_id,
+            status=status or "",
+            failure_count=int(spooled_signals.get("failure_count", 0) or 0),
+        )
+    )
     outcome = (
         "cancelled"
         if terminal_state == "cancelled"

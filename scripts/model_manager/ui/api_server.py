@@ -23,6 +23,8 @@ from universal_event_bus import EventBus
 
 from .api_dispatch import execute, write_json
 from .manage_events import (
+    ManageQuitRequestRejected,
+    ManageRestartDeferred,
     ManageServiceCompleted,
     ManageServiceFailed,
     ManageServiceRequested,
@@ -64,6 +66,9 @@ class ManageAPIServer:
         self._controller = controller
         self._event_bus = event_bus
         self._server: asyncio.AbstractServer | None = None
+        # Process-level quit guard — increment in-flight per dispatched request so
+        # a quit keystroke drains rather than truncates an active manage() call.
+        self._shutdown_gate = controller.shutdown_gate
 
     async def start(self) -> None:
         """Start the UDS listener, removing any stale socket from a prior run.
@@ -132,7 +137,27 @@ class ManageAPIServer:
             method = req.get("method", "")
             params: dict[str, Any] = req.get("params") or {}
 
-            result, err = await self._dispatch(method, params)
+            # Quit guard: once the TUI is draining for exit, reject new JSON-RPC
+            # with a structured retryable error (mirrors MCP -32099) instead of
+            # admitting work the about-to-exit process cannot finish cleanly.
+            if self._shutdown_gate.is_draining():
+                write_json(writer, self._shutdown_gate.rejection_payload(req_id))
+                await writer.drain()
+                await self._event_bus.publish(
+                    ManageQuitRequestRejected(
+                        method=method, service=str(params.get("service", ""))
+                    )
+                )
+                return
+
+            # In-flight count gates exit: the drain loop waits for this to reach 0
+            # before tearing down the listener, so the response below is never
+            # truncated mid-write by an exit.
+            self._shutdown_gate.enter_request()
+            try:
+                result, err = await self._dispatch(method, params)
+            finally:
+                self._shutdown_gate.leave_request()
 
             if err:
                 resp: dict[str, Any] = {"jsonrpc": "2.0", "error": err, "id": req_id}
@@ -203,6 +228,17 @@ class ManageAPIServer:
             }
 
         duration = round(time.monotonic() - t0, 3)
+        if isinstance(result, dict) and result.get("status") == "deferred":
+            await self._event_bus.publish(
+                ManageRestartDeferred(
+                    method=method,
+                    service=service,
+                    state=str(result.get("state", "")),
+                    reason=str(result.get("reason", "")),
+                    retry_after_s=int(result.get("retry_after_s", 30)),
+                )
+            )
+            return result, None
         await self._event_bus.publish(
             ManageServiceCompleted(method=method, service=service, duration_s=duration)
         )

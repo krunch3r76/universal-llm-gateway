@@ -78,9 +78,9 @@ class SessionCloseRequest(BaseModel):
         entity created with ``attributes.transcript_depth="light"``;
         NOT enrichment-eligible (no verbatim turns to walk). Transcript
         source is ignored; file content is ``session_summary_md``.
-      - ``none``     — no file, no transcript entity; journal row,
-        ``continues`` edge, and handoff entry (without the
-        ``handoff_for`` link) still written. NOT enrichment-eligible.
+      - ``none``     — no file, no transcript entity; journal row +
+        ``continues`` edge written; ``handoff_prompt``, when supplied,
+        persisted on the journal row. NOT enrichment-eligible.
 
     Continuity (journal row, prior_session_id linkage, open_items) is
     written for all depths. Only the transcript archival layer varies.
@@ -149,11 +149,9 @@ class SessionCloseResponse(BaseModel):
     enrichment per ``agent-skills/enrichment-quality-discipline.md``:
     only ``verbatim`` is enrichment-eligible.
 
-    The ``handoff_prompt`` (when supplied on the request) is persisted
-    on the ``session_journals`` row; no separate response field carries
-    its identifier — ``journal_row_id`` is the durable handle. The
-    legacy ``handoff_entry_id`` (RJ row id) was retired per
-    ``decision:rj-handoff-kind-retirement`` (agent-bus thread 1107).
+    The handoff prompt (when supplied) is persisted on the session_journals
+    row; journal_row_id is the durable handle. The separate RJ-row identifier
+    was retired per ``decision:rj-handoff-kind-retirement`` (agent-bus thread 1107).
     """
 
     transcript_entity_id: str | None = None

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import logging.handlers
 import os
 import signal
 import sys
+import time
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +24,8 @@ from .api_server import ManageAPIServer, ManageSocketBusyError
 from .controller.onboarding import OnboardingController
 from .controller.service_config import ensure_event_service_config, ensure_socket_dir
 from .controller.service_ctl import ServiceController
+from .controller.shutdown_gate import QUIT_DRAIN_TIMEOUT_S, BusySnapshot
+from .manage_events import ManageQuitDrainCompleted, ManageQuitDrainStarted
 from .model.catalog_state import CatalogState
 from .model.local_env import LocalEnv
 from .tui_events import TuiExited, TuiStarted
@@ -41,6 +45,9 @@ _TUI_LOG_PATH = Path("/tmp/logs/tui/tui.log")
 _MANAGE_API_LOG_PATH = Path("/tmp/logs/tui/manage-api.log")
 _MANAGE_API_LOG_BYTES = 1_048_576  # 1 MiB per file
 _MANAGE_API_LOG_BACKUPS = 3
+# Poll cadence for the quit-drain loop. Cheap snapshot reads of an in-memory
+# counter — sub-second so exit feels responsive once the last call completes.
+_QUIT_DRAIN_POLL_S = 0.5
 
 
 def _configure_manage_api_logging() -> None:
@@ -54,9 +61,7 @@ def _configure_manage_api_logging() -> None:
     agents can read after the fact.
     """
     api_logger = logging.getLogger("scripts.model_manager.ui.api_server")
-    if any(
-        getattr(h, "_manage_api_handler", False) for h in api_logger.handlers
-    ):
+    if any(getattr(h, "_manage_api_handler", False) for h in api_logger.handlers):
         return
     _MANAGE_API_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(
@@ -133,6 +138,11 @@ class ModelManagerApp(App):
     @property
     def service_controller(self) -> ServiceController:
         return self._service_controller
+
+    @property
+    def event_bus(self) -> EventBus | None:
+        """Shared manage EventBus (None until on_mount wires it)."""
+        return self._event_bus
 
     @property
     def onboarding(self) -> OnboardingController:
@@ -225,6 +235,89 @@ class ModelManagerApp(App):
             await self._event_bus.publish(TuiExited(reason="quit"))
         if self._broadcaster is not None:
             await self._broadcaster.stop_debug_server()
+
+    def _busy_snapshot(self) -> BusySnapshot:
+        """Compose the full in-flight picture blocking exit.
+
+        Folds ``ServiceController.build_running`` (a transient signal the gate
+        does not own) into the gate-owned manage.sock + fleet-deploy tracking.
+        """
+        gate = self._service_controller.shutdown_gate
+        extra = ("build",) if self._service_controller.build_running else ()
+        return gate.snapshot(extra_activities=extra)
+
+    def action_quit(self) -> None:
+        """Drain-then-exit guard for ``q`` / ``ctrl+c``.
+
+        No confirmation dialog (operator constraint): a quit while idle exits
+        immediately; a quit while busy flips the shutdown gate to draining (new
+        manage.sock JSON-RPC gets a retryable -32099) and a worker waits — bounded
+        by ``QUIT_DRAIN_TIMEOUT_S`` — for in-flight work to finish before exiting.
+        A second quit while draining is acknowledged but does not force-exit; the
+        bounded timeout is the only escape hatch, so an extra keystroke can never
+        nuke in-flight work.
+        """
+        gate = self._service_controller.shutdown_gate
+        snapshot = self._busy_snapshot()
+        if not snapshot.busy:
+            self.exit()
+            return
+        if gate.is_draining():
+            self.notify(
+                f"Draining — still waiting for {snapshot.count} active "
+                f"operation(s): {snapshot.describe()}.",
+                severity="warning",
+            )
+            return
+        gate.begin_drain()
+        self.notify(
+            f"Draining {snapshot.count} active operation(s) before exit: "
+            f"{snapshot.describe()}.",
+            severity="warning",
+            timeout=10,
+        )
+        self.run_worker(
+            self._drain_then_exit(), exclusive=False, name="manage-quit-drain"
+        )
+
+    async def _drain_then_exit(self) -> None:
+        """Wait (bounded) for in-flight work to clear, then exit the app."""
+        start = time.monotonic()
+        deadline = start + QUIT_DRAIN_TIMEOUT_S
+        opening = self._busy_snapshot()
+        if self._event_bus is not None:
+            await self._event_bus.publish(
+                ManageQuitDrainStarted(
+                    busy_count=opening.count, sources=opening.sources()
+                )
+            )
+
+        timed_out = False
+        while True:
+            snapshot = self._busy_snapshot()
+            if not snapshot.busy:
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                logger.warning(
+                    "quit-drain timed out after %.0fs with %d in-flight: %s",
+                    QUIT_DRAIN_TIMEOUT_S,
+                    snapshot.count,
+                    snapshot.describe(),
+                )
+                break
+            await asyncio.sleep(_QUIT_DRAIN_POLL_S)
+
+        final = self._busy_snapshot()
+        if self._event_bus is not None:
+            await self._event_bus.publish(
+                ManageQuitDrainCompleted(
+                    timed_out=timed_out,
+                    waited_s=round(time.monotonic() - start, 1),
+                    remaining=final.count,
+                )
+            )
+        self.exit()
 
     def push_screen(self, screen: str, kwargs: dict | None = None) -> None:
         kwargs = kwargs or {}

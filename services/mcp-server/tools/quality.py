@@ -183,7 +183,10 @@ def _run_import_check(files: list[str]) -> dict[str, bool | str]:
 
     check_script = _PROJECT_ROOT / "scripts" / "check-imports"
     if not check_script.exists():
-        return {"passed": False, "output": f"check-imports script missing: {check_script}"}
+        return {
+            "passed": False,
+            "output": f"check-imports script missing: {check_script}",
+        }
 
     stargate_root = (_PROJECT_ROOT / "services" / "universal-stargate").resolve()
     needs_stargate_entry = any(

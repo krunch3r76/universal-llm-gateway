@@ -2481,13 +2481,47 @@ All signals: `role="observation"`, `scope="global"`.
 | `mcp.grokbuild.list.called` | `dispatch_id`, `worktree_root` | `worktree_list_op` admitted (V2: emits after root-existence check; fires whether root is missing or present, review W9). |
 | `mcp.grokbuild.list.completed` | `dispatch_id`, `duration_s`, `worktree_root`, `count` (int) | Enumeration succeeded. `count=0` is valid (missing or empty root). |
 | `mcp.grokbuild.list.failed` | `dispatch_id`, `duration_s`, `error` (str ≤200), `worktree_root` | `os.listdir` raised OSError. |
+| `mcp.grokbuild.snapshot.called` | `dispatch_id`, `source_repo`, `slug`, `branch`, `reset_main` (bool) | `snapshot_op` admitted after slug/source_repo validation. |
+| `mcp.grokbuild.snapshot.completed` | `dispatch_id`, `duration_s`, `source_repo`, `slug`, `branch`, `worktree_path`, `snapshot_sha`, `main_reset` (str — `skipped` \| `ok` \| `failed`) | Snapshot commit + arc worktree created. |
+| `mcp.grokbuild.snapshot.failed` | `dispatch_id`, `duration_s`, `error` (str ≤200), `source_repo`, `slug`, `branch` | Capture or worktree-create failed after admission. |
+| `mcp.grokbuild.snapshot.rejected` | `dispatch_id`, `reason_code` (str — `slug_invalid` \| `source_repo_invalid` \| `clean_tree` \| …), `reason`, `source_repo`, `slug`, `branch` | Admission failed (clean tree, invalid slug/source_repo, branch exists). |
 | `mcp.grokbuild.registry.recovered` | `entries_recovered` (int), `entries_pruned` (int — see sentinel below), `schema_version` (int) | Persistent-registry load at module import. `entries_pruned=N` (N≥0) means the previous writer PID was dead and N stale entries were dropped. **Sentinel: `entries_pruned=-1` means a registry write failed at runtime** (review W12 — replaces the prior silent `except OSError: pass`); operator should investigate `GROKBUILD_REGISTRY_PATH` permissions / disk pressure. |
 
 `.rejected` `reason_code` enum (validator side, unchanged from V1; V2 added `capacity_exhausted` on the worker-side `grokbuild.dispatch.rejected`, see below): `retired_op`, `retired_output_format`, `retired_param`, `unknown_op`, `bad_tier`, `bad_reasoning_effort`, `bad_effort`, `bad_max_turns`, `bad_best_of_n`, `bad_timeout_seconds`, `bad_resume_strict_without_session_id`, `bad_output_format`, `cwd_missing`, `not_a_git_repo`, `git_unreachable`, `working_tree_dirty`, `grok_not_in_path`, `missing_grok_auth`, `sidecar_unavailable`, `dispatch_conflict`.
 
+**Auth lifecycle signals** (`grokbuild.auth.*`). Emitted by the worker process via the
+UDS publisher hook (same path as `grokbuild.*` worker-level events; not audit-rich
+`mcp.grokbuild.*` vocab).
+
+| Signal | Fields | Notes |
+|---|---|---|
+| `grokbuild.auth.required` | `reason_code` (str — `"expired"` \| `"missing"`), `grok_auth_dir` (str), `deploy_shape` (str — `"bare-metal"` \| `"container"`), `trigger` (str — `"startup"` \| `"dispatch_rejection"` \| `"periodic"`), `debounce_key` (str — ISO timestamp of active latch, empty before Phase 2 notifier) | Fired when `probe_grok_auth()` returns non-OK. Debounced in Phase 2 — raw event fires every probe failure; debounced agent-bus notification is gated by the file latch. |
+| `grokbuild.auth.restored` | `grok_auth_dir` (str), `downtime_s` (float — 0 before Phase 3 tracking is wired) | Fired when probe succeeds after a prior non-OK result. Clears the debounce latch in Phase 3. |
+
+**Invariant** (Option A, OQ-1): `grokbuild.auth.required{trigger="startup"}` ⟹
+`grokbuild.worker.started` emitted in the same boot cycle. `grok_auth` is **excluded**
+from `degraded_checks` and from the `/health` `status` rollup — auth expiry is surfaced
+only via `grokbuild.auth.required` and the `checks.grok_auth` field, never as worker
+`degraded`. So `status="ok"` is possible while `checks.grok_auth="expired"`.
+
 `read_only_violation` semantics: `True` iff `mode == "read_only"` AND `(git_diff_stat.strip() OR git_status_post.strip())`. Validator enforces clean pre-state, so any non-empty post-state porcelain is divergence. Reading `git_status_post` alone catches all YX-coded changes (staged, unstaged, untracked); `git_diff_stat` is OR'd for defense in depth on `audit_incomplete=True` paths.
 
 `audit_incomplete` semantics: `True` iff a git invocation in `_capture_post_state` failed (`subprocess.CalledProcessError`, `TimeoutExpired`, or `OSError`). Subscribers MUST treat `audit_incomplete=true` as "do not trust this dispatch's `read_only_violation` verdict" — distinct from a clean repo (`git_status_post=""`, `audit_incomplete=false`), which is a TRUE clean signal.
+
+**Lib signals (`git.integrate.*`).** Source: `git-integration-worker` in Phase 4 (via UDS publisher hook on `libs/git_integrate/events.py`, mirroring grokbuild). Payload contracts established Phase 2; emitters wired in Phase 3 (`integrate_op`, `status_op`).
+
+All signals: `role="observation"`, `scope="global"`.
+
+| Signal | Payload fields | Description |
+|---|---|---|
+| `git.integrate.requested` | `integration_id` (str — uuid4), `arc` (str — plan slug), `phase` (str — phase label), `worktree_path` (str), `diff_sha256` (str — sha256 of approved unified diff) | Integration admitted past validation; retry loop entered. Emitted by `integrate_op` after admission succeeds. |
+| `git.integrate.completed` | `integration_id`, `arc`, `phase`, `merge_commit` (str — arc-branch tip after merge), `master_sha` (str — master ref after CAS advance), `duration_s` (float) | Master advanced at ref level; optional worktree teardown follows. Emitted by `integrate_op` on success. |
+| `git.integrate.rejected` | `integration_id`, `reason_code` (str enum), `reason` (str), `arc`, `phase` | Admission or merge-phase refusal. No master advance. Correlation fields inline so no `.requested` join required for admission rejects. Emitted by `validate_integrate` / `integrate_op`. |
+| `git.integrate.gate.failed` | `integration_id`, `arc`, `phase`, `gate_cmd` (str — joined server-configured command), `gate_exit` (int), `duration_s` (float) | Green-gate returned non-zero on the integrated tree; arc worktree reset to pre-merge tip. Emitted by `integrate_op`. |
+| `git.integrate.retried` | `integration_id`, `arc`, `attempt` (int — 1-based loop index), `reason` (str — typically `master_advanced_mid_span`) | Non-ff CAS advance; optimistic retry loop continues. Emitted by `integrate_op`. |
+| `git.status.read` | `worktree_path` (str), `dirty` (bool), `branch` (str) | Read-only status probe served (MCP `git_status` path). Emitted by `status_op`. |
+
+`.rejected` `reason_code` enum (Phase 3): `arc_branch_mismatch`, `approval_missing`, `diff_mismatch`, `integrate_conflict`, `gate_failed`, `max_attempts_exhausted`, `worktree_not_found`, `not_a_git_repo`.
 
 **Worker signals (`grokbuild.*`).** Source: `grokbuild-worker`. Added V2. SSE-friendly tracker vocabulary plus per-op tracking events; does NOT carry the lib's audit fields (those live on the parallel `mcp.grokbuild.dispatch.completed`).
 
@@ -2507,9 +2541,14 @@ All signals: `role="observation"`, `scope="global"`.
 | `grokbuild.worktree.listed` | `count` (int), `duration_s` | `GET /worktrees` succeeded. |
 | `grokbuild.worktree.removed` | `name`, `duration_s`, `outcome` | `DELETE /worktrees/{name}` succeeded. |
 | `grokbuild.push.completed` | `name`, `branch`, `duration_s`, `outcome`, `commits_pushed` (int — **typed**, no longer hardcoded 0 per review W10; computed via `git rev-list --count @{u}..HEAD`) | `POST /worktrees/{name}/push` succeeded. |
+| `grokbuild.snapshot.created` | `slug`, `branch`, `worktree_path`, `snapshot_sha`, `duration_s`, `outcome` | `POST /snapshots` succeeded; lib also emits `mcp.grokbuild.snapshot.*` audit signals. |
+| `grokbuild.snapshot.main_reset` | `slug`, `source_repo` | Main tree reset clean after snapshot (`reset_main=True` and reset succeeded). |
 | `grokbuild.pr.created` | `name`, `pr_number` (int \| null — **typed**, surfaced from envelope metadata per review W8), `duration_s`, `outcome` | `POST /worktrees/{name}/pull-requests` succeeded. |
 | `grokbuild.models.listed` | `count` (int), `duration_s` | `GET /models` succeeded. |
 | `grokbuild.tracker.orphan.cleaned` | `count` (int), `dispatch_ids` (list[str]) | Lifespan startup hook (`cleanup_orphans`) purged tracker entries whose subprocess PID is dead. With pure-in-memory storage this is usually a no-op; test harnesses pre-seed dead entries to exercise the path. |
+| `grokbuild.result.spooled` | `dispatch_id` (str), `status` (str — terminal envelope status), `failure_count` (int — from computed signals) | Worker wrote the build-result spool at terminal (`ulg-build-results/{dispatch_id}/`). Emitted after `write_spool` in `tracker_runner._finalize`. |
+
+**Spool prune (log-only).** Startup `prune_spool()` removes aged dispatch dirs by mtime; it logs `removed_count` only — no `grokbuild.result.pruned` event (Phase 2 chose log-only over UDS publish).
 
 **C.1 header-vs-sidecar JOIN example (discrepancy detection).** Both the
 MCP-server header path (C.1(i): `mcp.request.completed` with
@@ -2697,12 +2736,14 @@ on every lifecycle operation received over `manage.sock`.
 | `manage.service.requested` | observation | global | API request received, before execution |
 | `manage.service.completed` | observation | global | Operation finished successfully |
 | `manage.service.failed` | observation | global | Operation raised an error |
+| `manage.restart.deferred` | observation | global | Stop/restart/sync_restart deferred by the drain gate (busy / in_progress / probe_error) |
 
 ### Payload Keys
 
 `manage.service.requested`: `method` (str), `service` (str)
 `manage.service.completed`: `method` (str), `service` (str), `duration_s` (float)
 `manage.service.failed`: `method` (str), `service` (str), `error` (str), `duration_s` (float)
+`manage.restart.deferred`: `method` (str), `service` (str), `state` (str ∈ {busy, in_progress, probe_error}), `reason` (str), `retry_after_s` (int)
 
 ### MCP Layer Signals
 

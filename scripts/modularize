@@ -701,7 +701,7 @@ def _run_plan(
 
 def _scan_cmd(args: argparse.Namespace) -> None:
     """Execute scan subcommand."""
-    skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/"]
+    skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/", "test_", "_test.py"]
     files = _scan_directory(args.paths, skip_patterns)
 
     output_path = Path("./tmp/modularize-scan.md")
@@ -745,7 +745,7 @@ def _plan_cmd(args: argparse.Namespace) -> None:
 
 def _plan_batch(args: argparse.Namespace, invariants: str | None) -> None:
     """Execute batch planning."""
-    skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/"]
+    skip_patterns = ["__pycache__", ".venv", "node_modules", "tmp/", "pipelines.local/", "test_", "_test.py"]
     files = _scan_directory(args.paths, skip_patterns)
 
     targets = [f for f in files if f.category == args.severity]

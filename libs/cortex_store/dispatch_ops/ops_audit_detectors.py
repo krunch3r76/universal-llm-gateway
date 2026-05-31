@@ -57,6 +57,7 @@ from ._detectors.skill_binding import (
     detect_skill_binding_missing,
     detect_skill_binding_tool_unknown,
 )
+from ._detectors.todo import detect_todo_implementation_seed_incomplete
 from ._detectors.workflow_coherence import (
     detect_decision_deprecated_not_terminal,
     detect_decision_workflow_state_incoherent,
@@ -90,6 +91,9 @@ GRAPH_ONLY_KINDS = {
     # entity-state coherence (thread 1116) — confirmed decision resting at
     # NULL/proposed. Parameterized engine; decision landed first.
     "decision_workflow_state_incoherent",
+    # todo seed-contract completeness (thread 1144) — open/in_progress todos
+    # missing source_uri, required_skills, or a non-skill context edge.
+    "todo_implementation_seed_incomplete",
     # missing_handoff retired — handoffs are optional artifacts for manual
     # copy-paste at end of chat; absence is not a gap (assertion 8384,
     # session web-2026-05-04-1057).
@@ -136,6 +140,7 @@ def get_all_detectors() -> dict[str, Any]:
         "skill_binding_tool_unknown": detect_skill_binding_tool_unknown,
         "decision_workflow_state_incoherent": detect_decision_workflow_state_incoherent,
         "decision_deprecated_not_terminal": detect_decision_deprecated_not_terminal,
+        "todo_implementation_seed_incomplete": detect_todo_implementation_seed_incomplete,
     }
 
 
@@ -213,6 +218,7 @@ __all__ = [
     "detect_project_required_skills_no_relationship",
     "detect_skill_binding_missing",
     "detect_skill_binding_tool_unknown",
+    "detect_todo_implementation_seed_incomplete",
     "detect_unregistered_document_in_markdown",
     "get_all_detectors",
     "run_detectors",

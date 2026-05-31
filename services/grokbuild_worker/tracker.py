@@ -92,6 +92,11 @@ class GrokbuildExecutionTracker:
     def capacity(self) -> int:
         return self._capacity
 
+    @property
+    def running_count(self) -> int:
+        """Public count of pending+running dispatches (drain-gate probe)."""
+        return self._running_count()
+
     def _running_count(self) -> int:
         return sum(
             1 for e in self._dispatches.values() if e.state in {"pending", "running"}

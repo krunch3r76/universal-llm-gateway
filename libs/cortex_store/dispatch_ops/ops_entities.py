@@ -47,6 +47,7 @@ def _op_entities(
     query: str | None = None,
     for_agent: str | None = None,
     content_hash: str | None = None,
+    fields: list[str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     _, _, _, _list_entities_impl, _ = _impls()
@@ -59,6 +60,7 @@ def _op_entities(
             query=query,
             for_agent=for_agent,
             content_hash=content_hash,
+            fields=fields,
         )
 
 

@@ -67,7 +67,7 @@ async def _check_if_streaming_request(request: Request) -> bool:
         # Reuse parsed JSON if another path already decoded the payload.
         if hasattr(request.state, "_json"):
             body = request.state._json
-            return body.get("stream", False) if isinstance(body, dict) else False
+            return body.get("stream") is True if isinstance(body, dict) else False
 
         # Avoid consuming the request stream in exception handlers. Raw body
         # bytes are cached by RawBodyCacheMiddleware for POST/PUT/PATCH requests.
@@ -77,7 +77,7 @@ async def _check_if_streaming_request(request: Request) -> bool:
 
         body = json.loads(raw_body.decode("utf-8"))
         request.state._json = body
-        return body.get("stream", False) if isinstance(body, dict) else False
+        return body.get("stream") is True if isinstance(body, dict) else False
 
     except (UnicodeDecodeError, json.JSONDecodeError):
         logger.debug("Could not decode request body as JSON, assuming non-streaming.")

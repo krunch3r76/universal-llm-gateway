@@ -13,6 +13,8 @@ Workflow-state schema, validation, and todo-closure-gap emission live in
 from __future__ import annotations
 
 import datetime
+import json
+import re
 import sqlite3
 from collections.abc import Callable
 
@@ -97,6 +99,62 @@ def _enforce_role_entity_lint(
 ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
 JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
+# Base columns selectable directly; everything else resolves from the
+# attributes JSON blob via json_extract. `id` is always projected.
+_PROJECTABLE_COLUMNS = frozenset(
+    {
+        "id",
+        "type",
+        "name",
+        "description",
+        "status",
+        "workflow_state",
+        "content_hash",
+        "created_at",
+    }
+)
+_SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _build_field_projection(fields: list[str]) -> tuple[str, list[str]]:
+    """Return (SELECT-list SQL, ordered output keys) for a projected query.
+
+    `id` is always included. Base columns select directly; non-column names
+    resolve as json_extract(attributes,'$.<name>') AS <name>. Field names are
+    validated against a simple identifier grammar to keep them out of SQL
+    string interpolation risk (no params for identifiers/JSON paths in sqlite).
+    """
+    out_keys: list[str] = ["id"]
+    select_parts: list[str] = ["id"]
+    for raw in fields:
+        name = raw.strip()
+        if not name or name == "id" or not _SAFE_FIELD.fullmatch(name):
+            continue
+        out_keys.append(name)
+        if name in _PROJECTABLE_COLUMNS:
+            select_parts.append(name)
+        else:
+            select_parts.append(f"json_extract(attributes, '$.{name}') AS {name}")
+    return ", ".join(select_parts), out_keys
+
+
+def _project_row(row: dict[str, object], out_keys: list[str]) -> dict[str, object]:
+    """Keep only the projected keys; decode JSON-list attribute values.
+
+    json_extract returns a JSON-encoded string for list/object values; decode
+    those so e.g. applicable_agents comes back as a Python list, not a string.
+    """
+    out: dict[str, object] = {}
+    for k in out_keys:
+        v = row.get(k)
+        if isinstance(v, str) and v[:1] in ("[", "{"):
+            try:
+                v = json.loads(v)
+            except ValueError:
+                pass
+        out[k] = v
+    return out
+
 
 def list_entities_impl(
     conn: sqlite3.Connection,
@@ -107,6 +165,7 @@ def list_entities_impl(
     for_agent: str | None = None,
     query: str | None = None,
     content_hash: str | None = None,
+    fields: list[str] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     clauses: list[str] = []
     params: list[object] = []
@@ -157,6 +216,15 @@ def list_entities_impl(
             params.append(pattern)
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    if fields:
+        select_sql, out_keys = _build_field_projection(fields)
+        sql = (
+            f"SELECT {select_sql} FROM entities{where} ORDER BY created_at DESC LIMIT ?"
+        )
+        params.append(limit)
+        rows = db_query(conn, sql, tuple(params))
+        return {"items": [_project_row(row, out_keys) for row in rows]}
+
     sql = (
         "SELECT id, type, name, description, status, workflow_state, content_hash, "
         f"created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
