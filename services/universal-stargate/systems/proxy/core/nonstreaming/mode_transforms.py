@@ -13,6 +13,7 @@ function rather than a method on a god-class.  Two modes exist:
 Helper functions (extract_messages, inject_profile_system_prompt, etc.)
 are shared between modes and are usable independently for testing.
 """
+
 # ruff: noqa: E501
 
 from __future__ import annotations

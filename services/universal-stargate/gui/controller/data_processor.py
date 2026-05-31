@@ -65,7 +65,8 @@ class DataProcessor:
                 f"Extracted response_data for {raw_data.get('type')} event: {type(response_data)} - {str(response_data)[:100] if response_data else 'None'}"
             )
 
-        # For streaming chunks, don't try to extract request data since it's not included
+        # For streaming chunks, don't try to extract request data since it's not
+        # included
         if (
             raw_data.get("type") == "streaming_chunk"
             or raw_data.get("type") == "streaming_chunk_batch"

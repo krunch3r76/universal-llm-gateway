@@ -62,7 +62,8 @@ class ModelCacheConsumer:
         logger.debug(f"📥 Cache updated: {model_id} loaded on {gateway_url}")
 
     async def _handle_model_unloaded(self, event: Event) -> None:
-        """Handle MODEL_UNLOADED event - remove model from gateway's available models."""
+        """Handle MODEL_UNLOADED event - remove model from gateway's available"
+        "models."""
         payload = event.payload
         gateway_url = payload.get("url")
         model_id = payload.get("model_id")

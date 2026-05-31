@@ -120,8 +120,10 @@ class ModelRoutingOperations:
                 "ensuring model loaded"
             )
 
-            # INVARIANT CHECK: Orchestrator MUST be available if federated gateway selected
-            # This should be unreachable - startup fail-fast ensures orchestrator exists in MASTER mode
+            # INVARIANT CHECK: Orchestrator MUST be available if federated gateway
+            # selected
+            # This should be unreachable - startup fail-fast ensures orchestrator exists
+            # in MASTER mode
             # If this fires, it indicates a startup wiring bug, not an operational error
             if self._federated_load_orchestrator is None:
                 raise RuntimeError(

@@ -1,4 +1,5 @@
-"""Mixin: capacity acquisition — acquire_token, acquire context manager, immediate try, wait loop."""
+"""Mixin: capacity acquisition — acquire_token, acquire context manager, immediate try,"
+"wait loop."""
 
 from __future__ import annotations
 

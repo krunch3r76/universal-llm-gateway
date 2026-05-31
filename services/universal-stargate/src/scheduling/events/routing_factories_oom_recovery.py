@@ -1,4 +1,5 @@
-"""Stargate scheduling routing events — split module (routing_factories_oom_recovery.py)."""
+"""Stargate scheduling routing events — split module"
+"(routing_factories_oom_recovery.py)."""
 
 # ruff: noqa: N802
 

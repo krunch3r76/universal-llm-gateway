@@ -8,6 +8,7 @@ Resolution order:
 
 Invariant: ∀ (domain, step_type), ∃! resolved handler
 """
+
 # ruff: noqa: E501
 
 from __future__ import annotations

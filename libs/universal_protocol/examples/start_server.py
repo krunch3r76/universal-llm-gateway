@@ -119,7 +119,8 @@ Examples:
     except ImportError as e:
         logger.error(f"Failed to import Universal Protocol modules: {e}")
         logger.error(
-            "Ensure PYTHONPATH includes <project_root>/libs (sitecustomize.py handles this)"
+            "Ensure PYTHONPATH includes <project_root>/libs (sitecustomize.py handles"
+            "this)"
         )
         return 1
 

@@ -248,9 +248,11 @@ class TokenManager:
                 # Return metrics to allow caller to provide detailed error
                 token_metrics = TokenMetrics(
                     input_tokens=result.input_tokens,
-                    max_tokens_requested=user_requested_max_tokens
-                    if user_requested_max_tokens is not None
-                    else 0,
+                    max_tokens_requested=(
+                        user_requested_max_tokens
+                        if user_requested_max_tokens is not None
+                        else 0
+                    ),
                     max_tokens_adjusted=0,
                     context_limit=result.context_limit,
                     max_tokens_absolute=0,
@@ -274,9 +276,11 @@ class TokenManager:
                 # Return metrics to allow caller to provide detailed error (safe to assert non-None here)
                 token_metrics = TokenMetrics(
                     input_tokens=result.input_tokens or 0,
-                    max_tokens_requested=user_requested_max_tokens
-                    if user_requested_max_tokens is not None
-                    else 0,
+                    max_tokens_requested=(
+                        user_requested_max_tokens
+                        if user_requested_max_tokens is not None
+                        else 0
+                    ),
                     max_tokens_adjusted=0,
                     context_limit=result.context_limit or 0,
                     max_tokens_absolute=0,
@@ -357,12 +361,14 @@ class TokenManager:
 
             token_metrics = TokenMetrics(
                 input_tokens=result.input_tokens,
-                max_tokens_requested=user_requested_max_tokens
-                if user_requested_max_tokens is not None
-                else 0,
-                max_tokens_adjusted=final_max_tokens
-                if final_max_tokens is not None
-                else 0,
+                max_tokens_requested=(
+                    user_requested_max_tokens
+                    if user_requested_max_tokens is not None
+                    else 0
+                ),
+                max_tokens_adjusted=(
+                    final_max_tokens if final_max_tokens is not None else 0
+                ),
                 context_limit=result.context_limit,
                 max_tokens_absolute=available_generation_space,
                 safety_buffer=self.completion_safety_buffer,

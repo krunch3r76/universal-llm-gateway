@@ -233,7 +233,8 @@ class RequestForwarder:
                         )
 
             except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as e:
-                # Response might not be JSON or might not have expected fields - that's okay
+                # Response might not be JSON or might not have expected fields - that's
+                # okay
                 logger.debug(f"Could not parse response JSON for validation: {e}")
 
             logger.debug(

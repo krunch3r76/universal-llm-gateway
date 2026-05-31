@@ -1,4 +1,5 @@
 """Map iteration preparation: input resolution, model selection, step creation."""
+
 # ruff: noqa: E501
 
 from __future__ import annotations

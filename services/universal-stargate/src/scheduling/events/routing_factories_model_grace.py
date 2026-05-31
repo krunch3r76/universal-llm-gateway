@@ -1,4 +1,5 @@
-"""Stargate scheduling routing events — split module (routing_factories_model_grace.py)."""
+"""Stargate scheduling routing events — split module"
+"(routing_factories_model_grace.py)."""
 
 # ruff: noqa: N802
 

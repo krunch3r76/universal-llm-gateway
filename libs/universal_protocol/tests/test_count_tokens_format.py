@@ -86,9 +86,10 @@ async def test_count_tokens_response_format():
         )
 
         assert "method" in result, "Response must contain 'method' field"
-        assert result["method"] in ["exact", "estimate"], (
-            "'method' must be 'exact' or 'estimate'"
-        )
+        assert result["method"] in [
+            "exact",
+            "estimate",
+        ], "'method' must be 'exact' or 'estimate'"
         assert result["method"] == tc["expected_method"], (
             f"Expected method={tc['expected_method']}, got {result['method']}"
         )

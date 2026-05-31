@@ -165,7 +165,9 @@ class PipelineExecutor:
         Preserves the ``X-Pipeline-Execution-Id`` header (set by
         ``ResponseBuilder``) — existing MCP sync callers depend on it.
         """
-        from ...response_builder import ResponseBuilder  # noqa: I001  # late import avoids cycle
+        from ...response_builder import (
+            ResponseBuilder,
+        )  # noqa: I001  # late import avoids cycle
 
         return ResponseBuilder.build_response(
             prepared.pipeline_context,

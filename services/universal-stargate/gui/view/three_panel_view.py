@@ -129,8 +129,10 @@ class ThreePanelView:
                     and display_data.original_request.strip() not in ["", "No data"]
                 )
             elif event_type == "pre_processing":
-                # For pre_processing, original_request is required, modified_request is optional
-                # Allow updates even if not "new" request to show transformations when they complete
+                # For pre_processing, original_request is required, modified_request is
+                # optional
+                # Allow updates even if not "new" request to show transformations when
+                # they complete
                 should_update_panels = (
                     display_data.original_request
                     and display_data.original_request.strip() not in ["", "No data"]
@@ -180,7 +182,8 @@ class ThreePanelView:
             # Update response panel based on type
             if display_data.response.is_streaming:
                 self._switch_to_streaming_response()
-                # Pass event ID, original request, and request ID for new request detection
+                # Pass event ID, original request, and request ID for new request
+                # detection
                 event_id = display_data.event_info.get("id", None)
                 logger.debug(
                     f"ThreePanelView passing request_id: {display_data.request_id}"

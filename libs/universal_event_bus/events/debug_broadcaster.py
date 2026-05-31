@@ -336,12 +336,14 @@ class MinimalEventDebugBroadcaster:
                 active_clients = []
 
                 for client in self.debug_clients:
-                    # Remove clients that haven't been seen for 30s or are explicitly disconnected
+                    # Remove clients that haven't been seen for 30s or are explicitly
+                    # disconnected
                     if client.connected and (current_time - client.last_seen) < 30:
                         active_clients.append(client)
                     else:
                         logger.debug(
-                            "🧹 Cleaning up disconnected debug client (connected=%s, last_seen=%s)",
+                            "🧹 Cleaning up disconnected debug client (connected=%s,"
+                            "last_seen=%s)",
                             client.connected,
                             client.last_seen,
                         )

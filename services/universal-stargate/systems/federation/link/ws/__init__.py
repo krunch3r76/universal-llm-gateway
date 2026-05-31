@@ -1,4 +1,5 @@
 """WebSocket transport for telemetry (event-driven)."""
+
 # Lazy imports to avoid circular dependencies
 # Import from submodules directly when needed
 

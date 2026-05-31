@@ -216,7 +216,8 @@ class TransportServerManager:
             return
 
         try:
-            # Extract event type from signal (e.g., "monitoring.chat_completion" -> "chat_completion")
+            # Extract event type from signal (e.g., "monitoring.chat_completion" ->
+            # "chat_completion")
             signal = event.signal
             if signal.startswith("monitoring."):
                 event_type = signal.replace("monitoring.", "")

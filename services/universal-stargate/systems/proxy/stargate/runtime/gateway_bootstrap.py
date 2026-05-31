@@ -143,7 +143,8 @@ async def initialize_resource_manager(proxy: StargateProxy) -> None:
         )
 
         # Ensure ModelRouter is initialized with proper config
-        # Pass the entire StargateConfig.config dict so ModelRouter can extract routing config
+        # Pass the entire StargateConfig.config dict so ModelRouter can extract routing
+        # config
         routing_config = proxy.config.config if hasattr(proxy.config, "config") else {}
         proxy.gateway_manager.set_config(routing_config)
         proxy.gateway_manager._ensure_model_router()  # noqa: SLF001

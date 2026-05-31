@@ -138,12 +138,12 @@ def build_handler_context(
     on_request_inference_started: (
         Callable[[str, str, str, str | None], Awaitable[None]] | None
     ),
-    model_loaded_callbacks: dict[
-        str, set[Callable[[str, dict[str, Any]], Awaitable[None]]]
-    ]
-    | None = None,
-    model_load_failed_callbacks: dict[str, set[Callable[[str, str], Awaitable[None]]]]
-    | None = None,
+    model_loaded_callbacks: (
+        dict[str, set[Callable[[str, dict[str, Any]], Awaitable[None]]]] | None
+    ) = None,
+    model_load_failed_callbacks: (
+        dict[str, set[Callable[[str, str], Awaitable[None]]]] | None
+    ) = None,
 ) -> HandlerContext:
     """
     Build context for message handlers.
@@ -239,12 +239,14 @@ def build_handler_context(
         can_report_vram_drift=state.can_report_vram_drift,
         # Model-specific callbacks (for concurrent load tracking)
         # CRITICAL: Pass dict by reference, not copy - use `is None` check
-        model_loaded_callbacks=model_loaded_callbacks
-        if model_loaded_callbacks is not None
-        else {},
-        model_load_failed_callbacks=model_load_failed_callbacks
-        if model_load_failed_callbacks is not None
-        else {},
+        model_loaded_callbacks=(
+            model_loaded_callbacks if model_loaded_callbacks is not None else {}
+        ),
+        model_load_failed_callbacks=(
+            model_load_failed_callbacks
+            if model_load_failed_callbacks is not None
+            else {}
+        ),
         # Telemetry handler (per-gateway capacity telemetry)
         _capacity_telemetry_handler=capacity_telemetry_handler,
     )

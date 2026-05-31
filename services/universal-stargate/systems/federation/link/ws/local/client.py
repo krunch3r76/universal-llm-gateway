@@ -56,12 +56,14 @@ class LocalEdgeClient(PeerConnection):
         self,
         config: LocalEdgeConfig,
         relay_stargate_id: str,
-        on_telemetry: Callable[[str, str, dict[str, Any]], Awaitable[None]]
-        | None = None,
+        on_telemetry: (
+            Callable[[str, str, dict[str, Any]], Awaitable[None]] | None
+        ) = None,
         on_connected: Callable[[], Awaitable[None]] | None = None,
         on_disconnected: Callable[[], Awaitable[None]] | None = None,
-        on_measurement_request: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
-        | None = None,
+        on_measurement_request: (
+            Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
+        ) = None,
         ping_interval: float = 20.0,
     ):
         self._config = config

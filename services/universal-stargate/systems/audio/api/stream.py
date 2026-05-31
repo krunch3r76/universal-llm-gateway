@@ -70,8 +70,9 @@ async def audio_live_transcribe_proxy(  # noqa: PLR0913
     whisper_profile: str | None = get_whisper_profile_param(),
     whisper_beam_size: int | None = get_whisper_beam_size_param(),
     whisper_temperature: str | None = get_whisper_temperature_param(),
-    whisper_condition_on_previous_text: bool
-    | None = get_whisper_condition_on_previous_text_param(),
+    whisper_condition_on_previous_text: (
+        bool | None
+    ) = get_whisper_condition_on_previous_text_param(),
     profile: str | None = get_vad_profile_param(),
     vad_method: str | None = get_vad_method_param(),
     silero_threshold: float | None = get_silero_threshold_param(),

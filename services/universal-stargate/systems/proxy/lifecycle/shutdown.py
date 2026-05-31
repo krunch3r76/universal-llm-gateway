@@ -113,7 +113,8 @@ def initialize_shutdown_handler(
     )
 
     logger.info(
-        "✅ GatewayShutdownHandler initialized, subscribed to GATEWAY_SHUTDOWN and GATEWAY_STATE_CHANGED events"
+        "✅ GatewayShutdownHandler initialized, subscribed to GATEWAY_SHUTDOWN and"
+        "GATEWAY_STATE_CHANGED events"
     )
 
     return shutdown_handler

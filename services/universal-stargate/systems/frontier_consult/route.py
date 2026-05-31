@@ -107,10 +107,12 @@ FrontierDispatchBody = Annotated[
 
 
 def _normalize_op_body(
-    body: TeamDispatchGenerateBody
-    | TeamDispatchToThreadBody
-    | FrontierDispatchGenerateBody
-    | FrontierDispatchToThreadBody,
+    body: (
+        TeamDispatchGenerateBody
+        | TeamDispatchToThreadBody
+        | FrontierDispatchGenerateBody
+        | FrontierDispatchToThreadBody
+    ),
 ) -> dict[str, Any]:
     """Translate a discriminated dispatch body into ``FrontierGenerateRequest``
     kwargs.

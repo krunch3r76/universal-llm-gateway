@@ -10,7 +10,8 @@ Example:
 """
 
 print(
-    "⚠️  This script is deprecated. Debug event broadcasting is now integrated into the main application."
+    "⚠️ This script is deprecated. Debug event broadcasting is now integrated into the"
+    "main application."
 )
 print("   Use: python start_proxy.py --debug-events")
 print("   Or: python scripts/start_proxy_with_debug.py")

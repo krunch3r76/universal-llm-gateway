@@ -55,10 +55,10 @@ class StargateMonitor:
         # Validate EventBus is provided
         if not self.event_bus:
             logger.warning(
-                "⚠️ StargateMonitor: EventBus not provided - monitoring will be disabled!"
+                "⚠️ StargateMonitor: EventBus not provided - monitoring will bedisabled!"
             )
             logger.warning(
-                "⚠️ Events will not be delivered to GUI. Please pass event_bus parameter."
+                "⚠️ Events will not be delivered to GUI. Please pass event_busparameter."
             )
             self.enabled = False
             self.event_logger = None

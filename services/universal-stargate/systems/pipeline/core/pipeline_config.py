@@ -35,8 +35,10 @@ class PipelineOptions(BaseModel):
     timeout_seconds: int = 60
     max_tokens: int | None = None
     skip_token_counting: bool = False
-    # Profile control — model-assigned profiles (e.g. "gemma4-instruct", "qwen3-instruct")
-    # are applied by default so models get correct generation parameters (enable_thinking,
+    # Profile control — model-assigned profiles (e.g. "gemma4-instruct",
+    # "qwen3-instruct")
+    # are applied by default so models get correct generation parameters
+    # (enable_thinking,
     # sampling settings). Set disable_profile=True in pipeline options or on a specific
     # step to suppress profile injection for that scope. Explicit step/pipeline profile
     # overrides the default assignment.

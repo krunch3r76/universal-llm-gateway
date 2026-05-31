@@ -163,7 +163,8 @@ class RPCClient:
             # Record successful RPC call metrics
             latency = time.time() - start_time
             metrics = get_metrics_instance()
-            # Note: RPC request counter is incremented on server side to avoid double-counting
+            # Note: RPC request counter is incremented on server side to avoid
+            # double-counting
             metrics.record_rpc_latency(method, latency)
         except Exception as e:
             # Record error metrics
@@ -605,7 +606,8 @@ class AsyncRPCClient:
         Args:
             payload: Optional dict containing inference parameters.
                      If provided, overrides individual prompt/messages/kwargs arguments.
-                     Can contain "prompt", "messages", and any other inference parameters.
+                     Can contain "prompt","
+                         ""messages", and any other inference parameters.
             prompt: Text prompt for completion (mutually exclusive with messages)
             messages: Chat messages for conversation (mutually exclusive with prompt)
             **kwargs: Additional inference parameters (max_tokens, temperature, etc.)

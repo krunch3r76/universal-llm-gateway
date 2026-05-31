@@ -283,7 +283,8 @@ class RemoteTelemetrySender:
             return
 
         # Rewrite source.stargate_id to Relay's identity
-        # source may be None for request-scoped telemetry (e.g. request.inference.started)
+        # source may be None for request-scoped telemetry (e.g.
+        # request.inference.started)
         # that originates from the edge Stargate event bus rather than the Gateway.
         if payload.source is not None:
             payload.source.stargate_id = self._source.stargate_id

@@ -163,7 +163,8 @@ def main():
         test_robust_gui_connection()
     else:
         print(
-            "Please specify a test mode: --test-connectivity, --monitor-file, or --test-gui"
+            "Please specify a test mode: --test-connectivity, --monitor-file, or"
+            "--test-gui"
         )
 
 

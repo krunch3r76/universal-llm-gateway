@@ -216,9 +216,10 @@ async def assert_worker_healthy(socket_path: str, timeout: float = 5.0):
             socket_path, timeout=timeout, verify_socket=False
         ) as client:
             health = await client.health()
-            assert health.get("status") in ["ready", "busy"], (
-                f"Unexpected health status: {health}"
-            )
+            assert health.get("status") in [
+                "ready",
+                "busy",
+            ], f"Unexpected health status: {health}"
             logger.info(f"Worker health check passed: {health}")
     except Exception as e:
         raise AssertionError(f"Worker health check failed: {e}")

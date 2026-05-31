@@ -6,6 +6,7 @@ full request/response cycle for observability and debugging.
 
 Invariant: ∀ _call_model() invocation ⟹ ∃! ModelInvocation event
 """
+
 # ruff: noqa: E501
 
 from __future__ import annotations

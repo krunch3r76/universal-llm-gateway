@@ -17,6 +17,7 @@ passes the bound method as a callable so subclass overrides reached via
 ``self.<hook>`` are still honored when called transitively (e.g. an override of
 ``_format_for_prompt`` propagates through ``_build_prompt_context``).
 """
+
 # ruff: noqa: E501
 
 from __future__ import annotations

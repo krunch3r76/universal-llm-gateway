@@ -50,7 +50,8 @@ async def test_queue_timeout_error_propagation():
     queue = BoundedQueue()
     context = StreamContext("test-stream-1")
 
-    # Register stream in stream_registry (type: ignore for BoundedQueue vs UnboundedStreamQueue)
+    # Register stream in stream_registry (type: ignore for BoundedQueue vs
+    # UnboundedStreamQueue)
     stream_registry.register(
         "test-stream-1", kind="stream", context=context, queue=queue
     )
@@ -123,7 +124,8 @@ async def test_cumulative_4mb_limit():
     queue = BoundedQueue()
     context = StreamContext("test-stream-2")
 
-    # Register stream in stream_registry (type: ignore for BoundedQueue vs UnboundedStreamQueue)
+    # Register stream in stream_registry (type: ignore for BoundedQueue vs
+    # UnboundedStreamQueue)
     stream_registry.register(
         "test-stream-2", kind="stream", context=context, queue=queue
     )

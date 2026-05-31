@@ -6,6 +6,7 @@ Event Bus schema where messages have: signal, payload, id, timestamp, correlatio
 
 Factory functions enforce payload structure consistency across process boundaries.
 """
+
 # ruff: noqa: N802  # Factory functions use PascalCase to match event constants
 
 from typing import Any

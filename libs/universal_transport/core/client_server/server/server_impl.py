@@ -302,7 +302,8 @@ class AsyncTransportServer:
                     pass
         finally:
             # Only clean up if session wasn't used by get_transport()
-            # When get_transport() is waiting, only the FIRST session should be left open
+            # When get_transport() is waiting, only the FIRST session should be left
+            # open
             should_keep_open = False
 
             if (
@@ -335,8 +336,10 @@ class AsyncTransportServer:
                 # Keep session open for get_transport()
                 logger.debug(f"Leaving session {client_id} open for get_transport()")
 
-        # Only keep connection open if this is the FIRST session when get_transport() is waiting
-        # get_transport() only uses the first session, so others should be closed normally
+        # Only keep connection open if this is the FIRST session when get_transport() is
+        # waiting
+        # get_transport() only uses the first session, so others should be closed
+        # normally
         if self._get_transport_waiting:
             sessions = list(self.clients.values())
             is_first_session = len(sessions) == 1 and sessions[0].client_id == client_id
@@ -499,9 +502,12 @@ class AsyncTransportServer:
         import warnings
 
         warnings.warn(
-            "AsyncTransportServer.get_transport() mixes incompatible patterns and will be deprecated. "
-            "Consider using SingleClientServer instead for single-client scenarios with MessagePump support. "
-            "See universal_transport.core.client_server.server.SingleClientServer for the recommended approach.",
+            "AsyncTransportServer.get_transport() mixes incompatible patterns and will"
+            "be deprecated."
+            "Consider using SingleClientServer instead for single-client scenarios with"
+            "MessagePump support."
+            "See universal_transport.core.client_server.server.SingleClientServer for"
+            "the recommended approach.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -520,8 +526,10 @@ class AsyncTransportServer:
 
                 if len(sessions) > 1:
                     raise ValueError(
-                        "Multiple clients connected. get_transport() only supports single-client mode. "
-                        "Use get_client_sessions() instead or set max_clients=1 on the underlying server."
+                        "Multiple clients connected. get_transport() only supports"
+                        "single-client mode."
+                        "Use get_client_sessions() instead or set max_clients=1 on the"
+                        "underlying server."
                     )
 
                 if sessions:

@@ -1,4 +1,5 @@
-"""Stargate scheduling routing events — split module (routing_factories_eviction_waits_startup.py)."""
+"""Stargate scheduling routing events — split module"
+"(routing_factories_eviction_waits_startup.py)."""
 
 # ruff: noqa: N802
 

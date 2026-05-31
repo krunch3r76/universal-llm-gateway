@@ -69,7 +69,8 @@ class ModelErrorBuilder:
                     "code": "model_loading_timeout",
                     "model": model_name,
                     "timeout_seconds": timeout_seconds,
-                    "suggestion": "Please try again shortly. Large models (30B+) may take 5-10 minutes to load initially.",
+                    "suggestion": "Please try again shortly. Large models (30B+) may"
+                    "take 5-10 minutes to load initially.",
                 }
             },
         )
@@ -196,7 +197,8 @@ class ModelErrorBuilder:
                     "error_details": error_details,
                     "retryable": False,
                     "suggestion": (
-                        "This is a server resource issue. Please contact the administrator "
+                        "This is a server resource issue. Please contact the"
+                        "administrator"
                         "to free up GPU/CPU memory or use a smaller model."
                     ),
                 }

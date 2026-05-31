@@ -125,7 +125,8 @@ class RemoteIntegration:
         )
 
     async def _start_connection_manager(self) -> None:
-        """Creates and starts the ConnectionManager to connect to the Master Stargate."""
+        """Creates and starts the ConnectionManager to connect to the Master"
+        "Stargate."""
         """Create and start ConnectionManager (connects TO Master)."""
         self._connection_manager = ConnectionManager(
             self._config,

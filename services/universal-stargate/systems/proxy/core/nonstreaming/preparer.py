@@ -9,6 +9,7 @@ and master mode lives in mode_transforms.py — this module delegates to it.
 Note: Import ordering is intentionally non-standard to ensure logging
 configuration is loaded before universal_logging import.
 """
+
 # ruff: noqa: E501
 
 import time

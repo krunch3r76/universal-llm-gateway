@@ -37,10 +37,13 @@ def parse_cloud_proxy_url(url: str) -> tuple[str | None, str]:
     if url.startswith("unix://"):
         path = url[7:].lstrip("/")
         return (
-            f"/{path}"
-            if path
-            else os.environ.get(
-                "CLOUD_PROXY_SOCKET_PATH", "/tmp/universal-protocol/cloud-proxy.sock"
+            (
+                f"/{path}"
+                if path
+                else os.environ.get(
+                    "CLOUD_PROXY_SOCKET_PATH",
+                    "/tmp/universal-protocol/cloud-proxy.sock",
+                )
             ),
             "http://localhost",
         )

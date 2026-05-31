@@ -1,4 +1,5 @@
-"""Stargate scheduling routing events — split module (routing_signal_constants_routing_waits.py)."""
+"""Stargate scheduling routing events — split module"
+"(routing_signal_constants_routing_waits.py)."""
 
 # ruff: noqa: N802
 

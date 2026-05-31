@@ -120,7 +120,8 @@ class TaskModelReputationStore:
         logger.info("Loaded %d reputation records from %s", loaded, target)
 
     def _save_to_disk(self, data: dict[str, Any]) -> None:
-        """Write serialized data to disk. Called from thread pool; does not acquire lock."""
+        """Write serialized data to disk. Called from thread pool; does not acquire"
+        "lock."""
         try:
             self._persistence_path.parent.mkdir(parents=True, exist_ok=True)
             self._persistence_path.write_text(json.dumps(data, indent=2))

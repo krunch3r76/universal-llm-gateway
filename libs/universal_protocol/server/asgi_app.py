@@ -122,7 +122,8 @@ async def rpc_handler(request: Request) -> JSONResponse:
     correlation_id = params.get("correlation_id") if params else None
     if not correlation_id:
         logger.warning(
-            f"[request_id={request_id}] RPC request missing correlation_id for method: {method}"
+            f"[request_id={request_id}] RPC request missing correlation_id "
+            f"for method: {method}"
         )
 
     # Log incoming RPC request with both request_id and correlation_id
@@ -239,7 +240,8 @@ async def rpc_handler(request: Request) -> JSONResponse:
         # Handle EngineError and StreamError (subclasses of ProtocolError)
         error_data = e.to_dict()
         logger.error(
-            f"[request_id={request_id}] Protocol error: {method} failed with {error_data}"
+            f"[request_id={request_id}] Protocol error: {method} "
+            f"failed with {error_data}"
         )
 
         # Track error by code and source
@@ -352,8 +354,9 @@ async def handle_process_data(params: dict[str, Any]) -> dict[str, Any]:
     """
     worker_id = params.get("worker_id", "unknown")
     logger.error(
-        f"[fallback] process_data called but no worker handler registered for {worker_id}. "
-        f"Worker must register process_data handler if using send_data()."
+        f"[fallback] process_data called but no worker handler registered "
+        f"for {worker_id}. Worker must register process_data handler "
+        f"if using send_data()."
     )
     raise NotImplementedError(
         "process_data not implemented by worker. "
@@ -419,9 +422,11 @@ async def handle_supervisor_health_check(params: dict[str, Any]) -> dict[str, An
         "status": health_info.get("status", "unknown"),
         "models": health_info.get("models", []),
         "worker_id": params.get("worker_id"),
-        "uptime": time.time() - app.state.start_time
-        if hasattr(app.state, "start_time")
-        else 0,
+        "uptime": (
+            time.time() - app.state.start_time
+            if hasattr(app.state, "start_time")
+            else 0
+        ),
         "memory_usage": health_info.get("memory_usage", {}),
         "supervisor_ready": True,
     }
@@ -433,7 +438,8 @@ async def handle_supervisor_process_command(params: dict[str, Any]) -> dict[str,
     This is the main command dispatch for supervisor operations.
     Workers must override this by registering their own handler.
     """
-    # This default handler should be replaced by worker's handler via SUPERVISOR_RPC_METHODS.update()
+    # This default handler should be replaced by worker's handler via
+    # SUPERVISOR_RPC_METHODS.update()
     # If we reach here, it means the worker hasn't registered its handler yet
     raise NotImplementedError(
         "Worker must register process_command handler for supervisor operations"
@@ -677,13 +683,15 @@ async def metrics_handler(request: Request) -> Response:
 
         # RPC error metrics by code and source
         prometheus_lines.append(
-            "# HELP universal_protocol_rpc_errors_total Total RPC errors by code and source"
+            "# HELP universal_protocol_rpc_errors_total Total RPC errors by code and"
+            "source"
         )
         prometheus_lines.append("# TYPE universal_protocol_rpc_errors_total counter")
         for source, codes in metrics.get("rpc_errors_by_source", {}).items():
             for code, count in codes.items():
                 prometheus_lines.append(
-                    f'universal_protocol_rpc_errors_total{{code="{code}",source="{source}"}} {count}'
+                    f'universal_protocol_rpc_errors_total{{code="{code}",'
+                    f'source="{source}"}} {count}'
                 )
 
         # Active streams gauge
@@ -703,7 +711,8 @@ async def metrics_handler(request: Request) -> Response:
             "# TYPE universal_protocol_queue_timeouts_total counter"
         )
         prometheus_lines.append(
-            f"universal_protocol_queue_timeouts_total {metrics.get('queue_timeouts_total', 0)}"
+            f"universal_protocol_queue_timeouts_total "
+            f"{metrics.get('queue_timeouts_total', 0)}"
         )
 
         # Queue timeouts by model
@@ -714,19 +723,22 @@ async def metrics_handler(request: Request) -> Response:
 
         # Backpressure events counter (total and by model)
         prometheus_lines.append(
-            "# HELP universal_protocol_backpressure_events_total Total backpressure events"
+            "# HELP universal_protocol_backpressure_events_total Total backpressure"
+            "events"
         )
         prometheus_lines.append(
             "# TYPE universal_protocol_backpressure_events_total counter"
         )
         prometheus_lines.append(
-            f"universal_protocol_backpressure_events_total {metrics.get('backpressure_events', 0)}"
+            f"universal_protocol_backpressure_events_total "
+            f"{metrics.get('backpressure_events', 0)}"
         )
 
         # Backpressure events by model
         for model, count in metrics.get("backpressure_events_by_model", {}).items():
             prometheus_lines.append(
-                f'universal_protocol_backpressure_events_total{{model="{model}"}} {count}'
+                f'universal_protocol_backpressure_events_total{{model="{model}"}} '
+                f"{count}"
             )
 
         # Queue depth gauge (total)
@@ -749,19 +761,23 @@ async def metrics_handler(request: Request) -> Response:
             for method, stats in metrics["rpc_latency_stats"].items():
                 if "avg_seconds" in stats:
                     prometheus_lines.append(
-                        f'universal_protocol_rpc_latency_seconds{{method="{method}",quantile="0.5"}} {stats["avg_seconds"]}'
+                        f'universal_protocol_rpc_latency_seconds{{method="{method}",'
+                        f'quantile="0.5"}} {stats["avg_seconds"]}'
                     )
                 if "min_seconds" in stats:
                     prometheus_lines.append(
-                        f'universal_protocol_rpc_latency_seconds{{method="{method}",quantile="0.0"}} {stats["min_seconds"]}'
+                        f'universal_protocol_rpc_latency_seconds{{method="{method}",'
+                        f'quantile="0.0"}} {stats["min_seconds"]}'
                     )
                 if "max_seconds" in stats:
                     prometheus_lines.append(
-                        f'universal_protocol_rpc_latency_seconds{{method="{method}",quantile="1.0"}} {stats["max_seconds"]}'
+                        f'universal_protocol_rpc_latency_seconds{{method="{method}",'
+                        f'quantile="1.0"}} {stats["max_seconds"]}'
                     )
                 if "count" in stats:
                     prometheus_lines.append(
-                        f'universal_protocol_rpc_latency_seconds_count{{method="{method}"}} {stats["count"]}'
+                        f'universal_protocol_rpc_latency_seconds_count{{method="{method}"}} '
+                        f"{stats['count']}"
                     )
 
         # Stream duration histogram (if available)
@@ -770,7 +786,8 @@ async def metrics_handler(request: Request) -> Response:
             and metrics["stream_duration_histogram"]
         ):
             prometheus_lines.append(
-                "# HELP universal_protocol_stream_duration_seconds_bucket Stream duration histogram buckets"
+                "# HELP universal_protocol_stream_duration_seconds_bucket Stream"
+                "duration histogram buckets"
             )
             prometheus_lines.append(
                 "# TYPE universal_protocol_stream_duration_seconds_bucket histogram"
@@ -782,13 +799,15 @@ async def metrics_handler(request: Request) -> Response:
                 key=lambda x: float("inf") if x[0] == "+Inf" else float(x[0]),
             ):
                 prometheus_lines.append(
-                    f'universal_protocol_stream_duration_seconds_bucket{{le="{bucket_label}"}} {cumulative_count}'
+                    f'universal_protocol_stream_duration_seconds_bucket{{le="{bucket_label}"}} '
+                    f"{cumulative_count}"
                 )
 
             # Add total count
             if "stream_duration_histogram_count" in metrics:
                 prometheus_lines.append(
-                    f"universal_protocol_stream_duration_seconds_count {metrics['stream_duration_histogram_count']}"
+                    f"universal_protocol_stream_duration_seconds_count "
+                    f"{metrics['stream_duration_histogram_count']}"
                 )
 
             # Add sum if we have duration stats
@@ -804,22 +823,26 @@ async def metrics_handler(request: Request) -> Response:
         elif "stream_duration_stats" in metrics and metrics["stream_duration_stats"]:
             stats = metrics["stream_duration_stats"]
             prometheus_lines.append(
-                "# HELP universal_protocol_stream_duration_seconds Stream duration statistics"
+                "# HELP universal_protocol_stream_duration_seconds Stream duration"
+                "statistics"
             )
             prometheus_lines.append(
                 "# TYPE universal_protocol_stream_duration_seconds summary"
             )
             if "avg_seconds" in stats:
                 prometheus_lines.append(
-                    f'universal_protocol_stream_duration_seconds{{quantile="0.5"}} {stats["avg_seconds"]}'
+                    f'universal_protocol_stream_duration_seconds{{quantile="0.5"}} '
+                    f"{stats['avg_seconds']}"
                 )
             if "min_seconds" in stats:
                 prometheus_lines.append(
-                    f'universal_protocol_stream_duration_seconds{{quantile="0.0"}} {stats["min_seconds"]}'
+                    f'universal_protocol_stream_duration_seconds{{quantile="0.0"}} '
+                    f"{stats['min_seconds']}"
                 )
             if "max_seconds" in stats:
                 prometheus_lines.append(
-                    f'universal_protocol_stream_duration_seconds{{quantile="1.0"}} {stats["max_seconds"]}'
+                    f'universal_protocol_stream_duration_seconds{{quantile="1.0"}} '
+                    f"{stats['max_seconds']}"
                 )
             if "count" in stats:
                 prometheus_lines.append(
@@ -830,7 +853,8 @@ async def metrics_handler(request: Request) -> Response:
         if "token_throughput_stats" in metrics and metrics["token_throughput_stats"]:
             stats = metrics["token_throughput_stats"]
             prometheus_lines.append(
-                "# HELP universal_protocol_token_throughput_per_second Token generation throughput"
+                "# HELP universal_protocol_token_throughput_per_second Token generation"
+                "throughput"
             )
             prometheus_lines.append(
                 "# TYPE universal_protocol_token_throughput_per_second gauge"

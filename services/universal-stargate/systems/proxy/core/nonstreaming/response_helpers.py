@@ -63,7 +63,8 @@ def apply_content_filter_to_response(
                         filtered_content
                     )
                     logger.info(
-                        "Applied analysis filter to federated non-streaming response: %s",
+                        "Applied analysis filter to federated non-streaming response:"
+                        "%s",
                         model_name,
                     )
 

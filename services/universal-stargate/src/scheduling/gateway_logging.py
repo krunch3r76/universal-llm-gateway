@@ -52,7 +52,8 @@ class GatewayLogger:
         self.log_connectivity_changes = log_connectivity_changes
         self.log_health_changes = log_health_changes
 
-        # Rate limiting tracking: {(gateway_url, transition_type): [timestamp1, timestamp2, ...]}
+        # Rate limiting tracking: {(gateway_url, transition_type): [timestamp1,
+        # timestamp2, ...]}
         self._log_timestamps: dict[tuple[str, str], list[float]] = defaultdict(list)
 
         # Subscribe to gateway state change events

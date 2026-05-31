@@ -296,7 +296,8 @@ class NetworkReceiver:
                 "timestamp": getattr(event, "timestamp", time.time()),
             }
 
-            # For compatibility, if event.data contains original_request/modified_request, merge them up
+            # For compatibility, if event.data contains
+            # original_request/modified_request, merge them up
             if isinstance(event_data["data"], dict):
                 # Process all fields from data
                 for key, value in event_data["data"].items():

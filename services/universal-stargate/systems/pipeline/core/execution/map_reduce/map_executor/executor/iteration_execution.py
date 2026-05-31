@@ -65,9 +65,11 @@ async def execute_iteration(
             from .....schemas import StepOutput
 
             return StepOutput(
-                data=cached.output_json
-                if cached.output_json
-                else {"raw": cached.output_raw},
+                data=(
+                    cached.output_json
+                    if cached.output_json
+                    else {"raw": cached.output_raw}
+                ),
                 metadata=cached.output_meta or {},
             )
 

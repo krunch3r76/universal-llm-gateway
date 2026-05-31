@@ -27,7 +27,8 @@ if _libs_path.exists() and str(_libs_path) not in sys.path:
     sys.path.insert(0, str(_libs_path))
 
 # Note: Environment loading is handled by wrapper script (start-stargate.sh)
-# which sources .env.local from project root before starting this Python service manager.
+# which sources .env.local from project root before starting this Python service
+# manager.
 # All config is read from os.environ.
 
 # CRITICAL: Set LOG_DIR and SERVICE_NAME before universal_logging import
@@ -108,9 +109,11 @@ class StargateConfig:
                 "GATEWAY_VENV", os.path.expanduser("~/.venvs/universal")
             ),
             workers=int(os.getenv("STARGATE_WORKERS", "1")),
-            limit_concurrency=int(os.getenv("STARGATE_LIMIT_CONCURRENCY"))
-            if os.getenv("STARGATE_LIMIT_CONCURRENCY")
-            else None,
+            limit_concurrency=(
+                int(os.getenv("STARGATE_LIMIT_CONCURRENCY"))
+                if os.getenv("STARGATE_LIMIT_CONCURRENCY")
+                else None
+            ),
             shutdown_grace=int(os.getenv("STARGATE_SHUTDOWN_GRACE", "20")),
             debug_mode=os.getenv("DEBUG_MODE", "true").lower() == "true",
             enable_tcp_monitoring=os.getenv(
@@ -246,7 +249,8 @@ class ProcessManager:
                     processes.append(proc)
                     self.logger.debug(f"Found stargate uvicorn process: PID {proc.pid}")
 
-                # Check for python processes in stargate directory (excluding manager scripts)
+                # Check for python processes in stargate directory (excluding manager
+                # scripts)
                 elif (
                     "python" in cmdline
                     and ("universal-stargate" in cmdline or "stargate" in cmdline)
@@ -395,7 +399,8 @@ class SystemdManager:
         """Stop systemd service"""
         if self.is_running_under_systemd():
             self.logger.info(
-                "Running under systemd, skipping systemctl stop to avoid circular dependency"
+                "Running under systemd, skipping systemctl stop to avoid circular"
+                "dependency"
             )
             return True
 

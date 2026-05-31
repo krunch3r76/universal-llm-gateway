@@ -125,7 +125,7 @@ class MockWorkerStreaming:
                 error_frame = {
                     "t": "err",
                     "code": "QUEUE_TIMEOUT",
-                    "message": "Producer timeout sending completion - consumer too slow",
+                    "message": "Producer timeout sending completion - consumer tooslow",
                     "source": "stream",
                 }
                 try:
@@ -342,13 +342,15 @@ async def test_multiple_backpressure_scenarios():
             )
 
             # Verify stream handling - either cut short or completed with error handling
-            # Due to timing, sometimes all tokens can be generated before consumer simulates slowness
+            # Due to timing, sometimes all tokens can be generated before consumer
+            # simulates slowness
             if len(token_frames) < scenario["num_tokens"]:
                 logger.info("✅ Stream was terminated early due to backpressure")
             else:
                 # All tokens fit - just verify we didn't crash and error handling works
                 logger.info(
-                    "✅ Stream completed normally (backpressure didn't trigger in this scenario)"
+                    "✅ Stream completed normally (backpressure didn't trigger in this"
+                    "scenario)"
                 )
 
             # Verify error frame format if error occurred

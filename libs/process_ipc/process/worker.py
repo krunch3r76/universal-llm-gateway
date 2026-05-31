@@ -121,19 +121,22 @@ class CommandProcessor:
                 )
                 result = {"error": "Handler returned empty result"}
             else:
-                # Check if result only contains command metadata (indicates handler returned command_data)
+                # Check if result only contains command metadata (indicates handler
+                # returned command_data)
                 command_metadata_keys = {"command_type", "worker_id", "correlation_id"}
                 result_keys = set(result.keys())
                 # If all result keys are metadata keys, this is suspicious
                 if result_keys and result_keys.issubset(command_metadata_keys):
-                    # Result only contains command metadata - handler likely returned command_data unchanged
+                    # Result only contains command metadata - handler likely returned
+                    # command_data unchanged
                     self._logger.error(
                         f"Handler result only contains command metadata for correlation_id: {correlation_id}. "
                         f"Result keys: {list(result_keys)}. "
                         f"This indicates process_command() returned command_data instead of processing it."
                     )
                     result = {
-                        "error": "Handler returned command metadata only - implementation error"
+                        "error": "Handler returned command metadata only -"
+                        "implementation error"
                     }
 
             # Log result structure for debugging
@@ -143,7 +146,8 @@ class CommandProcessor:
                 f"result_type={type(result).__name__}"
             )
 
-            # Simple UML Message format: payload contains worker response directly (no result wrapper, no metadata)
+            # Simple UML Message format: payload contains worker response directly (no
+            # result wrapper, no metadata)
             response = signals.CommandComplete(
                 result=result,
                 correlation_id=correlation_id,
@@ -312,7 +316,8 @@ class WorkerProcess(WorkerInterface):
                 socket_path=self.socket_path,
             )
 
-            # Get Transport interface for single-client mode (from generic AsyncTransportServer)
+            # Get Transport interface for single-client mode (from generic
+            # AsyncTransportServer)
             self._transport = await self._server.get_transport(timeout=30.0)
 
             # Create message pump with configured receive timeout
@@ -482,8 +487,10 @@ class WorkerProcess(WorkerInterface):
                 try:
                     # Get message from pump using get_message() which reads from
                     # the internal queue. This is safe to call when the pump is running
-                    # because it doesn't conflict with the pump's exclusive receive loop.
-                    # Returns None on timeout, so we check for message before processing.
+                    # because it doesn't conflict with the pump's exclusive receive
+                    # loop.
+                    # Returns None on timeout, so we check for message before
+                    # processing.
                     message = await self._message_pump.get_message(timeout=1.0)
 
                     if message:
@@ -646,9 +653,9 @@ class WorkerProcess(WorkerInterface):
         return {
             **self._status,
             "active_commands": len(self._active_commands),
-            "message_queue_size": self._message_pump.get_queue_size()
-            if self._message_pump
-            else 0,
+            "message_queue_size": (
+                self._message_pump.get_queue_size() if self._message_pump else 0
+            ),
         }
 
     def is_ready_for_inference(self) -> bool:
@@ -671,7 +678,8 @@ class WorkerProcess(WorkerInterface):
         # Extract correlation_id if present (will be moved to top level)
         correlation_id = event_data.get("correlation_id")
 
-        # For streaming events, remove worker_id and redundant correlation_id from payload
+        # For streaming events, remove worker_id and redundant correlation_id from
+        # payload
         # (they're already at the top level of the message)
         streaming_signals = {
             signals.DATA_STREAM,
@@ -689,7 +697,8 @@ class WorkerProcess(WorkerInterface):
                 if k not in {"worker_id", "correlation_id"}
             }
         else:
-            # For non-streaming events, ensure worker_id is in payload (for backward compatibility)
+            # For non-streaming events, ensure worker_id is in payload (for backward
+            # compatibility)
             if "worker_id" not in event_data:
                 payload = dict(event_data)
                 payload["worker_id"] = self.worker_id
@@ -729,7 +738,8 @@ class WorkerProcess(WorkerInterface):
                     f"Socket buffer likely full."
                 )
                 self._logger.error(error_msg)
-                # Propagate error to caller. Silently swallowing this leads to data loss.
+                # Propagate error to caller. Silently swallowing this leads to data
+                # loss.
                 raise ProcessError(error_msg, self.worker_id)
 
     async def report_streaming_chunk(

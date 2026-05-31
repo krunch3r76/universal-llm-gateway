@@ -86,7 +86,8 @@ class _ParameterComparisonLogging:
                     )
                 )
                 logger.debug(
-                    "✅ MONITORING: Successfully published parameter_comparison to EventBus"
+                    "✅ MONITORING: Successfully published parameter_comparison to"
+                    "EventBus"
                 )
             else:
                 logger.warning(

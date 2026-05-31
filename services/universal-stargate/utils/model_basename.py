@@ -104,7 +104,8 @@ class UnifiedModelMatcher:
 
             if data and "transformations" in data:
                 for name, config in data["transformations"].items():
-                    # Check if transformation is enabled (default to True for backward compatibility)
+                    # Check if transformation is enabled (default to True for backward
+                    # compatibility)
                     if not config.get("enabled", True):
                         logger.info(f"Skipping disabled transformation: {name}")
                         continue
@@ -119,7 +120,8 @@ class UnifiedModelMatcher:
                             #     f"Loaded transformation mapping (basename): {basename} -> {name}"
                             # )
                         else:
-                            # Ignore transformations with basename: null - no fallback transformations
+                            # Ignore transformations with basename: null - no fallback
+                            # transformations
                             logger.debug(
                                 f"Ignoring transformation with basename: null: {name}"
                             )

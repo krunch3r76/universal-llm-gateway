@@ -112,14 +112,16 @@ class ModelLoadOrchestrator:
             if self._global_load_coordinator.was_load_coordinated(model_id):
                 # We coordinated this load - trust it completely
                 logger.info(
-                    "✅ Model %s confirmed on %s (coordinator-verified, skipping HTTP check)",
+                    "✅ Model %s confirmed on %s (coordinator-verified, skipping HTTP"
+                    "check)",
                     model_id,
                     gateway_name,
                 )
                 return ModelLoadingStatus.LOADED
             # External load - will verify via HTTP later
             logger.debug(
-                "Model %s on %s - coordinator NOT verified (external load or stale), will check HTTP",
+                "Model %s on %s - coordinator NOT verified (external load or stale),"
+                "will check HTTP",
                 model_id,
                 gateway_name,
             )
@@ -262,7 +264,8 @@ class ModelLoadOrchestrator:
         if coordinator_thinks_loaded:
             logger.info(
                 "🔄 Coordinator routing key conflict: %s not loaded, "
-                "but routing key marked as loaded on %s. Will attempt eviction and load.",
+                "but routing key marked as loaded on %s. Will attempt eviction and"
+                "load.",
                 model_id,
                 gateway_name,
             )
@@ -420,7 +423,8 @@ class ModelLoadOrchestrator:
             )
 
             if result.should_load:
-                # Actually execute the load (reserve resources + HTTP request to Gateway)
+                # Actually execute the load (reserve resources + HTTP request to
+                # Gateway)
                 status = await self._execute_coordinated_load(
                     gateway, model_id, resource_manager
                 )

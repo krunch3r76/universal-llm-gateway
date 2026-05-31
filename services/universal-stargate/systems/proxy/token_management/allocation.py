@@ -45,7 +45,8 @@ def compute_final_max_tokens(
         Final max_tokens to use (None if no allocation)
     """
     if user_explicitly_specified_max_tokens and user_requested_max_tokens is not None:
-        # MODE 1: User explicitly specified max_tokens - respect but cap to available space
+        # MODE 1: User explicitly specified max_tokens - respect but cap to available
+        # space
         if available_generation_space > 0:
             return min(user_requested_max_tokens, available_generation_space)
         else:

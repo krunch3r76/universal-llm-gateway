@@ -384,7 +384,8 @@ def _validate_gateway_config_dict(
     """
     if "resource_management" not in config_dict:
         raise ResourceManagementConfigError(
-            "requires resource_management configuration. The previous optional behavior has been removed for production safety.",
+            "requires resource_management configuration. The previous optional"
+            "behavior has been removed for production safety.",
             gateway_name=gateway_name,
         )
 
@@ -620,5 +621,6 @@ def _load_gateway_configs_sync(config_path: Path) -> dict[str, GatewayConfig]:
 
 
 # REMOVED: load_gateway_configs - use GatewayConfigManager instead
-# REMOVED: reload_gateway_config - use GatewayConfigManager.reload_gateway_config instead
+# REMOVED: reload_gateway_config - use GatewayConfigManager.reload_gateway_config
+# instead
 # REMOVED: get_default_resource_management_config - moved to tests.fixtures

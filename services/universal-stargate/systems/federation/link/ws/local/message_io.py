@@ -69,8 +69,9 @@ async def local_receive_loop(
     websocket: WebSocketClientProtocol,
     peer_id: str,
     on_telemetry: Callable[[str, str, dict[str, Any]], Awaitable[None]] | None,
-    on_measurement_request: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
-    | None = None,
+    on_measurement_request: (
+        Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None
+    ) = None,
 ) -> None:
     """
     Receive and dispatch messages from Edge.

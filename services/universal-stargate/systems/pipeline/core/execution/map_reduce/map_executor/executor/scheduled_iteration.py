@@ -45,9 +45,9 @@ async def tracked_iteration(
     executor._event_publisher.emit_iteration_completed_immediate(
         index=idx,
         elapsed_seconds=round(elapsed, 3),
-        inference_seconds=round(inference_seconds, 3)
-        if inference_seconds is not None
-        else None,
+        inference_seconds=(
+            round(inference_seconds, 3) if inference_seconds is not None else None
+        ),
         prompt_tokens=getattr(result, "prompt_tokens", 0),
         completion_tokens=getattr(result, "completion_tokens", 0),
     )

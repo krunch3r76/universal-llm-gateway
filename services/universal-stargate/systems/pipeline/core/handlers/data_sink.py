@@ -1,4 +1,5 @@
 """Built-in data_sink_v1: persist pipeline outputs to RAG metadata (SQLite)."""
+
 # ruff: noqa: E501
 
 from __future__ import annotations

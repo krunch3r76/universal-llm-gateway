@@ -627,7 +627,8 @@ class ProcessSupervisor:
         timeout: float,
     ) -> dict[str, Any] | None:
         """Get next stream event (for compatibility)."""
-        # This method is kept for compatibility but streaming now uses WebSocket directly
+        # This method is kept for compatibility but streaming now uses WebSocket
+        # directly
         # The actual streaming happens via WebSocket to /stream/{stream_id}
         raise NotImplementedError(
             "Streaming now uses WebSocket directly via /stream/{stream_id}"
@@ -635,7 +636,8 @@ class ProcessSupervisor:
 
     def stop_stream(self, correlation_id: str) -> None:
         """Stop a stream (for compatibility)."""
-        # This method is kept for compatibility but streaming now uses WebSocket directly
+        # This method is kept for compatibility but streaming now uses WebSocket
+        # directly
         # Stream cancellation happens via cancel_inference RPC call
         pass
 
@@ -670,19 +672,25 @@ class ProcessSupervisor:
         return {
             "worker_id": self._worker_id,
             "pid": self._worker_pid,
-            "status": self._worker_process_info.status.value
-            if self._worker_process_info
-            else None,
-            "command": getattr(self._subprocess, "args", None)
-            if self._subprocess
-            else None,
-            "started_at": self._worker_process_info.started_at.isoformat()
-            if self._worker_process_info
-            else None,
+            "status": (
+                self._worker_process_info.status.value
+                if self._worker_process_info
+                else None
+            ),
+            "command": (
+                getattr(self._subprocess, "args", None) if self._subprocess else None
+            ),
+            "started_at": (
+                self._worker_process_info.started_at.isoformat()
+                if self._worker_process_info
+                else None
+            ),
             "transport_connected": self._http_client is not None,
-            "socket_path": self._get_universal_protocol_socket_path(self._worker_id)
-            if self._worker_id
-            else None,
+            "socket_path": (
+                self._get_universal_protocol_socket_path(self._worker_id)
+                if self._worker_id
+                else None
+            ),
             "health_monitoring": True,
             "resource_monitoring": self.resource_config.enable_resource_monitoring,
         }

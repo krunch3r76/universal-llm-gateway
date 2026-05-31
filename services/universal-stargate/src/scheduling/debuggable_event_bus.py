@@ -15,7 +15,8 @@ Example:
 import warnings
 
 warnings.warn(
-    "DebuggableEventBus is deprecated. Use EventBus(debug_broadcaster=debug_broadcaster) instead.",
+    "DebuggableEventBus is deprecated. Use"
+    "EventBus(debug_broadcaster=debug_broadcaster) instead.",
     DeprecationWarning,
     stacklevel=2,
 )

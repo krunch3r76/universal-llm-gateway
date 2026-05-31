@@ -291,7 +291,8 @@ class TestUnloadSemantics:
             stream_registry.register(
                 stream_id, kind="stream", context=context, queue=queue
             )
-            # Note: registry doesn't track model; this test verifies stream cleanup on unload
+            # Note: registry doesn't track model; this test verifies stream cleanup on
+            # unload
             stream_ids.append(stream_id)
 
             # Add some frames

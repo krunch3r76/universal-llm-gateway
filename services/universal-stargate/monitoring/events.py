@@ -4,6 +4,7 @@ Monitoring event factory functions.
 Creates structured events for monitoring system operations.
 All monitoring events use the Event structure with consistent payloads.
 """
+
 # ruff: noqa: N802  # Factory functions use PascalCase
 
 from typing import Any

@@ -220,7 +220,8 @@ def _normalize_gateway_configs(
     if gateway_configs is not None and gateway_url is not None:
         raise ValueError(
             "Cannot provide both 'gateway_configs' and 'gateway_url'. "
-            "Use 'gateway_configs' for multiple gateways or 'gateway_url' for a single gateway."
+            "Use 'gateway_configs' for multiple gateways or 'gateway_url' for a single"
+            "gateway."
         )
 
     # If explicit list provided

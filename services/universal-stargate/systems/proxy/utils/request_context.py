@@ -60,9 +60,9 @@ class RequestContextBuilder:
             model_name=str(context.selected_model),  # Convert ModelId to string
             metadata=model_metadata,
             middleware_actions=context.middleware_actions.copy(),
-            token_metrics=context.token_metrics.dict()
-            if context.token_metrics
-            else None,
+            token_metrics=(
+                context.token_metrics.dict() if context.token_metrics else None
+            ),
             modified_request=context.modified_request,
             original_request=context.original_request,
         )

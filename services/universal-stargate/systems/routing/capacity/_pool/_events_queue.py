@@ -1,4 +1,5 @@
-"""Mixin: emit capacity queue lifecycle events (entered, admitted, waiting, full, cancelled)."""
+"""Mixin: emit capacity queue lifecycle events (entered, admitted, waiting, full,"
+"cancelled)."""
 
 from __future__ import annotations
 

@@ -67,12 +67,14 @@ def build_map_config(step: StepConfig) -> MapConfig | None:
 
     inference_timeout = raw.get("inference_timeout_seconds")
     kwargs: dict[str, Any] = {
-        "max_concurrency": int(raw["max_concurrency"])
-        if raw.get("max_concurrency") is not None
-        else None,
-        "inference_timeout_seconds": float(inference_timeout)
-        if inference_timeout is not None
-        else None,
+        "max_concurrency": (
+            int(raw["max_concurrency"])
+            if raw.get("max_concurrency") is not None
+            else None
+        ),
+        "inference_timeout_seconds": (
+            float(inference_timeout) if inference_timeout is not None else None
+        ),
     }
     for key in ("max_concurrency", "inference_timeout_seconds"):
         if kwargs[key] is None:

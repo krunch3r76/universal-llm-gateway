@@ -73,7 +73,8 @@ def load_logging_config(config_file: str = "config/logging.yaml"):
             if handler_config.get("class") == "logging.FileHandler":
                 # Get the original filename
                 original_filename = handler_config.get("filename", "")
-                # Check if it's a path with ${LOG_DIR:-logs} prefix or just starts with logs/
+                # Check if it's a path with ${LOG_DIR:-logs} prefix or just starts with
+                # logs/
                 if "${LOG_DIR" in original_filename or original_filename.startswith(
                     "logs/"
                 ):

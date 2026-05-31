@@ -152,6 +152,7 @@ class RoutingMetricsConsumer:
             self.socket.sendto(message_bytes, (self.udp_host, self.udp_port))
 
         except Exception as e:
-            # Silently ignore errors - metrics emission should never block or fail request processing
+            # Silently ignore errors - metrics emission should never block or fail
+            # request processing
             # Only log at DEBUG level to avoid log spam
             logger.debug(f"Failed to emit metric {metric_type}: {e}")

@@ -66,7 +66,8 @@ class MessagePump(MessagePumpInterface):
         Args:
             transport: Transport instance to use
             get_correlation_id: Optional function to extract correlation ID from messages.
-                                Defaults to looking for 'correlation_id', 'correlationId', or 'id'.
+                                Defaults to looking for 'correlation_id','
+                                    ''correlationId', or 'id'.
             receive_timeout: Timeout for each transport.receive() call in seconds.
                            Prevents indefinite hangs from incomplete socket data.
                            Set to None to disable timeout (not recommended).
@@ -226,7 +227,8 @@ class MessagePump(MessagePumpInterface):
             raise TransportError(
                 "Cannot call read_message() while message pump is running. "
                 "The pump's receive loop is the exclusive reader from the transport. "
-                "Use send_request() for request/response patterns, or stop() the pump first."
+                "Use send_request() for request/response patterns, or stop() the pump"
+                "first."
             )
         return await self.transport.receive()
 
@@ -266,7 +268,8 @@ class MessagePump(MessagePumpInterface):
             raise TransportError(
                 "Cannot call receive() while message pump is running. "
                 "The pump's receive loop is the exclusive reader from the transport. "
-                "Use send_request() for request/response patterns, or stop() the pump first."
+                "Use send_request() for request/response patterns, or stop() the pump"
+                "first."
             )
         return await self.transport.receive()
 
@@ -343,7 +346,8 @@ class MessagePump(MessagePumpInterface):
         """
         if not self._running:
             raise TransportError(
-                "Cannot call get_message_for_correlation() when message pump is not running. "
+                "Cannot call get_message_for_correlation() when message pump is not"
+                "running."
                 "Call start() first to begin the receive loop."
             )
 

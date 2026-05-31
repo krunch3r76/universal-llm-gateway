@@ -152,7 +152,8 @@ class TestCancellationContractCompliance:
                     assert ef["source"] == "stream"
                     logger.info("✅ Backpressure timeout emits proper error frame")
                 else:
-                    # Enqueue succeeded but frame not in queue (drained before we checked)
+                    # Enqueue succeeded but frame not in queue (drained before we
+                    # checked)
                     logger.info("✅ Error frame enqueued successfully")
             else:
                 # Best effort - couldn't enqueue when queue full

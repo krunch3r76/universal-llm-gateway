@@ -211,7 +211,7 @@ class StreamingSafeExecutor:
         else:
             error_detail = {
                 "error": {
-                    "message": "Stream completed without data - worker may have crashed",
+                    "message": "Stream completed without data - worker may havecrashed",
                     "type": "service_unavailable",
                     "code": "empty_stream",
                     "request_id": request_id,

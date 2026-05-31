@@ -43,7 +43,8 @@ def server_process(test_socket_dir):
     socket_path = test_socket_dir / "worker-1.sock"
 
     # Start server subprocess
-    # Use: python -m universal_protocol.examples.start_server --worker-id 1 --socket-dir /tmp/...
+    # Use: python -m universal_protocol.examples.start_server --worker-id 1 --socket-dir
+    # /tmp/...
     proc = subprocess.Popen(
         [
             "python",

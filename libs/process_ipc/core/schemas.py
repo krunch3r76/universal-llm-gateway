@@ -151,7 +151,8 @@ def extract_domain_data(message: dict[str, Any]) -> dict[str, Any]:
     payload = message["payload"]
     signal = message["signal"]
 
-    # For streaming signals, the domain data is nested inside the "data" key of the payload.
+    # For streaming signals, the domain data is nested inside the "data" key of the
+    # payload.
     # This check is now unambiguous because it relies on the signal type.
     streaming_signals = {signals.DATA_STREAM, signals.STREAM_CHUNK}
     if signal in streaming_signals:
@@ -159,7 +160,8 @@ def extract_domain_data(message: dict[str, Any]) -> dict[str, Any]:
             return payload["data"]
         else:
             # A streaming signal should have a "data" key. If not, return the
-            # payload as-is to avoid breaking, but this may indicate a sender-side issue.
+            # payload as-is to avoid breaking, but this may indicate a sender-side
+            # issue.
             return payload
 
     # For all other signals (e.g., COMMAND_COMPLETE), the payload is the domain data.

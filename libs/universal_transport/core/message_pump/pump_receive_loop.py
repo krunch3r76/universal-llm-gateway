@@ -223,8 +223,10 @@ class PumpReceiveLoop:
                 if self._is_concurrency_error(e):
                     logger.error(
                         f"Transport concurrency error detected: {e}. "
-                        "This indicates another coroutine is trying to read from the transport "
-                        "while the receive loop is active. Ensure all transport reads go through "
+                        "This indicates another coroutine is trying to read from the"
+                        "transport"
+                        "while the receive loop is active. Ensure all transport reads"
+                        "go through"
                         "the message pump. Error details:",  # noqa: E501
                         exc_info=True,
                     )

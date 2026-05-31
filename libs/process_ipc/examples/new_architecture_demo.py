@@ -61,12 +61,14 @@ async def demo_supervisor():
 
     # Send another command via supervisor
     # print("\n4. Sending another command...")
-    # correlation_id = await supervisor.send_command({"action": "process_data", "data": "test"})
+    # correlation_id = await supervisor.send_command({"action": "process_data", "data":
+    # "test"})
     # print(f"   ✓ Command sent (correlation_id: {correlation_id})")
 
     # Receive response via message pump
     # print("\n5. Receiving response...")
-    # response = await supervisor._message_pump.await_correlation(correlation_id, timeout=10.0)
+    # response = await supervisor._message_pump.await_correlation(correlation_id,
+    # timeout=10.0)
     # print(f"   ✓ Response received: {response}")
 
     # Monitor resources

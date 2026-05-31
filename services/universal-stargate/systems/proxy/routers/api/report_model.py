@@ -15,7 +15,8 @@ router = APIRouter(tags=["report-model"])
 
 
 class ReportModelPayload(BaseModel):
-    """Request body for POST /api/v1/report-model (agents report bad models → reputation)."""
+    """Request body for POST /api/v1/report-model (agents report bad models →"
+    "reputation)."""
 
     task: str
     model_id: str

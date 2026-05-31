@@ -93,9 +93,9 @@ async def forward_request_with_cleanup(
             processing_time_ms=(time.time() - context.start_time) * 1000,
             gateway_endpoint=gateway_url,
             request_id=context.request_id,
-            token_metrics=context.token_metrics.dict()
-            if context.token_metrics
-            else None,
+            token_metrics=(
+                context.token_metrics.dict() if context.token_metrics else None
+            ),
             model_metadata=model_metadata,
         )
 
@@ -157,9 +157,9 @@ async def forward_request_with_cleanup(
             processing_time_ms=(time.time() - context.start_time) * 1000,
             gateway_endpoint=gateway_url,
             request_id=context.request_id,
-            token_metrics=context.token_metrics.dict()
-            if context.token_metrics
-            else None,
+            token_metrics=(
+                context.token_metrics.dict() if context.token_metrics else None
+            ),
             model_metadata=model_metadata,
             response_data=monitoring_response_data,
         )

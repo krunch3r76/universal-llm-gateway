@@ -12,6 +12,7 @@ Public re-exports flow through the package ``__init__``:
 ``from .step_config import ResolvedTargetModel`` continue to work for every
 consumer under ``core/`` without import-path changes.
 """
+
 # ruff: noqa: E501
 
 from __future__ import annotations

@@ -208,10 +208,11 @@ class StargateGUI:
             "running": self.running,
             "transport": self.transport,
             "unix_socket": self.unix_socket,
-            "network_receiver_active": self.network_receiver
-            and self.network_receiver.running
-            if self.network_receiver
-            else False,
+            "network_receiver_active": (
+                self.network_receiver and self.network_receiver.running
+                if self.network_receiver
+                else False
+            ),
             "view_active": self.view and self.view.is_running() if self.view else False,
         }
 

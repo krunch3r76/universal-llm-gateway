@@ -3,6 +3,7 @@ Token management for request execution.
 
 Handles token counting, context limit validation, and max_tokens computation.
 """
+
 # TODO: Move to a shared location (e.g. core/ or core/request/); used by both
 # streaming and non-streaming paths, so core/nonstreaming/ is misleading.
 
@@ -417,9 +418,11 @@ async def apply_federated_token_management(
         legal_reason = (
             "selected_gateway_loaded"
             if loaded_on_gateway
-            else "selected_gateway_known_load_or_wait_completed"
-            if known_to_gateway
-            else "selected_gateway_unknown"
+            else (
+                "selected_gateway_known_load_or_wait_completed"
+                if known_to_gateway
+                else "selected_gateway_unknown"
+            )
         )
         await event_bus.publish_nowait(
             TokenCountPrecondition(

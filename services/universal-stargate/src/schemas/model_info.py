@@ -63,7 +63,8 @@ class ModelInfo(BaseModel):
 
 
 class ModelListResponse(BaseModel):
-    """Response schema for models listing endpoint - flexible for basic and detailed responses"""
+    """Response schema for models listing endpoint - flexible for basic and detailed"
+    "responses"""
 
     model_config = ConfigDict(
         extra="allow",  # Allow additional fields from gateway

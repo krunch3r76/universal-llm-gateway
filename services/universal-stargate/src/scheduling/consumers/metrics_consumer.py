@@ -251,9 +251,11 @@ class MetricsConsumer:
         return {
             "hourly_transitions": dict(self._hourly_transitions),
             "daily_transitions": dict(self._daily_transitions),
-            "peak_hour": max(self._hourly_transitions.items(), key=lambda x: x[1])[0]
-            if self._hourly_transitions
-            else None,
+            "peak_hour": (
+                max(self._hourly_transitions.items(), key=lambda x: x[1])[0]
+                if self._hourly_transitions
+                else None
+            ),
         }
 
     def get_comprehensive_metrics(self, url: str) -> dict:

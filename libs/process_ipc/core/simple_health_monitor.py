@@ -274,7 +274,8 @@ class SimpleHealthMonitor:
         self._logger.debug(f"Removed process {process_id} from health monitoring")
 
     def clear_reported_pid(self, pid: int) -> None:
-        """Clear a PID from the reported crash/exit tracking (for new worker with same ID)."""
+        """Clear a PID from the reported crash/exit tracking (for new worker with same"
+        "ID)."""
         self._reported_crash_pids.discard(pid)
         self._reported_exit_pids.discard(pid)
         self._logger.debug(f"Cleared reported status for PID {pid}")
@@ -417,9 +418,11 @@ class SimpleHealthMonitor:
                 ),
                 stderr=stderr_output,
                 is_signal_termination=exit_code < 0,
-                signal_name=signal.Signals(-exit_code).name
-                if exit_code < 0 and -exit_code < 32
-                else None,
+                signal_name=(
+                    signal.Signals(-exit_code).name
+                    if exit_code < 0 and -exit_code < 32
+                    else None
+                ),
             )
 
             # Publish event in background
