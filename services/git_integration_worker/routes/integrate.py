@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from git_integrate.events import emit_git_status_read
-from git_integrate.git_cas import is_dirty, land_diff_text, land_fingerprint
+from git_integrate.git_cas import (
+    is_dirty,
+    land_diff_numstat,
+    land_diff_text,
+    land_fingerprint,
+)
 from git_integrate.integrate import integrate_op
 from git_integrate.land import land_op
 from git_integrate.schema import RC_NOT_A_GIT_REPO, RC_WORKTREE_MISSING
@@ -22,6 +27,8 @@ from universal_logging import get_logger
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.models.api import (
     DiffResponse,
+    DiffStat,
+    DiffStatFile,
     IntegrateRequest,
     IntegrateResponse,
     LandRequest,
@@ -54,6 +61,48 @@ def _config(request: Request) -> WorkerConfig:
     return getattr(request.app.state, "worker_config", _CONFIG)
 
 
+def _current_branch(worktree_path: str) -> str:
+    """Resolve the worktree's current branch ("" on detached HEAD or failure)."""
+    proc = subprocess.run(
+        ["git", "-C", worktree_path, "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        timeout=10.0,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def _parse_numstat(raw: str) -> DiffStat:
+    """Parse ``git diff --numstat`` output into a compact DiffStat.
+
+    Each line is ``<insertions>\\t<deletions>\\t<path>``; binary files report
+    ``-`` for both counts. Path may carry a rename arrow — preserved verbatim.
+    """
+    files: list[DiffStatFile] = []
+    total_ins = total_del = 0
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        ins_s, del_s, path = parts[0], parts[1], "\t".join(parts[2:])
+        binary = not (ins_s.isdigit() and del_s.isdigit())
+        ins = int(ins_s) if ins_s.isdigit() else 0
+        dels = int(del_s) if del_s.isdigit() else 0
+        total_ins += ins
+        total_del += dels
+        files.append(
+            DiffStatFile(path=path, insertions=ins, deletions=dels, binary=binary)
+        )
+    return DiffStat(
+        files_changed=len(files),
+        insertions=total_ins,
+        deletions=total_del,
+        files=files,
+    )
+
+
 def _status_sync(worktree_path: str) -> StatusResponse:
     if not os.path.isdir(worktree_path):
         return StatusResponse(
@@ -78,13 +127,7 @@ def _status_sync(worktree_path: str) -> StatusResponse:
             reason=f"not a git repo: {worktree_path!r}",
         )
 
-    branch_proc = subprocess.run(
-        ["git", "-C", worktree_path, "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-        timeout=10.0,
-    )
-    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else ""
+    branch = _current_branch(worktree_path)
 
     status_proc = subprocess.run(
         ["git", "-C", worktree_path, "status", "--porcelain"],
@@ -103,7 +146,9 @@ def _status_sync(worktree_path: str) -> StatusResponse:
     )
 
 
-def _diff_sync(worktree_path: str, path_filter: str) -> DiffResponse:
+def _diff_sync(
+    worktree_path: str, path_filter: str, include_full_diff: bool
+) -> DiffResponse:
     if not os.path.isdir(worktree_path):
         return DiffResponse(
             worktree_path=worktree_path,
@@ -129,15 +174,23 @@ def _diff_sync(worktree_path: str, path_filter: str) -> DiffResponse:
             reason=f"not a git repo: {worktree_path!r}",
         )
 
+    # The fingerprint is always over the full arc-vs-master change set; the
+    # diffstat summarizes that same set. The full unified body is the costly
+    # part — only materialize it when explicitly requested (friction 11511).
     dirty = is_dirty(worktree_path)
-    diff_text = land_diff_text(worktree_path, path_filter)
     sha = land_fingerprint(worktree_path)
+    diffstat = _parse_numstat(land_diff_numstat(worktree_path))
+    branch = _current_branch(worktree_path)
+    diff_text = land_diff_text(worktree_path, path_filter) if include_full_diff else ""
     return DiffResponse(
         worktree_path=worktree_path,
         diff=diff_text,
         diff_sha256=sha,
+        diffstat=diffstat,
+        branch=branch,
         path_filter=path_filter,
         includes_uncommitted=dirty,
+        full_diff_included=include_full_diff,
         status="ok",
     )
 
@@ -221,11 +274,22 @@ async def diff(
     worktree_path: str = Query(..., description="Absolute path to the arc worktree."),
     path_filter: str = Query(
         "",
-        description="Optional pathspec limiting the unified diff (display only).",
+        description="Optional pathspec limiting the unified diff (display only; "
+        "requires include_full_diff).",
+    ),
+    include_full_diff: bool = Query(
+        False,
+        description="Include the full unified diff body. Default false returns the "
+        "compact envelope (diff_sha256 + diffstat + branch + includes_uncommitted).",
     ),
 ) -> DiffResponse:
-    """Read-only diff + ``diff_sha256`` fingerprint; does not acquire the integrate gate."""
+    """Read-only compact diff envelope + ``diff_sha256`` fingerprint.
+
+    Does not acquire the integrate gate. The fingerprint and diffstat always
+    describe the full arc-vs-master change set; pass ``include_full_diff=true``
+    for the inline unified body.
+    """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        None, lambda: _diff_sync(worktree_path, path_filter)
+        None, lambda: _diff_sync(worktree_path, path_filter, include_full_diff)
     )

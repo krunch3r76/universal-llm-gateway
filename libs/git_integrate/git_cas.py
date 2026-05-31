@@ -28,11 +28,11 @@ import tempfile
 from universal_logging import get_logger
 
 from git_integrate.schema import (
+    RC_CLEAN_TREE,
+    RC_COMMIT_FAILED,
     CasResult,
     CommitResult,
     MergeResult,
-    RC_CLEAN_TREE,
-    RC_COMMIT_FAILED,
 )
 
 _GIT_TIMEOUT = 30.0
@@ -75,8 +75,14 @@ def _scratch_index_diff(
     *,
     cached: bool,
     path_filter: str = "",
+    numstat: bool = False,
 ) -> str:
-    """Compute diff via a temporary index — does not mutate the real index."""
+    """Compute diff via a temporary index — does not mutate the real index.
+
+    ``numstat=True`` swaps the unified body for ``--numstat`` machine output
+    (per-file insertions/deletions) so callers can summarize the change set
+    without paying the full-hunk cost.
+    """
     index_path = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -103,6 +109,8 @@ def _scratch_index_diff(
         diff_cmd = ["git", "-C", worktree_path, "diff"]
         if cached:
             diff_cmd.append("--cached")
+        if numstat:
+            diff_cmd.append("--numstat")
         diff_cmd.append(merge_base)
         if path_filter:
             diff_cmd.extend(["--", path_filter])
@@ -150,6 +158,30 @@ def land_diff_text(worktree_path: str, path_filter: str = "") -> str:
     try:
         diff = subprocess.run(
             diff_cmd,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        return diff.stdout if diff.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def land_diff_numstat(worktree_path: str) -> str:
+    """``--numstat`` of what would land (dirty-aware, read-only).
+
+    Describes the full arc-vs-master change set — the same set the
+    ``diff_sha256`` fingerprint covers — so the summary stays authoritative.
+    No path_filter: a stat is a whole-change-set fingerprint, not a view.
+    """
+    merge_base = _merge_base(worktree_path)
+    if not merge_base:
+        return ""
+    if is_dirty(worktree_path):
+        return _scratch_index_diff(worktree_path, merge_base, cached=True, numstat=True)
+    try:
+        diff = subprocess.run(
+            ["git", "-C", worktree_path, "diff", "--numstat", merge_base, "HEAD"],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,

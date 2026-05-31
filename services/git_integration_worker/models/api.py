@@ -77,14 +77,45 @@ class StatusResponse(BaseModel):
     reason: str = ""
 
 
+class DiffStatFile(BaseModel):
+    """Per-file insertion/deletion counts from ``git diff --numstat``."""
+
+    path: str
+    insertions: int = 0
+    deletions: int = 0
+    binary: bool = Field(False, description="True when numstat reported '-' (binary).")
+
+
+class DiffStat(BaseModel):
+    """Compact change-set summary — aggregate totals + per-file numstat."""
+
+    files_changed: int = 0
+    insertions: int = 0
+    deletions: int = 0
+    files: list[DiffStatFile] = Field(default_factory=list)
+
+
 class DiffResponse(BaseModel):
-    """Unified diff + fingerprint for approval binding."""
+    """Compact change-set envelope + fingerprint for approval binding.
+
+    Default shape carries the authoritative ``diff_sha256``, the ``diffstat``
+    summary, ``includes_uncommitted``, and ``branch`` — enough to bind an
+    approval before ``git_integrate``/``git_land`` without replaying the full
+    unified body across a review loop. The full ``diff`` is populated only when
+    the caller requests it (``full_diff_included=true``); see friction 11511.
+    """
 
     worktree_path: str
     diff: str = ""
     diff_sha256: str = ""
+    diffstat: DiffStat | None = None
+    branch: str = ""
     path_filter: str = ""
     includes_uncommitted: bool = False
+    full_diff_included: bool = Field(
+        False,
+        description="True iff `diff` carries the full unified body (gated by include_full_diff).",
+    )
     status: str = Field("ok", description="ok | rejected")
     reason_code: str = ""
     reason: str = ""
