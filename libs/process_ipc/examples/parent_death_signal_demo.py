@@ -142,12 +142,12 @@ except KeyboardInterrupt:
         # Remove temp files
         try:
             os.remove(worker_script_path)
-        except:
+        except Exception:
             pass
 
         try:
             os.remove("/tmp/worker_demo_pid.txt")
-        except:
+        except Exception:
             pass
 
 

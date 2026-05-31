@@ -181,5 +181,5 @@ class AppController:
                 try:
                     self.view.root.quit()
                     self.view.root.destroy()
-                except:
+                except Exception:
                     pass

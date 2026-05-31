@@ -35,7 +35,7 @@ def process_items(items: list[dict[str, int]]) -> list[int]:
         try:
             result = item["value"] * 2
             results.append(result)
-        except:
+        except Exception:
             pass
     return results
 

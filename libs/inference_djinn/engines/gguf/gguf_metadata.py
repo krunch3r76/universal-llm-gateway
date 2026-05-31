@@ -82,7 +82,7 @@ class GGUFMetadataLite:
                 else:
                     return 1 if value_part is not None else 0
             return 0
-        except:
+        except Exception:
             return 0
 
     @classmethod
@@ -180,7 +180,7 @@ class GGUFMetadataLite:
                             )
                             return hashlib.sha256(byte_data).hexdigest()
                 return None
-            except:
+            except Exception:
                 return None
 
         # Build checksums dict, filtering out None values
@@ -198,7 +198,7 @@ class GGUFMetadataLite:
             version = get("GGUF.version", 0)
             tensor_count = get("GGUF.tensor_count", 0)
             kv_count = get("GGUF.kv_count", 0)
-        except:
+        except Exception:
             version = tensor_count = kv_count = 0
 
         # Get architecture to determine correct key prefix

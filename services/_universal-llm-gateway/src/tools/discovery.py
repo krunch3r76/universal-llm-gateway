@@ -433,7 +433,7 @@ class ModelDiscovery:
                         return self.discover_hf(model_path, format_hint="gptq")
                     elif "awq" in quant_method:
                         return self.discover_hf(model_path, format_hint="awq")
-                except:
+                except Exception:
                     pass
 
             # Default to HF

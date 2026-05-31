@@ -1,7 +1,7 @@
 """Tests for /mcp/grok route (B2).
 
 Four concerns:
-  1. tools/list returns 65 tools with correct names
+  1. tools/list returns 77 tools with correct names
   2. Each tool's inputSchema matches canonical.yaml json_schema
   3. Round-trip dispatch via /mcp/grok returns a real result (read-only tool)
   4. /mcp route is unaffected (regression check)

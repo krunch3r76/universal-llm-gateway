@@ -1,11 +1,11 @@
 """Tests for /mcp Claude dispatcher route (Phase D).
 
 Four concerns:
-  1. tools/list returns 11 domain dispatcher tools matching derive_claude_manifest()
+  1. tools/list returns 16 domain dispatcher tools matching derive_claude_manifest()
   2. Primary tool count ≤ 24 (D3 P10 probe)
   3. Previously-absent domains (manage, grokbuild, pipeline, rag, observability) are
      accessible via dispatch (callpath wired, not just listed)
-  4. /mcp/grok regression — wire_grok_route still builds; 65 tools present
+  4. /mcp/grok regression — wire_grok_route still builds; 77 tools present
 """
 
 from __future__ import annotations
@@ -68,10 +68,10 @@ def test_claude_primary_tools_match_manifest(main_server_state: dict) -> None:
 
 
 def test_claude_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: Claude /mcp exposes exactly 11 dispatcher domains; cap ≤ 24 (D3/P10)."""
+    """D-T2: Claude /mcp exposes exactly 16 dispatcher domains; cap ≤ 24 (D3/P10)."""
     manifest = main_server_state["manifest"]
-    assert len(manifest) == 11, (
-        f"Expected 11 Claude dispatcher domains, got {len(manifest)}: "
+    assert len(manifest) == 16, (
+        f"Expected 16 Claude dispatcher domains, got {len(manifest)}: "
         f"{sorted(e['domain'] for e in manifest)}"
     )
     assert len(manifest) <= 24, f"D3 cap violated: {len(manifest)} > 24"
@@ -113,6 +113,6 @@ def test_claude_regression_grok_unaffected(main_server_state: dict) -> None:
         f"Grok tool count mismatch: {len(grok_tools)} registered vs "
         f"{len(grok_manifest)} in canonical.yaml"
     )
-    assert len(grok_manifest) == 65, (
-        f"Grok manifest length changed: {len(grok_manifest)} (expected 65)"
+    assert len(grok_manifest) == 77, (
+        f"Grok manifest length changed: {len(grok_manifest)} (expected 77)"
     )

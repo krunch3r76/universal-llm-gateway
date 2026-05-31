@@ -120,7 +120,7 @@ class SystemMonitor:
                     temp = pynvml.nvmlDeviceGetTemperature(
                         handle, pynvml.NVML_TEMPERATURE_GPU
                     )
-                except:
+                except Exception:
                     temp = None
 
                 gpus.append(

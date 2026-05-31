@@ -90,7 +90,7 @@ class SchemaIntrospector:
                 values = get_args(annotation)
                 quoted = [f"'{v}'" for v in values]
                 return f"string (one of: {', '.join(quoted)})"
-            except:
+            except Exception:
                 return "string"
 
         else:
@@ -113,7 +113,7 @@ class SchemaIntrospector:
         ):
             try:
                 return field_info.default_factory()
-            except:
+            except Exception:
                 pass
 
         # Field-specific placeholders
@@ -134,7 +134,7 @@ class SchemaIntrospector:
                 values = get_args(annotation)
                 if values:
                     return values[0]
-            except:
+            except Exception:
                 pass
 
         # Type-based defaults
@@ -165,7 +165,7 @@ class SchemaIntrospector:
             try:
                 values = get_args(annotation)
                 return values[0] if values else "value"
-            except:
+            except Exception:
                 return "value"
 
         return None
@@ -472,7 +472,7 @@ class SchemaExampleGenerator:
         ):
             try:
                 return field_info.default_factory()
-            except:
+            except Exception:
                 pass
 
         # Optional fields get None

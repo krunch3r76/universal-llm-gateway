@@ -93,12 +93,12 @@ async def serve(
                 if bound_socket:
                     try:
                         bound_socket.close()
-                    except:
+                    except Exception:
                         pass
                 if os.path.exists(socket_path):
                     try:
                         os.unlink(socket_path)
-                    except:
+                    except Exception:
                         pass
 
             atexit.register(cleanup_socket)

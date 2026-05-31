@@ -41,7 +41,7 @@ class MainWindow:
             # You can add an icon here if you have one
             # self.root.iconbitmap("icon.ico")
             pass
-        except:
+        except Exception:
             pass
 
         # Handle window close event
@@ -251,7 +251,7 @@ class MainWindow:
         """
         try:
             return bool(self.root and self.root.winfo_exists())
-        except:
+        except Exception:
             return False
 
     def set_navigation_callbacks(

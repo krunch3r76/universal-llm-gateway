@@ -51,7 +51,7 @@ class MainWindow:
         try:
             # self.root.iconbitmap("icon.ico")  # Add icon if available
             pass
-        except:
+        except Exception:
             pass
 
         # Handle window close
@@ -215,5 +215,5 @@ class MainWindow:
         """
         try:
             return bool(self.root and self.root.winfo_exists())
-        except:
+        except Exception:
             return False

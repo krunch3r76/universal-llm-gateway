@@ -538,7 +538,7 @@ class ProcessSupervisor:
         if self._log_file:
             try:
                 self._log_file.close()
-            except:
+            except Exception:
                 pass
             self._log_file = None
 
