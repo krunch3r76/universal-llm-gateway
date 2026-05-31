@@ -22,6 +22,8 @@ from cursorbuild.home import (
 )
 from cursorbuild.runner_types import RunnerResult, RunnerSpec
 
+from . import sidecar  # noqa: F401,I001
+
 __all__ = [
     "build_argv",
     "CURSOR_AGENT_BIN",
@@ -32,4 +34,5 @@ __all__ = [
     "setup_dispatch_home",
     "RunnerResult",
     "RunnerSpec",
+    "sidecar",
 ]
