@@ -284,16 +284,17 @@ async def diff(
         "requires include_full_diff).",
     ),
     include_full_diff: bool = Query(
-        False,
-        description="Include the full unified diff body. Default false returns the "
-        "compact envelope (diff_sha256 + diffstat + branch + includes_uncommitted).",
+        True,
+        description="Include the full unified diff body. Default true preserves "
+        "legacy callers; pass false for compact-only (diff_sha256 + diffstat + "
+        "branch + includes_uncommitted).",
     ),
 ) -> DiffResponse:
-    """Read-only compact diff envelope + ``diff_sha256`` fingerprint.
+    """Read-only diff envelope + ``diff_sha256`` fingerprint.
 
     Does not acquire the integrate gate. The fingerprint and diffstat always
-    describe the full arc-vs-master change set; pass ``include_full_diff=true``
-    for the inline unified body.
+    describe the full arc-vs-master change set. By default the inline unified
+    body is included; pass ``include_full_diff=false`` for compact-only.
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(

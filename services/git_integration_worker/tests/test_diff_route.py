@@ -88,3 +88,29 @@ def test_diff_sync_missing_worktree_rejected() -> None:
     resp = _diff_sync("/no/such/worktree", "", include_full_diff=True)
     assert resp.status == "rejected"
     assert resp.reason_code == RC_WORKTREE_MISSING
+
+
+@pytest.mark.asyncio
+async def test_diff_endpoint_default_includes_full_body(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    """Guard D: Query default must include full diff (S2 additive-first)."""
+    from httpx import ASGITransport, AsyncClient
+
+    from services.git_integration_worker.app import create_app
+
+    wt = _arc_worktree(tmp_path, source_repo)
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/v1/git/diff",
+            params={"worktree_path": str(wt)},
+        )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["full_diff_included"] is True
+    assert body["diff"]
+    assert body["diff_sha256"]
+    assert body["diffstat"] is not None

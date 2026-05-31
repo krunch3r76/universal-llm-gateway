@@ -195,28 +195,27 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
     async def git_diff(
         worktree_path: str,
         path_filter: str = "",
-        include_full_diff: bool = False,
+        include_full_diff: bool = True,
     ) -> dict[str, Any]:
         """Compact change-set envelope of what would land, plus ``diff_sha256``.
 
         Read-only; does not acquire the integrate gate. By default returns the
-        compact envelope — ``diff_sha256`` (authoritative fingerprint), ``diffstat``
-        (per-file + aggregate insertions/deletions), ``branch``, and
-        ``includes_uncommitted`` — which is all the approval-binding handoff to
-        ``git_integrate``/``git_land`` needs. The full inline unified body is
-        omitted unless ``include_full_diff=true`` (it is a large, repeated context
-        cost across review loops; friction 11511). The fingerprint and diffstat
-        always cover the full arc-vs-master change set regardless of this flag.
+        full unified diff inline (legacy callers) plus ``diff_sha256``,
+        ``diffstat``, ``branch``, and ``includes_uncommitted``. Pass
+        ``include_full_diff=false`` for the compact envelope only — enough for
+        approval binding without replaying the full body across review loops
+        (friction 11511). The fingerprint and diffstat always cover the full
+        arc-vs-master change set regardless of this flag.
 
         Pass ``diff_sha256`` and operator ``approval`` into ``git_land`` after review.
 
         Args:
             worktree_path: Absolute path to the arc worktree.
             path_filter: Optional pathspec limiting the inline diff body (display
-                only, requires ``include_full_diff``; fingerprint and diffstat use
-                the full arc-vs-master change set).
+                only, requires full diff; fingerprint and diffstat use the full
+                arc-vs-master change set).
             include_full_diff: Include the full unified diff body inline
-                (``full_diff_included=true`` in the response). Default false.
+                (``full_diff_included=true`` in the response). Default true.
 
         Returns:
             Worker ``DiffResponse`` (``diff_sha256``, ``diffstat``, ``branch``,
@@ -226,8 +225,8 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
         params: dict[str, Any] = {"worktree_path": worktree_path}
         if path_filter:
             params["path_filter"] = path_filter
-        if include_full_diff:
-            params["include_full_diff"] = True
+        if not include_full_diff:
+            params["include_full_diff"] = False
         return await _relay(
             "GET",
             "/api/v1/git/diff",

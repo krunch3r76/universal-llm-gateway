@@ -1860,17 +1860,16 @@ tools:
   fol_descriptor: |
     ∀ worktree ∈ ArcWorktrees:
       git_diff(worktree) ⟹
-        diff_sha256 ∈ SHA256Hex ∧ diffstat ∈ DiffStat ∧ branch ∈ str.
-      git_diff(worktree, include_full_diff=true) ⟹ ∧ diff ∈ str.
-    Read-only. Compact envelope by default (diff_sha256 + diffstat + branch +
-    includes_uncommitted); full inline body gated behind include_full_diff
-    (friction 11511). Fingerprint feeds git_integrate approval binding.
+        diff_sha256 ∈ SHA256Hex ∧ diffstat ∈ DiffStat ∧ branch ∈ str ∧ diff ∈ str.
+      git_diff(worktree, include_full_diff=false) ⟹ compact envelope (no inline diff).
+    Read-only. Default includes full unified diff (legacy callers); compact via
+    include_full_diff=false (friction 11511). Fingerprint feeds git_integrate approval binding.
   json_schema:
     type: object
     properties:
       worktree_path: {type: string}
       path_filter: {type: string, default: ""}
-      include_full_diff: {type: boolean, default: false}
+      include_full_diff: {type: boolean, default: true}
     required: [worktree_path]
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: read_only

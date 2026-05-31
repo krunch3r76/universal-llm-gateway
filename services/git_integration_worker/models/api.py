@@ -96,13 +96,12 @@ class DiffStat(BaseModel):
 
 
 class DiffResponse(BaseModel):
-    """Compact change-set envelope + fingerprint for approval binding.
+    """Diff envelope + fingerprint for approval binding.
 
-    Default shape carries the authoritative ``diff_sha256``, the ``diffstat``
-    summary, ``includes_uncommitted``, and ``branch`` — enough to bind an
-    approval before ``git_integrate``/``git_land`` without replaying the full
-    unified body across a review loop. The full ``diff`` is populated only when
-    the caller requests it (``full_diff_included=true``); see friction 11511.
+    Always carries ``diff_sha256``, ``diffstat``, ``branch``, and
+    ``includes_uncommitted``. By default the full unified ``diff`` body is
+    included (legacy callers); pass ``include_full_diff=false`` for compact-only
+    (friction 11511).
     """
 
     worktree_path: str
@@ -114,7 +113,7 @@ class DiffResponse(BaseModel):
     includes_uncommitted: bool = False
     full_diff_included: bool = Field(
         False,
-        description="True iff `diff` carries the full unified body (gated by include_full_diff).",
+        description="Echoes the caller's ``include_full_diff`` flag (not whether ``diff`` is non-empty).",
     )
     status: str = Field("ok", description="ok | rejected")
     reason_code: str = ""
