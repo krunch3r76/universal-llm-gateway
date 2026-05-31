@@ -403,7 +403,7 @@ def GitPathCommitCompleted(  # noqa: N802
     duration_s: float,
 ) -> Event:
     return Event(
-        signal="git.path_commit.completed",
+        signal="git.path.commit.completed",
         payload={
             "commit_id": commit_id,
             "branch": branch,
@@ -423,7 +423,7 @@ def GitPathCommitRejected(  # noqa: N802
     branch: str,
 ) -> Event:
     return Event(
-        signal="git.path_commit.rejected",
+        signal="git.path.commit.rejected",
         payload={
             "commit_id": commit_id,
             "reason_code": reason_code,

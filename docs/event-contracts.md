@@ -2520,6 +2520,8 @@ All signals: `role="observation"`, `scope="global"`.
 | `git.integrate.gate.failed` | `integration_id`, `arc`, `phase`, `gate_cmd` (str — joined server-configured command), `gate_exit` (int), `duration_s` (float) | Green-gate returned non-zero on the integrated tree; arc worktree reset to pre-merge tip. Emitted by `integrate_op`. |
 | `git.integrate.retried` | `integration_id`, `arc`, `attempt` (int — 1-based loop index), `reason` (str — typically `master_advanced_mid_span`) | Non-ff CAS advance; optimistic retry loop continues. Emitted by `integrate_op`. |
 | `git.status.read` | `worktree_path` (str), `dirty` (bool), `branch` (str) | Read-only status probe served (MCP `git_status` path). Emitted by `status_op`. |
+| `git.path.commit.completed` | `commit_id` (str — uuid4), `branch` (str), `commit_sha` (str), `path_count` (int), `duration_s` (float) | Gated path-scoped commit succeeded. Emitted by `commit_op` after `commit_paths` advances the branch. |
+| `git.path.commit.rejected` | `commit_id`, `reason_code` (str enum), `reason` (str), `branch` (str) | Gated path-scoped commit refused (validation or commit failure). No branch advance. Emitted by `commit_op`. |
 
 `.rejected` `reason_code` enum (Phase 3): `arc_branch_mismatch`, `approval_missing`, `diff_mismatch`, `integrate_conflict`, `gate_failed`, `max_attempts_exhausted`, `worktree_not_found`, `not_a_git_repo`.
 
