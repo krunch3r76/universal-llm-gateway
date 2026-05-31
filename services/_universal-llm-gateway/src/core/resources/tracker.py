@@ -61,10 +61,10 @@ from .tracker_queries import (
     get_system_resources as _get_system_resources,
 )
 from .types import (
-    WORKER_TO_MODEL_STATUS,
     ModelResourceInfo,
     ModelStatus,
     SystemResourceInfo,
+    worker_to_model_status,
 )
 from .variant_registry import VariantRegistry
 
@@ -182,8 +182,9 @@ class ResourceTracker(
             if to_state == WorkerState.LOADED and m.load_time is None:
                 m.load_time = time.time()
 
-        from_status = WORKER_TO_MODEL_STATUS[from_state]
-        to_status = WORKER_TO_MODEL_STATUS[to_state]
+        status_map = worker_to_model_status()
+        from_status = status_map[from_state]
+        to_status = status_map[to_state]
         if from_status != to_status:
             error_msg = (
                 (metadata or {}).get("error_message")

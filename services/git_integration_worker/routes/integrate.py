@@ -63,12 +63,18 @@ def _config(request: Request) -> WorkerConfig:
 
 def _current_branch(worktree_path: str) -> str:
     """Resolve the worktree's current branch ("" on detached HEAD or failure)."""
-    proc = subprocess.run(
-        ["git", "-C", worktree_path, "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-        timeout=10.0,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", worktree_path, "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        logger.warning(
+            "git branch --show-current failed for %s", worktree_path, exc_info=True
+        )
+        return ""
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 

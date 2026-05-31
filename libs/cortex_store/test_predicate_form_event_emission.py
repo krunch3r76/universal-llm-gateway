@@ -26,7 +26,7 @@ import pytest
 from predicate_form import normalize_predicate_domain
 from predicate_form.entity_resolve import DBEntityResolver
 
-from cortex_store.dispatch_ops.ops_assertions import (
+from cortex_store.dispatch_ops._assertions_shared import (
     _emit_predicate_form_normalize_events,
 )
 from cortex_store.routes.assertions import _update_assertion_impl

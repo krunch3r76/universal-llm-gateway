@@ -14,19 +14,18 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from src.core.workers.state_machine import WorkerState
-
 if TYPE_CHECKING:
-    from src.core.workers.state_machine import WorkerStateMachine
+    from src.core.workers.state_machine import WorkerState, WorkerStateMachine
 
 
 class ModelStatus(Enum):
     """Model status enumeration for lifecycle tracking.
 
     Kept as the public API enum for serialization compatibility.
-    Derived from WorkerState via WORKER_TO_MODEL_STATUS mapping.
+    Derived from WorkerState via worker_to_model_status() mapping.
     """
 
     NOT_LOADED = "not_loaded"
@@ -37,15 +36,23 @@ class ModelStatus(Enum):
     ERROR = "error"
 
 
-WORKER_TO_MODEL_STATUS: dict[WorkerState, ModelStatus] = {
-    WorkerState.UNINITIALIZED: ModelStatus.NOT_LOADED,
-    WorkerState.LOADING: ModelStatus.LOADING,
-    WorkerState.LOADED: ModelStatus.LOADED,
-    WorkerState.BUSY: ModelStatus.BUSY,
-    WorkerState.ERROR: ModelStatus.ERROR,
-    WorkerState.UNLOADING: ModelStatus.UNLOADING,
-    WorkerState.UNLOADED: ModelStatus.NOT_LOADED,
-}
+@lru_cache(maxsize=1)
+def worker_to_model_status() -> dict[WorkerState, ModelStatus]:
+    from src.core.workers.state_machine import WorkerState
+
+    return {
+        WorkerState.UNINITIALIZED: ModelStatus.NOT_LOADED,
+        WorkerState.LOADING: ModelStatus.LOADING,
+        WorkerState.LOADED: ModelStatus.LOADED,
+        WorkerState.BUSY: ModelStatus.BUSY,
+        WorkerState.ERROR: ModelStatus.ERROR,
+        WorkerState.UNLOADING: ModelStatus.UNLOADING,
+        WorkerState.UNLOADED: ModelStatus.NOT_LOADED,
+    }
+
+
+def _status_for_worker_state(state: WorkerState) -> ModelStatus:
+    return worker_to_model_status()[state]
 
 
 @dataclass
@@ -84,7 +91,7 @@ class ModelResourceInfo:
         """
         if self._sm is None:
             return ModelStatus.NOT_LOADED
-        return WORKER_TO_MODEL_STATUS[self._sm.current_state]
+        return _status_for_worker_state(self._sm.current_state)
 
     @property
     def effective_vram_mb(self) -> int:

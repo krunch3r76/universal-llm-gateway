@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-pytest_plugins = ["grokbuild.test_support"]
-
 
 @pytest.fixture
 def worktree_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:

@@ -9,7 +9,7 @@ Test matrix per schema:
     - Engine-specific rules enforced
 """
 
-from core.catalog.schemas import (
+from src.core.catalog.schemas import (
     DiffusersSchema,
     FasterWhisperSchema,
     LlamaCppSchema,

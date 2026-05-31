@@ -8,7 +8,7 @@ _repo_root = str(Path(__file__).resolve().parents[2])
 if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 
-from services.rag.admin_routes import _coverage_sources  # noqa: E402
+from services.rag.admin_routes._helpers import _coverage_sources  # noqa: E402
 
 
 def test_coverage_sources_includes_cached_and_chroma_only_sources() -> None:
