@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import zipfile
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +13,10 @@ from services.rag.property_index import PropertyIndex
 from services.rag.rag_service._indexing_failure_ops import (
     _classify_indexing_failure,
 )
+
+
+class PackageNotFoundError(Exception):
+    """Stand-in matching python-docx's exception qualname."""
 
 
 def test_classifier_permanent_exceeds_batch_size() -> None:
@@ -222,3 +227,28 @@ async def test_iso_last_failed_at_parseable(tmp_path: Path) -> None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     assert datetime.now(UTC) - parsed < timedelta(minutes=1)
+
+
+def test_badzipfile_classified_permanent_corrupt_archive() -> None:
+    """zipfile.BadZipFile → ('permanent', 'corrupt_archive') (thread 1136 A5)."""
+    category, reason = _classify_indexing_failure(
+        zipfile.BadZipFile("File is not a zip file"), chunk_count=0
+    )
+    assert category == "permanent"
+    assert reason == "corrupt_archive"
+
+
+def test_package_not_found_classified_permanent_corrupt_archive() -> None:
+    """A PackageNotFoundError (by qualname) → permanent corrupt_archive."""
+    category, reason = _classify_indexing_failure(
+        PackageNotFoundError("Package not found at 'x.docx'"), chunk_count=0
+    )
+    assert category == "permanent"
+    assert reason == "corrupt_archive"
+
+
+def test_timeout_still_transient() -> None:
+    """Regression guard: a genuine transient error is not reclassified."""
+    category, reason = _classify_indexing_failure(TimeoutError("slow"), chunk_count=3)
+    assert category == "transient"
+    assert reason == "timeout"
