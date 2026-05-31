@@ -1,8 +1,9 @@
 """Git integration MCP tools — thin relay to git-integration-worker via Stargate.
 
-Routes ``git_integrate``, ``git_land``, ``git_status``, and ``git_diff`` to
-``/api/v1/git/{integrate,land,status,diff}``. Request/response shapes mirror the
-worker OpenAPI (``services/git_integration_worker/models/api.py``).
+Routes ``git_integrate``, ``git_land``, ``git_status``, ``git_diff``, and
+``git_commit`` to ``/api/v1/git/{integrate,land,status,diff,commit}``.
+Request/response shapes mirror the worker OpenAPI
+(``services/git_integration_worker/models/api.py``).
 """
 
 from __future__ import annotations
@@ -78,7 +79,7 @@ def _http_error_to_envelope(resp: httpx.Response) -> dict[str, Any]:
 
 
 def register_git_integrate_tools(mcp: FastMCP) -> None:
-    """Register git_integrate, git_land, git_status, and git_diff on the MCP catalog."""
+    """Register git_integrate, git_land, git_status, git_diff, and git_commit on the MCP catalog."""
 
     @mcp.tool(title="Git Integrate")
     async def git_integrate(  # noqa: PLR0913 — mirrors IntegrateRequest fields
@@ -231,5 +232,62 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
             "GET",
             "/api/v1/git/diff",
             params=params,
+            timeout=_SYNC_TIMEOUT,
+        )
+
+    @mcp.tool(title="Git Commit")
+    async def git_commit(  # noqa: PLR0913 — mirrors CommitRequest fields
+        worktree_path: str,
+        expected_branch: str,
+        paths: list[str],
+        approval: str = "",
+        expected_paths_sha256: str = "",
+        commit_message: str = "",
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Commit explicit named paths on the current branch (non-arc, gated).
+
+        The path-explicit complement to ``git_land``: commits ONLY ``paths`` on
+        the current branch of a non-arc checkout (typically the live master
+        working tree). No ``--all`` — concurrent edits to unnamed files are
+        never captured. No merge, CAS, or teardown.
+
+        Two-step approval workflow (mirrors ``git_diff`` → ``git_land``):
+
+        1. ``git_commit(worktree_path, expected_branch, paths, dry_run=True)``
+           returns ``expected_paths_sha256`` (path-scoped fingerprint) + ``numstat``.
+        2. After operator review, call again with ``approval``,
+           ``expected_paths_sha256``, and ``commit_message`` to commit. A
+           fingerprint mismatch (named paths changed since preview) rejects.
+
+        Use ``git_land`` for arc→master integration; use this for committing
+        reviewed changes that already live on a non-arc working tree.
+
+        Args:
+            worktree_path: Absolute path to the working tree (e.g. live master checkout).
+            expected_branch: Branch the caller affirms HEAD is on (rejects on mismatch).
+            paths: Explicit repo-relative paths to stage and commit (no --all).
+            approval: Operator approval bound to expected_paths_sha256 (required unless dry_run).
+            expected_paths_sha256: Path-scoped fingerprint from a prior dry_run (required unless dry_run).
+            commit_message: Commit message (required unless dry_run).
+            dry_run: Return fingerprint + numstat without committing (read-only).
+
+        Returns:
+            Worker envelope — ``status`` ∈ {preview, completed, rejected};
+            preview carries ``expected_paths_sha256`` + ``numstat``; completion
+            carries ``commit_sha`` + ``branch``.
+        """
+        return await _relay(
+            "POST",
+            "/api/v1/git/commit",
+            json_body={
+                "worktree_path": worktree_path,
+                "expected_branch": expected_branch,
+                "paths": paths,
+                "approval": approval,
+                "expected_paths_sha256": expected_paths_sha256,
+                "commit_message": commit_message,
+                "dry_run": dry_run,
+            },
             timeout=_SYNC_TIMEOUT,
         )

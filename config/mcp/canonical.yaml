@@ -29,8 +29,10 @@ domains:
 - rag
 - grokbuild
 - git_integrate
+- git_land
 - git_status
 - git_diff
+- git_commit
 - observability
 - manage
 - dispatch
@@ -1789,7 +1791,7 @@ tools:
   cache_priority: on_demand
   introduced: 2026-05-29
 
-  # ─── domain: git_integrate / git_status / git_diff ───────────────────────────
+  # ─── domain: git_integrate / git_land / git_status / git_diff ──────────────────
   # Thin Stargate relay to git-integration-worker (harness-agnostic lead merge).
 
 - canonical_name: git_integrate_integrate
@@ -1821,6 +1823,39 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29
+
+- canonical_name: git_land_land
+  domain: git_land
+  operation: land
+  dispatcher_call_shape:
+    tool: git_land
+    dispatch_key: op
+    dispatch_value: land
+  flat_call_shape:
+    tool: git_land
+    substrate_qualified: user-vortex__git_land
+  fol_descriptor: |
+    ∀ arc ∈ PlanSlugs ∧ worktree ∈ ArcWorktrees ∧ sha256 ∈ DiffFingerprints:
+      git_land(arc, phase, worktree, approval, sha256) ⟹
+        (commit-if-dirty ∧ merge master ∧ green-gate ∧ ref-advance ∧ teardown)
+        ∨ status = rejected.
+    Mutating. Atomic. One operator-gated land. commit_message required when worktree
+    dirty. ¬green_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.
+  json_schema:
+    type: object
+    properties:
+      arc: {type: string}
+      phase: {type: string}
+      worktree_path: {type: string}
+      approval: {type: string}
+      expected_diff_sha256: {type: string}
+      commit_message: {type: string, default: ""}
+      remove_worktree: {type: boolean, default: true}
+    required: [arc, phase, worktree_path, approval, expected_diff_sha256]
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-31
 
 - canonical_name: git_status_query
   domain: git_status
@@ -1875,6 +1910,40 @@ tools:
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
+
+- canonical_name: git_commit_commit
+  domain: git_commit
+  operation: commit
+  dispatcher_call_shape:
+    tool: git_commit
+    dispatch_key: op
+    dispatch_value: commit
+  flat_call_shape:
+    tool: git_commit
+    substrate_qualified: user-vortex__git_commit
+  fol_descriptor: |
+    ∀ worktree ∈ GitWorktrees ∧ paths ⊆ RepoPaths ∧ paths ≠ ∅:
+      git_commit(worktree, expected_branch, paths, dry_run=true) ⟹
+        expected_paths_sha256 ∈ SHA256Hex ∧ numstat ∈ str.
+      git_commit(worktree, expected_branch, paths, approval, sha256, message) ⟹
+        (commit_sha ∈ SHA256Hex ∧ status = completed) ∨ status = rejected.
+    Path-explicit (¬--all); commit isolates to named paths. Non-arc complement
+    to git_land. Fingerprint binds approval. See decision:git-commit-non-arc-op.
+  json_schema:
+    type: object
+    properties:
+      worktree_path: {type: string}
+      expected_branch: {type: string}
+      paths: {type: array, items: {type: string}}
+      approval: {type: string, default: ""}
+      expected_paths_sha256: {type: string, default: ""}
+      commit_message: {type: string, default: ""}
+      dry_run: {type: boolean, default: false}
+    required: [worktree_path, expected_branch, paths]
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-05-31
 
   # ─── domain: observability ───────────────────────────────────────────────────
   # Current: observability(operation="...", ...)

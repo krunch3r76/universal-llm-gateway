@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
+from git_integrate.commit import commit_op
 from git_integrate.events import emit_git_status_read
 from git_integrate.git_cas import (
     is_dirty,
@@ -26,6 +27,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.models.api import (
+    CommitRequest,
     DiffResponse,
     DiffStat,
     DiffStatFile,
@@ -244,6 +246,33 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
             source_repo=str(cfg.source_repo),
             green_gate_cmd=list(cfg.green_gate_cmd),
             remove_worktree=req.remove_worktree,
+        )
+    return IntegrateResponse(**result)
+
+
+@router.post(
+    "/commit",
+    response_model=IntegrateResponse,
+    status_code=200,
+    summary="Commit explicit named paths on the current branch (non-arc, gated).",
+)
+async def commit(req: CommitRequest, request: Request) -> IntegrateResponse:
+    """Path-explicit gated commit; serialized via the shared integrate gate.
+
+    ``dry_run=true`` returns the path-scoped fingerprint + numstat for approval
+    binding without committing. The fingerprint covers ONLY the named paths;
+    the commit isolates to them via ``git commit -- <paths>`` so concurrent
+    edits to unnamed files are never captured.
+    """
+    async with _integrate_slot():
+        result = await commit_op(
+            worktree_path=req.worktree_path,
+            expected_branch=req.expected_branch,
+            paths=req.paths,
+            approval=req.approval,
+            expected_paths_sha256=req.expected_paths_sha256,
+            commit_message=req.commit_message,
+            dry_run=req.dry_run,
         )
     return IntegrateResponse(**result)
 

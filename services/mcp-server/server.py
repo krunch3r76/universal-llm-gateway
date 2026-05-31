@@ -343,6 +343,14 @@ def _build_server() -> tuple[
     )
     # Capture all Tool objects before pruning for the /mcp/grok server (B2).
     pre_prune_tool_objects = asyncio.run(_capture_pre_prune_tools(mcp))
+    from _coherence_allowlist import INTENTIONAL_OVERFLOW  # noqa: PLC0415
+    from _derive import run_startup_tool_coherence_checks  # noqa: PLC0415
+
+    run_startup_tool_coherence_checks(
+        _PRIMARY_TOOLS,
+        set(pre_prune_tool_objects.keys()),
+        allowlist=INTENTIONAL_OVERFLOW,
+    )
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
     register_tool_search_tool(mcp, overflow_metadata)
 

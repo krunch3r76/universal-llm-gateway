@@ -1544,11 +1544,62 @@
   },
   {
     "cache_priority": "on_demand",
+    "canonical_name": "git_commit_commit",
+    "description": "\u2200 worktree \u2208 GitWorktrees \u2227 paths \u2286 RepoPaths \u2227 paths \u2260 \u2205:\n  git_commit(worktree, expected_branch, paths, dry_run=true) \u27f9\n    expected_paths_sha256 \u2208 SHA256Hex \u2227 numstat \u2208 str.\n  git_commit(worktree, expected_branch, paths, approval, sha256, message) \u27f9\n    (commit_sha \u2208 SHA256Hex \u2227 status = completed) \u2228 status = rejected.\nPath-explicit (\u00ac--all); commit isolates to named paths. Non-arc complement\nto git_land. Fingerprint binds approval. See decision:git-commit-non-arc-op.",
+    "domain": "git_commit",
+    "inputSchema": {
+      "properties": {
+        "approval": {
+          "default": "",
+          "type": "string"
+        },
+        "commit_message": {
+          "default": "",
+          "type": "string"
+        },
+        "dry_run": {
+          "default": false,
+          "type": "boolean"
+        },
+        "expected_branch": {
+          "type": "string"
+        },
+        "expected_paths_sha256": {
+          "default": "",
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "worktree_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "worktree_path",
+        "expected_branch",
+        "paths"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "git_commit",
+    "skill_uri": ""
+  },
+  {
+    "cache_priority": "on_demand",
     "canonical_name": "git_diff_query",
-    "description": "\u2200 worktree \u2208 ArcWorktrees:\n  git_diff(worktree) \u27f9\n    diff_sha256 \u2208 SHA256Hex \u2227 diff \u2208 str.\nRead-only. Fingerprint feeds git_integrate approval binding.",
+    "description": "\u2200 worktree \u2208 ArcWorktrees:\n  git_diff(worktree) \u27f9\n    diff_sha256 \u2208 SHA256Hex \u2227 diffstat \u2208 DiffStat \u2227 branch \u2208 str \u2227 diff \u2208 str.\n  git_diff(worktree, include_full_diff=false) \u27f9 compact envelope (no inline diff).\nRead-only. Default includes full unified diff (legacy callers); compact via\ninclude_full_diff=false (friction 11511). Fingerprint feeds git_integrate approval binding.",
     "domain": "git_diff",
     "inputSchema": {
       "properties": {
+        "include_full_diff": {
+          "default": true,
+          "type": "boolean"
+        },
         "path_filter": {
           "default": "",
           "type": "string"
@@ -1604,6 +1655,50 @@
     },
     "mandate_safety": "write",
     "name": "git_integrate",
+    "skill_uri": ""
+  },
+  {
+    "cache_priority": "on_demand",
+    "canonical_name": "git_land_land",
+    "description": "\u2200 arc \u2208 PlanSlugs \u2227 worktree \u2208 ArcWorktrees \u2227 sha256 \u2208 DiffFingerprints:\n  git_land(arc, phase, worktree, approval, sha256) \u27f9\n    (commit-if-dirty \u2227 merge master \u2227 green-gate \u2227 ref-advance \u2227 teardown)\n    \u2228 status = rejected.\nMutating. Atomic. One operator-gated land. commit_message required when worktree\ndirty. \u00acgreen_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.",
+    "domain": "git_land",
+    "inputSchema": {
+      "properties": {
+        "approval": {
+          "type": "string"
+        },
+        "arc": {
+          "type": "string"
+        },
+        "commit_message": {
+          "default": "",
+          "type": "string"
+        },
+        "expected_diff_sha256": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "remove_worktree": {
+          "default": true,
+          "type": "boolean"
+        },
+        "worktree_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "arc",
+        "phase",
+        "worktree_path",
+        "approval",
+        "expected_diff_sha256"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "git_land",
     "skill_uri": ""
   },
   {

@@ -392,3 +392,79 @@ def emit_git_commit_created(
             commit_sha=commit_sha,
         )
     )
+
+
+@event_factory
+def GitPathCommitCompleted(  # noqa: N802
+    commit_id: str,
+    branch: str,
+    commit_sha: str,
+    path_count: int,
+    duration_s: float,
+) -> Event:
+    return Event(
+        signal="git.path_commit.completed",
+        payload={
+            "commit_id": commit_id,
+            "branch": branch,
+            "commit_sha": commit_sha,
+            "path_count": path_count,
+            "duration_s": duration_s,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GitPathCommitRejected(  # noqa: N802
+    commit_id: str,
+    reason_code: str,
+    reason: str,
+    branch: str,
+) -> Event:
+    return Event(
+        signal="git.path_commit.rejected",
+        payload={
+            "commit_id": commit_id,
+            "reason_code": reason_code,
+            "reason": reason,
+            "branch": branch,
+        },
+        scope="global",
+    )
+
+
+def emit_git_path_commit_completed(
+    *,
+    commit_id: str,
+    branch: str,
+    commit_sha: str,
+    path_count: int,
+    duration_s: float,
+) -> None:
+    _emit(
+        GitPathCommitCompleted(
+            commit_id=commit_id,
+            branch=branch,
+            commit_sha=commit_sha,
+            path_count=path_count,
+            duration_s=duration_s,
+        )
+    )
+
+
+def emit_git_path_commit_rejected(
+    *,
+    commit_id: str,
+    reason_code: str,
+    reason: str,
+    branch: str,
+) -> None:
+    _emit(
+        GitPathCommitRejected(
+            commit_id=commit_id,
+            reason_code=reason_code,
+            reason=reason,
+            branch=branch,
+        )
+    )

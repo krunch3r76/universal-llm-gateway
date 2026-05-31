@@ -105,6 +105,67 @@ def validate_primary_tools_coherence(
     return sorted(primary_tools - registry_domains)
 
 
+def derive_all_canonical_tool_names(
+    canonical_yaml_path: Path = _DEFAULT_CANONICAL,
+) -> set[str]:
+    """Return every tool name declared in canonical.yaml (flat + dispatcher shapes)."""
+    data = _load_registry(canonical_yaml_path)
+    tools: list[dict[str, Any]] = data.get("tools", [])
+    names: set[str] = set()
+    for entry in tools:
+        flat = entry.get("flat_call_shape", {}).get("tool")
+        disp = entry.get("dispatcher_call_shape", {}).get("tool")
+        if flat:
+            names.add(flat)
+        if disp:
+            names.add(disp)
+    return names
+
+
+def validate_registered_tool_coherence(
+    registered_tool_names: set[str],
+    allowlist: frozenset[str] = frozenset(),
+    canonical_yaml_path: Path = _DEFAULT_CANONICAL,
+) -> list[str]:
+    """Return registered tool names absent from canonical.yaml and not allowlisted.
+
+    ∀ t ∈ registered_tool_names: t ∈ canonical_names ∨ t ∈ allowlist ∨ violation.
+    """
+    canonical_names = derive_all_canonical_tool_names(canonical_yaml_path)
+    return sorted(registered_tool_names - canonical_names - allowlist)
+
+
+def run_startup_tool_coherence_checks(
+    primary_tools: set[str],
+    registered_tool_names: set[str],
+    *,
+    allowlist: frozenset[str],
+) -> None:
+    """Forward + inverse coherence at boot (primary hard-fail; inverse advisory)."""
+    from mcp_events import record  # noqa: PLC0415
+
+    fwd_violations = validate_primary_tools_coherence(primary_tools)
+    if fwd_violations:
+        raise RuntimeError(
+            f"Primary tools absent from canonical registry: {fwd_violations}"
+        )
+
+    drift = validate_registered_tool_coherence(
+        registered_tool_names, allowlist=allowlist
+    )
+    if drift:
+        _logger.warning(
+            "Tool coherence drift — registered but undeclared in canonical.yaml: %s",
+            drift,
+        )
+        record("mcp.server.tool.coherence.drift", tools=drift, count=len(drift))
+    else:
+        record(
+            "mcp.server.tool.coherence.ok",
+            registered=len(registered_tool_names),
+        )
+
+
 # ── Claude /mcp dispatcher manifest (Phase D) ─────────────────────────────────
 
 _CLAUDE_TOKEN = "mcp_claude"

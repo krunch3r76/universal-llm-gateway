@@ -19,6 +19,9 @@ RC_UNCOMMITTED_NO_MESSAGE = "uncommitted_no_message"
 RC_NOTHING_TO_LAND = "nothing_to_land"
 RC_COMMIT_FAILED = "commit_failed"
 RC_CLEAN_TREE = "clean_tree"
+RC_PATHS_EMPTY = "paths_empty"
+RC_BRANCH_MISMATCH = "branch_mismatch"
+RC_NO_CHANGES_FOR_PATHS = "no_changes_for_paths"
 
 # SHA-256 of empty string — canonical empty diff fingerprint.
 EMPTY_DIFF_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

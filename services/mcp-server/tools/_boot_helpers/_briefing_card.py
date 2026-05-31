@@ -18,6 +18,7 @@ from ._briefing_card_render import (
     truncate_at_sentence,
 )
 from ._manifest import build_manifest
+from ._orientation_blocks import render_orientation_blocks
 from ._time import relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
@@ -83,6 +84,10 @@ def render_briefing_card(
         summary = tc.get("summary", tc.get("description", ""))
         if summary:
             parts.append(f"**Summary**: {summary}")
+
+    # Capability-axis Dispatch & Consult + co-located Liveness blocks, emitted
+    # ABOVE the skills list (A2). Source: _orientation_blocks (durable home, 2a).
+    parts.extend(render_orientation_blocks())
 
     if skills:
         parts.extend(render_skills_section(skills, skills_unpartitioned_count))

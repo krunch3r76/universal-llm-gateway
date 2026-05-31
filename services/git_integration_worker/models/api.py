@@ -66,6 +66,50 @@ class LandRequest(BaseModel):
     )
 
 
+class CommitRequest(BaseModel):
+    """Body for ``POST /commit`` — path-explicit, gated, non-arc commit.
+
+    ``dry_run`` returns the path-scoped fingerprint + numstat for approval
+    binding (read-only); the gated commit requires ``approval`` +
+    ``expected_paths_sha256`` + ``commit_message``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    worktree_path: str = Field(
+        ...,
+        description="Absolute path to the git working tree (typically the live "
+        "master checkout, not an arc worktree).",
+    )
+    expected_branch: str = Field(
+        ...,
+        description="Branch the caller affirms HEAD is on; rejects on mismatch.",
+    )
+    paths: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Explicit repo-relative paths to stage and commit. No --all.",
+    )
+    approval: str = Field(
+        "",
+        description="Operator approval bound to expected_paths_sha256 "
+        "(required unless dry_run).",
+    )
+    expected_paths_sha256: str = Field(
+        "",
+        description="SHA-256 of the staged diff for `paths` vs HEAD, from a "
+        "prior dry_run (required unless dry_run).",
+    )
+    commit_message: str = Field(
+        "",
+        description="Commit message (required unless dry_run).",
+    )
+    dry_run: bool = Field(
+        False,
+        description="Return fingerprint + numstat without committing (read-only).",
+    )
+
+
 class StatusResponse(BaseModel):
     """Read-only worktree status probe."""
 

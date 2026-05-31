@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from git_integrate.commit import commit_op
 from git_integrate.events import (
     GitIntegrateCompleted,
     GitIntegrateGateFailed,
@@ -38,6 +39,7 @@ __all__ = [
     "emit_git_integrate_requested",
     "emit_git_integrate_retried",
     "emit_git_status_read",
+    "commit_op",
     "integrate_op",
     "land_op",
     "register_uds_publisher",

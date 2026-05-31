@@ -11,17 +11,21 @@ import subprocess
 
 from universal_logging import get_logger
 
+from git_integrate.commit_paths import commit_paths_fingerprint
 from git_integrate.git_cas import diff_sha256, is_dirty, land_fingerprint
 from git_integrate.schema import (
+    EMPTY_DIFF_SHA256,
     RC_APPROVAL_MISSING,
     RC_ARC_BRANCH_MISMATCH,
+    RC_BRANCH_MISMATCH,
     RC_DIFF_MISMATCH,
     RC_DIRTY_WORKTREE,
-    RC_NOTHING_TO_LAND,
+    RC_NO_CHANGES_FOR_PATHS,
     RC_NOT_A_GIT_REPO,
+    RC_NOTHING_TO_LAND,
+    RC_PATHS_EMPTY,
     RC_UNCOMMITTED_NO_MESSAGE,
     RC_WORKTREE_MISSING,
-    EMPTY_DIFF_SHA256,
     IntegrateResult,
 )
 
@@ -147,6 +151,75 @@ def validate_land(
         return _reject(
             RC_UNCOMMITTED_NO_MESSAGE,
             "commit_message required when worktree has uncommitted changes",
+        )
+
+    return IntegrateResult(ok=True)
+
+
+def validate_commit(
+    *,
+    worktree_path: str,
+    expected_branch: str,
+    paths: list[str],
+    approval: str,
+    expected_paths_sha256: str,
+    commit_message: str,
+) -> IntegrateResult:
+    """Admission checks for commit_op — path-scoped, branch-affirmed, fingerprint-bound.
+
+    Order:
+      1. worktree_path exists and is a git repo
+      2. approval non-empty, paths non-empty, commit_message non-empty
+      3. current branch == expected_branch (affirm intended target)
+      4. path-scoped fingerprint non-empty and == expected_paths_sha256
+    """
+    if not os.path.isdir(worktree_path):
+        return _reject(
+            RC_WORKTREE_MISSING, f"worktree does not exist: {worktree_path!r}"
+        )
+    try:
+        subprocess.run(
+            ["git", "-C", worktree_path, "rev-parse", "--git-dir"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return _reject(RC_NOT_A_GIT_REPO, f"not a git repo: {worktree_path!r}")
+
+    if not approval:
+        return _reject(RC_APPROVAL_MISSING, "approval token is required")
+    if not paths:
+        return _reject(RC_PATHS_EMPTY, "at least one path is required")
+    if not commit_message:
+        return _reject(RC_UNCOMMITTED_NO_MESSAGE, "commit_message is required")
+
+    try:
+        branch_proc = subprocess.run(
+            ["git", "-C", worktree_path, "branch", "--show-current"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return _reject(RC_BRANCH_MISMATCH, "failed to read current branch")
+    current_branch = branch_proc.stdout.strip()
+    if current_branch != expected_branch:
+        return _reject(
+            RC_BRANCH_MISMATCH,
+            f"branch is {current_branch!r}; expected {expected_branch!r}",
+        )
+
+    fingerprint = commit_paths_fingerprint(worktree_path, paths)
+    if not fingerprint or fingerprint == EMPTY_DIFF_SHA256:
+        return _reject(RC_NO_CHANGES_FOR_PATHS, "no staged changes for the named paths")
+    if fingerprint != expected_paths_sha256:
+        return _reject(
+            RC_DIFF_MISMATCH,
+            f"paths changed since approval: "
+            f"got {fingerprint[:16]}..., expected {expected_paths_sha256[:16]}...",
         )
 
     return IntegrateResult(ok=True)
