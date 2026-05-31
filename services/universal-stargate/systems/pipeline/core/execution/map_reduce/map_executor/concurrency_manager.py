@@ -11,6 +11,7 @@ from ....events.map import MapTimeoutWarning
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+
     from ....schemas import StepConfig
     from .events import MapEventPublisher
 

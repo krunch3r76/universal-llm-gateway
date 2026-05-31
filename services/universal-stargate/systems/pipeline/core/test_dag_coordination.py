@@ -64,8 +64,8 @@ async def test_model_coordination_serializes_same_model():
 
     # Mock registry to return model IDs
     registry = MagicMock()
-    registry.get_model_config.side_effect = (
-        lambda model_ref, **_: MagicMock(model="model-a")
+    registry.get_model_config.side_effect = lambda model_ref, **_: (
+        MagicMock(model="model-a")
         if model_ref == "ref1"
         else MagicMock(model="model-b")
     )
@@ -733,9 +733,7 @@ async def test_explicit_cloud_model_still_falls_back():
         mp.setattr(
             fb_mod,
             "get_ranked_candidates",
-            AsyncMock(
-                return_value=["anthropic/claude-sonnet-4", "openai/gpt-5.4"]
-            ),
+            AsyncMock(return_value=["anthropic/claude-sonnet-4", "openai/gpt-5.4"]),
         )
         result = await fb_mod.try_step_model_fallback(
             step,

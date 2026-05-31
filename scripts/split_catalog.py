@@ -33,13 +33,17 @@ from typing import Any
 import yaml
 
 # Import from gateway package
-sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "_universal-llm-gateway" / "src"))
+sys.path.insert(
+    0, str(Path(__file__).parent.parent / "services" / "_universal-llm-gateway" / "src")
+)
 
-from core.catalog.split import determine_model_path, write_model_file
 from catalog_split import create_timestamped_backup  # backup.py stays in scripts
+from core.catalog.split import determine_model_path, write_model_file
 
 
-def split_catalog(catalog_path: Path, output_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def split_catalog(
+    catalog_path: Path, output_dir: Path, dry_run: bool = False
+) -> dict[str, Any]:
     """
     Split monolithic catalog into individual files.
 
@@ -65,7 +69,12 @@ def split_catalog(catalog_path: Path, output_dir: Path, dry_run: bool = False) -
     models = catalog.get("models", {})
     if not models:
         print("❌ No models found in catalog")
-        return {"models_processed": 0, "files_created": 0, "errors": 0, "backup_path": backup_path}
+        return {
+            "models_processed": 0,
+            "files_created": 0,
+            "errors": 0,
+            "backup_path": backup_path,
+        }
 
     stats: dict[str, Any] = {
         "models_processed": 0,
@@ -90,13 +99,17 @@ def split_catalog(catalog_path: Path, output_dir: Path, dry_run: bool = False) -
             stats["domains"][relative_path] = stats["domains"].get(relative_path, 0) + 1
 
             if dry_run:
-                print(f"  → Would write to: {output_file.relative_to(output_dir.parent.parent)}")
+                print(
+                    f"  → Would write to: {output_file.relative_to(output_dir.parent.parent)}"
+                )
                 continue
 
             # Write model file
             write_model_file(output_file, model_entry)
             stats["files_created"] += 1
-            print(f"  ✅ Written to: {output_file.relative_to(output_dir.parent.parent)}")
+            print(
+                f"  ✅ Written to: {output_file.relative_to(output_dir.parent.parent)}"
+            )
 
         except Exception as e:
             stats["errors"] += 1
@@ -148,10 +161,14 @@ def main() -> int:
         return 1
 
     if stats["files_created"] != stats["models_processed"]:
-        print(f"\n❌ Mismatch: processed {stats['models_processed']} but only created {stats['files_created']} files")
+        print(
+            f"\n❌ Mismatch: processed {stats['models_processed']} but only created {stats['files_created']} files"
+        )
         return 1
 
-    print(f"\n✅ Successfully split {stats['files_created']} models into individual files")
+    print(
+        f"\n✅ Successfully split {stats['files_created']} models into individual files"
+    )
     print(f"   Backup at: {stats['backup_path']}")
     return 0
 

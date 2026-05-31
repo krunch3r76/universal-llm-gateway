@@ -33,9 +33,7 @@ class WorkerState(Enum):
     UNLOADED = "unloaded"
 
 
-TransitionCallback = Callable[
-    [WorkerState, WorkerState, str, dict | None], None
-]
+TransitionCallback = Callable[[WorkerState, WorkerState, str, dict | None], None]
 
 
 @dataclass

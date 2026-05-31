@@ -1,7 +1,9 @@
 """_PropertyIndexPart02 — PropertyIndex method chunk (SLOC split)."""
+
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
+
 
 class _PropertyIndexPart02:
     async def add_batch(self, entries: list[tuple[str, str]], source: str = "") -> None:
@@ -260,5 +262,3 @@ class _PropertyIndexPart02:
             (source_path,),
         ).fetchone()
         return row is not None
-
-

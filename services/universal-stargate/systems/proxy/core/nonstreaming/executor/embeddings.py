@@ -136,8 +136,7 @@ async def _forward_with_retry(
             await asyncio.sleep(delay)
 
     logger.error(
-        "%s forward exhausted %d attempts (model=%s, gateway=%s, "
-        "last_status=%d)",
+        "%s forward exhausted %d attempts (model=%s, gateway=%s, last_status=%d)",
         workload_label,
         _FORWARD_RETRY_ATTEMPTS,
         request_body.get("model", "?"),

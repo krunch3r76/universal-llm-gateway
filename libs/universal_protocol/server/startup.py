@@ -14,8 +14,9 @@ Usage:
     )
 """
 
-from universal_logging import get_logger
 import socket
+
+from universal_logging import get_logger
 
 from .uds_security import bind_socket
 

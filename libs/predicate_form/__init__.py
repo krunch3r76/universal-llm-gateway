@@ -156,7 +156,9 @@ def normalize_predicate_domain(
         candidate_set_fingerprint = ""
     else:
         joined = "|".join(per_arg_fps)
-        candidate_set_fingerprint = hashlib.sha256(joined.encode("utf-8")).hexdigest()[:16]
+        candidate_set_fingerprint = hashlib.sha256(joined.encode("utf-8")).hexdigest()[
+            :16
+        ]
 
     p, fired = apply_class_2(p, active_resolver)
     if fired:

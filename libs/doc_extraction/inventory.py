@@ -15,10 +15,18 @@ from typing import Any
 import tree_sitter as _ts
 import tree_sitter_python as _tspython
 
-_PY_LANG: _ts.Language = _ts.Language(_tspython.language()) # Tree-sitter language object for Python.
-_PY_PARSER = _ts.Parser(_PY_LANG) # Tree-sitter parser instance for Python.
-_STRING_NODE_TYPES = {"string", "concatenated_string"} # Tree-sitter node types representing string literals.
-_DEF_NODE_TYPES = {"function_definition", "async_function_definition"} # Tree-sitter node types for function definitions.
+_PY_LANG: _ts.Language = _ts.Language(
+    _tspython.language()
+)  # Tree-sitter language object for Python.
+_PY_PARSER = _ts.Parser(_PY_LANG)  # Tree-sitter parser instance for Python.
+_STRING_NODE_TYPES = {
+    "string",
+    "concatenated_string",
+}  # Tree-sitter node types representing string literals.
+_DEF_NODE_TYPES = {
+    "function_definition",
+    "async_function_definition",
+}  # Tree-sitter node types for function definitions.
 
 
 def _decode(node: _ts.Node, source: bytes) -> str:
@@ -169,13 +177,17 @@ def extract_subsystem_inventory(
                 "docstring": file_inv["module_docstring"],
             }
         )
-        classes.extend([{"path": file_inv["path"], **cls} for cls in file_inv["classes"]])
+        classes.extend(
+            [{"path": file_inv["path"], **cls} for cls in file_inv["classes"]]
+        )
         functions.extend(
             [{"path": file_inv["path"], **fn} for fn in file_inv["functions"]]
         )
         imports.extend(
-            [{"path": file_inv["path"], "import": import_stmt}
-            for import_stmt in file_inv["imports"]]
+            [
+                {"path": file_inv["path"], "import": import_stmt}
+                for import_stmt in file_inv["imports"]
+            ]
         )
 
     subsystem_name = target_dir.name

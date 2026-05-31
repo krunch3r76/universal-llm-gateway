@@ -33,7 +33,9 @@ async def _snapshot(gate: AdmissionGate) -> None:
 
     Best-effort: any HTTP error leaves the gate in its default OPEN state.
     """
-    async with make_async_client(DEFAULT_STARGATE_URL, timeout=_SNAPSHOT_TIMEOUT_S) as client:
+    async with make_async_client(
+        DEFAULT_STARGATE_URL, timeout=_SNAPSHOT_TIMEOUT_S
+    ) as client:
         for key in list(gate._tracked):
             url = "/api/v1/admission/state"
             try:
@@ -96,7 +98,9 @@ async def _emit_first_burst_observed(
     """
     queue_depth: int | None = None
     try:
-        async with make_async_client(DEFAULT_STARGATE_URL, timeout=_SNAPSHOT_TIMEOUT_S) as client:
+        async with make_async_client(
+            DEFAULT_STARGATE_URL, timeout=_SNAPSHOT_TIMEOUT_S
+        ) as client:
             resp = await client.get(
                 "/api/v1/admission/state",
                 params={"model_id": key},
@@ -181,9 +185,7 @@ async def _subscribe_loop(gate: AdmissionGate) -> None:
 
                         signal = str(event.get("signal", ""))
                         payload_raw = event.get("payload")
-                        payload = (
-                            payload_raw if isinstance(payload_raw, dict) else {}
-                        )
+                        payload = payload_raw if isinstance(payload_raw, dict) else {}
                         gate._apply_signal(signal, payload)
 
         except asyncio.CancelledError:

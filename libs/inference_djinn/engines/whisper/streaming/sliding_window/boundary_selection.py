@@ -9,10 +9,10 @@ NEW:
 - select_boundary() - Direct Silero probability analysis
 """
 
-from universal_logging import get_logger
 from typing import TYPE_CHECKING
 
 import numpy as np
+from universal_logging import get_logger
 
 from ...vad import VADMethod
 

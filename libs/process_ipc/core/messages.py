@@ -186,7 +186,6 @@ def validate_message(
     signal = message["signal"]
     if signal not in signals.ALL_SIGNALS:
         # Log warning but don't raise error (allow custom signals)
-        import logging
 
         get_logger("process_ipc.messages").warning(
             f"Unknown signal '{signal}' - not in predefined signal list"

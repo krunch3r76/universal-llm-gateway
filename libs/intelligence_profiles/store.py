@@ -163,10 +163,15 @@ def _matches_requirements(
             )
             return False
 
-    effective_min_completion_tokens = req.min_completion_tokens if req.min_completion_tokens is not None else 16384
+    effective_min_completion_tokens = (
+        req.min_completion_tokens if req.min_completion_tokens is not None else 16384
+    )
     if req.min_completion_tokens is not None:
         max_completion = getattr(profile, "max_completion_tokens", None)
-        if max_completion is not None and max_completion < effective_min_completion_tokens:
+        if (
+            max_completion is not None
+            and max_completion < effective_min_completion_tokens
+        ):
             logger.debug(
                 "model.selection.filtered",
                 extra={

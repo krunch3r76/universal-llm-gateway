@@ -1,7 +1,9 @@
 """_PropertyIndexPart03 — PropertyIndex method chunk (SLOC split)."""
+
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
+
 
 class _PropertyIndexPart03:
     async def sync_article_structural_fields(
@@ -255,5 +257,3 @@ class _PropertyIndexPart03:
                 raise
 
         await self._seq.run(_write())
-
-

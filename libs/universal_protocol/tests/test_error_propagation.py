@@ -3,7 +3,6 @@
 Verifies that engine errors are properly propagated through the streaming pipeline.
 """
 
-
 import pytest
 
 from universal_protocol.ws import stream_registry

@@ -8,6 +8,7 @@ from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     from .core.schemas import PipelineSpec
 
 logger = get_logger(__name__)

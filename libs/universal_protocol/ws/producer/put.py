@@ -4,6 +4,7 @@ Single responsibility: Lookup stream, update activity, enqueue frame.
 """
 
 from universal_logging import get_logger
+
 from universal_protocol.ws.registry import stream_registry
 
 from .error_frame import make_producer_error_frame

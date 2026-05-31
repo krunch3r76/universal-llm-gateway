@@ -25,9 +25,9 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Generic, TypeVar
-from collections.abc import Callable
 
 from universal_logging import get_logger
 

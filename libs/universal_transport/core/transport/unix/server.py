@@ -5,10 +5,11 @@ This module provides multi-client Unix socket server with connection handling.
 """
 
 import asyncio
-from universal_logging import get_logger
 import os
 from collections.abc import Callable
 from pathlib import Path
+
+from universal_logging import get_logger
 
 from .client_handler import AsyncUnixClientHandler
 from .connection import AsyncUnixConnectionError

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from mcp.types import ImageContent
 
-from ._ops_binary import append_binary_impl, write_binary_impl
 from ._ops_image import view_image_impl
 from ._ops_paths import (
     copy_file_impl,

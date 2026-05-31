@@ -42,9 +42,7 @@ class TelemetryHeartbeatPublisher:
     def unregister_connection(self, connection: Any) -> None:
         """Unregister a WebSocket connection."""
         self._connections.discard(connection)
-        logger.debug(
-            f"Unregistered connection (remaining: {len(self._connections)})"
-        )
+        logger.debug(f"Unregistered connection (remaining: {len(self._connections)})")
 
     async def start(self) -> None:
         """Start periodic heartbeat publishing."""
@@ -90,9 +88,7 @@ class TelemetryHeartbeatPublisher:
                     try:
                         await conn.send_json(message.to_dict())
                     except Exception as e:
-                        logger.warning(
-                            f"Failed to send heartbeat to connection: {e}"
-                        )
+                        logger.warning(f"Failed to send heartbeat to connection: {e}")
                         # Connection will be removed on disconnect
 
                 logger.debug(

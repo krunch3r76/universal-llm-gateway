@@ -50,9 +50,7 @@ class AssembleStubHandler:
 
     step_type = "assemble_stub_v1"
 
-    async def execute(
-        self, step: StepConfig, context: PipelineContext
-    ) -> StepOutput:
+    async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         anchor = _anchor_for(context.chat_id)
         payload = {
             "messages": list(anchor["history"]),
@@ -68,9 +66,7 @@ class ArchiveUserStubHandler:
 
     step_type = "archive_user_stub_v1"
 
-    async def execute(
-        self, step: StepConfig, context: PipelineContext
-    ) -> StepOutput:
+    async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         anchor = _anchor_for(context.chat_id)
         turn_index = anchor["turn_count"]
         anchor["history"].append({"role": "user", "content": context.source_text})
@@ -84,9 +80,7 @@ class ArchiveAssistantStubHandler:
 
     step_type = "archive_assistant_stub_v1"
 
-    async def execute(
-        self, step: StepConfig, context: PipelineContext
-    ) -> StepOutput:
+    async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         anchor = _anchor_for(context.chat_id)
         turn_index = anchor["turn_count"]
         respond_output = context.outputs.get("respond")

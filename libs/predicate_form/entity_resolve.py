@@ -91,7 +91,9 @@ class StaticEntityResolver:
             fp = _candidate_fingerprint(cands)
             return ResolutionResult("resolved_single", match, match, cands, fp)
         else:
-            return ResolutionResult("no_match", None, None, (), _candidate_fingerprint(()))
+            return ResolutionResult(
+                "no_match", None, None, (), _candidate_fingerprint(())
+            )
 
 
 # Type prefixes the cortex-backed resolver tries when looking up a bare

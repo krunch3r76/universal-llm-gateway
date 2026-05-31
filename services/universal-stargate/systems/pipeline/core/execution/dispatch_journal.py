@@ -244,4 +244,3 @@ async def prune_expired(
         "records_deleted": deleted,
         "oldest_deleted_age_seconds": oldest_age_seconds,
     }
-

@@ -11,11 +11,11 @@ from ._briefing_card_render import (
     PREVIEW_MAX_CHARS,
     deadline_line,
     filter_recent_self_reflections,
-    truncate_at_sentence,
     render_async_dispatch_section,
     render_audit_alerts_section,
     render_skills_section,
     render_views_section,
+    truncate_at_sentence,
 )
 from ._manifest import build_manifest
 from ._time import relative_time

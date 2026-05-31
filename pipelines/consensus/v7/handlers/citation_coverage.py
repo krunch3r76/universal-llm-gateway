@@ -70,9 +70,7 @@ def citation_coverage_check(resolved: dict[str, Any]) -> dict[str, Any]:
     raw_artifact: str = resolved.get("artifact", "")
     verified_facts: str = str(resolved.get("verified_facts", ""))
 
-    expected = {
-        int(m) for m in re.findall(r"^\[(\d+)\]", verified_facts, re.MULTILINE)
-    }
+    expected = {int(m) for m in re.findall(r"^\[(\d+)\]", verified_facts, re.MULTILINE)}
 
     prose = _extract_prose(raw_artifact)
     incorporated = sorted(expected & _extract_indices(prose))

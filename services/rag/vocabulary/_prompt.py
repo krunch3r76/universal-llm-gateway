@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ._categories import DEFAULT_TAXONOMY, _CATEGORY_DESCRIPTIONS
+from ._categories import _CATEGORY_DESCRIPTIONS, DEFAULT_TAXONOMY
 
 
 def build_classification_prompt(taxonomy: list[str]) -> str:

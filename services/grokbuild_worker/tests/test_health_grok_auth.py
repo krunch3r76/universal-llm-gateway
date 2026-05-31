@@ -101,7 +101,9 @@ class TestOptionARollup:
         core_keys = ("grok_binary", "auth_dir", "sidecar_dir", "registry")
         # verify core checks are all ok (test isolation guard)
         for key in core_keys:
-            assert checks[key] == "ok", f"expected core check {key!r} == 'ok', got {checks[key]!r}"
+            assert checks[key] == "ok", (
+                f"expected core check {key!r} == 'ok', got {checks[key]!r}"
+            )
 
         # grok_auth must reflect the probe status
         assert checks["grok_auth"] != "ok"
@@ -112,9 +114,7 @@ class TestOptionARollup:
         status = "ok" if all(checks[k] == "ok" for k in rollup_keys) else "degraded"
         assert status == "ok"
 
-    def test_all_ok_including_grok_auth_yields_status_ok(
-        self, tmp_path: Path
-    ) -> None:
+    def test_all_ok_including_grok_auth_yields_status_ok(self, tmp_path: Path) -> None:
         """When all checks including grok_auth are ok, status is 'ok'."""
         cfg = _make_cfg(tmp_path)
         checks = _evaluate(cfg, _state(AuthStatus.OK))

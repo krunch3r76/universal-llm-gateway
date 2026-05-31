@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -66,7 +65,9 @@ def _run_overview(model: str, readme_text: str) -> int:
         print(f"Could not reach Stargate: {e}", file=sys.stderr)
         return 1
     except httpx.HTTPStatusError as e:
-        print(f"HTTP {e.response.status_code}: {e.response.text[:500]}", file=sys.stderr)
+        print(
+            f"HTTP {e.response.status_code}: {e.response.text[:500]}", file=sys.stderr
+        )
         return 1
     choices = data.get("choices", [])
     if not choices:
@@ -83,12 +84,14 @@ def _run_overview(model: str, readme_text: str) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rewrite README via cloud model")
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         default="README_REVISED.md",
         help="Output path (default: README_REVISED.md); use - for stdout",
     )
     parser.add_argument(
-        "-m", "--model",
+        "-m",
+        "--model",
         default=DEFAULT_MODEL,
         help="Cloud model ID (default: CLOUD_MODEL or anthropic/claude-sonnet-4-20250514)",
     )
@@ -139,7 +142,9 @@ def main() -> int:
         print(f"Could not reach Stargate at {STARGATE_URL}: {e}", file=sys.stderr)
         return 1
     except httpx.HTTPStatusError as e:
-        print(f"HTTP {e.response.status_code}: {e.response.text[:500]}", file=sys.stderr)
+        print(
+            f"HTTP {e.response.status_code}: {e.response.text[:500]}", file=sys.stderr
+        )
         return 1
 
     choices = data.get("choices", [])
@@ -164,7 +169,11 @@ def main() -> int:
     if args.output == "-":
         print(content)
     else:
-        out_path = ROOT / args.output if not Path(args.output).is_absolute() else Path(args.output)
+        out_path = (
+            ROOT / args.output
+            if not Path(args.output).is_absolute()
+            else Path(args.output)
+        )
         out_path.write_text(content, encoding="utf-8")
         print(f"Wrote {out_path}", file=sys.stderr)
 

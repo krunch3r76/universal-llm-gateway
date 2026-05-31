@@ -231,4 +231,3 @@ class PromptConfig:
                 f"PromptConfig '{self.name}' has empty template. "
                 f"Template is required for all prompts."
             )
-

@@ -69,8 +69,12 @@ class LazyInspector:
 GGUFEngine = LazyEngine("GGUFEngine", "engines.gguf.engine.engine.GGUFEngine")
 VLLMEngine = LazyEngine("VLLMEngine", "engines.vllm.engine.VLLMEngine")
 ExLlamaV3Engine = LazyEngine("ExLlamaV3Engine", "engines.exl3.engine.ExLlamaV3Engine")
-WhisperEngine = LazyEngine("WhisperEngine", "engines.whisper.engine.engine.WhisperEngine")
-CrossEncoderEngine = LazyEngine("CrossEncoderEngine", "engines.cross_encoder.engine.CrossEncoderEngine")
+WhisperEngine = LazyEngine(
+    "WhisperEngine", "engines.whisper.engine.engine.WhisperEngine"
+)
+CrossEncoderEngine = LazyEngine(
+    "CrossEncoderEngine", "engines.cross_encoder.engine.CrossEncoderEngine"
+)
 
 # Create lazy loading inspectors
 gguf_inspector = LazyInspector("gguf_inspector", "engines.gguf.inspector")

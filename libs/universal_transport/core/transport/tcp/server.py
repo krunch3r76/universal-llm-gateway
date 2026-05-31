@@ -5,9 +5,10 @@ This module provides multi-client TCP server with connection handling.
 """
 
 import asyncio
-from universal_logging import get_logger
 import socket
 from collections.abc import Callable
+
+from universal_logging import get_logger
 
 from .client_handler import AsyncTCPClientHandler
 from .connection import AsyncTCPConnectionError

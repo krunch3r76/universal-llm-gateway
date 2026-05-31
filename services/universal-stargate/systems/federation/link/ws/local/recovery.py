@@ -53,8 +53,7 @@ async def _call_manage(
     except FileNotFoundError:
         return {
             "error": (
-                "manage.sock not found. Ensure ./manage is running "
-                "(TUI or headless)."
+                "manage.sock not found. Ensure ./manage is running (TUI or headless)."
             )
         }
     except TimeoutError:

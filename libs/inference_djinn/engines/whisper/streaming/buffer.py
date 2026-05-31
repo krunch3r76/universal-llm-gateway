@@ -124,4 +124,3 @@ class EfficientAudioBuffer:
     def to_numpy_float32(self) -> np.ndarray:
         """Convert buffer to numpy float32 array normalized to [-1.0, 1.0]."""
         return self.to_numpy_int16().astype(np.float32) / 32768.0
-

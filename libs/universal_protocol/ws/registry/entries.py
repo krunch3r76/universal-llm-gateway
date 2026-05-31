@@ -5,10 +5,11 @@ No cleanup logic, no control plane, no idle monitoring.
 """
 
 import asyncio
-from universal_logging import get_logger
 import time
 from dataclasses import dataclass, field
 from typing import Literal
+
+from universal_logging import get_logger
 
 from universal_protocol.ws.lifecycle import StreamContext
 from universal_protocol.ws.queue_protocol import StreamQueueProtocol

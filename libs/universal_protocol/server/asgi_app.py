@@ -859,6 +859,7 @@ routes = [
     WebSocketRoute("/stream/{stream_id}", stream_handler),
 ]
 
+
 @asynccontextmanager
 async def lifespan(app: Starlette) -> AsyncIterator[None]:
     """Initialize and tear down minimal process-global app state."""

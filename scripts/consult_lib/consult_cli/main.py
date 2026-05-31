@@ -93,7 +93,9 @@ def main() -> None:
         print_role_listing(role_prompts)
         return
 
-    args.question = _read_question_from_source(parser, args.question_file, args.question)
+    args.question = _read_question_from_source(
+        parser, args.question_file, args.question
+    )
 
     call_id = str(uuid4())
     role_pipeline_id = get_pipeline_id(args.role)

@@ -11,10 +11,11 @@ Security Model:
 - Lifecycle: Unlink-before-bind, atexit cleanup
 """
 
-from universal_logging import get_logger
 import os
 import socket
 from pathlib import Path
+
+from universal_logging import get_logger
 
 from universal_protocol.config import get_config
 

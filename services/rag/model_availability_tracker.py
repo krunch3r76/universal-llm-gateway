@@ -134,9 +134,7 @@ class ModelAvailabilityTracker:
         Lifecycle order: configure() → refresh_snapshot() → start_subscription()
         """
         if not self._started:
-            raise RuntimeError(
-                "configure() must be called before start_subscription()"
-            )
+            raise RuntimeError("configure() must be called before start_subscription()")
         if self._subscribe_task is None or self._subscribe_task.done():
             self._subscribe_task = asyncio.create_task(
                 self._subscribe_loop(), name="model-availability-subscriber"
@@ -207,10 +205,14 @@ class ModelAvailabilityTracker:
 
                             if signal == "model.available":
                                 self._set_available(mid, True)
-                                logger.info("Model %s became routable (Event Service)", mid)
+                                logger.info(
+                                    "Model %s became routable (Event Service)", mid
+                                )
                             elif signal == "model.unavailable":
                                 self._set_available(mid, False)
-                                logger.info("Model %s became unroutable (Event Service)", mid)
+                                logger.info(
+                                    "Model %s became unroutable (Event Service)", mid
+                                )
 
             except asyncio.CancelledError:
                 return
@@ -336,7 +338,9 @@ class ModelAvailabilityTracker:
                 f"call configure() with this model_id first"
             )
         if self.is_available(model_id):
-            return AvailabilityResult(available=True, reason=AvailabilityReason.ROUTABLE)
+            return AvailabilityResult(
+                available=True, reason=AvailabilityReason.ROUTABLE
+            )
         probe = await self._probe_catalog_presence(model_id)
         if probe.available:
             self._set_available(model_id, True)
@@ -360,7 +364,9 @@ class ModelAvailabilityTracker:
                 )
             return result
         if self.is_available(model_id):
-            return AvailabilityResult(available=True, reason=AvailabilityReason.ROUTABLE)
+            return AvailabilityResult(
+                available=True, reason=AvailabilityReason.ROUTABLE
+            )
         return await self._probe_catalog_presence(model_id)
 
 

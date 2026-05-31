@@ -14,8 +14,9 @@ Usage:
     reader = GGUFReader('model.gguf')
 """
 
-from universal_logging import get_logger
 from enum import IntEnum
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

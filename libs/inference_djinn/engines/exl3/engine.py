@@ -7,9 +7,10 @@ Supports EXL3 quantization format and addresses embedding.embedding=None errors.
 """
 
 import asyncio
-from universal_logging import get_logger
 from collections.abc import AsyncGenerator
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

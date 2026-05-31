@@ -19,25 +19,25 @@ async def handle_process_crash_callback(
 ) -> None:
     """
     Orchestrate crash cleanup response (event-driven, fully isolated).
-    
+
     Delegates to specialized modules for each cleanup responsibility.
     All operations are error-isolated to prevent breaking process_ipc.
-    
+
     Invariant: ∀ cleanup_step: error_isolated ∧ logged
-    
+
     Args:
         process_id: Process/model ID that crashed
         exit_code: Exit code of crashed process
         error_message: Error message from process_ipc
         state: Process state container
-        
+
     Side Effects:
         - Logs crash error
         - Marks worker as failed in state
         - Stops health monitoring
         - Removes supervisor references
         - Publishes SocketCleanupRequested event (non-blocking)
-        
+
     Note:
         Resource tracker updates happen via WORKER_CRASH_DETECTED event
         (emitted by process_ipc, bridged by ProcessCrashBridge).

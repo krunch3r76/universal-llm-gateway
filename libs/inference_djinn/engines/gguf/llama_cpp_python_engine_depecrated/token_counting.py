@@ -6,8 +6,9 @@ Includes image token estimation for vision models.
 """
 
 import asyncio
-from universal_logging import get_logger
 from typing import Any
+
+from universal_logging import get_logger
 
 from inference_djinn.utils.types import TokenCountResult
 

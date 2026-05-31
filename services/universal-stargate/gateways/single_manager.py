@@ -23,6 +23,7 @@ from .types import GatewayInstance
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
     from gateway_client import GatewayConfig
 
 logger = get_logger(__name__)

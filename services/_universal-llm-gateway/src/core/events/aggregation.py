@@ -114,15 +114,21 @@ class EventAggregator:
             MODEL_LOADING_STARTED, self._handle_model_loading_started
         )
         self.event_bus.subscribe_async(MODEL_LOADED, self._handle_model_loaded)
-        self.event_bus.subscribe_async(MODEL_LOAD_FAILED, self._handle_model_load_failed)
+        self.event_bus.subscribe_async(
+            MODEL_LOAD_FAILED, self._handle_model_load_failed
+        )
         self.event_bus.subscribe_async(
             MODEL_UNLOADING_STARTED, self._handle_model_unloading_started
         )
         self.event_bus.subscribe_async(MODEL_UNLOADED, self._handle_model_unloaded)
 
         # Inference lifecycle events - subscribe by signal name (string)
-        self.event_bus.subscribe_async(INFERENCE_STARTED, self._handle_inference_started)
-        self.event_bus.subscribe_async(INFERENCE_COMPLETED, self._handle_inference_completed)
+        self.event_bus.subscribe_async(
+            INFERENCE_STARTED, self._handle_inference_started
+        )
+        self.event_bus.subscribe_async(
+            INFERENCE_COMPLETED, self._handle_inference_completed
+        )
         self.event_bus.subscribe_async(INFERENCE_FAILED, self._handle_inference_failed)
 
         # System resource events - subscribe by signal name (string)

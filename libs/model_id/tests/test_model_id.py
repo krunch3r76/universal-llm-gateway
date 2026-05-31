@@ -81,4 +81,3 @@ if __name__ == "__main__":
     test_routing_key_mcp_suffix()
     test_synthetic_id_hybrid_mcp()
     print("✅ All tests passed")
-

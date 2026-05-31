@@ -5,9 +5,10 @@ This module defines the Transport interface that all concrete transport
 implementations must follow.
 """
 
-from universal_logging import get_logger
 from abc import ABC, abstractmethod
 from enum import Enum
+
+from universal_logging import get_logger
 
 # Import core exceptions to avoid duplication
 from ..exceptions import TransportError, UTConnectionError

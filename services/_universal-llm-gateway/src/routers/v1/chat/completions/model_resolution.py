@@ -64,4 +64,3 @@ def resolve_model_id(
             )
 
     return model_id
-

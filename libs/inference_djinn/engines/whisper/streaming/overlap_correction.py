@@ -9,8 +9,9 @@ Minimal audio preservation (~100ms) prevents word loss at boundaries,
 and this corrector removes the resulting duplications.
 """
 
-from universal_logging import get_logger
 from dataclasses import dataclass, field
+
+from universal_logging import get_logger
 
 from .types import HighResTimedWord, TranscriptionResult
 

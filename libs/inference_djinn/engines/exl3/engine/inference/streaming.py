@@ -4,10 +4,11 @@ ExLlamaV3 engine streaming inference operations.
 Handles streaming completion generation.
 """
 
-from universal_logging import get_logger
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

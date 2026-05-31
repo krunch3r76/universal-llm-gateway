@@ -71,7 +71,9 @@ class MicrophoneTranscriber:
 
         # Streaming configuration
         self.stream_chunk_duration: float = 0.5  # Send 0.5s chunks
-        self.stream_chunk_size: int = int(self.target_sample_rate * self.stream_chunk_duration)
+        self.stream_chunk_size: int = int(
+            self.target_sample_rate * self.stream_chunk_duration
+        )
         self.audio_buffer: list[int] = []
 
         # Resampling support
@@ -114,28 +116,38 @@ class MicrophoneTranscriber:
 
             # Determine input device
             device_index = None
-            if self.args and hasattr(self.args, 'device') and self.args.device is not None:
+            if (
+                self.args
+                and hasattr(self.args, "device")
+                and self.args.device is not None
+            ):
                 device_index = self.args.device
-                device_info = self.pyaudio_instance.get_device_info_by_index(device_index)
+                device_info = self.pyaudio_instance.get_device_info_by_index(
+                    device_index
+                )
                 print(f"🎤 Using device {device_index}: {device_info['name']}")
-                
+
                 # Use device's default sample rate
-                self.device_sample_rate = int(device_info['defaultSampleRate'])
+                self.device_sample_rate = int(device_info["defaultSampleRate"])
                 print(f"   Device sample rate: {self.device_sample_rate}Hz")
-                
+
                 if self.device_sample_rate != self.target_sample_rate:
                     self.needs_resampling = True
-                    print(f"   Will resample to {self.target_sample_rate}Hz for Whisper")
+                    print(
+                        f"   Will resample to {self.target_sample_rate}Hz for Whisper"
+                    )
             else:
                 # Use default device
                 default_device = self.pyaudio_instance.get_default_input_device_info()
-                device_index = default_device['index']
-                self.device_sample_rate = int(default_device['defaultSampleRate'])
+                device_index = default_device["index"]
+                self.device_sample_rate = int(default_device["defaultSampleRate"])
                 print(f"🎤 Using: {default_device['name']}")
-                
+
                 if self.device_sample_rate != self.target_sample_rate:
                     self.needs_resampling = True
-                    print(f"   Will resample from {self.device_sample_rate}Hz to {self.target_sample_rate}Hz")
+                    print(
+                        f"   Will resample from {self.device_sample_rate}Hz to {self.target_sample_rate}Hz"
+                    )
 
             self.audio_stream = self.pyaudio_instance.open(
                 format=self.format,
@@ -162,14 +174,14 @@ class MicrophoneTranscriber:
         """Audio input callback - buffers and sends chunks."""
         if self.is_streaming:
             audio_data = self.np.frombuffer(in_data, dtype=self.np.int16)
-            
+
             # Resample if needed
             if self.needs_resampling:
                 # Simple decimation: take every Nth sample
                 # For 48kHz -> 16kHz, take every 3rd sample (48000/16000 = 3)
                 decimation_factor = self.device_sample_rate // self.target_sample_rate
                 audio_data = audio_data[::decimation_factor]
-            
+
             self.audio_buffer.extend(audio_data)
 
             # Send 0.5s chunks to queue
@@ -235,7 +247,7 @@ class MicrophoneTranscriber:
     def build_websocket_url(self) -> str:
         """
         Build WebSocket URL with Whisper quality profile and VAD parameters.
-        
+
         Returns full WebSocket URL for HTTP/WebSocket mode, or path-only for Unix socket mode.
         """
         params = [f"model={self.model}"]
@@ -331,12 +343,12 @@ class MicrophoneTranscriber:
                 if not os.path.exists(self.unix_socket_path):
                     print(f"❌ Unix socket not found: {self.unix_socket_path}")
                     return
-                
+
                 # Check if it's a socket (correct validation using stat.S_ISSOCK)
                 if not stat.S_ISSOCK(os.stat(self.unix_socket_path).st_mode):
                     print(f"❌ Path is not a Unix socket: {self.unix_socket_path}")
                     return
-                
+
                 try:
                     # Connect via Unix domain socket
                     self.websocket = await websockets.unix_connect(
@@ -344,10 +356,14 @@ class MicrophoneTranscriber:
                         uri=f"ws://localhost{uri}",  # Dummy host, real path in uri
                     )
                 except PermissionError:
-                    print(f"❌ Connection error: Permission denied (check socket permissions)")
+                    print(
+                        "❌ Connection error: Permission denied (check socket permissions)"
+                    )
                     return
                 except ConnectionRefusedError:
-                    print(f"❌ Connection error: Connection refused (is the service running?)")
+                    print(
+                        "❌ Connection error: Connection refused (is the service running?)"
+                    )
                     return
                 except Exception as e:
                     print(f"❌ Connection error: {e}")
@@ -605,13 +621,16 @@ async def main():
     if args.list_devices:
         try:
             import pyaudio
+
             p = pyaudio.PyAudio()
             print("\n🎤 Available Audio Input Devices:\n")
             for i in range(p.get_device_count()):
                 info = p.get_device_info_by_index(i)
-                if info['maxInputChannels'] > 0:
+                if info["maxInputChannels"] > 0:
                     print(f"  [{i}] {info['name']}")
-                    print(f"      Channels: {info['maxInputChannels']}, Sample Rate: {int(info['defaultSampleRate'])}Hz")
+                    print(
+                        f"      Channels: {info['maxInputChannels']}, Sample Rate: {int(info['defaultSampleRate'])}Hz"
+                    )
             p.terminate()
             return 0
         except Exception as e:

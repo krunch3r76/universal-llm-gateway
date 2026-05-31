@@ -46,9 +46,7 @@ class VetoThresholdHandler(BaseHandler):
     step_type: str = "consensus_veto_threshold_v6_0"
 
     @override
-    async def execute(
-        self, step: StepConfig, context: PipelineContext
-    ) -> StepOutput:
+    async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         resolver = NamespaceResolver(context)
         verified_facts: list[dict[str, Any]] = self._resolve_input(
             resolver, step, "verified_facts", step.handler_inputs

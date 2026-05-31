@@ -174,9 +174,7 @@ async def finalize_selection_and_load(
                             selection_tier=trace.selection_tier.name,
                             selection_reason=trace.selection_reason,
                             models_to_evict=(
-                                [str(m) for m in plan.models_to_evict]
-                                if plan
-                                else []
+                                [str(m) for m in plan.models_to_evict] if plan else []
                             ),
                             freed_vram_mb=plan.freed_vram_mb if plan else 0,
                             freed_ram_mb=plan.freed_ram_mb if plan else 0,

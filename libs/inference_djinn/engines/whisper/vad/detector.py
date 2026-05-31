@@ -6,10 +6,10 @@ Architecture: Supports both sync and async initialization patterns.
 - Use __init__() for sync contexts (blocking, use sparingly)
 """
 
-from universal_logging import get_logger
 from typing import Any
 
 import numpy as np
+from universal_logging import get_logger
 
 from .base import BaseVAD, VADConfig, VADMethod
 from .energy import EnergyVAD

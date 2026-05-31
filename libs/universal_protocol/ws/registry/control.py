@@ -7,7 +7,9 @@ All control-frame emission flows through _signal_and_try_push().
 from __future__ import annotations
 
 import asyncio
-from universal_logging import get_logger, DEBUG, WARNING
+
+from universal_logging import DEBUG, WARNING, get_logger
+
 from universal_protocol.ws.registry.entries import StreamEntry
 from universal_protocol.ws.registry.protocols import ControlHostProtocol
 

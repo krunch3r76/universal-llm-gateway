@@ -126,7 +126,9 @@ class ResourceTrackerCrashHandler:
             )
             resource_tracker.set_model_error(
                 model_id,
-                classified_error if crashed_while_loading else f"Worker crashed: {error_message}",
+                classified_error
+                if crashed_while_loading
+                else f"Worker crashed: {error_message}",
             )
 
             if crashed_while_loading:

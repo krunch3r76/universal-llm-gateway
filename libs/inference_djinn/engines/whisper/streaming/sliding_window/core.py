@@ -6,11 +6,11 @@ callback thread to async event loop.
 """
 
 import asyncio
-from universal_logging import get_logger
 import time
 from collections.abc import Callable
 
 import numpy as np
+from universal_logging import get_logger
 
 from ..config import EnhancedConfig
 from ..types import TranscriptionResult
@@ -232,7 +232,7 @@ class AsyncSlidingWindowBuffer:
 
         if results:
             logger.info(
-                f"⏱️  Chunk processing: {t1-t0:.3f}s for {len(results)} result(s)"
+                f"⏱️  Chunk processing: {t1 - t0:.3f}s for {len(results)} result(s)"
             )
 
         return results
@@ -269,9 +269,9 @@ class AsyncSlidingWindowBuffer:
             self.boundary_finder.reset_boundary_timer()
             logger.debug(
                 f"⏱️  Buffer processing breakdown: "
-                f"boundary_detect={t2-t1:.3f}s, "
-                f"transcribe={t4-t3:.3f}s, "
-                f"total={t4-t0:.3f}s"
+                f"boundary_detect={t2 - t1:.3f}s, "
+                f"transcribe={t4 - t3:.3f}s, "
+                f"total={t4 - t0:.3f}s"
             )
 
         return results

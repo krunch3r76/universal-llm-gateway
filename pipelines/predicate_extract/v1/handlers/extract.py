@@ -50,10 +50,7 @@ class PredicateExtractApplyHandler(BaseHandler):
         entity_id = opts.get("entity_id")
 
         if not isinstance(assertion_id, int) or not claim:
-            err = (
-                "missing required pipeline_options: "
-                "assertion_id (int), claim (str)"
-            )
+            err = "missing required pipeline_options: assertion_id (int), claim (str)"
             return _step_output({"ok": False, "error": err}, error=err)
 
         async with make_async_client(

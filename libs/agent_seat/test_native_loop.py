@@ -391,7 +391,9 @@ async def test_synthesis_round_fires_after_friction_exhaustion(
         [
             _anthropic_repeated_section_miss_round("t1"),
             _anthropic_repeated_section_miss_round("t2"),
-            _anthropic_terminal("Could not find the section; here is what I can say from context."),
+            _anthropic_terminal(
+                "Could not find the section; here is what I can say from context."
+            ),
         ]
     )
     req = FrontierRequest(
@@ -572,9 +574,7 @@ async def test_synthesis_round_skipped_when_adapter_lacks_hooks(
         def parse_frontier_response(self, raw: Any) -> Any:
             return self._inner.parse_frontier_response(raw)
 
-        def append_tool_round(
-            self, body: Any, raw: Any, tool_results: Any
-        ) -> None:
+        def append_tool_round(self, body: Any, raw: Any, tool_results: Any) -> None:
             self._inner.append_tool_round(body, raw, tool_results)
 
     def fake_resolve(provider: Any) -> Any:
@@ -740,9 +740,7 @@ def test_all_frontier_adapters_implement_synthesis_hooks() -> None:
         ResponsesAPIAdapter(
             api_key="x", base_url="https://example.test", vendor="openai"
         ),
-        ResponsesAPIAdapter(
-            api_key="x", base_url="https://example.test", vendor="xai"
-        ),
+        ResponsesAPIAdapter(api_key="x", base_url="https://example.test", vendor="xai"),
         GoogleAdapter(api_key="x"),
     ]
     for a in adapters:

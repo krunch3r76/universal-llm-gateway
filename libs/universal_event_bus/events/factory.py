@@ -15,6 +15,7 @@ from typing import Any, cast
 from .event import Event
 from .validation import validate_event_signal
 
+
 class _ConstructionFlag(threading.local):
     """Thread-local guard toggled only during factory execution."""
 

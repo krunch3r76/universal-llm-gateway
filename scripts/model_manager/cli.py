@@ -152,13 +152,22 @@ def create_parser() -> argparse.ArgumentParser:
 # Lazy command mapping: command_name -> (module_path, function_name)
 # This avoids eager imports of optional dependencies (e.g., HuggingFace tools)
 COMMAND_REGISTRY = {
-    "check-resources": ("scripts.model_manager.commands.check_resources", "cmd_check_resources"),
+    "check-resources": (
+        "scripts.model_manager.commands.check_resources",
+        "cmd_check_resources",
+    ),
     "discover": ("scripts.model_manager.commands.catalog", "cmd_discover"),
     "generate": ("scripts.model_manager.commands.catalog", "cmd_generate"),
     "verify": ("scripts.model_manager.commands.verify", "cmd_verify"),
-    "promote-to-verified": ("scripts.model_manager.commands.promote", "cmd_promote_to_verified"),
+    "promote-to-verified": (
+        "scripts.model_manager.commands.promote",
+        "cmd_promote_to_verified",
+    ),
     "download": ("scripts.model_manager.commands.download", "cmd_download"),
-    "download-from-catalog": ("scripts.model_manager.commands.download_catalog", "cmd_download_from_catalog"),
+    "download-from-catalog": (
+        "scripts.model_manager.commands.download_catalog",
+        "cmd_download_from_catalog",
+    ),
     "list": ("scripts.model_manager.commands.catalog", "cmd_list"),
     "info": ("scripts.model_manager.commands.catalog", "cmd_info"),
     "show": ("scripts.model_manager.commands.catalog", "cmd_info"),

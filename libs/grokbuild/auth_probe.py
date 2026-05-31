@@ -20,8 +20,9 @@ import time
 from dataclasses import dataclass
 from enum import StrEnum
 
-from grokbuild.runner import _build_env
 from universal_logging import get_logger
+
+from grokbuild.runner import _build_env
 
 logger = get_logger(__name__)
 

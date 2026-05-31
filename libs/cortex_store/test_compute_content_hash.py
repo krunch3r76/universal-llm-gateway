@@ -19,7 +19,6 @@ import pytest
 
 from cortex_store.dispatch_ops import _shared
 
-
 _TEXT = "# v3.3\n\nFresh skill body.\n"
 _TEXT_SHA = "sha256:" + hashlib.sha256(_TEXT.encode("utf-8")).hexdigest()
 
@@ -46,9 +45,7 @@ def test_cortex_scheme_prefix_strips_and_resolves(files_root: Path) -> None:
     treated the scheme as part of the filename and produced a path like
     ``<root>/cortex://agent-skills/foo.md`` that is_file() rejected.
     """
-    assert (
-        _shared._compute_content_hash("cortex://agent-skills/foo.md") == _TEXT_SHA
-    )
+    assert _shared._compute_content_hash("cortex://agent-skills/foo.md") == _TEXT_SHA
 
 
 def test_cortex_scheme_and_bare_path_yield_identical_hash(files_root: Path) -> None:
@@ -81,7 +78,6 @@ def test_files_scheme_returns_none(files_root: Path) -> None:
 def test_missing_file_returns_none(files_root: Path) -> None:
     """Path resolves but file does not exist — None."""
     assert (
-        _shared._compute_content_hash("cortex://agent-skills/does-not-exist.md")
-        is None
+        _shared._compute_content_hash("cortex://agent-skills/does-not-exist.md") is None
     )
     assert _shared._compute_content_hash("agent-skills/does-not-exist.md") is None

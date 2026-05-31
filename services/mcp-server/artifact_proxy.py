@@ -23,7 +23,6 @@ from typing import Any
 from mcp_events import monotonic_now, record
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-
 from tools._local_relay import relay as _relay
 
 logger = logging.getLogger(__name__)

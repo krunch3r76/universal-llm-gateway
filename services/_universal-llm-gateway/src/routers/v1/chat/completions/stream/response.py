@@ -69,6 +69,7 @@ async def generate_streaming_response(
 
     if request_id is None:
         import uuid
+
         request_id = str(uuid.uuid4())
 
     # Emit REQUEST_QUEUED event

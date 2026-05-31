@@ -5,9 +5,10 @@ Handles non-streaming completion generation.
 """
 
 import asyncio
-from universal_logging import get_logger
 import time
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

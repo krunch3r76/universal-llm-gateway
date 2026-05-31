@@ -1,7 +1,8 @@
 """Cancel inference RPC handler."""
 
-from universal_logging import get_logger
 from typing import Any
+
+from universal_logging import get_logger
 
 from universal_protocol.errors import RPCError
 from universal_protocol.observability import set_streams_active

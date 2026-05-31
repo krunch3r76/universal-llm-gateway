@@ -8,9 +8,10 @@ Provides functions to analyze HuggingFace models for vLLM compatibility:
 - Tokenizer analysis
 """
 
-from universal_logging import get_logger
 import os
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

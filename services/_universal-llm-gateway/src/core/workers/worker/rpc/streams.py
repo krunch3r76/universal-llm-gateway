@@ -170,10 +170,12 @@ class StreamHandlers:
 
         task = asyncio.create_task(deferred_cleanup())
         task.add_done_callback(
-            lambda t: logger.debug(f"Deferred cleanup task done for {stream_id}")
-            if not t.exception()
-            else logger.error(
-                f"Deferred cleanup task exception for {stream_id}: {t.exception()}"
+            lambda t: (
+                logger.debug(f"Deferred cleanup task done for {stream_id}")
+                if not t.exception()
+                else logger.error(
+                    f"Deferred cleanup task exception for {stream_id}: {t.exception()}"
+                )
             )
         )
 

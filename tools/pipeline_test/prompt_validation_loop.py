@@ -14,7 +14,6 @@ a revision, and ALL cases are re-run after each revision.
 import json
 import pathlib
 import re
-import sys
 import time
 import urllib.request
 
@@ -45,6 +44,7 @@ TEST_CASES = [
 ]
 
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def call_raw(model: str, messages: list[dict]) -> str:
     body = json.dumps({"model": model, "messages": messages}).encode()
@@ -131,7 +131,7 @@ Output JSON only:
 def revise_prompt(current_prompt: str, violations: list[dict], label: str) -> str:
     violation_text = "\n".join(
         f"- [{v['severity'].upper()}] Test case: {label!r}\n"
-        f"  Instruction: \"{v['instruction']}\"\n"
+        f'  Instruction: "{v["instruction"]}"\n'
         f"  Model did: {v['actual']}"
         for v in violations
     )
@@ -156,7 +156,8 @@ no YAML, no wrapper, no explanation.
 def extract_system_prompt(prompts_yaml: str) -> str:
     m = re.search(
         r"  finalize:\n.*?system_prompt: \|\n(.*?)(?=\n    template:)",
-        prompts_yaml, re.DOTALL
+        prompts_yaml,
+        re.DOTALL,
     )
     if not m:
         raise ValueError("Could not find finalize system_prompt in prompts.yaml")
@@ -177,17 +178,20 @@ def save_prompt(new_prompt: str, yaml_path: pathlib.Path) -> None:
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     yaml_path = pathlib.Path("pipelines/modularize/prompts.yaml")
     system_prompt = extract_system_prompt(yaml_path.read_text())
 
-    print(f"Prompt validation loop — {len(TEST_CASES)} test cases, max {MAX_ITERATIONS} revision rounds\n")
+    print(
+        f"Prompt validation loop — {len(TEST_CASES)} test cases, max {MAX_ITERATIONS} revision rounds\n"
+    )
     print("=" * 70)
 
     for revision_round in range(1, MAX_ITERATIONS + 1):
-        print(f"\n{'━'*70}")
+        print(f"\n{'━' * 70}")
         print(f"  REVISION ROUND {revision_round}/{MAX_ITERATIONS}")
-        print(f"{'━'*70}")
+        print(f"{'━' * 70}")
 
         all_violations: list[tuple[str, list[dict]]] = []
 
@@ -205,7 +209,9 @@ def main() -> None:
                 decline = plan.get("decline_reason", "(none)")
                 modules = len(plan.get("modules", []))
                 reasoning_ok = bool(plan.get("reasoning"))
-                print(f"    [result] {elapsed:.1f}s — decline={decline!r}  modules={modules}  reasoning={'✓' if reasoning_ok else '✗'}")
+                print(
+                    f"    [result] {elapsed:.1f}s — decline={decline!r}  modules={modules}  reasoning={'✓' if reasoning_ok else '✗'}"
+                )
             else:
                 print(f"    [result] {elapsed:.1f}s — could not parse JSON response")
 
@@ -216,25 +222,33 @@ def main() -> None:
             elapsed = time.monotonic() - t0
             compliant = verdict["compliant"]
             n_violations = len(verdict.get("violations", []))
-            print(f"    [audit]  {elapsed:.1f}s — compliant={compliant}  violations={n_violations}")
+            print(
+                f"    [audit]  {elapsed:.1f}s — compliant={compliant}  violations={n_violations}"
+            )
             print(f"             {verdict.get('summary', '')}")
 
             if not compliant:
                 for v in verdict["violations"]:
-                    print(f"             [{v['severity'].upper()}] {v['instruction'][:72]!r}")
+                    print(
+                        f"             [{v['severity'].upper()}] {v['instruction'][:72]!r}"
+                    )
                     print(f"                      → {v['actual'][:72]!r}")
                 all_violations.append((label, verdict["violations"]))
 
         if not all_violations:
-            print(f"\n{'='*70}")
-            print(f"  ✅  All {len(TEST_CASES)} test cases passed — prompt is compliant!")
-            print(f"{'='*70}")
+            print(f"\n{'=' * 70}")
+            print(
+                f"  ✅  All {len(TEST_CASES)} test cases passed — prompt is compliant!"
+            )
+            print(f"{'=' * 70}")
             save_prompt(system_prompt, yaml_path)
             print(f"  Saved to {yaml_path}")
             return
 
         if revision_round == MAX_ITERATIONS:
-            print(f"\n⚠️  Max revision rounds reached with {len(all_violations)} failing case(s).")
+            print(
+                f"\n⚠️  Max revision rounds reached with {len(all_violations)} failing case(s)."
+            )
             print("   Saving best prompt found.")
             save_prompt(system_prompt, yaml_path)
             return
@@ -246,22 +260,24 @@ def main() -> None:
             for v in viols
             if v["severity"] == "critical"
         ]
-        to_fix_labeled = all_critical if all_critical else [
-            (label, v)
-            for label, viols in all_violations
-            for v in viols
-        ]
+        to_fix_labeled = (
+            all_critical
+            if all_critical
+            else [(label, v) for label, viols in all_violations for v in viols]
+        )
 
         # Group by label for the revision request
         by_label: dict[str, list[dict]] = {}
         for label, v in to_fix_labeled:
             by_label.setdefault(label, []).append(v)
 
-        print(f"\n  [revise] Requesting prompt revision ({len(to_fix_labeled)} violation(s) across {len(by_label)} case(s))...")
+        print(
+            f"\n  [revise] Requesting prompt revision ({len(to_fix_labeled)} violation(s) across {len(by_label)} case(s))..."
+        )
         # Build combined violations text
         all_v_text = "\n".join(
             f"- [{v['severity'].upper()}] Case: {label!r}\n"
-            f"  Instruction: \"{v['instruction']}\"\n"
+            f'  Instruction: "{v["instruction"]}"\n'
             f"  Model did: {v['actual']}"
             for label, v in to_fix_labeled
         )
@@ -279,8 +295,12 @@ Revise the system prompt to prevent these violations while preserving all
 correct behaviors. Output ONLY the revised system_prompt text.
 """
         t0 = time.monotonic()
-        system_prompt = call_raw(AUTHOR_MODEL, [{"role": "user", "content": revise_prompt_text}])
-        print(f"  [revise] done in {time.monotonic()-t0:.1f}s — {len(system_prompt)} chars")
+        system_prompt = call_raw(
+            AUTHOR_MODEL, [{"role": "user", "content": revise_prompt_text}]
+        )
+        print(
+            f"  [revise] done in {time.monotonic() - t0:.1f}s — {len(system_prompt)} chars"
+        )
 
     print("\nDone.")
 

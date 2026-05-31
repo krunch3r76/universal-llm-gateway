@@ -12,10 +12,10 @@ from typing import Any
 from universal_logging import get_logger
 
 from ...protocol.length_prefixed import LengthPrefixedProtocol
-from ...transport.tcp_async import AsyncTCPClientHandler
-from ...transport.unix_async import AsyncUnixClientHandler
 from ...transport.tcp.connection import AsyncTCPReceiveError
+from ...transport.tcp_async import AsyncTCPClientHandler
 from ...transport.unix.connection import AsyncUnixReceiveError
+from ...transport.unix_async import AsyncUnixClientHandler
 
 logger = get_logger(__name__)
 
@@ -153,7 +153,9 @@ class AsyncClientSession:
             # Check if it's a normal disconnect (IncompleteReadError) vs actual error
             error_msg = str(e)
             if "disconnected" in error_msg.lower() or "closed" in error_msg.lower():
-                logger.debug(f"Client {self.client_id} disconnected normally: {error_msg}")
+                logger.debug(
+                    f"Client {self.client_id} disconnected normally: {error_msg}"
+                )
             else:
                 # Unexpected receive error (protocol violation, etc.)
                 logger.error(f"Failed to receive message from {self.client_id}: {e}")

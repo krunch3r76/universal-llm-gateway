@@ -474,9 +474,7 @@ class ModelRouter:
 
         # 6. Select gateway
         request_id = request.get("_request_id") if isinstance(request, dict) else None
-        selected, trace = self._select_and_record_stats(
-            gateways, placement, request_id
-        )
+        selected, trace = self._select_and_record_stats(gateways, placement, request_id)
 
         if not selected:
             logger.debug(f"P4: No gateway available for {model_id} - queued")
@@ -490,8 +488,7 @@ class ModelRouter:
                 allowed_gateway_ids = frozenset({selected.name})
             else:
                 allowed_gateway_ids = frozenset(
-                    g.name for g in gateways
-                    if parsed in g.loaded_models
+                    g.name for g in gateways if parsed in g.loaded_models
                 )
 
             timeout_s = self._routing_policy.capacity_acquire_timeout_s
@@ -528,4 +525,3 @@ class ModelRouter:
             return None  # Return to queue, retry later
 
         return selected
-

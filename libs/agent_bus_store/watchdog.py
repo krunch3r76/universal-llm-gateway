@@ -34,7 +34,9 @@ from .events.lifecycle import emit_thread_abandoned, emit_watchdog_sweep_failed
 
 _PENDING_TTL: int = int(os.getenv("AGENT_BUS_WATCHDOG_PENDING_TTL", "1800"))
 _ADMITTED_TTL: int = int(os.getenv("AGENT_BUS_WATCHDOG_ADMITTED_TTL", "3600"))
-_ACTIVE_ABANDON_TTL: int = int(os.getenv("AGENT_BUS_WATCHDOG_ACTIVE_ABANDON_TTL", "172800"))
+_ACTIVE_ABANDON_TTL: int = int(
+    os.getenv("AGENT_BUS_WATCHDOG_ACTIVE_ABANDON_TTL", "172800")
+)
 _SWEEP_INTERVAL: int = int(os.getenv("AGENT_BUS_WATCHDOG_SWEEP_INTERVAL", "300"))
 
 ReapReason = Literal[
@@ -120,7 +122,9 @@ def _reap_admitted(cutoff: str) -> None:
             (cutoff,),
         ).fetchall()
     for row in rows:
-        _reap_single(row["id"], expected_state="admitted", reason="admitted_ttl_exceeded")
+        _reap_single(
+            row["id"], expected_state="admitted", reason="admitted_ttl_exceeded"
+        )
 
 
 def _reap_active(cutoff: str) -> None:
@@ -141,7 +145,9 @@ def _reap_active(cutoff: str) -> None:
             (cutoff,),
         ).fetchall()
     for row in rows:
-        _reap_single(row["id"], expected_state="active", reason="all_terminal_no_delivery")
+        _reap_single(
+            row["id"], expected_state="active", reason="all_terminal_no_delivery"
+        )
 
 
 def _cutoff_for_ttl(ttl_seconds: int) -> str:

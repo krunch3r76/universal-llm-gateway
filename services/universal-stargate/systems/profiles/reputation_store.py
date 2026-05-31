@@ -152,9 +152,7 @@ class TaskModelReputationStore:
                 }
                 self._last_save_ts = now
                 self._save_pending = False
-                asyncio.create_task(
-                    asyncio.to_thread(self._save_to_disk, data_to_save)
-                )
+                asyncio.create_task(asyncio.to_thread(self._save_to_disk, data_to_save))
             elif not self._save_pending:
                 self._save_pending = True
                 delay = _SAVE_DEBOUNCE_SECONDS - (now - self._last_save_ts)
@@ -172,9 +170,7 @@ class TaskModelReputationStore:
                         }
                         self._last_save_ts = monotonic()
                         self._save_pending = False
-                    await asyncio.to_thread(
-                        self._save_to_disk, data_to_save
-                    )
+                    await asyncio.to_thread(self._save_to_disk, data_to_save)
 
                 asyncio.create_task(_deferred())
 

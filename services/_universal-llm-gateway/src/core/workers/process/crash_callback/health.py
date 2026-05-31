@@ -10,9 +10,9 @@ logger = get_logger(__name__)
 async def stop_health_monitoring(process_id: str, state: ProcessState) -> None:
     """
     Stop health monitoring for crashed worker to prevent duplicate reports.
-    
+
     Error isolated - failures logged but don't propagate.
-    
+
     Args:
         process_id: Process/model ID that crashed
         state: Process state container

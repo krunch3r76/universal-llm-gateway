@@ -1,9 +1,9 @@
 """DELETE /api/v1/models/{model_id} - Unload model endpoint"""
 
-from universal_logging import get_logger
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from universal_logging import get_logger
 
 from src.core.workers import WorkerController
 from src.routers.dependencies import get_worker_controller

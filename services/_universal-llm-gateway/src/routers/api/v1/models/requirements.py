@@ -1,7 +1,7 @@
 """GET /api/v1/models/{model_id}/requirements - Model resource requirements"""
 
-from universal_logging import get_logger
 from fastapi import APIRouter, Depends, HTTPException
+from universal_logging import get_logger
 
 from src.core.resources import resource_tracker
 from src.routers.dependencies import get_model_registry

@@ -151,9 +151,7 @@ def test_grounding_metadata_preserved() -> None:
         ]
     )
     result = GoogleStreamReducer.to_terminal_dict(state)
-    assert result["candidates"][0]["groundingMetadata"] == {
-        "webSearchQueries": ["q1"]
-    }
+    assert result["candidates"][0]["groundingMetadata"] == {"webSearchQueries": ["q1"]}
 
 
 # ---------------------------------------------------------------------------
@@ -174,9 +172,7 @@ def test_to_terminal_dict_empty_state_is_well_formed() -> None:
 def test_terminal_error_raises_provider_error() -> None:
     r = GoogleStreamReducer()
     state = r.initial_state()
-    err = SSEMessage(
-        data='{"error": {"code": 429, "message": "quota"}}', event="error"
-    )
+    err = SSEMessage(data='{"error": {"code": 429, "message": "quota"}}', event="error")
     with pytest.raises(SSEProviderError, match="Google stream error"):
         r.terminal_error(state, err)
 

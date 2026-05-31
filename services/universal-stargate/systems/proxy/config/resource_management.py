@@ -247,9 +247,7 @@ def load_gateway_configs(config_path: Path) -> dict[str, GatewayConfig]:
     """
 
     if not config_path.exists():
-        raise FileNotFoundError(
-            f"Gateway configuration file not found: {config_path}"
-        )
+        raise FileNotFoundError(f"Gateway configuration file not found: {config_path}")
 
     try:
         with open(config_path) as f:

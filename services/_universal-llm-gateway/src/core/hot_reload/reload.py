@@ -166,7 +166,7 @@ class ConfigReloader:
 
     def _parse_config_file(self, file_path: Path) -> dict[str, Any]:
         """Parse configuration file without modifying timestamps.
-        
+
         Preserves file access/modification times to prevent editor notifications
         about spurious changes when hot-reload reads config files.
         """

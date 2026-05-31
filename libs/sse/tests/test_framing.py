@@ -38,9 +38,7 @@ async def test_single_event_in_one_chunk() -> None:
 
 @pytest.mark.asyncio
 async def test_event_split_across_chunks() -> None:
-    events = [
-        event async for event in iter_sse_events(_aiter(b"data: hel", b"lo\n\n"))
-    ]
+    events = [event async for event in iter_sse_events(_aiter(b"data: hel", b"lo\n\n"))]
     assert len(events) == 1
     assert events[0].data == "hello"
 

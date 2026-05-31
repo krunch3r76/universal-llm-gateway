@@ -6,10 +6,11 @@ OpenAI format conversion, and consistent error handling.
 """
 
 import asyncio
-from universal_logging import get_logger
 import time
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

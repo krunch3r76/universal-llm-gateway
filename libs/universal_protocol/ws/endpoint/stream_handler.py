@@ -3,8 +3,8 @@
 Single responsibility: Accept connection, orchestrate validation/loop/cleanup.
 """
 
-from universal_logging import get_logger
 from starlette.websockets import WebSocket
+from universal_logging import get_logger
 
 from .cleanup import cleanup_websocket_stream
 from .stream_loop import read_and_send_frames

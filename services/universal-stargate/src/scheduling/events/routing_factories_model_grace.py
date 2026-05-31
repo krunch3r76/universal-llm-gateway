@@ -77,4 +77,3 @@ def RoutingModelGraceTimeout(
             "waited_ms": waited_ms,
         },
     )
-

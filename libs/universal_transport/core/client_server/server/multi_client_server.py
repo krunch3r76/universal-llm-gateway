@@ -6,9 +6,10 @@ multi-client server patterns with message handlers.
 """
 
 import asyncio
-from universal_logging import get_logger
 from collections.abc import Awaitable, Callable
 from typing import Any
+
+from universal_logging import get_logger
 
 from ...protocol.length_prefixed import LengthPrefixedProtocol
 from ...transport.tcp_async import AsyncTCPClientHandler, AsyncTCPServer

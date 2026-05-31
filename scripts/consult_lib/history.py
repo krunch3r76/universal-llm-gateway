@@ -118,7 +118,7 @@ def extract_pipeline_step_records(
                         wall_clock=event.get("wall_clock"),
                     )
                 )
-    except OSError as e:
+    except OSError:
         # Log the error for observability
         # import logging
         # logging.error(f"Error reading recorder file {recorder_file}: {e}")
@@ -204,7 +204,7 @@ def resolve_pipeline_models(
                 if isinstance(model_id, str) and model_id and model_id not in seen:
                     seen.add(model_id)
                     models.append(model_id)
-    except OSError as e:
+    except OSError:
         # Log the error for observability
         # import logging
         # logging.error(f"Error reading pipeline events file {_PIPELINE_EVENTS_PATH}: {e}")

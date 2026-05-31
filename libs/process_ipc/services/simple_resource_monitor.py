@@ -11,10 +11,10 @@ from datetime import datetime
 from typing import Any
 
 import psutil
+from universal_logging import get_logger
 
 from ..core.config import ResourceMonitoringConfig
 from ..core.types import ProcessResourceUsage
-from universal_logging import get_logger
 
 # Try to import pynvml for GPU monitoring
 try:

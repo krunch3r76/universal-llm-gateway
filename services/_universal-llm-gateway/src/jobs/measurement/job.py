@@ -468,8 +468,8 @@ class MeasurementJob(Job):
         }
         if is_embedding:
             loader_updates["embedding"] = True
-            loader_updates["embedding_task_default"] = self._resolve_embedding_task_default(
-                loader_config
+            loader_updates["embedding_task_default"] = (
+                self._resolve_embedding_task_default(loader_config)
             )
         return results, loader_updates
 
@@ -542,7 +542,9 @@ class MeasurementJob(Job):
 
         loader_updates: dict[str, Any] = {
             "embedding": True,
-            "embedding_task_default": self._resolve_embedding_task_default(loader_config),
+            "embedding_task_default": self._resolve_embedding_task_default(
+                loader_config
+            ),
         }
         if pooling is not None:
             loader_updates["pooling"] = pooling

@@ -39,7 +39,9 @@ class StreamCancellationHandler:
         self._cancellation_count = 0  # Track total cancellations for monitoring
 
         # Subscribe to cancellation events (EventBus auto-detects async)
-        self.event_bus.subscribe_async(STREAM_CANCELLED, self._handle_stream_cancellation)
+        self.event_bus.subscribe_async(
+            STREAM_CANCELLED, self._handle_stream_cancellation
+        )
 
         logger.info("🔄 StreamCancellationHandler initialized")
 

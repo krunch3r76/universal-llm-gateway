@@ -7,9 +7,10 @@ Control-plane messaging delegated to RegistryControlMixin.
 from __future__ import annotations
 
 import asyncio
-from universal_logging import get_logger
 import time
 from collections.abc import Iterator
+
+from universal_logging import get_logger
 
 from universal_protocol.ws.registry.entries import StreamEntry
 from universal_protocol.ws.registry.protocols import IdleMonitorHostProtocol

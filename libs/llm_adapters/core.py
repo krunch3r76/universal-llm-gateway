@@ -206,7 +206,9 @@ def body_to_llm_request(
     system_raw = body.get("system", "")
     system = flatten_anthropic_system(system_raw)
     max_tok_raw = body.get("max_tokens")
-    max_tok: int | None = max_tok_raw if isinstance(max_tok_raw, int) and max_tok_raw >= 1 else None
+    max_tok: int | None = (
+        max_tok_raw if isinstance(max_tok_raw, int) and max_tok_raw >= 1 else None
+    )
     temperature = body.get("temperature")
     if isinstance(temperature, bool) or not isinstance(temperature, int | float):
         temperature = None

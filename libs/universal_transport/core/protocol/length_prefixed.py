@@ -15,11 +15,12 @@ Design principles:
 Frame format: [4-byte length (big-endian)][payload bytes]
 """
 
-from universal_logging import get_logger
 import struct
 from collections.abc import Iterator
 from enum import Enum
 from typing import Any
+
+from universal_logging import get_logger
 
 from .base import DecodeError, EncodeError, Protocol
 from .serializers import JSONSerializer, Serializer

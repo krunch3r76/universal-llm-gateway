@@ -1,7 +1,6 @@
 """Check system resources and show measurement safety diagnostics."""
 
 import argparse
-from pathlib import Path
 
 from ..config import Config
 
@@ -181,17 +180,16 @@ def cmd_check_resources(args: argparse.Namespace, config: Config) -> int:
     print("=== Recommendations ===")
     print()
 
-    if mem_info.get("available_ram_mb", 0) < mem_info.get(
-        "recommended_headroom_mb", 0
-    ):
+    if mem_info.get("available_ram_mb", 0) < mem_info.get("recommended_headroom_mb", 0):
         print("🛑 CRITICAL: Insufficient RAM for safe measurement")
         print("   - Unload all models before measuring")
         print("   - Reduce context sizes (use --contexts 16384,8192,4096)")
         print("   - Consider adding swap or upgrading RAM")
         return 1
-    elif mem_info.get("available_ram_mb", 0) < mem_info.get(
-        "recommended_headroom_mb", 0
-    ) * 1.5:
+    elif (
+        mem_info.get("available_ram_mb", 0)
+        < mem_info.get("recommended_headroom_mb", 0) * 1.5
+    ):
         print("⚠️  WARNING: Low available RAM")
         print("   - Unload all models before measuring")
         print("   - Start with smaller contexts (--contexts 16384,8192,4096,2048)")
@@ -215,7 +213,3 @@ def cmd_check_resources(args: argparse.Namespace, config: Config) -> int:
         print("   - Recommended: at least 8GB swap")
 
     return 0
-
-
-
-

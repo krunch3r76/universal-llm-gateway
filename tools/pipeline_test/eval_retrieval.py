@@ -169,9 +169,7 @@ def _build_eval_prompt(
         "rewritten_queries": rewrite.get("rewritten_queries", []),
         "hyde_passage": rewrite.get("hyde_passage", ""),
     }
-    rewrite_summary = json.dumps(
-        rewrite_summary_data, indent=2, ensure_ascii=False
-    )
+    rewrite_summary = json.dumps(rewrite_summary_data, indent=2, ensure_ascii=False)
 
     trunc_note = (
         f"\n[Context truncated at {_CONTEXT_CHAR_LIMIT} chars for evaluation]"
@@ -386,8 +384,7 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
             )
         if preview:
             issues_list.append(
-                f"Raw response preview (first {len(preview)} chars): "
-                f"{preview!r}"
+                f"Raw response preview (first {len(preview)} chars): {preview!r}"
             )
         result: dict[str, Any] = {
             "scores": {},
@@ -406,7 +403,9 @@ def _parse_evaluation(text: str, model_id: str) -> dict[str, Any]:
     )
     _coerce_scores(scores_for_coercion)
     scores: dict[str, int] = {
-        key: value for key, value in scores_for_coercion.items() if isinstance(value, int)
+        key: value
+        for key, value in scores_for_coercion.items()
+        if isinstance(value, int)
     }
 
     # Derive verdict from scores if model omitted/miscased it

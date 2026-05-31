@@ -20,4 +20,5 @@ class MapIterationContext:
     key: str | None
     total: int
 
+
 __all__ = ["MapOutputCollection", "MapJsonAccessor", "MapIterationContext"]

@@ -455,9 +455,7 @@ class GatewayResourceManager(Sequential):
             "active_models": list(self._reservations_by_model.keys()),
         }
 
-    def _publish_reservation_event(
-        self, reservation: ResourceReservation
-    ) -> None:
+    def _publish_reservation_event(self, reservation: ResourceReservation) -> None:
         """
         Publish RESOURCE_RESERVED event to update WebSocket cache.
 
@@ -483,9 +481,7 @@ class GatewayResourceManager(Sequential):
             try:
                 loop = asyncio.get_running_loop()
                 loop.call_soon(
-                    lambda: asyncio.create_task(
-                        self._event_bus.publish_nowait(event)
-                    )
+                    lambda: asyncio.create_task(self._event_bus.publish_nowait(event))
                 )
             except RuntimeError:
                 # Not in async context, skip emission
@@ -526,9 +522,7 @@ class GatewayResourceManager(Sequential):
             try:
                 loop = asyncio.get_running_loop()
                 loop.call_soon(
-                    lambda: asyncio.create_task(
-                        self._event_bus.publish_nowait(event)
-                    )
+                    lambda: asyncio.create_task(self._event_bus.publish_nowait(event))
                 )
             except RuntimeError:
                 # Not in async context, skip emission

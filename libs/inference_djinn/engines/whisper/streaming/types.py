@@ -140,9 +140,9 @@ class TranscriptionResult:
                 }
                 for word in self.words
             ]
-            result_dict["average_word_probability"] = (
-                sum(word.probability for word in self.words) / len(self.words)
-            )
+            result_dict["average_word_probability"] = sum(
+                word.probability for word in self.words
+            ) / len(self.words)
         else:
             result_dict["words"] = []
             result_dict["average_word_probability"] = 0.0
@@ -155,7 +155,9 @@ class TranscriptionResult:
             return 0.0
         return sum(word.probability for word in self.words) / len(self.words)
 
-    def get_low_probability_words(self, threshold: float = 0.5) -> list[HighResTimedWord]:
+    def get_low_probability_words(
+        self, threshold: float = 0.5
+    ) -> list[HighResTimedWord]:
         """Get words with probability below threshold."""
         if not self.words:
             return []
@@ -227,4 +229,3 @@ class StreamingResponse:
             "service_type": self.service_type,
             "timestamp": self.timestamp,
         }
-

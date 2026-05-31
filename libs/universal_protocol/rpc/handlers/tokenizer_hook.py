@@ -25,4 +25,3 @@ def register_tokenizer_callback(callback: Callable[[str, str | None], Any]) -> N
 def get_tokenizer_callback() -> Callable[[str, str | None], Any] | None:
     """Get registered tokenizer callback (may be None)."""
     return _tokenizer_callback
-

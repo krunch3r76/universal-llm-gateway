@@ -1,7 +1,9 @@
 """_PropertyIndexPart08 — PropertyIndex method chunk (SLOC split)."""
+
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
+
 
 class _PropertyIndexPart08:
     def lookup_articles_by_hash(self, hashes: list[str]) -> dict[str, ArticleEntry]:
@@ -55,6 +57,3 @@ class _PropertyIndexPart08:
             conn.executemany("UPDATE properties SET scope = ? WHERE rowid = ?", updates)
             conn.commit()
         return len(rows), len(updates)
-
-
-

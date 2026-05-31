@@ -212,9 +212,7 @@ def _audit(client: _UDSConnection) -> int:
       - Orphan: id in PARTITION/OVERRIDES but no matching live entity
         (typically a deleted or renamed skill).
     """
-    status, body = client.request(
-        "GET", "/entities?type=agent_skill&limit=500"
-    )
+    status, body = client.request("GET", "/entities?type=agent_skill&limit=500")
     if status != 200:
         print(f"AUDIT FAIL: GET /entities {status} → {body}")
         return 2
@@ -320,10 +318,7 @@ def main() -> int:
         merged["applicable_agents"] = applicable
 
         if args.dry_run:
-            print(
-                f"  WOULD {entity_id:60s}  → {applicable}  ({label})"
-                f"  prior={prior}"
-            )
+            print(f"  WOULD {entity_id:60s}  → {applicable}  ({label})  prior={prior}")
             continue
 
         status, body = client.request(

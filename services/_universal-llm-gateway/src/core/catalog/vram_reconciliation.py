@@ -31,7 +31,7 @@ def _resolve_target_profile(
     preferred_devices = ["gpu", "hybrid", "cpu"] if measured_vram_mb > 0 else ["cpu"]
 
     for device in preferred_devices:
-        profiles = ((devices.get(device) or {}).get("profiles") or {})
+        profiles = (devices.get(device) or {}).get("profiles") or {}
         if profiles:
             profile_key = "default" if "default" in profiles else next(iter(profiles))
             return device, str(profile_key)
@@ -76,7 +76,7 @@ def reconcile_max_observed_vram(
 
     device_key, profile_key = target
     devices = entry.get("devices") or {}
-    profiles = ((devices.get(device_key) or {}).get("profiles") or {})
+    profiles = (devices.get(device_key) or {}).get("profiles") or {}
     profile = profiles.get(profile_key)
     if not isinstance(profile, dict):
         logger.warning(

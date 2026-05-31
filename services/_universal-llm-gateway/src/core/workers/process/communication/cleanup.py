@@ -17,11 +17,11 @@ logger = get_logger(__name__)
 def SocketCleanupRequested(model_id: str, socket_path: str) -> Event:
     """
     Create socket cleanup request event.
-    
+
     Args:
         model_id: Model identifier
         socket_path: Path to socket file
-        
+
     Returns:
         Event with SocketCleanupRequested signal
     """
@@ -37,13 +37,13 @@ def WorkerCleanupRequested(
 ) -> Event:
     """
     Create worker cleanup request event.
-    
+
     Args:
         model_id: Model identifier
         socket_path: Path to socket file
         supervisor_id: Optional supervisor ID
         reason: Cleanup reason
-        
+
     Returns:
         Event with WorkerCleanupRequested signal
     """
@@ -62,11 +62,11 @@ def WorkerCleanupRequested(
 def SupervisorTerminationRequested(model_id: str, supervisor_id: str) -> Event:
     """
     Create supervisor termination request event.
-    
+
     Args:
         model_id: Model identifier
         supervisor_id: Supervisor ID to terminate
-        
+
     Returns:
         Event with SupervisorTerminationRequested signal
     """
@@ -82,12 +82,12 @@ def ResourceStateUpdateRequested(
 ) -> Event:
     """
     Create resource state update request event.
-    
+
     Args:
         model_id: Model identifier
         state: Target state ("failed", "unloaded")
         error: Optional error message
-        
+
     Returns:
         Event with ResourceStateUpdateRequested signal
     """

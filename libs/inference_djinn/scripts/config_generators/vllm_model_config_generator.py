@@ -20,7 +20,6 @@ Examples:
 import argparse
 import hashlib
 import json
-from universal_logging import get_logger, INFO
 import os
 import sys
 from dataclasses import dataclass
@@ -28,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from universal_logging import get_logger
 
 # Configure logging (universal_logging is already imported)
 logger = get_logger(__name__)

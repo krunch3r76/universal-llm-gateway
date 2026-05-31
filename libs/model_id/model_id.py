@@ -268,7 +268,7 @@ class ModelId:
         if self.provider:
             prefix = f"{self.provider}/"
             if self.base_id.startswith(prefix):
-                result = self.base_id[len(prefix):]
+                result = self.base_id[len(prefix) :]
                 if result.endswith("-mcp"):
                     result = result[:-4]
                 return result

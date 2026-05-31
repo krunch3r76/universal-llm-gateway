@@ -1,6 +1,5 @@
 """OpenAI Embeddings API compatible schemas."""
 
-
 from pydantic import BaseModel, Field
 
 

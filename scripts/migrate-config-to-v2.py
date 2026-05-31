@@ -22,7 +22,7 @@ import yaml
 def remove_env_defaults(value: str) -> str:
     """Replace ${VAR:-default} with ${VAR} (fail-fast)."""
     # Pattern: ${VAR:-default} -> ${VAR}
-    return re.sub(r'\$\{([^:}]+):-[^}]*\}', r'${\1}', value)
+    return re.sub(r"\$\{([^:}]+):-[^}]*\}", r"${\1}", value)
 
 
 def walk_and_fix_env_vars(obj):
@@ -66,7 +66,9 @@ def migrate_remote_gateway(config: dict) -> list[str]:
 
     if gw_socket and not local_gw.get("socket_path"):
         local_gw["socket_path"] = gw_socket
-        warnings.append("Moved gateway.socket_path to federation.local_gateway.socket_path")
+        warnings.append(
+            "Moved gateway.socket_path to federation.local_gateway.socket_path"
+        )
         gateway["socket_path"] = None
 
     federation["local_gateway"] = local_gw
@@ -147,7 +149,9 @@ def main():
     # Write output
     output_path = config_path.with_suffix(".unified.yaml")
     with output_path.open("w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml.dump(
+            config, f, default_flow_style=False, sort_keys=False, allow_unicode=True
+        )
 
     print(f"✅ Migrated: {config_path} → {output_path}")
     print("Review the output and rename when ready.")

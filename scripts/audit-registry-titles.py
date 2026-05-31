@@ -89,7 +89,10 @@ def extract_title_via_llm(md_text: str, model: str, timeout: float = 60.0) -> st
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": "You return only the requested piece of text, with no extra wording."},
+                    {
+                        "role": "system",
+                        "content": "You return only the requested piece of text, with no extra wording.",
+                    },
                     {"role": "user", "content": f"{prompt}\n\n---\n\n{excerpt}"},
                 ],
                 "temperature": 0,
@@ -98,7 +101,9 @@ def extract_title_via_llm(md_text: str, model: str, timeout: float = 60.0) -> st
         )
         resp.raise_for_status()
         data = resp.json()
-        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        content = (data.get("choices") or [{}])[0].get("message", {}).get(
+            "content"
+        ) or ""
         return content.strip()
     except Exception as e:
         print(f"Error extracting title via LLM: {e}", file=sys.stderr)
@@ -143,7 +148,10 @@ def main(model: str = "auto", batch_size: int = DEFAULT_BATCH_SIZE) -> None:
         pdf_entries.append((filename, entry))
 
     effective_model = resolve_model() if model == "auto" else model
-    print(f"Auditing {len(pdf_entries)} PDFs in batches of {batch_size} (model={effective_model})", flush=True)
+    print(
+        f"Auditing {len(pdf_entries)} PDFs in batches of {batch_size} (model={effective_model})",
+        flush=True,
+    )
 
     inconsistencies: list[dict[str, str]] = []
     total = len(pdf_entries)
@@ -152,39 +160,47 @@ def main(model: str = "auto", batch_size: int = DEFAULT_BATCH_SIZE) -> None:
         for filename, entry in batch:
             pdf_path = RESEARCH_ROOT / (entry.get("subdirectory") or "") / filename
             if not pdf_path.exists():
-                inconsistencies.append({
-                    "file": filename,
-                    "registered_title": entry.get("title") or "",
-                    "extracted_title": "",
-                    "reason": "file_not_found",
-                })
+                inconsistencies.append(
+                    {
+                        "file": filename,
+                        "registered_title": entry.get("title") or "",
+                        "extracted_title": "",
+                        "reason": "file_not_found",
+                    }
+                )
                 continue
             try:
                 md_text = pdf_to_markdown(pdf_path)
                 extracted = extract_title_via_llm(md_text, effective_model)
             except Exception as e:
-                inconsistencies.append({
-                    "file": filename,
-                    "registered_title": entry.get("title") or "",
-                    "extracted_title": "",
-                    "reason": str(e),
-                })
+                inconsistencies.append(
+                    {
+                        "file": filename,
+                        "registered_title": entry.get("title") or "",
+                        "extracted_title": "",
+                        "reason": str(e),
+                    }
+                )
                 continue
             registered = entry.get("title") or ""
             if not registered and extracted:
-                inconsistencies.append({
-                    "file": filename,
-                    "registered_title": "",
-                    "extracted_title": extracted,
-                    "reason": "missing_in_registry",
-                })
+                inconsistencies.append(
+                    {
+                        "file": filename,
+                        "registered_title": "",
+                        "extracted_title": extracted,
+                        "reason": "missing_in_registry",
+                    }
+                )
             elif not titles_consistent(registered, extracted):
-                inconsistencies.append({
-                    "file": filename,
-                    "registered_title": registered,
-                    "extracted_title": extracted,
-                    "reason": "mismatch",
-                })
+                inconsistencies.append(
+                    {
+                        "file": filename,
+                        "registered_title": registered,
+                        "extracted_title": extracted,
+                        "reason": "mismatch",
+                    }
+                )
         idx = min(i + batch_size, total)
         print(f"  Processed {idx}/{total}...", flush=True)
         if i + batch_size < total:
@@ -199,7 +215,9 @@ def main(model: str = "auto", batch_size: int = DEFAULT_BATCH_SIZE) -> None:
         "model_used": effective_model,
     }
     report_path.write_text(
-        yaml.dump(report, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        yaml.dump(
+            report, default_flow_style=False, allow_unicode=True, sort_keys=False
+        ),
         encoding="utf-8",
     )
 
@@ -218,8 +236,20 @@ def main(model: str = "auto", batch_size: int = DEFAULT_BATCH_SIZE) -> None:
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Audit registry titles against LLM-extracted titles from PDFs.")
-    parser.add_argument("--model", default="auto", help="Model id (default: auto = local else openrouter/free)")
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help=f"PDFs per batch (default {DEFAULT_BATCH_SIZE})")
+
+    parser = argparse.ArgumentParser(
+        description="Audit registry titles against LLM-extracted titles from PDFs."
+    )
+    parser.add_argument(
+        "--model",
+        default="auto",
+        help="Model id (default: auto = local else openrouter/free)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"PDFs per batch (default {DEFAULT_BATCH_SIZE})",
+    )
     args = parser.parse_args()
     main(model=args.model, batch_size=args.batch_size)

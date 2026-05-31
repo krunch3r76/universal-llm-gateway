@@ -1,9 +1,9 @@
 """Audio buffer management for sliding window processing."""
 
-from universal_logging import get_logger
 from typing import TYPE_CHECKING
 
 import numpy as np
+from universal_logging import get_logger
 
 from ..buffer import EfficientAudioBuffer
 from ..types import TranscriptionResult

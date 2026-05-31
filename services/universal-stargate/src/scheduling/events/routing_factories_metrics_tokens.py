@@ -5,9 +5,9 @@
 from universal_event_bus import Event, event_factory
 
 from .routing_signal_constants_metrics import (
-    TOKEN_COUNTING_FAILED,
     TOKEN_COUNT_COMPLETED,
     TOKEN_COUNT_PRECONDITION,
+    TOKEN_COUNTING_FAILED,
 )
 
 

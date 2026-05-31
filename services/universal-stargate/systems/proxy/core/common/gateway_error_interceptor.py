@@ -194,8 +194,7 @@ class GatewayErrorInterceptor:
 
             # Enhance message with gateway context
             error_dict["error"]["message"] = (
-                f"Gateway '{gateway_name}' connection error during {operation}: "
-                f"{e}"
+                f"Gateway '{gateway_name}' connection error during {operation}: {e}"
             )
             error_dict["error"]["type"] = "service_unavailable"
             error_dict["error"]["code"] = "gateway_connection_failed"

@@ -115,10 +115,7 @@ class GatewayWebSocketClient:
         self._on_model_loaded: Callable[[str, dict], Awaitable[None]] | None = None
         self._on_model_unloaded: Callable[[str], Awaitable[None]] | None = None
         self._on_model_load_failed: (
-            Callable[
-                [str, str, dict | None, dict | None], Awaitable[None]
-            ]
-            | None
+            Callable[[str, str, dict | None, dict | None], Awaitable[None]] | None
         ) = None
         self._on_model_busy: Callable[[str], Awaitable[None]] | None = None
         self._on_model_idle: Callable[[str, dict], Awaitable[None]] | None = None
@@ -673,9 +670,7 @@ class GatewayWebSocketClient:
 
     def on_model_load_failed(
         self,
-        callback: Callable[
-            [str, str, dict | None, dict | None], Awaitable[None]
-        ],
+        callback: Callable[[str, str, dict | None, dict | None], Awaitable[None]],
     ) -> None:
         """
         Set callback for model-load-failed events.

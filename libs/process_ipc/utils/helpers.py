@@ -7,7 +7,6 @@ for path management, networking, and other operations.
 
 import asyncio
 import ctypes
-from universal_logging import get_logger
 import os
 import signal
 import socket
@@ -16,6 +15,8 @@ import tempfile
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

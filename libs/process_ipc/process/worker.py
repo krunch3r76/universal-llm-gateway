@@ -19,7 +19,6 @@ from universal_transport.core.interfaces import Transport
 from universal_transport.core.message_pump import MessagePump
 
 from ..core import signals
-from ..core.config import UnixSocketConfig
 from ..core.exceptions import ProcessError, WorkerError
 from ..core.interfaces import WorkerInterface
 from ..core.messages import (
@@ -612,9 +611,7 @@ class WorkerProcess(WorkerInterface):
 
         return signals.HealthResponse(
             worker_id=self.worker_id,
-            status="healthy"
-            if health_info.get("healthy", True)
-            else "unhealthy",
+            status="healthy" if health_info.get("healthy", True) else "unhealthy",
             healthy=health_info.get("healthy", True),
             details=health_info,
             correlation_id=correlation_id,

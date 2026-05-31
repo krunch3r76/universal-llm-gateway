@@ -38,7 +38,9 @@ class IterationResult:
     duration_seconds: float | None = None
     error_message: str | None = None
     started_at: float | None = None  # monotonic time
-    truncated_response: str | None = None  # path to file containing full truncated response, or short excerpt on write failure
+    truncated_response: str | None = (
+        None  # path to file containing full truncated response, or short excerpt on write failure
+    )
     truncation_tokens: int | None = None  # completion_tokens at truncation
 
     def to_dict(self) -> dict[str, Any]:

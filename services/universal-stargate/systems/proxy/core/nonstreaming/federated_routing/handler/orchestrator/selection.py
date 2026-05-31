@@ -198,8 +198,7 @@ async def run_initial_selection(
             g.gateway_id
             for g in all_gateways
             if model_id in g.available_models
-            and g.gateway_id
-            not in {h.gateway_id for h in federated_gateways}
+            and g.gateway_id not in {h.gateway_id for h in federated_gateways}
         ]
         if unhealthy_with_model:
             grace_timeout_s = float(

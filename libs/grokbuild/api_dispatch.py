@@ -31,10 +31,10 @@ from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from grokbuild.constants import (
-    DISPATCH_MODEL_ID,
     _TIER_PRESETS,
     _VALID_TIERS,
     DEFAULT_TIMEOUT_SECONDS,
+    DISPATCH_MODEL_ID,
     MODEL_REGISTRY,
     default_model_for_tier,
     envelope_metadata_model,

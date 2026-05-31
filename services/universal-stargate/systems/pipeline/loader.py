@@ -170,9 +170,7 @@ def resolve_sub_pipelines(
         try:
             sub_spec = SubPipelineSpec(**data.get("pipeline", data))
         except Exception as exc:
-            raise ValueError(
-                f"Invalid sub-pipeline spec {sub_path}: {exc}"
-            ) from exc
+            raise ValueError(f"Invalid sub-pipeline spec {sub_path}: {exc}") from exc
 
         resolve_sub_pipelines(sub_spec.steps, sub_path.parent, visited)
 

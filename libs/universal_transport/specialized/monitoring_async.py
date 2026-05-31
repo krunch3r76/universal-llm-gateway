@@ -12,13 +12,13 @@ Key improvements:
 - Same high-level interface as legacy classes
 """
 
-from universal_logging import get_logger
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+from universal_logging import get_logger
 
 from ..core.client_server.async_client import (
     AsyncTransportClient,

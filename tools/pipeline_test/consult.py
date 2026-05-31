@@ -76,7 +76,14 @@ def consult_step_via_lib(
         timeout=timeout,
     )
 
-    subset = ("model_id", "response_text", "prompt_tokens", "completion_tokens", "latency_ms", "error")
+    subset = (
+        "model_id",
+        "response_text",
+        "prompt_tokens",
+        "completion_tokens",
+        "latency_ms",
+        "error",
+    )
     return [ConsultResult(**{k: getattr(r, k) for k in subset}) for r in lib_results]
 
 

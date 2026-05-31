@@ -112,11 +112,13 @@ Examples:
     )
     parser.add_argument("socket", help="Path to debug event socket")
     parser.add_argument(
-        "--filter", "-f",
+        "--filter",
+        "-f",
         help="Filter events by signal substring (e.g., 'model.' or 'request.')",
     )
     parser.add_argument(
-        "--json", "-j",
+        "--json",
+        "-j",
         action="store_true",
         help="Output raw JSON (one event per line)",
     )

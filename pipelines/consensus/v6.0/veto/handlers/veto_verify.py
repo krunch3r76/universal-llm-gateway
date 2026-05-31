@@ -76,9 +76,7 @@ class VetoVerifyHandler(BaseHandler):
         return []
 
     @override
-    async def execute(
-        self, step: StepConfig, context: PipelineContext
-    ) -> StepOutput:
+    async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         resolver = NamespaceResolver(context)
         verified_facts: list[dict[str, Any]] = self._resolve_input(
             resolver, step, "verified_facts", step.handler_inputs
@@ -105,17 +103,26 @@ class VetoVerifyHandler(BaseHandler):
         if not authority_accepted_ids:
             return StepOutput(
                 raw="",
-                json={"veto_verdicts": {}, "verdicts_by_model": {}, "authority_claims": []},
+                json={
+                    "veto_verdicts": {},
+                    "verdicts_by_model": {},
+                    "authority_claims": [],
+                },
             )
 
         authority_claims = [
-            c for c in verified_list
+            c
+            for c in verified_list
             if c.get("statement_id", "") in authority_accepted_ids
         ]
         if not authority_claims:
             return StepOutput(
                 raw="",
-                json={"veto_verdicts": {}, "verdicts_by_model": {}, "authority_claims": []},
+                json={
+                    "veto_verdicts": {},
+                    "verdicts_by_model": {},
+                    "authority_claims": [],
+                },
             )
 
         veto_pool_aliases = self._resolve_veto_pool(step, context)
@@ -123,7 +130,11 @@ class VetoVerifyHandler(BaseHandler):
             logger.warning("Step '%s': no veto_pool configured", step.id)
             return StepOutput(
                 raw="",
-                json={"veto_verdicts": {}, "verdicts_by_model": {}, "authority_claims": authority_claims},
+                json={
+                    "veto_verdicts": {},
+                    "verdicts_by_model": {},
+                    "authority_claims": authority_claims,
+                },
             )
 
         # Affinity ordering

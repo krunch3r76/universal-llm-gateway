@@ -138,9 +138,7 @@ class BaseEngine(ABC):
             "user",
             "logit_bias",
         }
-        return {
-            k: v for k, v in data.items() if k not in non_generation_fields
-        }
+        return {k: v for k, v in data.items() if k not in non_generation_fields}
 
     def _extract_prompt(self, data: dict[str, Any]) -> str | None:
         """

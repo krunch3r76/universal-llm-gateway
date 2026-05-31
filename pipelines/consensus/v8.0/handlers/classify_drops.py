@@ -103,13 +103,17 @@ class ClassifyDropsHandler(BaseHandler):
         )
         uncited_indices: list[int] = sorted(
             int(i)
-            for i in (self._resolve_input(resolver, step, "uncited_indices", inputs) or [])
+            for i in (
+                self._resolve_input(resolver, step, "uncited_indices", inputs) or []
+            )
         )
         answer: str = str(self._resolve_input(resolver, step, "answer", inputs) or "")
 
         if not uncited_indices:
             latency_ms = (time.monotonic() - start_time) * 1000
-            logger.info("Step '%s': no uncited facts — skipping classification", step.id)
+            logger.info(
+                "Step '%s': no uncited facts — skipping classification", step.id
+            )
             return StepOutput(
                 raw="",
                 json={

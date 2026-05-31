@@ -500,9 +500,7 @@ def build_detailed_results(results: list[VerificationResult]) -> list[dict]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Test compound statement verification"
-    )
+    parser = argparse.ArgumentParser(description="Test compound statement verification")
     parser.add_argument(
         "--url",
         default="http://localhost:9999",
@@ -551,7 +549,9 @@ def main() -> int:
 
     print("By Category:")
     for cat, stats in summary["by_category"].items():
-        print(f"  {cat}: {stats['accuracy']}% accuracy ({stats['correct']}/{stats['total']})")
+        print(
+            f"  {cat}: {stats['accuracy']}% accuracy ({stats['correct']}/{stats['total']})"
+        )
     print()
 
     print("By Model:")
@@ -559,7 +559,9 @@ def main() -> int:
         total_correct = sum(c["correct"] for c in mdata["categories"].values())
         total = sum(c["total"] for c in mdata["categories"].values())
         overall_acc = round(total_correct / total * 100, 1) if total > 0 else 0
-        print(f"  {alias}: {overall_acc}% overall accuracy, {mdata['avg_latency_ms']}ms avg latency")
+        print(
+            f"  {alias}: {overall_acc}% overall accuracy, {mdata['avg_latency_ms']}ms avg latency"
+        )
     print()
 
     # Save to file

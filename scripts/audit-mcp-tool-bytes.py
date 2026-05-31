@@ -144,9 +144,7 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
             f"{r['schema_b']:>8} {pct:>6.1f}%"
         )
     print("-" * 64)
-    print(
-        f"{'TOTAL':<28} {total:>8} {desc_total:>8} {schema_total:>8} {'100.0':>6}%"
-    )
+    print(f"{'TOTAL':<28} {total:>8} {desc_total:>8} {schema_total:>8} {'100.0':>6}%")
     print(f"\nTools: {len(rows)}    Total: {total} bytes ({total / 1024:.1f} KiB)")
 
     print("\nPareto (top 5):")

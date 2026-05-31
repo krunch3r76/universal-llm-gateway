@@ -11,10 +11,11 @@ Design Goals:
 - Future: Reusable by non-streaming transcription path
 """
 
-from universal_logging import get_logger, DEBUG
 import time
 from dataclasses import dataclass, field
 from typing import Any
+
+from universal_logging import DEBUG, get_logger
 
 logger = get_logger(__name__)
 

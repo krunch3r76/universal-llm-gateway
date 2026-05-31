@@ -93,13 +93,13 @@ from .crash_handlers import (
 # Import event filtering
 from .filtering import EventFilter, FilteredEventBus
 
+# Import measurement event signal and factory
+from .measurement import MEASUREMENT_EMBEDDING_DETECTED, MeasurementEmbeddingDetected
+
 # Import event persistence
 from .persistence import EventStore, EventStoreSubscriber
 from .persistence_async import AsyncEventStore, AsyncEventStoreSubscriber
 from .resource_monitoring import AsyncResourceMonitor, InferenceResourceSnapshot
-
-# Import measurement event signal and factory
-from .measurement import MEASUREMENT_EMBEDDING_DETECTED, MeasurementEmbeddingDetected
 
 # Import LLM-specific event signal constants
 from .types import (

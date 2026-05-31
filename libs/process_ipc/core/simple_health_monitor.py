@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from universal_event_bus import Event, event_factory
+from universal_event_bus import Event
 from universal_logging import get_logger
 
 from . import signals
@@ -206,9 +206,7 @@ class SimpleHealthMonitor:
 
                 if is_crash:
                     # Handle crash detection
-                    await self._handle_process_crash(
-                        process_id, returncode, pid
-                    )
+                    await self._handle_process_crash(process_id, returncode, pid)
                     # Mark PID as reported to prevent duplicate crash events
                     self._reported_crash_pids.add(pid)
                 else:

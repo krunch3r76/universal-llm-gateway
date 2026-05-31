@@ -26,7 +26,9 @@ WORKSPACE_ROOT = Path(__file__).parent.parent
 STATIC_MODELS_DIR = WORKSPACE_ROOT / "config" / "models"
 LOCAL_CATALOG_DIR = Path.home() / ".gateway" / "catalog"
 
-METADATA_FIELDS_TO_STRIP = frozenset({"activated_gpu_contexts", "activated_cpu_contexts"})
+METADATA_FIELDS_TO_STRIP = frozenset(
+    {"activated_gpu_contexts", "activated_cpu_contexts"}
+)
 ENTRY_SECTIONS_TO_STRIP = frozenset({"loader", "devices"})
 
 
@@ -48,7 +50,9 @@ def _write_yaml(path: Path, data: dict[str, Any]) -> None:
             return super().increase_indent(flow, False)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(suffix=".yaml.tmp", dir=path.parent, prefix=f".{path.stem}.")
+    fd, tmp = tempfile.mkstemp(
+        suffix=".yaml.tmp", dir=path.parent, prefix=f".{path.stem}."
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(
@@ -105,7 +109,9 @@ def _discover_model_files() -> list[tuple[Path, Path]]:
         List of (yaml_path, relative_path_from_models_dir) tuples
     """
     if not STATIC_MODELS_DIR.exists():
-        print(f"ERROR: Static models dir not found: {STATIC_MODELS_DIR}", file=sys.stderr)
+        print(
+            f"ERROR: Static models dir not found: {STATIC_MODELS_DIR}", file=sys.stderr
+        )
         sys.exit(1)
 
     files: list[tuple[Path, Path]] = []

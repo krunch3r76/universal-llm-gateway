@@ -420,9 +420,7 @@ def _compute_eviction_plan(
     # this guard catches any future regression in that classification.
     if routing_key_tracker is not None and gw_keys_in_flight is not None:
         in_flight_violations = [
-            mid
-            for mid in models_to_evict
-            if mid.routing_key in gw_keys_in_flight
+            mid for mid in models_to_evict if mid.routing_key in gw_keys_in_flight
         ]
         if in_flight_violations:
             logger.error(

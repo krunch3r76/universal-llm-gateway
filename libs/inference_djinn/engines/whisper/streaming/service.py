@@ -1,11 +1,11 @@
 """Streaming ASR service for managing streaming sessions."""
 
-from universal_logging import get_logger
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
+from universal_logging import get_logger
 
 from .config import EnhancedConfig, StreamingConfig
 from .overlap_correction import OverlapCorrector

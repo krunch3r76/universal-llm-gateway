@@ -15,13 +15,14 @@ Key features:
 
 import asyncio
 import json
-from universal_logging import get_logger
 import struct
 import time
 from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
+
+from universal_logging import get_logger
 
 from ..core.protocol.serializers import (
     JSONSerializer,

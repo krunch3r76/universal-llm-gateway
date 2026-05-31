@@ -96,7 +96,9 @@ def _run_direct_branch(
         results = execute_consult(
             args.question,
             role=args.role,
-            context_files=[Path(p) for p in args.context_files] if args.context_files else [],
+            context_files=[Path(p) for p in args.context_files]
+            if args.context_files
+            else [],
             scope=args.scope,
             chain=args.chain,
             models=args.models,

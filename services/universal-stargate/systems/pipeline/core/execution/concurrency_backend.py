@@ -48,9 +48,7 @@ class ConcurrencyBackend(ABC):
     """
 
     @abstractmethod
-    async def acquire(
-        self, key: str, timeout: float, request_id: str
-    ) -> None:
+    async def acquire(self, key: str, timeout: float, request_id: str) -> None:
         """Acquire serialisation slot on ``key``, blocking up to ``timeout``s.
 
         Raises ``TimeoutError`` when the slot cannot be acquired within
@@ -98,9 +96,7 @@ class InProcessConcurrencyBackend(ConcurrencyBackend):
         self._gates: dict[str, FifoCapacityGate] = {}
         self._store_lock: asyncio.Lock = asyncio.Lock()
 
-    async def acquire(
-        self, key: str, timeout: float, request_id: str
-    ) -> None:
+    async def acquire(self, key: str, timeout: float, request_id: str) -> None:
         """Acquire a slot on the gate for ``key`` (creating the gate if absent).
 
         See :meth:`ConcurrencyBackend.acquire`. Raises ``TimeoutError``

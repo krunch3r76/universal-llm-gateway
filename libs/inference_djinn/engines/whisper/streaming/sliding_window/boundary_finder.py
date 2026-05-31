@@ -1,10 +1,10 @@
 """Boundary finding logic for sliding window processing."""
 
-from universal_logging import get_logger
 import time
 from typing import TYPE_CHECKING
 
 import numpy as np
+from universal_logging import get_logger
 
 from ...vad import SileroVAD, VADMethod
 
@@ -113,10 +113,10 @@ class BoundaryFinder:
         if candidate is None:
             logger.debug(
                 f"⏱️  VAD timing (no boundary): "
-                f"timestamps={t2-t1:.3f}s, "
-                f"probabilities={t3-t2:.3f}s, "
-                f"analysis={t4-t3:.3f}s, "
-                f"total={t4-t0:.3f}s"
+                f"timestamps={t2 - t1:.3f}s, "
+                f"probabilities={t3 - t2:.3f}s, "
+                f"analysis={t4 - t3:.3f}s, "
+                f"total={t4 - t0:.3f}s"
             )
             return None, 0.0
 
@@ -126,10 +126,10 @@ class BoundaryFinder:
         # Log timing with boundary info
         logger.debug(
             f"⏱️  VAD timing (found boundary): "
-            f"timestamps={t2-t1:.3f}s, "
-            f"probabilities={t3-t2:.3f}s, "
-            f"analysis={t4-t3:.3f}s, "
-            f"total={t4-t0:.3f}s"
+            f"timestamps={t2 - t1:.3f}s, "
+            f"probabilities={t3 - t2:.3f}s, "
+            f"analysis={t4 - t3:.3f}s, "
+            f"total={t4 - t0:.3f}s"
         )
 
         # Log differently based on boundary source for diagnostic visibility

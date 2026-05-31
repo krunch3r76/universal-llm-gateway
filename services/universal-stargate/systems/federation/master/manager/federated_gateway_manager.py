@@ -1616,9 +1616,7 @@ class FederatedGatewayManager(Sequential):
             error_str = error_raw if isinstance(error_raw, str) else "unknown"
             worker_snapshot_raw = parsed.get("worker_snapshot")
             worker_snapshot = (
-                worker_snapshot_raw
-                if isinstance(worker_snapshot_raw, dict)
-                else None
+                worker_snapshot_raw if isinstance(worker_snapshot_raw, dict) else None
             )
             gateway_state_snapshot_raw = parsed.get("gateway_state_snapshot")
             gateway_state_snapshot = (

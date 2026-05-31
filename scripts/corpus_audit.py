@@ -63,8 +63,8 @@ def build_batch_prompt(entries: list[tuple[str, str]]) -> str:
     """Build prompt for one batch of category/filename + excerpt."""
     lines = [
         "You are auditing a research PDF corpus. For each entry below:",
-        "1. Does the filename (slug) describe this paper's actual title? If not, output: TITLE_MISMATCH  | {category}/{filename}.pdf | actual_title: \"<title from text>\"",
-        "2. Does the paper's primary topic belong in the given category? If not, output: WRONG_CATEGORY  | {category}/{filename}.pdf | title: \"<title>\" | better_category: <suggestion>",
+        '1. Does the filename (slug) describe this paper\'s actual title? If not, output: TITLE_MISMATCH  | {category}/{filename}.pdf | actual_title: "<title from text>"',
+        '2. Does the paper\'s primary topic belong in the given category? If not, output: WRONG_CATEGORY  | {category}/{filename}.pdf | title: "<title>" | better_category: <suggestion>',
         "3. If this is clearly the same paper as another in the list, output: DUPLICATE_NAME  | path | same_paper_as: other_path",
         "Category meanings:",
         CATEGORY_DESCRIPTIONS,
@@ -111,15 +111,24 @@ def parse_response(response: str) -> list[str]:
         s = line.strip()
         if not s or s == "OK":
             continue
-        if s.startswith("TITLE_MISMATCH  |") or s.startswith("WRONG_CATEGORY  |") or s.startswith("DUPLICATE_NAME  |"):
+        if (
+            s.startswith("TITLE_MISMATCH  |")
+            or s.startswith("WRONG_CATEGORY  |")
+            or s.startswith("DUPLICATE_NAME  |")
+        ):
             reported.append(s)
     return reported
 
 
 def main() -> int:
     import argparse
-    parser = argparse.ArgumentParser(description="Audit docs/research PDFs: title vs filename, category.")
-    parser.add_argument("--model", default="auto", help="Model ID for LLM checks (default: auto)")
+
+    parser = argparse.ArgumentParser(
+        description="Audit docs/research PDFs: title vs filename, category."
+    )
+    parser.add_argument(
+        "--model", default="auto", help="Model ID for LLM checks (default: auto)"
+    )
     parser.add_argument(
         "--extract-only",
         action="store_true",
@@ -129,7 +138,9 @@ def main() -> int:
 
     pdfs = collect_pdfs()
     if not pdfs:
-        print("No PDFs found under docs/research/ (excluding skip dirs).", file=sys.stderr)
+        print(
+            "No PDFs found under docs/research/ (excluding skip dirs).", file=sys.stderr
+        )
         return 1
 
     if args.extract_only:
@@ -153,8 +164,10 @@ def main() -> int:
         try:
             response = call_gateway(prompt, model=args.model)
         except Exception as e:
-            print(f"Gateway error for batch {i // BATCH_SIZE + 1}: {e}", file=sys.stderr)
-            all_mismatches.append(f"# BATCH_ERROR  | batch {i//BATCH_SIZE + 1} | {e}")
+            print(
+                f"Gateway error for batch {i // BATCH_SIZE + 1}: {e}", file=sys.stderr
+            )
+            all_mismatches.append(f"# BATCH_ERROR  | batch {i // BATCH_SIZE + 1} | {e}")
             continue
         mismatches = parse_response(response)
         all_mismatches.extend(mismatches)
@@ -186,7 +199,11 @@ def main() -> int:
         total = categories_seen[cat]
         mismatches_in_cat = sum(1 for p in mismatch_paths if p.startswith(cat + "/"))
         ok = total - mismatches_in_cat
-        status = "OK" if mismatches_in_cat == 0 else f"{ok}/{total} correct, {mismatches_in_cat} flagged"
+        status = (
+            "OK"
+            if mismatches_in_cat == 0
+            else f"{ok}/{total} correct, {mismatches_in_cat} flagged"
+        )
         print(f"  {cat}: {status}")
 
     print(f"\nTotal PDFs: {len(pdfs)}")

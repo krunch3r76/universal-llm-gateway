@@ -31,7 +31,11 @@ def _resolve_rag_base_and_path(
     """Resolve RAG base URL and path. Base: socket_path override or central config."""
     socket_path = step.get_domain_field("socket_path")
     if socket_path:
-        base = f"unix://{socket_path}" if not str(socket_path).startswith("unix://") else str(socket_path)
+        base = (
+            f"unix://{socket_path}"
+            if not str(socket_path).startswith("unix://")
+            else str(socket_path)
+        )
     else:
         base = resolve_rag_base_url()
     path = urlparse(endpoint).path or default_path

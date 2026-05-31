@@ -55,20 +55,20 @@ async def read_and_send_frames(
     websocket: WebSocket,
 ) -> tuple[int, dict | None]:
     """Read frames from queue and send over WebSocket until terminal frame.
-    
+
     Pure event processor - no timeout logic. Waits indefinitely on queue.get().
     Idle monitor provides safety net by pushing idle_timeout events.
-    
+
     Inputs:
         stream_id: Stream identifier (for logging + registry lookup)
         queue: Queue to read frames from
         websocket: WebSocket connection to send to
-    
+
     Outputs:
         (close_code, error_frame_or_none)
             close_code: 1000 (done), 1001 (error/control), -1 (already handled)
             error_frame: dict if error to send, None if clean exit
-    
+
     Invariant:
         ∀ frame ∈ queue: frame sent via websocket ⟹ last_activity updated
         Handler exits ⟺ terminal frame received (t="done" or t="err")

@@ -43,7 +43,9 @@ def _load_report(report_path: Path) -> dict[str, Any]:
 
 def _analyze_report(
     report: dict[str, Any],
-) -> tuple[list[dict[str, Any]], dict[str, list[str]], dict[str, dict[str, dict[str, bool]]]]:
+) -> tuple[
+    list[dict[str, Any]], dict[str, list[str]], dict[str, dict[str, dict[str, bool]]]
+]:
     """
     Single pass over report: build caught list and per-model hallucination list.
 

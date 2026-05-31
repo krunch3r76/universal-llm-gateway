@@ -14,6 +14,7 @@ Usage:
 import asyncio
 import sys
 from pathlib import Path
+
 import httpx
 
 RESEARCH_ROOT = Path("/mnt/torus/projects/universal-llm-gateway/docs/research")
@@ -44,7 +45,6 @@ RESEARCH_ROOT = Path("/mnt/torus/projects/universal-llm-gateway/docs/research")
 
 # (arXiv ID, target_dir, filename)
 ARXIV_PAPERS: list[tuple[str, str, str]] = [
-
     # -----------------------------------------------------------------------
     # rag-systems (59 files — all covered except cormack-rrf-2009, see PENDING)
     # -----------------------------------------------------------------------
@@ -85,7 +85,11 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2503.10150", "rag-systems", "hirag-hierarchical-knowledge.pdf"),
     ("2501.09136", "rag-systems", "agentic-rag-survey-2025.pdf"),
     ("2112.01488", "rag-systems", "colbertv2.pdf"),
-    ("2311.07914", "rag-systems", "llm-agents-rag-knowledge-graphs-reflections-2025.pdf"),
+    (
+        "2311.07914",
+        "rag-systems",
+        "llm-agents-rag-knowledge-graphs-reflections-2025.pdf",
+    ),
     ("2212.10509", "rag-systems", "ircot-interleaving-retrieval-cot.pdf"),
     ("2502.18397", "rag-systems", "kirag-iterative-retrieval.pdf"),
     ("2510.18633", "rag-systems", "query-decomp-exploration-exploitation.pdf"),
@@ -110,7 +114,6 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2402.07483", "rag-systems", "rag-from-pdfs-experience.pdf"),
     ("2412.04661", "rag-systems", "heal-domain-embedding.pdf"),
     ("2507.00355", "rag-systems", "question-decomposition-rag.pdf"),
-
     # -----------------------------------------------------------------------
     # small_llm/prompting (59 files — prompt engineering for small/local models)
     # -----------------------------------------------------------------------
@@ -136,11 +139,23 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2404.14618", "small_llm/prompting", "hybrid-llm-query-routing.pdf"),
     ("2402.01620", "small_llm/prompting", "magdi-multi-agent-distillation.pdf"),
     ("2601.07245", "small_llm/prompting", "multi-model-consensus-reasoning-engine.pdf"),
-    ("2512.20184", "small_llm/prompting", "reaching-agreement-reasoning-llm-agents.pdf"),
+    (
+        "2512.20184",
+        "small_llm/prompting",
+        "reaching-agreement-reasoning-llm-agents.pdf",
+    ),
     ("2503.10881", "small_llm/prompting", "scalable-consistency-ensembles.pdf"),
     ("2502.15631", "small_llm/prompting", "o3-thinks-harder-not-longer.pdf"),
-    ("2509.13196", "small_llm/prompting", "few-shot-dilemma-over-prompting-large-llms.pdf"),
-    ("2602.08672", "small_llm/prompting", "llm-designing-applying-evaluation-rubrics.pdf"),
+    (
+        "2509.13196",
+        "small_llm/prompting",
+        "few-shot-dilemma-over-prompting-large-llms.pdf",
+    ),
+    (
+        "2602.08672",
+        "small_llm/prompting",
+        "llm-designing-applying-evaluation-rubrics.pdf",
+    ),
     ("2512.16041", "small_llm/prompting", "assessing-llm-as-a-judge.pdf"),
     ("2503.23989", "small_llm/prompting", "rubric-is-all-you-need-code-evaluation.pdf"),
     ("2502.02988", "small_llm/prompting", "themis-fine-tuned-llm-judge.pdf"),
@@ -151,24 +166,56 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2508.02053", "small_llm/prompting", "procut-attribution-prompt-compression.pdf"),
     ("2511.12281", "small_llm/prompting", "cmprsr-abstractive-prompt-compression.pdf"),
     ("2502.16923", "small_llm/prompting", "survey-automatic-prompt-optimization.pdf"),
-    ("2505.16307", "small_llm/prompting", "pmpo-probabilistic-metric-prompt-optimization.pdf"),
-    ("2511.19829", "small_llm/prompting", "evaluation-instructed-prompt-optimization.pdf"),
-    ("2504.10179", "small_llm/prompting", "adaptive-mllm-prompting-comprehensive-evaluation.pdf"),
+    (
+        "2505.16307",
+        "small_llm/prompting",
+        "pmpo-probabilistic-metric-prompt-optimization.pdf",
+    ),
+    (
+        "2511.19829",
+        "small_llm/prompting",
+        "evaluation-instructed-prompt-optimization.pdf",
+    ),
+    (
+        "2504.10179",
+        "small_llm/prompting",
+        "adaptive-mllm-prompting-comprehensive-evaluation.pdf",
+    ),
     ("2508.11126", "small_llm/prompting", "ai-agentic-programming-survey.pdf"),
     ("2509.19376", "small_llm/prompting", "solving-freshness-rag-recency-prior.pdf"),
-    ("2412.15540", "small_llm/prompting", "mrag-modular-retrieval-time-sensitive-qa.pdf"),
-    ("2502.21024", "small_llm/prompting", "tempretriever-temporal-dense-passage-retrieval.pdf"),
+    (
+        "2412.15540",
+        "small_llm/prompting",
+        "mrag-modular-retrieval-time-sensitive-qa.pdf",
+    ),
+    (
+        "2502.21024",
+        "small_llm/prompting",
+        "tempretriever-temporal-dense-passage-retrieval.pdf",
+    ),
     ("2507.22917", "small_llm/prompting", "ta-rag-diachronic-question-answering.pdf"),
     ("2509.11353", "small_llm/prompting", "recency-bias-llm-reranking.pdf"),
     ("2403.14403", "small_llm/prompting", "adaptive-rag-question-complexity.pdf"),
-    ("2401.15884", "small_llm/prompting", "crag-corrective-retrieval-augmented-generation.pdf"),
-    ("2305.06983", "small_llm/prompting", "flare-active-retrieval-augmented-generation.pdf"),
+    (
+        "2401.15884",
+        "small_llm/prompting",
+        "crag-corrective-retrieval-augmented-generation.pdf",
+    ),
+    (
+        "2305.06983",
+        "small_llm/prompting",
+        "flare-active-retrieval-augmented-generation.pdf",
+    ),
     ("2212.10496", "small_llm/prompting", "hyde-hypothetical-document-embeddings.pdf"),
     ("2401.05856", "small_llm/prompting", "seven-failure-points-rag.pdf"),
     ("2310.06117", "small_llm/prompting", "step-back-prompting-abstraction.pdf"),
     ("2410.02185", "small_llm/prompting", "posix-prompt-sensitivity-index.pdf"),
     ("2401.06766", "small_llm/prompting", "template-ensembles-prompt-robustness.pdf"),
-    ("2504.03975", "small_llm/prompting", "greater-prompt-optimization-small-models.pdf"),
+    (
+        "2504.03975",
+        "small_llm/prompting",
+        "greater-prompt-optimization-small-models.pdf",
+    ),
     ("2311.10227", "small_llm/prompting", "persona-prompting-not-helpful.pdf"),
     # Corrected IDs (previous downloads had wrong arXiv IDs)
     # "Deciphering the Factors Influencing the Efficacy of CoT: Probability, Memorization, Noisy Reasoning"
@@ -180,7 +227,6 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     # "Revisiting OPRO: The Limitations of Small-Scale LLMs as Optimizers" (ACL Findings 2024)
     # Previous wrong download: "Semantic API Alignment" (2405.04236)
     ("2405.10276", "small_llm/prompting", "revisiting-opro-small-llm-optimizers.pdf"),
-
     # -----------------------------------------------------------------------
     # llm/prompting (6 files — prompt engineering for large/cloud models)
     # -----------------------------------------------------------------------
@@ -190,7 +236,6 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2505.05315", "llm/prompting", "elastic-reasoning-scalable-cot.pdf"),
     ("2512.02840", "llm/prompting", "promptolution-modular-prompt-optimization.pdf"),
     ("2601.06403", "llm/prompting", "steer-model-system-prompt-adherence.pdf"),
-
     # -----------------------------------------------------------------------
     # prompting/ — general prompting research (tier-agnostic superset)
     # Same papers as small_llm/prompting + llm/prompting with all fixes applied.
@@ -260,7 +305,6 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2505.05315", "prompting", "elastic-reasoning-scalable-cot.pdf"),
     ("2512.02840", "prompting", "promptolution-modular-prompt-optimization.pdf"),
     ("2601.06403", "prompting", "steer-model-system-prompt-adherence.pdf"),
-
     # -----------------------------------------------------------------------
     # code-retrieval (7 files)
     # -----------------------------------------------------------------------
@@ -271,7 +315,6 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2411.12644", "code-retrieval", "codexembed-code-embedding-models.pdf"),
     ("2405.19782", "code-retrieval", "draco-dataflow-python-retrieval.pdf"),
     ("2503.20589", "code-retrieval", "alliancecoder-what-to-retrieve.pdf"),
-
     # -----------------------------------------------------------------------
     # workflows (16 files)
     # -----------------------------------------------------------------------
@@ -292,7 +335,6 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2512.20184", "workflows", "aegean-protocol-incremental-quorum.pdf"),
     ("2503.07675", "workflows", "dyntaskmas-dynamic-task-graphs.pdf"),
     ("2603.04428", "workflows", "prompt-choreography-kv-cache-multiagent.pdf"),
-
     # -----------------------------------------------------------------------
     # graph-modeling (18 files — IDs from embedded arXiv headers)
     # -----------------------------------------------------------------------
@@ -301,7 +343,11 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2504.05767", "graph-modeling", "cross-document-coreference-kg.pdf"),
     ("2409.01102", "graph-modeling", "gql-sql-pgq-formal-foundations.pdf"),
     ("2308.06512", "graph-modeling", "hyperformer-hyper-relational-kg.pdf"),
-    ("2404.09848", "graph-modeling", "hypermono-stage-reasoning-qualifier-monotonicity.pdf"),
+    (
+        "2404.09848",
+        "graph-modeling",
+        "hypermono-stage-reasoning-qualifier-monotonicity.pdf",
+    ),
     ("2502.06472", "graph-modeling", "karma-multi-agent-kg-enrichment.pdf"),
     ("2310.04835", "graph-modeling", "knowledge-graph-evolution-survey.pdf"),
     ("2510.20345", "graph-modeling", "llm-empowered-kg-construction-survey.pdf"),
@@ -314,21 +360,39 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2110.13348", "graph-modeling", "rdf-to-property-graph-tradeoffs.pdf"),
     ("2404.12788", "graph-modeling", "rexel-end-to-end-document-ie.pdf"),
     ("2502.01295", "graph-modeling", "shacl-shex-pgschema-common-foundations.pdf"),
-
     # -----------------------------------------------------------------------
     # temporal-provenance (10 of 14 files — 4 are in PENDING above)
     # -----------------------------------------------------------------------
-    ("2111.13499", "temporal-provenance", "bitemporal-property-graphs-evolving-systems.pdf"),
+    (
+        "2111.13499",
+        "temporal-provenance",
+        "bitemporal-property-graphs-evolving-systems.pdf",
+    ),
     ("2409.04499", "temporal-provenance", "conver-g-concurrent-kg-versioning.pdf"),
-    ("2601.05270", "temporal-provenance", "livevectorlake-versioned-knowledge-base.pdf"),
-    ("2511.06179", "temporal-provenance", "memoriesdb-temporal-semantic-relational.pdf"),
+    (
+        "2601.05270",
+        "temporal-provenance",
+        "livevectorlake-versioned-knowledge-base.pdf",
+    ),
+    (
+        "2511.06179",
+        "temporal-provenance",
+        "memoriesdb-temporal-semantic-relational.pdf",
+    ),
     ("2409.20302", "temporal-provenance", "om4ov-ontology-matching-versioning.pdf"),
     ("2412.07986", "temporal-provenance", "provenance-semirings-first-order-logic.pdf"),
-    ("2403.04782", "temporal-provenance", "temporal-kg-representation-learning-survey.pdf"),
-    ("2505.11803", "temporal-provenance", "vita-versatile-time-hyper-relational-tkg.pdf"),
+    (
+        "2403.04782",
+        "temporal-provenance",
+        "temporal-kg-representation-learning-survey.pdf",
+    ),
+    (
+        "2505.11803",
+        "temporal-provenance",
+        "vita-versatile-time-hyper-relational-tkg.pdf",
+    ),
     ("2504.19757", "temporal-provenance", "vmodb-unified-event-data-management.pdf"),
     ("2501.13956", "temporal-provenance", "zep-temporal-kg-agent-memory.pdf"),
-
     # -----------------------------------------------------------------------
     # belief-consistency (15 files — IDs from embedded arXiv headers)
     # -----------------------------------------------------------------------
@@ -336,8 +400,16 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2508.02426", "belief-consistency", "bake-bayesian-continual-kge.pdf"),
     ("2510.10042", "belief-consistency", "belief-graphs-reasoning-zones.pdf"),
     ("2512.22318", "belief-consistency", "cagp-decomposed-uncertainty-kge.pdf"),
-    ("2510.24754", "belief-consistency", "certainty-in-uncertainty-statistical-guarantees.pdf"),
-    ("2505.16877", "belief-consistency", "condkgcp-predicate-conditional-conformal.pdf"),
+    (
+        "2510.24754",
+        "belief-consistency",
+        "certainty-in-uncertainty-statistical-guarantees.pdf",
+    ),
+    (
+        "2505.16877",
+        "belief-consistency",
+        "condkgcp-predicate-conditional-conformal.pdf",
+    ),
     ("2511.11118", "belief-consistency", "continual-kge-informed-initialization.pdf"),
     ("2509.15464", "belief-consistency", "evoreasoner-evokg-temporal-evolving.pdf"),
     ("2502.16514", "belief-consistency", "graphcheck-kg-powered-fact-checking.pdf"),
@@ -347,19 +419,34 @@ ARXIV_PAPERS: list[tuple[str, str, str]] = [
     ("2503.08087", "belief-consistency", "resolvi-reference-architecture-er.pdf"),
     ("2410.08985", "belief-consistency", "trustworthy-kg-reasoning-uag.pdf"),
     ("2511.10375", "belief-consistency", "truthfulrag-factual-conflict-resolution.pdf"),
-
     # -----------------------------------------------------------------------
     # knowledge-management (10 files — NEW corpus, kept for completeness)
     # These will be skipped since files already exist.
     # -----------------------------------------------------------------------
-    ("2506.23826", "knowledge-management", "digital-me-personal-human-digital-twins.pdf"),
-    ("2304.09572", "knowledge-management", "ecosystem-personal-knowledge-graphs-survey.pdf"),
+    (
+        "2506.23826",
+        "knowledge-management",
+        "digital-me-personal-human-digital-twins.pdf",
+    ),
+    (
+        "2304.09572",
+        "knowledge-management",
+        "ecosystem-personal-knowledge-graphs-survey.pdf",
+    ),
     ("2602.20507", "knowledge-management", "indaleko-unified-personal-index.pdf"),
     ("2512.12686", "knowledge-management", "memoria-scalable-agentic-memory.pdf"),
     ("2509.03610", "knowledge-management", "notebar-ai-assisted-note-taking.pdf"),
     ("2204.11428", "knowledge-management", "personal-research-knowledge-graphs.pdf"),
-    ("2506.17001", "knowledge-management", "personalai-kg-storage-retrieval-comparison.pdf"),
-    ("2508.10906", "knowledge-management", "personatwin-multi-tier-prompt-conditioning.pdf"),
+    (
+        "2506.17001",
+        "knowledge-management",
+        "personalai-kg-storage-retrieval-comparison.pdf",
+    ),
+    (
+        "2508.10906",
+        "knowledge-management",
+        "personatwin-multi-tier-prompt-conditioning.pdf",
+    ),
     ("2503.08102", "knowledge-management", "second-me-ai-native-memory.pdf"),
     ("2409.13265", "knowledge-management", "towards-lifespan-cognitive-systems.pdf"),
     ("2404.16130", "knowledge-management", "graphrag-microsoft.pdf"),
@@ -414,7 +501,9 @@ async def main(dry_run: bool = False) -> None:
     print("  - temporal-provenance/acl2020-provenance-claims.pdf  (ACL 2020)")
     print("  - temporal-provenance/acl2021-fine-grained-provenance.pdf  (ACL 2021)")
     print("  - temporal-provenance/green2007-provenance-semirings.pdf  (PODS 2007)")
-    print("  - temporal-provenance/provsql-semiring-provenance-postgresql.pdf  (VLDB 2018)")
+    print(
+        "  - temporal-provenance/provsql-semiring-provenance-postgresql.pdf  (VLDB 2018)"
+    )
 
     ok = failed = skipped = 0
 
@@ -422,9 +511,9 @@ async def main(dry_run: bool = False) -> None:
         headers={"User-Agent": "research-corpus-restore/1.0 (academic use)"},
         follow_redirects=True,
     ) as client:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Downloading {len(ARXIV_PAPERS)} papers")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         for arxiv_id, target_dir, filename in ARXIV_PAPERS:
             dest = RESEARCH_ROOT / target_dir / filename
@@ -432,7 +521,9 @@ async def main(dry_run: bool = False) -> None:
                 skipped += 1
                 print(f"  SKIP: {target_dir}/{filename}")
                 continue
-            success = await download_pdf(arxiv_id, target_dir, filename, client, dry_run)
+            success = await download_pdf(
+                arxiv_id, target_dir, filename, client, dry_run
+            )
             if success:
                 ok += 1
             else:
@@ -440,10 +531,10 @@ async def main(dry_run: bool = False) -> None:
             if not dry_run:
                 await asyncio.sleep(RATE_LIMIT_DELAY)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Done: {ok} downloaded, {skipped} skipped (exist), {failed} failed")
-    print(f"PENDING (not on arXiv, source manually): 5 files")
-    print(f"{'='*60}")
+    print("PENDING (not on arXiv, source manually): 5 files")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

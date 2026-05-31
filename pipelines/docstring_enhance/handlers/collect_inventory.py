@@ -239,7 +239,9 @@ class CollectInventoryHandler(BaseHandler):
             inventory["target_kind"] = "directory"
         else:
             if target.suffix != ".py":
-                return _error_output(step.id, "target_path must be a .py file or directory")
+                return _error_output(
+                    step.id, "target_path must be a .py file or directory"
+                )
             file_inv = extract_file_inventory(target, workspace_root)
             inventory = {
                 "subsystem_path": target.as_posix(),
@@ -247,9 +249,14 @@ class CollectInventoryHandler(BaseHandler):
                 "architecture_doc_path": "",
                 "file_count": 1,
                 "modules": [
-                    {"path": file_inv["path"], "docstring": file_inv["module_docstring"]}
+                    {
+                        "path": file_inv["path"],
+                        "docstring": file_inv["module_docstring"],
+                    }
                 ],
-                "classes": [{"path": file_inv["path"], **cls} for cls in file_inv["classes"]],
+                "classes": [
+                    {"path": file_inv["path"], **cls} for cls in file_inv["classes"]
+                ],
                 "functions": [
                     {"path": file_inv["path"], **fn} for fn in file_inv["functions"]
                 ],
@@ -262,8 +269,12 @@ class CollectInventoryHandler(BaseHandler):
             }
 
         quality_issues = _build_quality_issues(inventory)
-        critical_count = sum(1 for issue in quality_issues if issue["severity"] == "critical")
-        warning_count = sum(1 for issue in quality_issues if issue["severity"] == "warning")
+        critical_count = sum(
+            1 for issue in quality_issues if issue["severity"] == "critical"
+        )
+        warning_count = sum(
+            1 for issue in quality_issues if issue["severity"] == "warning"
+        )
         inventory["quality_issues"] = quality_issues
         inventory["quality_summary"] = {
             "critical": critical_count,

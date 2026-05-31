@@ -1,8 +1,7 @@
 """GET /api/v1/model_info/stats - Model statistics endpoint"""
 
-from universal_logging import get_logger
-
 from fastapi import APIRouter, Depends, HTTPException
+from universal_logging import get_logger
 
 from src.core.model_registry import ModelRegistry
 from src.routers.dependencies import get_model_metadata_adapter, get_model_registry

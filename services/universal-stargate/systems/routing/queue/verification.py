@@ -187,4 +187,3 @@ class ResourceVerifier:
         except Exception as e:
             self.logger.debug(f"Error getting model configuration for {model_id}: {e}")
             return None
-

@@ -88,11 +88,19 @@ def strip_measurement_data(entry: dict[str, Any]) -> dict[str, Any]:
     return static
 
 
-def _ensure_catalog_schema(entry: dict[str, Any], *, schema_version: int) -> dict[str, Any]:
+def _ensure_catalog_schema(
+    entry: dict[str, Any], *, schema_version: int
+) -> dict[str, Any]:
     """Ensure catalog_schema is the first key in the entry with the given version."""
-    if list(entry.keys())[:1] == ["catalog_schema"] and entry["catalog_schema"] == schema_version:
+    if (
+        list(entry.keys())[:1] == ["catalog_schema"]
+        and entry["catalog_schema"] == schema_version
+    ):
         return entry
-    return {"catalog_schema": schema_version, **{k: v for k, v in entry.items() if k != "catalog_schema"}}
+    return {
+        "catalog_schema": schema_version,
+        **{k: v for k, v in entry.items() if k != "catalog_schema"},
+    }
 
 
 def _remove_stale_model_files(root: Path, model_id: str, canonical: Path) -> list[Path]:

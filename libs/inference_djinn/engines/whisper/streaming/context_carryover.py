@@ -5,8 +5,8 @@ Prepends previous segment audio to give Whisper more context,
 improving accuracy at segment boundaries.
 """
 
-from universal_logging import get_logger
 import numpy as np
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

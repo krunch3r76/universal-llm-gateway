@@ -29,8 +29,8 @@ from universal_protocol.rpc.handlers import (
     register_tokenizer_callback,
 )
 from universal_protocol.server.uds_security import bind_socket
-from universal_protocol.ws.bounded_queue import BoundedQueue
 from universal_protocol.ws import producer_put, stream_registry
+from universal_protocol.ws.bounded_queue import BoundedQueue
 from universal_protocol.ws.lifecycle import StreamContext
 
 # Configure logging
@@ -51,7 +51,9 @@ async def test_queue_timeout_error_propagation():
     context = StreamContext("test-stream-1")
 
     # Register stream in stream_registry (type: ignore for BoundedQueue vs UnboundedStreamQueue)
-    stream_registry.register("test-stream-1", kind="stream", context=context, queue=queue)
+    stream_registry.register(
+        "test-stream-1", kind="stream", context=context, queue=queue
+    )
 
     try:
         # Fill the queue to capacity
@@ -122,7 +124,9 @@ async def test_cumulative_4mb_limit():
     context = StreamContext("test-stream-2")
 
     # Register stream in stream_registry (type: ignore for BoundedQueue vs UnboundedStreamQueue)
-    stream_registry.register("test-stream-2", kind="stream", context=context, queue=queue)
+    stream_registry.register(
+        "test-stream-2", kind="stream", context=context, queue=queue
+    )
 
     try:
         config = get_config()

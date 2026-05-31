@@ -5,10 +5,11 @@ This module defines the Protocol interface for encoding and decoding messages
 to/from byte streams.
 """
 
-from universal_logging import get_logger
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

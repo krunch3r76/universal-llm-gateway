@@ -12,11 +12,11 @@ Example:
 
 import asyncio
 import json
-from universal_logging import get_logger
 import time
 from typing import Any
 
 import httpx
+from universal_logging import get_logger
 
 from universal_protocol.errors import RPCError
 from universal_protocol.ids import generate_request_id

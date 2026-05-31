@@ -35,16 +35,6 @@ from grokbuild.events_create import (
     emit_grok_build_create_failed,
     emit_grok_build_create_rejected,
 )
-from grokbuild.events_snapshot import (
-    GrokBuildSnapshotCalled,
-    GrokBuildSnapshotCompleted,
-    GrokBuildSnapshotFailed,
-    GrokBuildSnapshotRejected,
-    emit_grok_build_snapshot_called,
-    emit_grok_build_snapshot_completed,
-    emit_grok_build_snapshot_failed,
-    emit_grok_build_snapshot_rejected,
-)
 from grokbuild.events_dispatch import (
     GrokBuildDispatchCalled,
     GrokBuildDispatchCompleted,
@@ -60,6 +50,16 @@ from grokbuild.events_dispatch import (
     emit_grok_build_dispatch_timeout,
     emit_grok_build_dispatch_tool_calls,
     emit_grok_build_dispatch_zero_tool_calls_when_expected,
+)
+from grokbuild.events_snapshot import (
+    GrokBuildSnapshotCalled,
+    GrokBuildSnapshotCompleted,
+    GrokBuildSnapshotFailed,
+    GrokBuildSnapshotRejected,
+    emit_grok_build_snapshot_called,
+    emit_grok_build_snapshot_completed,
+    emit_grok_build_snapshot_failed,
+    emit_grok_build_snapshot_rejected,
 )
 from grokbuild.events_worktree import (
     GrokBuildListCalled,

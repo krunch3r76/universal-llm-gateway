@@ -137,9 +137,7 @@ class CatalogManager:
         static["metadata"] = metadata
 
         loader_static = {
-            k: v
-            for k, v in entry.get("loader", {}).items()
-            if k in _LOADER_STATIC_KEYS
+            k: v for k, v in entry.get("loader", {}).items() if k in _LOADER_STATIC_KEYS
         }
         if loader_static:
             static["loader"] = loader_static
@@ -327,7 +325,9 @@ class CatalogManager:
         self._loader.reload()
 
         operation: Literal["created", "updated"] = "updated" if existing else "created"
-        logger.info(f"{operation.title()} local-only catalog entry for '{model_id}': {local_path}")
+        logger.info(
+            f"{operation.title()} local-only catalog entry for '{model_id}': {local_path}"
+        )
 
         return CatalogOperationResult(
             operation=operation, model_id=model_id, file_path=local_path
@@ -359,9 +359,7 @@ class CatalogManager:
             break
 
         if not local_file and not static_file:
-            raise CatalogValidationError(
-                f"Model '{model_id}' not found in catalog"
-            )
+            raise CatalogValidationError(f"Model '{model_id}' not found in catalog")
 
         deleted_paths: list[Path] = []
         if local_file and local_file.exists():
@@ -375,9 +373,7 @@ class CatalogManager:
             deleted_paths.append(static_file)
 
         if not deleted_paths:
-            raise CatalogValidationError(
-                f"Model '{model_id}' not found in catalog"
-            )
+            raise CatalogValidationError(f"Model '{model_id}' not found in catalog")
 
         self._loader.reload()
 

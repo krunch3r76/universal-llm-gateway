@@ -1,7 +1,9 @@
 """_PropertyIndexPart04 — PropertyIndex method chunk (SLOC split)."""
+
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
+
 
 class _PropertyIndexPart04:
     async def replace_scope_vocabulary_for_scopes(
@@ -289,5 +291,3 @@ class _PropertyIndexPart04:
             return int(cursor.rowcount)
 
         return await self._seq.run(_write())
-
-

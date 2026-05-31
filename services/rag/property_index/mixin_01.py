@@ -133,7 +133,9 @@ class _PropertyIndexPart01:
         self, conn: sqlite3.Connection
     ) -> None:
         """Add active_execution_id to track the Stargate async execution in flight."""
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(extraction_queue)")}
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(extraction_queue)")
+        }
         if "active_execution_id" not in columns:
             conn.executescript(_V14_EXTRACTION_QUEUE_EXECUTION_ID_SQL)
 

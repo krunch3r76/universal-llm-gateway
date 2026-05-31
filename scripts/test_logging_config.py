@@ -11,7 +11,6 @@ Fix: Added `from . import renderers as renderers` similar to handlers import
 """
 
 import logging.config
-import os
 import sys
 
 
@@ -19,12 +18,12 @@ def test_renderers_accessible():
     """Test that renderers module and JSONFormatter are accessible."""
     import universal_logging
 
-    assert hasattr(
-        universal_logging, "renderers"
-    ), "universal_logging.renderers not accessible"
-    assert hasattr(
-        universal_logging.renderers, "JSONFormatter"
-    ), "universal_logging.renderers.JSONFormatter not accessible"
+    assert hasattr(universal_logging, "renderers"), (
+        "universal_logging.renderers not accessible"
+    )
+    assert hasattr(universal_logging.renderers, "JSONFormatter"), (
+        "universal_logging.renderers.JSONFormatter not accessible"
+    )
     print("✓ Renderers module accessible")
 
 

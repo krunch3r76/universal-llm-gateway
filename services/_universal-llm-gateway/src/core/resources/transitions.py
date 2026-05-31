@@ -57,9 +57,7 @@ def handle_error_state_recovery(
         else:
             logger.warning(f"Failed to clear error state for {model_id}")
     else:
-        logger.warning(
-            f"State machine not found for {model_id} — cannot clear ERROR"
-        )
+        logger.warning(f"State machine not found for {model_id} — cannot clear ERROR")
 
 
 def transition_to_loading(
@@ -176,9 +174,7 @@ async def update_model_idle_status_async(
         m.inference_state = None
         logger.info(f"✅ Model {model_id} marked idle")
     else:
-        logger.debug(
-            "Model %s idle bookkeeping ran without active inference", model_id
-        )
+        logger.debug("Model %s idle bookkeeping ran without active inference", model_id)
 
     if not had_active_inference:
         return

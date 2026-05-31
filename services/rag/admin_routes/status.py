@@ -104,7 +104,9 @@ def register_status_routes(
                 except Exception:
                     contextualize_cache_rows_degraded = True
                 try:
-                    stale_corpus_hints_count = prop_idx.count_scopes_with_stale_corpus_hints()
+                    stale_corpus_hints_count = (
+                        prop_idx.count_scopes_with_stale_corpus_hints()
+                    )
                 except Exception:
                     stale_corpus_hints_count_degraded = True
             except sqlite3.Error as exc:

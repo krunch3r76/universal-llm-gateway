@@ -19,8 +19,6 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Optional
 
 # Configuration
 CHECK_INTERVAL = 300  # 5 minutes
@@ -139,7 +137,7 @@ class CudaMonitor:
             )
 
             if result.returncode == 0:
-                self.logger.info(f"✅ Container restarted successfully")
+                self.logger.info("✅ Container restarted successfully")
                 self.last_restart_time = datetime.now()
                 self.restart_count_hourly += 1
                 self.consecutive_failures = 0

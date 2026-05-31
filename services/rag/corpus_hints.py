@@ -445,16 +445,12 @@ def filter_hints_by_cooccurrence(
     except sqlite3.OperationalError as exc:
         logger.warning("Cannot open property index DB read-only: %s", db_path)
         if event_bus is not None:
-            event_bus.publish_from_sync(
-                rag_corpus_hints_filter_failed(error=str(exc))
-            )
+            event_bus.publish_from_sync(rag_corpus_hints_filter_failed(error=str(exc)))
         return []
     except Exception as exc:
         logger.debug("Co-occurrence query failed", exc_info=True)
         if event_bus is not None:
-            event_bus.publish_from_sync(
-                rag_corpus_hints_filter_failed(error=str(exc))
-            )
+            event_bus.publish_from_sync(rag_corpus_hints_filter_failed(error=str(exc)))
         return []
 
 

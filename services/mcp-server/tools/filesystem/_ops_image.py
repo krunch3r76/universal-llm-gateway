@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Any, Literal
+from typing import Literal
 
 from mcp.types import ImageContent
 from mcp_events import record

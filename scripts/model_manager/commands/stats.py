@@ -54,8 +54,7 @@ def _collect_stats(models: dict[str, Any]) -> dict[str, Any]:
 
             # Check for profiles
             has_profiles = any(
-                isinstance(d, dict) and d.get("profiles")
-                for d in devices.values()
+                isinstance(d, dict) and d.get("profiles") for d in devices.values()
             )
             if has_profiles:
                 models_with_profiles += 1

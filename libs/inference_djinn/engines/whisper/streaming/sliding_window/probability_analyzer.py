@@ -8,10 +8,10 @@ This module analyzes Silero VAD output to find natural speech boundaries:
 Used by boundary_finder.py to replace WebRTC binary gating.
 """
 
-from universal_logging import get_logger
 from dataclasses import dataclass
 
 import numpy as np
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -116,9 +116,7 @@ class VramReconciler:
         # Models in LOADING or UNLOADING state have legitimate running workers —
         # they are transitioning and must not be killed as phantoms.
         transitioning = self._get_transitioning_models()
-        phantom_models = sorted(
-            set(running_processes) - tracked_models - transitioning
-        )
+        phantom_models = sorted(set(running_processes) - tracked_models - transitioning)
         for model_id in phantom_models:
             pid = running_processes.get(model_id)
             tracker_status = self._get_tracker_status(model_id)

@@ -52,9 +52,13 @@ def build_base_profile_from_metadata(
         # Convert numpy types to native Python int
         from .utils import to_native_int
 
-        parameters = to_native_int(parameters_raw) if parameters_raw is not None else None
+        parameters = (
+            to_native_int(parameters_raw) if parameters_raw is not None else None
+        )
         training_context_length = to_native_int(training_context_length_raw)
-        has_chat_template = bool(meta and meta.chat_template and meta.chat_template.strip())
+        has_chat_template = bool(
+            meta and meta.chat_template and meta.chat_template.strip()
+        )
         input_schema = "messages" if has_chat_template else "prompt"
 
         # Check for vision model

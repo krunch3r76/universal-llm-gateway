@@ -1,8 +1,9 @@
 """Load model RPC handler."""
 
 import asyncio
-from universal_logging import get_logger
 from typing import Any
+
+from universal_logging import get_logger
 
 from universal_protocol.errors import RPCError
 

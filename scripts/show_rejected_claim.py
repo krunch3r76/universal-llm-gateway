@@ -139,14 +139,14 @@ def main():
     statement = extract_statement_from_context(contexts, args.statement_id)
 
     if statement:
-        print(f"\n📄 FULL STATEMENT")
+        print("\n📄 FULL STATEMENT")
         print("─" * 80)
         print(statement["text"])
         print("─" * 80)
         print(f"\nTimestamp: {statement['timestamp']}")
 
     # Show rejection context
-    print(f"\n🚫 REJECTION CONTEXT")
+    print("\n🚫 REJECTION CONTEXT")
     print("─" * 80)
     for ctx in contexts:
         if ctx["type"] == "rejection":

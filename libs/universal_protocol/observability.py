@@ -18,11 +18,12 @@ Dict operations (defaultdict) are atomic under GIL.
 """
 
 import asyncio
-from universal_logging import get_logger
 import os
 import time
 from collections import defaultdict
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

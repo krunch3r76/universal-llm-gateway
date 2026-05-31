@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_seat.registry import normalize_agent_slug
 from agent_seat.profiles import resolve_seat
+from agent_seat.registry import normalize_agent_slug
 
 from ._boot_diff import build_boot_diff
 from ._boot_runner import BootMode, run_cortex_boot

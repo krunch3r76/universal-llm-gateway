@@ -307,8 +307,7 @@ class _ProxyChatCompletionStream:
 
             if not isinstance(chunk, dict):
                 logger.warning(
-                    "chat_completion_stream: skipping non-dict SSE payload "
-                    "(type=%s)",
+                    "chat_completion_stream: skipping non-dict SSE payload (type=%s)",
                     type(chunk).__name__,
                 )
                 continue

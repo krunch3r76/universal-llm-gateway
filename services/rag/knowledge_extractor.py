@@ -323,7 +323,9 @@ async def poll_extraction_result(
     Raises httpx.TimeoutException or httpx.HTTPStatusError on transport failure.
     Raises RuntimeError if the execution fails on Stargate's side.
     """
-    deadline = asyncio.get_running_loop().time() + _PIPELINE_CEILING_S + _batch_overhead_s
+    deadline = (
+        asyncio.get_running_loop().time() + _PIPELINE_CEILING_S + _batch_overhead_s
+    )
     while True:
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:

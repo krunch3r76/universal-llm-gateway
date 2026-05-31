@@ -61,7 +61,7 @@ class OrphanedSocketDetector:
                     f"Skipping non-worker socket during orphan detection: {socket_file.name}"
                 )
                 continue
-            
+
             # Extract model_id from "worker-{model_id}.sock"
             model_id = socket_file.stem.removeprefix("worker-")
             reason = await self._is_socket_orphaned(model_id, socket_file)

@@ -119,18 +119,18 @@ def build_comprehensive_model_info_for_synthetic(
         "loader_type": loader_type,
         # Standardized metadata (from capabilities)
         "training_context_length": model_info.get("training_context_length")
-        or (model_info.get("capabilities") or {}).get("limits", {}).get(
-            "max_context_length"
-        ),
+        or (model_info.get("capabilities") or {})
+        .get("limits", {})
+        .get("max_context_length"),
         "input_schema": model_info.get("input_schema"),
         "context_length": context_length,
         "training_cutoff_year": model_info.get("training_cutoff_year"),
         "model_family": model_info.get("family"),
         "quantization": model_info.get("quant"),
         "architecture": model_info.get("arch"),
-        "license": (model_info.get("capabilities") or {}).get("provenance", {}).get(
-            "license"
-        )
+        "license": (model_info.get("capabilities") or {})
+        .get("provenance", {})
+        .get("license")
         or model_info.get("license"),
         "parameters": model_info.get("parameters"),
         "release_date": model_info.get("release_date"),
@@ -175,9 +175,7 @@ def get_openai_models(
         return models
 
     except Exception as e:
-        logger.error(
-            "Error generating OpenAI models list: %s", e, exc_info=True
-        )
+        logger.error("Error generating OpenAI models list: %s", e, exc_info=True)
         return []
 
 
@@ -211,9 +209,7 @@ def get_comprehensive_models(
         return models
 
     except Exception as e:
-        logger.error(
-            "Error generating comprehensive models list: %s", e, exc_info=True
-        )
+        logger.error("Error generating comprehensive models list: %s", e, exc_info=True)
         return []
 
 
@@ -257,7 +253,7 @@ async def list_models(
 
         # Convert filtered IDs back to synthetic model objects for response building
         all_synthetic_models = SyntheticModelResolver.get_all_synthetic_models(config)
-        
+
         filtered_synthetic_models = [
             sm for sm in all_synthetic_models if sm.synthetic_id in filtered_model_ids
         ]

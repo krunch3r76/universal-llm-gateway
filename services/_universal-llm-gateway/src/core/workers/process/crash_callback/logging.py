@@ -8,9 +8,9 @@ logger = get_logger(__name__)
 def log_crash_error(process_id: str, exit_code: int, error_message: str) -> None:
     """
     Log crash error with full error isolation.
-    
+
     Never raises exceptions to prevent breaking process_ipc monitoring.
-    
+
     Args:
         process_id: Process/model ID that crashed
         exit_code: Exit code of crashed process

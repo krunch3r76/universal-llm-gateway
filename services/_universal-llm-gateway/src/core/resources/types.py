@@ -93,7 +93,11 @@ class ModelResourceInfo:
         Falls back only when measured_vram_mb is None (not yet measured).
         A measured value of 0 is preserved as a valid measurement.
         """
-        return self.measured_vram_mb if self.measured_vram_mb is not None else self.vram_usage_mb
+        return (
+            self.measured_vram_mb
+            if self.measured_vram_mb is not None
+            else self.vram_usage_mb
+        )
 
 
 @dataclass

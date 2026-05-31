@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from universal_logging import get_logger
 
 from ..core.config import (
     SupervisorConfig,
@@ -32,7 +33,6 @@ from ..core.types import (
     ProcessResourceUsage,
     ProcessStatus,
 )
-from universal_logging import get_logger
 from ..services.simple_resource_monitor import SimpleResourceMonitor
 from ..utils.helpers import cleanup_socket_path
 

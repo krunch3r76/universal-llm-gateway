@@ -40,7 +40,10 @@ def cmd_download_from_catalog(args: argparse.Namespace, config: Config) -> int:
     format_type = model.metadata.get("format", "gguf")
 
     if not repo:
-        print(f"Error: Model {args.model_id} has no HuggingFace repo in catalog", file=sys.stderr)
+        print(
+            f"Error: Model {args.model_id} has no HuggingFace repo in catalog",
+            file=sys.stderr,
+        )
         return 1
 
     dest_dir = args.dest or config.model_root
@@ -54,7 +57,10 @@ def cmd_download_from_catalog(args: argparse.Namespace, config: Config) -> int:
             login(token=hf_token)
         except Exception as e:
             print(f"Warning: Could not login to HuggingFace: {e}", file=sys.stderr)
-            print("Continuing without explicit login (may fail for gated models)", file=sys.stderr)
+            print(
+                "Continuing without explicit login (may fail for gated models)",
+                file=sys.stderr,
+            )
 
     # Download based on format
     if format_type in ("hf", "awq", "gptq", "cross-encoder"):
@@ -97,9 +103,7 @@ def cmd_download_from_catalog(args: argparse.Namespace, config: Config) -> int:
         return 1
 
 
-def _download_gguf_model(
-    model_id: str, repo: str, file: str, dest_dir: Path
-) -> int:
+def _download_gguf_model(model_id: str, repo: str, file: str, dest_dir: Path) -> int:
     """Download single GGUF file."""
     dest_path = dest_dir / file
 
@@ -135,8 +139,14 @@ def _download_gguf_model(
                 file=sys.stderr,
             )
             print("  1. Accept the license on HuggingFace", file=sys.stderr)
-            print("  2. Get a token: https://huggingface.co/settings/tokens", file=sys.stderr)
-            print("  3. Set HF_TOKEN environment variable or run: huggingface-cli login", file=sys.stderr)
+            print(
+                "  2. Get a token: https://huggingface.co/settings/tokens",
+                file=sys.stderr,
+            )
+            print(
+                "  3. Set HF_TOKEN environment variable or run: huggingface-cli login",
+                file=sys.stderr,
+            )
         return 1
 
 
@@ -166,6 +176,7 @@ def _download_directory_model(
             return 0
         # Remove existing directory
         import shutil
+
         shutil.rmtree(target_dir)
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -180,14 +191,23 @@ def _download_directory_model(
         return 0
     except Exception as e:
         print(f"Error: Download failed: {e}", file=sys.stderr)
-        if "401" in str(e) or "Unauthorized" in str(e) or "GatedRepoError" in str(type(e).__name__):
+        if (
+            "401" in str(e)
+            or "Unauthorized" in str(e)
+            or "GatedRepoError" in str(type(e).__name__)
+        ):
             print(
                 "\nThis model is gated. You need to:",
                 file=sys.stderr,
             )
             print("  1. Accept the license on HuggingFace", file=sys.stderr)
             print(f"  2. Visit: https://huggingface.co/{repo}", file=sys.stderr)
-            print("  3. Get a token: https://huggingface.co/settings/tokens", file=sys.stderr)
-            print("  4. Set HF_TOKEN environment variable or run: huggingface-cli login", file=sys.stderr)
+            print(
+                "  3. Get a token: https://huggingface.co/settings/tokens",
+                file=sys.stderr,
+            )
+            print(
+                "  4. Set HF_TOKEN environment variable or run: huggingface-cli login",
+                file=sys.stderr,
+            )
         return 1
-

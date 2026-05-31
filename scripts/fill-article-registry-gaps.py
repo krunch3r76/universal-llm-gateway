@@ -17,7 +17,9 @@ import httpx
 import yaml
 
 REGISTRY_PATH = Path.home() / ".rag" / "article_registry.yaml"
-RESTORE_SCRIPT = Path(__file__).resolve().parents[1] / "scripts/restore-research-corpus.py"
+RESTORE_SCRIPT = (
+    Path(__file__).resolve().parents[1] / "scripts/restore-research-corpus.py"
+)
 ARXIV_API = "https://export.arxiv.org/api/query"
 BATCH_SIZE = 20
 DELAY_S = 1.0
@@ -27,7 +29,9 @@ def extract_arxiv_ids_from_restore_script() -> dict[str, str]:
     """Parse restore-research-corpus.py for (arxiv_id, target_dir, filename); return filename -> arxiv_id (first wins)."""
     text = RESTORE_SCRIPT.read_text(encoding="utf-8")
     # Match ("2312.10997", "rag-systems", "gao-rag-survey-2024.pdf"),
-    pattern = re.compile(r'\s*\(\s*"([0-9]+\.[0-9]+)"\s*,\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)')
+    pattern = re.compile(
+        r'\s*\(\s*"([0-9]+\.[0-9]+)"\s*,\s*"[^"]+"\s*,\s*"([^"]+)"\s*\)'
+    )
     result: dict[str, str] = {}
     for m in pattern.finditer(text):
         arxiv_id, filename = m.group(1), m.group(2)
@@ -46,7 +50,10 @@ def fetch_arxiv_metadata(arxiv_ids: list[str]) -> dict[str, dict[str, str]]:
         resp.raise_for_status()
         _ = time.sleep(DELAY_S)
         root = ET.fromstring(resp.text)
-        ns = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+        ns = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "arxiv": "http://arxiv.org/schemas/atom",
+        }
         for entry in root.findall(".//atom:entry", ns):
             id_elem = entry.find("atom:id", ns)
             if id_elem is None:
@@ -64,8 +71,14 @@ def fetch_arxiv_metadata(arxiv_ids: list[str]) -> dict[str, dict[str, str]]:
             if len(authors_elems) > 5:
                 authors += " et al."
             published_elem = entry.find("atom:published", ns)
-            published = (published_elem.text or "")[:10] if published_elem is not None else ""
-            out[arxiv_id] = {"title": title, "authors": authors, "published_date": published}
+            published = (
+                (published_elem.text or "")[:10] if published_elem is not None else ""
+            )
+            out[arxiv_id] = {
+                "title": title,
+                "authors": authors,
+                "published_date": published,
+            }
     return out
 
 
@@ -134,7 +147,8 @@ def main() -> None:
 
 """
     _ = REGISTRY_PATH.write_text(
-        header + yaml.dump(out, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        header
+        + yaml.dump(out, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
     print(f"Wrote {REGISTRY_PATH}")

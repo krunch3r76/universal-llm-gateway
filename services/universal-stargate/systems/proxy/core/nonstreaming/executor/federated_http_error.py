@@ -93,9 +93,7 @@ async def raise_federated_http_error(
             f"{upstream_status_code}{common_message_suffix}"
         )
     else:
-        message = (
-            f"Remote gateway error: {upstream_status_code}{common_message_suffix}"
-        )
+        message = f"Remote gateway error: {upstream_status_code}{common_message_suffix}"
 
     detail = error_envelope(
         code=error_code,

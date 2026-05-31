@@ -64,7 +64,10 @@ def test_db_resolver_cardinality_collision() -> None:
     out = res.resolve_slug_with_cardinality("duplicate-slug")
     assert out.decision == "collision_refused"
     assert out.match is None
-    assert out.match_first_match == "document:duplicate-slug" or out.match_first_match == "person:duplicate-slug"
+    assert (
+        out.match_first_match == "document:duplicate-slug"
+        or out.match_first_match == "person:duplicate-slug"
+    )
     assert len(out.candidates) == 2
     assert "person:duplicate-slug" in out.candidates
     assert "document:duplicate-slug" in out.candidates

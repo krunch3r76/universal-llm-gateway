@@ -84,7 +84,10 @@ async def _watch_extraction_model(
                             continue
                         if payload.get("model_id") != pipeline_id:
                             continue
-                        if state._property_index is not None and state._event_bus is not None:
+                        if (
+                            state._property_index is not None
+                            and state._event_bus is not None
+                        ):
                             reset = await state._property_index.wake_extraction_queue()
                             if reset:
                                 logger.info(

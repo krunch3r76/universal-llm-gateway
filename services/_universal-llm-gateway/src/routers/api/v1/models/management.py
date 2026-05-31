@@ -10,9 +10,10 @@ Writes to dynamic catalog by default, static with static=true flag.
 
 import asyncio
 import json
-from universal_logging import get_logger
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
+from universal_logging import get_logger
 
 try:
     from .....core.catalog_manager import (

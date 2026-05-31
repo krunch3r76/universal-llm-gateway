@@ -14,9 +14,10 @@ Key features:
 """
 
 import asyncio
-from universal_logging import get_logger
 import struct
 from typing import Any
+
+from universal_logging import get_logger
 
 from ..protocol.length_prefixed import LengthPrefixedProtocol
 from ..protocol.serializers import JSONSerializer, Serializer

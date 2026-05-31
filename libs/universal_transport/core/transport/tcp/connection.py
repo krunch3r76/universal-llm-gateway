@@ -6,9 +6,10 @@ for TCP transport connections.
 """
 
 import asyncio
-from universal_logging import get_logger
 import socket
 from enum import Enum
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

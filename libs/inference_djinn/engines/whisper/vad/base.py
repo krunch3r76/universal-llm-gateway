@@ -2,12 +2,12 @@
 Base classes and enums for Speech VAD package.
 """
 
-from universal_logging import get_logger
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 
 import numpy as np
+from universal_logging import get_logger
 
 logger = get_logger("speech-vad")
 

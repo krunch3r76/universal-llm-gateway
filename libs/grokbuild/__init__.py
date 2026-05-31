@@ -12,8 +12,8 @@ from grokbuild.events import emit_grok_build_dispatch_rejected
 from grokbuild.fetch_result import fetch_result_op
 from grokbuild.git_ops import pr_create_op, push_op
 from grokbuild.runner import RunnerResult, RunnerSpec
-from grokbuild.validator import validate_dispatch
 from grokbuild.snapshot import snapshot_op
+from grokbuild.validator import validate_dispatch
 from grokbuild.worktree import worktree_create_op
 from grokbuild.worktree_list import worktree_list_op
 from grokbuild.worktree_remove import worktree_remove_op

@@ -261,19 +261,20 @@ async def _run_contextualization_phase(
         )
 
     successful_misses = sum(1 for miss in plan.cache_misses if contexts[miss.index])
-    contextualization_exception_id, contextualization_exception_record_error = (
-        await _record_partial_failure(
-            source=source,
-            source_hash=source_hash,
-            context_model=context_model,
-            correlation_id=correlation_id,
-            prop_index=prop_index,
-            ctx_result=ctx_result,
-            total_chunks=len(chunks),
-            cache_misses_count=plan.cache_misses_count,
-            partial_failed_count=partial_failed_count,
-            partial_first_failure=partial_first_failure,
-        )
+    (
+        contextualization_exception_id,
+        contextualization_exception_record_error,
+    ) = await _record_partial_failure(
+        source=source,
+        source_hash=source_hash,
+        context_model=context_model,
+        correlation_id=correlation_id,
+        prop_index=prop_index,
+        ctx_result=ctx_result,
+        total_chunks=len(chunks),
+        cache_misses_count=plan.cache_misses_count,
+        partial_failed_count=partial_failed_count,
+        partial_first_failure=partial_first_failure,
     )
 
     if state._event_bus is not None:

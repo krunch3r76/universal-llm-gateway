@@ -179,7 +179,9 @@ def migrate(db_path: str, tasks_dir: str) -> None:
             ):
                 item["status"] = "resolved"
             if item["id"] in seen_ids:
-                print(f"  WARNING: duplicate id {item['id']!r} in {source_name}, skipping")
+                print(
+                    f"  WARNING: duplicate id {item['id']!r} in {source_name}, skipping"
+                )
                 _emit_event(
                     "todo.item.skipped.duplicateid",
                     source=source_name,

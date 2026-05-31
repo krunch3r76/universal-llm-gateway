@@ -53,7 +53,9 @@ def resolve_llm_model(timeout: float = 5.0) -> str:
     return OPENROUTER_FREE
 
 
-def extract_title_via_llm(md_text: str, model: str = "auto", timeout: float = 60.0) -> str:
+def extract_title_via_llm(
+    md_text: str, model: str = "auto", timeout: float = 60.0
+) -> str:
     """Ask the gateway LLM to return only the paper title from the given text. Empty on failure."""
     excerpt = md_text.strip()[:LLM_EXTRACT_MAX_CHARS]
     if not excerpt:
@@ -68,7 +70,10 @@ def extract_title_via_llm(md_text: str, model: str = "auto", timeout: float = 60
             json={
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": "You return only the requested piece of text, with no extra wording."},
+                    {
+                        "role": "system",
+                        "content": "You return only the requested piece of text, with no extra wording.",
+                    },
                     {"role": "user", "content": f"{prompt}\n\n---\n\n{excerpt}"},
                 ],
                 "temperature": 0,
@@ -77,7 +82,9 @@ def extract_title_via_llm(md_text: str, model: str = "auto", timeout: float = 60
         )
         resp.raise_for_status()
         data = resp.json()
-        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        content = (data.get("choices") or [{}])[0].get("message", {}).get(
+            "content"
+        ) or ""
         return content.strip()
     except Exception:
         return ""
@@ -162,7 +169,11 @@ def main(
         sub = entry.get("subdirectory", "")
         pdf_path = RESEARCH_ROOT / sub / filename
         if not pdf_path.exists():
-            manifest[filename] = {"path": str(pdf_path), "candidate_title": "", "error": "file_not_found"}
+            manifest[filename] = {
+                "path": str(pdf_path),
+                "candidate_title": "",
+                "error": "file_not_found",
+            }
             continue
         stem = pdf_path.stem
         out_dir = OUT_ROOT / sub
@@ -186,17 +197,26 @@ def main(
                 entry["title"] = candidate
                 print(f"  [{idx}/{n}] {filename[:45]}... -> {candidate[:50]}...")
         except Exception as e:
-            manifest[filename] = {"path": str(pdf_path), "candidate_title": "", "error": str(e)}
+            manifest[filename] = {
+                "path": str(pdf_path),
+                "candidate_title": "",
+                "error": str(e),
+            }
 
     _ = MANIFEST_PATH.write_text(
-        yaml.dump(manifest, default_flow_style=False, allow_unicode=True, sort_keys=True),
+        yaml.dump(
+            manifest, default_flow_style=False, allow_unicode=True, sort_keys=True
+        ),
         encoding="utf-8",
     )
     print(f"Wrote {len(to_convert)} markdown files under {OUT_ROOT}")
     print(f"Manifest: {MANIFEST_PATH}")
 
     if apply:
-        out_articles = {k: {kk: vv for kk, vv in v.items() if vv not in (None, "")} for k, v in sorted(articles.items())}
+        out_articles = {
+            k: {kk: vv for kk, vv in v.items() if vv not in (None, "")}
+            for k, v in sorted(articles.items())
+        }
         header = (
             "# Article registry for RAG chunk metadata (title, published_date, content_hash, etc.).\n"
             "# Loaded by RAG service when article_registry_path is set in ~/.gateway/rag.yaml.\n"
@@ -204,7 +224,13 @@ def main(
             "# Duplicate basenames across dirs: one entry per basename (first path wins).\n\n"
         )
         _ = REGISTRY_PATH.write_text(
-            header + yaml.dump({"articles": out_articles}, default_flow_style=False, allow_unicode=True, sort_keys=False),
+            header
+            + yaml.dump(
+                {"articles": out_articles},
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+            ),
             encoding="utf-8",
         )
         print("Updated article_registry.yaml with candidate titles.")
@@ -212,9 +238,20 @@ def main(
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Export PDFs (no title) to markdown and extract title.")
-    parser.add_argument("--apply", action="store_true", help="Write candidate titles into article_registry.yaml")
-    parser.add_argument("--llm", action="store_true", help="Use Stargate LLM to extract title from md (more reliable)")
+
+    parser = argparse.ArgumentParser(
+        description="Export PDFs (no title) to markdown and extract title."
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write candidate titles into article_registry.yaml",
+    )
+    parser.add_argument(
+        "--llm",
+        action="store_true",
+        help="Use Stargate LLM to extract title from md (more reliable)",
+    )
     parser.add_argument(
         "--model",
         default="auto",

@@ -4,6 +4,7 @@ Gateway-specific hot reload manager.
 Uses universal_hot_reload.HotReloadWatcher for file monitoring,
 adds Gateway-specific features: ConfigReloader, rollback, metrics.
 """
+
 import asyncio
 from pathlib import Path
 
@@ -24,14 +25,14 @@ logger = get_logger(__name__)
 class HotReloadManager:
     """
     Gateway hot reload manager.
-    
+
     Wraps shared HotReloadWatcher with Gateway-specific functionality:
     - ConfigReloader for parsing, validation, merge
     - Automatic rollback on failure
     - Metrics collection
     - Security validation (allowed_paths, max_file_size)
     - Per-file reload callbacks
-    
+
     Architecture:
         HotReloadWatcher (shared lib) → file change detected
         → HotReloadManager._on_file_change(file_path) → per-file queue
@@ -51,7 +52,7 @@ class HotReloadManager:
         log_level: str = "info",  # Unused, kept for API compatibility
     ):
         """Initialize hot reload manager.
-        
+
         Args:
             config_manager: Configuration manager instance (unused, kept for API)
             model_registry: Model registry instance for config updates
@@ -103,7 +104,7 @@ class HotReloadManager:
 
     async def start(self) -> bool:
         """Start hot reload monitoring.
-        
+
         Returns:
             True if started successfully, False otherwise
         """
@@ -163,10 +164,10 @@ class HotReloadManager:
 
     async def _on_file_change(self, file_path: str):
         """Called by shared watcher when a specific file changes.
-        
+
         Args:
             file_path: Path to the changed file (from HotReloadWatcher)
-        
+
         The shared watcher already handles debouncing and pattern filtering.
         We just need to queue the reload for this specific file.
         """
@@ -244,7 +245,9 @@ class HotReloadManager:
         if path.exists():
             size_mb = path.stat().st_size / (1024 * 1024)
             if size_mb > self.max_file_size_mb:
-                raise ValueError(f"File {path} exceeds max size ({size_mb:.1f}MB > {self.max_file_size_mb}MB)")
+                raise ValueError(
+                    f"File {path} exceeds max size ({size_mb:.1f}MB > {self.max_file_size_mb}MB)"
+                )
 
     def get_status(self) -> HotReloadStatus:
         """Get current hot reload status."""

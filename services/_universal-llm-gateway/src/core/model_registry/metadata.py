@@ -137,11 +137,17 @@ class MetadataExtractor:
 
         # Extract context length from capabilities.limits or metadata
         capabilities = djinn_summary.get("capabilities", {})
-        limits = capabilities.get("limits", {}) if isinstance(capabilities, dict) else {}
+        limits = (
+            capabilities.get("limits", {}) if isinstance(capabilities, dict) else {}
+        )
         context_length = limits.get("max_context_length")
 
         if context_length is None:
-            metadata = capabilities.get("metadata", {}) if isinstance(capabilities, dict) else {}
+            metadata = (
+                capabilities.get("metadata", {})
+                if isinstance(capabilities, dict)
+                else {}
+            )
             context_length = metadata.get("training_context_length")
         if context_length is None:
             main_metadata = djinn_summary.get("metadata", {})

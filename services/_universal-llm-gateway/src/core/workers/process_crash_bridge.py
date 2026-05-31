@@ -73,9 +73,7 @@ class ProcessCrashBridge:
 
         worker_crash_event = WorkerCrashDetected(
             model_id=process_id,  # process_id = model_id in gateway
-            error_message=event.payload.get(
-                "error_message", "Worker process crashed"
-            ),
+            error_message=event.payload.get("error_message", "Worker process crashed"),
             socket_path=event.payload.get("socket_path"),
             process_pid=event.payload.get("pid"),
             exit_code=event.payload.get("exit_code"),

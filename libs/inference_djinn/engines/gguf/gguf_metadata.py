@@ -151,8 +151,6 @@ class GGUFMetadataLite:
                         return value_part
                 return default
             except Exception as e:
-                import logging
-
                 get_logger(__name__).debug(f"Error getting field {key}: {e}")
                 return default
 

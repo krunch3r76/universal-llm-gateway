@@ -57,7 +57,11 @@ def add_single_to_verified(
         return 0  # Not fatal, just skip
 
     # Prefer local file when model is on disk (single-file case)
-    if (not sha256 or not size_bytes) and local_path is not None and local_path.is_file():
+    if (
+        (not sha256 or not size_bytes)
+        and local_path is not None
+        and local_path.is_file()
+    ):
         print(f"   Computing sha256/size from local file for {model_id}...")
         sha256 = compute_sha256(local_path)
         size_bytes = local_path.stat().st_size

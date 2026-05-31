@@ -56,7 +56,7 @@ def format_record(record: dict, compact: bool = False) -> str:
     msg = record.get("message", "")
 
     color = COLORS.get(level, "")
-    
+
     if compact:
         ts_display = format_timestamp(ts)
     else:
@@ -70,7 +70,12 @@ def format_record(record: dict, compact: bool = False) -> str:
     return f"{DIM}{ts_display}{RESET} {color}{level:<8}{RESET} {DIM}[{logger}]{RESET} {msg}"
 
 
-def tail_file(path: Path, level_filter: str | None = None, logger_filter: str | None = None, compact: bool = False) -> None:
+def tail_file(
+    path: Path,
+    level_filter: str | None = None,
+    logger_filter: str | None = None,
+    compact: bool = False,
+) -> None:
     """Tail a log file, printing new lines as they appear."""
     with open(path) as f:
         # Seek to end
@@ -93,7 +98,7 @@ def tail_file(path: Path, level_filter: str | None = None, logger_filter: str | 
             if level_filter:
                 if record.get("level", "").upper() != level_filter.upper():
                     continue
-            
+
             if logger_filter:
                 if logger_filter.lower() not in record.get("logger", "").lower():
                     continue
@@ -101,7 +106,12 @@ def tail_file(path: Path, level_filter: str | None = None, logger_filter: str | 
             print(format_record(record, compact=compact), flush=True)
 
 
-def read_file(path: Path, level_filter: str | None = None, logger_filter: str | None = None, compact: bool = False) -> None:
+def read_file(
+    path: Path,
+    level_filter: str | None = None,
+    logger_filter: str | None = None,
+    compact: bool = False,
+) -> None:
     """Read entire log file and print formatted output."""
     with open(path) as f:
         for line in f:
@@ -116,7 +126,7 @@ def read_file(path: Path, level_filter: str | None = None, logger_filter: str | 
             if level_filter:
                 if record.get("level", "").upper() != level_filter.upper():
                     continue
-            
+
             if logger_filter:
                 if logger_filter.lower() not in record.get("logger", "").lower():
                     continue
@@ -124,16 +134,25 @@ def read_file(path: Path, level_filter: str | None = None, logger_filter: str | 
             print(format_record(record, compact=compact), flush=True)
 
 
-def read_file_with_pager(path: Path, level_filter: str | None = None, logger_filter: str | None = None, compact: bool = False) -> None:
+def read_file_with_pager(
+    path: Path,
+    level_filter: str | None = None,
+    logger_filter: str | None = None,
+    compact: bool = False,
+) -> None:
     """Read file and pipe to less for scrolling."""
     try:
         # Start less with color support and line wrapping
         less = subprocess.Popen(
-            ["less", "-R", "-S"],  # -R for color, -S for no wrap (toggle with -S in less)
+            [
+                "less",
+                "-R",
+                "-S",
+            ],  # -R for color, -S for no wrap (toggle with -S in less)
             stdin=subprocess.PIPE,
-            text=True
+            text=True,
         )
-        
+
         with open(path) as f:
             for line in f:
                 clean_line = strip_ansi(line)
@@ -145,7 +164,7 @@ def read_file_with_pager(path: Path, level_filter: str | None = None, logger_fil
                 if level_filter:
                     if record.get("level", "").upper() != level_filter.upper():
                         continue
-                
+
                 if logger_filter:
                     if logger_filter.lower() not in record.get("logger", "").lower():
                         continue
@@ -155,7 +174,7 @@ def read_file_with_pager(path: Path, level_filter: str | None = None, logger_fil
                     less.stdin.write(formatted + "\n")
                 except BrokenPipeError:
                     break
-        
+
         less.stdin.close()
         less.wait()
     except KeyboardInterrupt:
@@ -178,12 +197,14 @@ Examples:
     )
     parser.add_argument("logfile", type=Path, help="Path to NDJSON log file")
     parser.add_argument(
-        "--tail", "-f",
+        "--tail",
+        "-f",
         action="store_true",
         help="Follow file (like tail -f)",
     )
     parser.add_argument(
-        "--level", "-l",
+        "--level",
+        "-l",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Filter by log level",
     )
@@ -192,7 +213,8 @@ Examples:
         help="Filter by logger name (case-insensitive substring match)",
     )
     parser.add_argument(
-        "--compact", "-c",
+        "--compact",
+        "-c",
         action="store_true",
         help="Show compact timestamps (time only, no date)",
     )

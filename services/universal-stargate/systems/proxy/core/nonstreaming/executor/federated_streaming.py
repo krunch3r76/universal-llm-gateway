@@ -94,9 +94,9 @@ async def _execute_federated_streaming(
                         detail=error_envelope(
                             code=ErrorCode.CONFIGURATION_ERROR,
                             message=(
-                            "Federation forwarder not available "
-                            "(required for federated forwarding)"
-                        ),
+                                "Federation forwarder not available "
+                                "(required for federated forwarding)"
+                            ),
                             source="master",
                             retryable=False,
                             data={},

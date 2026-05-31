@@ -114,34 +114,25 @@ class SynthesizeBatchedHandler(BaseHandler):
             resolver, step, "fact_clusters", step.handler_inputs or {}
         )
         question: str = str(
-            self._resolve_input(
-                resolver, step, "question", step.handler_inputs or {}
-            )
+            self._resolve_input(resolver, step, "question", step.handler_inputs or {})
         )
 
         max_batch_size = int(
-            step.get_domain_field("max_batch_size")
-            or _DEFAULT_MAX_BATCH_SIZE
+            step.get_domain_field("max_batch_size") or _DEFAULT_MAX_BATCH_SIZE
         )
         if not step.prompt_ref:
-            raise ValueError(
-                f"Step '{step.id}': requires 'prompt_ref'"
-            )
+            raise ValueError(f"Step '{step.id}': requires 'prompt_ref'")
         prompt_ref: str = step.prompt_ref
         sys_ref: str | None = step.get_domain_field("system_prompt_ref")
 
-        model_id = self._resolve_model_alias(
-            step.model_ref or "", context
-        )
+        model_id = self._resolve_model_alias(step.model_ref or "", context)
 
         batches = _merge_clusters_into_batches(fact_clusters, max_batch_size)
 
         # Render system prompt once — instructions only, no fact data
         cached_sys: str | None = None
         if sys_ref:
-            cached_sys = self._render_prompt(
-                sys_ref, {}, context
-            ).user_prompt
+            cached_sys = self._render_prompt(sys_ref, {}, context).user_prompt
 
         prose_parts: list[str] = []
         all_incorporated: list[int] = []
@@ -153,9 +144,7 @@ class SynthesizeBatchedHandler(BaseHandler):
 
         for batch_idx, batch in enumerate(batches):
             batch_facts_str = _format_batch_facts(batch, global_offset)
-            batch_expected = set(
-                range(global_offset, global_offset + len(batch))
-            )
+            batch_expected = set(range(global_offset, global_offset + len(batch)))
 
             user_ctx: dict[str, Any] = {
                 "question": question,
@@ -180,18 +169,14 @@ class SynthesizeBatchedHandler(BaseHandler):
             if prose:
                 prose_parts.append(prose)
 
-            incorporated = sorted(
-                batch_expected & _extract_indices(prose)
-            )
+            incorporated = sorted(batch_expected & _extract_indices(prose))
             dropped = _parse_dropped(raw_text)
             excluded_wr = {
                 idx: reason
                 for idx, reason in dropped.items()
                 if idx in batch_expected and idx not in incorporated
             }
-            excluded_nr = sorted(
-                batch_expected - set(incorporated) - set(excluded_wr)
-            )
+            excluded_nr = sorted(batch_expected - set(incorporated) - set(excluded_wr))
 
             all_incorporated.extend(incorporated)
             all_excluded_with_reason.update(excluded_wr)
@@ -200,8 +185,7 @@ class SynthesizeBatchedHandler(BaseHandler):
             global_offset += len(batch)
 
             logger.info(
-                "Step '%s' batch %d/%d: %d facts → "
-                "inc=%d exc_wr=%d silent=%d",
+                "Step '%s' batch %d/%d: %d facts → inc=%d exc_wr=%d silent=%d",
                 step.id,
                 batch_idx + 1,
                 len(batches),
@@ -215,8 +199,7 @@ class SynthesizeBatchedHandler(BaseHandler):
         latency_ms = (time.monotonic() - start_time) * 1000
 
         logger.info(
-            "Step '%s': %d batches, %d facts → "
-            "inc=%d exc_wr=%d silent=%d (%.0fms)",
+            "Step '%s': %d batches, %d facts → inc=%d exc_wr=%d silent=%d (%.0fms)",
             step.id,
             len(batches),
             sum(len(b) for b in batches),
@@ -233,9 +216,7 @@ class SynthesizeBatchedHandler(BaseHandler):
                 "batch_texts": prose_parts,
                 "incorporated": sorted(all_incorporated),
                 "excluded_with_reason": all_excluded_with_reason,
-                "excluded_without_reason": sorted(
-                    all_excluded_without_reason
-                ),
+                "excluded_without_reason": sorted(all_excluded_without_reason),
                 "batch_count": len(batches),
                 "batch_sizes": [len(b) for b in batches],
             },
@@ -252,16 +233,10 @@ class SynthesizeBatchedHandler(BaseHandler):
         inputs = step.handler_inputs or {}
         if "fact_clusters" not in inputs:
             errors.append(
-                f"Step '{step.id}': requires 'fact_clusters' "
-                "in handler_inputs"
+                f"Step '{step.id}': requires 'fact_clusters' in handler_inputs"
             )
         if "question" not in inputs:
-            errors.append(
-                f"Step '{step.id}': requires 'question' "
-                "in handler_inputs"
-            )
+            errors.append(f"Step '{step.id}': requires 'question' in handler_inputs")
         if not step.prompt_ref:
-            errors.append(
-                f"Step '{step.id}': requires 'prompt_ref'"
-            )
+            errors.append(f"Step '{step.id}': requires 'prompt_ref'")
         return errors

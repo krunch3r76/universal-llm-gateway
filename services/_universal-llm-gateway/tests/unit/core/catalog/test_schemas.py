@@ -9,11 +9,8 @@ Test matrix per schema:
     - Engine-specific rules enforced
 """
 
-import pytest
-
 from core.catalog.schemas import (
     DiffusersSchema,
-    ExllamaV3Schema,
     FasterWhisperSchema,
     LlamaCppSchema,
     SchemaRegistry,
@@ -211,11 +208,7 @@ class TestLlamaCppSchema:
             },
             "loader": {},  # Missing clip_model_path
             "devices": {
-                "gpu": {
-                    "profiles": {
-                        "8192": {"vram_mb": 8000, "ram_mb": 500}
-                    }
-                }
+                "gpu": {"profiles": {"8192": {"vram_mb": 8000, "ram_mb": 500}}}
             },
         }
 
@@ -311,11 +304,7 @@ class TestDiffusersSchema:
         """Diffusers does not support CPU-only mode."""
         entry = {
             "metadata": {"format": "flux"},
-            "devices": {
-                "cpu": {
-                    "profiles": {"default": {"ram_mb": 32000}}
-                }
-            },
+            "devices": {"cpu": {"profiles": {"default": {"ram_mb": 32000}}}},
         }
 
         schema = DiffusersSchema()

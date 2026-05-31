@@ -158,7 +158,9 @@ async def _main_async(args: argparse.Namespace) -> int:
             }
             if frontier_model:
                 opts["model_ref_overrides"] = {"classify": frontier_model}
-            print("\n--dry-run: would POST to Stargate with pipeline_options (frontier):")
+            print(
+                "\n--dry-run: would POST to Stargate with pipeline_options (frontier):"
+            )
             print(json.dumps(opts, indent=2))
         return 0
 
@@ -174,7 +176,9 @@ async def _main_async(args: argparse.Namespace) -> int:
         else:
             rc |= await _run_pipeline(local_scopes, "local", local_model, args.force)
     if frontier_scopes:
-        rc |= await _run_pipeline(frontier_scopes, "frontier", frontier_model, args.force)
+        rc |= await _run_pipeline(
+            frontier_scopes, "frontier", frontier_model, args.force
+        )
     return rc
 
 

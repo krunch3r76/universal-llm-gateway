@@ -19,8 +19,8 @@ from universal_protocol.rpc.handlers import (
     handle_health,
     handle_unload_model,
 )
-from universal_protocol.ws.bounded_queue import BoundedQueue, QueueTimeoutError
 from universal_protocol.ws import producer_put, stream_registry
+from universal_protocol.ws.bounded_queue import BoundedQueue, QueueTimeoutError
 from universal_protocol.ws.lifecycle import StreamContext
 
 logging.basicConfig(
@@ -288,7 +288,9 @@ class TestUnloadSemantics:
             queue = BoundedQueue()
             context = StreamContext(stream_id)
 
-            stream_registry.register(stream_id, kind="stream", context=context, queue=queue)
+            stream_registry.register(
+                stream_id, kind="stream", context=context, queue=queue
+            )
             # Note: registry doesn't track model; this test verifies stream cleanup on unload
             stream_ids.append(stream_id)
 

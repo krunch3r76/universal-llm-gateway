@@ -44,7 +44,6 @@ def _parse_scope_filter(scope: str | None) -> list[str]:
     return list(dict.fromkeys(normalized))
 
 
-
 def register_article_routes(
     router: APIRouter,
     *,

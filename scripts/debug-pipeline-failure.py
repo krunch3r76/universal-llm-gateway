@@ -10,22 +10,22 @@ from pathlib import Path
 def parse_log_file(log_path: Path) -> dict[str, dict]:
     """Extract all request/response pairs from log file."""
     content = log_path.read_text()
-    
+
     pairs = {}
-    
+
     # Find all request-response pairs
     pattern = r"--- REQUEST \(request_id=([a-f0-9-]+)\) ---\n(.*?)\n--- RESPONSE \(request_id=\1\) ---\n(.*?)(?=\n--- REQUEST|\n--- END|$)"
-    
+
     for match in re.finditer(pattern, content, re.DOTALL):
         request_id = match.group(1)
         request_json = match.group(2).strip()
         response_json = match.group(3).strip()
-        
+
         pairs[request_id] = {
             "request": request_json,
             "response": response_json,
         }
-    
+
     return pairs
 
 
@@ -44,35 +44,37 @@ def main() -> None:
     if len(sys.argv) != 2:
         print("Usage: python scripts/debug-pipeline-failure.py <log_file>")
         print("\nExample:")
-        print("  python scripts/debug-pipeline-failure.py /tmp/logs/universal-stargate/pipeline_failures/20260210_230106_*.txt")
+        print(
+            "  python scripts/debug-pipeline-failure.py /tmp/logs/universal-stargate/pipeline_failures/20260210_230106_*.txt"
+        )
         sys.exit(1)
-    
+
     log_path = Path(sys.argv[1])
     if not log_path.exists():
         print(f"Error: File not found: {log_path}")
         sys.exit(1)
-    
+
     print(f"Analyzing: {log_path.name}\n")
-    
+
     pairs = parse_log_file(log_path)
-    
+
     if not pairs:
         print("No request/response pairs found in log file.")
         sys.exit(1)
-    
+
     print(f"Found {len(pairs)} request/response pairs\n")
-    
+
     invalid_count = 0
-    
+
     for request_id, data in pairs.items():
         # Validate response JSON
         is_valid, error = validate_json(data["response"])
-        
+
         if not is_valid:
             invalid_count += 1
             print(f"❌ INVALID JSON - request_id: {request_id}")
             print(f"   Error: {error}")
-            print(f"   Response preview:")
+            print("   Response preview:")
             lines = data["response"].split("\n")
             for i, line in enumerate(lines[:15], 1):
                 print(f"   {i:3}: {line}")
@@ -83,16 +85,18 @@ def main() -> None:
             # Parse and do semantic validation
             response_obj = json.loads(data["response"])
             request_obj = json.loads(data["request"])
-            
+
             # Check for common issues
             issues = []
-            
+
             # Check if it's a classifications response
             if "classifications" in response_obj:
                 for idx, item in enumerate(response_obj["classifications"]):
                     if "domain" not in item:
-                        issues.append(f"Item {idx} missing 'domain' field (has: {list(item.keys())})")
-            
+                        issues.append(
+                            f"Item {idx} missing 'domain' field (has: {list(item.keys())})"
+                        )
+
             # Check if it's an evaluations response
             if "evaluations" in response_obj:
                 # Extract expected count from system prompt
@@ -103,8 +107,10 @@ def main() -> None:
                         expected = int(match.group(1))
                         actual = len(response_obj["evaluations"])
                         if actual != expected:
-                            issues.append(f"Expected {expected} evaluations, got {actual}")
-            
+                            issues.append(
+                                f"Expected {expected} evaluations, got {actual}"
+                            )
+
             if issues:
                 invalid_count += 1
                 print(f"⚠️  SEMANTIC ISSUES - request_id: {request_id}")
@@ -113,10 +119,10 @@ def main() -> None:
                 print()
             else:
                 print(f"✅ Valid - request_id: {request_id}")
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{'=' * 60}")
     print(f"Summary: {invalid_count}/{len(pairs)} responses have issues")
-    
+
     if invalid_count > 0:
         sys.exit(1)
 

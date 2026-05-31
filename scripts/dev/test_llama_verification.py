@@ -609,32 +609,48 @@ def main() -> int:
         )
         # Detailed per-category breakdown
         for cat, cstats in mdata["categories"].items():
-            print(f"    {cat}: {cstats['accuracy']}% ({cstats['correct']}/{cstats['total']})")
+            print(
+                f"    {cat}: {cstats['accuracy']}% ({cstats['correct']}/{cstats['total']})"
+            )
     print()
 
     # Decision guidance
     print("=" * 60)
     print("DECISION GUIDANCE")
     print("=" * 60)
-    
-    llama_format = summary["format_compliance"]["llama_3_1_8b"]["format_compliant_percent"]
+
+    llama_format = summary["format_compliance"]["llama_3_1_8b"][
+        "format_compliant_percent"
+    ]
     llama_accuracy = next(
-        round(sum(c["correct"] for c in mdata["categories"].values()) / 
-              sum(c["total"] for c in mdata["categories"].values()) * 100, 1)
-        for alias, mdata in summary["models"].items() if alias == "llama_3_1_8b"
+        round(
+            sum(c["correct"] for c in mdata["categories"].values())
+            / sum(c["total"] for c in mdata["categories"].values())
+            * 100,
+            1,
+        )
+        for alias, mdata in summary["models"].items()
+        if alias == "llama_3_1_8b"
     )
-    
+
     qwen_format = summary["format_compliance"]["qwen"]["format_compliant_percent"]
     qwen_accuracy = next(
-        round(sum(c["correct"] for c in mdata["categories"].values()) / 
-              sum(c["total"] for c in mdata["categories"].values()) * 100, 1)
-        for alias, mdata in summary["models"].items() if alias == "qwen"
+        round(
+            sum(c["correct"] for c in mdata["categories"].values())
+            / sum(c["total"] for c in mdata["categories"].values())
+            * 100,
+            1,
+        )
+        for alias, mdata in summary["models"].items()
+        if alias == "qwen"
     )
-    
+
     print(f"Llama 3.1 8B: {llama_format}% format compliant, {llama_accuracy}% accurate")
-    print(f"Qwen (baseline): {qwen_format}% format compliant, {qwen_accuracy}% accurate")
+    print(
+        f"Qwen (baseline): {qwen_format}% format compliant, {qwen_accuracy}% accurate"
+    )
     print()
-    
+
     if llama_format >= 95.0 and llama_accuracy >= 85.0:
         print("✓ RECOMMENDED: llama_3_1_8b shows good format compliance and accuracy")
         print("  Consider adding to verify_models as replacement for mistral_7b")

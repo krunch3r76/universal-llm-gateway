@@ -96,7 +96,9 @@ class ResourceMonitor:
         self.event_bus.subscribe_async(MODEL_UNLOADED, self._on_model_unloaded)
         self.event_bus.subscribe_async(MODEL_LOAD_FAILED, self._on_model_load_failed)
         self.event_bus.subscribe_async(INFERENCE_STARTED, self._on_inference_started)
-        self.event_bus.subscribe_async(INFERENCE_COMPLETED, self._on_inference_completed)
+        self.event_bus.subscribe_async(
+            INFERENCE_COMPLETED, self._on_inference_completed
+        )
         self.event_bus.subscribe_async(
             SYSTEM_RESOURCES_UPDATED, self._on_system_resources_updated
         )

@@ -90,9 +90,7 @@ class ModelMetadata:
 
         caps = data.get("capabilities", {})
         input_schema = (
-            caps.get("input_schema")
-            if isinstance(caps, dict)
-            else None
+            caps.get("input_schema") if isinstance(caps, dict) else None
         ) or data.get("input_schema", "prompt")
 
         return cls(

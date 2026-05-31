@@ -33,13 +33,17 @@ def publish_socket_cleanup_event(process_id: str) -> None:
             loop.call_soon(
                 lambda: asyncio.create_task(
                     get_event_bus().publish_nowait(
-                        SocketCleanupRequested(model_id=process_id, socket_path=socket_path)
+                        SocketCleanupRequested(
+                            model_id=process_id, socket_path=socket_path
+                        )
                     )
                 )
             )
             logger.info(f"🧹 Published cleanup event for crashed {process_id}")
         except RuntimeError:
             # Not in async context, skip emission
-            logger.debug(f"Skipped cleanup event for {process_id} (not in async context)")
+            logger.debug(
+                f"Skipped cleanup event for {process_id} (not in async context)"
+            )
     except Exception as e:
         logger.error(f"Failed to publish cleanup event for {process_id}: {e}")

@@ -1,31 +1,30 @@
 """Factory for creating vision model chat handlers."""
 
-from universal_logging import get_logger
 from typing import Any
+
+from universal_logging import get_logger
 
 from .registry import get_vision_model_info
 
 logger = get_logger(__name__)
 
 
-
-
 def _wrap_handler_with_logging(handler: Any, clip_model_path: str) -> Any:
     """
     Wrap vision handler to log CLIP model loading explicitly.
-    
+
     Args:
         handler: The vision handler instance
         clip_model_path: Path to CLIP model (for logging)
-        
+
     Returns:
         Wrapped handler that logs CLIP loading
     """
     original_call = handler.__call__
-    
+
     def wrapped_call(self, **kwargs):
         # Check if this is the first call (CLIP not loaded yet)
-        if hasattr(self, 'mtmd_ctx') and self.mtmd_ctx is None:
+        if hasattr(self, "mtmd_ctx") and self.mtmd_ctx is None:
             logger.info(f"🔮 Loading CLIP model from: {clip_model_path}")
             try:
                 result = original_call(self, **kwargs)
@@ -42,7 +41,7 @@ def _wrap_handler_with_logging(handler: Any, clip_model_path: str) -> Any:
         else:
             # CLIP already loaded, just call normally
             return original_call(self, **kwargs)
-    
+
     handler.__call__ = wrapped_call
     return handler
 
@@ -92,10 +91,10 @@ def create_vision_handler(
 
         logger.info(f"✅ Vision handler created: {handler_class_name}")
         logger.info("⚠️  NOTE: CLIP model will be loaded on first inference with images")
-        
+
         # Wrap handler to log CLIP loading explicitly
         handler = _wrap_handler_with_logging(handler, clip_model_path)
-        
+
         return handler
 
     except ImportError as e:

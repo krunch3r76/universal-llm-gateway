@@ -1,7 +1,7 @@
 """Audio preprocessing utilities for Whisper engine."""
 
-from universal_logging import get_logger
 import numpy as np
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -135,4 +135,3 @@ def normalize_audio(audio: np.ndarray) -> np.ndarray:
         return np.clip(audio.astype(np.float32), -1.0, 1.0)
     else:
         raise ValueError(f"Unsupported audio dtype: {audio.dtype}")
-

@@ -9,8 +9,9 @@ same change there. A shared base is deferred until a third transport type exists
 """
 
 import asyncio
-from universal_logging import get_logger
 from pathlib import Path
+
+from universal_logging import get_logger
 
 from .connection import (
     AsyncUnixReceiveError,

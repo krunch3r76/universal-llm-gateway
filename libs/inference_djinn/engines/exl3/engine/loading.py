@@ -5,9 +5,10 @@ Handles model loading, configuration, and unload operations.
 """
 
 import asyncio
-from universal_logging import get_logger
 from pathlib import Path
 from typing import Any
+
+from universal_logging import get_logger
 
 try:
     from exllamav3 import Config, Generator, Model, Tokenizer

@@ -4,8 +4,9 @@ GGUF engine prompt building operations.
 Handles prompt formatting and message-to-prompt conversion.
 """
 
-from universal_logging import get_logger
 from typing import Any
+
+from universal_logging import get_logger
 
 from ..vision.content_utils import extract_text_content
 from ..vision.types import MessageList

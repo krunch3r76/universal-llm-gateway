@@ -6,10 +6,7 @@ from model_id import ModelId, canonical_model_entity_id
 
 
 def test_provider_prefix_is_removed_for_model_entity() -> None:
-    assert (
-        canonical_model_entity_id("google/gemini-2.5-pro")
-        == "model:gemini-2.5-pro"
-    )
+    assert canonical_model_entity_id("google/gemini-2.5-pro") == "model:gemini-2.5-pro"
 
 
 def test_openrouter_routing_prefix_is_removed_for_model_entity() -> None:

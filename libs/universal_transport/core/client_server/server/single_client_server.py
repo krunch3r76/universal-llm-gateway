@@ -6,7 +6,9 @@ scenarios that need Transport/MessagePump compatibility.
 """
 
 import asyncio
+
 from universal_logging import get_logger
+
 from ...interfaces import Transport
 from ...message_pump import MessagePump
 from ...protocol.length_prefixed import LengthPrefixedProtocol

@@ -10,6 +10,7 @@ Provides tooling for managing the user's local dynamic catalog:
 
 import os
 from pathlib import Path
+
 import yaml
 
 from .schema import (

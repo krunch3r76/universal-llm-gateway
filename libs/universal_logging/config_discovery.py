@@ -85,6 +85,7 @@ def load_yaml_config(config_path: Path) -> dict[str, Any] | None:
     except Exception as e:
         # Policy: caught exceptions must log WARN/ERROR or re-raise
         import logging
+
         logging.getLogger(__name__).warning(
             f"Failed to load config file {config_path}: {e}"
         )

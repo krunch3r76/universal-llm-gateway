@@ -12,10 +12,10 @@ from contextlib import asynccontextmanager
 from universal_logging import get_logger
 
 from ._types import (
+    _WAITING_EVENT_INTERVAL_S,
     CapacityToken,
     QueueFullError,
     _Slot,
-    _WAITING_EVENT_INTERVAL_S,
     _Waiter,
     _WaiterCancelledError,
 )

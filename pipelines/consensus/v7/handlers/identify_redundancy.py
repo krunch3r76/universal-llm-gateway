@@ -113,7 +113,9 @@ class IdentifyRedundancyHandler(BaseHandler):
             if "batch_texts" in inputs
             else None
         )
-        batch_texts: list[str] = raw_batch_texts if isinstance(raw_batch_texts, list) else []
+        batch_texts: list[str] = (
+            raw_batch_texts if isinstance(raw_batch_texts, list) else []
+        )
 
         def _empty(reason: str) -> StepOutput:
             latency = (time.monotonic() - start_time) * 1000

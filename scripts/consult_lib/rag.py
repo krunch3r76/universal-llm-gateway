@@ -28,8 +28,10 @@ def rag_socket_present(rag_url: str) -> bool:
     if not rag_url.startswith("unix://"):
         return True
     rest = rag_url[7:].lstrip("/")
-    socket_path = Path(f"/{rest}") if rest else Path(
-        os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock")
+    socket_path = (
+        Path(f"/{rest}")
+        if rest
+        else Path(os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock"))
     )
     return socket_path.exists()
 
@@ -120,7 +122,9 @@ def fetch_rag_pipeline(
     except Exception as exc:
         import logging
 
-        logging.getLogger(__name__).exception("Unexpected error during fetch_rag_pipeline")
+        logging.getLogger(__name__).exception(
+            "Unexpected error during fetch_rag_pipeline"
+        )
         return [], str(exc)
     data = resp.json()
     content: str = data.get("choices", [{}])[0].get("message", {}).get("content", "")

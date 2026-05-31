@@ -7,8 +7,9 @@ Triggered when:
 Uses stricter Silero parameters to find boundaries that primary pass missed.
 """
 
-from universal_logging import get_logger
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 from ...vad import SileroVAD, VADMethod
 

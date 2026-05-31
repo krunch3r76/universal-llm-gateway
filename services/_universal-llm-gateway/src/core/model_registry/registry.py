@@ -951,9 +951,7 @@ class ModelRegistry:
             else:
                 # ∀ synthetic model ID with context suffix: exact profile key required.
                 # Stargate owns context selection; Gateway must not silently substitute.
-                numeric_keys = sorted(
-                    int(k) for k in profiles.keys() if k.isdigit()
-                )
+                numeric_keys = sorted(int(k) for k in profiles.keys() if k.isdigit())
                 logger.error(
                     f"[registry] Context {requested_ctx} not found in profiles. "
                     f"Available: {numeric_keys}. "

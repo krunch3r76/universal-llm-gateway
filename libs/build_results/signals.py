@@ -14,9 +14,7 @@ from typing import Any
 # Lines matching these markers are surfaced as failure signals. Anchored to
 # common pytest / runtime failure vocabulary; case-sensitive on the all-caps
 # tokens to avoid matching prose like "no errors".
-_FAILURE_RE = re.compile(
-    r"\b(FAILED|ERROR|ERRORS|AssertionError|Traceback|FAIL)\b"
-)
+_FAILURE_RE = re.compile(r"\b(FAILED|ERROR|ERRORS|AssertionError|Traceback|FAIL)\b")
 _DEFAULT_TAIL_LINES = 20
 _MAX_FAILURE_LINES = 50
 _MAX_LINE_CHARS = 500

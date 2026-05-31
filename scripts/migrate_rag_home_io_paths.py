@@ -30,7 +30,7 @@ COLLECTION_NAME = "knowledge"
 
 def _replace_prefix(path: str) -> str:
     if path.startswith(OLD_PREFIX):
-        return NEW_PREFIX + path[len(OLD_PREFIX):]
+        return NEW_PREFIX + path[len(OLD_PREFIX) :]
     return path
 
 
@@ -43,7 +43,10 @@ def migrate_chromadb() -> int:
     try:
         collection = client.get_collection(COLLECTION_NAME)
     except Exception as exc:
-        print(f"  ERROR: could not open collection '{COLLECTION_NAME}': {exc}", file=sys.stderr)
+        print(
+            f"  ERROR: could not open collection '{COLLECTION_NAME}': {exc}",
+            file=sys.stderr,
+        )
         return 0
 
     total_chunks = collection.count()
@@ -82,7 +85,9 @@ def migrate_chromadb() -> int:
 
     # Unique source files affected.
     affected_sources = sorted({m["source"] for m in stale_metadatas})
-    print(f"  ChromaDB: {len(stale_ids)} chunks across {len(affected_sources)} source files")
+    print(
+        f"  ChromaDB: {len(stale_ids)} chunks across {len(affected_sources)} source files"
+    )
 
     # Update in batches of 500 (ChromaDB update limit guidance).
     update_batch = 500
@@ -186,7 +191,9 @@ def migrate_sqlite() -> dict[str, int]:
         )
         results["chunks_fts_content"] = cur.rowcount
         if cur.rowcount:
-            print(f"  SQLite chunks_fts_content.c1 (source): {cur.rowcount} rows updated")
+            print(
+                f"  SQLite chunks_fts_content.c1 (source): {cur.rowcount} rows updated"
+            )
 
         conn.commit()
     except Exception as exc:
@@ -219,7 +226,10 @@ def verify(expected_chroma_sources: set[str]) -> None:
         if len(ids) < batch_size:
             break
     if remaining:
-        print(f"  VERIFY FAIL: {remaining} /home/io/ chunks still in ChromaDB", file=sys.stderr)
+        print(
+            f"  VERIFY FAIL: {remaining} /home/io/ chunks still in ChromaDB",
+            file=sys.stderr,
+        )
     else:
         print("  VERIFY OK: ChromaDB — 0 /home/io/ chunks remain")
 
@@ -236,7 +246,10 @@ def verify(expected_chroma_sources: set[str]) -> None:
                 (f"%{OLD_PREFIX}%",),
             ).fetchone()
             if count:
-                print(f"  VERIFY FAIL: {count} /home/io/ rows remain in {table}.{col}", file=sys.stderr)
+                print(
+                    f"  VERIFY FAIL: {count} /home/io/ rows remain in {table}.{col}",
+                    file=sys.stderr,
+                )
             else:
                 print(f"  VERIFY OK: {table}.{col} — 0 /home/io/ rows remain")
     finally:

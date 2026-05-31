@@ -80,9 +80,7 @@ class RunArtifact:
     def _ensure_dir(self) -> Path:
         if self._run_dir is not None:
             return self._run_dir
-        dt = datetime.fromisoformat(
-            self.started_at.replace("Z", "+00:00")
-        )
+        dt = datetime.fromisoformat(self.started_at.replace("Z", "+00:00"))
         ts = dt.strftime("%Y%m%d-%H%M%S-%f")[:-3]
         name = f"{ts}-{self.call_id[:8]}"
         d = _runs_root() / name

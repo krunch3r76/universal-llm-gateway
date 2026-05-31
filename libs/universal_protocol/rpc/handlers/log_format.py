@@ -45,4 +45,3 @@ def make_log_prefix(params: dict[str, Any]) -> str:
     correlation_id = get_correlation_id(params)
     request_id = extract_request_id(params)
     return f"[request_id={request_id}][correlation_id={correlation_id}]"
-

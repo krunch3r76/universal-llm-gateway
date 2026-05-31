@@ -134,7 +134,7 @@ def check_file(file_path: Path) -> list[Violation]:
     # - Event(signal="...", ...)
     # - Event( signal="...", ...)
     # - Event(signal=CONSTANT, ...)
-    pattern = re.compile(r'Event\s*\(\s*signal\s*=')
+    pattern = re.compile(r"Event\s*\(\s*signal\s*=")
 
     for line_num, line in enumerate(lines, start=1):
         if pattern.search(line):
@@ -150,7 +150,10 @@ def check_file(file_path: Path) -> list[Violation]:
                         # node.returns is the return annotation
                         if node.returns:
                             # Check if it's a Name node with id "Event"
-                            if isinstance(node.returns, ast.Name) and node.returns.id == "Event":
+                            if (
+                                isinstance(node.returns, ast.Name)
+                                and node.returns.id == "Event"
+                            ):
                                 # Check if the line is within this function's body
                                 # Use lineno for start, and try to find end
                                 func_start = node.lineno
@@ -162,7 +165,10 @@ def check_file(file_path: Path) -> list[Violation]:
                                     # Fallback: find last line of function body
                                     if node.body:
                                         last_stmt = node.body[-1]
-                                        if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
+                                        if (
+                                            hasattr(last_stmt, "end_lineno")
+                                            and last_stmt.end_lineno
+                                        ):
                                             func_end = last_stmt.end_lineno
                                         elif hasattr(last_stmt, "lineno"):
                                             func_end = last_stmt.lineno

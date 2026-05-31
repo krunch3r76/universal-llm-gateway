@@ -26,6 +26,7 @@ class Placement:
     context_length: int | None = None  # For config lookup
     endpoint_category: str = "generation"  # "generation" or "embedding"
 
+
 class ModelDetails(TypedDict, total=False):
     """Per-model routing metadata used by selection and eviction planning."""
 
@@ -171,7 +172,6 @@ class Stargate:
     def is_telemetry_stale(self, max_age_ms: int = 2000) -> bool:
         """True if telemetry is stale."""
         return self.telemetry_age_ms > max_age_ms
-
 
 
 @dataclass(frozen=True)

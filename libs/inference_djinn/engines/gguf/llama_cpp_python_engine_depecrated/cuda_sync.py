@@ -26,9 +26,10 @@ operation that would synchronize ALL CUDA streams on the entire GPU, potentially
 interfering with other processes or concurrent operations.
 """
 
-from universal_logging import get_logger
 import time
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 

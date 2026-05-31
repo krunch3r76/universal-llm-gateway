@@ -11,9 +11,10 @@ Features:
 """
 
 import asyncio
-from universal_logging import get_logger
 import time
 from typing import Any
+
+from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -131,7 +132,7 @@ class UnboundedStreamQueue:
             return  # Idempotent
 
         # Emit terminal frame BEFORE marking closed (consumer must see it)
-        from universal_protocol.ws.frame_types import FRAME_ERR, CODE_QUEUE_CLOSED
+        from universal_protocol.ws.frame_types import CODE_QUEUE_CLOSED, FRAME_ERR
 
         terminal_frame = {
             "t": FRAME_ERR,

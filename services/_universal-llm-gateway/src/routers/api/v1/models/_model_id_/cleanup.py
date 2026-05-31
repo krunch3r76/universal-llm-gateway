@@ -4,8 +4,8 @@ Manual intervention endpoint for when automatic cleanup fails.
 Should rarely be needed if load flow cleanup is working correctly.
 """
 
-from universal_logging import get_logger
 from fastapi import APIRouter, Depends, HTTPException
+from universal_logging import get_logger
 
 from src.core.workers import WorkerController
 from src.routers.dependencies import get_worker_controller

@@ -1,11 +1,11 @@
 """Whisper transcription for sliding window processing."""
 
-from universal_logging import get_logger
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
+from universal_logging import get_logger
 
 from ...word_processing import (
     PipelineMetrics,
@@ -141,10 +141,10 @@ class Transcriber:
             # Log timing breakdown
             logger.info(
                 f"⏱️  Transcription timing (audio={new_audio_duration:.2f}s): "
-                f"prepare={t1-t0:.3f}s, "
-                f"whisper={t3-t2:.3f}s, "
-                f"pipeline={t5-t4:.3f}s, "
-                f"total={t5-t0:.3f}s"
+                f"prepare={t1 - t0:.3f}s, "
+                f"whisper={t3 - t2:.3f}s, "
+                f"pipeline={t5 - t4:.3f}s, "
+                f"total={t5 - t0:.3f}s"
             )
 
             return transcription

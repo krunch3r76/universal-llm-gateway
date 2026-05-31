@@ -369,10 +369,7 @@ def _emit_restart_progress(msg_id: object, attempt: int, delay_s: float) -> None
                 "params": {
                     "progressToken": msg_id,
                     "progress": attempt,
-                    "message": (
-                        "MCP server restarting; "
-                        f"retrying in {delay_s:.0f}s"
-                    ),
+                    "message": (f"MCP server restarting; retrying in {delay_s:.0f}s"),
                 },
             }
         )

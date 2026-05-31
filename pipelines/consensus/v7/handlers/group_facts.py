@@ -177,8 +177,7 @@ class GroupFactsHandler(BaseHandler):
         )
 
         fact_clusters: list[list[dict[str, Any]]] = [
-            [verified_facts[idx] for idx in sorted(cluster)]
-            for cluster in clusters
+            [verified_facts[idx] for idx in sorted(cluster)] for cluster in clusters
         ]
 
         return StepOutput(

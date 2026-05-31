@@ -24,9 +24,7 @@ from typing import cast
 try:
     import yaml
 except ImportError as exc:  # pragma: no cover - runtime environment concern
-    raise SystemExit(
-        "PyYAML is required. Install with: pip install pyyaml"
-    ) from exc
+    raise SystemExit("PyYAML is required. Install with: pip install pyyaml") from exc
 
 
 DEFAULT_FIXTURE = "tasks/specs/consult-code-rag-benchmark-tasks.yaml"
@@ -97,7 +95,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Benchmark baseline vs code-RAG consult workflows."
     )
-    _ = parser.add_argument("--fixture", default=DEFAULT_FIXTURE, help="Path to tasks YAML")
+    _ = parser.add_argument(
+        "--fixture", default=DEFAULT_FIXTURE, help="Path to tasks YAML"
+    )
     _ = parser.add_argument(
         "--baseline-cmd",
         default=DEFAULT_BASELINE_CMD,
@@ -138,7 +138,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output directory (default: tmp/consult-benchmark/<timestamp>)",
     )
-    _ = parser.add_argument("--dry-run", action="store_true", help="Print commands only")
+    _ = parser.add_argument(
+        "--dry-run", action="store_true", help="Print commands only"
+    )
     return parser
 
 
@@ -466,7 +468,9 @@ def _summarize(results: list[TaskRun], variant: str) -> dict[str, float]:
     retries = [float(r.metrics.retry_count) for r in rows]
     manual = [float(r.metrics.manual_intervention_count) for r in rows]
     fallback_rate = sum(1 for r in rows if r.metrics.fallback_used) / len(rows)
-    quality = [r.metrics.quality_score for r in rows if r.metrics.quality_score is not None]
+    quality = [
+        r.metrics.quality_score for r in rows if r.metrics.quality_score is not None
+    ]
     failures = sum(1 for r in rows if r.metrics.exit_code != 0)
     return {
         "runs": float(len(rows)),
@@ -564,7 +568,11 @@ def main() -> None:
     churn = _load_churn(Path(args.churn_json)) if args.churn_json else {}
 
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    run_root = Path(args.out_dir) if args.out_dir else root / "tmp" / "consult-benchmark" / timestamp
+    run_root = (
+        Path(args.out_dir)
+        if args.out_dir
+        else root / "tmp" / "consult-benchmark" / timestamp
+    )
     run_root.mkdir(parents=True, exist_ok=True)
 
     variants: list[tuple[str, str]] = []

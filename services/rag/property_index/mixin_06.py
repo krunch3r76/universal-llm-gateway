@@ -1,7 +1,9 @@
 """_PropertyIndexPart06 — PropertyIndex method chunk (SLOC split)."""
+
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
+
 
 class _PropertyIndexPart06:
     def get_permanent_failures(self, source: str, max_attempts: int) -> set[str]:
@@ -274,5 +276,3 @@ class _PropertyIndexPart06:
             return int(row[0]) if row else 0
 
         return await self._seq.run(_write())
-
-

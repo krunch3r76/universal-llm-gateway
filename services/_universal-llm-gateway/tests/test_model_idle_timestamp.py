@@ -5,7 +5,7 @@ and that the value flows correctly through the WebSocket layer.
 """
 
 import time
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

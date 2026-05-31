@@ -15,7 +15,9 @@ from grokbuild.auth_probe import (
 
 
 def _proc(cmd: list, rc: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(cmd, rc, stdout="model-list\n" if rc == 0 else "", stderr=stderr)
+    return subprocess.CompletedProcess(
+        cmd, rc, stdout="model-list\n" if rc == 0 else "", stderr=stderr
+    )
 
 
 # ── probe_grok_auth ──────────────────────────────────────────────────────────
@@ -60,7 +62,9 @@ class TestProbeGrokAuth:
         assert result.status == AuthStatus.EXPIRED
         assert "expired" in result.detail
 
-    def test_file_not_found_returns_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_file_not_found_returns_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """FileNotFoundError → MISSING with canonical 'grok binary not found' message."""
 
         def fake_run(cmd, **kw):
@@ -72,7 +76,9 @@ class TestProbeGrokAuth:
         assert result.status == AuthStatus.MISSING
         assert "grok binary not found" in result.detail
 
-    def test_timeout_expired_returns_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_timeout_expired_returns_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """subprocess.TimeoutExpired → MISSING."""
 
         def fake_run(cmd, **kw):

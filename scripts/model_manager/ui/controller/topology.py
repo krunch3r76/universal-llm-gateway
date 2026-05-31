@@ -204,9 +204,7 @@ async def _verify_deploy_paths(ssh_target: str) -> tuple[bool, list[str]]:
     stdout, _ = await proc.communicate()
     lines = stdout.decode(errors="replace").splitlines()
     missing = [
-        line.removeprefix("MISSING:")
-        for line in lines
-        if line.startswith("MISSING:")
+        line.removeprefix("MISSING:") for line in lines if line.startswith("MISSING:")
     ]
     return not missing, missing
 

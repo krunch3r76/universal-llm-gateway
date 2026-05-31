@@ -9,6 +9,7 @@ to read on-demand are actually surfaced via the renderer's pointer block.
 
 Exit code: 0 if no drift, 1 if drift found.
 """
+
 from __future__ import annotations
 
 import ast
@@ -20,8 +21,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CORTEX_DATA = Path("/mnt/torus/mcp-data/files")
 
-BOOT_TOOL_PATH = REPO_ROOT / "services/mcp-server/tools/cortex_named_tools/_orchestration_tools.py"
-BOOT_RUNNER_PATH = REPO_ROOT / "services/mcp-server/tools/cortex_named_tools/_boot_runner.py"
+BOOT_TOOL_PATH = (
+    REPO_ROOT / "services/mcp-server/tools/cortex_named_tools/_orchestration_tools.py"
+)
+BOOT_RUNNER_PATH = (
+    REPO_ROOT / "services/mcp-server/tools/cortex_named_tools/_boot_runner.py"
+)
 OPS_CONTEXT_PATH = REPO_ROOT / "services/mcp-server/tools/_operational_context.py"
 TOOL_REFERENCE_PATH = REPO_ROOT / "docs/tool-reference.md"
 OPS_LESSONS_PATH = CORTEX_DATA / "notes/system/shared/operational-lessons.md"
@@ -58,9 +63,15 @@ class AuditReport:
         critical = [f for f in self.findings if f.severity == "critical"]
         warning = [f for f in self.findings if f.severity == "warning"]
         info = [f for f in self.findings if f.severity == "info"]
-        out = ["# Boot Audit\n",
-               f"**{len(critical)} critical · {len(warning)} warning · {len(info)} info**\n"]
-        for bucket, label in [(critical, "Critical"), (warning, "Warning"), (info, "Info")]:
+        out = [
+            "# Boot Audit\n",
+            f"**{len(critical)} critical · {len(warning)} warning · {len(info)} info**\n",
+        ]
+        for bucket, label in [
+            (critical, "Critical"),
+            (warning, "Warning"),
+            (info, "Info"),
+        ]:
             if bucket:
                 out.append(f"\n## {label}\n")
                 out.extend(f.render() for f in bucket)
@@ -68,6 +79,7 @@ class AuditReport:
 
 
 # === Check 1: cortex_boot tool signature vs documented params ===
+
 
 def extract_cortex_boot_params() -> set[str]:
     """Parse the cortex_boot tool decorator function and return param names."""
@@ -90,13 +102,15 @@ def extract_documented_boot_params() -> set[str] | None:
     text = TOOL_REFERENCE_PATH.read_text()
     boot_section = re.search(
         r"##\s+cortex_boot\b.*?(?=\n##\s+\w|\Z)",
-        text, re.DOTALL,
+        text,
+        re.DOTALL,
     )
     if not boot_section:
         return None
     args_subsection = re.search(
         r"###\s+(?:Args|Params|Parameters)\b.*?(?=\n###?\s+\w|\Z)",
-        boot_section.group(0), re.DOTALL,
+        boot_section.group(0),
+        re.DOTALL,
     )
     if not args_subsection:
         return set()
@@ -108,39 +122,46 @@ def check_documented_vs_actual_params(report: AuditReport) -> None:
     actual = extract_cortex_boot_params()
     documented = extract_documented_boot_params()
     if documented is None:
-        report.add(Finding(
-            severity="warning",
-            category="cortex_boot section not found in tool-reference.md",
-            location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
-            claim="docs/tool-reference.md should document cortex_boot",
-            reality="No `### cortex_boot` (or `## cortex_boot`) section located — drift check skipped.",
-        ))
+        report.add(
+            Finding(
+                severity="warning",
+                category="cortex_boot section not found in tool-reference.md",
+                location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
+                claim="docs/tool-reference.md should document cortex_boot",
+                reality="No `### cortex_boot` (or `## cortex_boot`) section located — drift check skipped.",
+            )
+        )
         return
     if not documented:
-        report.add(Finding(
-            severity="info",
-            category="cortex_boot params table failed to parse",
-            location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
-            claim="cortex_boot section was found",
-            reality=(
-                "Section located but the params table regex returned zero rows. "
-                "Either the table format changed or the params table was removed. "
-                "Manual review needed; drift check on documented-vs-actual params skipped."
-            ),
-        ))
+        report.add(
+            Finding(
+                severity="info",
+                category="cortex_boot params table failed to parse",
+                location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
+                claim="cortex_boot section was found",
+                reality=(
+                    "Section located but the params table regex returned zero rows. "
+                    "Either the table format changed or the params table was removed. "
+                    "Manual review needed; drift check on documented-vs-actual params skipped."
+                ),
+            )
+        )
         return
     phantom = documented - actual
     for param in phantom:
-        report.add(Finding(
-            severity="critical",
-            category="Documented param does not exist",
-            location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
-            claim=f"cortex_boot accepts `{param}`",
-            reality=f"`{param}` not in tool signature {sorted(actual)}",
-        ))
+        report.add(
+            Finding(
+                severity="critical",
+                category="Documented param does not exist",
+                location=str(TOOL_REFERENCE_PATH.relative_to(REPO_ROOT)),
+                claim=f"cortex_boot accepts `{param}`",
+                reality=f"`{param}` not in tool signature {sorted(actual)}",
+            )
+        )
 
 
 # === Check 2: post_file mechanism claim vs runner code ===
+
 
 def check_post_file_claims(report: AuditReport) -> None:
     """Any markdown file in /shared/ claiming 'post_file' load that isn't
@@ -153,16 +174,19 @@ def check_post_file_claims(report: AuditReport) -> None:
         preamble = "\n".join(text.splitlines()[:20])
         if re.search(r"post[_\- ]?file", preamble, re.IGNORECASE):
             if not has_post_file_mechanism:
-                report.add(Finding(
-                    severity="critical",
-                    category="Self-claimed auto-load mechanism does not exist",
-                    location=str(md_file.relative_to(CORTEX_DATA)),
-                    claim="Preamble claims auto-load via post_file mechanism",
-                    reality=f"No 'post_file' reference in {BOOT_RUNNER_PATH.name}",
-                ))
+                report.add(
+                    Finding(
+                        severity="critical",
+                        category="Self-claimed auto-load mechanism does not exist",
+                        location=str(md_file.relative_to(CORTEX_DATA)),
+                        claim="Preamble claims auto-load via post_file mechanism",
+                        reality=f"No 'post_file' reference in {BOOT_RUNNER_PATH.name}",
+                    )
+                )
 
 
 # === Check 3: on-demand pointer target file existence ===
+
 
 def extract_on_demand_pointers() -> list[tuple[str, Path]]:
     """Find paths referenced in the operational-context renderer's
@@ -179,16 +203,19 @@ def extract_on_demand_pointers() -> list[tuple[str, Path]]:
 def check_pointer_targets_exist(report: AuditReport) -> None:
     for ref, target in extract_on_demand_pointers():
         if not target.exists():
-            report.add(Finding(
-                severity="critical",
-                category="On-demand pointer target missing",
-                location=str(OPS_CONTEXT_PATH.relative_to(REPO_ROOT)),
-                claim=f"On-demand module: `{ref}`",
-                reality=f"File does not exist at {target}",
-            ))
+            report.add(
+                Finding(
+                    severity="critical",
+                    category="On-demand pointer target missing",
+                    location=str(OPS_CONTEXT_PATH.relative_to(REPO_ROOT)),
+                    claim=f"On-demand module: `{ref}`",
+                    reality=f"File does not exist at {target}",
+                )
+            )
 
 
 # === Check 4: agent-scoped sections in shared files ===
+
 
 def check_agent_scoped_sections(report: AuditReport) -> None:
     """A section header like '### Foo (web-claude)' inside a file loaded
@@ -200,24 +227,28 @@ def check_agent_scoped_sections(report: AuditReport) -> None:
             continue
         for m in re.finditer(
             r"^#{2,4}\s+([^\n]*?\(([\w-]+(?:-claude)?)\s*(?:only)?\))",
-            text, re.MULTILINE,
+            text,
+            re.MULTILINE,
         ):
             heading = m.group(1)
             scope = m.group(2)
-            report.add(Finding(
-                severity="warning",
-                category="Agent-scoped section in shared file",
-                location=f"{md_file.relative_to(CORTEX_DATA)}",
-                claim=f"Section `{heading}` is scoped to {scope}",
-                reality=(
-                    "Shared file loaded identically by all agents — "
-                    f"section reaches every agent, not just {scope}. "
-                    "Either move to per-agent file or rely on agent honoring scope tag."
-                ),
-            ))
+            report.add(
+                Finding(
+                    severity="warning",
+                    category="Agent-scoped section in shared file",
+                    location=f"{md_file.relative_to(CORTEX_DATA)}",
+                    claim=f"Section `{heading}` is scoped to {scope}",
+                    reality=(
+                        "Shared file loaded identically by all agents — "
+                        f"section reaches every agent, not just {scope}. "
+                        "Either move to per-agent file or rely on agent honoring scope tag."
+                    ),
+                )
+            )
 
 
 # === Check 5: stale 'last update' claims ===
+
 
 def check_last_update_freshness(report: AuditReport) -> None:
     """A file with a 'Last structural update: YYYY-MM-DD' footer older
@@ -233,16 +264,19 @@ def check_last_update_freshness(report: AuditReport) -> None:
         )
         if m:
             from datetime import date
+
             last = date.fromisoformat(m.group(1))
             age_days = (date.today() - last).days
             if age_days > 90:
-                report.add(Finding(
-                    severity="info",
-                    category="Stale on-demand reference",
-                    location=str(target.relative_to(CORTEX_DATA)),
-                    claim=f"Last update {m.group(1)} ({age_days} days ago)",
-                    reality="Consider review or removal",
-                ))
+                report.add(
+                    Finding(
+                        severity="info",
+                        category="Stale on-demand reference",
+                        location=str(target.relative_to(CORTEX_DATA)),
+                        claim=f"Last update {m.group(1)} ({age_days} days ago)",
+                        reality="Consider review or removal",
+                    )
+                )
 
 
 # === Check 6: claimed on-demand paths not in renderer pointer block ===
@@ -281,24 +315,27 @@ def check_claimed_on_demand_unreferenced(report: AuditReport) -> None:
                 continue
             target = CORTEX_DATA / claimed_path
             target_status = "exists" if target.exists() else "missing"
-            report.add(Finding(
-                severity="warning",
-                category="Claimed-on-demand path not in renderer pointer block",
-                location=str(md_file.relative_to(CORTEX_DATA)),
-                claim=f"Agents instructed to read `{claimed_path}` on demand",
-                reality=(
-                    f"Target file is {target_status} but not listed in "
-                    "`_ON_DEMAND_POINTERS` — boot's section manifest will "
-                    "not surface this file to agents reading the boot output "
-                    "cold. The on-demand instruction is a hidden contract, "
-                    "discoverable only by agents that already know the path. "
-                    "Either add to `_ON_DEMAND_POINTERS` or remove the read "
-                    "instruction."
-                ),
-            ))
+            report.add(
+                Finding(
+                    severity="warning",
+                    category="Claimed-on-demand path not in renderer pointer block",
+                    location=str(md_file.relative_to(CORTEX_DATA)),
+                    claim=f"Agents instructed to read `{claimed_path}` on demand",
+                    reality=(
+                        f"Target file is {target_status} but not listed in "
+                        "`_ON_DEMAND_POINTERS` — boot's section manifest will "
+                        "not surface this file to agents reading the boot output "
+                        "cold. The on-demand instruction is a hidden contract, "
+                        "discoverable only by agents that already know the path. "
+                        "Either add to `_ON_DEMAND_POINTERS` or remove the read "
+                        "instruction."
+                    ),
+                )
+            )
 
 
 # === Driver ===
+
 
 def main() -> int:
     report = AuditReport()

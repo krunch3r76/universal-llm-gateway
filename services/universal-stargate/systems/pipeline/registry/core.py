@@ -8,7 +8,7 @@ Part of the pipeline registry package.
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 

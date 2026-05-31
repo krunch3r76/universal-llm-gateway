@@ -99,7 +99,9 @@ def list_executions(summaries_dir: Path) -> list[dict[str, Any]]:
             if not events_file.exists():
                 continue
             try:
-                executions.append(_build_execution_list_item(exec_dir, pipeline_dir.name))
+                executions.append(
+                    _build_execution_list_item(exec_dir, pipeline_dir.name)
+                )
             except (json.JSONDecodeError, OSError) as e:  # Or more specific exceptions
                 logger.error("Failed to aggregate %s: %s", exec_dir, e)
             except Exception as e:
@@ -119,7 +121,9 @@ def list_executions(summaries_dir: Path) -> list[dict[str, Any]]:
 _STALE_THRESHOLD_SECONDS = 5 * 60  # No new events for 5 min → dead execution
 
 
-def _build_execution_list_item(exec_dir: Path, pipeline_id_fallback: str) -> dict[str, Any]:
+def _build_execution_list_item(
+    exec_dir: Path, pipeline_id_fallback: str
+) -> dict[str, Any]:
     """Build lightweight metadata for execution cards.
 
     This intentionally avoids full execution aggregation so frequent list polling

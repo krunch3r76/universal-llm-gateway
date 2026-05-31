@@ -97,7 +97,9 @@ class AssertThenReviseHandler(BaseHandler):
             )
 
         prompt_ref: str = revise_config["prompt_ref"]
-        model_ref: str = revise_config.get("model_ref") or step.get_domain_field("model_ref") or ""
+        model_ref: str = (
+            revise_config.get("model_ref") or step.get_domain_field("model_ref") or ""
+        )
         if not model_ref:
             raise ValueError(f"Step '{step.id}' missing model_ref for revise action")
 
@@ -108,9 +110,7 @@ class AssertThenReviseHandler(BaseHandler):
         model_call_count = 0
 
         for attempt in range(max_retries):
-            targets_text = "\n".join(
-                f'{i + 1}. "{s}"' for i, s in enumerate(remaining)
-            )
+            targets_text = "\n".join(f'{i + 1}. "{s}"' for i, s in enumerate(remaining))
             rendered = self._render_prompt(
                 prompt_ref,
                 {"artifact": artifact, "targets": targets_text},

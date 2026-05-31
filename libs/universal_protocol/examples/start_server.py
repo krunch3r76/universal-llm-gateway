@@ -16,9 +16,10 @@ Socket Path:
 """
 
 import argparse
-from universal_logging import get_logger, INFO
 import sys
 from pathlib import Path
+
+from universal_logging import INFO, get_logger
 
 # Configure logging before imports
 logging.basicConfig(

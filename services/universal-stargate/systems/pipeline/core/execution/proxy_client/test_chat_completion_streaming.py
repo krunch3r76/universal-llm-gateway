@@ -273,10 +273,7 @@ async def test_streaming_raises_on_upstream_5xx_before_first_chunk(
 async def test_streaming_decrements_active_requests_on_clean_exit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    body = (
-        _sse_frame({"choices": [{"delta": {"content": "x"}}]})
-        + _sse_frame("[DONE]")
-    )
+    body = _sse_frame({"choices": [{"delta": {"content": "x"}}]}) + _sse_frame("[DONE]")
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

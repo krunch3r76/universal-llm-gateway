@@ -17,6 +17,7 @@ API-BASED OPERATION:
 - Automatic failover and load balancing
 - Real-time configuration updates from gateway
 """
+
 from __future__ import annotations
 
 # middleware/

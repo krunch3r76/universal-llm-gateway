@@ -5,9 +5,10 @@ This module provides the BaseAsyncServer abstract class that contains
 common functionality for both multi-client and single-client server patterns.
 """
 
-from universal_logging import get_logger
 from abc import ABC, abstractmethod
 from typing import Any
+
+from universal_logging import get_logger
 
 from ...protocol.length_prefixed import LengthPrefixedProtocol
 from ...protocol.serializers import JSONSerializer

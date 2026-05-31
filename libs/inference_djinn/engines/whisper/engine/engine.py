@@ -2,14 +2,13 @@
 
 import asyncio
 import base64
-from universal_logging import get_logger
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 import whisper
+from universal_logging import get_logger
 
 from inference_djinn.engines.base import BaseEngine
 

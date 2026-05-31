@@ -79,9 +79,7 @@ async def _handle_pdf_duplicate_or_move(
 
     # True duplicate: old path still exists on disk.
     if old_path is not None:
-        logger.info(
-            "PDF duplicate detected: %s is duplicate of %s", source, old_path
-        )
+        logger.info("PDF duplicate detected: %s is duplicate of %s", source, old_path)
     if state._event_bus is not None:
         await state._event_bus.publish_nowait(
             rag_file_skipped(
@@ -140,4 +138,6 @@ async def _handle_empty_chunks(
                 operation=operation,
             )
         )
-    return IndexResult(deleted=len(existing_ids), indexed=0, unchanged=False, file=source)
+    return IndexResult(
+        deleted=len(existing_ids), indexed=0, unchanged=False, file=source
+    )

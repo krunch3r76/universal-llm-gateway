@@ -5,7 +5,6 @@ This module provides a simple wrapper around process_ipc.UnixSocketProcessManage
 for managing LLM worker processes without complex abstractions.
 """
 
-
 try:
     import psutil
 except ImportError:

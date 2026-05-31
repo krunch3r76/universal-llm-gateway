@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
-from ._extract_document_helpers import compute_source_sha256
 from ._file_helpers import FILES_ROOT
 from ._sidecar_schema import (
     SIDECAR_SUFFIX,

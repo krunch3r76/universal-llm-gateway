@@ -108,7 +108,9 @@ class VerifyGeneralHandler(BaseHandler):
         )
         originator = str(originator) if originator is not None else None
 
-        verify_model_aliases, full_verifier_pool = self._resolve_verify_models(step, context, originator)
+        verify_model_aliases, full_verifier_pool = self._resolve_verify_models(
+            step, context, originator
+        )
 
         # Affinity ordering: answer-pool models first
         answer_models_opt = (context.options or {}).get("answer_models", {})

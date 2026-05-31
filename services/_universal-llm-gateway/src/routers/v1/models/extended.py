@@ -59,16 +59,16 @@ def get_extended_models() -> list[ExtendedModelInfo]:
                         "training_context_length": model_info.get(
                             "training_context_length"
                         )
-                        or (model_info.get("capabilities") or {}).get("limits", {}).get(
-                            "max_context_length"
-                        ),
+                        or (model_info.get("capabilities") or {})
+                        .get("limits", {})
+                        .get("max_context_length"),
                         "training_cutoff_year": model_info.get("training_cutoff_year"),
                         "model_family": model_info.get("family"),
                         "quantization": model_info.get("quant"),
                         "architecture": model_info.get("arch"),
-                        "license": (
-                            model_info.get("capabilities") or {}
-                        ).get("provenance", {}).get("license")
+                        "license": (model_info.get("capabilities") or {})
+                        .get("provenance", {})
+                        .get("license")
                         or model_info.get("license"),
                         "parameters": model_info.get("parameters"),
                         "release_date": model_info.get("release_date"),

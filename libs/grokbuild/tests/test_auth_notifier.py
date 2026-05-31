@@ -53,7 +53,9 @@ def test_empty_token_returns_false_no_post(
 ) -> None:
     """No agent_bus_token → False, no POST, no latch written."""
     calls = _install_post_turn(monkeypatch)
-    result = notify_if_needed(sidecar_dir=tmp_path, **{**_DEFAULTS, "agent_bus_token": ""})
+    result = notify_if_needed(
+        sidecar_dir=tmp_path, **{**_DEFAULTS, "agent_bus_token": ""}
+    )
     assert result is False
     assert not calls
     assert not _latch_path(tmp_path).exists()
@@ -140,7 +142,9 @@ def test_payload_has_slug_not_thread(
             captured_json.append(json)
             return _FakeResp()
 
-    monkeypatch.setattr(transport_utils, "make_sync_client", lambda *a, **kw: _FakeClient())
+    monkeypatch.setattr(
+        transport_utils, "make_sync_client", lambda *a, **kw: _FakeClient()
+    )
 
     slug = "grokbuild-auth-alert"
     notify_if_needed(sidecar_dir=tmp_path, **{**_DEFAULTS, "notify_slug": slug})

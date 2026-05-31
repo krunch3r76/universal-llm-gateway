@@ -156,7 +156,7 @@ def ProcessCrashDetected(
         This signal is emitted directly to event_bus, not via IPC transport.
         However, we maintain the factory pattern for consistency.
     """
-    from universal_event_bus import Event, event_factory
+    from universal_event_bus import Event
 
     return Event(
         signal=PROCESS_CRASH_DETECTED,
@@ -169,7 +169,7 @@ def ProcessCrashDetected(
             "stderr": stderr,
             "is_signal_termination": is_signal_termination,
             "signal_name": signal_name,
-        }
+        },
     )
 
 

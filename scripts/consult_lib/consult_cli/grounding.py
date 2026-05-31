@@ -102,7 +102,9 @@ def _observe_grounding_outcomes(
                                 "model_id": model_id,
                                 "error": str(exc),
                                 "response_status_code": (
-                                    response.status_code if response is not None else None
+                                    response.status_code
+                                    if response is not None
+                                    else None
                                 ),
                             },
                         },

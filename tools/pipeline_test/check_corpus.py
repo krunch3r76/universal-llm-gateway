@@ -5,6 +5,7 @@ Usage:
     python tools/pipeline_test/check_corpus.py
     python tools/pipeline_test/check_corpus.py --corpus docs/research/prompting
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,9 +50,9 @@ def check_corpus(corpus_dir: Path) -> None:
                 indexed_no_date.append((pdf, key))
 
     if not_indexed:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"NOT INDEXED ({len(not_indexed)} files):")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for pdf in not_indexed:
             print(f"  {pdf.name}")
         print()
@@ -59,28 +60,30 @@ def check_corpus(corpus_dir: Path) -> None:
         corpus_abs = corpus_dir.resolve()
         for pdf in not_indexed:
             print(
-                f'  curl -s -X POST --unix-socket /tmp/universal-protocol/rag.sock '
-                f'http://localhost/index \\\n'
-                f'    -H \'Content-Type: application/json\' \\\n'
+                f"  curl -s -X POST --unix-socket /tmp/universal-protocol/rag.sock "
+                f"http://localhost/index \\\n"
+                f"    -H 'Content-Type: application/json' \\\n"
                 f'    -d \'{{"path": "{corpus_abs}/{pdf.name}", "metadata_overrides": {{"published_date": "YYYY-MM-DDT00:00:00+00:00"}}}}\''
             )
     else:
         print("\nAll PDFs are indexed.")
 
     if indexed_no_date:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"INDEXED BUT NO published_date ({len(indexed_no_date)} files):")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         for pdf, _ in indexed_no_date:
             print(f"  {pdf.name}")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"INDEXED WITH DATE ({len(indexed_with_date)} files):")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     for pdf, _, pub in indexed_with_date:
         print(f"  {pdf.name:60s}  {pub[:10]}")
 
-    print(f"\nTotal on disk: {len(on_disk)}  |  Not indexed: {len(not_indexed)}  |  Missing date: {len(indexed_no_date)}  |  Complete: {len(indexed_with_date)}")
+    print(
+        f"\nTotal on disk: {len(on_disk)}  |  Not indexed: {len(not_indexed)}  |  Missing date: {len(indexed_no_date)}  |  Complete: {len(indexed_with_date)}"
+    )
 
 
 def main() -> None:

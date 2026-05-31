@@ -35,9 +35,7 @@ def _apply_gateway_signal(
     return True
 
 
-def _apply_signal(
-    gate: AdmissionGate, signal: str, payload: dict[str, object]
-) -> None:
+def _apply_signal(gate: AdmissionGate, signal: str, payload: dict[str, object]) -> None:
     if _apply_gateway_signal(gate, signal, payload):
         return
 
