@@ -74,6 +74,7 @@ prompts/
 tests/*
 !libs/inference_djinn/scripts/tests/
 !tests/predicate_form/
+!tests/agent_bus_store/
 # Root-anchored: rsync --filter=:- .gitignore ignores git ! negations.
 # Use /foo/ not foo/ when foo/ also appears as a source directory elsewhere in the tree.
 /templates/
