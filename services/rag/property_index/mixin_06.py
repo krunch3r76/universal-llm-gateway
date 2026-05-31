@@ -1,5 +1,6 @@
 """_PropertyIndexPart06 — PropertyIndex method chunk (SLOC split)."""
 
+# ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations
 
 from ._spec import *  # noqa: F401,F403
