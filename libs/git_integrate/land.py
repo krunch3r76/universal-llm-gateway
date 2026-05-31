@@ -29,6 +29,19 @@ from git_integrate.validate import validate_integrate, validate_land
 
 _logger = get_logger(__name__)
 
+# Land-report disambiguation (thread 1153): a land advances the *ref*
+# refs/heads/master in source_repo — the authoritative land target. The live
+# working checkout ff-pulls on its own cadence and origin push is
+# operator-discretionary; neither is implied by a completed land. Reconcile
+# "landed" claims against the ref (via git_cas.is_reachable_from_master /
+# GET /api/v1/git/reachable), never a working tree's HEAD.
+_LAND_REPORT_NOTE = (
+    "master_sha is the advanced tip of refs/heads/master in source_repo (the "
+    "authoritative land target). The live working checkout ff-pulls on its own "
+    "cadence and origin push is operator-discretionary — neither is implied by "
+    "this land. Reconcile reachability against the ref, not a working tree."
+)
+
 
 async def land_op(
     *,
@@ -195,6 +208,8 @@ async def land_op(
         status="completed",
         merge_commit=merge_commit,
         master_sha=master_sha,
+        landed_ref="refs/heads/master",
+        land_report=_LAND_REPORT_NOTE,
         committed=committed,
         commit_sha=commit_sha,
         duration_s=duration_s,

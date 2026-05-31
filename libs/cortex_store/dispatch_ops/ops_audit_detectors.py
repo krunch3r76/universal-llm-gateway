@@ -44,6 +44,7 @@ from ._detectors.entity import (
     detect_entity_source_uri_unresolved,
 )
 from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
+from ._detectors.git_reconcile import detect_landed_claim_not_on_master
 from ._detectors.markdown_render import (
     detect_markdown_section_drift,
     detect_marker_nesting_violation,
@@ -105,6 +106,10 @@ FS_TOUCHING_KINDS = {
     "unregistered_document_in_markdown",
     "markdown_section_drift",
     "forbidden_surfaces",
+    # Landed-claim-vs-master-ref reconciliation (thread 1153) — touches the
+    # repo via the git-integration-worker route, so it runs in the opt-in
+    # include_filesystem pass, off the <100ms graph-only session_audit budget.
+    "landed_claim_not_on_master",
 }
 
 INFO_KINDS = {"case_marker_absent", "decision_deprecated_not_terminal"}
@@ -141,6 +146,7 @@ def get_all_detectors() -> dict[str, Any]:
         "decision_workflow_state_incoherent": detect_decision_workflow_state_incoherent,
         "decision_deprecated_not_terminal": detect_decision_deprecated_not_terminal,
         "todo_implementation_seed_incomplete": detect_todo_implementation_seed_incomplete,
+        "landed_claim_not_on_master": detect_landed_claim_not_on_master,
     }
 
 
@@ -212,6 +218,7 @@ __all__ = [
     "detect_entity_source_uri_missing",
     "detect_entity_source_uri_unresolved",
     "detect_forbidden_surfaces",
+    "detect_landed_claim_not_on_master",
     "detect_markdown_section_drift",
     "detect_marker_nesting_violation",
     "detect_prior_session_id_omitted",

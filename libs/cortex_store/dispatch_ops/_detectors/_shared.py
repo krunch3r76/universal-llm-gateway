@@ -56,6 +56,12 @@ SEVERITY = {
     # Fires on open/in_progress todos missing source_uri, required_skills, or a
     # context edge to a non-agent_skill entity.
     "todo_implementation_seed_incomplete": "warning",
+    # Landed-claim-vs-master-ref ground-truth audit (thread 1153;
+    # case:telemetry-vs-git-ground-truth-divergence). A live assertion claiming
+    # a land whose SHA is not on local refs/heads/master is a ground-truth
+    # falsehood in the graph — the top (critical) tier, not hygiene. The spec's
+    # "severity high" maps to this enum's "critical" (no separate high tier).
+    "landed_claim_not_on_master": "critical",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

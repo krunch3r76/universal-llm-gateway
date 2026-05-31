@@ -266,6 +266,54 @@ async def current_sha(repo_path: str, ref: str) -> str:
     return proc.stdout.strip()
 
 
+async def commit_exists(source_repo: str, sha: str) -> bool:
+    """True ⟺ ``sha`` resolves to a commit object in ``source_repo``.
+
+    ``git rev-parse --quiet --verify <sha>^{commit}`` (rc 0 ⟹ exists).
+    Distinguishes a phantom SHA (claimed commit absent from the repo) from a
+    real commit that merely isn't on master — the reachability audit needs
+    both signals to classify a stranded-land claim.
+    """
+    proc = await _run_command(
+        [
+            "git",
+            "-C",
+            source_repo,
+            "rev-parse",
+            "--quiet",
+            "--verify",
+            f"{sha}^{{commit}}",
+        ],
+        timeout=_GIT_TIMEOUT,
+    )
+    return proc.returncode == 0
+
+
+async def is_reachable_from_master(source_repo: str, sha: str) -> bool:
+    """True ⟺ ``sha`` is an ancestor of (or equal to) refs/heads/master.
+
+    Wraps ``git -C <source_repo> merge-base --is-ancestor <sha> refs/heads/master``
+    (rc 0 ⟹ reachable). Reconciles against **local** master only — origin push
+    is separate and operator-owned, so a not-yet-pushed land still reads
+    reachable here. Returns False on any non-zero rc (not-ancestor, phantom SHA,
+    or git error); callers needing phantom-vs-not-reachable should consult
+    ``commit_exists`` first.
+    """
+    proc = await _run_command(
+        [
+            "git",
+            "-C",
+            source_repo,
+            "merge-base",
+            "--is-ancestor",
+            sha,
+            "refs/heads/master",
+        ],
+        timeout=_GIT_TIMEOUT,
+    )
+    return proc.returncode == 0
+
+
 async def fetch_master(worktree_path: str) -> None:
     """Best-effort update of master ref visibility.
 

@@ -12,10 +12,10 @@ from git_integrate.git_cas import diff_sha256, land_fingerprint
 from git_integrate.integrate import integrate_op
 from git_integrate.land import land_op
 from git_integrate.schema import (
+    EMPTY_DIFF_SHA256,
     RC_DIRTY_WORKTREE,
     RC_NOTHING_TO_LAND,
     RC_UNCOMMITTED_NO_MESSAGE,
-    EMPTY_DIFF_SHA256,
 )
 
 
@@ -113,6 +113,11 @@ async def test_land_dirty_happy_path(
     assert out["committed"] is True
     assert out["commit_sha"]
     assert out["master_sha"]
+    # Ground-truth equality this whole episode is about: the reported
+    # master_sha IS the advanced tip of refs/heads/master in source_repo —
+    # not telemetry, the ref itself (thread 1153).
+    assert out["master_sha"] == _ref_sha(source_repo, "refs/heads/master")
+    assert out["landed_ref"] == "refs/heads/master"
     signals = [s for s, _ in event_log]
     assert "git.land.requested" in signals
     assert "git.land.completed" in signals

@@ -110,6 +110,24 @@ class CommitRequest(BaseModel):
     )
 
 
+class ReachableResponse(BaseModel):
+    """Read-only reachability probe of a SHA against local refs/heads/master.
+
+    ``exists`` (rev-parse) and ``reachable`` (merge-base --is-ancestor) are
+    reported separately so a caller can distinguish a phantom SHA (absent from
+    the repo) from a real commit that simply isn't on master. Reconciles
+    against **local** master only — origin push is separate/operator-owned.
+    """
+
+    sha: str
+    exists: bool = False
+    reachable: bool = False
+    ref: str = "refs/heads/master"
+    status: str = Field("ok", description="ok | rejected")
+    reason_code: str = ""
+    reason: str = ""
+
+
 class StatusResponse(BaseModel):
     """Read-only worktree status probe."""
 

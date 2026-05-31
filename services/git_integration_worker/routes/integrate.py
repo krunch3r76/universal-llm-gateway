@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
@@ -14,7 +15,9 @@ from fastapi.responses import JSONResponse
 from git_integrate.commit import commit_op
 from git_integrate.events import emit_git_status_read
 from git_integrate.git_cas import (
+    commit_exists,
     is_dirty,
+    is_reachable_from_master,
     land_diff_numstat,
     land_diff_text,
     land_fingerprint,
@@ -34,6 +37,7 @@ from services.git_integration_worker.models.api import (
     IntegrateRequest,
     IntegrateResponse,
     LandRequest,
+    ReachableResponse,
     StatusResponse,
 )
 
@@ -47,6 +51,10 @@ router = APIRouter(prefix="/api/v1/git", tags=["git-integration"])
 # Single-owner serializer: one integrate at a time in this process (1117 S2).
 _GATE = FifoCapacityGate(limit=1, gate_id="git-integrate")
 _CONFIG: WorkerConfig = load_config()
+
+# A git commit token: 7–40 hex chars. Guards the read-only reachability probe
+# against arbitrary subprocess input before it reaches git.
+_SHA_TOKEN_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
 @asynccontextmanager
@@ -329,3 +337,34 @@ async def diff(
     return await loop.run_in_executor(
         None, lambda: _diff_sync(worktree_path, path_filter, include_full_diff)
     )
+
+
+@router.get("/reachable", response_model=ReachableResponse)
+async def reachable(
+    request: Request,
+    sha: str = Query(
+        ...,
+        description="Commit SHA (7–40 hex) to test against local refs/heads/master.",
+    ),
+) -> ReachableResponse:
+    """Read-only: is ``sha`` reachable from LOCAL refs/heads/master in source_repo.
+
+    Does not acquire the integrate gate. ``source_repo`` is the worker-owned
+    ``cfg.source_repo`` — the route takes no path argument. Reconciles against
+    **local** master only (origin push is separate/operator-owned). Returns
+    ``exists`` (rev-parse) and ``reachable`` (merge-base --is-ancestor)
+    separately so callers can distinguish a phantom SHA from a real commit not
+    yet on master. Backs the cortex landed-claim audit detector.
+    """
+    cfg = _config(request)
+    if not _SHA_TOKEN_RE.fullmatch(sha):
+        return ReachableResponse(
+            sha=sha,
+            status="rejected",
+            reason_code="invalid_sha",
+            reason="sha must be a 7–40 character hex commit token",
+        )
+    source_repo = str(cfg.source_repo)
+    exists = await commit_exists(source_repo, sha)
+    is_reachable = await is_reachable_from_master(source_repo, sha) if exists else False
+    return ReachableResponse(sha=sha, exists=exists, reachable=is_reachable)

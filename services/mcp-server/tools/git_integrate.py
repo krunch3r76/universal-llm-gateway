@@ -155,7 +155,12 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
 
         Returns:
             Worker land envelope (``integration_id``, ``status``, ``committed``,
-            ``commit_sha``, ``master_sha``, …).
+            ``commit_sha``, ``master_sha``, …). ``master_sha`` is the advanced
+            tip of ``landed_ref`` (refs/heads/master) in source_repo — the
+            authoritative land target. The live working checkout ff-pulls on its
+            own cadence and origin push is operator-discretionary; neither is
+            implied by a completed land (see ``land_report``). Reconcile
+            "landed" claims against the ref reachability, not a working tree.
         """
         return await _relay(
             "POST",
