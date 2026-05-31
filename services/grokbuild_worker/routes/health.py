@@ -39,6 +39,7 @@ class _HealthChecks(BaseModel):
     auth_dir: Literal["ok", "missing"]
     sidecar_dir: Literal["ok", "creating_failed"]
     registry: Literal["ok", "missing"]
+    grok_auth: Literal["ok", "expired", "missing"]
 
 
 class HealthResponse(BaseModel):
@@ -78,12 +79,32 @@ def _check_registry(registry_path: Path) -> str:
     return "ok" if registry_path.parent.exists() else "missing"
 
 
-def _evaluate(cfg: Any) -> dict[str, str]:
+def _evaluate(cfg: Any, state: Any | None = None) -> dict[str, str]:
+    """Evaluate all health checks.
+
+    ``state`` is the FastAPI app.state (or None at pre-lifespan call sites).
+    ``grok_auth`` is read from ``state.grok_auth_status`` rather than
+    probing inline — a subprocess probe on every /health poll would add
+    up to 60s latency with warmup; the startup/periodic probe in app.py
+    updates state instead.
+    """
+    from grokbuild.auth_probe import AuthStatus
+
+    grok_auth: str = "missing"
+    if state is not None:
+        raw = getattr(state, "grok_auth_status", None)
+        if raw is AuthStatus.OK:
+            grok_auth = "ok"
+        elif raw is AuthStatus.EXPIRED:
+            grok_auth = "expired"
+        elif raw is AuthStatus.MISSING:
+            grok_auth = "missing"
     return {
         "grok_binary": _check_grok_binary(cfg.grok_bin_path),
         "auth_dir": _check_auth_dir(cfg.grok_auth_dir),
         "sidecar_dir": _check_sidecar_dir(cfg.sidecar_dir),
         "registry": _check_registry(cfg.registry_path),
+        "grok_auth": grok_auth,
     }
 
 
@@ -96,15 +117,18 @@ def _evaluate(cfg: Any) -> dict[str, str]:
 async def health(request: Request) -> JSONResponse:
     """Return health envelope; ``200`` even when degraded.
 
-    Degraded state means at least one startup check is still failing
-    (binary/auth/sidecar/registry). Operator probes filter on
-    ``status="ok"`` rather than on HTTP status — by design, restarts
-    aren't triggered just because the auth dir went missing.
+    Degraded means ≥1 startup check is still failing. ``grok_auth``
+    reflects the most recent probe result stored in app.state
+    (updated at startup and optionally by the periodic probe task).
     """
     state = request.app.state
     cfg = state.worker_config
-    checks = _evaluate(cfg)
-    status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    checks = _evaluate(cfg, state)
+    # Option A (OQ-1): grok_auth is operator-actionable, not a worker-health
+    # fault — it is reported informationally but does NOT drive the degraded
+    # rollup. Status is computed over the four core readiness checks only.
+    _ROLLUP_KEYS = ("grok_binary", "auth_dir", "sidecar_dir", "registry")
+    status = "ok" if all(checks[k] == "ok" for k in _ROLLUP_KEYS) else "degraded"
     return JSONResponse(
         status_code=200,
         content={

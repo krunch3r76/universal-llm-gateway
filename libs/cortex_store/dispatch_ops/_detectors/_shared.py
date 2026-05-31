@@ -52,6 +52,10 @@ SEVERITY = {
     # engine, decision landed first.
     "decision_workflow_state_incoherent": "warning",
     "decision_deprecated_not_terminal": "info",
+    # Todo seed-contract completeness (thread 1144; decision:todo-creation-rich-seed-contract).
+    # Fires on open/in_progress todos missing source_uri, required_skills, or a
+    # context edge to a non-agent_skill entity.
+    "todo_implementation_seed_incomplete": "warning",
 }
 
 # Identifier-shaped attribute value: alphanumerics + ``-._:/`` only. Used by

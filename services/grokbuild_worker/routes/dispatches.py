@@ -23,8 +23,10 @@ from collections.abc import AsyncIterator
 from build_results import result_ref
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
+from grokbuild.auth_probe import AuthStatus
 from grokbuild.fetch_result import fetch_result_op
 from pydantic import BaseModel
+from universal_logging import get_logger
 
 from services.grokbuild_worker.error_map import raise_if_error
 from services.grokbuild_worker.events import (
@@ -46,6 +48,8 @@ from services.grokbuild_worker.tracker import (
 )
 
 router = APIRouter(prefix="/api/v1/grokbuild", tags=["grokbuild-dispatches"])
+
+logger = get_logger(__name__)
 
 
 class _ErrorDetail(BaseModel):
@@ -190,6 +194,47 @@ async def start_dispatch(
                 ),
                 "depth_received": req.recursion_depth,
                 "depth_limit": _recursion_depth_limit,
+            },
+        )
+
+    # T2: admission-time auth gate — reject immediately if the cached auth status
+    # is not OK rather than letting the dispatch start and fail inside the lib.
+    grok_auth_status = getattr(request.app.state, "grok_auth_status", None)
+    if grok_auth_status is not None and grok_auth_status != AuthStatus.OK:
+        rejection_id = str(uuid.uuid4())
+        publish_nowait(
+            GrokbuildDispatchRejectedEvent(
+                dispatch_id=rejection_id,
+                reason_code="missing_grok_auth",
+                reason=f"grok auth is {grok_auth_status}; run grok login --device-auth",
+                running=0,
+                capacity=0,
+            )
+        )
+        cfg = request.app.state.worker_config
+        try:
+            from grokbuild.auth_notifier import notify_if_needed
+
+            notify_if_needed(
+                sidecar_dir=cfg.sidecar_dir,
+                agent_bus_url=cfg.agent_bus_url,
+                agent_bus_token=cfg.agent_bus_token,
+                notify_slug=cfg.grok_auth_notify_slug,
+                notify_to=cfg.grok_auth_notify_to,
+                debounce_h=cfg.grok_auth_debounce_h,
+                trigger="dispatch_rejection",
+                grok_auth_dir=str(cfg.grok_auth_dir),
+                deploy_shape=cfg.deploy_shape,
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "auth_notifier.notify_if_needed failed on dispatch rejection"
+            )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "reason_code": "missing_grok_auth",
+                "reason": f"grok auth is {grok_auth_status}; run grok login --device-auth",
             },
         )
 

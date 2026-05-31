@@ -18,6 +18,10 @@ from urllib.parse import urlencode
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
+from ._agent_bus_post_guard import (
+    reconcile_post_arguments,
+    structured_route_guard,
+)
 from ._local_relay import relay as _relay
 
 if TYPE_CHECKING:
@@ -103,6 +107,9 @@ def _post_impl(
         structured = _structured_body_too_large(result, op="post")
         if structured is not None:
             return structured
+        guard = structured_route_guard(result)
+        if guard is not None:
+            return guard
         return {"error": f"agent-bus error creating thread: {result['error']}"}
 
     thread_data = result.get("thread", {})
@@ -883,6 +890,24 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           dispatch_links: list — pipeline executions linked to this thread via dispatch-admit;
             each entry has: execution_id, pipeline_id, linked_at, terminal_status, delivery_at
 
+        Turn response fields (Turn — returned by fetch, fetch_unread, get, and as
+        the created turn inside post/reply):
+          id, thread, turn_number, from, to, subject, body,
+          status (TurnStatus — see Status enums below), supersedes_turn,
+          created_at, read_at, attachments
+          NOTE: the author field serializes on the wire as `from` (the create/reply
+            INPUT field is `from_agent`); the recipient field is `to`.
+          `status` on a turn is the PER-TURN TurnStatus, NOT the thread's status.
+            Do not infer thread state from a turn's `status` — a closed thread can
+            still contain turns whose status is `open`. To check whether a thread
+            is active or closed, use threads() and read the ThreadStatus `status`
+            field on ThreadDetail.
+
+        Status enums (two distinct fields — not the same field, not interchangeable;
+        both happen to include `waiting`):
+          TurnStatus   (per-turn workflow state, on each Turn):     open | resolved | superseded | waiting
+          ThreadStatus (thread-level lifecycle, on ThreadDetail):   active | blocked | waiting | closed
+
         Tags (free-form strings on threads):
           Suggested `namespace:value` convention — nothing is enforced:
             project:<name>   — project scoping (e.g. project:claudeburst)
@@ -922,6 +947,16 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                         f"that did not parse as a JSON object"
                     )
                 }
+            if tool == "post":
+                # Guardrail C: reconcile the `from` alias and reject
+                # continuation-shaped misuse before the unknown-argument gate.
+                parsed, misuse = reconcile_post_arguments(parsed)
+                if misuse is not None:
+                    record(
+                        "mcp.agentbus.post.rejected",
+                        reason=str(misuse.get("reason", "")),
+                    )
+                    return misuse
             accepted = set(inspect.signature(handler).parameters)
             unknown = [k for k in parsed if k not in accepted]
             if unknown:

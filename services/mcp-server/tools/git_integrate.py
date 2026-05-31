@@ -1,7 +1,7 @@
 """Git integration MCP tools — thin relay to git-integration-worker via Stargate.
 
-Routes ``git_integrate``, ``git_status``, and ``git_diff`` to
-``/api/v1/git/{integrate,status,diff}``. Request/response shapes mirror the
+Routes ``git_integrate``, ``git_land``, ``git_status``, and ``git_diff`` to
+``/api/v1/git/{integrate,land,status,diff}``. Request/response shapes mirror the
 worker OpenAPI (``services/git_integration_worker/models/api.py``).
 """
 
@@ -78,7 +78,7 @@ def _http_error_to_envelope(resp: httpx.Response) -> dict[str, Any]:
 
 
 def register_git_integrate_tools(mcp: FastMCP) -> None:
-    """Register git_integrate, git_status, and git_diff on the MCP catalog."""
+    """Register git_integrate, git_land, git_status, and git_diff on the MCP catalog."""
 
     @mcp.tool(title="Git Integrate")
     async def git_integrate(  # noqa: PLR0913 — mirrors IntegrateRequest fields
@@ -125,6 +125,52 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
             timeout=_INTEGRATE_TIMEOUT,
         )
 
+    @mcp.tool(title="Git Land")
+    async def git_land(  # noqa: PLR0913 — mirrors LandRequest fields
+        arc: str,
+        phase: str,
+        worktree_path: str,
+        approval: str,
+        expected_diff_sha256: str,
+        commit_message: str = "",
+        remove_worktree: bool = True,
+    ) -> dict[str, Any]:
+        """One atomic operator-gated land — commit, merge, gate, ref-advance, teardown.
+
+        Commits the reviewed arc worktree when dirty (``commit_message`` required),
+        merges master into the arc, runs the server green gate, advances master at
+        the ref level, and tears down the worktree. Obtain ``expected_diff_sha256``
+        from ``git_diff`` first (dirty-aware fingerprint).
+
+        Args:
+            arc: Plan slug; worktree branch must be ``arc/<arc>``.
+            phase: Phase label for audit events.
+            worktree_path: Absolute path to the arc worktree.
+            approval: Operator approval string bound to the diff fingerprint.
+            expected_diff_sha256: SHA-256 of the approved diff from ``git_diff``.
+            commit_message: Commit message when the worktree has uncommitted changes.
+            remove_worktree: Remove the arc worktree after successful land
+                (default True).
+
+        Returns:
+            Worker land envelope (``integration_id``, ``status``, ``committed``,
+            ``commit_sha``, ``master_sha``, …).
+        """
+        return await _relay(
+            "POST",
+            "/api/v1/git/land",
+            json_body={
+                "arc": arc,
+                "phase": phase,
+                "worktree_path": worktree_path,
+                "approval": approval,
+                "expected_diff_sha256": expected_diff_sha256,
+                "commit_message": commit_message,
+                "remove_worktree": remove_worktree,
+            },
+            timeout=_INTEGRATE_TIMEOUT,
+        )
+
     @mcp.tool(title="Git Status")
     async def git_status(worktree_path: str) -> dict[str, Any]:
         """Read-only arc worktree status (branch, dirty flag).
@@ -150,10 +196,11 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
         worktree_path: str,
         path_filter: str = "",
     ) -> dict[str, Any]:
-        """Unified diff vs master plus ``diff_sha256`` for approval binding.
+        """Unified diff of what would land plus ``diff_sha256`` for approval binding.
 
-        Read-only; does not acquire the integrate gate. Pass ``diff_sha256`` and
-        operator ``approval`` into ``git_integrate`` after review.
+        Read-only; does not acquire the integrate gate. When the worktree is dirty,
+        returns the working-tree-inclusive diff and ``includes_uncommitted=true``.
+        Pass ``diff_sha256`` and operator ``approval`` into ``git_land`` after review.
 
         Args:
             worktree_path: Absolute path to the arc worktree.
@@ -161,7 +208,8 @@ def register_git_integrate_tools(mcp: FastMCP) -> None:
                 only; fingerprint uses the full arc-vs-master diff).
 
         Returns:
-            Worker ``DiffResponse`` (``diff``, ``diff_sha256``, ``status``, …).
+            Worker ``DiffResponse`` (``diff``, ``diff_sha256``,
+            ``includes_uncommitted``, ``status``, …).
         """
         params: dict[str, Any] = {"worktree_path": worktree_path}
         if path_filter:

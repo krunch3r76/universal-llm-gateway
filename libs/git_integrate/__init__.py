@@ -18,10 +18,12 @@ from git_integrate.events import (
     register_uds_publisher,
 )
 from git_integrate.integrate import integrate_op
-from git_integrate.schema import CasResult, IntegrateResult, MergeResult
+from git_integrate.land import land_op
+from git_integrate.schema import CasResult, CommitResult, IntegrateResult, MergeResult
 
 __all__ = [
     "CasResult",
+    "CommitResult",
     "GitIntegrateCompleted",
     "GitIntegrateGateFailed",
     "GitIntegrateRejected",
@@ -37,5 +39,6 @@ __all__ = [
     "emit_git_integrate_retried",
     "emit_git_status_read",
     "integrate_op",
+    "land_op",
     "register_uds_publisher",
 ]

@@ -10,12 +10,16 @@ import pytest
 from git_integrate.git_cas import (
     abort_merge,
     advance_master_cas,
+    commit_arc,
     current_sha,
     diff_sha256,
     fetch_master,
+    is_dirty,
+    land_fingerprint,
     merge_master_into,
     reset_hard_to,
 )
+from git_integrate.schema import RC_CLEAN_TREE
 
 
 def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -194,3 +198,77 @@ async def test_advance_master_never_touches_live_working_tree(
         if p.is_file() and not p.name.startswith(".")
     }
     assert files_before == files_after
+
+
+@pytest.mark.asyncio
+async def test_commit_arc_dirty_creates_commit(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    wt = tmp_path / "worktrees" / "commit-arc"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _git("worktree", "add", "-b", "arc/commit-arc", str(wt), "master", cwd=source_repo)
+    _git("config", "user.email", "test@example.com", cwd=wt)
+    _git("config", "user.name", "Test", cwd=wt)
+    (wt / "new.py").write_text("# new\n")
+    before = _head_sha(wt)
+
+    result = await commit_arc(str(wt), "commit new file")
+    assert result.committed
+    assert result.commit_sha
+    assert result.commit_sha != before
+    assert _head_sha(wt) == result.commit_sha
+
+
+@pytest.mark.asyncio
+async def test_commit_arc_clean_tree(arc_worktree: Path) -> None:
+    result = await commit_arc(str(arc_worktree), "noop")
+    assert not result.committed
+    assert result.reason_code == RC_CLEAN_TREE
+
+
+@pytest.mark.asyncio
+async def test_land_fingerprint_dirty_matches_post_commit(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    wt = tmp_path / "worktrees" / "fp-arc"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _git("worktree", "add", "-b", "arc/fp-arc", str(wt), "master", cwd=source_repo)
+    _git("config", "user.email", "test@example.com", cwd=wt)
+    _git("config", "user.name", "Test", cwd=wt)
+    (wt / "tracked.py").write_text("# tracked\n")
+    (wt / "untracked.py").write_text("# untracked\n")
+
+    before_fp = land_fingerprint(str(wt))
+    assert is_dirty(str(wt))
+
+    _git("add", "-A", cwd=wt)
+    _git("commit", "-m", "land test", cwd=wt)
+    after_fp = diff_sha256(str(wt))
+    assert before_fp == after_fp
+
+
+@pytest.mark.asyncio
+async def test_scratch_index_leaves_worktree_unmodified(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    wt = tmp_path / "worktrees" / "scratch-arc"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _git("worktree", "add", "-b", "arc/scratch-arc", str(wt), "master", cwd=source_repo)
+    (wt / "dirty.py").write_text("# dirty\n")
+    status_before = subprocess.run(
+        ["git", "-C", str(wt), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    _ = land_fingerprint(str(wt))
+
+    status_after = subprocess.run(
+        ["git", "-C", str(wt), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert status_before == status_after
+    assert (wt / "dirty.py").read_text() == "# dirty\n"

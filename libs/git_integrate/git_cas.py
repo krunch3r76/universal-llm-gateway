@@ -23,13 +23,174 @@ import hashlib
 import os
 import signal
 import subprocess
+import tempfile
 
 from universal_logging import get_logger
 
-from git_integrate.schema import CasResult, MergeResult
+from git_integrate.schema import (
+    CasResult,
+    CommitResult,
+    MergeResult,
+    RC_CLEAN_TREE,
+    RC_COMMIT_FAILED,
+)
 
 _GIT_TIMEOUT = 30.0
 _logger = get_logger(__name__)
+
+
+def _merge_base(worktree_path: str) -> str:
+    """Return merge-base(HEAD, refs/heads/master) or "" on failure."""
+    try:
+        mb = subprocess.run(
+            ["git", "-C", worktree_path, "merge-base", "HEAD", "refs/heads/master"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if mb.returncode != 0:
+            return ""
+        return mb.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def is_dirty(worktree_path: str) -> bool:
+    """True when the worktree has uncommitted changes (incl. untracked)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", worktree_path, "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        return bool(proc.stdout.strip()) if proc.returncode == 0 else False
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _scratch_index_diff(
+    worktree_path: str,
+    merge_base: str,
+    *,
+    cached: bool,
+    path_filter: str = "",
+) -> str:
+    """Compute diff via a temporary index — does not mutate the real index."""
+    index_path = ""
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            index_path = tmp.name
+        env = {**os.environ, "GIT_INDEX_FILE": index_path}
+        read_tree = subprocess.run(
+            ["git", "-C", worktree_path, "read-tree", "HEAD"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if read_tree.returncode != 0:
+            return ""
+        add_all = subprocess.run(
+            ["git", "-C", worktree_path, "add", "-A"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        if add_all.returncode != 0:
+            return ""
+        diff_cmd = ["git", "-C", worktree_path, "diff"]
+        if cached:
+            diff_cmd.append("--cached")
+        diff_cmd.append(merge_base)
+        if path_filter:
+            diff_cmd.extend(["--", path_filter])
+        diff = subprocess.run(
+            diff_cmd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        return diff.stdout if diff.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    finally:
+        if index_path:
+            try:
+                os.unlink(index_path)
+            except OSError:
+                pass
+
+
+def land_fingerprint(worktree_path: str) -> str:
+    """SHA-256 of the diff that would be committed and integrated."""
+    if not is_dirty(worktree_path):
+        return diff_sha256(worktree_path)
+    merge_base = _merge_base(worktree_path)
+    if not merge_base:
+        return ""
+    diff_text = _scratch_index_diff(worktree_path, merge_base, cached=True)
+    return hashlib.sha256(diff_text.encode()).hexdigest()
+
+
+def land_diff_text(worktree_path: str, path_filter: str = "") -> str:
+    """Unified diff of what would land (dirty-aware, read-only)."""
+    merge_base = _merge_base(worktree_path)
+    if not merge_base:
+        return ""
+    if is_dirty(worktree_path):
+        return _scratch_index_diff(
+            worktree_path, merge_base, cached=True, path_filter=path_filter
+        )
+    diff_cmd = ["git", "-C", worktree_path, "diff", merge_base, "HEAD"]
+    if path_filter:
+        diff_cmd.extend(["--", path_filter])
+    try:
+        diff = subprocess.run(
+            diff_cmd,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT,
+        )
+        return diff.stdout if diff.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+async def commit_arc(worktree_path: str, message: str) -> CommitResult:
+    """Deterministically commit all staged/unstaged changes in the arc worktree."""
+    add_proc = await _run_command(
+        ["git", "-C", worktree_path, "add", "-A"],
+        timeout=_GIT_TIMEOUT,
+    )
+    if add_proc.returncode != 0:
+        return CommitResult(
+            committed=False,
+            reason_code=RC_COMMIT_FAILED,
+        )
+
+    commit_proc = await _run_command(
+        ["git", "-C", worktree_path, "commit", "-m", message],
+        timeout=_GIT_TIMEOUT,
+    )
+    if commit_proc.returncode != 0:
+        combined = commit_proc.stdout + commit_proc.stderr
+        if "nothing to commit" in combined:
+            sha = await current_sha(worktree_path, "HEAD")
+            return CommitResult(
+                committed=False,
+                commit_sha=sha,
+                reason_code=RC_CLEAN_TREE,
+            )
+        return CommitResult(
+            committed=False,
+            reason_code=RC_COMMIT_FAILED,
+        )
+
+    sha = await current_sha(worktree_path, "HEAD")
+    return CommitResult(committed=True, commit_sha=sha)
 
 
 def diff_sha256(worktree_path: str) -> str:

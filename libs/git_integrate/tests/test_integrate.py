@@ -235,7 +235,7 @@ async def test_cas_retry_then_success(
             return CasResult(non_ff=True)
         return await original_advance(src, wtp, expected=expected)
 
-    monkeypatch.setattr("git_integrate.integrate.advance_master_cas", _patched_advance)
+    monkeypatch.setattr("git_integrate.ops_common.advance_master_cas", _patched_advance)
 
     out = await integrate_op(
         arc="retry-arc",
@@ -268,7 +268,7 @@ async def test_cas_exhausted_after_max_attempts(
 
         return CasResult(non_ff=True)
 
-    monkeypatch.setattr("git_integrate.integrate.advance_master_cas", _always_non_ff)
+    monkeypatch.setattr("git_integrate.ops_common.advance_master_cas", _always_non_ff)
 
     out = await integrate_op(
         arc="test-arc",

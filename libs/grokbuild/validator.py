@@ -15,17 +15,12 @@ import subprocess
 from dataclasses import dataclass
 from typing import Literal
 
-# Cross-module import so the auth preflight subprocess and the runner
-# subprocess see the same environment (review W3). Private prefix is
-# preserved because _build_env is still an implementation detail of the
-# runner; this validator is the only sanctioned external consumer.
 from grokbuild.constants import (
     _PERMISSION_BY_MODE,
     _SIDECAR_DIR,
     _VALID_TIERS,
     DEFAULT_TIMEOUT_SECONDS,
 )
-from grokbuild.runner import _build_env
 
 # Admitted op set. validate_dispatch is called only by the dispatch path
 # with op='build' (the v1 rename of the prior 'dispatch' value). It also
@@ -65,79 +60,24 @@ def _resolve_grok_path() -> str | None:
     return shutil.which("grok")
 
 
-class _GrokAuthProbe:
-    """Cached probe for ``grok models`` auth health.
-
-    Encapsulates what was previously a module-global mutable ``bool`` plus
-    a ``global``-mutating reader and a test-only reset back-door (review
-    S4). Behavior is unchanged: caches ONLY ``True`` returns so a transient
-    ``False`` on a fresh container process doesn't poison the cache and
-    block all dispatches until MCP restarts.
-
-    Subprocess env mirrors the runner via ``_build_env()`` (review W3) so
-    the preflight sees the same environment as the runner subprocess;
-    otherwise the preflight could pass with credentials/proxy env that
-    the stripped runner env lacks, masking real failures.
-
-    Single instance per process: ``_GROK_AUTH_PROBE`` below. The
-    module-level ``_grok_models_ok`` / ``_reset_grok_models_cache_for_tests``
-    facades preserve the import surface so existing callers (validator
-    body, test fixtures) keep working without renames.
-    """
-
-    __slots__ = ("_cached_ok",)
-
-    def __init__(self) -> None:
-        self._cached_ok: bool = False
-
-    def ok(self) -> bool:
-        if self._cached_ok:
-            return True
-        try:
-            proc = subprocess.run(
-                ["grok", "models"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-                env=_build_env(),
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            return False
-        if proc.returncode == 0:
-            self._cached_ok = True
-            return True
-        return False
-
-    def reset(self) -> None:
-        """TEST-ONLY: clear the cached True state.
-
-        Used by ``test_support.clear_validator_caches`` and by tests that
-        verify the cold-start transient-False contract.
-        """
-        self._cached_ok = False
-
-
-_GROK_AUTH_PROBE = _GrokAuthProbe()
+# Auth probe delegated to grokbuild.auth_probe._PROBE which fixes the
+# HOME-stripping gap: _build_env() intentionally omits HOME for dispatch
+# subprocesses; the standalone probe re-injects real HOME so grok finds
+# auth.json at HOME/.grok/auth.json.
+from grokbuild.auth_probe import _PROBE as _GROK_AUTH_PROBE
 
 
 def _grok_models_ok() -> bool:
-    """Module-level facade — preserves the import surface for callers.
+    """Module-level facade — delegates to grokbuild.auth_probe._PROBE.ok().
 
-    Delegates to ``_GROK_AUTH_PROBE.ok()``. Kept as a module-level
-    function so existing imports (``from grokbuild.validator import
-    _grok_models_ok``) and the validator body keep working without
-    rename churn.
+    Preserved so existing imports (``from grokbuild.validator import
+    _grok_models_ok``) and the validator body continue to work.
     """
     return _GROK_AUTH_PROBE.ok()
 
 
 def _reset_grok_models_cache_for_tests() -> None:
-    """TEST-ONLY back-door — delegates to the singleton's reset.
-
-    Preserved as a module-level function so ``test_support`` and the test
-    suite keep their existing import paths. Production code MUST NOT call
-    this; the probe is self-managing.
-    """
+    """TEST-ONLY back-door — delegates to auth_probe._PROBE.reset()."""
     _GROK_AUTH_PROBE.reset()
 
 

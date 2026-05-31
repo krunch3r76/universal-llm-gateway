@@ -16,6 +16,7 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.events import publish_lib_signal
+from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
 
 logger = get_logger(__name__)
@@ -80,6 +81,7 @@ def create_app() -> FastAPI:
             content={"detail": "Internal Server Error", "error": str(exc)},
         )
 
+    app.include_router(health_router)
     app.include_router(integrate_router)
     return app
 

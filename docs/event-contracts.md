@@ -2489,6 +2489,21 @@ All signals: `role="observation"`, `scope="global"`.
 
 `.rejected` `reason_code` enum (validator side, unchanged from V1; V2 added `capacity_exhausted` on the worker-side `grokbuild.dispatch.rejected`, see below): `retired_op`, `retired_output_format`, `retired_param`, `unknown_op`, `bad_tier`, `bad_reasoning_effort`, `bad_effort`, `bad_max_turns`, `bad_best_of_n`, `bad_timeout_seconds`, `bad_resume_strict_without_session_id`, `bad_output_format`, `cwd_missing`, `not_a_git_repo`, `git_unreachable`, `working_tree_dirty`, `grok_not_in_path`, `missing_grok_auth`, `sidecar_unavailable`, `dispatch_conflict`.
 
+**Auth lifecycle signals** (`grokbuild.auth.*`). Emitted by the worker process via the
+UDS publisher hook (same path as `grokbuild.*` worker-level events; not audit-rich
+`mcp.grokbuild.*` vocab).
+
+| Signal | Fields | Notes |
+|---|---|---|
+| `grokbuild.auth.required` | `reason_code` (str — `"expired"` \| `"missing"`), `grok_auth_dir` (str), `deploy_shape` (str — `"bare-metal"` \| `"container"`), `trigger` (str — `"startup"` \| `"dispatch_rejection"` \| `"periodic"`), `debounce_key` (str — ISO timestamp of active latch, empty before Phase 2 notifier) | Fired when `probe_grok_auth()` returns non-OK. Debounced in Phase 2 — raw event fires every probe failure; debounced agent-bus notification is gated by the file latch. |
+| `grokbuild.auth.restored` | `grok_auth_dir` (str), `downtime_s` (float — 0 before Phase 3 tracking is wired) | Fired when probe succeeds after a prior non-OK result. Clears the debounce latch in Phase 3. |
+
+**Invariant** (Option A, OQ-1): `grokbuild.auth.required{trigger="startup"}` ⟹
+`grokbuild.worker.started` emitted in the same boot cycle. `grok_auth` is **excluded**
+from `degraded_checks` and from the `/health` `status` rollup — auth expiry is surfaced
+only via `grokbuild.auth.required` and the `checks.grok_auth` field, never as worker
+`degraded`. So `status="ok"` is possible while `checks.grok_auth="expired"`.
+
 `read_only_violation` semantics: `True` iff `mode == "read_only"` AND `(git_diff_stat.strip() OR git_status_post.strip())`. Validator enforces clean pre-state, so any non-empty post-state porcelain is divergence. Reading `git_status_post` alone catches all YX-coded changes (staged, unstaged, untracked); `git_diff_stat` is OR'd for defense in depth on `audit_incomplete=True` paths.
 
 `audit_incomplete` semantics: `True` iff a git invocation in `_capture_post_state` failed (`subprocess.CalledProcessError`, `TimeoutExpired`, or `OSError`). Subscribers MUST treat `audit_incomplete=true` as "do not trust this dispatch's `read_only_violation` verdict" — distinct from a clean repo (`git_status_post=""`, `audit_incomplete=false`), which is a TRUE clean signal.

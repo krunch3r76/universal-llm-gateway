@@ -14,6 +14,23 @@ RC_CAS_EXHAUSTED = "cas_exhausted"
 RC_TEARDOWN_FAILED = "teardown_failed"
 RC_NOT_A_GIT_REPO = "not_a_git_repo"
 RC_WORKTREE_MISSING = "worktree_missing"
+RC_DIRTY_WORKTREE = "dirty_worktree"
+RC_UNCOMMITTED_NO_MESSAGE = "uncommitted_no_message"
+RC_NOTHING_TO_LAND = "nothing_to_land"
+RC_COMMIT_FAILED = "commit_failed"
+RC_CLEAN_TREE = "clean_tree"
+
+# SHA-256 of empty string — canonical empty diff fingerprint.
+EMPTY_DIFF_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+@dataclass(frozen=True, slots=True)
+class CommitResult:
+    """Outcome of commit_arc."""
+
+    committed: bool
+    commit_sha: str = ""
+    reason_code: str = ""
 
 
 @dataclass(frozen=True, slots=True)

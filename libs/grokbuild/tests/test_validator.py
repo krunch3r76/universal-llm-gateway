@@ -214,10 +214,13 @@ def test_grok_models_caches_only_true(monkeypatch: pytest.MonkeyPatch) -> None:
     NOT cached, so a subsequent successful call re-runs the subprocess and
     returns True without requiring an MCP restart.
 
-    Regression for the cold-start lru_cache poisoning pattern: with
-    ``lru_cache(maxsize=1)`` the first call's False would have been cached
-    indefinitely, blocking every dispatch with ``missing_grok_auth`` until
-    MCP restarted. See docs/agent-guides/grok-build-dispatch.md §3.4 / §7.2.
+    Regression for the cold-start lru_cache poisoning pattern. After Phase 1
+    the probe runs _WARMUP_CALLS (2) subprocess invocations per ok() call,
+    so "transient failure" now means both warmup calls fail. Both must fail
+    to produce False; and that False must not be cached so the next ok() can
+    recover.
+
+    See docs/agent-guides/grok-build-dispatch.md §3.4 / §7.2.
     """
     import subprocess as _sp
 
@@ -225,27 +228,28 @@ def test_grok_models_caches_only_true(monkeypatch: pytest.MonkeyPatch) -> None:
     from grokbuild.validator import _grok_models_ok
 
     clear_validator_caches()
+    monkeypatch.setattr("grokbuild.auth_probe._WARMUP_SLEEP_S", 0)
 
     call_count = {"n": 0}
 
     def fake_run(cmd: list[str], **kwargs: object) -> _sp.CompletedProcess[str]:
         call_count["n"] += 1
-        # First call simulates the cold-start transient (non-zero exit).
+        # First two calls (both warmup attempts): fail to produce a False result.
         # Subsequent calls succeed.
-        rc = 1 if call_count["n"] == 1 else 0
+        rc = 1 if call_count["n"] <= 2 else 0
         return _sp.CompletedProcess(cmd, rc, stdout="" if rc else "ok\n", stderr="")
 
     monkeypatch.setattr(_sp, "run", fake_run)
 
-    # First call: transient False. Must NOT be cached.
+    # First ok(): warmup runs 2x, both fail → False. Must NOT be cached.
     assert _grok_models_ok() is False
-    assert call_count["n"] == 1
-    # Second call: re-runs subprocess and gets a clean True.
-    assert _grok_models_ok() is True
     assert call_count["n"] == 2
-    # Third call: uses the cached True. Subprocess MUST NOT be re-invoked.
+    # Second ok(): re-runs 2x warmup, now both succeed → True. Caches it.
     assert _grok_models_ok() is True
-    assert call_count["n"] == 2
+    assert call_count["n"] == 4
+    # Third ok(): uses cached True. Subprocess MUST NOT be re-invoked.
+    assert _grok_models_ok() is True
+    assert call_count["n"] == 4
 
     clear_validator_caches()
 
@@ -452,3 +456,51 @@ def test_cache_reset_callable() -> None:
     from grokbuild.validator import _reset_grok_models_cache_for_tests
 
     _reset_grok_models_cache_for_tests()  # must not raise
+
+
+# ── auth_probe delegation (Phase 4, Task 4.4) ────────────────────────────────
+
+
+def test_grok_models_ok_delegates_to_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_grok_models_ok() returns the delegated result from auth_probe._PROBE.ok()."""
+    from unittest.mock import MagicMock
+
+    from grokbuild.validator import _grok_models_ok
+
+    mock_probe = MagicMock()
+    mock_probe.ok.return_value = True
+    monkeypatch.setattr("grokbuild.validator._GROK_AUTH_PROBE", mock_probe)
+
+    result = _grok_models_ok()
+
+    assert result is True
+    mock_probe.ok.assert_called_once()
+
+
+def test_grok_models_ok_delegates_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_grok_models_ok() propagates False from the probe without caching."""
+    from unittest.mock import MagicMock
+
+    from grokbuild.validator import _grok_models_ok
+
+    mock_probe = MagicMock()
+    mock_probe.ok.return_value = False
+    monkeypatch.setattr("grokbuild.validator._GROK_AUTH_PROBE", mock_probe)
+
+    assert _grok_models_ok() is False
+
+
+def test_reset_grok_models_cache_delegates_to_probe_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_reset_grok_models_cache_for_tests() calls through to auth_probe._PROBE.reset()."""
+    from unittest.mock import MagicMock
+
+    from grokbuild.validator import _reset_grok_models_cache_for_tests
+
+    mock_probe = MagicMock()
+    monkeypatch.setattr("grokbuild.validator._GROK_AUTH_PROBE", mock_probe)
+
+    _reset_grok_models_cache_for_tests()
+
+    mock_probe.reset.assert_called_once()

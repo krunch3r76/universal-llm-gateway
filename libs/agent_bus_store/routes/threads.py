@@ -38,6 +38,7 @@ from ..turns_models import (
     ThreadWithTurnCreate,
     ThreadWithTurnCreated,
     TurnCreated,
+    post_continuation_misuse_error,
     turn_body_limit_error,
 )
 
@@ -251,6 +252,11 @@ async def create_thread_with_turn_route(
     body: ThreadWithTurnCreate,
 ) -> ThreadWithTurnCreated:
     """Atomically create a thread and its first turn in one transaction."""
+    if error_detail := post_continuation_misuse_error(body.slug, body.after_turn):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_detail,
+        )
     if error_detail := turn_body_limit_error(
         body.body,
         allow_long_body=body.allow_long_body,

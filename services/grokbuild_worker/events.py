@@ -415,6 +415,74 @@ def GrokbuildTrackerOrphanCleaned(  # noqa: N802
     )
 
 
+@event_factory
+def GrokbuildAuthRequired(  # noqa: N802
+    reason_code: str,
+    grok_auth_dir: str,
+    deploy_shape: str,
+    trigger: str,
+    debounce_key: str,
+) -> Event:
+    """Emitted when grok auth probe fails; triggers operator notification.
+
+    Signal: grokbuild.auth.required
+    Fields:
+      reason_code  — "expired" | "missing" (mirrors AuthStatus values)
+      grok_auth_dir — path the worker resolved for GROK_AUTH_DIR
+      deploy_shape  — "bare-metal" | "container" (from WorkerConfig)
+      trigger       — "startup" | "dispatch_rejection" | "periodic"
+      debounce_key  — ISO timestamp of the latch file path used
+    """
+    return Event(
+        signal="grokbuild.auth.required",
+        payload={
+            "reason_code": reason_code,
+            "grok_auth_dir": grok_auth_dir,
+            "deploy_shape": deploy_shape,
+            "trigger": trigger,
+            "debounce_key": debounce_key,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GrokbuildAuthRestored(  # noqa: N802
+    grok_auth_dir: str,
+    downtime_s: float,
+) -> Event:
+    """Emitted when grok auth probe succeeds after a prior failure.
+
+    Signal: grokbuild.auth.restored
+    Fields:
+      grok_auth_dir — path the worker resolved for GROK_AUTH_DIR
+      downtime_s    — seconds since auth was first detected expired (0 if unknown)
+    """
+    return Event(
+        signal="grokbuild.auth.restored",
+        payload={"grok_auth_dir": grok_auth_dir, "downtime_s": downtime_s},
+        scope="global",
+    )
+
+
+def emit_auth_required(
+    reason_code: str,
+    grok_auth_dir: str,
+    deploy_shape: str,
+    trigger: str,
+    debounce_key: str,
+) -> None:
+    _emit_uds(
+        GrokbuildAuthRequired(
+            reason_code, grok_auth_dir, deploy_shape, trigger, debounce_key
+        )
+    )
+
+
+def emit_auth_restored(grok_auth_dir: str, downtime_s: float) -> None:
+    _emit_uds(GrokbuildAuthRestored(grok_auth_dir, downtime_s))
+
+
 def envelope_outcome(envelope: dict[str, Any]) -> str:
     """Map envelope status → outcome label for event payloads.
 

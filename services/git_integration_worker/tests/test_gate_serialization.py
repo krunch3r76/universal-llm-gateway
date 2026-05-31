@@ -84,3 +84,48 @@ async def test_concurrent_integrate_serializes(app) -> None:
     assert r2.status_code == 200
     assert order == ["start", "end", "start", "end"]
     assert elapsed >= 0.25
+
+
+@pytest.mark.asyncio
+async def test_concurrent_land_serializes(app) -> None:
+    """Second /land waits on FifoCapacityGate(limit=1), same as integrate."""
+    order: list[str] = []
+
+    async def slow_land(**_kwargs: Any) -> dict[str, Any]:
+        order.append("start")
+        await asyncio.sleep(0.15)
+        order.append("end")
+        return {
+            "integration_id": "test-id",
+            "status": "rejected",
+            "reason_code": "mock",
+            "reason": "mock",
+        }
+
+    transport = ASGITransport(app=app)
+    body = {
+        "arc": "x",
+        "phase": "p",
+        "worktree_path": "/tmp/wt",
+        "approval": "ok",
+        "expected_diff_sha256": "a" * 64,
+        "commit_message": "test",
+        "remove_worktree": False,
+    }
+
+    with patch(
+        "services.git_integration_worker.routes.integrate.land_op",
+        side_effect=slow_land,
+    ):
+        async with AsyncClient(transport=transport, base_url=BASE) as client:
+            t0 = time.monotonic()
+            first = asyncio.create_task(client.post("/api/v1/git/land", json=body))
+            await asyncio.sleep(0.05)
+            second = asyncio.create_task(client.post("/api/v1/git/land", json=body))
+            r1, r2 = await asyncio.gather(first, second)
+            elapsed = time.monotonic() - t0
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    assert order == ["start", "end", "start", "end"]
+    assert elapsed >= 0.25

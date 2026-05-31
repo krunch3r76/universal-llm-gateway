@@ -60,6 +60,7 @@
           "type": "string"
         },
         "from_agent": {
+          "description": "Seat authoring the turn (e.g. cursor, claude-web). Accepts `from` as an alias (parity with the POST /threads/with-turn route).",
           "type": "string"
         },
         "subject": {
@@ -71,7 +72,7 @@
       },
       "required": [
         "body",
-        "from",
+        "from_agent",
         "to"
       ],
       "type": "object"

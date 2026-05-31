@@ -46,6 +46,9 @@ _PROBE_TIMEOUT_S = 5.0
 # return state=probe_error (perpetual deferral). Pin the host port explicitly.
 STARGATE_PROBE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
 GROKBUILD_WORKER_URL = os.environ.get("GROKBUILD_WORKER_URL", "http://127.0.0.1:8090")
+GIT_INTEGRATION_WORKER_URL = os.environ.get(
+    "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
+)
 
 # Only these actions are drain-gated. start/status/health/wait_healthy never kill
 # live work; rebuild routes through sync_restart for the relevant services.
@@ -132,6 +135,9 @@ def _default_probes() -> dict[str, BusyProbe]:
         "grokbuild_worker": HttpActiveWorkProbe(
             GROKBUILD_WORKER_URL, "/api/v1/grokbuild/active-work"
         ),
+        "git_integration_worker": HttpActiveWorkProbe(
+            GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
+        ),
     }
 
 
@@ -143,7 +149,9 @@ class RestartDrainGate:
     """
 
     def __init__(self, probes: dict[str, BusyProbe] | None = None) -> None:
-        self._probes: dict[str, BusyProbe] = probes if probes is not None else _default_probes()
+        self._probes: dict[str, BusyProbe] = (
+            probes if probes is not None else _default_probes()
+        )
         self._gates: dict[str, FifoCapacityGate] = {}
 
     def _gate(self, service: str) -> FifoCapacityGate:
@@ -237,9 +245,7 @@ class RestartDrainGate:
         gate = self._gate(service)
         return gate.active_count >= gate.current_limit
 
-    async def busy_report(
-        self, services: Iterable[str]
-    ) -> dict[str, dict[str, Any]]:
+    async def busy_report(self, services: Iterable[str]) -> dict[str, dict[str, Any]]:
         """Per-service busy read model (pull). Probes WITHOUT acquiring any slot.
 
         For each service, returns

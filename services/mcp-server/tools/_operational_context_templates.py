@@ -78,7 +78,14 @@ Substantive content (specs, reviews, analysis, debriefs, long responses) belongs
 1. Write to `notes/system/threads/<slug>-<subject>.md` via `fs(sandbox="cortex", op="write", …)`
 2. Post a short body: orientation sentence(s) + the sidecar path.
 Never put a document, full analysis, or long structured output directly into a turn body unless the recipient contract requires inline long-form delivery; in that rare case pass `allow_long_body: true` on `post`/`reply`.
-A *directive* means implement now. A *ticket* or *todo* means deferred work. Acknowledge receipt of directives before beginning."""
+A *directive* means implement now. A *ticket* or *todo* means deferred work. Acknowledge receipt of directives before beginning.
+
+**Thread ID vs slug (CRITICAL — post vs reply):**
+- Thread **ID** (e.g. `"1140"`) → `reply` only, field `thread`. Never put a thread ID in `post.slug`.
+- Thread **slug** (e.g. `"grokbuild-deterministic-commit-op"`) is a human label at creation; it is NOT a routing key for append.
+- **`post` always creates** a new thread. To continue thread N: `reply(thread="N", after_turn=<last turn you read>)`.
+- Author field: **`from_agent`** (seat slug). The route accepts `from` as an alias; prefer `from_agent`.
+- On `dispatch.rejected` with unknown fields — do not retry by swapping names into the wrong op; re-read accepted params for that op."""
 
 AGENT_BUS_EXAMPLES = """\
 ### Replying to an unread turn

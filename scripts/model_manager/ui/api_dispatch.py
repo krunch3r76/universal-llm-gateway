@@ -30,6 +30,7 @@ VALID_SERVICES = frozenset(
         "cortex_api",
         "agent_bus",
         "grokbuild_worker",
+        "git_integration_worker",
         "email_bridge",
     }
 )
@@ -40,6 +41,7 @@ REBUILD_SERVICES = frozenset(
         "cortex_api",
         "agent_bus",
         "grokbuild_worker",
+        "git_integration_worker",
         "email_bridge",
     }
 )
@@ -53,6 +55,7 @@ SYNC_RESTART_SERVICES = frozenset(
         "cortex_api",
         "agent_bus",
         "grokbuild_worker",
+        "git_integration_worker",
         "event_service",
     }
 )
@@ -301,6 +304,8 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         return await ctl.rebuild_agent_bus()
     if service == "grokbuild_worker":
         return await ctl.rebuild_grokbuild_worker()
+    if service == "git_integration_worker":
+        return await ctl.rebuild_git_integration_worker()
     if service == "email_bridge":
         return await ctl.rebuild_email_bridge(no_cache=True)
     raise ValueError(f"rebuild not supported for '{service}'")

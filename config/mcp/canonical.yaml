@@ -949,10 +949,12 @@ tools:
     type: object
     properties:
       body: {type: string}
-      from_agent: {type: string}
+      from_agent:
+        type: string
+        description: "Seat authoring the turn (e.g. cursor, claude-web). Accepts `from` as an alias (parity with the POST /threads/with-turn route)."
       to: {type: string}
       subject: {type: string}
-    required: [body, from, to]
+    required: [body, from_agent, to]
   skill_uri: agent_skill:agent_bus
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: write

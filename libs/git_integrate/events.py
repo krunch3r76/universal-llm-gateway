@@ -264,3 +264,131 @@ def emit_git_status_read(
             branch=branch,
         )
     )
+
+
+@event_factory
+def GitLandRequested(  # noqa: N802
+    integration_id: str,
+    arc: str,
+    phase: str,
+    worktree_path: str,
+    diff_sha256: str,
+    committed: bool,
+) -> Event:
+    return Event(
+        signal="git.land.requested",
+        payload={
+            "integration_id": integration_id,
+            "arc": arc,
+            "phase": phase,
+            "worktree_path": worktree_path,
+            "diff_sha256": diff_sha256,
+            "committed": committed,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GitLandCompleted(  # noqa: N802
+    integration_id: str,
+    arc: str,
+    phase: str,
+    merge_commit: str,
+    master_sha: str,
+    committed: bool,
+    commit_sha: str,
+    duration_s: float,
+) -> Event:
+    return Event(
+        signal="git.land.completed",
+        payload={
+            "integration_id": integration_id,
+            "arc": arc,
+            "phase": phase,
+            "merge_commit": merge_commit,
+            "master_sha": master_sha,
+            "committed": committed,
+            "commit_sha": commit_sha,
+            "duration_s": duration_s,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def GitCommitCreated(  # noqa: N802
+    integration_id: str,
+    arc: str,
+    commit_sha: str,
+) -> Event:
+    return Event(
+        signal="git.commit.created",
+        payload={
+            "integration_id": integration_id,
+            "arc": arc,
+            "commit_sha": commit_sha,
+        },
+        scope="global",
+    )
+
+
+def emit_git_land_requested(
+    *,
+    integration_id: str,
+    arc: str,
+    phase: str,
+    worktree_path: str,
+    diff_sha256: str,
+    committed: bool,
+) -> None:
+    _emit(
+        GitLandRequested(
+            integration_id=integration_id,
+            arc=arc,
+            phase=phase,
+            worktree_path=worktree_path,
+            diff_sha256=diff_sha256,
+            committed=committed,
+        )
+    )
+
+
+def emit_git_land_completed(
+    *,
+    integration_id: str,
+    arc: str,
+    phase: str,
+    merge_commit: str,
+    master_sha: str,
+    committed: bool,
+    commit_sha: str,
+    duration_s: float,
+) -> None:
+    _emit(
+        GitLandCompleted(
+            integration_id=integration_id,
+            arc=arc,
+            phase=phase,
+            merge_commit=merge_commit,
+            master_sha=master_sha,
+            committed=committed,
+            commit_sha=commit_sha,
+            duration_s=duration_s,
+        )
+    )
+
+
+def emit_git_commit_created(
+    *,
+    integration_id: str,
+    arc: str,
+    commit_sha: str,
+) -> None:
+    _emit(
+        GitCommitCreated(
+            integration_id=integration_id,
+            arc=arc,
+            commit_sha=commit_sha,
+        )
+    )

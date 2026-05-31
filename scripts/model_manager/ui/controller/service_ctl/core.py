@@ -42,6 +42,7 @@ from . import (
     cloud_proxy_service,
     cortex_api_service,
     event_service,
+    git_integration_worker_service,
     grokbuild_worker_service,
     rag_service,
 )
@@ -760,6 +761,28 @@ class ServiceController:
         """Rebuild grokbuild-worker — host process, so rebuild = restart."""
         await self.stop_grokbuild_worker()
         return await self.start_grokbuild_worker()
+
+    async def start_git_integration_worker(self) -> str:
+        """Start git-integration-worker as host TCP subprocess."""
+        return await git_integration_worker_service.start_git_integration_worker(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def stop_git_integration_worker(self) -> str:
+        """Stop git-integration-worker gracefully."""
+        return await git_integration_worker_service.stop_git_integration_worker(
+            self._service_state, self._root, self._kill_and_wait
+        )
+
+    async def restart_git_integration_worker(self) -> str:
+        """Restart git-integration-worker (stop then start)."""
+        await self.stop_git_integration_worker()
+        return await self.start_git_integration_worker()
+
+    async def rebuild_git_integration_worker(self, *, no_cache: bool = False) -> str:  # noqa: ARG002
+        """Rebuild git-integration-worker — host process, so rebuild = restart."""
+        await self.stop_git_integration_worker()
+        return await self.start_git_integration_worker()
 
     async def start_email_bridge(self) -> str:
         """Start email-bridge as host subprocess."""
