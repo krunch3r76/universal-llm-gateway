@@ -14,7 +14,7 @@ from universal_logging import get_logger
 
 T = TypeVar("T")
 
-from inference_djinn.utils.types import TokenCountResult
+from inference_djinn.utils.types import TokenCountResult  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -45,12 +45,12 @@ except ImportError:
         "[GGUF Engine] Could not load engine environment variables (env_loader not available)"
     )
 
-import inspect
+import inspect  # noqa: E402
 
 # import gguf  # Only needed for metadata extraction, not inference
 # os.sched_setaffinity(0, list(range(12))) # Set affinity to first 12 cores (power cores on ryzen 9 7900x)
-import llama_cpp
-from llama_cpp import Llama
+import llama_cpp  # noqa: E402
+from llama_cpp import Llama  # noqa: E402
 
 # Check if this is the Blackwell-optimized version
 if llama_cpp.__version__ == "9.9.9":
@@ -64,15 +64,15 @@ else:
     else:
         logger.info(f"Using STANDARD llama-cpp-python v{llama_cpp.__version__}")
 
-from inference_djinn.engines.base import BaseEngine
+from inference_djinn.engines.base import BaseEngine  # noqa: E402
 
-from .formatting.prompt_builder import GGUFPromptBuilder
-from .inference.parameters import GGUFParameterBuilder
-from .inference.regular import GGUFRegularInference
-from .inference.streaming import GGUFStreamingInference
-from .loading import GGUFModelLoader
-from .token_counting import GGUFTokenCounter
-from .vision.types import MessageList
+from .formatting.prompt_builder import GGUFPromptBuilder  # noqa: E402
+from .inference.parameters import GGUFParameterBuilder  # noqa: E402
+from .inference.regular import GGUFRegularInference  # noqa: E402
+from .inference.streaming import GGUFStreamingInference  # noqa: E402
+from .loading import GGUFModelLoader  # noqa: E402
+from .token_counting import GGUFTokenCounter  # noqa: E402
+from .vision.types import MessageList  # noqa: E402
 
 
 class GGUFEngine(BaseEngine):

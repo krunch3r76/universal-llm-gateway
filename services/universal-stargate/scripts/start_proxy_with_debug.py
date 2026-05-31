@@ -16,8 +16,8 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from universal_event_bus import EventBus, MinimalEventDebugBroadcaster
-from universal_logging import get_logger
+from universal_event_bus import EventBus, MinimalEventDebugBroadcaster  # noqa: E402
+from universal_logging import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
 

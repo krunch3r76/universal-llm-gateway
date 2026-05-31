@@ -7,8 +7,6 @@ from typing import Any
 import yaml
 from universal_logging import get_logger
 
-logger = get_logger(__name__)
-
 from .catalog import get_catalog_loader
 from .gateway_config import GatewayConfig
 

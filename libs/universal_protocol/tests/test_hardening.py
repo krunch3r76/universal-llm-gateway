@@ -23,15 +23,15 @@ libs_path = Path(__file__).resolve().parents[3]
 if str(libs_path) not in sys.path:
     sys.path.insert(0, str(libs_path))
 
-from universal_protocol.config import get_config
-from universal_protocol.rpc.handlers import (
+from universal_protocol.config import get_config  # noqa: E402
+from universal_protocol.rpc.handlers import (  # noqa: E402
     handle_count_tokens,
     register_tokenizer_callback,
 )
-from universal_protocol.server.uds_security import bind_socket
-from universal_protocol.ws import producer_put, stream_registry
-from universal_protocol.ws.bounded_queue import BoundedQueue
-from universal_protocol.ws.lifecycle import StreamContext
+from universal_protocol.server.uds_security import bind_socket  # noqa: E402
+from universal_protocol.ws import producer_put, stream_registry  # noqa: E402
+from universal_protocol.ws.bounded_queue import BoundedQueue  # noqa: E402
+from universal_protocol.ws.lifecycle import StreamContext  # noqa: E402
 
 # Configure logging
 logging.basicConfig(

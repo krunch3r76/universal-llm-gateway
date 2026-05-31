@@ -18,8 +18,8 @@ import yaml
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.core.config_manager import ConfigManager, ConfigValidationError
-from src.tools.discovery import DiscoveryError, ModelDiscovery
+from src.core.config_manager import ConfigManager, ConfigValidationError  # noqa: E402
+from src.tools.discovery import DiscoveryError, ModelDiscovery  # noqa: E402
 
 
 def format_error(message: str) -> str:

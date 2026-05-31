@@ -24,8 +24,8 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "services" / "_universal-llm-gateway" / "src"))
 
-from core.catalog.loading import ALLOWED_DOMAINS
-from core.catalog.schemas import SchemaRegistry
+from core.catalog.loading import ALLOWED_DOMAINS  # noqa: E402
+from core.catalog.schemas import SchemaRegistry  # noqa: E402
 
 
 def get_staged_catalog_files() -> list[Path]:

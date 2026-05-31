@@ -40,7 +40,7 @@ def unicode_friendly_dumps(obj, **kwargs):
 json.dumps = unicode_friendly_dumps
 
 # Import the main application
-from gui.main import main
+from gui.main import main  # noqa: E402
 
 
 def setup_debug_logging():

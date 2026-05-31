@@ -20,11 +20,11 @@ import yaml
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from pydantic import BaseModel, ValidationError
-from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefined
+from pydantic import BaseModel, ValidationError  # noqa: E402
+from pydantic.fields import FieldInfo  # noqa: E402
+from pydantic_core import PydanticUndefined  # noqa: E402
 
-from src.schemas.yaml_config import GGUFModelConfig, HFModelConfig
+from src.schemas.yaml_config import GGUFModelConfig, HFModelConfig  # noqa: E402
 
 # Import ruamel.yaml for comment preservation
 try:

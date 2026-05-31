@@ -15,6 +15,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Literal
 
+from grokbuild.auth_probe import _PROBE as _GROK_AUTH_PROBE
 from grokbuild.constants import (
     _PERMISSION_BY_MODE,
     _SIDECAR_DIR,
@@ -64,7 +65,6 @@ def _resolve_grok_path() -> str | None:
 # HOME-stripping gap: _build_env() intentionally omits HOME for dispatch
 # subprocesses; the standalone probe re-injects real HOME so grok finds
 # auth.json at HOME/.grok/auth.json.
-from grokbuild.auth_probe import _PROBE as _GROK_AUTH_PROBE
 
 
 def _grok_models_ok() -> bool:

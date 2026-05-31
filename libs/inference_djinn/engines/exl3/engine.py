@@ -21,10 +21,10 @@ try:
 except ImportError:
     exllamav3_available = False
 
-from ..base import BaseEngine
-from .engine.inference.regular import ExLlamaV3RegularInference
-from .engine.inference.streaming import ExLlamaV3StreamingInference
-from .engine.loading import ExLlamaV3ModelLoader
+from ..base import BaseEngine  # noqa: E402
+from .engine.inference.regular import ExLlamaV3RegularInference  # noqa: E402
+from .engine.inference.streaming import ExLlamaV3StreamingInference  # noqa: E402
+from .engine.loading import ExLlamaV3ModelLoader  # noqa: E402
 
 # CancellationToken removed - using asyncio.Event directly
 

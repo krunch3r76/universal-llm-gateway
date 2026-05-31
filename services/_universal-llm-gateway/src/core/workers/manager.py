@@ -20,7 +20,7 @@ class StreamErrorCode:
     TRANSPORT_ERROR = "transport_error"
 
 
-from universal_logging import get_logger
+from universal_logging import get_logger  # noqa: E402
 
 # Import enhanced error handling
 

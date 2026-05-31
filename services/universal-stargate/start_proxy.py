@@ -13,7 +13,7 @@ sys.path.insert(0, str(project_root))
 
 # Clear any cached config module to avoid namespace conflicts
 # (e.g., with universal_logging's config module)
-import importlib
+import importlib  # noqa: E402
 
 if "config" in sys.modules:
     del sys.modules["config"]
@@ -24,7 +24,7 @@ for key in list(sys.modules.keys()):
 importlib.invalidate_caches()
 
 # MONKEY PATCH: Configure JSON to use unicode by default
-import json
+import json  # noqa: E402
 
 _original_dumps = json.dumps
 
@@ -54,7 +54,7 @@ def unicode_friendly_dumps(obj, **kwargs):
 json.dumps = unicode_friendly_dumps
 
 # Configure logging with centralized configuration
-from config.logging_config import get_domain_logger, load_logging_config
+from config.logging_config import get_domain_logger, load_logging_config  # noqa: E402
 
 # Setup logging will be called in main() with proper log level
 logger = None
@@ -81,11 +81,11 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 sys.excepthook = global_exception_handler
 
 
-import argparse
-import atexit
-import stat
+import argparse  # noqa: E402
+import atexit  # noqa: E402
+import stat  # noqa: E402
 
-import uvicorn
+import uvicorn  # noqa: E402
 
 
 def _cleanup_socket(socket_path: str) -> None:

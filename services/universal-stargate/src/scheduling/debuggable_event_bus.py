@@ -21,7 +21,7 @@ warnings.warn(
 )
 
 # Import from universal-event-bus module
-from universal_event_bus.events import EventBus
+from universal_event_bus.events import EventBus  # noqa: E402
 
 # For backward compatibility, alias EventBus as DebuggableEventBus
 DebuggableEventBus = EventBus

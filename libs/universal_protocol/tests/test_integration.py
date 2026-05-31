@@ -27,8 +27,8 @@ libs_path = Path(__file__).resolve().parents[3]
 if str(libs_path) not in sys.path:
     sys.path.insert(0, str(libs_path))
 
-from universal_protocol.rpc.client import AsyncRPCClient
-from universal_protocol.ws.client import StreamClient
+from universal_protocol.rpc.client import AsyncRPCClient  # noqa: E402
+from universal_protocol.ws.client import StreamClient  # noqa: E402
 
 # Configure logging
 logging.basicConfig(

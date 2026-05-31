@@ -25,7 +25,7 @@ def unicode_friendly_dumps(obj, **kwargs):
 json.dumps = unicode_friendly_dumps
 
 # Configure logging with universal_logging
-from universal_logging import get_logger
+from universal_logging import get_logger  # noqa: E402
 
 # Auto-initialization: logger will be initialized on first use
 logger = None
