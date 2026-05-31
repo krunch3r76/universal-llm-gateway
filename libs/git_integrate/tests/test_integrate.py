@@ -10,6 +10,7 @@ import pytest
 
 from git_integrate.git_cas import diff_sha256
 from git_integrate.integrate import integrate_op
+from git_integrate.ops_common import _GATE_OUTPUT_TAIL_LINES, _bounded_gate_output
 from git_integrate.schema import (
     RC_ARC_BRANCH_MISMATCH,
     RC_CAS_EXHAUSTED,
@@ -46,6 +47,22 @@ def _ref_sha(repo: Path, ref: str) -> str:
         text=True,
         check=True,
     ).stdout.strip()
+
+
+def test_bounded_gate_output_caps_tail_and_counts() -> None:
+    """Large gate output is reduced to a line count + bounded tail."""
+    stdout = "\n".join(f"line {i}" for i in range(100))
+    out = _bounded_gate_output(stdout, "Found 100 errors.")
+    assert out["gate_output_line_count"] == 101
+    tail_lines = out["gate_output_tail"].splitlines()
+    assert len(tail_lines) == _GATE_OUTPUT_TAIL_LINES
+    assert tail_lines[-1] == "Found 100 errors."
+
+
+def test_bounded_gate_output_empty() -> None:
+    out = _bounded_gate_output("", "")
+    assert out["gate_output_line_count"] == 0
+    assert out["gate_output_tail"] == ""
 
 
 def _passing_gate() -> list[str]:

@@ -7,7 +7,19 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-_DEFAULT_GREEN_GATE = ["bash", "-lc", "ruff check . && python -m compileall -q ."]
+# Diff-scoped: lint/compile only the .py files the arc introduces vs master,
+# never the whole tree. A full-tree `ruff check .` can never pass for any arc
+# while master carries pre-existing lint debt (965 errors at the time this was
+# written), so it would block every land. P0 guard: an empty .py set must pass
+# trivially — it MUST NOT fall back to `ruff check .` (that re-introduces the
+# whole-tree bug). Runs in the arc worktree after master is merged into it, so
+# `master...HEAD` is the arc's net change set.
+_DIFF_SCOPED_GATE_SCRIPT = (
+    "files=$(git diff refs/heads/master...HEAD --name-only "
+    "--diff-filter=ACMR -- '*.py'); "
+    'if [ -n "$files" ]; then ruff check $files && python -m compileall -q $files; fi'
+)
+_DEFAULT_GREEN_GATE = ["bash", "-lc", _DIFF_SCOPED_GATE_SCRIPT]
 _DEFAULT_SOURCE_REPO = "/mnt/torus/projects/universal-llm-gateway"
 _DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-grok-worktrees"
 

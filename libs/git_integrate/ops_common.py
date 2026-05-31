@@ -28,7 +28,25 @@ from git_integrate.schema import (
 )
 
 _GATE_TIMEOUT = 300.0
+_GATE_OUTPUT_TAIL_LINES = 20
 _logger = get_logger(__name__)
+
+
+def _bounded_gate_output(stdout: str, stderr: str) -> dict[str, Any]:
+    """Bounded gate output for the rejection envelope.
+
+    The green gate can emit very large output (a ruff run over a big changeset
+    produced ~895KB once). Returning it inline floods caller context, so the
+    envelope carries only a line count plus the trailing lines — where ruff's
+    ``Found N errors.`` summary lands. Full output is recoverable by re-running
+    the gate locally; it is never inlined by default.
+    """
+    parts = [p for p in (stdout, stderr) if p]
+    lines = "\n".join(parts).splitlines()
+    return {
+        "gate_output_line_count": len(lines),
+        "gate_output_tail": "\n".join(lines[-_GATE_OUTPUT_TAIL_LINES:]),
+    }
 
 
 def envelope(
@@ -123,9 +141,8 @@ async def integrate_retry_loop(
                 reason_code=RC_GATE_FAILED,
                 reason=f"green gate exited {gate.returncode}",
                 gate_exit=gate.returncode,
-                gate_stdout=gate.stdout,
-                gate_stderr=gate.stderr,
                 duration_s=duration_s,
+                **_bounded_gate_output(gate.stdout, gate.stderr),
             )
 
         adv = await advance_master_cas(
