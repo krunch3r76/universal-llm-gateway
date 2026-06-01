@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Sync MCP source into the container, restart, and wait for healthy.
-# Not a true Docker rebuild — pip deps/Dockerfile changes still need ./manage.
+# Sync MCP Python source into the running container and restart (no image rebuild).
+# Pass --no-cache only for pip/Dockerfile/base-image changes (full build-mcp.sh rebuild).
 # Reads MCP_PROJECT_DIR, MCP_AUTH_TOKEN, etc. from ~/.gateway/mcp.yaml.
 # Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache] [from repo root or any subdir]
 
@@ -11,7 +11,7 @@ usage() {
 Usage: ./scripts/sync-and-restart-mcp.sh [--no-cache]
 
 Options:
-  --no-cache   Force full rebuild without cache (pulls fresh base images).
+  --no-cache   Full image rebuild (pip/Dockerfile/base-image changes — rare).
   -h, --help   Show this help text.
 EOF
 }
@@ -233,20 +233,57 @@ wait_for_mcp_healthy() {
   done
 }
 
+sync_source_into_container() {
+  local c=mcp-server
+  echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
+  docker cp "$WORKSPACE_ROOT/libs/." "${c}:/app/libs/"
+  docker cp "$WORKSPACE_ROOT/services/." "${c}:/app/services/"
+  docker cp "$WORKSPACE_ROOT/config/." "${c}:/app/config/"
+  docker cp "$WORKSPACE_ROOT/sitecustomize.py" "${c}:/app/sitecustomize.py"
+  docker cp "$WORKSPACE_ROOT/pipelines/." "${c}:/app/pipelines/"
+  if [[ -d "$WORKSPACE_ROOT/pipelines.local" ]]; then
+    docker cp "$WORKSPACE_ROOT/pipelines.local/." "${c}:/app/pipelines.local/"
+  fi
+  if [[ -d "$WORKSPACE_ROOT/services/mcp-server/tools/local" ]]; then
+    docker cp "$WORKSPACE_ROOT/services/mcp-server/tools/local/." \
+      "${c}:/app/services/mcp-server/tools/local/"
+  fi
+  docker exec -u 0 "$c" chown -R mcp:mcp \
+    /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
+    /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
+    docker exec -u 0 "$c" chown -R mcp:mcp \
+      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+}
+
+ensure_mcp_container() {
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
+    return 0
+  fi
+  echo "MCP container not found — creating from existing image (no rebuild)..."
+  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+  wait_for_mcp_healthy || return 1
+}
+
+restart_mcp_gracefully() {
+  cleanup_orphan_mcp_containers
+  echo "Restarting MCP server (graceful stop)..."
+  docker compose "${COMPOSE_ARGS[@]}" stop -t 30 mcp-server
+  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
+}
+
 if [[ "$NO_CACHE" == "true" ]]; then
   echo "Syncing latest grok CLI..."
   curl -fsSL https://x.ai/cli/install.sh | bash
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
+  cleanup_orphan_mcp_containers
+  echo "Starting MCP server..."
+  docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
 else
-  echo "Building MCP server (cached, refreshing source layers)..."
-  bash docker/scripts/build/build-mcp.sh --refresh-source
+  ensure_mcp_container
+  sync_source_into_container
+  restart_mcp_gracefully
 fi
-
-cleanup_orphan_mcp_containers
-
-echo "Starting MCP server..."
-docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
 
 if wait_for_mcp_healthy; then
   if [[ "${REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD}" == "true" ]]; then

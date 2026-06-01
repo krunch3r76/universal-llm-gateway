@@ -200,11 +200,10 @@ async def stop_local_services(
         stop_ops.append(("rag", ctl.stop_rag))
     if is_cloud_proxy_configured():
         stop_ops.append(("cloud_proxy", ctl.stop_cloud_proxy))
-    # MCP is intentionally excluded from the stop phase: rebuild_mcp calls
-    # `docker compose up -d` which replaces the container in-place, keeping
-    # downtime to the few-second swap window.  Pre-stopping the container
-    # extends the outage to cover the full build duration and causes Cursor's
-    # MCP connection to time out and require manual reconnection.
+    # MCP is intentionally excluded from the stop phase: sync_restart_mcp
+    # docker-cp-syncs into the running container then graceful-restarts in-place,
+    # keeping downtime to the few-second swap window. Pre-stopping extends the
+    # outage and causes Cursor's MCP connection to time out.
     if is_cortex_configured():
         stop_ops.append(("cortex_api", ctl.stop_cortex_api))
     if is_agent_bus_configured():
@@ -249,15 +248,12 @@ def _build_start_ops(
     if is_cloud_proxy_configured():
         start_ops.append(("cloud_proxy", ctl.start_cloud_proxy))
     if is_mcp_configured(ws_root):
-        # rebuild_deploy: full no-cache image rebuild + restart.
-        # sync_restart: cached rebuild (--refresh-source) — bakes updated source
-        #   layers into the image without invalidating pip/base layers (~20s).
-        #   MCP code is baked into the image (not bind-mounted), so a restart
-        #   alone cannot pick up source changes; a rebuild is required.
+        # sync_restart: docker cp source sync + graceful restart (no image rebuild).
+        # rebuild_deploy: full --no-cache image rebuild (pip/Dockerfile changes only).
         mcp_op: Callable[[], Awaitable[str]] = (
-            (lambda: ctl.rebuild_mcp(no_cache=True))
+            (lambda: ctl.sync_restart_mcp(no_cache=True))
             if rebuild_supporting_services
-            else ctl.rebuild_mcp
+            else ctl.sync_restart_mcp
         )
         start_ops.append(("mcp", mcp_op))
     if is_cortex_configured():

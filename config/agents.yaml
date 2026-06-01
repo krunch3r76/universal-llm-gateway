@@ -53,6 +53,7 @@ profiles:
     confirm_and_proceed: true
     dispatchable: false
     addenda:
+      - claude-web-tool-surface
       - session-close-pointer-web
       - session-close-markdown-audit
       - session-close-transcript

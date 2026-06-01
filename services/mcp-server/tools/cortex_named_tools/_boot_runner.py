@@ -309,6 +309,9 @@ def run_cortex_boot(
         views_data=views_data or None,
         async_dispatches=extracted.get("async_dispatches") or None,
         audit_counters=extracted.get("audit_counters") or None,
+        # Surface-aware dispatch block: grok → flat direct-call; claude/gpt/gemini
+        # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
+        family=resolved_family,
     )
 
     artifacts = _build_artifacts(

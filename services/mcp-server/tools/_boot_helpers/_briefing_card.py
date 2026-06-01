@@ -63,6 +63,7 @@ def render_briefing_card(
     views_data: list[dict[str, Any]] | None = None,
     async_dispatches: list[dict[str, Any]] | None = None,
     audit_counters: dict[str, int] | None = None,
+    family: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a compact briefing card (~3-5KB) and section manifest.
 
@@ -87,7 +88,9 @@ def render_briefing_card(
 
     # Capability-axis Dispatch & Consult + co-located Liveness blocks, emitted
     # ABOVE the skills list (A2). Source: _orientation_blocks (durable home, 2a).
-    parts.extend(render_orientation_blocks())
+    # Surface-aware: grok seats get the flat direct-call form; claude/gpt/gemini
+    # get the dispatch-route (OVERFLOW) form (thread 1167, 2026-06-01).
+    parts.extend(render_orientation_blocks(family=family))
 
     if skills:
         parts.extend(render_skills_section(skills, skills_unpartitioned_count))

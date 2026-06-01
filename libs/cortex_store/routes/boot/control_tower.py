@@ -28,6 +28,8 @@ from fastapi.responses import HTMLResponse
 from ...db import cortex_conn, json_decode
 from ...db import query as db_query
 from ...observability_bridge import query_agent_bus_threads
+from ...open_items.reconcile import reconcile_open_items
+from ...open_items.resolution_index import fetch_resolution_index_records
 from ..deadlines import _list_deadlines_impl
 from .continuity import _build_continuity_chain
 
@@ -86,9 +88,14 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         head = latest[0]
         continuity = _build_continuity_chain(conn, head["session_id"])
         last_session = head["summary"]
-        open_items = [
-            {"d": str(item)} for item in json_decode(head["open_items"], fallback=[])
-        ]
+        # Reconcile the journal head's open_items against recently-resolved
+        # work (superseded assertions + closed todos) so items completed
+        # outside this session's arc drop off the agenda. Tower omits resolved
+        # rows from display; boot keeps them tagged for audit.
+        raw_items = json_decode(head["open_items"], fallback=[])
+        resolved = fetch_resolution_index_records(conn)
+        reconciled = reconcile_open_items(raw_items, resolved, omit_resolved=True)
+        open_items = [{"d": item} for item in reconciled]
     else:
         continuity, last_session, open_items = [], None, []
 

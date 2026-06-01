@@ -292,7 +292,7 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
     go through the TUI Build Image flow.
     """
     if service == "mcp":
-        return await ctl.rebuild_mcp(no_cache=True)
+        return await ctl.sync_restart_mcp(no_cache=True)
     if service == "event_service":
         return await ctl.rebuild_event_service()
     if service == "cortex_api":
@@ -318,22 +318,17 @@ async def _sync_restart(ctl: ServiceController, service: str) -> str:
 
     Per-service strategy:
       gateway      → restart (libs/, services/, config/ are bind-mounted)
-      mcp          → cached --refresh-source rebuild + restart (~20s)
+      mcp          → scripts/sync-and-restart-mcp.sh (docker cp sync + restart)
       stargate, rag, cloud_proxy, cortex_api, agent_bus, event_service → restart
     """
     if service == "mcp":
-        msg = await ctl.rebuild_mcp(no_cache=False)
+        msg = await ctl.sync_restart_mcp(no_cache=False)
     else:
         stop_msg = await _stop(ctl, service)
         start_msg = await _start(ctl, service)
         msg = f"{stop_msg}\n{start_msg}"
 
-    # Skip boot-render-diff when the mcp recreate was deferred to a background
-    # task — the new container isn't healthy yet and the diff would query a
-    # transitional state. Use the controller's typed flag rather than parsing
-    # the message body.
-    skip_diff = service == "mcp" and ctl.mcp_rebuild_scheduled
-    if service in _BOOT_RENDER_DIFF_SERVICES and not skip_diff:
+    if service in _BOOT_RENDER_DIFF_SERVICES:
         diff_msg = await _run_boot_render_diff()
         if diff_msg:
             msg = f"{msg}\n\n{diff_msg}"

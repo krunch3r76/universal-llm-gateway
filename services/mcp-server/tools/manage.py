@@ -225,11 +225,13 @@ def register_manage_tools(mcp: FastMCP) -> None:
           restart       (service)           — stop then start (no source sync)
           sync_restart  (service)           — deploy local code edits. gateway
                                              uses bind-mounts (restart only); mcp
-                                             does a cached refresh-source rebuild
-                                             (~20s); host procs just restart.
+                                             runs scripts/sync-and-restart-mcp.sh
+                                             (docker cp sync + restart, no rebuild);
+                                             host procs just restart.
           rebuild       (service)           — full --no-cache rebuild. Forbidden
                                              for gateway/mcp via this tool — use
-                                             sync_restart. Ops-only via TUI.
+                                             sync_restart. Ops-only via TUI for
+                                             pip/Dockerfile changes (--no-cache).
           wait_healthy  (service, timeout?) — block until RUNNING or timeout
           busy_status   (no service needed) — per-service busy read model: for
                                              each service {busy, restart_would_defer,
@@ -248,10 +250,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         "active_work"} where state ∈ {busy, in_progress, probe_error}. Honor
         retry_after_s and retry, or pass force=true to preempt in-flight work.
 
-        Self-restart caveat: sync_restart(service="mcp") returns
-        "rebuild_scheduled" then recreates the container in background. During
-        the window, calls may get -32099 with data.reason="server_restarting"
-        and Retry-After: 30. Always follow with wait_healthy.
+        Self-restart caveat: sync_restart(service="mcp") graceful-stops the
+        container; during the restart window calls may get -32099 with
+        data.reason="server_restarting" and Retry-After: 30.
         """
         if action == "rebuild" and service in {"gateway", "mcp"}:
             heavy = (
@@ -263,8 +264,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
                 "error": (
                     f"rebuild is forbidden for '{service}'. "
                     f"Use manage(action='sync_restart', service='{service}') "
-                    "to deploy code changes — that path is the cached/bind-mount "
-                    "equivalent (~20s for mcp, instant for gateway via bind mount). "
+                    "to deploy code changes — that path docker-cp-syncs source "
+                    "into the container and restarts (~seconds for mcp, instant "
+                    "for gateway via bind mount). "
                     f"A 'rebuild' here would do a full --no-cache build{heavy}, "
                     "which is ops-only via TUI: ./manage → Services → Build "
                     "Image, and only valid when the inference engine, pip "

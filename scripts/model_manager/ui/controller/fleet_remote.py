@@ -85,6 +85,7 @@ def _classify_result(msg: str) -> bool:
             "event service stopped",
             "mcp server started",
             "mcp server stopped",
+            "mcp server synced",
             "mcp rebuild scheduled",
             "cortex api started",
             "cortex api stopped",

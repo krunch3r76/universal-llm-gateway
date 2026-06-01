@@ -38,6 +38,8 @@ domains:
 - dispatch
 - retrieve
 - tool_search
+- frontier_dispatch
+- team_dispatch
 
 tools:
 
@@ -2202,20 +2204,23 @@ tools:
     tool: dispatch_frontier
     substrate_qualified: user-vortex__dispatch_frontier
   fol_descriptor: |
-    ∀ model ∈ FrontierModels ∧ prompt ∈ str:
-      dispatch_frontier(model, prompt) ⟹
-        response ∈ str ∧ execution_id ∈ UUIDv4.
+    ∀ op ∈ {generate, to_thread} ∧ model ∈ FrontierModels ∧ messages ∈ list[ChatMessage]:
+      dispatch_frontier(op, model, messages) ⟹ {execution_id ∈ UUIDv4, status}.
+    op=generate → poll pipeline(op="result", execution_id=…) for content.
+    op=to_thread → Stargate posts the reply to `thread` on completion.
     Async. Mutating (external call). See agent_skill:dispatch.
   json_schema:
     type: object
     properties:
+      op: {type: string, enum: [generate, to_thread]}
       model: {type: string}
-      prompt: {type: string}
-      system: {type: string}
-      timeout_s: {type: integer}
-    required: [model, prompt]
+      messages: {type: array, items: {type: object}}
+      thread: {type: string}
+      subject: {type: string}
+      generation_options: {type: object}
+    required: [op, model, messages]
   skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2231,17 +2236,25 @@ tools:
     tool: dispatch_team
     substrate_qualified: user-vortex__dispatch_team
   fol_descriptor: |
-    ∀ role ∈ TeamRoles ∧ body ∈ str:
-      dispatch_team(role, body) ⟹ reply ∈ str.
-    Delegates to named team agent. Async. Mutating (external call). See agent_skill:dispatch.
+    ∀ op ∈ {generate, to_thread} ∧ role ∈ TeamRoles ∧ messages ∈ list[ChatMessage]:
+      dispatch_team(op, role, messages) ⟹ {execution_id ∈ UUIDv4, status}.
+    role selects a functional seat (lead/reviewer/gatherer/synthesizer/artisan/skeptic/investigator);
+    model optional (resolves from role default). op=generate → poll pipeline(op="result");
+    op=to_thread → Stargate posts the reply to `thread`. Async. Mutating (external call).
+    See agent_skill:dispatch.
   json_schema:
     type: object
     properties:
+      op: {type: string, enum: [generate, to_thread]}
       role: {type: string}
-      body: {type: string}
-    required: [role, body]
+      messages: {type: array, items: {type: object}}
+      model: {type: string}
+      thread: {type: string}
+      subject: {type: string}
+      generation_options: {type: object}
+    required: [op, role, messages]
   skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2331,3 +2344,132 @@ tools:
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
+- canonical_name: frontier_dispatch
+  domain: frontier_dispatch
+  operation: generate
+  dispatcher_call_shape:
+    tool: frontier_dispatch
+    dispatch_key: op
+    dispatch_value: generate
+  flat_call_shape:
+    tool: frontier_dispatch
+    substrate_qualified: user-vortex__frontier_dispatch
+  fol_descriptor: |-
+    ∀ model ∈ FrontierModels ∧ messages ∈ List[Msg]:
+      frontier_dispatch(op=generate, model, messages) ⟹
+        execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content.
+    Direct native-frontier dispatch (no role envelope). Async. Mutating. See agent_skill:dispatch.
+  json_schema:
+    type: object
+    properties:
+      op: {type: string, enum: [generate, to_thread]}
+      model: {type: string}
+      messages: {type: array, items: {type: object}}
+      system: {type: string}
+      mcp: {type: boolean}
+      reasoning_effort: {type: string}
+      thread: {type: string}
+      subject: {type: string}
+    required: [op, model, messages]
+  skill_uri: agent_skill:dispatch
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-05-30'
+- canonical_name: frontier_dispatch_to_thread
+  domain: frontier_dispatch
+  operation: to_thread
+  dispatcher_call_shape:
+    tool: frontier_dispatch
+    dispatch_key: op
+    dispatch_value: to_thread
+  flat_call_shape:
+    tool: frontier_dispatch_to_thread
+    substrate_qualified: user-vortex__frontier_dispatch_to_thread
+  fol_descriptor: |-
+    ∀ model ∈ FrontierModels ∧ thread ∈ ThreadID:
+      frontier_dispatch(op=to_thread, model, messages, thread) ⟹
+        Stargate posts the model reply on its behalf to thread (works with mcp=False).
+    Async. Mutating. See agent_skill:dispatch.
+  json_schema:
+    type: object
+    properties:
+      op: {type: string, enum: [generate, to_thread]}
+      model: {type: string}
+      messages: {type: array, items: {type: object}}
+      system: {type: string}
+      mcp: {type: boolean}
+      reasoning_effort: {type: string}
+      thread: {type: string}
+      subject: {type: string}
+    required: [op, model, messages, thread]
+  skill_uri: agent_skill:dispatch
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-05-30'
+- canonical_name: team_dispatch
+  domain: team_dispatch
+  operation: generate
+  dispatcher_call_shape:
+    tool: team_dispatch
+    dispatch_key: op
+    dispatch_value: generate
+  flat_call_shape:
+    tool: team_dispatch
+    substrate_qualified: user-vortex__team_dispatch
+  fol_descriptor: |-
+    ∀ role ∈ TeamRoles ∧ messages ∈ List[Msg]:
+      team_dispatch(op=generate, role, messages) ⟹
+        execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content.
+    Role-aware team-seat dispatch (lead/reviewer/gatherer/synthesizer/artisan/skeptic/investigator).
+    Async. Mutating. See agent_skill:dispatch.
+  json_schema:
+    type: object
+    properties:
+      op: {type: string, enum: [generate, to_thread]}
+      role: {type: string}
+      messages: {type: array, items: {type: object}}
+      model: {type: string}
+      system: {type: string}
+      reasoning_effort: {type: string}
+      thread: {type: string}
+      subject: {type: string}
+    required: [op, role, messages]
+  skill_uri: agent_skill:dispatch
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-05-30'
+- canonical_name: team_dispatch_to_thread
+  domain: team_dispatch
+  operation: to_thread
+  dispatcher_call_shape:
+    tool: team_dispatch
+    dispatch_key: op
+    dispatch_value: to_thread
+  flat_call_shape:
+    tool: team_dispatch_to_thread
+    substrate_qualified: user-vortex__team_dispatch_to_thread
+  fol_descriptor: |-
+    ∀ role ∈ TeamRoles ∧ thread ∈ ThreadID:
+      team_dispatch(op=to_thread, role, messages, thread) ⟹
+        Stargate posts the role reply on its behalf to thread after dispatch completes.
+    Async. Mutating. See agent_skill:dispatch.
+  json_schema:
+    type: object
+    properties:
+      op: {type: string, enum: [generate, to_thread]}
+      role: {type: string}
+      messages: {type: array, items: {type: object}}
+      model: {type: string}
+      system: {type: string}
+      reasoning_effort: {type: string}
+      thread: {type: string}
+      subject: {type: string}
+    required: [op, role, messages, thread]
+  skill_uri: agent_skill:dispatch
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-05-30'

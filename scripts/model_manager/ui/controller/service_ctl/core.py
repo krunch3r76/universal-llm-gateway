@@ -32,7 +32,6 @@ from ..service_config import (
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
-    load_mcp_config,
     mcp_browser_override_path,
 )
 from ..shutdown_gate import ManageShutdownGate
@@ -61,10 +60,8 @@ logger = logging.getLogger(__name__)
 _DETACHED_STDIN = asyncio.subprocess.DEVNULL
 
 _PGID_KILL_TIMEOUT = 5
-_CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S = 30
 _GATEWAY_CRASH_DETECT_S = 5.0
 _GATEWAY_STOP_TIMEOUT_S = 3
-_MCP_HEALTH_WAIT_TIMEOUT_S = 60.0
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
 _MCP_STOP_GRACE_S = 30
 _BUILD_LOG_POLL_INTERVAL_S = 0.25
@@ -111,12 +108,6 @@ class ServiceController:
         self._service_state = ServiceState(workspace_root)
         self._sidecar = SidecarController(workspace_root)
         self._build_process: asyncio.subprocess.Process | None = None
-        self._mcp_recreate_tasks: set[asyncio.Task[str]] = set()
-        # Structured signal for dispatchers: True when the most recent rebuild_mcp
-        # call deferred the container recreate (so the boot-render-diff smoke gate
-        # must skip until the new container is healthy). Avoids substring-matching
-        # against the user-facing rebuild_mcp return string in api_dispatch.
-        self._last_mcp_rebuild_scheduled: bool = False
         # Drain-aware restart coordination — persists across manage calls so the
         # per-service restart mutex coalesces concurrent agents / TUI.
         self._restart_gate = RestartDrainGate()
@@ -142,15 +133,6 @@ class ServiceController:
     def shutdown_gate(self) -> ManageShutdownGate:
         """Shared quit guard (manage.sock in-flight + TUI activity tracking)."""
         return self._shutdown_gate
-
-    @property
-    def mcp_rebuild_scheduled(self) -> bool:
-        """True iff the most recent rebuild_mcp call deferred the container recreate.
-
-        Reset to False at the start of each rebuild_mcp call, then set to True
-        only if the build succeeded and the recreate task was scheduled.
-        """
-        return self._last_mcp_rebuild_scheduled
 
     def check_model_path_ownership(self) -> str | None:
         """Return warning if MODEL_PATH is root-owned, None if OK.
@@ -622,78 +604,39 @@ class ServiceController:
         )
         return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
 
-    async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
-        """Rebuild MCP server image and schedule the container recreate.
+    async def sync_restart_mcp(self, *, no_cache: bool = False) -> str:
+        """Sync MCP source into the container and restart via the canonical script.
 
-        Default is a cached rebuild that refreshes only source layers — fast
-        enough for the sync+restart workflow.  Pass ``no_cache=True`` for a
-        full fresh build (pulls base images, rebuilds all layers).
-
-        Side effect: sets ``self._last_mcp_rebuild_scheduled`` so the dispatch
-        layer can branch on a typed flag rather than parsing the return string.
+        Default: ``docker cp`` sync + graceful restart (no image rebuild).
+        ``no_cache=True``: full ``build-mcp.sh --no-cache`` — pip/Dockerfile changes only.
         """
-        self._last_mcp_rebuild_scheduled = False
-        base = self._mcp_compose_args()
-        if base is None:
+        script = self._root / "scripts" / "sync-and-restart-mcp.sh"
+        if not script.is_file():
+            return f"Script not found: {script}"
+        if self._mcp_compose_args() is None:
             return "Compose file not found: docker/compose/mcp-server.yml"
         env = build_mcp_env(self._root)
-        script = self._root / "docker" / "scripts" / "build" / "build-mcp.sh"
-        extra_args = ["--no-cache"] if no_cache else ["--refresh-source"]
-        build_code, build_text = await self._run_build_script(
-            script=script,
+        cmd = ["bash", str(script)]
+        if no_cache:
+            cmd.append("--no-cache")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=_DETACHED_STDIN,
             env=env,
-            extra_args=extra_args,
+            cwd=str(self._root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
-        build_failed = build_code != 0
-        if build_failed:
-            logger.error("MCP rebuild failed (exit %d):\n%s", build_code, build_text)
-            return (
-                f"MCP build failed (exit {build_code}); "
-                "container recreate was not scheduled.\n"
-                f"{build_text}"
-            )
+        out = await proc.communicate()
+        text = out[0].decode(errors="replace") if out[0] else ""
+        if proc.returncode != 0:
+            logger.error("MCP sync/restart failed (exit %d):\n%s", proc.returncode, text)
+            return f"MCP sync/restart failed (exit {proc.returncode}).\n{text}"
+        return f"MCP server synced and restarted.\n{text}"
 
-        self._schedule_mcp_recreate()
-        self._last_mcp_rebuild_scheduled = True
-        return (
-            "MCP rebuild scheduled.\n"
-            "status: rebuild_scheduled\n"
-            "image_built: true\n"
-            "container_recreate: background\n"
-            "next_step: manage(action='wait_healthy', service='mcp', timeout=120)"
-        )
-
-    def _schedule_mcp_recreate(self) -> None:
-        task = asyncio.create_task(
-            self._recreate_mcp_container(),
-            name="mcp-recreate-after-build",
-        )
-        self._mcp_recreate_tasks.add(task)
-        task.add_done_callback(self._log_mcp_recreate_result)
-
-    def _log_mcp_recreate_result(self, task: asyncio.Task[str]) -> None:
-        self._mcp_recreate_tasks.discard(task)
-        try:
-            message = task.result()
-        except asyncio.CancelledError:
-            logger.warning("Background MCP recreate task was cancelled")
-        except Exception:
-            logger.exception("Background MCP recreate task failed")
-        else:
-            logger.info("Background MCP recreate task completed:\n%s", message)
-
-    async def _recreate_mcp_container(self) -> str:
-        start_text = await self.start_mcp()
-        if not start_text.startswith("MCP server started."):
-            return start_text
-        health_error = await self._wait_mcp_healthy(timeout=_MCP_HEALTH_WAIT_TIMEOUT_S)
-        if health_error is not None:
-            return f"{start_text}\nWARNING: {health_error}"
-
-        refresh_text = await self._refresh_cursor_mcp_descriptors_if_enabled()
-        if refresh_text:
-            return f"{start_text}\n{refresh_text}"
-        return start_text
+    async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
+        """MCP image rebuild — prefer ``sync_restart_mcp`` for routine code deploys."""
+        return await self.sync_restart_mcp(no_cache=no_cache)
 
     async def start_cortex_api(self) -> str:
         """Start cortex-api as host subprocess."""
@@ -786,64 +729,6 @@ class ServiceController:
         """Rebuild email-bridge — host process, so rebuild = restart."""
         await self.stop_email_bridge()
         return await self.start_email_bridge()
-
-    async def _wait_mcp_healthy(self, *, timeout: float) -> str | None:
-        """Wait until the mcp-server container reports healthy."""
-        return await self._wait_container_healthy("mcp-server", timeout=timeout)
-
-    async def _refresh_cursor_mcp_descriptors_if_enabled(self) -> str:
-        """Optionally refresh Cursor MCP descriptors based on ~/.gateway/mcp.yaml."""
-        cfg = load_mcp_config()
-        if cfg is None or not cfg.refresh_cursor_descriptors_after_rebuild:
-            return ""
-
-        script = self._root / "scripts" / "refresh-cursor-mcp-descriptors"
-        if not script.exists():
-            msg = (
-                "WARNING: Cursor descriptor refresh is enabled, but script is missing: "
-                f"{script}"
-            )
-            logger.warning(msg)
-            return msg
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "bash",
-                str(script),
-                stdin=_DETACHED_STDIN,
-                cwd=str(self._root),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-        except OSError as exc:
-            msg = f"WARNING: Could not launch descriptor refresh script: {exc}"
-            logger.warning(msg)
-            return msg
-
-        try:
-            output = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=_CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S,
-            )
-        except TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            msg = (
-                "WARNING: Cursor descriptor refresh timed out after "
-                f"{_CURSOR_DESCRIPTOR_REFRESH_TIMEOUT_S}s"
-            )
-            logger.warning(msg)
-            return msg
-
-        text = output[0].decode(errors="replace").strip() if output[0] else ""
-        if proc.returncode == 0:
-            return f"Cursor MCP descriptors refreshed.{chr(10) + text if text else ''}"
-
-        msg = f"WARNING: Cursor descriptor refresh failed (exit {proc.returncode})."
-        logger.warning("%s\n%s", msg, text)
-        if text:
-            return f"{msg}\n{text}"
-        return msg
 
     async def start_event_service(self) -> str:
         """Start event service as host subprocess."""

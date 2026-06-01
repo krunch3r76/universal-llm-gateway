@@ -68,10 +68,10 @@ def test_claude_primary_tools_match_manifest(main_server_state: dict) -> None:
 
 
 def test_claude_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: Claude /mcp exposes exactly 15 dispatcher domains; cap ≤ 24 (D3/P10)."""
+    """D-T2: Claude /mcp exposes exactly 18 dispatcher domains; cap ≤ 24 (D3/P10)."""
     manifest = main_server_state["manifest"]
-    assert len(manifest) == 15, (
-        f"Expected 15 Claude dispatcher domains, got {len(manifest)}: "
+    assert len(manifest) == 18, (
+        f"Expected 18 Claude dispatcher domains, got {len(manifest)}: "
         f"{sorted(e['domain'] for e in manifest)}"
     )
     assert len(manifest) <= 24, f"D3 cap violated: {len(manifest)} > 24"

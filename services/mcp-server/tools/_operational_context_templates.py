@@ -260,6 +260,16 @@ Re-poll up to 5× if status is still pending/running.
 tools (xAI multi-agent rejects them; standard API path has no vortex). This platform
 (grok.com) has the full vortex MCP catalog available — use it."""
 
+CLAUDE_WEB_TOOL_SURFACE = """\
+## Dispatch & Consult (claude-web /mcp seat)
+Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
+On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s).
+- consult any model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → returns execution_id; poll pipeline(op="result", execution_id=…)
+- by role          → team_dispatch(op="generate", role="…", messages=[…])
+- strategic / multi-model / in-pipeline RAG → dispatch(tool="advisor" | "agent_consult" | "pipeline_consult", …)  [overflow]
+- close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
+Note: frontier_dispatch/team_dispatch are standalone primary tools here via the standalone-domain promotion (thread 1146/1167); the promotion must stay committed or a rebuild reverts it to overflow. advisor/agent_consult/pipeline_consult remain overflow (via dispatch). Source of truth: cortex:notes/system/threads/claude-web-dispatch-decision-table.md (§2/§3/§4)."""
+
 GROK_DIRECT_SESSION_CLOSE = """\
 Grok-direct sessions use `cortex(tool="session_close", transcript_md="<full session \
 markdown>", session_summary_md="<summary>", agent="grok-direct", family="Grok")`. \
@@ -277,6 +287,7 @@ ADDENDA_BLOCKS: dict[str, str] = {
     "session-close-markdown-audit": SESSION_CLOSE_MARKDOWN_AUDIT,
     "session-close-transcript": TRANSCRIPT_CLOSE_PROTOCOL,
     "grok-web-tool-surface": GROK_WEB_TOOL_SURFACE,
+    "claude-web-tool-surface": CLAUDE_WEB_TOOL_SURFACE,
 }
 
 ASSERTION_SEARCH = """\

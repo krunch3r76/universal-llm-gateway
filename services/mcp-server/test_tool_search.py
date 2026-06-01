@@ -51,10 +51,10 @@ def server_state() -> dict:
 
 # Phase D promotes pipeline/rag/grokbuild/observability/manage to primary (11-tool
 # catalog); tool_search manifest covers overflow/demoted tools only.
+# frontier_dispatch/team_dispatch promoted to PRIMARY via standalone domains
+# (thread 1146/1167) — no longer in the overflow manifest.
 _EXPECTED_DEMOTED = {
     "cortex_boot",
-    "team_dispatch",
-    "frontier_dispatch",
     "web_fetch",
     "boot_inspect",
     "model_status",
@@ -88,14 +88,13 @@ def test_manifest_entries_have_required_fields(server_state: dict) -> None:
 
 
 GOLDEN_QUERIES: list[tuple[str, str]] = [
-    # Unified tools promoted primary in Phase D — golden pairs target overflow flat tools.
-    ("poll pipeline result", "frontier_dispatch"),
+    # Golden pairs target overflow flat tools. frontier_dispatch/team_dispatch
+    # promoted to primary (thread 1146/1167) → no longer in the overflow manifest,
+    # so their former entries are removed.
     ("restart service", "bot_supervisor"),
     ("fetch web page", "web_fetch"),
     ("raw sql query", "sql"),
     ("build with grok", "grok_imagine"),
-    ("dispatch to team", "team_dispatch"),
-    ("dispatch to frontier", "frontier_dispatch"),
     ("rag semantic search query", "rag_search"),
     ("model status", "model_status"),
     ("query events", "query_observability_preview"),

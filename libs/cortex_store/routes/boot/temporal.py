@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query
 from ...action_hints import detect_expired_unresolved
 from ...db import cortex_conn
 from ...db import query as db_query
+from ...open_items.resolution_index import fetch_resolution_index_records
 
 router = APIRouter(tags=["boot"])
 
@@ -42,22 +43,10 @@ _TEMPORAL_UPCOMING_SQL = """
     LIMIT ?
 """
 
-# Assertions that had a future valid_until within the last 30 days but are now
-# superseded. These represent recently-resolved temporal matters — used by cortex_boot
-# to suppress stale open_items in session journals that still reference the matter
-# as pending.
-_TEMPORAL_RECENTLY_RESOLVED_SQL = """
-    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
-           a.valid_from, a.valid_until, a.confidence
-    FROM assertions a
-    JOIN entities e ON a.entity_id = e.id
-    WHERE a.valid_until IS NOT NULL
-      AND a.valid_until >= datetime('now', '-30 days')
-      AND a.superseded_by IS NOT NULL
-      AND a.review_status = 'committed'
-    ORDER BY a.valid_until DESC
-    LIMIT ?
-"""
+# Recently-resolved work (superseded assertions + closed todos) is sourced via
+# open_items.resolution_index so cortex_boot and the control tower share one
+# definition of "resolved" — used to suppress stale open_items that still
+# reference completed matters as pending.
 
 _TEMPORAL_EXPIRED_UNRESOLVED_SQL = """
     SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
@@ -100,9 +89,11 @@ def get_boot_temporal(
     Upcoming: assertions with valid_from in the next 7 days that haven't
     started yet, not superseded, not resolved. Ordered by soonest start.
 
-    Recently resolved: temporal assertions (valid_until set) that were superseded
-    within the last 30 days. Used by cortex_boot to tag stale open_items in session
-    journals that still reference the matter as pending.
+    Recently resolved: unified resolved-record set (superseded assertions of any
+    type + done/cancelled todos) from the last 30 days, sourced via
+    open_items.resolution_index. Used by cortex_boot AND the control tower to
+    reconcile stale open_items in session journals that still reference completed
+    matters as pending.
 
     Expired unresolved: assertions with valid_until in the past that are NOT
     superseded. These fell through the cracks — expired but never acted on.
@@ -115,8 +106,8 @@ def get_boot_temporal(
     try:
         active_rows = db_query(conn, _TEMPORAL_ACTIVE_SQL, (active_limit,))
         upcoming_rows = db_query(conn, _TEMPORAL_UPCOMING_SQL, (upcoming_limit,))
-        resolved_rows = db_query(
-            conn, _TEMPORAL_RECENTLY_RESOLVED_SQL, (resolved_limit,)
+        recently_resolved = fetch_resolution_index_records(
+            conn, assertion_limit=resolved_limit, todo_limit=resolved_limit
         )
         expired_rows = db_query(
             conn, _TEMPORAL_EXPIRED_UNRESOLVED_SQL, (expired_limit,)
@@ -141,7 +132,7 @@ def get_boot_temporal(
     result: dict[str, Any] = {
         "active": [_format_row(r) for r in active_rows],
         "upcoming": [_format_row(r) for r in upcoming_rows],
-        "recently_resolved": [_format_row(r) for r in resolved_rows],
+        "recently_resolved": recently_resolved,
         "expired_unresolved": expired_formatted,
     }
     if hints:
