@@ -25,10 +25,10 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import load_config
-from services.rag.entity_admission import EntityAdmissionGate
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
+from services.rag.entity_admission import EntityAdmissionGate
 from services.rag.events.indexing import (
     rag_contextualize_cache_gc_completed,
     rag_contextualize_cache_gc_failed,

@@ -24,11 +24,11 @@ from universal_logging import get_logger
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
-from .event_publisher import cortex_entity_source_changed
 from .entity_exhibit_lint import (
     enforce_exhibit_belongs_to,
     insert_exhibit_belongs_to_relationship,
 )
+from .event_publisher import cortex_entity_source_changed
 from .models import (
     AssertionItem,
     EntityCreate,
