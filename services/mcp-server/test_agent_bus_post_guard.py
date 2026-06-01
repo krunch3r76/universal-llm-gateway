@@ -70,6 +70,13 @@ def test_after_turn_key_rejected_with_actionable_envelope() -> None:
     assert "reply(" in misuse["error"]
 
 
+def test_after_turn_zero_skip_sentinel_stripped_on_post() -> None:
+    args = _legit_post() | {"after_turn": 0}
+    normalized, misuse = reconcile_post_arguments(args)
+    assert misuse is None
+    assert "after_turn" not in normalized
+
+
 def test_legit_post_passes_clean() -> None:
     normalized, misuse = reconcile_post_arguments(_legit_post())
     assert misuse is None

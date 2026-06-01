@@ -60,9 +60,11 @@ def post_continuation_misuse_error(
     (POST /turns); silently creating a forked thread is the 1140->1142 footgun.
 
       - slug all-digits -> a thread ID jammed into the slug field
-      - after_turn set  -> a continuation field; inert on create (the unread
+      - after_turn > 0  -> a continuation field; inert on create (the unread
                            check in create_thread_with_turn runs against the
-                           freshly created empty thread, so it never fires)
+                           freshly created empty thread, so it never fires).
+                           after_turn=0 is the skip-sentinel (_post_impl injects
+                           it; same contract as reply's ``if after_turn > 0``).
 
     Returns a structured 400 envelope, or None for a legitimate new-thread post.
     """
@@ -79,7 +81,7 @@ def post_continuation_misuse_error(
             ),
             "suggestion": "use_reply_to_continue",
         }
-    if after_turn is not None:
+    if after_turn is not None and after_turn > 0:
         return {
             "reason": "after_turn_not_valid_on_post",
             "after_turn": after_turn,

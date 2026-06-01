@@ -53,17 +53,23 @@ def reconcile_post_arguments(
         args.setdefault("from_agent", alias_value)
 
     for key in POST_CONTINUATION_KEYS:
-        if key in args:
-            return args, {
-                "error": (
-                    f"post: {key!r} is a continuation field and has no effect "
-                    "on post, which always creates a NEW thread. To continue an "
-                    "existing thread use reply(thread=<id>, after_turn=<n>)."
-                ),
-                "reason": f"{key}_not_valid_on_post",
-                key: args[key],
-                "suggestion": "use_reply_to_continue",
-            }
+        if key not in args:
+            continue
+        # after_turn=0 is the skip-sentinel (_post_impl injects it at REST);
+        # align with _reply_impl's ``if after_turn > 0`` guard.
+        if key == "after_turn" and args[key] == 0:
+            args.pop("after_turn")
+            continue
+        return args, {
+            "error": (
+                f"post: {key!r} is a continuation field and has no effect "
+                "on post, which always creates a NEW thread. To continue an "
+                "existing thread use reply(thread=<id>, after_turn=<n>)."
+            ),
+            "reason": f"{key}_not_valid_on_post",
+            key: args[key],
+            "suggestion": "use_reply_to_continue",
+        }
     return args, None
 
 

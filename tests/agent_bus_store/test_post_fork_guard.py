@@ -47,6 +47,13 @@ def test_after_turn_rejected_on_post(tmp_path) -> None:
     assert resp.json()["detail"]["reason"] == "after_turn_not_valid_on_post"
 
 
+def test_after_turn_zero_skip_sentinel_allowed_on_post(tmp_path) -> None:
+    """_post_impl always injects after_turn=0; must not trip the post guard."""
+    with TestClient(_app(tmp_path)) as client:
+        resp = _post(client, after_turn=0)
+    assert resp.status_code == 201
+
+
 def test_descriptive_slug_creates(tmp_path) -> None:
     with TestClient(_app(tmp_path)) as client:
         resp = _post(client)
