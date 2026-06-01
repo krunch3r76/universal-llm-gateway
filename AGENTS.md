@@ -256,23 +256,35 @@ Full policy: `agent_skill:grokbuild` (cortex, consolidated v3 — 2026-05-22) co
 
 ## Worktree discipline
 
-Grok’s `--worktree` flag is unreliable under streaming JSON dispatch; **all code-modifying work** uses grokbuild-managed git worktrees.
+Code-modifying work lands in the **arc worktree** under the harness-agnostic **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-workflow.md` §Arc worktree binding. grokbuild is **retired** (assertion 11588); **cursorbuild** is the forward multi-writer harness (11479). **grok-direct** edits in the worktree; the **lead** integrates to master via the gated `git_integrate` primitive (`decision:lead-agent-git-integration`), approval bound to the reviewed `diff_sha256`.
 
-1. **Location** — `/mnt/torus/projects/ulg-grok-worktrees/<name>` (`WORKTREE_ROOT`). Code-modifying dispatches and edits go here—not the live checkout while Cursor may be editing the same tree.
-2. **Read-only** — inspection, RAG, events, and non-mutating cortex work may use the live repo cwd.
-3. **Translation** — same protocol whether the caller is MCP, a human shell, or CI:
+1. **Arc binding** — `∀ arc : one_worktree(arc) ∧ one_branch(arc)`. Coordinator kickoff (once per arc):
 
-| Intent | MCP (`grokbuild`) | Shell (operator) |
-|---|---|---|
-| Create worktree + enter | `op="worktree_create"` (`source_repo`, `name`, `branch`, …) | `scripts/grok-worktree <name> [<branch>]` |
-| Remove worktree | `op="worktree_remove"` (`name`) | `scripts/grok-worktree-cleanup <name>` |
-| List worktrees | `op="worktree_list"` | (MCP only) |
-| Async code dispatch | `op="build"` (V2: 202 + poll `build_status` + `fetch_result`) | After create: run `grok` inside worktree path |
+   ```
+   git worktree add <WORKTREE_ROOT>/<plan-name> -b arc/<plan-name> <base-sha>
+   ```
 
-Shell scripts are **thin HTTP clients** to Stargate → grokbuild-worker (`/api/v1/grokbuild/worktrees`). They do not re-implement dirty/busy/registry guards—that is `[universal:no-bc]` territory in the worker.
+   Declare `arc_branch`, `arc_worktree_path`, and `arc_base_sha` on the `plan:` entity at seed time. Resume reads them — never re-derive per session.
 
-4. **Concurrency** — Cursor agents tracking MCP dispatches will not see your interactive `grok` session. Use **unique worktree names** as the shared conflict-avoidance primitive.
-5. **Depth reference** — worktree lifecycle detail: `agent-skills/grokbuild-v1.md` (cortex). Dispatch async contract: `agent-skills/grokbuild-v2.md`. Topology: `docs/grokbuild-topology.md`.
+2. **Location** — default arc root `/mnt/torus/projects/ulg-grok-worktrees/<name>` (or path on the plan entity). Code-modifying dispatches and edits go here — not the live checkout while Cursor may be editing the same tree.
+
+3. **Read-only** — inspection, RAG, events, and non-mutating cortex work may use the live repo cwd.
+
+4. **Integration invariants** — `executor-does-not-self-integrate`: the seat that authors edits never merges its own unreviewed work. `integration-requires-approval`: master advances only via `git_integrate` / `git_land` with a valid `approval` bound to the exact reviewed `diff_sha256`.
+
+5. **Harness routing** — dispatch `cwd=arc_worktree_path` regardless of harness:
+
+   | Harness | Where edits land | Who merges |
+   |---|---|---|
+   | `grok-direct` (CLI) | arc worktree cwd | lead via `git_integrate` |
+   | `cursorbuild` (forward) | arc worktree via `cursor-agent` dispatch | lead via `git_integrate` |
+   | `grokbuild` *(retired — 11588)* | — | — |
+
+6. **Concurrency** — Cursor agents and grok-direct sessions do not share cwd. Use **unique worktree names** (or one arc per plan) as the conflict-avoidance primitive.
+
+7. **⚠ Open — ad-hoc grok-direct worktree bootstrap** — `scripts/grok-worktree` / `scripts/grok-worktree-cleanup` still exist and POST/DELETE to grokbuild-worker (`/api/v1/grokbuild/worktrees`), but grokbuild MCP ops are retired. No confirmed forward replacement for ad-hoc (non-arc) grok-direct session worktree creation. Arc kickoff uses plain `git worktree add` above. Operator decision pending before documenting a new path.
+
+8. **Depth reference** — arc binding + integration gates: `agent-skills/implementation-plan-workflow.md` §Arc worktree binding. grokbuild history: `agent-skills/grokbuild.md`. Git integration primitives: `decision:lead-agent-git-integration`.
 
 ---
 
