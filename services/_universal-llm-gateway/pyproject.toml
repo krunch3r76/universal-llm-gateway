@@ -32,7 +32,14 @@ select = [
     "N",   # pep8-naming
     "UP",  # pyupgrade
 ]
-ignore = ["E501"]  # line-too-long (match root pyproject)
+ignore = [
+    "E501",  # line-too-long (match root pyproject)
+    "N999",  # Squashed subtree — directory name is not an importable module name
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/core/workers/process/communication/cleanup.py" = ["N802"]  # event_factory names
+"src/core/errors.py" = ["N818"]  # SyntaxErrorException (public API)
 
 [tool.ruff.format]
 quote-style = "double"

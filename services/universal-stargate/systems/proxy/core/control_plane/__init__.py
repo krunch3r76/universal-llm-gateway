@@ -1,7 +1,8 @@
 """
 Control plane for model orchestration.
 
-Manages model placement (where work runs) and model lifecycle (load/unload/wait/coordination).
+Manages model placement (where work runs) and model lifecycle
+    (load/unload/wait/coordination).
 Replaces the broad core/model/ domain with explicit subdomains.
 """
 

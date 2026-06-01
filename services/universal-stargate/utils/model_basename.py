@@ -1,7 +1,8 @@
 """
 Unified Model Basename Matching Utility
 
-This module provides centralized basename matching for model profiles and transformations,
+This module provides centralized basename matching for model profiles and
+transformations,
 replacing fragmented regex-based approaches with a single, maintainable solution.
 
 Key features:
@@ -28,7 +29,8 @@ class UnifiedModelMatcher:
         Initialize the UnifiedModelMatcher
 
         Args:
-            config_dir: Path to configuration directory (defaults to ../config relative to this file)
+            config_dir: Path to configuration directory (defaults to ../config
+                relative to this file)
         """
         self.basenames: list[str] = []
         self.profile_mappings: dict[str, str | dict] = {}
@@ -117,7 +119,8 @@ class UnifiedModelMatcher:
                             self.basenames.append(basename)
                             self.transformation_mappings[basename] = config
                             # logger.debug(
-                            #     f"Loaded transformation mapping (basename): {basename} -> {name}"
+                            #     f"Loaded transformation mapping (basename): "
+                            #     f"{basename} -> {name}"
                             # )
                         else:
                             # Ignore transformations with basename: null - no fallback
@@ -136,7 +139,8 @@ class UnifiedModelMatcher:
                                 self.basenames.append(basename_lower)
                                 self.transformation_mappings[basename_lower] = config
                                 logger.debug(
-                                    f"Loaded transformation mapping (legacy): {basename_lower} -> {name}"
+                                    f"Loaded transformation mapping (legacy):"
+                                    f"{basename_lower} -> {name}"
                                 )
 
         except Exception as e:
@@ -252,13 +256,15 @@ class UnifiedModelMatcher:
             transformation = self.transformation_mappings.get(basename)
             if transformation:
                 logger.debug(
-                    f"Found explicit transformation for {model_id} via basename {basename}"
+                    f"Found explicit transformation for {model_id} via"
+                    f"basename {basename}"
                 )
                 return transformation
 
         # No explicit transformation configured - use standard chat format
         logger.debug(
-            f"No explicit transformation for model {model_id} - using standard chat format"
+            f"No explicit transformation for model {model_id} -"
+            f"using standard chat format"
         )
         return None
 

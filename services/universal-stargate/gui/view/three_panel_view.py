@@ -106,7 +106,9 @@ class ThreePanelView:
             # Update request panels for events with valid request data
             # Streaming chunks should NEVER update request panels
             event_type = display_data.event_info.get("type")
-            # logger.info(f"🔍 PANEL: Panel update - Event: {event_type}, Request ID: {display_data.request_id}, Current ID: {self.current_request_id}, Is New: {is_new_request}")
+            #  logger.info(f"🔍 PANEL: Panel update - Event: {event_type}, Request ID:
+            # {display_data.request_id}, Current ID: {self.current_request_id}, Is New:
+            # {is_new_request}")
 
             # Log the request data availability
             original_valid = (
@@ -118,7 +120,8 @@ class ThreePanelView:
                 and display_data.modified_request.strip() not in ["", "No data"]
             )
             logger.debug(
-                f"Request data validity - Original: {original_valid}, Modified: {modified_valid}"
+                f"Request data validity - Original: {original_valid},"
+                f"Modified: {modified_valid}"
             )
 
             # For request_info events, only original_request is available
@@ -151,7 +154,8 @@ class ThreePanelView:
             if should_update_panels:
                 # Event with valid request data - update panels
                 logger.info(
-                    f"🔍 PANEL: Updating request panels for new {event_type} event (request_id: {display_data.request_id})"
+                    f"🔍 PANEL: Updating request panels for new {event_type} event"
+                    f"(request_id: {display_data.request_id})"
                 )
 
                 # Always update original panel if we have original request data
@@ -174,7 +178,10 @@ class ThreePanelView:
                 # Streaming chunks or invalid data - DO NOT touch request panels
                 if event_type in ["chat_completion", "request_info"]:
                     logger.warning(
-                        f"🔍 PANEL: NOT updating request panels for {event_type} event - Conditions: is_new_request={is_new_request}, original_valid={original_valid}, modified_valid={modified_valid}"
+                        f"🔍 PANEL: NOT updating request panels for {event_type} "
+                        f"event - Conditions: is_new_request={is_new_request}, "
+                        f"original_valid={original_valid}, "
+                        f"modified_valid={modified_valid}"
                     )
                 else:
                     logger.debug(f"Skipping request panel updates - {event_type} event")

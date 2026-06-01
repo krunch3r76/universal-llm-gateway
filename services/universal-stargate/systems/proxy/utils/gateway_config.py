@@ -60,7 +60,8 @@ def _normalize_gateway_config(
     # If explicit config provided
     if gateway_config is not None:
         logger.info(
-            f"_normalize_gateway_config(): gateway_config type={type(gateway_config).__name__}, "
+            f"_normalize_gateway_config(): gateway_config"
+            f"type={type(gateway_config).__name__}, f"
             f"gateway_url={gateway_url}, default_url={default_url}"
         )
         if isinstance(gateway_config, str):
@@ -108,7 +109,8 @@ def _normalize_gateway_config(
             ):
                 error_msg = (
                     f"CRITICAL: socket_path was modified during normalization! "
-                    f"Original: {original_socket_path}, Current: {gateway_config.socket_path}"
+                    f"Original: {original_socket_path}, Current:"
+                    f"{gateway_config.socket_path}"
                 )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
@@ -116,7 +118,8 @@ def _normalize_gateway_config(
             # CRITICAL: Preserve socket_path when returning GatewayConfig
             logger.info(
                 f"_normalize_gateway_config(): Returning GatewayConfig - "
-                f"socket_path={gateway_config.socket_path}, base_url={gateway_config.base_url}"
+                f"socket_path={gateway_config.socket_path},"
+                f"base_url={gateway_config.base_url}"
             )
             return gateway_config
         else:
@@ -260,7 +263,8 @@ def _normalize_gateway_configs(
                 # Validate GatewayConfig URL
                 if not _is_valid_url(gw.base_url):
                     raise ValueError(
-                        f"Invalid gateway URL in GatewayConfig at index {i}: '{gw.base_url}'"
+                        f"Invalid gateway URL in GatewayConfig at index"
+                        f"{i}: '{gw.base_url}'"
                     )
 
                 # Check for duplicates

@@ -117,7 +117,6 @@ class ServicesScreen(Screen):
             yield Static("  AgentBus: —", id="svc-agentbus")
             yield Static("  Events:   checking...", id="svc-events")
             yield Static("  EmailBridge: —", id="svc-emailbridge")
-            yield Static("  GrokBuild:  checking...", id="svc-grokbuild")
 
         with Vertical(id="build-options"):
             yield Select(
@@ -207,17 +206,6 @@ class ServicesScreen(Screen):
                 yield Button(
                     "Stop Email Bridge",
                     id="btn-stop-emailbridge",
-                    variant="error",
-                    disabled=True,
-                )
-                yield Button(
-                    "Start GrokBuild",
-                    id="btn-start-grokbuild",
-                    variant="success",
-                )
-                yield Button(
-                    "Stop GrokBuild",
-                    id="btn-stop-grokbuild",
                     variant="error",
                     disabled=True,
                 )
@@ -336,13 +324,6 @@ class ServicesScreen(Screen):
                     self.run_worker(self._start_email_bridge(), exclusive=True)
                 else:
                     self.run_worker(self._stop_email_bridge(), exclusive=True)
-            case "btn-start-grokbuild" | "btn-stop-grokbuild":
-                self.query_one("#btn-start-grokbuild", Button).disabled = True
-                self.query_one("#btn-stop-grokbuild", Button).disabled = True
-                if event.button.id == "btn-start-grokbuild":
-                    self.run_worker(self._start_grokbuild_worker(), exclusive=True)
-                else:
-                    self.run_worker(self._stop_grokbuild_worker(), exclusive=True)
             case "btn-restart-local":
                 self.run_worker(self._restart_local(), exclusive=True)
             case "btn-force-toggle":
@@ -521,14 +502,6 @@ class ServicesScreen(Screen):
             )
             self.query_one("#btn-start-emailbridge", Button).disabled = True
             self.query_one("#btn-stop-emailbridge", Button).disabled = True
-
-        grokbuild = svc.service_state.check_grokbuild_worker()
-        self.query_one("#svc-grokbuild", Static).update(
-            f"  GrokBuild:  {grokbuild.detail or grokbuild.status}"
-        )
-        grokbuild_up = grokbuild.status is not ServiceStatus.STOPPED
-        self.query_one("#btn-start-grokbuild", Button).disabled = grokbuild_up
-        self.query_one("#btn-stop-grokbuild", Button).disabled = not grokbuild_up
 
         events = svc.service_state.check_event_service()
         self.query_one("#svc-events", Static).update(
@@ -830,21 +803,6 @@ class ServicesScreen(Screen):
         svc = self.app.service_controller  # type: ignore[attr-defined]
         await self._run_gated_action(
             "stop", "email_bridge", lambda: svc.stop_email_bridge()
-        )
-        await asyncio.sleep(2)
-        self._refresh_status()
-
-    async def _start_grokbuild_worker(self) -> None:
-        svc = self.app.service_controller  # type: ignore[attr-defined]
-        result = await svc.start_grokbuild_worker()
-        self.query_one("#svc-log", LogStream).write_line(result)
-        await asyncio.sleep(2)
-        self._refresh_status()
-
-    async def _stop_grokbuild_worker(self) -> None:
-        svc = self.app.service_controller  # type: ignore[attr-defined]
-        await self._run_gated_action(
-            "stop", "grokbuild_worker", lambda: svc.stop_grokbuild_worker()
         )
         await asyncio.sleep(2)
         self._refresh_status()

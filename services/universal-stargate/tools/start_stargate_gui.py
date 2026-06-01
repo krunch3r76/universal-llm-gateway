@@ -5,7 +5,8 @@ Standalone launcher for the stargate GUI.
 Usage:
     # Unix socket (local monitoring)
     python tools/start_stargate_gui.py
-    python tools/start_stargate_gui.py --transport unix --unix-socket /path/to/socket.sock
+    python tools/start_stargate_gui.py --transport unix --unix-socket
+        /path/to/socket.sock
 
     # TCP (remote monitoring)
     python tools/start_stargate_gui.py --transport tcp --host <server-ip> --port 9997

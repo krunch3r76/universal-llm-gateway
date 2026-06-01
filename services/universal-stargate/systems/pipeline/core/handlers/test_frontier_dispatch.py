@@ -14,13 +14,14 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
 import agent_seat
+import pytest
 
 from systems.pipeline.core.execution.errors import FrontierDispatchExhaustedError
 from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
+)
+from systems.pipeline.core.handlers.frontier_dispatch import (
     native_loop as fd_native_mod,
 )
 from systems.pipeline.core.handlers.frontier_dispatch_tools import XAI_BUILTIN_TOOLS

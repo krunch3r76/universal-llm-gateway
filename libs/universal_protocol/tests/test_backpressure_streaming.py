@@ -87,7 +87,8 @@ class MockWorkerStreaming:
                     except Exception:
                         pass  # Best effort, ignore timeout/validation errors
                     logger.error(
-                        f"❌ [worker] Streaming terminated due to backpressure timeout for {self.stream_id}"
+                        f"❌ [worker] Streaming terminated due to backpressure timeout "
+                        f"for {self.stream_id}"
                     )
                     return  # Exit without sending done frame
                 except Exception as e:
@@ -118,7 +119,8 @@ class MockWorkerStreaming:
             try:
                 await self.queue.put(done_frame)
                 logger.info(
-                    f"✅ [worker] Streaming completed for {self.stream_id}: {num_tokens} tokens"
+                    f"✅ [worker] Streaming completed for {self.stream_id}: "
+                    f"{num_tokens} tokens"
                 )
             except QueueTimeoutError:
                 # Even done frame can timeout
@@ -135,7 +137,8 @@ class MockWorkerStreaming:
                 except Exception:
                     pass  # Best effort, ignore timeout/validation errors
                 logger.error(
-                    f"❌ [worker] Failed to send done frame due to backpressure for {self.stream_id}"
+                    f"❌ [worker] Failed to send done frame due to backpressure for "
+                    f"{self.stream_id}"
                 )
 
         except Exception as e:
@@ -203,7 +206,6 @@ async def test_backpressure_timeout_produces_error_frame():
 
         # Now check if error frame was enqueued
         error_frame_found = False
-        done_frame_found = False
         frames_received = []
 
         # Consume all frames from queue
@@ -227,7 +229,6 @@ async def test_backpressure_timeout_produces_error_frame():
                 logger.info("✅ Found properly formatted SSE error frame")
 
             elif frame.get("t") == "done":
-                done_frame_found = True
                 logger.error("❌ Found unexpected done frame after error!")
 
         # The error frame might not make it to the queue due to best-effort enqueue
@@ -331,14 +332,16 @@ async def test_multiple_backpressure_scenarios():
             done_frames = [f for f in frames if f.get("t") == "done"]
 
             logger.info(
-                f"Received {len(error_frames)} error frames, {len(done_frames)} done frames"
+                f"Received {len(error_frames)} error frames, {len(done_frames)} done "
+                f"frames"
             )
 
             # Error frame might not make it into queue if full (best effort)
             # But we should see the streaming was terminated early
             token_frames = [f for f in frames if f.get("t") == "token"]
             logger.info(
-                f"Token frames: {len(token_frames)} (expected less than {scenario['num_tokens']})"
+                f"Token frames: {len(token_frames)} (expected less than "
+                f"{scenario['num_tokens']})"
             )
 
             # Verify stream handling - either cut short or completed with error handling

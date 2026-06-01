@@ -239,12 +239,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              restart slot — safe to poll live.
 
         Services: gateway, stargate, rag, cloud_proxy, mcp, event_service,
-                  cortex_api, agent_bus, email_bridge, grokbuild_worker,
-                  git_integration_worker
+                  cortex_api, agent_bus, email_bridge, git_integration_worker
 
         Drain gate: stop/restart/sync_restart are deferred when the target has
-        in-flight work (e.g. a running async pipeline on stargate, a build on
-        grokbuild_worker, an integrate on git_integration_worker). A deferral returns
+        in-flight work (e.g. a running async pipeline on stargate, an integrate
+        on git_integration_worker). A deferral returns
         {"status":"deferred","state","service","reason","retry_after_s",
         "active_work"} where state ∈ {busy, in_progress, probe_error}. Honor
         retry_after_s and retry, or pass force=true to preempt in-flight work.

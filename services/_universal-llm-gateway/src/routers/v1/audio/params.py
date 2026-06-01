@@ -1,6 +1,6 @@
 """FastAPI query parameter definitions for audio streaming endpoint."""
 
-from enum import Enum
+from enum import StrEnum
 
 from fastapi import Query
 
@@ -43,7 +43,7 @@ __all__ = [
 ]
 
 
-class VADMethod(str, Enum):
+class VADMethod(StrEnum):
     """Available VAD methods with fallback chain."""
 
     SILERO = "silero"  # Best quality, requires CUDA

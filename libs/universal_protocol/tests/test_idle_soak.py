@@ -138,7 +138,8 @@ async def test_idle_soak_60_cycles(server_process):
             # Verify cycle time
             if cycle_time > max_cycle_time:
                 logger.warning(
-                    f"Cycle {cycle_num} exceeded max time ({cycle_time:.2f}s > {max_cycle_time}s)"
+                    f"Cycle {cycle_num} exceeded max time ({cycle_time:.2f}s > "
+                    f"{max_cycle_time}s)"
                 )
 
         except Exception as e:
@@ -149,7 +150,8 @@ async def test_idle_soak_60_cycles(server_process):
         if (cycle_num + 1) % 10 == 0:
             avg_time = sum(cycle_times) / len(cycle_times)
             logger.info(
-                f"Progress: {cycle_num + 1}/{num_cycles} cycles, avg time: {avg_time:.2f}s"
+                f"Progress: {cycle_num + 1}/{num_cycles} cycles, avg time: "
+                f"{avg_time:.2f}s"
             )
 
     # Wait for cleanup

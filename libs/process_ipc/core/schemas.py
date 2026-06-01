@@ -5,7 +5,7 @@ Defines the complete schema hierarchy for all message types used in process_ipc,
 from the top-level IPC envelope down to domain-specific command responses.
 """
 
-from typing import Any, TypedDict, Union
+from typing import Any, TypedDict
 
 from . import signals
 
@@ -81,7 +81,7 @@ class ErrorResponse(TypedDict):
 
 
 # Union type for all possible domain responses
-DomainResponse = Union[PingResponse, InferenceResponse, ErrorResponse]
+DomainResponse = PingResponse | InferenceResponse | ErrorResponse
 
 
 def extract_domain_data(message: dict[str, Any]) -> dict[str, Any]:
@@ -89,7 +89,8 @@ def extract_domain_data(message: dict[str, Any]) -> dict[str, Any]:
     Extract domain data from process_ipc message (Simple UML Message format).
 
     Extracts domain data from the simple UML Message format:
-    - Signal/payload format: {"signal": "...", "correlation_id": "...", "payload": {...}}
+    - Signal/payload format: {"signal": "...", "correlation_id": "...",
+      "payload": {...}}
     - For commands: Payload contains domain data directly (no result wrapper)
     - For streaming (e.g., DATA_STREAM, STREAM_CHUNK): Payload is {"data": {...}},
       and this function extracts the inner data.
@@ -138,7 +139,8 @@ def extract_domain_data(message: dict[str, Any]) -> dict[str, Any]:
     # Validate message structure
     if "payload" not in message or "signal" not in message:
         raise ValueError(
-            f"Message missing 'payload' or 'signal' field. Expected Simple UML Message format. "
+            "Message missing 'payload' or 'signal' field. "
+            "Expected Simple UML Message format. "
             f"Got keys: {list(message.keys())}"
         )
 

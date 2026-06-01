@@ -38,7 +38,7 @@ sys.path.insert(0, str(project_root))
 
 # Try to import Hugging Face dependencies
 try:
-    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
     from transformers import __version__ as transformers_version
 
     transformers_available = True

@@ -54,7 +54,7 @@ _CRITICAL_DEPLOY_PATHS: tuple[str, ...] = (
     "services/_universal-llm-gateway/src/routers/api/v1/models/management.py",
     "config/models/text_llm/llama-cpp/qwen3-14b-q4-k-m.yaml",
     "libs/cortex_store/models/__init__.py",
-    "services/grokbuild_worker/models/__init__.py",
+    "services/universal-stargate/systems/proxy/routers/api/git.py",
     "config/templates/relay-stargate.yaml",
 )
 

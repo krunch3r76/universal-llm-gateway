@@ -118,5 +118,7 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "health",
         # Models listing tool not yet canonicalized
         "list_models",
+        # Archived harness stub — canonical entries removed (assertion 11588)
+        "grokbuild",
     }
 )

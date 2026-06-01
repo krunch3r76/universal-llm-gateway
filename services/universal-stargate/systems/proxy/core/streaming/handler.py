@@ -1,7 +1,8 @@
 """
 Streaming request handling for StargateProxy.
 
-Handles streaming request forwarding, newline-delimited JSON streaming, and content filtering.
+Handles streaming request forwarding, newline-delimited JSON streaming,
+and content filtering.
 """
 
 import json
@@ -89,7 +90,8 @@ class StreamHandler:
             else "unknown"
         )
         logger.info(
-            f"🎯 [REQ:{request_id_short}] stream_handler.forward_streaming_request() ENTRY"
+            f"🎯 [REQ:{request_id_short}]"
+            f"stream_handler.forward_streaming_request() ENTRY"
         )
 
         if not context:
@@ -106,9 +108,10 @@ class StreamHandler:
         if content:
             try:
                 request_json = json.loads(content.decode("utf-8"))
+                body_log = format_json_for_log(request_json)
                 logger.debug(
                     f"Streaming request body to Gateway [{context.request_id}]: "
-                    f"{format_json_for_log(request_json)}"  # Unicode + automatic truncation
+                    f"{body_log}"
                 )
             except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.debug("Could not parse request body for logging")

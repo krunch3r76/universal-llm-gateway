@@ -8,7 +8,7 @@ INVARIANT: requires_federation_auth
 
 import asyncio
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
@@ -19,7 +19,7 @@ from .request_store import ActiveRequestStore
 logger = get_logger(__name__)
 
 
-class CancelStatus(str, Enum):
+class CancelStatus(StrEnum):
     """Cancel operation status."""
 
     CANCELLED = "cancelled"

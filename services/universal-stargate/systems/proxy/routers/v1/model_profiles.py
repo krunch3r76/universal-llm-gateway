@@ -2,7 +2,8 @@
 
 GET  /v1/models/{model_id}/profile      — single model profile
 POST /v1/models/select                  — unified three-tier cascade selection
-POST /v1/models/observe                 — record observation for reputation (full payload)
+POST /v1/models/observe                 — record observation for reputation (full
+    payload)
 POST /v1/models/profiles/reload         — hot-reload curated YAML profiles
 """
 

@@ -8,6 +8,7 @@ Provides functions to analyze HuggingFace models for vLLM compatibility:
 - Tokenizer analysis
 """
 
+import importlib.util
 import os
 from typing import Any
 
@@ -23,12 +24,7 @@ except ImportError:
     transformers_available = False
     logger.warning("Transformers not available - limited inspection capabilities")
 
-try:
-    import safetensors
-
-    safetensors_available = True
-except ImportError:
-    safetensors_available = False
+safetensors_available = importlib.util.find_spec("safetensors") is not None
 
 
 def inspect_model_path(model_path: str) -> dict[str, Any]:

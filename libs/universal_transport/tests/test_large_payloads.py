@@ -397,7 +397,8 @@ async def test_performance_benchmark():
             )
 
             logger.info(
-                f"{size_mb}MB: {avg_time:.2f}s avg, {throughput_mbps:.1f} MB/s throughput"
+                f"{size_mb}MB: {avg_time:.2f}s avg, {throughput_mbps:.1f} MB/s "
+                f"throughput"
             )
 
         # Print summary
@@ -406,7 +407,8 @@ async def test_performance_benchmark():
         logger.info("-" * 45)
         for result in results:
             logger.info(
-                f"{result['size_mb']:8.1f} | {result['avg_time_s']:11.2f} | {result['throughput_mbps']:13.1f}"
+                f"{result['size_mb']:8.1f} | {result['avg_time_s']:11.2f} | "
+                f"{result['throughput_mbps']:13.1f}"
             )
 
     finally:

@@ -12,7 +12,8 @@ in each pipeline execution directory. Scripts can parse it to:
 
 Schema: See build_verification_report() return structure.
 stats.verification_timing: total_models, total_latency_ms, per_model[]
-  (model_id, num_claims, latency_ms, mode, chunk_size, chunks[], prompt_tokens, completion_tokens).
+  (model_id, num_claims, latency_ms, mode, chunk_size, chunks[], prompt_tokens,
+      completion_tokens).
 """
 
 from __future__ import annotations

@@ -222,7 +222,7 @@ class MicrophoneTranscriber:
                 break
             if vad.is_speech(frame, sample_rate=self.target_sample_rate):
                 voiced += 1
-        ratio = voiced / total_frames
+        voiced / total_frames
         # print(
         #     f"[LOCAL VAD] frames={total_frames} voiced_ratio={ratio:.2f} "
         #     f"bytes={len(audio_bytes)}"

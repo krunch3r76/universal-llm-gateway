@@ -239,7 +239,8 @@ async def test_error_responses():
             # Verify error is detected
             assert "error" in err_resp["response"]
             logger.info(
-                f"✅ Error response correctly identified: {err_resp['response']['error']}"
+                f"✅ Error response correctly identified: "
+                f"{err_resp['response']['error']}"
             )
 
     logger.info("\n✅ Error handling tests passed")

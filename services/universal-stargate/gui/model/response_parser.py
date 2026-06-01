@@ -78,7 +78,8 @@ class ResponseParser:
             if data is None:
                 return ParsedResponse(
                     raw_data={},
-                    formatted_text="⏳ Request being processed...\n\nWaiting for gateway response...",
+                    formatted_text="⏳ Request being processed...\n\nWaiting"
+                    "for gateway response...",
                     response_type="pre_processing",
                     is_streaming=False,
                 )
@@ -97,7 +98,8 @@ class ResponseParser:
             logger.error(f"Error formatting JSON response: {e}")
             return ParsedResponse(
                 raw_data=data,
-                formatted_text=f"Error formatting JSON: {e}\n\nRaw: {str(data)[:1000]}...",
+                formatted_text=f"Error formatting JSON: {e}\n\nRaw:"
+                f"{str(data)[:1000]}...f",
                 response_type="error",
                 is_streaming=False,
                 error_message=str(e),

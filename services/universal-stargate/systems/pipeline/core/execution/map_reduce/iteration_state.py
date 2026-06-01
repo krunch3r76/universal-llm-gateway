@@ -39,7 +39,7 @@ class IterationResult:
     error_message: str | None = None
     started_at: float | None = None  # monotonic time
     truncated_response: str | None = (
-        None  # path to file containing full truncated response, or short excerpt on write failure
+        None  # path to truncated response file, or short excerpt on write failure
     )
     truncation_tokens: int | None = None  # completion_tokens at truncation
 

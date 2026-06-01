@@ -277,7 +277,8 @@ class ResilientStateChannel:
         """Attempt to reconnect with exponential backoff."""
         while self._running:
             logger.info(
-                f"🔄 Attempting to reconnect to '{self.channel_name}' in {self._reconnect_delay}s..."
+                f"🔄 Attempting to reconnect to '{self.channel_name}' in "
+                f"{self._reconnect_delay}s..."
             )
             await asyncio.sleep(self._reconnect_delay)
 

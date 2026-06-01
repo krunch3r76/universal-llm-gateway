@@ -75,7 +75,8 @@ class RequestForwarder:
                                 filtered_content
                             )
                             logger.info(
-                                f"Applied analysis filter to non-streaming response for model: {model_name}"
+                                f"Applied analysis filter to non-streaming response"
+                                f"for model: {model_name}"
                             )
 
                             # Reconstruct response
@@ -162,7 +163,8 @@ class RequestForwarder:
             # Log request details for correlation tracking
             request_id = context.request_id if context else None
             logger.debug(
-                f"🔍 Forwarding request {request_id} to gateway '{gateway_name}': {method} {url} (model: {model_name})"
+                f"🔍 Forwarding request {request_id} to gateway '{gateway_name}':"
+                f"{method} {url} (model: {model_name})"
             )
 
             # Quick pre-flight check - don't start if client already gone
@@ -170,7 +172,8 @@ class RequestForwarder:
                 try:
                     if await request.is_disconnected():
                         logger.info(
-                            f"🔌 Client disconnected before gateway request {request_id}"
+                            f"🔌 Client disconnected before gateway request "
+                            f"{request_id}"
                         )
                         raise HTTPException(
                             status_code=499, detail="Client disconnected"
@@ -205,14 +208,18 @@ class RequestForwarder:
                 # Log response details for correlation tracking
                 if response_id:
                     logger.debug(
-                        f"📥 Response ID from gateway: {response_id} for request {request_id}"
+                        f"📥 Response ID from gateway: {response_id} for"
+                        f"request {request_id}"
                     )
 
                 # Check for model mismatch
                 if response_model and model_name and response_model != model_name:
                     logger.error(
-                        f"⚠️ RESPONSE MODEL MISMATCH: Request was for '{model_name}' but response contains model '{response_model}'. "
-                        f"Request ID: {request_id}, Response ID: {response_id}. This indicates responses may be getting mixed up between concurrent requests!"
+                        f"⚠️ RESPONSE MODEL MISMATCH: Request was for "
+                        f"'{model_name}' but response contains model "
+                        f"'{response_model}'. Request ID: {request_id}, "
+                        f"Response ID: {response_id}. Responses may be "
+                        f"mixed up between concurrent requests!"
                     )
 
                 # Log response content preview for debugging (first 100 chars)
@@ -229,7 +236,8 @@ class RequestForwarder:
 
                     if content_preview:
                         logger.debug(
-                            f"📄 Response content preview for request {request_id}: {content_preview}..."
+                            f"📄 Response content preview for request"
+                            f"{request_id}: {content_preview}..."
                         )
 
             except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as e:
@@ -238,7 +246,8 @@ class RequestForwarder:
                 logger.debug(f"Could not parse response JSON for validation: {e}")
 
             logger.debug(
-                f"✅ Received response for request {request_id} from gateway '{gateway_name}' (status: {response.status_code})"
+                f"✅ Received response for request {request_id} from gateway"
+                f"'{gateway_name}' (status: {response.status_code})"
             )
 
             # Write response snapshot if debugging enabled (from Gateway)
@@ -262,7 +271,8 @@ class RequestForwarder:
                 if len(response_content) != original_length:
                     response_headers["content-length"] = str(len(response_content))
                     logger.debug(
-                        f"Updated Content-Length from {original_length} to {len(response_content)}"
+                        f"Updated Content-Length from {original_length} to"
+                        f"{len(response_content)}"
                     )
 
             # Write final response snapshot if debugging enabled (to client)

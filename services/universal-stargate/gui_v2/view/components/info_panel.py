@@ -107,7 +107,10 @@ class InfoPanel:
             if session.processing_time_ms is not None:
                 duration = f"{session.processing_time_ms / 1000:.2f}s"
             elif "start_time" in session.metadata:
-                duration = f"{(datetime.now() - session.metadata['start_time']).total_seconds():.2f}s"
+                elapsed = (
+                    datetime.now() - session.metadata["start_time"]
+                ).total_seconds()
+                duration = f"{elapsed:.2f}s"
             else:
                 duration = "N/A"
             self.labels["duration"].configure(text=duration)
@@ -119,7 +122,9 @@ class InfoPanel:
             # Update token metrics
             if "token_metrics" in session.metadata:
                 metrics = session.metadata["token_metrics"]
-                tokens = f"Input: {metrics.get('input', 0)} | Output: {metrics.get('output', 0)}"
+                inp = metrics.get("input", 0)
+                out = metrics.get("output", 0)
+                tokens = f"Input: {inp} | Output: {out}"
             else:
                 tokens = "N/A"
             self.labels["tokens"].configure(text=tokens)

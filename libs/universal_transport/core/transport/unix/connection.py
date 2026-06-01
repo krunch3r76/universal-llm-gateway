@@ -106,7 +106,8 @@ class UnixConnectionManager:
         except TimeoutError:
             self.state = AsyncUnixConnectionState.ERROR
             raise AsyncUnixConnectionError(
-                f"Connection timeout after {self.connection_timeout}s: {self.socket_path}"
+                f"Connection timeout after {self.connection_timeout}s: "
+                f"{self.socket_path}"
             )
         except FileNotFoundError:
             self.state = AsyncUnixConnectionState.ERROR

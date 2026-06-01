@@ -86,17 +86,17 @@ class EventStore:
 
             # Create indices for common queries
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_timestamp 
+                CREATE INDEX IF NOT EXISTS idx_timestamp
                 ON events(timestamp DESC)
             """)
 
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_event_type 
+                CREATE INDEX IF NOT EXISTS idx_event_type
                 ON events(event_type)
             """)
 
             conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_created_at 
+                CREATE INDEX IF NOT EXISTS idx_created_at
                 ON events(created_at DESC)
             """)
 
@@ -404,9 +404,9 @@ class EventStore:
 
                 # Event type counts
                 cursor = conn.execute("""
-                    SELECT event_type, COUNT(*) as count 
-                    FROM events 
-                    GROUP BY event_type 
+                    SELECT event_type, COUNT(*) as count
+                    FROM events
+                    GROUP BY event_type
                     ORDER BY count DESC
                 """)
                 type_counts = {row[0]: row[1] for row in cursor.fetchall()}

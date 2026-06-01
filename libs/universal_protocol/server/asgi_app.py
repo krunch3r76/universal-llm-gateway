@@ -619,7 +619,8 @@ RPC_METHODS: dict[str, Callable[[dict[str, Any]], Any]] = {
 async def metrics_handler(request: Request) -> Response:
     """Handle metrics endpoint requests.
 
-    Supports both JSON (default) and Prometheus text format based on 'format' query parameter.
+    Supports both JSON (default) and Prometheus text format based on 'format'
+    query parameter.
 
     Args:
         request: Starlette request with optional format=prometheus query parameter
@@ -747,7 +748,8 @@ async def metrics_handler(request: Request) -> Response:
         )
         prometheus_lines.append("# TYPE universal_protocol_queue_depth_total gauge")
         prometheus_lines.append(
-            f"universal_protocol_queue_depth_total {metrics.get('queue_depth_total', 0)}"
+            f"universal_protocol_queue_depth_total "
+            f"{metrics.get('queue_depth_total', 0)}"
         )
 
         # RPC latency statistics (if available)
@@ -776,7 +778,8 @@ async def metrics_handler(request: Request) -> Response:
                     )
                 if "count" in stats:
                     prometheus_lines.append(
-                        f'universal_protocol_rpc_latency_seconds_count{{method="{method}"}} '
+                        f"universal_protocol_rpc_latency_seconds_count{{"
+                        f'method="{method}"}} '
                         f"{stats['count']}"
                     )
 
@@ -799,7 +802,8 @@ async def metrics_handler(request: Request) -> Response:
                 key=lambda x: float("inf") if x[0] == "+Inf" else float(x[0]),
             ):
                 prometheus_lines.append(
-                    f'universal_protocol_stream_duration_seconds_bucket{{le="{bucket_label}"}} '
+                    f"universal_protocol_stream_duration_seconds_bucket{{"
+                    f'le="{bucket_label}"}} '
                     f"{cumulative_count}"
                 )
 
@@ -861,7 +865,8 @@ async def metrics_handler(request: Request) -> Response:
             )
             if "avg_tokens_per_second" in stats:
                 prometheus_lines.append(
-                    f"universal_protocol_token_throughput_per_second {stats['avg_tokens_per_second']}"
+                    f"universal_protocol_token_throughput_per_second "
+                    f"{stats['avg_tokens_per_second']}"
                 )
 
         # Join lines and return as plain text

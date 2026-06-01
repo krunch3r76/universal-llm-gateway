@@ -341,7 +341,10 @@ class LengthPrefixedProtocol(Protocol):
         logger.info(f"Changed serializer: {old_serializer} -> {serializer}")
 
     def __str__(self) -> str:
-        return f"LengthPrefixedProtocol(serializer={self.serializer}, max_size={self.max_message_size})"
+        return (
+            f"LengthPrefixedProtocol(serializer={self.serializer}, "
+            f"max_size={self.max_message_size})"
+        )
 
     def __repr__(self) -> str:
         return (

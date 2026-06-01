@@ -7,6 +7,7 @@ This script generates annotated YAML examples by introspecting Pydantic schemas
 """
 
 import argparse
+import importlib.util
 import inspect
 import sys
 from collections import OrderedDict
@@ -26,13 +27,7 @@ from pydantic_core import PydanticUndefined  # noqa: E402
 
 from src.schemas.yaml_config import GGUFModelConfig, HFModelConfig  # noqa: E402
 
-# Import ruamel.yaml for comment preservation
-try:
-    from ruamel.yaml import YAML as RuamelYAML
-
-    RUAMEL_AVAILABLE = True
-except ImportError:
-    RUAMEL_AVAILABLE = False
+RUAMEL_AVAILABLE = importlib.util.find_spec("ruamel.yaml") is not None
 
 
 class SchemaIntrospector:
@@ -204,7 +199,7 @@ class SchemaExampleGenerator:
 
         return f"""# Universal LLM Gateway - {format_type.upper()} Model Configuration Example
 # Source of Truth: src/schemas/yaml_config.py::{format_type.upper()}ModelConfig{ts}
-# 
+#
 # This example is GENERATED from Pydantic schemas to ensure accuracy.
 # All fields are shown with explicit type annotations.
 #

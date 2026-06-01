@@ -57,7 +57,8 @@ def test_socket_connectivity(socket_path: str, duration: int = 60):
     print(f"   Successful connections: {connection_count}")
     print(f"   Failed connections: {failure_count}")
     print(
-        f"   Success rate: {connection_count / (connection_count + failure_count) * 100:.1f}%"
+        f"   Success rate: {
+            connection_count / (connection_count + failure_count) * 100:.1f}%"
     )
 
 
@@ -78,11 +79,13 @@ def monitor_socket_file(socket_path: str, duration: int = 60):
             try:
                 stat = os.stat(socket_path)
                 print(
-                    f"✅ Check #{check_count} ({elapsed:.1f}s): File exists, mode={oct(stat.st_mode)}, size={stat.st_size}"
+                    f"✅ Check #{check_count} ({elapsed:.1f}s): File exists,"
+                    f"mode={oct(stat.st_mode)}, size={stat.st_size}"
                 )
             except Exception as e:
                 print(
-                    f"⚠️  Check #{check_count} ({elapsed:.1f}s): File exists but stat failed: {e}"
+                    f"⚠️  Check #{check_count} ({elapsed:.1f}s): File"
+                    f"exists but stat failed: {e}"
                 )
         else:
             print(f"❌ Check #{check_count} ({elapsed:.1f}s): File missing")

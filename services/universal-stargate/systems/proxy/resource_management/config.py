@@ -109,7 +109,8 @@ class ResourceManagementConfig:
         for field_name, expected_type in required_fields.items():
             if field_name not in config_dict:
                 raise ResourceManagementConfigError(
-                    f"Required field '{field_name}' missing from resource_management configuration"
+                    f"Required field '{field_name}' missing from"
+                    f"resource_management configuration"
                 )
 
             value = config_dict[field_name]
@@ -120,7 +121,8 @@ class ResourceManagementConfig:
                     else str(expected_type)
                 )
                 raise ResourceManagementConfigError(
-                    f"Field '{field_name}' must be of type {type_name}, got {type(value).__name__}: {value}"
+                    f"Field '{field_name}' must be of type {type_name}, got"
+                    f"{type(value).__name__}: {value}"
                 )
 
         # Extract values with proper types
@@ -196,7 +198,8 @@ class GatewayConfig:
             Validated GatewayConfig instance
 
         Raises:
-            ResourceManagementConfigError: If configuration is invalid or resource_management missing
+            ResourceManagementConfigError: If configuration is invalid or
+                resource_management missing
         """
         gateway_name = config_dict.get("name", "unnamed")
 
@@ -249,7 +252,8 @@ def load_gateway_configs(config_path: Path) -> dict[str, GatewayConfig]:
         Dictionary mapping gateway names to validated GatewayConfig instances
 
     Raises:
-        ResourceManagementConfigError: If configuration file is invalid or gateways missing resource management
+        ResourceManagementConfigError: If configuration file is invalid or
+            gateways missing resource management
         FileNotFoundError: If configuration file does not exist
         yaml.YAMLError: If YAML parsing fails
     """
@@ -329,14 +333,16 @@ def _validate_resource_management_config(config: "ResourceManagementConfig") -> 
         )
     if config.max_concurrent_model_loads > 100:
         raise ResourceManagementConfigError(
-            f"exceeds recommended maximum of 100, got {config.max_concurrent_model_loads}",
+            f"exceeds recommended maximum of 100, got"
+            f"{config.max_concurrent_model_loads}",
             field_name="max_concurrent_model_loads",
         )
 
     # Validate timeout ranges
     if not (0.1 <= config.model_loading_slot_acquisition_timeout <= 60.0):
         raise ResourceManagementConfigError(
-            f"must be between 0.1 and 60.0 seconds, got {config.model_loading_slot_acquisition_timeout}",
+            f"must be between 0.1 and 60.0 seconds, got"
+            f"{config.model_loading_slot_acquisition_timeout}",
             field_name="model_loading_slot_acquisition_timeout",
         )
 
@@ -350,21 +356,30 @@ def _validate_resource_management_config(config: "ResourceManagementConfig") -> 
         10 <= config.reservation_cleanup_interval <= 600
     ):  # 10 seconds to 10 minutes
         raise ResourceManagementConfigError(
-            f"must be between 10 and 600 seconds, got {config.reservation_cleanup_interval}",
+            f"must be between 10 and 600 seconds, got"
+            f"{config.reservation_cleanup_interval}",
             field_name="reservation_cleanup_interval",
         )
 
     # Validate cleanup interval vs reservation timeout
     if config.reservation_cleanup_interval >= config.reservation_timeout:
         raise ResourceManagementConfigError(
-            f"cleanup interval ({config.reservation_cleanup_interval}) must be less than reservation timeout ({config.reservation_timeout})",
+            (
+                f"cleanup interval ({config.reservation_cleanup_interval}) "
+                f"must be less than reservation timeout "
+                f"({config.reservation_timeout})"
+            ),
             field_name="reservation_cleanup_interval",
         )
 
     # Additional safety check: cleanup should be frequent enough
     if config.reservation_cleanup_interval >= config.reservation_timeout / 2:
         raise ResourceManagementConfigError(
-            f"cleanup interval ({config.reservation_cleanup_interval}) should be < 50% of reservation timeout ({config.reservation_timeout}) for safety",
+            (
+                f"cleanup interval ({config.reservation_cleanup_interval}) "
+                f"should be < 50% of reservation timeout "
+                f"({config.reservation_timeout}) for safety"
+            ),
             field_name="reservation_cleanup_interval",
         )
 
@@ -482,7 +497,8 @@ class GatewayConfigManager(Sequential):
         if gateway_name not in fresh_configs:
             available = list(fresh_configs.keys())
             raise ResourceManagementConfigError(
-                f"Gateway '{gateway_name}' not found in reloaded config. Available: {available}"
+                f"Gateway '{gateway_name}' not found in reloaded"
+                f"config. Available: {available}"
             )
 
         # Update specific gateway atomically
@@ -502,7 +518,9 @@ class GatewayConfigManager(Sequential):
 
         Inputs:
             callback: Async function called when gateway config changes
-                     Signature: async def callback(gateway_name: str, config: GatewayConfig)
+                     Signature: async def callback(
+                         gateway_name: str, config: GatewayConfig
+                     )
         """
         self._subscribers.add(callback)
 
@@ -542,7 +560,8 @@ class GatewayConfigManager(Sequential):
                 callbacks.append(callback)
             except Exception as e:
                 logger.error(
-                    f"Failed to create notification task for subscriber {callback.__name__}: {e}",
+                    f"Failed to create notification task for subscriber"
+                    f"{callback.__name__}: {e}",
                     exc_info=True,
                 )
                 self._subscribers.discard(callback)
@@ -554,7 +573,8 @@ class GatewayConfigManager(Sequential):
             for callback, result in zip(callbacks, results, strict=True):
                 if isinstance(result, Exception):
                     logger.error(
-                        f"Configuration update notification failed for {callback.__name__} "
+                        f"Configuration update notification failed for"
+                        f"{callback.__name__} f"
                         f"(gateway: {gateway_name}): {result}",
                         exc_info=result,
                     )

@@ -38,8 +38,10 @@ class ModelRef(BaseModel):
         prompt_override: str | None (alternative prompt_ref for this model)
 
     Invariant: ∀ extra field: handler reads via getattr(model_config, field, default)
-    Invariant: ¬system_prompt — system prompts belong on the step (StepConfig.system_prompt)
-               or in the prompt definition (prompts.yaml). ModelRef is model routing, not
+    Invariant: ¬system_prompt — system prompts belong on the step
+        (StepConfig.system_prompt)
+               or in the prompt definition (prompts.yaml). ModelRef is model routing,
+                   not
                prompt engineering.
     """
 

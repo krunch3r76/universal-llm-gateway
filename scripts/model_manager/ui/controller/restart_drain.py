@@ -45,7 +45,6 @@ _PROBE_TIMEOUT_S = 5.0
 # would target the wrong endpoint and every non-force stargate restart would
 # return state=probe_error (perpetual deferral). Pin the host port explicitly.
 STARGATE_PROBE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
-GROKBUILD_WORKER_URL = os.environ.get("GROKBUILD_WORKER_URL", "http://127.0.0.1:8090")
 GIT_INTEGRATION_WORKER_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
 )
@@ -98,8 +97,8 @@ class BusyProbe(Protocol):
 class NullBusyProbe:
     """Probe for services with no long-running, cancel-on-restart work.
 
-    Used for services that either self-drain on SIGTERM (mcp container stop -t 30;
-    grokbuild already drains) at a layer below the gate, or whose requests are
+    Used for services that either self-drain on SIGTERM (mcp container stop -t 30)
+    at a layer below the gate, or whose requests are
     sub-second (cortex_api, agent_bus, event_service).
     """
 
@@ -131,9 +130,6 @@ def _default_probes() -> dict[str, BusyProbe]:
     return {
         "stargate": HttpActiveWorkProbe(
             STARGATE_PROBE_URL, "/api/v1/admin/active-work"
-        ),
-        "grokbuild_worker": HttpActiveWorkProbe(
-            GROKBUILD_WORKER_URL, "/api/v1/grokbuild/active-work"
         ),
         "git_integration_worker": HttpActiveWorkProbe(
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"

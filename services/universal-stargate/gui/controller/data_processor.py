@@ -36,7 +36,9 @@ class DataProcessor:
         if raw_data.get("type") == "streaming_chunk":
             # Debug logging
             logger.debug(
-                f"Processing streaming_chunk event: chunk='{event_data.get('chunk', '')}', chunk_number={event_data.get('chunk_number', 0)}"
+                f"Processing streaming_chunk event: "
+                f"chunk='{event_data.get('chunk', '')}', "
+                f"chunk_number={event_data.get('chunk_number', 0)}"
             )
 
             # Create response_data structure for streaming chunks
@@ -49,7 +51,8 @@ class DataProcessor:
         elif raw_data.get("type") == "streaming_chunk_batch":
             # Handle batched chunks (more efficient)
             logger.debug(
-                f"Processing streaming_chunk_batch event: {event_data.get('chunk_count', 0)} chunks"
+                f"Processing streaming_chunk_batch event:"
+                f"{event_data.get('chunk_count', 0)} chunks"
             )
             response_data = {
                 "type": "streaming_chunk_batch",
@@ -61,8 +64,10 @@ class DataProcessor:
         else:
             # For chat_completion and other events, extract from event_data
             response_data = event_data.get("response")
+            preview = str(response_data)[:100] if response_data else "None"
             logger.debug(
-                f"Extracted response_data for {raw_data.get('type')} event: {type(response_data)} - {str(response_data)[:100] if response_data else 'None'}"
+                f"Extracted response_data for {raw_data.get('type')} event: "
+                f"{type(response_data)} - {preview}"
             )
 
         # For streaming chunks, don't try to extract request data since it's not

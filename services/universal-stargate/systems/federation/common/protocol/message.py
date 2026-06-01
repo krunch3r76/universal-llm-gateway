@@ -5,7 +5,7 @@ Uses typed TelemetryPayload from universal_protocol.
 Wraps payloads in MessageEnvelope for wire format.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from universal_protocol.messages import (
@@ -23,7 +23,7 @@ from universal_protocol.messages import (
 )
 
 
-class FederationMessageType(str, Enum):
+class FederationMessageType(StrEnum):
     """Federation message types (dot-notation per EVENTS.md)."""
 
     # Lifecycle

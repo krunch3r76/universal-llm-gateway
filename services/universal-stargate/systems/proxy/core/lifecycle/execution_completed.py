@@ -132,7 +132,10 @@ async def emit_execution_failed(
             )
         )
         logger.debug(
-            "🔔 Emitted model.execution.failed: request=%s gateway=%s model=%s error=%s",
+            (
+                "🔔 Emitted model.execution.failed: request=%s "
+                "gateway=%s model=%s error=%s"
+            ),
             request_id[:8],
             gateway_id,
             model_id,

@@ -1,5 +1,5 @@
 """
-Routing decision consumer that aggregates selection-attempt and terminal-failure metrics.
+Routing decision consumer: selection-attempt and terminal-failure metrics.
 
 Subscribes to ROUTING_DECISION and ROUTING_DECISION_FAILED events and keeps
 intermediate no-selection attempts distinct from terminal request failures.
@@ -154,7 +154,7 @@ class RoutingDecisionConsumer:
         logger.info(
             f"📊 Routing Decision Metrics (last {self._report_interval_sec}s): "
             f"total={total}, success_rate={success_rate:.1f}%, "
-            f"attempts_without_selection={self._metrics['attempts_without_selection']}, "
+            f"no_selection={self._metrics['attempts_without_selection']}, "
             f"terminal_failures={self._metrics['failed_decisions']}, "
             f"avg_eval_time={avg_eval_time:.2f}ms"
         )

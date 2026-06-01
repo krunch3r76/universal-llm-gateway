@@ -384,7 +384,8 @@ class TestBackpressureLimits:
             if "cumulative limit" in str(e):
                 mb_sent = (frame_count * 1000) / (1024 * 1024)
                 logger.info(
-                    f"✅ Hit cumulative limit after {frame_count} frames (~{mb_sent:.1f} MB)"
+                    f"✅ Hit cumulative limit after {frame_count} frames "
+                    f"(~{mb_sent:.1f} MB)"
                 )
                 assert mb_sent > 3.5  # Should be close to 4MB
                 assert mb_sent < 4.5

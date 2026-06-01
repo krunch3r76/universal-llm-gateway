@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from sse import SSEMessage, format_sse_message
@@ -20,7 +20,7 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 
-class JobEventType(str, Enum):
+class JobEventType(StrEnum):
     """SSE event types for job streaming."""
 
     LOG = "log"
@@ -29,7 +29,7 @@ class JobEventType(str, Enum):
     KEEPALIVE = "keepalive"
 
 
-class JobStatus(str, Enum):
+class JobStatus(StrEnum):
     """Job execution status."""
 
     PENDING = "pending"

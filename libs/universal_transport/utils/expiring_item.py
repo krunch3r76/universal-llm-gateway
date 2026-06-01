@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from universal_logging import get_logger
 
@@ -37,7 +37,7 @@ T = TypeVar("T")
 
 
 @dataclass
-class ExpiringItem(Generic[T]):
+class ExpiringItem[T]:
     """
     Wraps an item with self-managing expiration.
 
@@ -116,7 +116,7 @@ class ExpiringItem(Generic[T]):
         )
 
 
-class ExpiringRegistry(Generic[T]):
+class ExpiringRegistry[T]:
     """
     Registry of expiring items with automatic cleanup.
 

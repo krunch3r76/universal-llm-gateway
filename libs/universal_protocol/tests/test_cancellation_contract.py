@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Test cancellation and backpressure contract compliance per Universal Protocol MVP spec.
+"""Test cancellation and backpressure contract compliance per Universal
+Protocol MVP spec.
 
 Verifies:
 1. Cancellation path emits {"t":"err","code":"CANCELLED","source":"stream"} via SSE
-2. Error frames are enqueued via BoundedQueue.put() and respect frame/cumulative/timeout limits
+2. Error frames are enqueued via BoundedQueue.put() and respect
+   frame/cumulative/timeout limits
 3. No AttributeError on cancellation (queue.enqueue() method doesn't exist)
 4. Backpressure timeouts emit {"t":"err","code":"QUEUE_TIMEOUT","source":"stream"}
 5. All error frames include "source" field per spec §2.3
@@ -35,7 +37,8 @@ class TestCancellationContractCompliance:
     async def test_cancellation_emits_error_frame_with_source(self):
         """Verify cancellation path emits proper error frame.
 
-        Regression test for: services/_universal-llm-gateway/src/core/workers/worker.py:470
+        Regression test for:
+        services/_universal-llm-gateway/src/core/workers/worker.py:470
         Was: await queue.enqueue(error_frame)  # AttributeError: enqueue doesn't exist
         Now: await queue.put(error_frame)  # Proper API with error frame validation
         """
@@ -90,7 +93,8 @@ class TestCancellationContractCompliance:
     async def test_backpressure_timeout_error_frame_format(self):
         """Verify backpressure timeout emits correct error frame per §1.3.
 
-        Regression test for: services/_universal-llm-gateway/src/core/workers/worker.py:516
+        Regression test for:
+        services/_universal-llm-gateway/src/core/workers/worker.py:516
         Was: await asyncio.wait_for(queue._queue.put(error_frame), timeout=0.1)
         Now: await queue.put(error_frame, timeout_seconds=0.1)
         """
@@ -197,14 +201,11 @@ class TestCancellationContractCompliance:
             logger.info(f"✅ Size validation enforced: {exc.value}")
 
             # But direct _queue.put would bypass this check
-            # Verify our code never does this
-            from universal_protocol.ws.bounded_queue import BoundedQueue as BQ
-
-            # Confirm the method signature only allows put()
-            assert hasattr(BQ, "put")
-            assert hasattr(BQ, "get")
+            # Verify our code never does this (module-level import above)
+            assert hasattr(BoundedQueue, "put")
+            assert hasattr(BoundedQueue, "get")
             # enqueue should NOT exist
-            assert not hasattr(BQ, "enqueue")
+            assert not hasattr(BoundedQueue, "enqueue")
 
             logger.info("✅ BoundedQueue API is correct: has put/get, no enqueue")
 

@@ -112,7 +112,7 @@ class SessionDetailView:
 
         # Add metadata display
         self.metadata_display = JsonDisplay(
-            self.metadata_frame, title="Session Metadata", bg_color="#ffffff"
+            self.metadata_frame, title="Session Metadata", bg_color="#fffff"
         )
         self.metadata_display.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
 

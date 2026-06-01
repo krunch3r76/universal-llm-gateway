@@ -70,7 +70,7 @@ class ResolvedTargetModel:
 
     @property
     def came_from_registry_model_ref(self) -> bool:
-        return self.resolution_source == "registry_model_ref"
+        return self.resolution_source == "registry_model_re"
 
     @property
     def came_from_model_requirements(self) -> bool:

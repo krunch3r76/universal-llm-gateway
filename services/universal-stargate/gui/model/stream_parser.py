@@ -38,7 +38,7 @@ class StreamParser:
                 parsed_chunk = self._parse_single_chunk(chunk)
 
                 logger.debug(
-                    f"Parsed streaming chunk {chunk_number}, length: {len(parsed_chunk)}"
+                    f"Parsed streaming chunk {chunk_number}, length:{len(parsed_chunk)}"
                 )
 
                 return ParsedResponse(
@@ -58,13 +58,18 @@ class StreamParser:
                 parsed_chunk = self._parse_single_chunk(content)
 
                 # Only log minimal info about the last chunk in the batch
+                batch_end = start_chunk_number + chunk_count - 1
                 logger.debug(
-                    f"Parsed chunk batch {start_chunk_number}-{start_chunk_number + chunk_count - 1}, length: {len(parsed_chunk)}"
+                    f"Parsed chunk batch {start_chunk_number}-{batch_end}, "
+                    f"length: {len(parsed_chunk)}"
                 )
 
+                batch_end = start_chunk_number + chunk_count - 1
                 return ParsedResponse(
                     raw_data=response_data,
-                    formatted_text=f"Batch {start_chunk_number}-{start_chunk_number + chunk_count - 1}: {parsed_chunk}",
+                    formatted_text=(
+                        f"Batch {start_chunk_number}-{batch_end}: {parsed_chunk}"
+                    ),
                     response_type="streaming_chunk_batch",
                     is_streaming=True,
                     chunks=[parsed_chunk] if parsed_chunk else [],
@@ -96,7 +101,8 @@ class StreamParser:
             logger.error(f"Error parsing streaming response: {e}")
             return ParsedResponse(
                 raw_data=response_data,
-                formatted_text=f"Error parsing streaming response: {e}\n\nRaw: {str(response_data)[:500]}...",
+                formatted_text=f"Error parsing streaming response: {e}\n\nRaw:"
+                f"{str(response_data)[:500]}...f",
                 response_type="error",
                 is_streaming=True,
                 error_message=str(e),
@@ -205,9 +211,16 @@ class StreamParser:
         if content_chunks:
             full_content = "".join(content_chunks)
 
-            return f"Streaming Response\n\nContent:\n{full_content}\n\nChunks received: {len(content_chunks)}"
+            return (
+                f"Streaming Response\n\nContent:\n{full_content}\n\n"
+                f"Chunks received: {len(content_chunks)}"
+            )
         else:
-            return f"Streaming Response\n\nReceived {len(parsed_chunks)} chunks but no content extracted"
+            n = len(parsed_chunks)
+            return (
+                f"Streaming Response\n\nReceived {n} chunks "
+                f"but no content extracted"
+            )
 
     def _create_streaming_placeholder(self, response_data: dict[str, Any]) -> str:
         """

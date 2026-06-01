@@ -5,14 +5,14 @@ Scans directories for models not yet in the catalog.
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 
-class ModelFormat(str, Enum):
+class ModelFormat(StrEnum):
     """Supported model formats."""
 
     GGUF = "gguf"

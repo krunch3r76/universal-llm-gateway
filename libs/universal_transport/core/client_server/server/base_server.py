@@ -75,7 +75,8 @@ class BaseAsyncServer(ABC):
         self.server.connection_handler = self._handle_new_client
 
         logger.debug(
-            f"{self.__class__.__name__} initialized: server={server}, protocol={self.protocol}"
+            f"{self.__class__.__name__} initialized: server={server}, "
+            f"protocol={self.protocol}"
         )
 
     async def start(self) -> None:

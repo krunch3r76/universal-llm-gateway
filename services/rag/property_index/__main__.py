@@ -3,6 +3,7 @@ if __name__ == "__main__":
 
     if "--rescope" in sys.argv:
         from services.rag.config import load_config
+        from services.rag.property_index import PropertyIndex
 
         config = load_config()
         idx = PropertyIndex()

@@ -55,7 +55,8 @@ class ParameterManager:
                     logger.debug(f"Cached model defaults for {model_id}")
                 else:
                     logger.warning(
-                        f"Failed to get model defaults for {model_id}: {response.status_code}"
+                        f"Failed to get model defaults for {model_id}:"
+                        f"{response.status_code}"
                     )
                     self._model_defaults_cache[model_id] = {}
             except Exception as e:
@@ -97,7 +98,8 @@ class ParameterManager:
                     logger.debug(f"Cached supported parameters for {model_id}")
                 else:
                     logger.warning(
-                        f"Failed to get supported parameters for {model_id}: {response.status_code}"
+                        f"Failed to get supported parameters for {model_id}:"
+                        f"{response.status_code}"
                     )
                     self._supported_params_cache[model_id] = {"all": []}
             except Exception as e:
@@ -186,5 +188,6 @@ class ParameterManager:
         for change in parameter_changes:
             if change["modified"] or change["source"] != "user_set":
                 logger.debug(
-                    f"  {change['parameter']}: {change['user_value']} → {change['final_value']} ({change['source']})"
+                    f"  {change['parameter']}: {change['user_value']} →"
+                    f"{change['final_value']} ({change['source']})"
                 )

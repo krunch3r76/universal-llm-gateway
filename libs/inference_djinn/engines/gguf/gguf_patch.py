@@ -46,7 +46,7 @@ def patch_gguf() -> bool:
 
         # Define new quantization types that may not be in the current release
         # Source: https://github.com/ggerganov/llama.cpp/blob/master/gguf-py/gguf/constants.py
-        NEW_TYPES = {
+        new_types = {
             36: "Q4_0_4_4",
             37: "Q4_0_4_8",
             38: "Q4_0_8_8",
@@ -56,7 +56,7 @@ def patch_gguf() -> bool:
         # Define block sizes and type sizes for new types
         # Format: (block_size, type_size)
         # MXFP4: 32 elements per block, ~4 bits per element = 16 bytes per block
-        NEW_QUANT_SIZES = {
+        new_quant_sizes = {
             36: (32, 18),  # Q4_0_4_4
             37: (32, 18),  # Q4_0_4_8
             38: (32, 18),  # Q4_0_8_8
@@ -71,22 +71,24 @@ def patch_gguf() -> bool:
             extended_values[qt.name] = qt.value
 
         # Add new types that don't exist
-        for value, name in NEW_TYPES.items():
+        for value, name in new_types.items():
             if value > current_max:
                 extended_values[name] = value
                 logger.debug(f"Adding quantization type: {name} = {value}")
 
         # Create new enum class
-        ExtendedGGMLQuantizationType = IntEnum("GGMLQuantizationType", extended_values)
+        extended_ggml_quantization_type = IntEnum(
+            "GGMLQuantizationType", extended_values
+        )
 
         # Replace the enum in the constants module
-        constants.GGMLQuantizationType = ExtendedGGMLQuantizationType
+        constants.GGMLQuantizationType = extended_ggml_quantization_type
 
         # Add new entries to GGML_QUANT_SIZES dictionary
-        for qt_value, (block_size, type_size) in NEW_QUANT_SIZES.items():
+        for qt_value, (block_size, type_size) in new_quant_sizes.items():
             if qt_value > current_max:
                 # Get the enum instance
-                qt_enum = ExtendedGGMLQuantizationType(qt_value)
+                qt_enum = extended_ggml_quantization_type(qt_value)
                 GGML_QUANT_SIZES[qt_enum] = (block_size, type_size)
                 logger.debug(
                     f"Added GGML_QUANT_SIZES[{qt_enum.name}] = ({block_size}, {type_size})"
@@ -97,7 +99,7 @@ def patch_gguf() -> bool:
             import gguf.gguf_reader as gguf_reader
 
             if hasattr(gguf_reader, "GGMLQuantizationType"):
-                gguf_reader.GGMLQuantizationType = ExtendedGGMLQuantizationType
+                gguf_reader.GGMLQuantizationType = extended_ggml_quantization_type
                 logger.debug("Patched gguf_reader.GGMLQuantizationType")
             if hasattr(gguf_reader, "GGML_QUANT_SIZES"):
                 gguf_reader.GGML_QUANT_SIZES = GGML_QUANT_SIZES
@@ -140,11 +142,11 @@ def get_quantization_type_name(type_id: int) -> str | None:
         pass
 
     # Fallback for known types not in enum
-    KNOWN_TYPES = {
+    known_types = {
         36: "Q4_0_4_4",
         37: "Q4_0_4_8",
         38: "Q4_0_8_8",
         39: "MXFP4",
     }
 
-    return KNOWN_TYPES.get(type_id, f"UNKNOWN_{type_id}")
+    return known_types.get(type_id, f"UNKNOWN_{type_id}")

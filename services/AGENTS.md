@@ -1,6 +1,6 @@
 # Services — Agent Guide (grok-direct)
 
-This subtree holds runnable services: **universal-stargate** (proxy, routing, pipelines API), **grokbuild-worker**, **mcp-server** (vortex), **rag**, gateway workers, and related deploy artifacts. Conventions here **supplement** repo-root `/AGENTS.md`—read that first for identity, cortex boot, MCP wiring, worktree discipline, and session close.
+This subtree holds runnable services: **universal-stargate** (proxy, routing, pipelines API), **mcp-server** (vortex), **rag**, gateway workers, and related deploy artifacts. Conventions here **supplement** repo-root `/AGENTS.md`—read that first for identity, cortex boot, MCP wiring, worktree discipline, and session close.
 
 ---
 
@@ -8,23 +8,20 @@ This subtree holds runnable services: **universal-stargate** (proxy, routing, pi
 
 | Class | Examples | How agents interact |
 |---|---|---|
-| **Long-lived host processes** | Stargate (`:9999` default), grokbuild-worker (`:8090`), git-integration-worker (`:8091`), MCP vortex (HTTPS), RAG, agent-bus | `manage` MCP for lifecycle; `observability` / Event Service for diagnosis |
+| **Long-lived host processes** | Stargate (`:9999` default), git-integration-worker (`:8091`), MCP vortex (HTTPS), RAG, agent-bus | `manage` MCP for lifecycle; `observability` / Event Service for diagnosis |
 | **Containerized / worker pools** | LLM gateway workers, some pipeline runners | `manage(action="rebuild"\|"restart", ...)` then `wait_healthy`; see `service-lifecycle` skill |
 
 Do not `systemctl` or `pkill` from agent sessions unless the operator explicitly directs it—prefer `manage`.
 
 ---
 
-## Stargate, grokbuild, and git-integration routing
+## Stargate and git-integration routing
 
 - **Stargate** listens by default on **`http://localhost:9999`** (`STARGATE_PORT`, `STARGATE_URL`, or unix socket via `STARGATE_UNIX_SOCKET`—see `libs/transport_utils` and `services/universal-stargate/scripts/stargate_service_manager.py`).
-- **grokbuild-worker** listens on **`127.0.0.1:8090`**; Stargate forwards **`/api/v1/grokbuild/*`** verbatim (`services/universal-stargate/systems/proxy/routers/api/grokbuild.py`).
 - **git-integration-worker** listens on **`127.0.0.1:8091`**; Stargate forwards **`/api/v1/git/*`** verbatim (`services/universal-stargate/systems/proxy/routers/api/git.py`). MCP `git_*` tools relay through Stargate to this worker.
-- Operator shell helpers `scripts/grok-worktree*` POST/DELETE through Stargate, not directly to `:8090`.
+- Ad-hoc grok-direct worktrees use **`scripts/grok-worktree*`** (local `git worktree` under `/mnt/torus/projects/ulg-grok-worktrees`).
 
-Both host workers use **`manage` lifecycle** (uvicorn subprocess + PID under `~/.gateway/`). Default ULG deployment does **not** use systemd for these; unit files under `services/*/systemd/` are optional operator artifacts only.
-
-Auth on the grokbuild proxy path is **pass-through**—bearer tokens are validated at vortex/MCP layers, not re-checked inside Stargate for grokbuild forwards.
+The git-integration host worker uses **`manage` lifecycle** (uvicorn subprocess + PID under `~/.gateway/`). Default ULG deployment does **not** use systemd for these; unit files under `services/*/systemd/` are optional operator artifacts only.
 
 ---
 
@@ -39,7 +36,7 @@ logger = get_logger(__name__)
 
 Never `import logging` / `logging.getLogger` in service code.
 
-**Events:** prefer Event Service queries before tailing log files. Grokbuild emits dual vocabularies (`mcp.grokbuild.*` audit-rich + `grokbuild.*` worker/SSE)—JOIN on `dispatch_id` (`docs/event-contracts.md`, `docs/grokbuild-topology.md`). When adding signals, update event vocabulary docs in the same change.
+**Events:** prefer Event Service queries before tailing log files. When adding signals, update event vocabulary docs in the same change.
 
 ---
 
@@ -74,5 +71,4 @@ Architecture docs (overhaul-only write path): `docs/architecture/*.md`.
 |---|---|
 | Agent identity, boot, session close | `/AGENTS.md` |
 | Lib import / SLOC conventions | `/libs/AGENTS.md` |
-| Grokbuild topology | `docs/grokbuild-topology.md` |
 | Deployment topology | `.cursor/rules/topology_ws.mdc` (agent-requestable) |

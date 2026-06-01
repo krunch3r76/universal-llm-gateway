@@ -388,7 +388,7 @@ class _FakeBufferedExecutor:
 
 
 def _buffered_pipeline_response(
-    *, content: str = "hi", exec_id: str = "exec-buf"
+    *, content: str = "hi", exec_id: str = "exec-bu"
 ) -> Response:
     body = {
         "id": "chatcmpl-pipeline-buffered",

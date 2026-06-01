@@ -235,7 +235,7 @@ def main():
 
     # Verify container exists
     try:
-        result = subprocess.run(
+        subprocess.run(
             ["docker", "inspect", args.container], capture_output=True, check=True
         )
     except subprocess.CalledProcessError:

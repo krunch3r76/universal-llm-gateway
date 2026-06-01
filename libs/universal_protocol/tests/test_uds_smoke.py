@@ -199,13 +199,15 @@ async def test_clean_shutdown(server_process):
         # FDs should be close to baseline (±2)
         fd_diff = abs(after_stats["fds_open"] - baseline["fds_open"])
         logger.info(
-            f"FD difference: {fd_diff} (baseline: {baseline['fds_open']}, after: {after_stats['fds_open']})"
+            f"FD difference: {fd_diff} (baseline: {baseline['fds_open']}, after: "
+            f"{after_stats['fds_open']})"
         )
 
         # Tasks should be close to baseline (±1)
         task_diff = abs(after_stats["tasks_running"] - baseline["tasks_running"])
         logger.info(
-            f"Task difference: {task_diff} (baseline: {baseline['tasks_running']}, after: {after_stats['tasks_running']})"
+            f"Task difference: {task_diff} (baseline: {baseline['tasks_running']}, "
+            f"after: {after_stats['tasks_running']})"
         )
 
 

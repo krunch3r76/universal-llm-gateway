@@ -1,7 +1,8 @@
 """
 Process IPC Package
 
-A simplified inter-process communication (IPC) system for single worker process management.
+A simplified inter-process communication (IPC) system for single worker
+process management.
 
 Features:
 - Single worker process management with ProcessSupervisor
@@ -126,7 +127,9 @@ __author__ = "Process IPC Contributors"
 # Public API exports - simplified stable set
 __all__ = [
     # Core interfaces
-    "Transport",  # Transport interface from universal_transport (imported from universal_transport.core.interfaces)
+    # Transport interface from universal_transport
+    # (imported from universal_transport.core.interfaces)
+    "Transport",
     "WorkerInterface",
     "EventBusProtocol",
     # Core types

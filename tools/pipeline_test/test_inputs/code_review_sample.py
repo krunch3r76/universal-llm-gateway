@@ -23,7 +23,7 @@ def load_config(path: str) -> dict[str, JsonValue]:
 
 def get_value(key: str, default: str | None = None) -> str | None:
     val = os.environ.get(key)
-    if val == None:
+    if val is None:
         return default
     return val
 

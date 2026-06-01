@@ -348,7 +348,7 @@ eviction has been blocked for > starvation_drain_threshold_s.
 Payload: {
     "model_id": str,       # routing_key of the paused model
     "duration_s": float,   # requested pause duration
-    "reason": str,         # typically "starvation_relief"
+    "reason": str,         # typically "starvation_relie"
 }
 """
 

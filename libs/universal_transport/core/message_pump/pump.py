@@ -1,7 +1,8 @@
 """
 Message pump implementation.
 
-Provides concurrent I/O, correlation matching, and message queuing for transport-based communication.
+Provides concurrent I/O, correlation matching, and message queuing for
+transport-based communication.
 
 Event-Driven Cleanup:
     Each correlation manages its own expiration via asyncio.Task.
@@ -65,8 +66,8 @@ class MessagePump(MessagePumpInterface):
 
         Args:
             transport: Transport instance to use
-            get_correlation_id: Optional function to extract correlation ID from messages.
-                                Defaults to looking for 'correlation_id','
+            get_correlation_id: Optional function to extract correlation ID
+                from messages. Defaults to looking for 'correlation_id','
                                     ''correlationId', or 'id'.
             receive_timeout: Timeout for each transport.receive() call in seconds.
                            Prevents indefinite hangs from incomplete socket data.
@@ -106,7 +107,8 @@ class MessagePump(MessagePumpInterface):
         )
 
         logger.debug(
-            f"MessagePump initialized with transport: {transport}, receive_timeout: {receive_timeout}s"
+            f"MessagePump initialized with transport: {transport}, receive_timeout: "
+            f"{receive_timeout}s"
         )
 
     @property
@@ -284,7 +286,8 @@ class MessagePump(MessagePumpInterface):
         that don't match pending requests) for consumption by workers.
 
         Args:
-            timeout: Maximum time to wait for a message (in seconds). If None, waits indefinitely.
+            timeout: Maximum time to wait for a message (in seconds). If None,
+                waits indefinitely.
 
         Returns:
             Message dict or None if timeout
@@ -387,14 +390,16 @@ class MessagePump(MessagePumpInterface):
             # If queue is full for >1s, log and drop message to prevent deadlock
             await asyncio.wait_for(self.message_queue.put(message), timeout=1.0)
             logger.debug(
-                f"Published message back to queue: correlation_id={message.get('correlation_id')}"
+                f"Published message back to queue: "
+                f"correlation_id={message.get('correlation_id')}"
             )
         except TimeoutError:
             # Queue is full and not draining - drop message to prevent deadlock
             logger.error(
                 f"Failed to publish message back to queue (timeout after 1s). "
                 f"Queue size: {self.message_queue.qsize()}. "
-                f"Dropping message with correlation_id: {message.get('correlation_id')} "
+                f"Dropping message with correlation_id: "
+                f"{message.get('correlation_id')} "
                 f"to prevent deadlock."
             )
 

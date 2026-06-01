@@ -128,7 +128,8 @@ class StreamingSafeExecutor:
                 yield chunk
 
             logger.info(
-                f"🔚 [{request_id[:8]}] Async for loop completed, chunk_count={chunk_count}"
+                f"🔚 [{request_id[:8]}] Async for loop completed,"
+                f"chunk_count={chunk_count}"
             )
 
             # Empty stream detection
@@ -140,7 +141,8 @@ class StreamingSafeExecutor:
 
         except HTTPException as exc:
             logger.info(
-                f"🚨 [{request_id[:8]}] Caught HTTPException: {exc.status_code} - {exc.detail}"
+                f"🚨 [{request_id[:8]}] Caught HTTPException:"
+                f"{exc.status_code} - {exc.detail}"
             )
             if stream_started:
                 async for event in self._handle_streaming_http_exception(
@@ -149,7 +151,8 @@ class StreamingSafeExecutor:
                     yield event
             else:
                 logger.error(
-                    f"[{request_id}] HTTPException before streaming started ({operation}): "
+                    f"[{request_id}] HTTPException before streaming"
+                    f"started ({operation}): f"
                     f"{exc.detail}",
                     exc_info=True,
                 )
@@ -157,7 +160,8 @@ class StreamingSafeExecutor:
 
         except Exception as exc:
             logger.info(
-                f"🚨 [{request_id[:8]}] Caught Exception: {type(exc).__name__} - {str(exc)}"
+                f"🚨 [{request_id[:8]}] Caught Exception:"
+                f"{type(exc).__name__} - {str(exc)}"
             )
             status, error_dict = self.error_normalizer.normalize_to_openai_format(
                 error=exc, default_status=500, operation=operation
@@ -172,7 +176,8 @@ class StreamingSafeExecutor:
                 yield StreamingErrorHandler.create_sse_done_event()
             else:
                 logger.error(
-                    f"[{request_id}] Exception before streaming started ({operation}): {exc}",
+                    f"[{request_id}] Exception before streaming started"
+                    f"({operation}): {exc}",
                     exc_info=True,
                 )
                 raise HTTPException(status_code=status, detail=error_dict)
@@ -196,13 +201,15 @@ class StreamingSafeExecutor:
             if model_status and model_status.get("status") == "error":
                 crash_reason = model_status.get("error_message")
                 logger.error(
-                    f"[{request_id}] Confirmed worker crash for {model_id}: {crash_reason}"
+                    f"[{request_id}] Confirmed worker crash for"
+                    f"{model_id}: {crash_reason}"
                 )
 
         if crash_reason:
             error_detail = {
                 "error": {
-                    "message": f"Worker crashed before generating response: {crash_reason}",
+                    "message": f"Worker crashed before generating response:"
+                    f"{crash_reason}",
                     "type": "service_unavailable",
                     "code": "worker_crashed",
                     "request_id": request_id,
@@ -230,7 +237,8 @@ class StreamingSafeExecutor:
     ) -> AsyncGenerator:
         """Handle HTTPException during active streaming."""
         logger.error(
-            f"[{request_id}] HTTPException during streaming ({operation}): {exc.detail}",
+            f"[{request_id}] HTTPException during streaming"
+            f"({operation}): {exc.detail}",
             exc_info=True,
         )
 
@@ -292,7 +300,8 @@ class StreamingSafeExecutor:
                     yield event
             else:
                 logger.error(
-                    f"[{request_id}] HTTPException before streaming started ({operation}): "
+                    f"[{request_id}] HTTPException before streaming"
+                    f"started ({operation}): f"
                     f"{exc.detail}",
                     exc_info=True,
                 )
@@ -312,7 +321,8 @@ class StreamingSafeExecutor:
                 yield StreamingErrorHandler.create_sse_done_event()
             else:
                 logger.error(
-                    f"[{request_id}] Exception before streaming started ({operation}): {exc}",
+                    f"[{request_id}] Exception before streaming started"
+                    f"({operation}): {exc}",
                     exc_info=True,
                 )
                 raise HTTPException(status_code=status, detail=error_dict)

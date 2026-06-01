@@ -382,28 +382,28 @@ def main():
 Examples:
   # Get example GGUF configuration
   %(prog)s example --format gguf
-  
+
   # Add new model from JSON file
   %(prog)s add --config-file my_model.json --key my-model-id
-  
+
   # Update existing model
   %(prog)s update my-model-id --config-file updated_model.json
-  
+
   # Get current model configuration
   %(prog)s get my-model-id
-  
+
   # List all models
   %(prog)s list
-  
+
   # Delete a model
   %(prog)s delete my-model-id
-  
+
   # Validate configuration
   %(prog)s validate
-  
+
   # Discover model from file
   %(prog)s discover /path/to/model.gguf
-  
+
   # Discover and add in one step
   %(prog)s discover /path/to/model.gguf --add --key my-model
         """,

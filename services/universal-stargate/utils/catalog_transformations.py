@@ -112,7 +112,8 @@ class CatalogTransformationProvider:
                            uses metadata.transformation directly.
 
         Returns:
-            Transformation configuration dictionary, or None if no transformation needed.
+            Transformation configuration dictionary, or None if no transformation
+                needed.
         """
         # Check cache first (unless model_metadata override provided)
         if model_id in self._transformation_cache and not model_metadata:

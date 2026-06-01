@@ -194,7 +194,6 @@ def test_main_server_unaffected_by_b2(
         "cortex_entity_get",
         "agent_bus_fetch",
         "fs_read",
-        "grokbuild_build",
     }
     for t in grok_individual:
         assert t not in tool_names, (

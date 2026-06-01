@@ -116,7 +116,8 @@ class TCPConnectionManager:
         except TimeoutError:
             self.state = AsyncTCPConnectionState.ERROR
             raise AsyncTCPConnectionError(
-                f"Connection timeout after {self.connection_timeout}s: {self.host}:{self.port}"
+                f"Connection timeout after {self.connection_timeout}s: "
+                f"{self.host}:{self.port}"
             )
         except ConnectionRefusedError:
             self.state = AsyncTCPConnectionState.ERROR

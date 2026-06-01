@@ -40,6 +40,13 @@ ignore = ["E501"]  # line-too-long
 "services/agent-bus/src/db/threads.py" = ["N818"]
 # Hyphenated service directory — N999 invalid-module-name for paths under event-service/.
 "services/event-service/**/*.py" = ["N999"]
+# Squashed git-subtree layout — directory name is not an importable module name.
+"services/_universal-llm-gateway/**/*.py" = ["N999"]
+"libs/process_ipc/core/serialization.py" = ["N802"]  # protobuf-shaped mock API
+"services/_universal-llm-gateway/src/core/workers/process/communication/cleanup.py" = [
+    "N802",
+]  # event_factory PascalCase signal names
+"services/_universal-llm-gateway/src/core/errors.py" = ["N818"]  # SyntaxErrorException
 
 [tool.ruff.format]
 quote-style = "double"

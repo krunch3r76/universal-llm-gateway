@@ -29,7 +29,6 @@ VALID_SERVICES = frozenset(
         "event_service",
         "cortex_api",
         "agent_bus",
-        "grokbuild_worker",
         "git_integration_worker",
         "email_bridge",
     }
@@ -40,7 +39,6 @@ REBUILD_SERVICES = frozenset(
         "event_service",
         "cortex_api",
         "agent_bus",
-        "grokbuild_worker",
         "git_integration_worker",
         "email_bridge",
     }
@@ -54,7 +52,6 @@ SYNC_RESTART_SERVICES = frozenset(
         "cloud_proxy",
         "cortex_api",
         "agent_bus",
-        "grokbuild_worker",
         "git_integration_worker",
         "event_service",
     }
@@ -302,8 +299,6 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
         return await ctl.rebuild_cortex_api()
     if service == "agent_bus":
         return await ctl.rebuild_agent_bus()
-    if service == "grokbuild_worker":
-        return await ctl.rebuild_grokbuild_worker()
     if service == "git_integration_worker":
         return await ctl.rebuild_git_integration_worker()
     if service == "email_bridge":

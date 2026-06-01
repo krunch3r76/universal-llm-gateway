@@ -168,7 +168,10 @@ class AsyncUnixTransport:
         return self.connection.state
 
     def __str__(self) -> str:
-        return f"AsyncUnixTransport({self.connection.socket_path}, state={self.connection.state.value})"
+        return (
+            f"AsyncUnixTransport({self.connection.socket_path}, "
+            f"state={self.connection.state.value})"
+        )
 
     def __repr__(self) -> str:
         return (

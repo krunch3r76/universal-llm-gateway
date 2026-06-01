@@ -21,16 +21,17 @@ def format_metric(metric):
     """Format metric for human-readable output"""
     metric_type = metric.get("type", "unknown")
     data = metric.get("data", {})
-    timestamp = datetime.fromtimestamp(data.get("timestamp", 0)).strftime(
-        "%H:%M:%S.%f"
-    )[:-3]
+    timestamp = datetime.fromtimestamp(data.get("timestamp", 0)).strftime("%H:%M:%S.%")[
+        :-3
+    ]
 
     if metric_type == "request_routed":
         return (
             f"[{timestamp}] 🔀 REQUEST ROUTED\n"
             f"  Request: {data.get('request_id', 'unknown')}\n"
             f"  Model: {data.get('model_id', 'unknown')}\n"
-            f"  Gateway: {data.get('gateway_name', 'unknown')} ({data.get('gateway_url', 'unknown')})\n"
+            f"  Gateway: {data.get('gateway_name', 'unknown')}"
+            f"({data.get('gateway_url', 'unknown')})\n"
             f"  Routing Time: {data.get('routing_time_ms', 0):.2f}ms\n"
             f"  Immediate: {data.get('immediate_route', False)}"
         )
@@ -39,7 +40,8 @@ def format_metric(metric):
         return (
             f"[{timestamp}] ⏳ MODEL LOAD INITIATED\n"
             f"  Model: {data.get('model_id', 'unknown')}\n"
-            f"  Gateway: {data.get('gateway_name', 'unknown')} ({data.get('gateway_url', 'unknown')})\n"
+            f"  Gateway: {data.get('gateway_name', 'unknown')}"
+            f"({data.get('gateway_url', 'unknown')})\n"
             f"  Already Loaded: {data.get('already_loaded', False)}"
         )
 
@@ -48,7 +50,8 @@ def format_metric(metric):
         result = (
             f"[{timestamp}] {success} MODEL LOAD COMPLETED\n"
             f"  Model: {data.get('model_id', 'unknown')}\n"
-            f"  Gateway: {data.get('gateway_name', 'unknown')} ({data.get('gateway_url', 'unknown')})\n"
+            f"  Gateway: {data.get('gateway_name', 'unknown')}"
+            f"({data.get('gateway_url', 'unknown')})\n"
             f"  Load Time: {data.get('load_time_ms', 0):.2f}ms\n"
             f"  Success: {data.get('success', False)}"
         )
@@ -72,7 +75,8 @@ def format_metric(metric):
         return result
 
     else:
-        return f"[{timestamp}] ❓ UNKNOWN METRIC: {metric_type}\n  Data: {json.dumps(data, indent=2)}"
+        payload = json.dumps(data, indent=2)
+        return f"[{timestamp}] ❓ UNKNOWN METRIC: {metric_type}\n  Data: {payload}"
 
 
 def main():

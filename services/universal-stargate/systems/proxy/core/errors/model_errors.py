@@ -62,7 +62,8 @@ class ModelErrorBuilder:
             detail={
                 "error": {
                     "message": (
-                        f"Model '{model_name}' loading timed out after {timeout_seconds} seconds. "
+                        f"Model '{model_name}' loading timed out after"
+                        f"{timeout_seconds} seconds. f"
                         f"Large models may take several minutes to load."
                     ),
                     "type": "gateway_timeout",
@@ -84,7 +85,8 @@ class ModelErrorBuilder:
             status_code=504,
             detail={
                 "error": {
-                    "message": f"Token counting for model '{model_name}' timed out after {timeout_seconds} seconds",
+                    "message": f"Token counting for model '{model_name}' timed out"
+                    f"after {timeout_seconds} secondsf",
                     "type": "model_error",
                     "code": "model_token_counting_timeout",
                     "model": model_name,
@@ -178,7 +180,8 @@ class ModelErrorBuilder:
         This is a definitive failure - retrying will not help.
         """
         message = (
-            f"Model '{model_name}' failed to load due to insufficient GPU/CPU memory (OOM). "
+            f"Model '{model_name}' failed to load due to"
+            f"insufficient GPU/CPU memory (OOM). f"
             f"The server does not have enough resources to load this model."
         )
         if error_details:

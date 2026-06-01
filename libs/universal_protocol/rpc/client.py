@@ -41,7 +41,8 @@ class RPCClient:
         """Initialize RPC client.
 
         Args:
-            socket_path: Path to Unix socket (e.g., "/tmp/universal-protocol/worker-1.sock")
+            socket_path: Path to Unix socket (e.g.,
+                "/tmp/universal-protocol/worker-1.sock")
             timeout: Request timeout in seconds (default: 30.0)
             verify_socket: If True, check socket exists before first use
 
@@ -156,7 +157,7 @@ class RPCClient:
             response = await loop.run_in_executor(
                 None,
                 lambda: self._get_client().post(
-                    "http://localhost/rpc",  # URL doesn't matter for UDS, only socket matters
+                    "http://localhost/rpc",  # UDS: only socket matters
                     json=request_body,
                 ),
             )
@@ -203,7 +204,8 @@ class RPCClient:
 
             logger.error(
                 f"{log_prefix} RPC error: {method} failed with "
-                f"code={protocol_code}, message={protocol_message}, source={protocol_source}"
+                f"code={protocol_code}, message={protocol_message}, "
+                f"source={protocol_source}"
             )
 
             raise RPCError(
@@ -217,7 +219,8 @@ class RPCClient:
         if response_id != request_id:
             raise ValueError(
                 f"RPC response ID mismatch: expected {request_id}, got {response_id}. "
-                f"This indicates a response routing error - responses may be getting mixed up between concurrent requests."
+                "This indicates a response routing error - responses may be "
+                "getting mixed up between concurrent requests."
             )
 
         # Extract result
@@ -496,7 +499,8 @@ class AsyncRPCClient:
 
             logger.error(
                 f"{log_prefix} RPC error: {method} failed with "
-                f"code={protocol_code}, message={protocol_message}, source={protocol_source}"
+                f"code={protocol_code}, message={protocol_message}, "
+                f"source={protocol_source}"
             )
 
             raise RPCError(
@@ -510,7 +514,8 @@ class AsyncRPCClient:
         if response_id != request_id:
             raise ValueError(
                 f"RPC response ID mismatch: expected {request_id}, got {response_id}. "
-                f"This indicates a response routing error - responses may be getting mixed up between concurrent requests."
+                "This indicates a response routing error - responses may be "
+                "getting mixed up between concurrent requests."
             )
 
         # Extract result

@@ -16,11 +16,11 @@ from pathlib import Path
 
 def check_llama_cpp_availability():
     """Check if llama_cpp is available and exit if not found."""
-    try:
-        import llama_cpp
+    import importlib.util
 
+    if importlib.util.find_spec("llama_cpp") is not None:
         return True
-    except ImportError:
+    else:
         print("Error: llama_cpp is not available.", file=sys.stderr)
         print("", file=sys.stderr)
         print(

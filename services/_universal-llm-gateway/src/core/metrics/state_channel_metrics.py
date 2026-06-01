@@ -308,8 +308,8 @@ class StateChannelMetricsCollector:
                 consecutive_errors += 1
                 logger.error(f"Queue processor error #{consecutive_errors}: {e}")
                 # Reset after too many consecutive errors
-                MAX_CONSECUTIVE_ERRORS = 10
-                if consecutive_errors > MAX_CONSECUTIVE_ERRORS:
+                max_consecutive_errors = 10
+                if consecutive_errors > max_consecutive_errors:
                     logger.critical("Too many consecutive errors, resetting")
                     await asyncio.sleep(5)  # Back off
                     consecutive_errors = 0

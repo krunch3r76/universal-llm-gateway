@@ -232,7 +232,10 @@ class MinimalEventDebugBroadcaster:
                 )
             except Exception:
                 logger.exception(
-                    "❌ An unexpected error occurred while starting debug events server."
+
+                        "❌ An unexpected error occurred while starting debug "
+                        "events server."
+
                 )
 
         # Start UDS publisher to event service (independent of socket)

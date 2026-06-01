@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from universal_logging import get_logger
 
 try:
-    from ....core.hot_reload import HotReloadManager, ReloadEvent
+    from ....core.hot_reload import HotReloadManager
     from ....dependencies import get_hot_reload_manager
 except ImportError:
     from src.core.hot_reload import HotReloadManager

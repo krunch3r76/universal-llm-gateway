@@ -39,7 +39,8 @@ class AnalysisSectionFilter:
             chunk_content: The content from the current chunk
 
         Returns:
-            None if still buffering, trimmed content (possibly empty) if pattern detected
+            None if still buffering, trimmed content (possibly empty) if pattern
+                detected
         """
         if not chunk_content:
             return None
@@ -52,7 +53,8 @@ class AnalysisSectionFilter:
             if self._detect_pattern():
                 self.passed_analysis_section = True
                 logger.info(
-                    f"Analysis section detected and filtered out for request {self.request_id}"
+                    f"Analysis section detected and filtered out for"
+                    f"request {self.request_id}"
                 )
                 logger.debug(
                     f"Buffer content (last 200 chars): ...{self.content_buffer[-200:]}"
@@ -67,11 +69,13 @@ class AnalysisSectionFilter:
                     # Truncate buffer to only contain content after the marker
                     self.content_buffer = trimmed_content
                     logger.debug(
-                        f"Buffer truncated to content after marker (length: {len(self.content_buffer)})"
+                        f"Buffer truncated to content after marker (length:"
+                        f"{len(self.content_buffer)})"
                     )
 
                     logger.info(
-                        f"Returning trimmed content (first 100 chars): '{trimmed_content[:100]}...'"
+                        f"Returning trimmed content (first 100 chars):"
+                        f"'{trimmed_content[:100]}...'"
                     )
                     return trimmed_content
 
@@ -113,7 +117,8 @@ class AnalysisSectionFilter:
         content_after_marker = self.content_buffer[message_end_pos:]
 
         logger.debug(
-            f"Extracted content after marker: '{content_after_marker[:100]}...' (length: {len(content_after_marker)})"
+            f"Extracted content after marker: '{content_after_marker[:100]}...'"
+            f"(length: {len(content_after_marker)})"
         )
 
         # Return empty string if marker found but no content after it
@@ -170,7 +175,8 @@ class AnalysisSectionFilter:
         # If pattern was detected, return filtered content
         if filtered is not None:
             logger.debug(
-                f"Non-streaming content filtered: original length {len(content)}, filtered length {len(filtered)}"
+                f"Non-streaming content filtered: original length"
+                f"{len(content)}, filtered length {len(filtered)}"
             )
             return filtered
 
@@ -190,7 +196,8 @@ class AnalysisSectionFilter:
         """
         if not self.passed_analysis_section and self.content_buffer:
             logger.warning(
-                f"Forcing flush of buffered content on completion for request {self.request_id} "
+                f"Forcing flush of buffered content on completion for"
+                f"request {self.request_id} f"
                 f"({len(self.content_buffer)} chars)"
             )
 

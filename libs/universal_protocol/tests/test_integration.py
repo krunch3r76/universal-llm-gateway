@@ -67,7 +67,12 @@ sys.path.insert(0, '{libs_path}')
 from universal_protocol.server import serve, app
 
 async def main():
-    await serve(app=app, socket_path='{self.socket_path}', loop="uvloop", log_level="info")
+    await serve(
+        app=app,
+        socket_path='{self.socket_path}',
+        loop="uvloop",
+        log_level="info",
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -160,7 +165,7 @@ async def test_full_integration():
         assert "websocket_path" in inference_result
 
         stream_id = inference_result["stream_id"]
-        ws_path = inference_result["websocket_path"]
+        inference_result["websocket_path"]
 
         # 6. Connect WebSocket client
         logger.info("=== Step 6: Connecting WebSocket client ===")

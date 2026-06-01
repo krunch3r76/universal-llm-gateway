@@ -1,6 +1,7 @@
 """Test process recovery and supervisor handling of worker crashes.
 
-Verifies that supervisor detects worker death, cleans up resources, and handles reconnection.
+Verifies that supervisor detects worker death, cleans up resources, and handles
+reconnection.
 """
 
 import asyncio

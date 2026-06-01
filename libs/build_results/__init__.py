@@ -1,9 +1,9 @@
 """Shared build-result spool — the common channel for large build-result inspection.
 
-Backend-neutral: consumes the canonical build envelope dict (the shape grokbuild's
-fetch_result and cursorbuild both emit), never a backend-specific dataclass. Both
-libs/grokbuild and libs/cursorbuild import this so the channel is defined ONCE,
-above the grokbuild/cursorbuild fork line (decision:build-result-common-channel).
+Backend-neutral: consumes the canonical build envelope dict (the shape cursorbuild
+emits), never a backend-specific dataclass. `libs/cursorbuild` imports this so the
+channel is defined once above the harness fork line
+(decision:build-result-common-channel).
 
 Spool layout (per dispatch):
     {BUILD_RESULTS_DIR}/{dispatch_id}/

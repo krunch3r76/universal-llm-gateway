@@ -71,7 +71,8 @@ class ProtobufSerializer(MessageSerializer):
         import sys
 
         print(
-            f"DEBUG: ProtobufSerializer._ensure_initialized() called, max_size={self._max_message_size}",
+            f"DEBUG: ProtobufSerializer._ensure_initialized() called, "
+            f"max_size={self._max_message_size}",
             file=sys.stderr,
         )
 
@@ -101,7 +102,6 @@ class ProtobufSerializer(MessageSerializer):
                 # Try to set the limit using the internal C++ parser API
                 try:
                     # Set the C++ parser limit directly
-                    import google.protobuf.internal._api_implementation as impl
                     from google.protobuf.internal import decoder
 
                     if hasattr(decoder, "_SetDefaultSizeLimit"):
@@ -109,7 +109,8 @@ class ProtobufSerializer(MessageSerializer):
                         import sys
 
                         print(
-                            f"Protobuf C++ parser limit set to {self._max_message_size} bytes",
+                            f"Protobuf C++ parser limit set to "
+                            f"{self._max_message_size} bytes",
                             file=sys.stderr,
                         )
                     elif hasattr(pb_message, "SetDefaultSizeLimit"):
@@ -117,7 +118,8 @@ class ProtobufSerializer(MessageSerializer):
                         import sys
 
                         print(
-                            f"Protobuf message limit set to {self._max_message_size} bytes",
+                            f"Protobuf message limit set to {self._max_message_size} "
+                            f"bytes",
                             file=sys.stderr,
                         )
                     else:
@@ -130,7 +132,8 @@ class ProtobufSerializer(MessageSerializer):
                         import sys
 
                         print(
-                            f"Protobuf limit set via environment variable to {self._max_message_size} bytes",
+                            f"Protobuf limit set via environment variable to "
+                            f"{self._max_message_size} bytes",
                             file=sys.stderr,
                         )
                 except (ImportError, AttributeError) as e2:
@@ -148,7 +151,8 @@ class ProtobufSerializer(MessageSerializer):
                         self._max_message_size
                     )
                     print(
-                        f"Set PROTOBUF_MESSAGE_SIZE_LIMIT env var to {self._max_message_size} bytes",
+                        f"Set PROTOBUF_MESSAGE_SIZE_LIMIT env var to "
+                        f"{self._max_message_size} bytes",
                         file=sys.stderr,
                     )
             except (ImportError, AttributeError) as e:
@@ -159,7 +163,6 @@ class ProtobufSerializer(MessageSerializer):
 
             # Try to import protobuf
             import google.protobuf.message as pb_message
-            from google.protobuf import descriptor_pb2
 
             # Create a simple message class dynamically
             # This is a minimal implementation - in production you'd use .proto files
@@ -212,7 +215,8 @@ class ProtobufSerializer(MessageSerializer):
                 size_limit = getattr(cls, "_size_limit", 64 * 1024)  # Default 64KB
                 if len(data) > size_limit:
                     raise ValueError(
-                        f"Message size {len(data)} bytes exceeds limit of {size_limit} bytes"
+                        f"Message size {len(data)} bytes exceeds limit of {size_limit} "
+                        f"bytes"
                     )
                 try:
                     obj = cls()
@@ -223,8 +227,9 @@ class ProtobufSerializer(MessageSerializer):
                     obj.timestamp = message_data.get("timestamp", "")
                     obj.correlation_id = message_data.get("correlation_id", "")
                     obj.worker_id = message_data.get("worker_id", "")
+                    payload_len = len(obj.payload) if obj.payload else 0
                     print(
-                        f"FromString: payload size = {len(obj.payload) if obj.payload else 0}",
+                        f"FromString: payload size = {payload_len}",
                         file=sys.stderr,
                     )
                     return obj
@@ -256,7 +261,8 @@ class ProtobufSerializer(MessageSerializer):
         # Check size AFTER serialization
         if len(serialized) > self._max_message_size:
             raise ValueError(
-                f"Message size {len(serialized)} bytes exceeds limit of {self._max_message_size} bytes"
+                f"Message size {len(serialized)} bytes exceeds limit of "
+                f"{self._max_message_size} bytes"
             )
 
         return serialized
@@ -274,7 +280,8 @@ class ProtobufSerializer(MessageSerializer):
         # Check size BEFORE deserialization
         if len(data) > self._max_message_size:
             raise ValueError(
-                f"Message size {len(data)} bytes exceeds limit of {self._max_message_size} bytes"
+                f"Message size {len(data)} bytes exceeds limit of "
+                f"{self._max_message_size} bytes"
             )
 
         try:
@@ -307,7 +314,8 @@ class SerializationManager:
 
     def __init__(
         self,
-        default_format: SerializationFormat = SerializationFormat.JSON,  # Changed from PROTOBUF to JSON to avoid format mismatch
+        # Changed from PROTOBUF to JSON to avoid format mismatch
+        default_format: SerializationFormat = SerializationFormat.JSON,
         max_message_size: int = 1024 * 1024,
     ):
         """
@@ -374,7 +382,10 @@ class SerializationManager:
         """
         serializer = self.get_serializer(format)
 
-        # print(f"DEBUG: Using serializer: {type(serializer).__name__}", file=sys.stderr)
+        # print(
+        #     f"DEBUG: Using serializer: {type(serializer).__name__}",
+        #     file=sys.stderr,
+        # )
         return serializer.deserialize(data)
 
     def set_default_format(self, format: SerializationFormat) -> None:

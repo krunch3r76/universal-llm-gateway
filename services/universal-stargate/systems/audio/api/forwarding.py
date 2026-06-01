@@ -27,7 +27,7 @@ async def forward_client_to_gateway(
     warned_not_ready = False
     dropped_frame_count = 0
     frames_since_last_log = 0
-    LOG_EVERY_N_DROPS = 10  # Log every 10 dropped frames to avoid spam
+    log_every_n_drops = 10  # Log every 10 dropped frames to avoid spam
 
     try:
         while True:
@@ -41,11 +41,12 @@ async def forward_client_to_gateway(
 
                     if not warned_not_ready:
                         logger.info(
-                            f"[{session_id}] Dropping client frames until gateway ready "
+                            f"[{session_id}] Dropping client frames until"
+                            f"gateway ready f"
                             "(model loading)"
                         )
                         warned_not_ready = True
-                    elif frames_since_last_log >= LOG_EVERY_N_DROPS:
+                    elif frames_since_last_log >= log_every_n_drops:
                         logger.debug(
                             f"[{session_id}] Dropped {dropped_frame_count} frames "
                             "(gateway not ready)"

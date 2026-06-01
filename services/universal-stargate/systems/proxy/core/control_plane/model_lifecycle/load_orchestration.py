@@ -132,7 +132,8 @@ class ModelLoadOrchestrator:
             error_gateway, error_msg = error_state
             if error_gateway == gateway_name:
                 logger.info(
-                    f"Model {model_id} in ERROR state on {gateway_name} (coordinator): {error_msg}. Will clear and retry"
+                    f"Model {model_id} in ERROR state on {gateway_name}"
+                    f"(coordinator): {error_msg}. Will clear and retry"
                 )
 
         # Check for LOADING state
@@ -159,9 +160,11 @@ class ModelLoadOrchestrator:
 
         def _model_in_set(model_id: ModelId, model_set: frozenset[str]) -> bool:
             """
-            Check if model_id matches any model in model_set using normalized comparison.
+            Check if model_id matches any model in model_set using normalized
+                comparison.
 
-            Gateway returns canonical IDs (without -hybrid), so we normalize for matching.
+            Gateway returns canonical IDs (without -hybrid), so we normalize for
+                matching.
             """
             try:
                 normalized_query = model_id.normalized
@@ -200,7 +203,8 @@ class ModelLoadOrchestrator:
 
         # Not found in WebSocket cache
         logger.debug(
-            f"Model {model_id} not in WebSocket cache on {gateway_name}, will attempt load"
+            f"Model {model_id} not in WebSocket cache on"
+            f"{gateway_name}, will attempt load"
         )
         return None
 
@@ -242,13 +246,15 @@ class ModelLoadOrchestrator:
                     model_id, gateway_name
                 )
             logger.debug(
-                f"Model {model_id} is loaded and busy on {gateway.config.name}, proceeding with request"
+                f"Model {model_id} is loaded and busy on"
+                f"{gateway.config.name}, proceeding with request"
             )
             return ModelLoadingStatus.LOADED
 
         if gw_status.is_error:
             logger.info(
-                f"Model {model_id} in ERROR state on {gateway.config.name} (HTTP fallback), will clear and retry"
+                f"Model {model_id} in ERROR state on {gateway.config.name}"
+                f"(HTTP fallback), will clear and retry"
             )
 
         if gw_status.is_loading:
@@ -418,7 +424,8 @@ class ModelLoadOrchestrator:
 
             # DIAGNOSTIC: Log coordinator decision
             logger.info(
-                f"📋 Coordinator response for {model_id}: should_load={result.should_load}, "
+                f"📋 Coordinator response for {model_id}:"
+                f"should_load={result.should_load}, f"
                 f"redirect={result.redirect_gateway}, error={result.error_message}"
             )
 
@@ -457,7 +464,8 @@ class ModelLoadOrchestrator:
                     return ModelLoadingStatus.LOADED
                 except TimeoutError:
                     logger.error(
-                        f"Timeout waiting for {model_id} to load on {result.redirect_gateway}"
+                        f"Timeout waiting for {model_id} to load on"
+                        f"{result.redirect_gateway}"
                     )
                     return ModelLoadingStatus.FAILED
             else:

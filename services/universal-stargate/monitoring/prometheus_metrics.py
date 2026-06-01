@@ -96,28 +96,35 @@ class PrometheusMetricsExporter:
             # Reservation metrics
             reservations = res_metrics.get("reservations", {})
             lines.append(
-                f'gateway_reservation_active{{gateway="{gateway_id}"}} {reservations.get("active", 0)}'
+                f'gateway_reservation_active{{gateway="{gateway_id}"}}'
+                f"{reservations.get('active', 0)}"
             )
             lines.append(
-                f'gateway_reservation_pending{{gateway="{gateway_id}"}} {reservations.get("pending", 0)}'
+                f'gateway_reservation_pending{{gateway="{gateway_id}"}}'
+                f"{reservations.get('pending', 0)}"
             )
             lines.append(
-                f'gateway_reservation_total{{gateway="{gateway_id}",state="completed"}} {reservations.get("completed", 0)}'
+                f'gateway_reservation_total{{gateway="{gateway_id}",state="completed"}}'
+                f"{reservations.get('completed', 0)}"
             )
             lines.append(
-                f'gateway_reservation_total{{gateway="{gateway_id}",state="failed"}} {reservations.get("failed", 0)}'
+                f'gateway_reservation_total{{gateway="{gateway_id}",state="failed"}}'
+                f"{reservations.get('failed', 0)}"
             )
             lines.append(
-                f'gateway_reservation_total{{gateway="{gateway_id}",state="expired"}} {reservations.get("expired", 0)}'
+                f'gateway_reservation_total{{gateway="{gateway_id}",state="expired"}}'
+                f"{reservations.get('expired', 0)}"
             )
 
             # Resource metrics
             resources = res_metrics.get("resources", {})
             lines.append(
-                f'gateway_vram_reserved_mb{{gateway="{gateway_id}"}} {resources.get("vram_reserved_mb", 0)}'
+                f'gateway_vram_reserved_mb{{gateway="{gateway_id}"}}'
+                f"{resources.get('vram_reserved_mb', 0)}"
             )
             lines.append(
-                f'gateway_ram_reserved_mb{{gateway="{gateway_id}"}} {resources.get("ram_reserved_mb", 0)}'
+                f'gateway_ram_reserved_mb{{gateway="{gateway_id}"}}'
+                f"{resources.get('ram_reserved_mb', 0)}"
             )
 
         return "\n".join(lines) + "\n"

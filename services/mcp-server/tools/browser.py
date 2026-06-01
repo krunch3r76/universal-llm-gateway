@@ -381,7 +381,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             return {"error": "Expected a JSON array of cookie objects"}
 
         # Normalise to Playwright format — keep only known fields, coerce types
-        _SAME_SITE = {"Strict", "Lax", "None"}
+        same_site_values = {"Strict", "Lax", "None"}
         cleaned: list[dict[str, object]] = []
         skipped = 0
         for c in raw:
@@ -412,7 +412,7 @@ def register_browser_tools(mcp: FastMCP) -> None:
             if "httpOnly" in c:
                 cookie["httpOnly"] = bool(c["httpOnly"])
             ss = c.get("sameSite") or c.get("samesite")
-            if ss and str(ss).capitalize() in _SAME_SITE:
+            if ss and str(ss).capitalize() in same_site_values:
                 cookie["sameSite"] = str(ss).capitalize()
             cleaned.append(cookie)
 

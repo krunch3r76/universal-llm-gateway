@@ -26,7 +26,7 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
-async def parallel_model_calls(
+async def parallel_model_calls[T, R](
     items: list[T],
     call_fn: Callable[[T], Awaitable[R | None]],
     *,
@@ -90,7 +90,7 @@ async def parallel_model_calls(
     return results
 
 
-async def parallel_model_calls_with_index(
+async def parallel_model_calls_with_index[T, R](
     items: list[T],
     call_fn: Callable[[int, T], Awaitable[R | None]],
     *,

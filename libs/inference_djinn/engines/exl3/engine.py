@@ -7,6 +7,7 @@ Supports EXL3 quantization format and addresses embedding.embedding=None errors.
 """
 
 import asyncio
+import importlib.util
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -14,12 +15,7 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-try:
-    from exllamav3 import Config, Generator, Model, Tokenizer
-
-    exllamav3_available = True
-except ImportError:
-    exllamav3_available = False
+exllamav3_available = importlib.util.find_spec("exllamav3") is not None
 
 from ..base import BaseEngine  # noqa: E402
 from .engine.inference.regular import ExLlamaV3RegularInference  # noqa: E402

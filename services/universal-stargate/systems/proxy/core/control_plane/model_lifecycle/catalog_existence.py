@@ -52,7 +52,8 @@ async def check_model_exists_anywhere(
     # But -cpu suffix MUST be included for CPU models
     lookup_id = model_id.synthetic_id
     logger.debug(
-        f"Checking if model {model_id} exists in {gw.config.name} catalog (lookup_id={lookup_id})"
+        f"Checking if model {model_id} exists in {gw.config.name}"
+        f"catalog (lookup_id={lookup_id})"
     )
 
     try:

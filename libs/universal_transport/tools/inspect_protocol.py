@@ -161,7 +161,7 @@ class ProtocolInspector:
                     # Create message info
                     message_info = MessageInfo(
                         sequence=sequence,
-                        timestamp=time.time(),  # File doesn't have timestamp, use current
+                        timestamp=time.time(),  # No timestamp in file; use now
                         payload_length=payload_length,
                         payload_bytes=payload_bytes,
                         decoded_message=decoded_message,
@@ -251,7 +251,8 @@ class ProtocolInspector:
         """
         print(f"Message {message_info.sequence}:", file=output)
         print(
-            f"  Timestamp: {message_info.timestamp} ({datetime.fromtimestamp(message_info.timestamp)})",
+            f"  Timestamp: {message_info.timestamp} "
+            f"({datetime.fromtimestamp(message_info.timestamp)})",
             file=output,
         )
         print(f"  Frame Length: {message_info.frame_length} bytes", file=output)

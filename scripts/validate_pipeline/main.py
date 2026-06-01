@@ -141,7 +141,7 @@ def _validate_yaml_files(
             sys.exit(2)
 
     # Config files co-located with pipelines that are not pipeline YAMLs
-    _SKIP_FILENAMES: set[str] = {"retrieval-profiles.yaml"}
+    skip_filenames: set[str] = {"retrieval-profiles.yaml"}
 
     # Separate into pipelines and config files
     pipeline_files = []
@@ -157,7 +157,7 @@ def _validate_yaml_files(
             models_files.append(yaml_file)
         elif yaml_file.name == "categories.yaml":
             categories_files.append(yaml_file)
-        elif yaml_file.name in _SKIP_FILENAMES:
+        elif yaml_file.name in skip_filenames:
             skipped_files.append(yaml_file)
         else:
             pipeline_files.append(yaml_file)

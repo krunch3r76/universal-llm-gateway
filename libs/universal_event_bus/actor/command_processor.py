@@ -37,7 +37,7 @@ Why This Works:
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar
+from typing import Any, TypeVar
 
 from universal_logging import get_logger
 
@@ -73,7 +73,7 @@ class CommandResult:
     error: str | None = None
 
 
-class CommandProcessor(Generic[S]):
+class CommandProcessor[S]:
     """
     Base class for lock-free sequential state management.
 

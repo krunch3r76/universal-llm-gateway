@@ -7,7 +7,7 @@ based on the model's inference engine format.
 Policy Matrix:
     Format    | Per-Gateway Max | Multi-Gateway | Rationale
     ----------|-----------------|---------------|---------------------------
-    gguf      | 1               | yes           | llama-cpp CUDA corruption when same model loaded 2x
+    gguf      | 1               | yes           | llama-cpp CUDA corruption if loaded 2x
     vllm      | 1               | yes           | Native batching
     exl3      | 1               | yes           | Native batching
     whisper   | unlimited       | yes           | Cheap CPU models
@@ -27,7 +27,7 @@ from enum import StrEnum
 class ModelFormat(StrEnum):
     """Supported model formats with distinct replication strategies."""
 
-    GGUF = "gguf"
+    GGUF = "ggu"
     VLLM = "vllm"
     EXL3 = "exl3"
     WHISPER = "whisper"
@@ -65,7 +65,8 @@ class ReplicationPolicy:
 REPLICATION_POLICIES: dict[str, ReplicationPolicy] = {
     ModelFormat.GGUF.value: ReplicationPolicy(
         format=ModelFormat.GGUF,
-        max_instances_per_gateway=1,  # Single - llama-cpp CUDA corruption under concurrency
+        # Single instance — llama-cpp CUDA corruption under concurrency
+        max_instances_per_gateway=1,
         allow_multi_gateway=True,
         supports_batching=False,
     ),

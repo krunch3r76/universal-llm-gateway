@@ -78,7 +78,8 @@ class AsyncChunkLogger:
         self._running = True
         self._worker_task = asyncio.create_task(self._worker_loop())
         logger.info(
-            f"✅ AsyncChunkLogger started (queue={self.max_queue_size}, batch={self.batch_size})"
+            f"✅ AsyncChunkLogger started"
+            f"(queue={self.max_queue_size}, batch={self.batch_size})"
         )
 
     async def stop(self):
@@ -131,7 +132,8 @@ class AsyncChunkLogger:
             # Log warning every 100 drops
             if self.stats["chunks_dropped"] % 100 == 1:
                 logger.warning(
-                    f"Monitoring queue full - dropped {self.stats['chunks_dropped']} chunks. "
+                    f"Monitoring queue full - dropped"
+                    f"{self.stats['chunks_dropped']} chunks. f"
                     f"Consider increasing max_queue_size or batch_size."
                 )
             return False

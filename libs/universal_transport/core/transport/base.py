@@ -219,7 +219,8 @@ class Transport(ABC):
         ):
             self._reconnect_attempts += 1
             logger.info(
-                f"Attempting reconnection {self._reconnect_attempts}/{self.max_reconnect_attempts}"
+                f"Attempting reconnection "
+                f"{self._reconnect_attempts}/{self.max_reconnect_attempts}"
             )
 
             try:

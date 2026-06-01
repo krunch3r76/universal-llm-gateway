@@ -61,7 +61,8 @@ class StateTransitionDebugger:
 
         logger.debug(
             f"State transition recorded: {url} | {transition_type} | "
-            f"connectivity={payload.get('connectivity')} | health={payload.get('health')}"
+            f"connectivity={payload.get('connectivity')} |"
+            f"health={payload.get('health')}"
         )
 
     def get_transition_summary(self, url: str | None = None) -> dict[str, Any]:

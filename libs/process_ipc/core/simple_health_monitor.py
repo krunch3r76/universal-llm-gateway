@@ -98,7 +98,8 @@ class SimpleHealthMonitor:
         self._monitor_task = asyncio.create_task(self._monitor_loop())
 
         self._logger.info(
-            f"Health monitoring started with interval: {self.config.health_check_interval}s"
+            f"Health monitoring started with interval: "
+            f"{self.config.health_check_interval}s"
         )
 
     async def stop_monitoring(self) -> None:
@@ -189,7 +190,9 @@ class SimpleHealthMonitor:
 
             if returncode is None:
                 # Process is still running - healthy
-                # self._logger.debug(f"Process {process_id} is healthy (PID: {subprocess_obj.pid})")
+                # self._logger.debug(
+                #     f"Process {process_id} is healthy (PID: {subprocess_obj.pid})"
+                # )
                 return True
             else:
                 # Process has terminated - handle crash detection
@@ -337,7 +340,8 @@ class SimpleHealthMonitor:
                 )
             except TimeoutError:
                 self._logger.error(
-                    f"Crash callback timed out after {self.config.crash_callback_timeout}s"
+                    f"Crash callback timed out after "
+                    f"{self.config.crash_callback_timeout}s"
                 )
             except Exception as e:
                 self._logger.error(f"Error in crash callback: {e}")
@@ -369,7 +373,8 @@ class SimpleHealthMonitor:
                 )
             except TimeoutError:
                 self._logger.error(
-                    f"Exit callback timed out after {self.config.crash_callback_timeout}s"
+                    f"Exit callback timed out after "
+                    f"{self.config.crash_callback_timeout}s"
                 )
             except Exception as e:
                 self._logger.error(f"Error in exit callback: {e}")

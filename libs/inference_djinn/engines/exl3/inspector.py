@@ -5,18 +5,14 @@ Provides model analysis capabilities optimized for ExLlamaV3 inference.
 Enhanced compatibility detection and EXL3 format support.
 """
 
+import importlib.util
 import json
 from pathlib import Path
 from typing import Any
 
-try:
-    from exllamav3 import Config
-
-    exllamav3_available = True
-except ImportError:
-    exllamav3_available = False
-
 from ..gptq.inspector import get_model_info_summary
+
+exllamav3_available = importlib.util.find_spec("exllamav3") is not None
 
 
 def get_exllamav3_model_info(model_path: str) -> dict[str, Any]:

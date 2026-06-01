@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime
 from typing import Any, TypedDict
 
+from universal_logging import get_logger
+
 from . import signals
 from .exceptions import ProcessError
 

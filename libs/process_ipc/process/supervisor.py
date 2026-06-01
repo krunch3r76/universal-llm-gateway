@@ -95,7 +95,8 @@ class ProcessSupervisor:
         self.setup_emergency_cleanup_handler()
 
         self._structured_logger.info(
-            f"process: supervisor:initialized - SUCCESS (log_base_dir={self.log_base_dir}, transport=http_rpc)"
+            f"process: supervisor:initialized - SUCCESS "
+            f"(log_base_dir={self.log_base_dir}, transport=http_rpc)"
         )
 
     def _get_universal_protocol_socket_path(self, model_id: str) -> str:
@@ -163,7 +164,8 @@ class ProcessSupervisor:
                 # Check status without raising to avoid exception propagation issues
                 if response.is_error:
                     raise ProcessError(
-                        f"Invalid JSON response (HTTP {response.status_code}): {json_err}",
+                        f"Invalid JSON response (HTTP {response.status_code}): "
+                        f"{json_err}",
                         self._worker_id,
                     )
                 else:
@@ -187,8 +189,10 @@ class ProcessSupervisor:
             response_id = result.get("id")
             if response_id != request_id:
                 raise ProcessError(
-                    f"RPC response ID mismatch: expected {request_id}, got {response_id}. "
-                    f"This indicates a response routing error - responses may be getting mixed up between concurrent requests.",
+                    f"RPC response ID mismatch: expected {request_id}, got "
+                    f"{response_id}. "
+                    "This indicates a response routing error - responses may "
+                    "be getting mixed up between concurrent requests.",
                     self._worker_id,
                 )
 
@@ -421,7 +425,8 @@ class ProcessSupervisor:
         params = command.copy()
 
         self._logger.info(
-            f"🔄 Executing command '{command_type}' for worker {self._worker_id} with timeout {timeout}s"
+            f"🔄 Executing command '{command_type}' for worker {self._worker_id} with "
+            f"timeout {timeout}s"
         )
 
         try:

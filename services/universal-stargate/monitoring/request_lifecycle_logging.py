@@ -59,7 +59,8 @@ class _RequestLifecycleLogging:
             # Publish to EventBus
             if self.event_bus:
                 logger.debug(
-                    f"📤 MONITORING: Publishing request_info to EventBus for request {request_id}"
+                    f"📤 MONITORING: Publishing request_info to EventBus"
+                    f"for request {request_id}"
                 )
                 await self.event_bus.publish_nowait(
                     MonitoringRequestInfo(
@@ -109,7 +110,8 @@ class _RequestLifecycleLogging:
                 "id": _new_event_id(),
                 "timestamp": _utc_timestamp_z(),
                 "type": "pre_processing",  # Keep type consistent for GUI compatibility
-                "event_subtype": event_type,  # Add subtype to differentiate before/after tokenization
+                # Subtype differentiates before/after tokenization
+                "event_subtype": event_type,
                 "request_id": request_id,
                 "original_request": self._ensure_serializable(original_request),
                 "modified_request": self._ensure_serializable(modified_request),
@@ -124,7 +126,8 @@ class _RequestLifecycleLogging:
             # Publish to EventBus
             if self.event_bus:
                 logger.debug(
-                    f"📤 MONITORING: Publishing {event_type} to EventBus for request {request_id}"
+                    f"📤 MONITORING: Publishing {event_type} to EventBus"
+                    f"for request {request_id}"
                 )
                 await self.event_bus.publish_nowait(
                     MonitoringPreProcessing(
@@ -192,7 +195,8 @@ class _RequestLifecycleLogging:
             # Publish to EventBus (single consistent path)
             if self.event_bus:
                 logger.debug(
-                    f"📤 MONITORING: Publishing chat_completion to EventBus for request {request_id}"
+                    f"📤 MONITORING: Publishing chat_completion to EventBus"
+                    f"for request {request_id}"
                 )
                 logger.debug(
                     f"📤 MONITORING: Event data keys: {list(event_data.keys())}"

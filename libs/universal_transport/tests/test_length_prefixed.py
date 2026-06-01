@@ -260,14 +260,14 @@ class TestLengthPrefixedProtocol:
 
         # Valid message
         valid_message = {"test": "valid"}
-        assert protocol.validate_message(valid_message) == True
+        assert protocol.validate_message(valid_message)
 
         # Invalid message (for JSON serializer)
         class NonSerializable:
             pass
 
         invalid_message = NonSerializable()
-        assert protocol.validate_message(invalid_message) == False
+        assert not protocol.validate_message(invalid_message)
 
     def test_size_estimation(self):
         """Test encoded size estimation."""

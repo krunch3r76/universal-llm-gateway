@@ -1,7 +1,9 @@
 """Middleware to cache raw request body before FastAPI/Pydantic processes it.
 
-CRITICAL: FastAPI's request.json() returns cached data that may be corrupted by Pydantic parsing.
-This middleware captures the raw bytes BEFORE any processing to preserve client data exactly.
+CRITICAL: FastAPI's request.json() returns cached data that may be corrupted by
+    Pydantic parsing.
+This middleware captures the raw bytes BEFORE any processing to preserve client data
+    exactly.
 """
 
 from starlette.middleware.base import BaseHTTPMiddleware

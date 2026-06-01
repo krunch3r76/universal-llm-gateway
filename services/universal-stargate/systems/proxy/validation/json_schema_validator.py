@@ -87,7 +87,8 @@ def validate_json_schema(schema: dict[str, Any], path: str = "schema") -> None:
                 )
         else:
             raise SchemaValidationError(
-                f"Type must be a string or array of strings, got {type(type_value).__name__}",
+                f"Type must be a string or array of strings, got"
+                f"{type(type_value).__name__}",
                 param=f"{path}.type",
             )
 
@@ -135,7 +136,8 @@ def validate_response_format(response_format: dict[str, Any]) -> None:
     format_type = response_format.get("type")
     if format_type not in ("json_object", "json_schema", "text"):
         raise SchemaValidationError(
-            f"response_format.type must be 'json_object', 'json_schema', or 'text', got '{format_type}'",
+            f"response_format.type must be 'json_object', 'json_schema',"
+            f"or 'text', got '{format_type}'f",
             param="response_format.type",
         )
 

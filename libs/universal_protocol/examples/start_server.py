@@ -19,13 +19,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from universal_logging import INFO, get_logger
+from universal_logging import get_logger
 
-# Configure logging before imports
-logging.basicConfig(
-    level=INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = get_logger(__name__)
 
 
@@ -46,10 +41,10 @@ def main() -> int:
 Examples:
   # Start worker 1
   python start_server.py --worker-id 1
-  
+
   # Start worker with custom socket directory (for testing)
   python start_server.py --worker-id 1 --socket-dir /tmp/test-sockets
-  
+
   # Show help
   python start_server.py --help
         """,
@@ -59,7 +54,10 @@ Examples:
         "--worker-id",
         type=int,
         required=True,
-        help="Worker ID (1-N). Determines socket path: /tmp/universal-protocol/worker-{id}.sock",
+        help=(
+            "Worker ID (1-N). Determines socket path: "
+            "/tmp/universal-protocol/worker-{id}.sock"
+        ),
     )
     parser.add_argument(
         "--socket-dir",
@@ -103,10 +101,9 @@ Examples:
         except OSError as e:
             logger.warning(f"Failed to remove stale socket {socket_path}: {e}")
 
-    # Check if we can import uvicorn
-    try:
-        import uvicorn
-    except ImportError:
+    import importlib.util
+
+    if importlib.util.find_spec("uvicorn") is None:
         logger.error(
             "uvicorn not installed. Install with: pip install uvicorn[standard]"
         )

@@ -96,7 +96,7 @@ def test_derive_mcp_grok_visibility_only() -> None:
 def test_derive_claude_manifest_count() -> None:
     """D1: derived Claude manifest returns exactly one entry per domain."""
     manifest = derive_claude_manifest(_CANONICAL_YAML)
-    assert len(manifest) == 16  # update if domains change
+    assert len(manifest) == 15  # update if domains change
     tool_names = [e["tool_name"] for e in manifest]
     assert len(tool_names) == len(set(tool_names)), "duplicate tool_names in manifest"
 

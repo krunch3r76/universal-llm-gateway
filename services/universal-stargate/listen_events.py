@@ -28,7 +28,8 @@ def listen_for_events():
                 event = json.loads(data.decode("utf-8"))
 
                 print(
-                    f"\n📡 Event #{event_count} received at {datetime.now().strftime('%H:%M:%S.%f')[:-3]}"
+                    f"\n📡 Event #{event_count} received at"
+                    f"{datetime.now().strftime('%H:%M:%S.%f')[:-3]}"
                 )
                 print(f"   ID: {event.get('id', 'N/A')}")
                 print(f"   Type: {event.get('type', 'N/A')}")

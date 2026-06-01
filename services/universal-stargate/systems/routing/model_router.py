@@ -31,9 +31,12 @@ class ModelRouter:
     """
     Unified router for CPU and GPU models.
 
-    This router abstracts model selection and request routing in a federated environment.
-    It acts as the central orchestration point for determining which gateway should serve
-    a given model inference request, based on current gateway status, model placement requirements,
+    This router abstracts model selection and request routing in a federated
+        environment.
+    It acts as the central orchestration point for determining which gateway should
+        serve
+    a given model inference request, based on current gateway status, model placement
+        requirements,
     routing policy, and resource capacity.
 
     Features:
@@ -41,18 +44,25 @@ class ModelRouter:
         all available gateways, supporting robust and traceable decision-making.
       - Parallel Gateway Collection: Collects gateway telemetry and candidate states
         in parallel for minimal latency and maximum fault tolerance.
-      - Federated Routing: Supports multi-hop routing topologies (master, relay, edge stargates)
-        and integrates with federation manager and eviction mechanisms for distributed model management.
-      - Eviction Orchestration: Coordinates model eviction when required to free capacity
-        for new model loads, delegating to the appropriate planning and execution components.
-      - Routing Hysteresis: Employs sticky placement tracking to minimize spurious routing changes
+      - Federated Routing: Supports multi-hop routing topologies (master, relay, edge
+          stargates)
+        and integrates with federation manager and eviction mechanisms for distributed
+            model management.
+      - Eviction Orchestration: Coordinates model eviction when required to free
+          capacity
+        for new model loads, delegating to the appropriate planning and execution
+            components.
+      - Routing Hysteresis: Employs sticky placement tracking to minimize spurious
+          routing changes
         and stabilize user experience under fluctuating conditions.
-      - Observability: Provides detailed statistics, selection traces, and decision telemetry
+      - Observability: Provides detailed statistics, selection traces, and decision
+          telemetry
         for operational debugging and capacity planning.
 
     Design Invariants:
       - Selection decisions always produce a trace for auditing/diagnosis.
-      - Routing respects both hard and soft affinity rules, honoring preferred placements
+      - Routing respects both hard and soft affinity rules, honoring preferred
+          placements
         where possible while falling back as policies allow.
       - Eviction and model loading are orchestrated to minimize service disruption
         and to maintain capacity guarantees.
@@ -61,7 +71,8 @@ class ModelRouter:
 
     Typical Usage:
         router = ModelRouter(...)
-        selected_gateway, trace = router._select_and_record_stats(gateways, placement, ...)
+        selected_gateway, trace = router._select_and_record_stats(gateways, placement,
+            ...)
         if eviction required:
             router._execute_local_eviction(selected_gateway, trace)
         # Forward request to selected_gateway
@@ -92,14 +103,16 @@ class ModelRouter:
                 Currently unused but preserved for backward compatibility.
 
             config: Routing configuration dict containing policy settings. Key fields:
-                - routing.policy.affinity_weight (float, default 1.0): Weight for gateway
+                - routing.policy.affinity_weight (float, default 1.0): Weight for
+                    gateway
                   affinity scoring (prefers gateways with model already loaded).
                 - routing.policy.contention_weight (float, default 1.0): Weight for
                   contention penalty (prefers less busy gateways).
                 - routing.policy.eviction_weight (float, default 1.0): Weight for
                   eviction cost penalty (prefers avoiding eviction).
                 - routing.policy.stability_weight (float, default 5.0): Weight for
-                  sticky placement bonus (prefers previously used gateway for same model).
+                  sticky placement bonus (prefers previously used gateway for same
+                      model).
                 - routing.policy.staleness_weight (float, default 0.5): Weight for
                   telemetry staleness penalty (prefers fresh telemetry).
                 - routing.policy.eviction_margin (float, default 1.0): Score margin
@@ -127,7 +140,8 @@ class ModelRouter:
                 (Master mode only). If None, routing key tracking is disabled.
 
         Raises:
-            ValueError: If federated_manager is provided but local_stargate_id is None/empty.
+            ValueError: If federated_manager is provided but local_stargate_id is
+                None/empty.
 
         Initialization:
             - Loads routing policy from config (or defaults)

@@ -33,11 +33,11 @@ class ModelDiscovery:
 
     def _check_djinn_availability(self) -> bool:
         """Check if inference_djinn is available"""
-        try:
-            import inference_djinn
+        import importlib.util
 
+        if importlib.util.find_spec("inference_djinn") is not None:
             return True
-        except ImportError:
+        else:
             logger.warning(
                 "inference_djinn not available - discovery features disabled"
             )

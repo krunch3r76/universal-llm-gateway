@@ -86,7 +86,8 @@ class GatewayStatusResult:
         """
         Check if model exists in gateway's catalog (regardless of load state).
 
-        Returns True if model is tracked by gateway (loaded, busy, loading, error, unknown).
+        Returns True if model is tracked by gateway (loaded, busy, loading, error,
+            unknown).
         Returns False only if model is NOT_FOUND (not in catalog at all).
         """
         return self.reachable and self.status != ModelStatus.NOT_FOUND

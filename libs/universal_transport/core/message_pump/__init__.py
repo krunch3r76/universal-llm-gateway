@@ -1,7 +1,8 @@
 """
 Message pump module.
 
-Provides concurrent I/O, correlation matching, and message queuing for transport-based communication.
+Provides concurrent I/O, correlation matching, and message queuing for
+transport-based communication.
 """
 
 from .interfaces import MessagePumpInterface, MessageReader, MessageWriter

@@ -210,7 +210,7 @@ class PipelineValidator:
                         )
                 if rf.step == step.name:
                     errors.append(
-                        f"Step '{step.name}': reads_from cannot reference itself"
+                        f"Step '{step.name}': reads_from cannot reference itsel"
                     )
                 if not rf.fields:
                     errors.append(

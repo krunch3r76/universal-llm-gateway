@@ -89,7 +89,8 @@ class ResourceVerifier:
                 if parsed in self._configuration_cache:
                     del self._configuration_cache[parsed]
                     self.logger.debug(
-                        f"📢 Invalidated configuration cache for {model_id_str} (MODEL_LOADED)"
+                        f"📢 Invalidated configuration cache for"
+                        f"{model_id_str} (MODEL_LOADED)"
                     )
             except ValueError:
                 # Invalid model ID format, skip cache invalidation
@@ -109,7 +110,8 @@ class ResourceVerifier:
                 if parsed in self._configuration_cache:
                     del self._configuration_cache[parsed]
                     self.logger.debug(
-                        f"📢 Invalidated configuration cache for {model_id_str} (MODEL_UNLOADED)"
+                        f"📢 Invalidated configuration cache for"
+                        f"{model_id_str} (MODEL_UNLOADED)"
                     )
             except ValueError:
                 # Invalid model ID format, skip cache invalidation

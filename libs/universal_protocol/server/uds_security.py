@@ -99,7 +99,8 @@ def bind_socket(
     - Validates path length
 
     Args:
-        socket_path: Full path to socket file (e.g., /tmp/universal-protocol/worker-1.sock)
+        socket_path: Full path to socket file (e.g.,
+            /tmp/universal-protocol/worker-1.sock)
         permissions: File permissions (default: 0o600 for owner-only)
         unlink_first: Remove existing socket before binding (default: True)
 
@@ -129,7 +130,8 @@ def bind_socket(
             logger.debug(f"Unlinked stale socket: {socket_path}")
         except OSError as e:
             logger.warning(
-                f"Failed to unlink existing socket {socket_path}: {e}. Proceeding anyway."
+                f"Failed to unlink existing socket {socket_path}: {e}. Proceeding "
+                f"anyway."
             )
 
     # Create Unix domain socket

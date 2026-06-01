@@ -196,10 +196,14 @@ class AsyncTCPTransport:
         return self.connection.state
 
     def __str__(self) -> str:
-        return f"AsyncTCPTransport({self.connection.host}:{self.connection.port}, state={self.connection.state.value})"
+        return (
+            f"AsyncTCPTransport({self.connection.host}:{self.connection.port}, "
+            f"state={self.connection.state.value})"
+        )
 
     def __repr__(self) -> str:
         return (
-            f"AsyncTCPTransport(host='{self.connection.host}', port={self.connection.port}, "
+            f"AsyncTCPTransport(host='{self.connection.host}', "
+            f"port={self.connection.port}, "
             f"state={self.connection.state.value})"
         )

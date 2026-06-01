@@ -1,7 +1,8 @@
 """
 Network receiver for universal_stargate monitoring data.
 
-Supports Unix socket transport via universal_transport.AsyncMonitoringClient for reliable event reception.
+Supports Unix socket transport via universal_transport.AsyncMonitoringClient for
+    reliable event reception.
 """
 
 import asyncio
@@ -75,7 +76,9 @@ class NetworkReceiver:
             and self.config.get("use_universal_transport", True)
         )
         logger.info(
-            f"NetworkReceiver config: use_universal_transport={self.use_universal_transport}, transport_type={self.transport_type}"
+            f"NetworkReceiver config: "
+            f"use_universal_transport={self.use_universal_transport}, "
+            f"transport_type={self.transport_type}"
         )
 
     def start(self):
@@ -92,7 +95,8 @@ class NetworkReceiver:
                 self._start_unix_stream()
             else:
                 raise ValueError(
-                    f"Unsupported transport type: {self.transport_type}. Use 'unix' or 'tcp'."
+                    f"Unsupported transport type:"
+                    f"{self.transport_type}. Use 'unix' or 'tcp'."
                 )
 
         except Exception as e:
@@ -100,7 +104,8 @@ class NetworkReceiver:
             self.running = False  # Reset running flag on failure
             # No fallback - fail fast with explicit error
             raise ConnectionError(
-                f"Failed to establish {self.transport_type} transport connection. No fallback allowed."
+                f"Failed to establish {self.transport_type} transport"
+                f"connection. No fallback allowed."
             ) from e
 
     def _start_monitoring_client(self):
@@ -176,11 +181,13 @@ class NetworkReceiver:
                 retry_count += 1
                 if retry_count <= 3:
                     logger.info(
-                        f"Socket not available (attempt {retry_count}/{max_retries}): {e}"
+                        f"Socket not available (attempt"
+                        f"{retry_count}/{max_retries}): {e}"
                     )
                 else:
                     logger.debug(
-                        f"Socket not available (attempt {retry_count}/{max_retries}): {e}"
+                        f"Socket not available (attempt"
+                        f"{retry_count}/{max_retries}): {e}"
                     )
                 await asyncio.sleep(backoff_time)
                 backoff_time = min(30.0, backoff_time * 1.5)  # Exponential backoff
@@ -197,7 +204,8 @@ class NetworkReceiver:
 
         if retry_count >= max_retries:
             logger.error(
-                f"Failed to connect after {max_retries} attempts - will continue retrying in background"
+                f"Failed to connect after {max_retries} attempts - will"
+                f"continue retrying in background"
             )
             # Continue retrying indefinitely rather than giving up
             while self.running:
@@ -280,7 +288,9 @@ class NetworkReceiver:
 
             # Log available attributes
             logger.debug(
-                f"   Available attrs: {[a for a in dir(event) if not a.startswith('_')]}"
+                f"   Available attrs: {
+                    [a for a in dir(event) if not a.startswith('_')]
+                }"
             )
 
             # Extract event data
@@ -340,7 +350,8 @@ class NetworkReceiver:
                 has_modified = "modified_request" in event_data
                 logger.info(f"🎯 CALLBACK: Passing dict with {len(event_data)} fields")
                 logger.info(
-                    f"🎯 CALLBACK: Has original_request: {has_original}, Has modified_request: {has_modified}"
+                    f"🎯 CALLBACK: Has original_request: {has_original}, Has"
+                    f"modified_request: {has_modified}"
                 )
 
             self.callback(event_data)
@@ -384,7 +395,8 @@ class NetworkReceiver:
                             )
                         except Exception as reconnect_error:
                             logger.error(
-                                f"❌ Failed to reconnect after proxy restart: {reconnect_error}"
+                                f"❌ Failed to reconnect after proxy restart:"
+                                f"{reconnect_error}"
                             )
                             time.sleep(5.0)  # Wait before retry
                     else:
@@ -396,7 +408,8 @@ class NetworkReceiver:
                             logger.info("✅ MonitoringClient reconnected successfully")
                         except Exception as reconnect_error:
                             logger.error(
-                                f"❌ Failed to reconnect MonitoringClient: {reconnect_error}"
+                                f"❌ Failed to reconnect MonitoringClient:"
+                                f"{reconnect_error}"
                             )
                             time.sleep(5.0)  # Wait before retry
 

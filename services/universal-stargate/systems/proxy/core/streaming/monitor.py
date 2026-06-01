@@ -54,7 +54,8 @@ class StreamMonitor:
 
             # Send initial chat completion event for GUI display
             logger.info(
-                f"🔍 STREAMING: Sending initial chat_completion event for request {context.request_id}"
+                f"🔍 STREAMING: Sending initial chat_completion event for"
+                f"request {context.request_id}"
             )
             await self.monitor.log_chat_completion(
                 original_request=original_request,
@@ -72,7 +73,8 @@ class StreamMonitor:
                 },
             )
             logger.info(
-                f"🔍 STREAMING: Successfully sent initial chat_completion event for request {context.request_id}"
+                f"🔍 STREAMING: Successfully sent initial chat_completion event"
+                f"for request {context.request_id}"
             )
         except Exception as e:
             logger.debug(f"Failed to send initial chat completion event: {e}")

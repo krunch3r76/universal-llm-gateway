@@ -163,10 +163,12 @@ async def test_cumulative_4mb_limit():
                 # This frame should fail
                 logger.info("Attempting frame that would exceed limit...")
                 logger.info(
-                    f"Current total: {total_bytes:,} bytes, frame size: {frame_bytes:,} bytes"
+                    f"Current total: {total_bytes:,} bytes, frame size: "
+                    f"{frame_bytes:,} bytes"
                 )
                 logger.info(
-                    f"Would total: {total_bytes + frame_bytes:,} bytes (limit: {config.cumulative_limit_bytes:,})"
+                    f"Would total: {total_bytes + frame_bytes:,} bytes (limit: "
+                    f"{config.cumulative_limit_bytes:,})"
                 )
 
                 success = await producer_put("test-stream-2", frame)

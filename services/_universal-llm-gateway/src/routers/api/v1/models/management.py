@@ -339,7 +339,7 @@ async def delete_model(
 ):
     """Delete a model from the dynamic catalog."""
     try:
-        result = await asyncio.to_thread(catalog_manager.delete_model, model_key)
+        await asyncio.to_thread(catalog_manager.delete_model, model_key)
 
         version = await asyncio.to_thread(catalog_manager.get_catalog_version)
 

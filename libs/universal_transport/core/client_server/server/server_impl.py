@@ -251,7 +251,8 @@ class AsyncTransportServer:
             client_handler: Low-level client transport handler
 
         Returns:
-            bool: True if the transport connection should be kept open for get_transport().
+            bool: True if the transport connection should be kept open for
+                get_transport().
         """
         # Generate unique client ID
         self._client_counter += 1
@@ -267,7 +268,8 @@ class AsyncTransportServer:
             # Don't start message handler if get_transport() is waiting
             if self._get_transport_waiting:
                 logger.debug(
-                    f"get_transport() is waiting, skipping message handler for {client_id}"
+                    f"get_transport() is waiting, skipping message handler for "
+                    f"{client_id}"
                 )
                 # Don't start _handle_client_messages() - get_transport() will handle it
                 # ✅ Session remains open for get_transport() to retrieve
@@ -358,7 +360,8 @@ class AsyncTransportServer:
             # Gracefully exit if this session is being handed off to get_transport()
             if session.client_id in self._transport_sessions:
                 logger.debug(
-                    f"Session {session.client_id} taken over by get_transport(). Stopping message handler."
+                    f"Session {session.client_id} taken over by get_transport(). "
+                    f"Stopping message handler."
                 )
                 break
 
@@ -483,7 +486,8 @@ class AsyncTransportServer:
             Transport adapter for the first client
 
         Raises:
-            ValueError: If multiple clients are connected (use get_client_sessions() instead)
+            ValueError: If multiple clients are connected (use
+                get_client_sessions() instead)
             TimeoutError: If no client connects within timeout
 
         Example:

@@ -127,8 +127,8 @@ async def health(request: Request) -> JSONResponse:
     # Option A (OQ-1): grok_auth is operator-actionable, not a worker-health
     # fault — it is reported informationally but does NOT drive the degraded
     # rollup. Status is computed over the four core readiness checks only.
-    _ROLLUP_KEYS = ("grok_binary", "auth_dir", "sidecar_dir", "registry")
-    status = "ok" if all(checks[k] == "ok" for k in _ROLLUP_KEYS) else "degraded"
+    _rollup_keys = ("grok_binary", "auth_dir", "sidecar_dir", "registry")
+    status = "ok" if all(checks[k] == "ok" for k in _rollup_keys) else "degraded"
     return JSONResponse(
         status_code=200,
         content={

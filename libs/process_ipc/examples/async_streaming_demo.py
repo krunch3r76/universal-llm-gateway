@@ -181,7 +181,8 @@ if __name__ == "__main__":
                 # Cancel after 5 chunks (~1.5 seconds)
                 if received_chunks == 5:
                     print(
-                        f"\n4. Sending cancellation command (after {received_chunks} chunks)..."
+                        f"\n4. Sending cancellation command (after {received_chunks} "
+                        f"chunks)..."
                     )
                     cancellation_sent_time = time.time()
 

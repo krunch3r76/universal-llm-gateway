@@ -116,7 +116,8 @@ class CommandProcessor:
             elif not result:
                 # Empty dict result
                 self._logger.warning(
-                    f"Handler returned empty dict for correlation_id: {correlation_id}. "
+                    f"Handler returned empty dict for correlation_id: "
+                    f"{correlation_id}. "
                     f"Command data keys: {list(command_data.keys())}"
                 )
                 result = {"error": "Handler returned empty result"}
@@ -130,9 +131,11 @@ class CommandProcessor:
                     # Result only contains command metadata - handler likely returned
                     # command_data unchanged
                     self._logger.error(
-                        f"Handler result only contains command metadata for correlation_id: {correlation_id}. "
+                        f"Handler result only contains command metadata for "
+                        f"correlation_id: {correlation_id}. "
                         f"Result keys: {list(result_keys)}. "
-                        f"This indicates process_command() returned command_data instead of processing it."
+                        "This indicates process_command() returned command_data "
+                        "instead of processing it."
                     )
                     result = {
                         "error": "Handler returned command metadata only -"
@@ -224,10 +227,10 @@ class WorkerProcess(WorkerInterface):
         Args:
             worker_id: Unique identifier for this worker
             socket_path: Path to Unix socket for IPC communication
-            message_pump_receive_timeout: Timeout for MessagePump transport.receive() calls in seconds.
-                                         Prevents indefinite hangs from incomplete socket data.
-                                         Set to None to disable timeout (not recommended).
-                                         Default: 30.0 seconds.
+            message_pump_receive_timeout: Timeout for MessagePump
+                transport.receive() calls in seconds. Prevents indefinite hangs
+                from incomplete socket data. Set to None to disable timeout
+                (not recommended). Default: 30.0 seconds.
         """
         self.worker_id = worker_id
         self.socket_path = socket_path
@@ -673,7 +676,8 @@ class WorkerProcess(WorkerInterface):
 
         Args:
             event_type: Type of event (used as signal name)
-            event_data: Event data - for streaming events, should contain domain data directly
+            event_data: Event data - for streaming events, should contain domain
+                data directly
         """
         # Extract correlation_id if present (will be moved to top level)
         correlation_id = event_data.get("correlation_id")
@@ -733,7 +737,8 @@ class WorkerProcess(WorkerInterface):
                 )
             except TimeoutError:
                 error_msg = (
-                    f"Timeout sending event {event_type} with correlation_id {correlation_id}. "
+                    f"Timeout sending event {event_type} with correlation_id "
+                    f"{correlation_id}. "
                     f"Gateway may be blocked or not consuming messages fast enough. "
                     f"Socket buffer likely full."
                 )

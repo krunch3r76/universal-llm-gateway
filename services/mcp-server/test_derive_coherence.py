@@ -38,7 +38,7 @@ def test_derive_all_canonical_tool_names_nonempty() -> None:
 def test_derive_all_canonical_tool_names_includes_known() -> None:
     """Known flat and dispatcher shapes are present."""
     names = derive_all_canonical_tool_names(_CANONICAL_YAML)
-    expected = {"cortex", "agent_bus", "fs", "dispatch", "git_land", "grokbuild", "rag"}
+    expected = {"cortex", "agent_bus", "fs", "dispatch", "git_land", "rag"}
     missing = expected - names
     assert not missing, f"Expected names absent from canonical: {sorted(missing)}"
 
@@ -52,14 +52,22 @@ def test_derive_all_canonical_tool_names_fixture() -> None:
                 "canonical_name": "alpha_read",
                 "domain": "alpha",
                 "flat_call_shape": {"tool": "alpha_read"},
-                "dispatcher_call_shape": {"tool": "alpha", "dispatch_key": "op", "dispatch_value": "read"},
+                "dispatcher_call_shape": {
+                    "tool": "alpha",
+                    "dispatch_key": "op",
+                    "dispatch_value": "read",
+                },
                 "seat_visibility": ["mcp_claude"],
             },
             {
                 "canonical_name": "beta_write",
                 "domain": "beta",
                 "flat_call_shape": {"tool": "beta_write"},
-                "dispatcher_call_shape": {"tool": "beta", "dispatch_key": "op", "dispatch_value": "write"},
+                "dispatcher_call_shape": {
+                    "tool": "beta",
+                    "dispatch_key": "op",
+                    "dispatch_value": "write",
+                },
                 "seat_visibility": ["mcp_grok"],
             },
         ],
@@ -83,7 +91,11 @@ def test_coherence_detects_unregistered_tool() -> None:
                 "canonical_name": "cortex_search",
                 "domain": "cortex",
                 "flat_call_shape": {"tool": "cortex_search"},
-                "dispatcher_call_shape": {"tool": "cortex", "dispatch_key": "op", "dispatch_value": "search"},
+                "dispatcher_call_shape": {
+                    "tool": "cortex",
+                    "dispatch_key": "op",
+                    "dispatch_value": "search",
+                },
                 "seat_visibility": ["mcp_claude"],
             },
         ],
@@ -124,7 +136,11 @@ def test_coherence_clean_when_all_canonical() -> None:
                 "canonical_name": "cortex_search",
                 "domain": "cortex",
                 "flat_call_shape": {"tool": "cortex_search"},
-                "dispatcher_call_shape": {"tool": "cortex", "dispatch_key": "op", "dispatch_value": "search"},
+                "dispatcher_call_shape": {
+                    "tool": "cortex",
+                    "dispatch_key": "op",
+                    "dispatch_value": "search",
+                },
                 "seat_visibility": ["mcp_claude"],
             },
         ],
@@ -215,7 +231,10 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.sqlite", "register_sqlite_tools"),
         ("tools.events", "register_event_tools"),
         ("tools.extract_document", "register_extract_document_tools"),
-        ("tools.promote_document_to_evidence", "register_promote_document_to_evidence_tools"),
+        (
+            "tools.promote_document_to_evidence",
+            "register_promote_document_to_evidence_tools",
+        ),
         ("tools.extract_directory", "register_extract_directory_tools"),
         ("tools.pipeline", "register_pipeline_tools"),
         ("tools.pipeline_consult", "register_pipeline_consult_tools"),

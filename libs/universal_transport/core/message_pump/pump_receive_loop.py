@@ -186,10 +186,14 @@ class PumpReceiveLoop:
                 else:
                     logger.warning(
                         f"Receive timeout after {self.receive_timeout}s while active "
-                        f"(timeout #{self._receive_timeout_count}, messages received: {self._messages_received_count}, "
-                        f"pending_requests: {len(self.pending_requests)}, correlation_queues: {self.correlation_registry.active_count}). "  # noqa: E501
-                        f"This may indicate incomplete data on the socket or a slow/stuck connection. "
-                        f"Continuing to wait for next message..."  # noqa: E501
+                        f"(timeout #{self._receive_timeout_count}, "
+                        f"messages received: {self._messages_received_count}, "
+                        f"pending_requests: {len(self.pending_requests)}, "
+                        f"correlation_queues: "
+                        f"{self.correlation_registry.active_count}). "
+                        "This may indicate incomplete data on the socket or a "
+                        "slow/stuck connection. "
+                        "Continuing to wait for next message..."
                     )
                 continue
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Script to update all log_process_event calls in the process manager to use native universal_logging.
+Script to update all log_process_event calls in the process manager to use
+native universal_logging.
 """
 
 import re
@@ -29,7 +30,7 @@ def update_logging_calls():
         if remaining_args:
             # Extract level if present
             level_match = re.search(r'level\s*=\s*["\']([^"\']+)["\']', remaining_args)
-            level = level_match.group(1) if level_match else "INFO"
+            level_match.group(1) if level_match else "INFO"
 
             # Extract other kwargs
             kwargs = []
@@ -40,7 +41,6 @@ def update_logging_calls():
 
             kwargs_str = ", " + ", ".join(kwargs) if kwargs else ""
         else:
-            level = "INFO"
             kwargs_str = ""
 
         # Determine success based on event name
@@ -50,7 +50,13 @@ def update_logging_calls():
         )
 
         # Create the replacement
-        replacement = f'self._structured_logger.log_operation(\n                    "process",\n                    f"{process_id}:{event}",\n                    {success}{kwargs_str}\n                )'
+        replacement = (
+            "self._structured_logger.log_operation(\n"
+            '                    "process",\n'
+            f'                    f"{process_id}:{event}",\n'
+            f"                    {success}{kwargs_str}\n"
+            "                )"
+        )
 
         return replacement
 

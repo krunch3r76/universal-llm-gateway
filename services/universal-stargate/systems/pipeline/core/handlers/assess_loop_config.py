@@ -166,7 +166,7 @@ class AssessLoopConfig:
                     label = f"step {i}" if len(steps) > 1 else "step"
                     errors.append(
                         f"Step '{step_id}' action '{action_name}' {label} "
-                        "missing prompt_ref"
+                        "missing prompt_re"
                     )
             if isinstance(action_cfg, dict):
                 cap = action_cfg.get("max_consecutive")
@@ -180,7 +180,8 @@ class AssessLoopConfig:
             and self.assess_handler not in PROGRAMMATIC_ASSESS_HANDLERS
         ):
             errors.append(
-                f"Step '{step_id}' assess_handler '{self.assess_handler}' is not registered "
+                f"Step '{step_id}' assess_handler"
+                f"'{self.assess_handler}' is not registered f"
                 "(ensure the handler module is imported before pipeline load)"
             )
         if self.initial_action is not None and self.initial_action not in self.actions:
@@ -239,7 +240,8 @@ def sanitize_repeated_items_decision(
     Leaves all other decision shapes unchanged.
 
     Invariants:
-    - ∀ pair: kept.strip() == deleted.strip() ⟹ stripped (self-referential hallucination)
+    - ∀ pair: kept.strip() == deleted.strip() ⟹ stripped (self-referential
+        hallucination)
     - ∀ pair: ∃ [Fact N] ∈ deleted ∧ [Fact N] ∉ kept ⟹ stripped (unique knowledge)
     - stripped_all ⟹ action = terminal_action, target = "" (short-circuit reviser)
     - some_stripped ⟹ target rebuilt from valid pairs only

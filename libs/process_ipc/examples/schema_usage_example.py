@@ -8,6 +8,7 @@ incorrectly assumed the response structure.
 """
 
 from process_ipc import PingResponse, extract_domain_data
+from process_ipc.core.messages import create_message
 
 
 def demonstrate_schema_usage():
@@ -65,7 +66,8 @@ def demonstrate_schema_usage():
         direct_payload = manager_receives["payload"]
         print(f"   Direct payload access: {direct_payload}")
         print(
-            "   ⚠️  Works but not recommended - use extract_domain_data() for consistency"
+            "   ⚠️  Works but not recommended - use extract_domain_data() "
+            "for consistency"
         )
     except KeyError as e:
         print(f"   ❌ KeyError: {e}")

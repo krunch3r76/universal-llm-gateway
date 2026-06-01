@@ -23,7 +23,6 @@ try:
     from ..schemas.yaml_config import (
         GGUFModelConfig,
         HFModelConfig,
-        ModelLoadersConfig,
         ResourceManagement,
     )
     from ..utils.examples import ExampleGenerator
@@ -112,7 +111,7 @@ def deep_merge_dict(base: dict[str, Any], update: dict[str, Any]) -> dict[str, A
         elif _is_type_transition_allowed(result[key], value):
             # Allow specific type transitions (None -> any, int <-> str)
             result[key] = value
-        elif type(result[key]) == type(value):
+        elif type(result[key]) is type(value):
             # Same types - update the value
             result[key] = value
         else:

@@ -1,7 +1,8 @@
 """
 Tracks StreamingResponse lifecycle to detect unconsumed responses.
 
-This helps diagnose cases where streaming responses are created but never consumed by clients.
+This helps diagnose cases where streaming responses are created but never consumed by
+    clients.
 """
 
 import time

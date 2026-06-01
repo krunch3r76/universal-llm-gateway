@@ -74,7 +74,8 @@ class GatewayState:
         changes = []
         if self.connectivity != previous.connectivity:
             changes.append(
-                f"connectivity: {previous.connectivity.value} → {self.connectivity.value}"
+                f"connectivity: {previous.connectivity.value} →"
+                f"{self.connectivity.value}"
             )
 
         if self.health != previous.health:
@@ -87,4 +88,8 @@ class GatewayState:
 
     def __str__(self) -> str:
         """String representation of gateway state."""
-        return f"GatewayState(url={self.url}, connectivity={self.connectivity.value}, health={self.health.value})"
+        return (
+            f"GatewayState(url={self.url}, "
+            f"connectivity={self.connectivity.value}, "
+            f"health={self.health.value})"
+        )

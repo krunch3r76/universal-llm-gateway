@@ -1,47 +1,34 @@
 #!/usr/bin/env bash
-# Thin client: POST worktree create via Stargate → grokbuild-worker (no local guards).
+# Ad-hoc grok-direct worktree bootstrap via local git (grokbuild-worker retired).
 set -euo pipefail
 
 WORKTREE_ROOT="${WORKTREE_ROOT:-/mnt/torus/projects/ulg-grok-worktrees}"
-STARGATE_URL="${STARGATE_URL:-http://localhost:9999}"
 
 usage() {
   echo "Usage: scripts/grok-worktree <name> [<branch>]" >&2
-  echo "WORKTREE_ROOT=${WORKTREE_ROOT} (informational; worker enforces path)" >&2
+  echo "WORKTREE_ROOT=${WORKTREE_ROOT}" >&2
   exit 1
 }
 
 [[ $# -ge 1 && $# -le 2 ]] || usage
-: "${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN is required}"
 
 name="$1"
 source_repo="$(pwd)"
 branch="${2:-$(git -C "$source_repo" rev-parse --abbrev-ref HEAD)}"
+worktree_path="${WORKTREE_ROOT}/${name}"
 
-payload="$(python3 -c 'import json,sys; print(json.dumps({"name":sys.argv[1],"branch":sys.argv[2],"source_repo":sys.argv[3]}))' \
-  "$name" "$branch" "$source_repo")"
-
-resp="$(mktemp)"
-trap 'rm -f "$resp"' EXIT
-http_code="$(
-  curl -sS -o "$resp" -w '%{http_code}' \
-    -X POST \
-    -H "Authorization: Bearer ${MCP_AUTH_TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d "$payload" \
-    "${STARGATE_URL}/api/v1/grokbuild/worktrees"
-)"
-
-if [[ ! "$http_code" =~ ^2 ]]; then
-  cat "$resp" >&2
+if [[ ! "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+  echo "invalid worktree name: ${name}" >&2
   exit 1
 fi
 
-worktree_path="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("metadata",{}).get("worktree_path",""))' "$resp")"
-if [[ -z "$worktree_path" ]]; then
-  cat "$resp" >&2
+if [[ -e "$worktree_path" ]]; then
+  echo "worktree path already exists: ${worktree_path}" >&2
   exit 1
 fi
+
+mkdir -p "$WORKTREE_ROOT"
+git -C "$source_repo" worktree add "$worktree_path" "$branch"
 
 echo "$worktree_path"
 cd "$worktree_path"

@@ -34,7 +34,8 @@ def format_bytes(bytes_val):
 def on_resource_update(usage: ProcessResourceUsage):
     """Callback for resource updates."""
     print(
-        f"\n[{usage.timestamp.strftime('%H:%M:%S')}] Resource Update: {usage.process_id}"
+        f"\n[{usage.timestamp.strftime('%H:%M:%S')}] Resource Update: "
+        f"{usage.process_id}"
     )
     print(f"  RAM: {format_bytes(usage.ram_used)} ({usage.ram_percent:.1f}%)")
 
@@ -116,7 +117,8 @@ async def main():
         print(f"   CPU: {usage.cpu_percent:.1f}%")
         print(f"   Threads: {usage.num_threads}")
         print(
-            f"   System RAM: {format_bytes(usage.system_ram_total)} total, {format_bytes(usage.system_ram_available)} available"
+            f"   System RAM: {format_bytes(usage.system_ram_total)} total, "
+            f"{format_bytes(usage.system_ram_available)} available"
         )
     else:
         print("   No resource data available yet")
@@ -135,7 +137,8 @@ async def main():
                 print(f"\n   Recent history ({len(history)} snapshots):")
                 for snapshot in history[-3:]:
                     print(
-                        f"     {snapshot.timestamp.strftime('%H:%M:%S')}: {format_bytes(snapshot.ram_used)} RAM"
+                        f"     {snapshot.timestamp.strftime('%H:%M:%S')}: "
+                        f"{format_bytes(snapshot.ram_used)} RAM"
                     )
 
     except KeyboardInterrupt:
@@ -152,7 +155,8 @@ async def main():
     all_usage = coordinator.get_all_resource_usage()
     for pid, usage in all_usage.items():
         print(
-            f"   {pid}: {format_bytes(usage.ram_used)} RAM, {usage.cpu_percent:.1f}% CPU"
+            f"   {pid}: {format_bytes(usage.ram_used)} RAM, {usage.cpu_percent:.1f}% "
+            f"CPU"
         )
 
     # Cleanup

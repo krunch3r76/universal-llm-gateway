@@ -9,7 +9,7 @@ import asyncio
 import json
 import time
 from collections.abc import Awaitable, Callable
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import websockets
@@ -21,7 +21,7 @@ from ..messages import MessageType
 logger = get_logger(__name__)
 
 
-class ConnectionState(str, Enum):
+class ConnectionState(StrEnum):
     """WebSocket connection state."""
 
     DISCONNECTED = "disconnected"
@@ -182,11 +182,14 @@ class ConnectionManager:
         if self._socket_path is None and ":999" not in self._ws_url:
             # URL has no port but socket_path is None - this is a configuration error
             logger.error(
-                f"CRITICAL: socket_path is None but ws_url={self._ws_url} suggests Unix socket config. "
-                f"This would cause TCP fallback. Failing fast to prevent silent misconfiguration."
+                f"CRITICAL: socket_path is None but ws_url={self._ws_url}"
+                f"suggests Unix socket config. f"
+                f"This would cause TCP fallback. Failing fast to"
+                f"prevent silent misconfiguration."
             )
             raise ValueError(
-                f"Configuration error: socket_path is None but gateway appears to be configured "
+                f"Configuration error: socket_path is None but gateway"
+                f"appears to be configured f"
                 f"for Unix socket (ws_url={self._ws_url}). Cannot fall back to TCP."
             )
 
@@ -264,7 +267,8 @@ class ConnectionManager:
             if on_connected:
                 try:
                     logger.debug(
-                        f"{self._gateway_name}: Calling on_connected callback and waiting for completion..."
+                        f"{self._gateway_name}: Calling on_connected callback"
+                        f"and waiting for completion..."
                     )
                     await on_connected()
                     logger.debug(
@@ -374,13 +378,15 @@ class ConnectionManager:
         raise ConnectionClosed, triggering reconnection.
         """
         logger.info(
-            f"🔍 {self._gateway_name}: start_message_loop() called (ws={self._ws}, state={self._state})"
+            f"🔍 {self._gateway_name}: start_message_loop() called"
+            f"(ws={self._ws}, state={self._state})"
         )
 
         # Cancel existing message loop if running
         if self._message_task and not self._message_task.done():
             logger.warning(
-                f"🔍 {self._gateway_name}: Cancelling existing message loop before starting new one"
+                f"🔍 {self._gateway_name}: Cancelling existing message"
+                f"loop before starting new one"
             )
             self._message_task.cancel()
 
@@ -390,7 +396,8 @@ class ConnectionManager:
                 self._message_loop(on_message, on_disconnected)
             )
             logger.info(
-                f"🔍 {self._gateway_name}: Message loop task created successfully: {self._message_task}"
+                f"🔍 {self._gateway_name}: Message loop task created"
+                f"successfully: {self._message_task}"
             )
         except Exception as e:
             logger.error(f"🔍 Failed to start message loop: {e}", exc_info=True)
@@ -419,13 +426,15 @@ class ConnectionManager:
         """
         ws_before = self._ws
         logger.info(
-            f"🔍 {self._gateway_name}: ===== MESSAGE LOOP STARTING ===== (ws={ws_before}, state={self._state})"
+            f"🔍 {self._gateway_name}: ===== MESSAGE LOOP STARTING ====="
+            f"(ws={ws_before}, state={self._state})"
         )
 
         # Check if we're already shutting down
         if self._shutdown_event.is_set():
             logger.error(
-                f"🔍 {self._gateway_name}: Message loop started but shutdown already requested!"
+                f"🔍 {self._gateway_name}: Message loop started but"
+                f"shutdown already requested!"
             )
             return
 
@@ -433,17 +442,21 @@ class ConnectionManager:
             ws_after = self._ws
             if ws_after is None:
                 logger.error(
-                    f"🔍 {self._gateway_name}: Message loop started but websocket is None! (was {ws_before}, now {ws_after})"
+                    f"🔍 {self._gateway_name}: Message loop started but websocket is"
+                    f"None! (was {ws_before}, now {ws_after})"
                 )
                 return
             if ws_before != ws_after:
                 logger.error(
-                    f"🔍 {self._gateway_name}: Websocket changed between log and check! {ws_before} -> {ws_after}"
+                    f"🔍 {self._gateway_name}: Websocket changed between log and"
+                    f"check! {ws_before} -> {ws_after}"
                 )
 
             # Check websocket state
             logger.info(
-                f"🔍 {self._gateway_name}: WebSocket state before loop: close_code={self._ws.close_code}, open={self._ws.close_code is None}"
+                f"🔍 {self._gateway_name}: WebSocket state before loop: "
+                f"close_code={self._ws.close_code}, "
+                f"open={self._ws.close_code is None}"
             )
             logger.info(
                 f"🔍 {self._gateway_name}: Entering message receive loop now..."
@@ -455,7 +468,8 @@ class ConnectionManager:
             try:
                 async for raw_message in self._ws:
                     logger.info(
-                        f"🔍 {self._gateway_name}: INSIDE async for loop - iteration {message_count + 1}"
+                        f"🔍 {self._gateway_name}: INSIDE async for loop -"
+                        f"iteration {message_count + 1}"
                     )
                     message_count += 1
                     logger.debug(
@@ -492,12 +506,14 @@ class ConnectionManager:
                             )
 
                 logger.info(
-                    f"🔍 {self._gateway_name}: async for loop completed normally after {message_count} messages"
+                    f"🔍 {self._gateway_name}: async for loop completed normally"
+                    f"after {message_count} messages"
                 )
 
             except StopAsyncIteration:
                 logger.warning(
-                    f"🔍 {self._gateway_name}: StopAsyncIteration raised in async for loop!"
+                    f"🔍 {self._gateway_name}: StopAsyncIteration"
+                    f"raised in async for loop!"
                 )
                 raise
             except asyncio.CancelledError:
@@ -507,7 +523,8 @@ class ConnectionManager:
                 raise
             except Exception as e:
                 logger.error(
-                    f"🔍 {self._gateway_name}: Exception in async for loop: {type(e).__name__}: {e}",
+                    f"🔍 {self._gateway_name}: Exception in async for loop:"
+                    f"{type(e).__name__}: {e}",
                     exc_info=True,
                 )
                 raise
@@ -517,7 +534,8 @@ class ConnectionManager:
             # This completes the WebSocket close handshake properly
             logger.warning(
                 f"{self._gateway_name} ConnectionClosed exception: "
-                f"code={e.code}, reason={e.reason or 'none'}, rcvd={e.rcvd}, sent={e.sent}"
+                f"code={e.code}, reason={e.reason or 'none'},"
+                f"rcvd={e.rcvd}, sent={e.sent}"
             )
             if self._ws and not self._shutdown_event.is_set():
                 try:
@@ -546,7 +564,9 @@ class ConnectionManager:
 
         finally:
             logger.info(
-                f"🔍 {self._gateway_name}: ===== MESSAGE LOOP FINALLY BLOCK ===== (shutdown={self._shutdown_event.is_set()}, ws={self._ws}, close_code={self._ws.close_code if self._ws else 'N/A'})"
+                f"🔍 {self._gateway_name}: ===== MESSAGE LOOP FINALLY BLOCK ====="
+                f"(shutdown={self._shutdown_event.is_set()}, ws={self._ws},"
+                f"close_code={self._ws.close_code if self._ws else 'N/A'})"
             )
             # Defensive: close if still open (e.g., shutdown or missed exception path)
             if self._ws:
@@ -554,12 +574,14 @@ class ConnectionManager:
                     # Only close if not already closed
                     if self._ws.close_code is None:
                         logger.info(
-                            f"🔍 {self._gateway_name}: Closing websocket in finally block (was open)"
+                            f"🔍 {self._gateway_name}: Closing websocket in"
+                            f"finally block (was open)"
                         )
                         await self._ws.close()
                     else:
                         logger.info(
-                            f"🔍 {self._gateway_name}: WebSocket already closed in finally block (code={self._ws.close_code})"
+                            f"🔍 {self._gateway_name}: WebSocket already closed "
+                            f"in finally block (code={self._ws.close_code})"
                         )
                 except Exception as e:
                     logger.warning(
@@ -571,7 +593,8 @@ class ConnectionManager:
             if not self._shutdown_event.is_set():
                 # Unexpected disconnect - trigger reconnection
                 logger.warning(
-                    f"🔍 {self._gateway_name}: Unexpected disconnect detected in finally block - will trigger reconnection"
+                    f"🔍 {self._gateway_name}: Unexpected disconnect detected in"
+                    f"finally block - will trigger reconnection"
                 )
                 self._state = ConnectionState.DISCONNECTED
                 self._ready.clear()

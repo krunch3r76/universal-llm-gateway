@@ -14,11 +14,11 @@ Version History:
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class ConfigType(str, Enum):
+class ConfigType(StrEnum):
     """Types of versioned configuration files."""
 
     CATALOG = "catalog"

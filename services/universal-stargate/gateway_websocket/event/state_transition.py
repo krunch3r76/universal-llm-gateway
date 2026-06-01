@@ -1,17 +1,17 @@
 """Gateway state transition computation."""
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ConnectivityValue(str, Enum):
+class ConnectivityValue(StrEnum):
     """Connectivity state values for event payloads."""
 
     REACHABLE = "reachable"
     UNREACHABLE = "unreachable"
 
 
-class HealthValue(str, Enum):
+class HealthValue(StrEnum):
     """Health state values for event payloads."""
 
     HEALTHY = "healthy"

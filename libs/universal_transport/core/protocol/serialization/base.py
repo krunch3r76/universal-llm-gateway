@@ -82,4 +82,7 @@ class Serializer(ABC):
         return f"{self.name} ({self.content_type})"
 
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}(name='{self.name}', content_type='{self.content_type}')"
+        return (
+            f"{self.__class__.__name__}(name='{self.name}', "
+            f"content_type='{self.content_type}')"
+        )

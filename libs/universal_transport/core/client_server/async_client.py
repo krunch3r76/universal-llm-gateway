@@ -92,7 +92,8 @@ class AsyncTransportClient:
         # Validate protocol is length-prefixed (no readline issues)
         if not isinstance(self.protocol, LengthPrefixedProtocol):
             logger.warning(
-                f"Protocol {type(self.protocol)} may have readline buffer limit issues. "
+                f"Protocol {type(self.protocol)} may have readline buffer limit "
+                f"issues. "
                 f"Consider using LengthPrefixedProtocol."
             )
 
@@ -218,7 +219,8 @@ class AsyncTransportClient:
 
             if len(payload_bytes) != payload_length:
                 raise AsyncClientReceiveError(
-                    f"Expected {payload_length} payload bytes, got {len(payload_bytes)} bytes"
+                    f"Expected {payload_length} payload bytes, got "
+                    f"{len(payload_bytes)} bytes"
                 )
 
             # Deserialize message

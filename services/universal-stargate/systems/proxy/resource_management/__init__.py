@@ -1,8 +1,10 @@
 """
 Event-driven resource management configuration for universal-stargate proxy.
 
-Provides typed configuration with async subscription patterns for atomic VRAM reservation system.
-This module replaces file-based polling with event-driven updates for zero-downtime configuration changes.
+Provides typed configuration with async subscription patterns for atomic VRAM
+    reservation system.
+This module replaces file-based polling with event-driven updates for zero-downtime
+    configuration changes.
 """
 
 from .config import (

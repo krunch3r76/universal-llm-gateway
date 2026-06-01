@@ -137,7 +137,8 @@ class AsyncClientSession:
 
             if len(payload_bytes) != payload_length:
                 raise ValueError(
-                    f"Expected {payload_length} payload bytes, got {len(payload_bytes)} bytes"
+                    f"Expected {payload_length} payload bytes, got "
+                    f"{len(payload_bytes)} bytes"
                 )
 
             # Deserialize message

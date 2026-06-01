@@ -53,7 +53,8 @@ def register_gateways_with_tracker(
             host = "unix"
             port = 0
             logger.info(
-                f"Registered gateway: {gw_config.name} via Unix socket: {gw_config.socket_path}"
+                f"Registered gateway: {gw_config.name} via Unix"
+                f"socket: {gw_config.socket_path}"
             )
         else:
             # TCP transport - parse host and port from URL

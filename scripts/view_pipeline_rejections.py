@@ -28,7 +28,7 @@ def extract_step_rejections(events: list[dict]) -> dict[str, Any]:
             if payload.get("execution_id") != current_execution:
                 continue
 
-            step_name = payload.get("step_name")
+            payload.get("step_name")
             # Pipeline stores full output; we need to parse it
             # This would require loading the actual step outputs
 

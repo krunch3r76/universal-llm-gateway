@@ -1,11 +1,11 @@
 """Tests for /mcp Claude dispatcher route (Phase D).
 
 Four concerns:
-  1. tools/list returns 16 domain dispatcher tools matching derive_claude_manifest()
+  1. tools/list returns 15 domain dispatcher tools matching derive_claude_manifest()
   2. Primary tool count ≤ 24 (D3 P10 probe)
-  3. Previously-absent domains (manage, grokbuild, pipeline, rag, observability) are
+  3. Previously-absent domains (manage, pipeline, rag, observability) are
      accessible via dispatch (callpath wired, not just listed)
-  4. /mcp/grok regression — wire_grok_route still builds; 77 tools present
+  4. /mcp/grok regression — wire_grok_route still builds; tools present
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ sys.path.insert(0, str(MCP_SERVER_DIR))
 os.environ.setdefault("MCP_AUTH_TOKEN", "test-noop")
 os.environ.setdefault("MCP_OAUTH_DISABLED", "1")
 
-_ABSENT_DOMAINS = {"manage", "grokbuild", "pipeline", "rag", "observability"}
+_ABSENT_DOMAINS = {"manage", "pipeline", "rag", "observability"}
 
 
 @pytest.fixture(scope="module")
@@ -68,10 +68,10 @@ def test_claude_primary_tools_match_manifest(main_server_state: dict) -> None:
 
 
 def test_claude_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: Claude /mcp exposes exactly 16 dispatcher domains; cap ≤ 24 (D3/P10)."""
+    """D-T2: Claude /mcp exposes exactly 15 dispatcher domains; cap ≤ 24 (D3/P10)."""
     manifest = main_server_state["manifest"]
-    assert len(manifest) == 16, (
-        f"Expected 16 Claude dispatcher domains, got {len(manifest)}: "
+    assert len(manifest) == 15, (
+        f"Expected 15 Claude dispatcher domains, got {len(manifest)}: "
         f"{sorted(e['domain'] for e in manifest)}"
     )
     assert len(manifest) <= 24, f"D3 cap violated: {len(manifest)} > 24"

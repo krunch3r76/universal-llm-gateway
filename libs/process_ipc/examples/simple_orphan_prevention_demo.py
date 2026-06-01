@@ -40,14 +40,14 @@ def signal_handler(signum, frame):
 def main():
     # Apply enhanced orphan prevention
     setup_enhanced_orphan_prevention()
-    
+
     # Set up signal handlers
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     worker_id = sys.argv[1] if len(sys.argv) > 1 else "demo-worker"
     print(f"Worker {worker_id} starting (PID: {os.getpid()}, PPID: {os.getppid()})")
-    
+
     # Run for a while, printing status
     counter = 0
     try:
@@ -252,7 +252,7 @@ def check_orphan_prevention_features():
         try:
             import ctypes
 
-            libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            ctypes.CDLL("libc.so.6", use_errno=True)
             print("✓ PR_SET_PDEATHSIG (prctl) available")
         except Exception as e:
             print(f"✗ PR_SET_PDEATHSIG not available: {e}")
@@ -280,12 +280,11 @@ def check_orphan_prevention_features():
     else:
         print("✗ Cgroups not available")
 
-    # Check psutil availability
-    try:
-        import psutil
+    import importlib.util
 
+    if importlib.util.find_spec("psutil") is not None:
         print("✓ psutil available for advanced process management")
-    except ImportError:
+    else:
         print("✗ psutil not available (install with: pip install psutil)")
 
 

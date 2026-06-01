@@ -80,7 +80,6 @@ class ServiceState:
             self.check_cortex_api(),
             self.check_agent_bus(),
             self.check_email_bridge(),
-            self.check_grokbuild_worker(),
             self.check_git_integration_worker(),
         ]
 
@@ -491,96 +490,6 @@ class ServiceState:
                 pid, "src.main:app", "email-bridge.sock"
             ),
         )
-
-    GROKBUILD_WORKER_PID_FILE: Path = Path.home() / ".gateway" / "grokbuild-worker.pid"
-    GROKBUILD_WORKER_HOST: str = os.environ.get("GROKBUILD_WORKER_HOST", "127.0.0.1")
-    GROKBUILD_WORKER_PORT: int = int(os.environ.get("GROKBUILD_WORKER_PORT", "8090"))
-
-    def check_grokbuild_worker(self) -> ServiceInfo:
-        """Check grokbuild-worker status via PID file + TCP /health probe."""
-        pid, pid_note = self._resolve_pid_file(self.GROKBUILD_WORKER_PID_FILE)
-        host = self.GROKBUILD_WORKER_HOST
-        port = self.GROKBUILD_WORKER_PORT
-        port_open = self._port_open(port, host)
-        listener_pid = self._find_listener_pid(port) if port_open else None
-        if listener_pid is not None and listener_pid != pid:
-            self._write_pid_file(self.GROKBUILD_WORKER_PID_FILE, listener_pid)
-            pid = listener_pid
-            pid_note = self._merge_notes(
-                pid_note, "PID file refreshed from live listener"
-            )
-        healthy, grok_auth_status = (
-            self._grokbuild_worker_probe_http(host, port) if port_open else (False, "")
-        )
-        _auth_note = (
-            f"grok_auth={grok_auth_status}"
-            if grok_auth_status and grok_auth_status != "ok"
-            else ""
-        )
-        health_url = f"http://{host}:{port}/api/v1/grokbuild/health"
-        if pid is not None:
-            uptime = self._proc_uptime_str(pid)
-            uptime_str = f" ({uptime})" if uptime else ""
-            return ServiceInfo(
-                name="grokbuild-worker",
-                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
-                port=port,
-                pid=pid,
-                health_url=health_url,
-                detail=self._with_note(
-                    self._with_note(
-                        f"PID {pid}{uptime_str}"
-                        + ("" if healthy else ", health probe failed"),
-                        _auth_note or None,
-                    ),
-                    pid_note,
-                ),
-            )
-        if healthy:
-            return ServiceInfo(
-                name="grokbuild-worker",
-                status=ServiceStatus.RUNNING,
-                port=port,
-                health_url=health_url,
-                detail=self._with_note(
-                    self._with_note("Port open (PID file missing)", _auth_note or None),
-                    pid_note,
-                ),
-            )
-        return ServiceInfo(
-            name="grokbuild-worker",
-            status=ServiceStatus.STOPPED,
-            port=port,
-            detail=pid_note or "",
-        )
-
-    def _grokbuild_worker_probe_http(self, host: str, port: int) -> tuple[bool, str]:
-        """Probe ``/api/v1/grokbuild/health``.  Returns (healthy, auth_status).
-
-        ``auth_status`` is one of ``"ok"``, ``"expired"``, ``"missing"``,
-        or ``""`` when the body is unparseable / field absent.
-        """
-        import http.client
-        import json as _json
-
-        try:
-            conn = http.client.HTTPConnection(
-                host, port, timeout=_SERVICE_HEALTH_TIMEOUT
-            )
-            try:
-                conn.request("GET", "/api/v1/grokbuild/health")
-                resp = conn.getresponse()
-                healthy = resp.status == 200
-                try:
-                    body = _json.loads(resp.read().decode("utf-8", errors="replace"))
-                    auth_status = body.get("checks", {}).get("grok_auth", "")
-                except Exception:
-                    auth_status = ""
-                return healthy, auth_status
-            finally:
-                conn.close()
-        except Exception:
-            return False, ""
 
     GIT_INTEGRATION_WORKER_PID_FILE: Path = (
         Path.home() / ".gateway" / "git-integration-worker.pid"

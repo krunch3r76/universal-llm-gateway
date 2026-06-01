@@ -2,11 +2,11 @@
 
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class MessageType(str, Enum):
+class MessageType(StrEnum):
     """WebSocket message types (dot-notation per EVENTS.md)."""
 
     # Gateway → Stargate

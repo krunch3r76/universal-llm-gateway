@@ -73,9 +73,9 @@ class StargateGUI:
             if self.transport == "unix":
                 logger.info(f"  Unix socket: {self.unix_socket}")
             elif self.transport == "tcp":
-                logger.info(
-                    f"  TCP: {self.transport_config.get('host')}:{self.transport_config.get('port')}"
-                )
+                host = self.transport_config.get("host")
+                port = self.transport_config.get("port")
+                logger.info(f"  TCP: {host}:{port}")
             logger.info("Universal Stargate GUI startup complete")
 
             # Create view (main window)
@@ -105,7 +105,8 @@ class StargateGUI:
                 receiver_config = {
                     "transport": self.transport,
                     "unix_socket_path": self.unix_socket,
-                    "use_universal_transport": True,  # Use new universal_transport system
+                    # Use new universal_transport system
+                    "use_universal_transport": True,
                 }
 
             self.network_receiver = NetworkReceiver(

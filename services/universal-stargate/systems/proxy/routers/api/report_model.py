@@ -30,8 +30,10 @@ async def report_model(
     proxy: StargateProxy = Depends(get_proxy),
     _current_user: dict[str, object] = Depends(get_auth_dependency),
 ) -> JSONResponse:
-    """Report a bad model (e.g. path hallucination) for reputation. Agents use this to lower
-    a model's reputation so selection prefers others. Feeds the same store as POST /v1/models/observe.
+    """Report a bad model (e.g. path hallucination) for reputation. Agents use this to
+        lower
+    a model's reputation so selection prefers others. Feeds the same store as POST
+        /v1/models/observe.
     """
     store = proxy.model_health_store
     if store is None:

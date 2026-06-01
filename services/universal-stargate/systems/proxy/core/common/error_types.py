@@ -5,10 +5,10 @@ Provides ErrorFormat enum and helper methods for determining error types
 and status codes from exceptions.
 """
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ErrorFormat(str, Enum):
+class ErrorFormat(StrEnum):
     """Supported error response formats"""
 
     OPENAI = "openai"

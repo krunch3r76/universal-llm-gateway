@@ -192,7 +192,8 @@ async def initialize_resource_manager(proxy: StargateProxy) -> None:
             # Register default resource managers if gateways.yaml doesn't exist
             config_path = Path("config/gateways.yaml")
             if not config_path.exists():
-                await proxy.resource_aware_model_manager.register_default_resource_managers_after_connection()
+                mgr = proxy.resource_aware_model_manager
+                await mgr.register_default_resource_managers_after_connection()
 
         # Sync currently connected gateways' loaded models to coordinator
         # (handles models loaded during initial connection before callback

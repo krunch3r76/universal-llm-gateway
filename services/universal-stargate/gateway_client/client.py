@@ -96,10 +96,15 @@ class GatewayClient:
             ConnectionError: If WebSocket connection fails.
         """
         # Diagnostic logging before connection attempt
+        ws_socket = (
+            self._ws_client._socket_path
+            if hasattr(self._ws_client, "_socket_path")
+            else "N/A"
+        )
         logger.info(
             f"GatewayClient.connect(): base_url={self.base_url}, "
             f"socket_path={self.config.socket_path}, "
-            f"ws_client.socket_path={self._ws_client._socket_path if hasattr(self._ws_client, '_socket_path') else 'N/A'}"
+            f"ws_client.socket_path={ws_socket}"
         )
 
         # CRITICAL: Fail fast if socket_path mismatch
@@ -117,10 +122,15 @@ class GatewayClient:
 
         if not ws_connected:
             # Enhanced error message with full diagnostic info
+            ws_socket = (
+                self._ws_client._socket_path
+                if hasattr(self._ws_client, "_socket_path")
+                else "N/A"
+            )
             error_msg = (
                 f"Failed to establish WebSocket connection to {self.base_url} "
                 f"(config.socket_path={self.config.socket_path}, "
-                f"ws_client.socket_path={self._ws_client._socket_path if hasattr(self._ws_client, '_socket_path') else 'N/A'}, "
+                f"ws_client.socket_path={ws_socket}, "
                 f"config.base_url={self.config.base_url})"
             )
             logger.error(error_msg)

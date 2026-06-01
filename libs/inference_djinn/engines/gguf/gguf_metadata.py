@@ -2,6 +2,8 @@ import hashlib
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from universal_logging import get_logger
+
 
 @dataclass
 class GGUFMetadataLite:

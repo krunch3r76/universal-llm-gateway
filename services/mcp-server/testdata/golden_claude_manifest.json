@@ -1,155 +1,152 @@
 [
-  {
-    "description": "\u2200 args \u2208 ThreadsArgs: threads(args) \u27f9\n  result \u2208 List[ThreadSummary]\n  \u2227 |result| \u2264 args.last \u2228 args.last = \u2205.\nRead-only. \u00acside-effects. See agent_skill:agent_bus.",
-    "domain": "agent_bus",
-    "ops": [
-      "fetch",
-      "get",
-      "post",
-      "reply",
-      "threads"
-    ],
-    "skill_uri": "agent_skill:agent_bus",
-    "tool_name": "agent_bus"
-  },
-  {
-    "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  result \u2208 List[Entity]\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state.\nRead-only. \u00acside-effects. See agent_skill:cortex.",
-    "domain": "cortex",
-    "ops": [
-      "assert",
-      "assertion_update",
-      "assertions",
-      "edge_create",
-      "edge_traverse",
-      "edges",
-      "entities",
-      "entities_bulk_upsert",
-      "entity_create",
-      "entity_get",
-      "entity_update",
-      "journal_read",
-      "relationship_create",
-      "relationships",
-      "search",
-      "session_close",
-      "supersede",
-      "todo_candidates"
-    ],
-    "skill_uri": "agent_skill:cortex",
-    "tool_name": "cortex"
-  },
-  {
-    "description": "\u2200 model \u2208 FrontierModels \u2227 prompt \u2208 str:\n  dispatch_frontier(model, prompt) \u27f9\n    response \u2208 str \u2227 execution_id \u2208 UUIDv4.\nAsync. Mutating (external call). See agent_skill:dispatch.",
-    "domain": "dispatch",
-    "ops": [
-      "frontier",
-      "overflow",
-      "team"
-    ],
-    "skill_uri": "agent_skill:dispatch",
-    "tool_name": "dispatch"
-  },
-  {
-    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str:\n  fs_read(sandbox, path) \u27f9 content \u2208 str \u2228 content_base64 \u2208 str.\nRead-only. \u00acside-effects. Idempotent. See agent_skill:fs.",
-    "domain": "fs",
-    "ops": [
-      "append",
-      "copy",
-      "delete",
-      "list",
-      "md_append",
-      "md_delete",
-      "md_list",
-      "md_read",
-      "md_replace",
-      "move",
-      "read",
-      "read_multi",
-      "replace",
-      "search",
-      "write",
-      "write_binary"
-    ],
-    "skill_uri": "agent_skill:fs",
-    "tool_name": "fs"
-  },
-  {
-    "description": "\u2200 args \u2208 BuildArgs:\n  grokbuild_build(args) \u27f9\n    202 \u2227 dispatch_id \u2208 UUIDv4.\n  \u2227 subsequent grokbuild_build_status(dispatch_id) \u27f9 progress.\n  \u2227 \u2203 T \u2264 args.timeout_s: grokbuild_fetch_result(dispatch_id) \u27f9 artifact \u2228 error.\nargs.source_repo \u2208 Workspaces \u2227 args.name \u2208 valid_worktree_names.\nAsync. Mutating. \u00acidempotent across distinct dispatch_ids. See agent_skill:grokbuild.",
-    "domain": "grokbuild",
-    "ops": [
-      "build",
-      "build_status",
-      "fetch_result",
-      "worktree_create",
-      "worktree_list",
-      "worktree_remove"
-    ],
-    "skill_uri": "agent_skill:grokbuild",
-    "tool_name": "grokbuild"
-  },
-  {
-    "description": "\u2200 service \u2208 ManagedServices \u222a {\u2205}:\n  manage_status(service) \u27f9\n    result \u2208 ServiceStatus.\nRead-only. \u00acside-effects. See agent_skill:manage.",
-    "domain": "manage",
-    "ops": [
-      "health",
-      "rebuild",
-      "restart",
-      "status",
-      "wait_healthy"
-    ],
-    "skill_uri": "agent_skill:manage",
-    "tool_name": "manage"
-  },
-  {
-    "description": "\u2200 limit \u2208 \u2115: observability_recent_failures(limit) \u27f9\n  result \u2208 List[Event]\n  \u2227 \u2200 e \u2208 result: e.level \u2208 {\"ERROR\",\"CRITICAL\"}.\nRead-only. Event Service query. \u00acside-effects. See agent_skill:observability.",
-    "domain": "observability",
-    "ops": [
-      "preview",
-      "query",
-      "recent_failures"
-    ],
-    "skill_uri": "agent_skill:observability",
-    "tool_name": "observability"
-  },
-  {
-    "description": "\u2200 pipeline \u2208 PipelineID \u2227 input \u2208 dict:\n  pipeline_run(pipeline, input) \u27f9\n    execution_id \u2208 str \u2227 status \u2208 {\"pending\",\"running\",\"complete\",\"error\"}.\nAsync. Mutating. See agent_skill:pipeline.",
-    "domain": "pipeline",
-    "ops": [
-      "consult",
-      "iterate",
-      "run"
-    ],
-    "skill_uri": "agent_skill:pipeline",
-    "tool_name": "pipeline"
-  },
-  {
-    "description": "\u2200 query \u2208 str \u2227 scope \u2208 RAGScope:\n  rag_search(query, scope) \u27f9\n    result \u2208 List[Chunk] \u2227 \u2200 c \u2208 result: c.score \u2265 0.\nRead-only. Semantic + keyword. \u00acside-effects. See agent_skill:rag.",
-    "domain": "rag",
-    "ops": [
-      "coverage",
-      "list_sources",
-      "search",
-      "upsert_article"
-    ],
-    "skill_uri": "agent_skill:rag",
-    "tool_name": "rag"
-  },
-  {
-    "description": "\u2200 id \u2208 ResponseStoreKey:\n  retrieve_payload(id) \u27f9 payload \u2208 Any \u2228 raises Expired.\n\u2200 id matching \"rs_[A-Za-z0-9]+\": use this before re-calling the source tool.\nRead-only (consumes stored response). \u00acside-effects on Cortex. See agent_skill:retrieve.",
-    "domain": "retrieve",
-    "ops": [
-      "payload"
-    ],
-    "skill_uri": "agent_skill:retrieve",
-    "tool_name": "retrieve"
-  },
-  {
-    "description": "\u2200 query \u2208 str: tool_search_query(query) \u27f9\n  results \u2208 List[ManifestEntry]\n  \u2227 \u2200 e \u2208 results: e \u2209 PrimaryTools.\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.",
-    "domain": "tool_search",
-    "ops": [
-      "query"
-    ],
-    "skill_uri": "agent_skill:tool_search",
-    "tool_name": "tool_search"
-  }
+    {
+        "description": "\u2200 args \u2208 ThreadsArgs: threads(args) \u27f9\n  result \u2208 List[ThreadSummary]\n  \u2227 |result| \u2264 args.last \u2228 args.last = \u2205.\nRead-only. \u00acside-effects. See agent_skill:agent_bus.",
+        "domain": "agent_bus",
+        "ops": ["fetch", "get", "post", "reply", "threads"],
+        "skill_uri": "agent_skill:agent_bus",
+        "tool_name": "agent_bus",
+    },
+    {
+        "description": "\u2200 args \u2208 EntitiesArgs: entities(args) \u27f9\n  (args.fields = \u2205 \u27f9 result \u2208 List[EntitySummary]\n   \u2227 args.fields \u2260 \u2205 \u27f9 result \u2208 List[ProjectedRow]\n   \u2227 \u2200 k \u2208 keys(result[0]): k \u2208 {id} \u222a args.fields)\n  \u2227 args.type \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.type = args.type\n  \u2227 args.workflow_state \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.workflow_state = args.workflow_state\n  \u2227 args.content_hash \u2260 \u2205 \u27f9 \u2200 e \u2208 result: e.content_hash = args.content_hash.\nProjectedRow: id always present; base columns pass through; other names\nresolve via json_extract(attributes,'$.<name>'). Read-only. \u00acside-effects.\nSee agent_skill:cortex.",
+        "domain": "cortex",
+        "ops": [
+            "assert",
+            "assertion_update",
+            "assertions",
+            "edge_create",
+            "edge_traverse",
+            "edges",
+            "entities",
+            "entities_bulk_upsert",
+            "entities_by_content_hash",
+            "entity_create",
+            "entity_get",
+            "entity_update",
+            "friction",
+            "journal_read",
+            "observe",
+            "relationship_create",
+            "relationships",
+            "rj_consolidate",
+            "rj_link",
+            "rj_list",
+            "rj_read",
+            "rj_write",
+            "search",
+            "session_close",
+            "session_handoff_upsert",
+            "supersede",
+            "todo_candidates",
+        ],
+        "skill_uri": "agent_skill:cortex",
+        "tool_name": "cortex",
+    },
+    {
+        "description": "\u2200 model \u2208 FrontierModels \u2227 prompt \u2208 str:\n  dispatch_frontier(model, prompt) \u27f9\n    response \u2208 str \u2227 execution_id \u2208 UUIDv4.\nAsync. Mutating (external call). See agent_skill:dispatch.",
+        "domain": "dispatch",
+        "ops": ["frontier", "overflow", "team"],
+        "skill_uri": "agent_skill:dispatch",
+        "tool_name": "dispatch",
+    },
+    {
+        "description": '\u2200 sandbox \u2208 {"cortex","workspaces"} \u2227 path \u2208 str:\n  fs_read(sandbox, path) \u27f9 content \u2208 str \u2228 content_base64 \u2208 str.\nRead-only. \u00acside-effects. Idempotent. See agent_skill:fs.',
+        "domain": "fs",
+        "ops": [
+            "append",
+            "copy",
+            "delete",
+            "list",
+            "md_append",
+            "md_delete",
+            "md_list",
+            "md_read",
+            "md_replace",
+            "move",
+            "read",
+            "read_multi",
+            "replace",
+            "search",
+            "write",
+            "write_binary",
+        ],
+        "skill_uri": "agent_skill:fs",
+        "tool_name": "fs",
+    },
+    {
+        "description": "\u2200 worktree \u2208 GitWorktrees \u2227 paths \u2286 RepoPaths \u2227 paths \u2260 \u2205:\n  git_commit(worktree, expected_branch, paths, dry_run=true) \u27f9\n    expected_paths_sha256 \u2208 SHA256Hex \u2227 numstat \u2208 str.\n  git_commit(worktree, expected_branch, paths, approval, sha256, message) \u27f9\n    (commit_sha \u2208 SHA256Hex \u2227 status = completed) \u2228 status = rejected.\nPath-explicit (\u00ac--all); commit isolates to named paths. Non-arc complement\nto git_land. Fingerprint binds approval. See decision:git-commit-non-arc-op.",
+        "domain": "git_commit",
+        "ops": ["commit"],
+        "skill_uri": "",
+        "tool_name": "git_commit",
+    },
+    {
+        "description": "\u2200 worktree \u2208 ArcWorktrees:\n  git_diff(worktree) \u27f9\n    diff_sha256 \u2208 SHA256Hex \u2227 diffstat \u2208 DiffStat \u2227 branch \u2208 str \u2227 diff \u2208 str.\n  git_diff(worktree, include_full_diff=false) \u27f9 compact envelope (no inline diff).\nRead-only. Default includes full unified diff (legacy callers); compact via\ninclude_full_diff=false (friction 11511). Fingerprint feeds git_integrate approval binding.",
+        "domain": "git_diff",
+        "ops": ["diff"],
+        "skill_uri": "",
+        "tool_name": "git_diff",
+    },
+    {
+        "description": "\u2200 arc \u2208 PlanSlugs \u2227 worktree \u2208 ArcWorktrees \u2227 sha256 \u2208 DiffFingerprints:\n  git_integrate(arc, phase, worktree, approval, sha256) \u27f9\n    master advanced at ref level \u2228 status = rejected.\nMutating. Atomic. \u00acgreen_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.",
+        "domain": "git_integrate",
+        "ops": ["integrate"],
+        "skill_uri": "",
+        "tool_name": "git_integrate",
+    },
+    {
+        "description": "\u2200 arc \u2208 PlanSlugs \u2227 worktree \u2208 ArcWorktrees \u2227 sha256 \u2208 DiffFingerprints:\n  git_land(arc, phase, worktree, approval, sha256) \u27f9\n    (commit-if-dirty \u2227 merge master \u2227 green-gate \u2227 ref-advance \u2227 teardown)\n    \u2228 status = rejected.\nMutating. Atomic. One operator-gated land. commit_message required when worktree\ndirty. \u00acgreen_gate_cmd in MCP args (server-owned). See decision:lead-agent-git-integration.",
+        "domain": "git_land",
+        "ops": ["land"],
+        "skill_uri": "",
+        "tool_name": "git_land",
+    },
+    {
+        "description": "\u2200 worktree \u2208 ArcWorktrees:\n  git_status(worktree) \u27f9\n    result \u2208 {ok, rejected} \u2227 branch \u2208 str \u2227 dirty \u2208 bool.\nRead-only. \u00acacquires integrate gate. See decision:lead-agent-git-integration.",
+        "domain": "git_status",
+        "ops": ["status"],
+        "skill_uri": "",
+        "tool_name": "git_status",
+    },
+    {
+        "description": "\u2200 service \u2208 ManagedServices \u222a {\u2205}:\n  manage_status(service) \u27f9\n    result \u2208 ServiceStatus.\nRead-only. \u00acside-effects. See agent_skill:manage.",
+        "domain": "manage",
+        "ops": ["health", "rebuild", "restart", "status", "wait_healthy"],
+        "skill_uri": "agent_skill:manage",
+        "tool_name": "manage",
+    },
+    {
+        "description": '\u2200 limit \u2208 \u2115: observability_recent_failures(limit) \u27f9\n  result \u2208 List[Event]\n  \u2227 \u2200 e \u2208 result: e.level \u2208 {"ERROR","CRITICAL"}.\nRead-only. Event Service query. \u00acside-effects. See agent_skill:observability.',
+        "domain": "observability",
+        "ops": ["preview", "query", "recent_failures"],
+        "skill_uri": "agent_skill:observability",
+        "tool_name": "observability",
+    },
+    {
+        "description": '\u2200 pipeline \u2208 PipelineID \u2227 input \u2208 dict:\n  pipeline_run(pipeline, input) \u27f9\n    execution_id \u2208 str \u2227 status \u2208 {"pending","running","complete","error"}.\nAsync. Mutating. See agent_skill:pipeline.',
+        "domain": "pipeline",
+        "ops": ["consult", "iterate", "run"],
+        "skill_uri": "agent_skill:pipeline",
+        "tool_name": "pipeline",
+    },
+    {
+        "description": "\u2200 query \u2208 str \u2227 scope \u2208 RAGScope:\n  rag_search(query, scope) \u27f9\n    result \u2208 List[Chunk] \u2227 \u2200 c \u2208 result: c.score \u2265 0.\nRead-only. Semantic + keyword. \u00acside-effects. See agent_skill:rag.",
+        "domain": "rag",
+        "ops": ["coverage", "list_sources", "search", "upsert_article"],
+        "skill_uri": "agent_skill:rag",
+        "tool_name": "rag",
+    },
+    {
+        "description": '\u2200 id \u2208 ResponseStoreKey:\n  retrieve_payload(id) \u27f9 payload \u2208 Any \u2228 raises Expired.\n\u2200 id matching "rs_[A-Za-z0-9]+": use this before re-calling the source tool.\nRead-only (consumes stored response). \u00acside-effects on Cortex. See agent_skill:retrieve.',
+        "domain": "retrieve",
+        "ops": ["payload"],
+        "skill_uri": "agent_skill:retrieve",
+        "tool_name": "retrieve",
+    },
+    {
+        "description": "\u2200 query \u2208 str: tool_search_query(query) \u27f9\n  results \u2208 List[ManifestEntry]\n  \u2227 \u2200 e \u2208 results: e \u2209 PrimaryTools.\nRead-only. Keyword ranking over overflow manifest. See agent_skill:tool_search.",
+        "domain": "tool_search",
+        "ops": ["query"],
+        "skill_uri": "agent_skill:tool_search",
+        "tool_name": "tool_search",
+    },
 ]

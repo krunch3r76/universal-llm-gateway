@@ -75,9 +75,15 @@ async def demo_supervisor():
     # print("\n6. Monitoring resources...")
     # usage = await supervisor.get_resource_usage("demo_worker")
     # if usage:
-    #     print(f"   - RAM: {usage.ram_used / 1024**3:.2f} GB ({usage.ram_percent:.1f}%)")
+    #     print(
+    #         f"   - RAM: {usage.ram_used / 1024**3:.2f} GB "
+    #         f"({usage.ram_percent:.1f}%)"
+    #     )
     #     if usage.vram_used:
-    #         print(f"   - VRAM: {usage.vram_used / 1024**3:.2f} GB ({usage.vram_percent:.1f}%)")
+    #         print(
+    #             f"   - VRAM: {usage.vram_used / 1024**3:.2f} GB "
+    #             f"({usage.vram_percent:.1f}%)"
+    #         )
     #
     # peaks = supervisor.get_peak_usage("demo_worker")
     # print(f"   - Peak RAM: {peaks['peak_ram_gb']:.2f} GB")
@@ -107,7 +113,8 @@ async def demo_comparison():
 
     print("\n📦 OLD ARCHITECTURE:")
     print(
-        "   from process_ipc import UnixSocketProcessManager, WorkerProcess, WorkerClient"
+        "   from process_ipc import UnixSocketProcessManager, "
+        "WorkerProcess, WorkerClient"
     )
     print("   ")
     print("   manager = UnixSocketProcessManager()")
@@ -117,7 +124,8 @@ async def demo_comparison():
 
     print("\n🎯 NEW ARCHITECTURE:")
     print(
-        "   from process_ipc import ProcessSupervisor, SupervisorConfig, UnixSocketConfig"
+        "   from process_ipc import ProcessSupervisor, SupervisorConfig, "
+        "UnixSocketConfig"
     )
     print("   ")
     print("   config = SupervisorConfig.from_socket_path('/tmp/worker.sock')")

@@ -23,16 +23,16 @@ from __future__ import annotations
 # are PRIMARY post-Part-1; advisor/agent_consult/pipeline_consult stay overflow.
 _DISPATCH_CONSULT_BLOCK = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
-To consult a MODEL (any provider, incl. grok) you do NOT use grokbuild.
+To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 frontier_dispatch + team_dispatch are PRIMARY (loaded at boot — call directly, no dispatch step). Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-7)
 - by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…)
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
 - multi-model advisory + cortex/RAG → agent_consult (query)                   [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
-- cheap close-to-code build         → grokbuild (op=build, mode=edit)  [build executor, NOT a model picker; cheap while sub sunk ~2wk; ≈cursorbuild soon]
+- close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
 - run a named pipeline              → pipeline (op=run|async)
-⚠ grokbuild = build executor, not a model picker. "Want a grok answer" → frontier_dispatch xai/grok-4.3, never grokbuild.
+⚠ "Want a grok answer" → frontier_dispatch xai/grok-4.3, never a build harness.
 Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
 
 # Co-located liveness block (2a durable home). Full substrate×load×probe table

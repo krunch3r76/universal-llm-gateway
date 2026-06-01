@@ -53,19 +53,12 @@ def list_available_serializers() -> dict[str, str]:
         "raw": "Raw binary (pass-through)",
     }
 
-    # Check for optional dependencies
-    try:
-        import msgpack
+    import importlib.util
 
+    if importlib.util.find_spec("msgpack") is not None:
         serializers["messagepack"] = "MessagePack (compact binary)"
-    except ImportError:
-        pass
 
-    try:
-        from google.protobuf import message
-
+    if importlib.util.find_spec("google.protobuf") is not None:
         serializers["protobuf"] = "Protocol Buffers (typed binary)"
-    except ImportError:
-        pass
 
     return serializers

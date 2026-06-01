@@ -503,7 +503,9 @@ class StargateServiceManager:
 
         # Set all environment variables
         env_vars = {
-            "PATH": f"{Path(self.config.stargate_venv) / 'bin'}:{os.environ.get('PATH', '')}",
+            "PATH": f"{Path(self.config.stargate_venv) / 'bin'}:{
+                os.environ.get('PATH', '')
+            }",
             "PYTHONPATH": ":".join(pythonpath_parts),
             "PYTHONUNBUFFERED": "1",
             "PYTHONDONTWRITEBYTECODE": "1",

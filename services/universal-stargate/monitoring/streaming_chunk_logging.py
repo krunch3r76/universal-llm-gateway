@@ -38,7 +38,8 @@ class _StreamingChunkLogging:
     ):
         """
         Send lightweight monitoring update for a streaming chunk.
-        Only includes essential fields: request_id, chunk_number, chunk content, and optional token_metrics.
+        Only includes essential fields: request_id, chunk_number, chunk content, and
+            optional token_metrics.
         """
         try:
             # Ensure token_metrics is serializable
@@ -58,7 +59,8 @@ class _StreamingChunkLogging:
             if self.event_bus:
                 try:
                     logger.debug(
-                        f"Publishing streaming_chunk to EventBus for request {request_id}"
+                        f"Publishing streaming_chunk to EventBus for"
+                        f"request {request_id}"
                     )
                     await self.event_bus.publish_nowait(
                         MonitoringStreamingChunk(
