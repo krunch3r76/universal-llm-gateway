@@ -35,16 +35,6 @@ from ..models import (
     EntityUpdate,
 )
 
-# Re-exports for back-compat with callers that imported the underscored names
-# from this module before the v2.4 Slice 2 split.
-_CARD_TOP_K_DEFAULT = CARD_TOP_K_DEFAULT
-_CARD_INTENTS_DEFERRED = CARD_INTENTS_DEFERRED
-_list_entities_impl = list_entities_impl
-_get_entity_impl = get_entity_impl
-_get_entity_card_impl = get_entity_card
-_update_entity_impl = update_entity_impl
-_create_entity_impl = create_entity_impl
-
 logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
 
@@ -153,7 +143,10 @@ def list_entity_source_paths() -> SourcePathsResponse:
             continue
         try:
             paths.add(_source_uri_to_absolute_path(source_uri.strip()))
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "source-paths: unresolvable source_uri=%r: %s", source_uri, exc
+            )
             unresolved += 1
     return SourcePathsResponse(
         paths=sorted(paths), count=len(paths), unresolved=unresolved

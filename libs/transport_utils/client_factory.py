@@ -34,6 +34,11 @@ elif os.environ.get("STARGATE_URL"):
 else:
     DEFAULT_STARGATE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
 
+EVENTS_QUERY_SOCKET_PATH = os.environ.get(
+    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
+)
+EVENTS_SUBSCRIBE_PATH = "http://localhost/v1/subscribe"  # host ignored with UDS
+
 
 def parse_rag_url(url: str) -> tuple[str | None, str]:
     """Parse a service URL into (uds_path, base_url)."""

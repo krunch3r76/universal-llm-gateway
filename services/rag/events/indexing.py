@@ -249,6 +249,24 @@ def rag_file_indexing_failure_skipped(
 
 
 @event_factory
+def rag_entity_gate_io_failed(
+    *,
+    operation: str,
+    error: str,
+) -> Event:
+    """Emitted when EntityAdmissionGate HTTP/WS I/O fails.
+
+    operation: ``"refresh"`` (cortex-api source-paths snapshot) or
+    ``"subscribe"`` (Event Service WebSocket reconnect loop).
+    error: ``str(exc)`` from the caught exception.
+    """
+    return Event(
+        signal="rag.entity.gate.io.failed",
+        payload={"operation": operation, "error": error},
+    )
+
+
+@event_factory
 def rag_file_indexing_gated(
     *,
     file: str,

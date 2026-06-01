@@ -627,6 +627,50 @@ def is_cloud_proxy_configured() -> bool:
 
 
 _BROWSER_OVERRIDE_COMPOSE = "docker/compose/mcp-server-browser.override.yml"
+_X_ACCOUNT_KEYS = ("X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET")
+_DEFAULT_X_ACCOUNT_ENV = Path("/mnt/torus/projects/xpharmdbot/.env")
+
+
+def _parse_export_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:]
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            values[key] = value
+    return values
+
+
+def apply_x_account_env(
+    env: dict[str, str], *, raw: dict[str, Any] | None = None
+) -> None:
+    """Inject @KJMXYXX OAuth credentials for the x_dm MCP tool."""
+    raw = raw or {}
+    for key in _X_ACCOUNT_KEYS:
+        value = str(raw.get(key) or os.environ.get(key) or env.get(key) or "").strip()
+        if value:
+            env[key] = value
+    if all(env.get(key) for key in _X_ACCOUNT_KEYS):
+        return
+    env_file = str(raw.get("x_account_env_file") or "").strip()
+    if not env_file and _DEFAULT_X_ACCOUNT_ENV.is_file():
+        env_file = str(_DEFAULT_X_ACCOUNT_ENV)
+    if not env_file:
+        return
+    file_values = _parse_export_env_file(Path(env_file).expanduser())
+    for key in _X_ACCOUNT_KEYS:
+        if not env.get(key) and file_values.get(key):
+            env[key] = file_values[key]
 
 
 def build_mcp_env(workspace_root: Path) -> dict[str, str]:
@@ -702,6 +746,16 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
         env["ENABLE_CONTEXT_TOOLS"] = "true"
         env["MCP_TASKS_MOUNT_MODE"] = "ro"
         env["TASKS_READ_ONLY"] = "true"
+
+    raw: dict[str, Any] = {}
+    if _MCP_CONFIG_PATH.exists():
+        try:
+            loaded = yaml.safe_load(_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                raw = loaded
+        except Exception:
+            logger.warning("Failed to parse %s for x_account env", _MCP_CONFIG_PATH)
+    apply_x_account_env(env, raw=raw)
     return env
 
 

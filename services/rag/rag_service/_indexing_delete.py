@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -53,12 +52,12 @@ async def _delete_file_impl(source: str) -> DeleteResult:
 
 
 async def _delete_file(file_path: Path) -> DeleteResult:
-    """Delete all indexed chunks for a removed file under per-source lock."""
+    """Delete all indexed chunks for a removed file under per-source gate."""
+    from .source_path_gate import acquire_source_path, release_source_path
+
     source = str(file_path.resolve())
-    lock = state._file_index_locks.setdefault(source, asyncio.Lock())
+    await acquire_source_path(source)
     try:
-        async with lock:
-            return await _delete_file_impl(source)
+        return await _delete_file_impl(source)
     finally:
-        if state._file_index_locks.get(source) is lock:
-            state._file_index_locks.pop(source, None)
+        await release_source_path(source)

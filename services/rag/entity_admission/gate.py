@@ -12,8 +12,9 @@ Do not conflate with the Stargate capacity admission_gate/ (different concern).
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 from ._io import _backstop_loop, _dirty_refresh_worker, _refresh, _subscribe_loop
 from ._signals import _apply_signal
@@ -21,7 +22,7 @@ from ._signals import _apply_signal
 if TYPE_CHECKING:
     from universal_event_bus import EventBus
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EntityAdmissionGate:

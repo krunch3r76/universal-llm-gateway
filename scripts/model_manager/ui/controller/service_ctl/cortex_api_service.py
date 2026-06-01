@@ -10,6 +10,7 @@ from __future__ import annotations
 import compileall
 import io
 import os
+import subprocess
 from collections.abc import Awaitable, Callable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -58,6 +59,68 @@ _CORTEX_SOCKET = Path(
     os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
 )
 _CORTEX_LOG_DIR = Path("/tmp/logs/cortex-api")
+# Browser-facing HTTP for /control-tower. Port 8200 is often cloud-proxy or
+# other docker services on this host; cortex-api itself stays on UDS for MCP.
+_CORTEX_HTTP_HOST = os.environ.get("CORTEX_API_HTTP_HOST", "0.0.0.0")
+_CORTEX_HTTP_PORT = int(os.environ.get("CORTEX_API_HTTP_PORT", "8202"))
+_CORTEX_HTTP_PID_FILE = GATEWAY_DIR / "cortex-api-http.pid"
+
+
+def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
+    """Second uvicorn on TCP for browser /control-tower (MCP keeps UDS)."""
+    if _CORTEX_HTTP_PID_FILE.exists():
+        try:
+            old_pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
+            os.kill(old_pid, 0)
+            return (
+                f"HTTP listener already on {_CORTEX_HTTP_HOST}:{_CORTEX_HTTP_PORT} "
+                f"(PID {old_pid})"
+            )
+        except (OSError, ValueError):
+            _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
+    venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
+    python = str(venv_python) if venv_python.exists() else "python3"
+    env = os.environ.copy()
+    env.update(extra_env)
+    libs_path = str(root / "libs")
+    env["PYTHONPATH"] = (
+        f"{libs_path}:{env['PYTHONPATH']}" if env.get("PYTHONPATH") else libs_path
+    )
+    proc = subprocess.Popen(
+        [
+            python,
+            "-m",
+            "uvicorn",
+            _CORTEX_APP_MODULE,
+            "--host",
+            _CORTEX_HTTP_HOST,
+            "--port",
+            str(_CORTEX_HTTP_PORT),
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(root),
+        env=env,
+        start_new_session=True,
+    )
+    GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
+    _CORTEX_HTTP_PID_FILE.write_text(f"{proc.pid}\n")
+    return (
+        f"HTTP on http://{_CORTEX_HTTP_HOST}:{_CORTEX_HTTP_PORT}/control-tower "
+        f"(PID {proc.pid})"
+    )
+
+
+def _stop_http_forwarder() -> None:
+    if not _CORTEX_HTTP_PID_FILE.exists():
+        return
+    try:
+        pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
+        os.kill(pid, 15)
+    except (OSError, ValueError):
+        pass
+    _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
 
 
 async def start_cortex_api(
@@ -101,7 +164,16 @@ async def start_cortex_api(
         "Cortex API will read Cursor agent-transcripts from %s",
         transcripts_root,
     )
-    return await _start_uvicorn_service(
+    def _on_uvicorn_ready(
+        _socket_path: Path | None,
+        _tcp_config: tuple[str, int] | None,
+        _pid: int,
+    ) -> None:
+        msg = _start_http_forwarder(root, extra_env)
+        if msg:
+            _logger.info("%s", msg)
+
+    base_msg = await _start_uvicorn_service(
         service_state=service_state,
         root=root,
         app_module=_CORTEX_APP_MODULE,
@@ -113,7 +185,13 @@ async def start_cortex_api(
         log_dir=_CORTEX_LOG_DIR,
         log_filename="cortex-api.log",
         extra_env=extra_env or None,
+        on_timeout_success=_on_uvicorn_ready,
     )
+    if "already running" in base_msg.lower():
+        fwd = _start_http_forwarder(root, extra_env)
+        if fwd:
+            return f"{base_msg} — {fwd}"
+    return base_msg
 
 
 async def stop_cortex_api(
@@ -122,6 +200,7 @@ async def stop_cortex_api(
     kill_and_wait: Callable[..., Awaitable[str]],
 ) -> str:
     """Stop cortex-api gracefully."""
+    _stop_http_forwarder()
     return await _stop_uvicorn_service(
         service_state=service_state,
         kill_and_wait=kill_and_wait,

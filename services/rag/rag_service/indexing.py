@@ -69,24 +69,24 @@ async def _index_file(
     operation_id: str | None = None,
     operation: str | None = None,
 ) -> IndexResult:
-    """Index a file under a per-source lock to avoid watcher/API races."""
+    """Index a file under a per-source gate to avoid watcher/API races."""
+    from .source_path_gate import acquire_source_path, release_source_path
+
     source = str(file_path.resolve())
-    lock = state._file_index_locks.setdefault(source, asyncio.Lock())
+    await acquire_source_path(source)
     try:
-        async with lock:
-            return await _index_file_impl(
-                file_path,
-                metadata_overrides,
-                chunk_tokens,
-                source,
-                force=force,
-                emit_skip_event=emit_skip_event,
-                operation_id=operation_id,
-                operation=operation,
-            )
+        return await _index_file_impl(
+            file_path,
+            metadata_overrides,
+            chunk_tokens,
+            source,
+            force=force,
+            emit_skip_event=emit_skip_event,
+            operation_id=operation_id,
+            operation=operation,
+        )
     finally:
-        if state._file_index_locks.get(source) is lock:
-            state._file_index_locks.pop(source, None)
+        await release_source_path(source)
 
 
 async def _index_file_impl(

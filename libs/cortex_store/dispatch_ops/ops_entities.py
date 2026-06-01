@@ -15,25 +15,21 @@ from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, reco
 
 
 def _impls() -> tuple:
-    # Lazy import — routes/entities → entity_crud → workflow_state →
-    # dispatch_ops/_shared cycles back to this package at import time.
-    # Resolving impl symbols on first call keeps the module import side
-    # of the cycle cold so direct importers of entity_crud (tests, scripts)
-    # don't hit a partially-initialized module.
-    from ..routes.entities import (
-        _create_entity_impl,
-        _get_entity_card_impl,
-        _get_entity_impl,
-        _list_entities_impl,
-        _update_entity_impl,
+    # Lazy import — entity_crud → workflow_state → dispatch_ops cycles at import.
+    from ..card import get_entity_card
+    from ..entity_crud import (
+        create_entity_impl,
+        list_entities_impl,
+        update_entity_impl,
     )
+    from ..entity_read import get_entity_impl
 
     return (
-        _create_entity_impl,
-        _get_entity_card_impl,
-        _get_entity_impl,
-        _list_entities_impl,
-        _update_entity_impl,
+        create_entity_impl,
+        get_entity_card,
+        get_entity_impl,
+        list_entities_impl,
+        update_entity_impl,
     )
 
 

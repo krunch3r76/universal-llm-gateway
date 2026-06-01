@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from .gate import EntityAdmissionGate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _SOURCE_CHANGED = "cortex.entity.source.changed"
 

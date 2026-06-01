@@ -80,6 +80,7 @@ from tools.security_js import register_security_js_tools
 from tools.sqlite import register_sqlite_tools
 from tools.topology import register_topology_tools
 from tools.web import register_web_tools
+from tools.x_dm import register_x_dm_tools
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -280,6 +281,7 @@ def _build_server() -> tuple[
     register_topology_tools(mcp)
     register_project_tools(mcp)
     register_web_tools(mcp)
+    register_x_dm_tools(mcp)
     register_browse_tool(mcp)
     register_rag_tools(mcp)
     register_rag_article_tools(mcp)

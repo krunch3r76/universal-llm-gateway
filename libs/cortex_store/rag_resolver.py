@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
@@ -90,6 +91,11 @@ def _cortex_uri_to_path(uri: str) -> str:
     return _source_uri_to_absolute_path(source_uri)
 
 
+def _canonicalize_filesystem_path(path: str) -> str:
+    """Resolve to match RAG's ``Path(...).expanduser().resolve()`` contract."""
+    return str(Path(path).expanduser().resolve())
+
+
 def _source_uri_to_absolute_path(source_uri: str) -> str:
     """Convert an entity's source_uri attribute to an absolute filesystem path.
 
@@ -99,13 +105,18 @@ def _source_uri_to_absolute_path(source_uri: str) -> str:
     ∀ plain relative path: {_FILES_ROOT}/{source_uri}.
     ∀ files:// with relative body: {_FILES_ROOT}/{body}.
     ∀ files:// with absolute body or workspaces:// → already absolute: return as-is.
+
+    Filesystem paths are canonicalized with ``Path.resolve()`` so the
+    cortex-api source-paths producer matches RAG indexing (exact set membership).
     """
     if "://" not in source_uri:
-        return f"{_FILES_ROOT}/{source_uri}"
+        return _canonicalize_filesystem_path(f"{_FILES_ROOT}/{source_uri}")
     result = normalize_evidence_uri(source_uri)
-    if result.startswith("/"):
+    if result.startswith("https://") or result.startswith("http://"):
         return result
-    return f"{_FILES_ROOT}/{result}"
+    if result.startswith("/"):
+        return _canonicalize_filesystem_path(result)
+    return _canonicalize_filesystem_path(f"{_FILES_ROOT}/{result}")
 
 
 def normalize_evidence_uri(uri: str) -> str:

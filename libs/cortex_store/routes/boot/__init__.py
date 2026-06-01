@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from . import (
     commitments,
     continuity,
+    control_tower,
     legal_contacts,
     recent_mentions,
     recent_work,
@@ -21,6 +22,7 @@ router.include_router(temporal.router)
 router.include_router(todos.router)
 router.include_router(commitments.router)
 router.include_router(continuity.router)
+router.include_router(control_tower.router)
 router.include_router(legal_contacts.router)
 router.include_router(recent_mentions.router)
 router.include_router(recent_work.router)

@@ -60,8 +60,7 @@ _registry: dict[str, ArticleEntry] | None = None
 _background_tasks: set[asyncio.Task[None]] = set()
 _dependency_activation = DependencyActivationState()
 
-# Serialize concurrent indexing of the same file path (watcher + API can race).
-_file_index_locks: dict[str, asyncio.Lock] = {}
+# Per-source index/delete serialization: source_path_gate (FifoCapacityGate).
 _post_index_stale: bool = False
 _extraction_shutdown: asyncio.Event | None = None
 _admission_gate: AdmissionGate | None = None

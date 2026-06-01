@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import os
+from transport_utils import EVENTS_QUERY_SOCKET_PATH, EVENTS_SUBSCRIBE_PATH
 
-_EVENT_QUERY_SOCK = os.environ.get(
-    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
-)
-_SUBSCRIBE_PATH = "http://localhost/v1/subscribe"  # host ignored with UDS
+_EVENT_QUERY_SOCK = EVENTS_QUERY_SOCKET_PATH
+_SUBSCRIBE_PATH = EVENTS_SUBSCRIBE_PATH
 
 # cortex-api endpoint returning resolved absolute paths of all entities
 # carrying a source_uri (Task 8). RAG reaches cortex-api over UDS via

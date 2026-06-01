@@ -1,0 +1,378 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CONTROL TOWER · cortex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#070a0c; --bg2:#0b1014; --panel:#0e151a; --panel2:#111a20;
+    --line:#1c2b33; --line2:#273b45;
+    --ink:#cfe9dd; --dim:#6f8a82; --faint:#42585a;
+    --phos:#5ffbaf; --phos-dim:#2f7d5c;
+    --cyan:#54d6ff; --amber:#ffc24b; --red:#ff5d6c; --redbg:#2a0f15;
+    --amberbg:#2a210d; --mono:'JetBrains Mono',ui-monospace,monospace; --disp:'Archivo',sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--mono);font-size:13px;line-height:1.5}
+  body{
+    background:
+      radial-gradient(900px 500px at 85% -10%, rgba(95,251,175,.06), transparent 60%),
+      radial-gradient(700px 600px at -5% 110%, rgba(84,214,255,.05), transparent 55%),
+      var(--bg);
+    min-height:100vh; padding:0 0 60px;
+  }
+  /* CRT scanline + grain overlay */
+  body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:9;
+    background:repeating-linear-gradient(180deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.18) 2px 3px);
+    mix-blend-mode:multiply;opacity:.5}
+  a{color:var(--cyan);text-decoration:none}
+
+  /* ── header ─────────────────────────────── */
+  header{position:sticky;top:0;z-index:10;backdrop-filter:blur(6px);
+    background:linear-gradient(180deg,rgba(7,10,12,.96),rgba(7,10,12,.82));
+    border-bottom:1px solid var(--line2);padding:14px 22px;display:flex;align-items:center;gap:22px;flex-wrap:wrap}
+  .brand{display:flex;align-items:center;gap:14px}
+  .radar{width:34px;height:34px;border-radius:50%;border:1px solid var(--phos-dim);position:relative;overflow:hidden;
+    box-shadow:0 0 14px rgba(95,251,175,.25) inset}
+  .radar::before{content:"";position:absolute;inset:0;background:conic-gradient(from 0deg,rgba(95,251,175,.55),transparent 38%);
+    animation:sweep 3.4s linear infinite}
+  .radar::after{content:"";position:absolute;inset:38%;border-radius:50%;background:var(--phos);box-shadow:0 0 8px var(--phos)}
+  @keyframes sweep{to{transform:rotate(360deg)}}
+  .wordmark{font-family:var(--disp);font-weight:900;letter-spacing:.34em;font-size:15px;color:var(--ink)}
+  .wordmark small{display:block;font-family:var(--mono);font-weight:400;letter-spacing:.18em;font-size:9.5px;color:var(--phos-dim)}
+  .hgap{flex:1}
+  .stat{display:flex;flex-direction:column;gap:1px}
+  .stat b{font-family:var(--disp);font-weight:700;font-size:14px;letter-spacing:.05em}
+  .stat span{font-size:9px;letter-spacing:.22em;color:var(--faint);text-transform:uppercase}
+  .pill{font-size:10px;letter-spacing:.16em;padding:4px 10px;border-radius:2px;border:1px solid var(--line2);text-transform:uppercase}
+  .pill.live{color:var(--phos);border-color:var(--phos-dim);box-shadow:0 0 10px rgba(95,251,175,.18)}
+  .pill.snap{color:var(--amber);border-color:#5a4a18}
+  .pill .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;background:currentColor;animation:blink 1.6s infinite}
+  @keyframes blink{50%{opacity:.25}}
+  button.ghost{font-family:var(--mono);font-size:10px;letter-spacing:.16em;background:transparent;color:var(--dim);
+    border:1px solid var(--line2);padding:6px 11px;border-radius:2px;cursor:pointer;text-transform:uppercase}
+  button.ghost:hover{color:var(--phos);border-color:var(--phos-dim)}
+
+  /* ── attention strip ────────────────────── */
+  .attention{margin:18px 22px 0;border:1px solid var(--line2);border-radius:3px;background:var(--panel);overflow:hidden}
+  .attention .head{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);
+    font-size:10px;letter-spacing:.24em;color:var(--dim);text-transform:uppercase}
+  .attention .head b{color:var(--ink);font-family:var(--disp);letter-spacing:.18em}
+  .alerts{display:flex;flex-direction:column}
+  .alert{display:grid;grid-template-columns:14px 64px 1fr auto;gap:12px;align-items:center;padding:9px 16px;border-bottom:1px solid var(--line)}
+  .alert:last-child{border-bottom:0}
+  .alert .lt{width:9px;height:9px;border-radius:50%;justify-self:center;box-shadow:0 0 8px currentColor}
+  .alert .sev{font-size:9px;letter-spacing:.16em;text-transform:uppercase;opacity:.85}
+  .alert .msg{color:var(--ink)}
+  .alert .msg em{color:var(--phos);font-style:normal}
+  .alert .tag{font-size:9px;letter-spacing:.1em;color:var(--faint);text-transform:uppercase;white-space:nowrap}
+  .sev-crit{color:var(--red)} .sev-warn{color:var(--amber)} .sev-info{color:var(--cyan)}
+
+  /* ── grid ───────────────────────────────── */
+  .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;padding:18px 22px}
+  .panel{grid-column:span 6;background:var(--panel);border:1px solid var(--line);border-radius:3px;
+    display:flex;flex-direction:column;min-height:160px;opacity:0;transform:translateY(8px);
+    animation:rise .5s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .panel .ph{display:flex;align-items:center;gap:9px;padding:11px 15px;border-bottom:1px solid var(--line)}
+  .panel .ph h2{margin:0;font-family:var(--disp);font-weight:700;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--ink)}
+  .panel .ph .ct{margin-left:auto;font-size:10px;color:var(--phos-dim);letter-spacing:.1em}
+  .panel .ph .bar{width:5px;height:14px;background:var(--phos);box-shadow:0 0 8px var(--phos);border-radius:1px}
+  .panel.amber .ph .bar{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+  .panel.red .ph .bar{background:var(--red);box-shadow:0 0 8px var(--red)}
+  .panel.cyan .ph .bar{background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+  .body{padding:6px 0;overflow:auto}
+  .span4{grid-column:span 4}.span8{grid-column:span 8}.span12{grid-column:span 12}
+  @media(max-width:880px){.panel,.span4,.span8{grid-column:span 12}}
+
+  .row{display:grid;gap:10px;padding:8px 15px;border-bottom:1px solid #131c22;align-items:start}
+  .row:last-child{border-bottom:0}
+  .row:hover{background:var(--panel2)}
+  .id{color:var(--cyan);font-size:11.5px;word-break:break-word}
+  .meta{color:var(--dim);font-size:10.5px}
+  .desc{color:var(--ink);font-size:12px}
+  .k{font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .chip{display:inline-block;font-size:9px;letter-spacing:.08em;padding:2px 6px;border:1px solid var(--line2);border-radius:2px;color:var(--dim);text-transform:uppercase}
+  .chip.high{color:var(--red);border-color:#5a1f26}
+  .chip.flight{color:var(--phos);border-color:var(--phos-dim)}
+  .new{color:var(--phos);font-size:10px}
+  .countdown{font-family:var(--disp);font-weight:700;font-size:13px;letter-spacing:.04em}
+  .ov{color:var(--red);text-shadow:0 0 10px rgba(255,93,108,.4)} .soon{color:var(--amber)} .ok{color:var(--phos-dim)}
+  .chain{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 15px;color:var(--dim);font-size:11px}
+  .chain .node{padding:4px 9px;border:1px solid var(--line2);border-radius:2px;color:var(--ink)}
+  .chain .here{border-color:var(--phos-dim);color:var(--phos);box-shadow:0 0 10px rgba(95,251,175,.15)}
+  .chain .arr{color:var(--faint)}
+  .busline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .gauge{height:5px;background:#0a1116;border:1px solid var(--line);border-radius:3px;overflow:hidden;margin-top:6px}
+  .gauge i{display:block;height:100%;background:linear-gradient(90deg,var(--amber),var(--red))}
+  footer{padding:14px 24px;color:var(--faint);font-size:10.5px;letter-spacing:.06em;border-top:1px solid var(--line)}
+  footer code{color:var(--phos-dim)}
+  .empty{padding:22px 15px;color:var(--faint);text-align:center;font-size:11px}
+</style>
+
+<header>
+  <div class="brand">
+    <div class="radar"></div>
+    <div class="wordmark">CONTROL&nbsp;TOWER<small>cortex · fleet ops</small></div>
+  </div>
+  <div class="hgap"></div>
+  <div class="stat"><b id="clock">--:--:--</b><span id="tz">utc</span></div>
+  <div class="stat"><b id="sess">—</b><span>session</span></div>
+  <span class="pill snap" id="mode"><span class="dot"></span>snapshot</span>
+  <button class="ghost" id="refresh">⟳ refresh</button>
+</header>
+
+<section class="attention">
+  <div class="head"><span class="lt" style="width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red)"></span><b>ATTENTION</b> — derived signals · auto-computed from live state</div>
+  <div class="alerts" id="alerts"></div>
+</section>
+
+<main class="grid" id="grid"></main>
+
+<footer>
+  source: <code id="src">loading…</code><br>
+  tier-1 live endpoint: <code>/control-tower/data</code> on cortex-api (default <code>:8202</code>, not cloud-proxy <code>:8200</code>).
+</footer>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   CONFIG — leave base blank to view the embedded snapshot.
+   Fill it in when you host this to make every panel live.
+   ════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  CORTEX_API_BASE: location.origin, // cortex-api HTTP (manage default :8202 on 0.0.0.0)
+  FETCH_MS: 8000,
+  REFRESH_MS: 30000,
+};
+
+/* ── embedded live snapshot (real boot state) ───────────────── */
+const SNAPSHOT = {
+  session:"claude-web-2026-06-01-0017",
+  continuity:["claude-web-2026-05-31-0549","claude-web-2026-05-31-2244","HERE"],
+  lastSession:"closed todo:dispatch-surface-orientation-fix — all parts verified live, stale assertion superseded (rj:222) · 1h ago",
+  openItems:[
+    {id:"assertion 9136 move", d:"BOE-19-P Rule 135 mis-attached on grok-web-dispatch; move-not-retract (live legal matter)"},
+    {id:"todo:frontier-dispatch-tool-friction-case-study", d:"stale-open — close + op=to_thread bus-mode gap"},
+    {id:"grok-web-dispatch scope-gap", d:"decision pending: leave+xref / narrow / merge xai-mcp"},
+    {id:"AUDIT unseeded_decision LOW", d:"commit-policy doctrine (operator 2026-05-31) lives only on a closed todo — re-assert on a durable decision entity"},
+  ],
+  inFlight:[
+    {id:"todo:repo-wide-ruff-cleanup", dom:"code-quality", d:"Clear ~965 pre-existing repo-wide ruff errors on master"},
+    {id:"todo:grokbuild-deterministic-commit-op", dom:"git_integration", d:"Design stash-free arc integration (land) at shared git layer"},
+    {id:"todo:grok-build-mcp-params-extension", dom:"mcp", d:"Extend grok_build MCP tool parameter surface"},
+    {id:"todo:uber-demand-letter-send", dom:"legal", d:"Send Uber Demand Letter", due:"2026-05-25"},
+    {id:"todo:boe19p-supplemental-appeal-prep", dom:"legal", d:"Prepare BOE-19-P retroactive supplemental appeal", due:"2026-05-05"},
+  ],
+  todos:[
+    {id:"todo:fix-frontier-dispatch-stream-pipeline-option", high:true, d:"Fix frontier-dispatch rejecting injected 'stream' pipeline_option (blocks all generate)"},
+    {id:"todo:cursorbuild-green-gate-verifies-consumers", high:true, d:"cursorbuild green-gate must verify downstream consumers, not just changed boundary"},
+    {id:"todo:concurrency-fifo-capacity-gate-swap", high:true, d:"Swap asyncio.Lock → FifoCapacityGate(1) in pipeline concurrency surface"},
+    {id:"todo:agent-surface-convergence-grok-vortex-wireup", high:true, d:"Agent-surface convergence — Track B: vortex MCP on Grok"},
+    {id:"todo:boe19p-hoe-coresident-retrieval", high:true, d:"BOE-19-P — co-resident HOE retrieval (III.C candidate)"},
+  ],
+  todosTotal:15,
+  planPhases:[
+    {id:"plan_phase:git-land-catalog-exposure/phase-2", done:true, d:"Boot-time coherence guard"},
+    {id:"plan_phase:git-land-catalog-exposure/phase-1", done:true, d:"Canonicalize git_land"},
+    {id:"plan_phase:git-commit-non-arc-op/phase-2", done:true, d:"git_commit MCP surface — relay tool + registry + deploy"},
+  ],
+  deadlines:[
+    {due:"2026-05-09", t:"Assessment Appeal Application — BOE-19-P retroactive exclusion", matter:"Estate of Fred Mansubi 24PR197054"},
+    {due:"2026-08", t:"Statute of Limitations — Life Insurance Sale", matter:"Life Insurance Policy Sale"},
+    {due:"2026-09-15", t:"Annual Base Year Value Appeal Window — Flintridge (challenge $2.8M FMV)", matter:"Estate of Fred Mansubi 24PR197054"},
+    {due:"2027", t:"Discovery Rule Extended Deadline", matter:"Life Insurance Policy Sale"},
+  ],
+  bus:["grokbuild-audit-trackb-sensitive","rag-entity-gated-indexing-plan","dispatch-part3-section6-retirement-sweep",
+       "lead-seat-git-commit-gap","repo-wide-ruff-cleanup","audit-deferred-claude-web-2026-05-31-0137",
+       "agent-bus-reply-vs-post-boot-revision","1114","cursorbuild-mvp-phase-implementation","audit-deferred-claude-web-2026-05-29-0537"],
+  mentions:[
+    {id:"service:agent-bus", t:"Agent Bus", ago:"8m", n:4},
+    {id:"decision:lead-agent-git-integration", t:"Lead-agent git integration across build harnesses", ago:"11m", n:6},
+    {id:"task:transcript-scoped-handoff", t:"Transcript-scoped handoff arc", ago:"36m", n:1},
+    {id:"decision:grokbuild-retirement-sequenced", t:"Retire grokbuild (reliability + cost)", ago:"44m", n:1},
+    {id:"decision:transcript-scoped-handoff-explicit-load", t:"Transcript handoff: explicit-load", ago:"1h", n:2},
+    {id:"service:stargate", t:"Stargate", ago:"1h", n:6},
+    {id:"service:git-integration-worker", t:"git-integration-worker", ago:"1h", n:9},
+    {id:"decision:landed-claim-detector", t:"Landed-claim-not-on-master detector", ago:"1h", n:1},
+  ],
+  audit:{crit:0, warn:17372, info:3},
+};
+
+/* ── deadline parsing / countdown ───────────────────────────── */
+function parseDue(s){
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return {end:new Date(s+"T23:59:59Z"), gran:"day"};
+  if(/^\d{4}-\d{2}$/.test(s)){const[y,m]=s.split("-").map(Number);return{end:new Date(Date.UTC(y,m,0,23,59,59)),gran:"month"};}
+  if(/^\d{4}$/.test(s)) return {end:new Date(Date.UTC(+s,11,31,23,59,59)), gran:"year"};
+  const d=new Date(s); return isNaN(d)?{end:null,gran:"?"}:{end:d,gran:"day"};
+}
+function countdown(s){
+  const {end,gran}=parseDue(s); if(!end) return {txt:s, cls:"", days:null};
+  const days=Math.round((end-Date.now())/86400000);
+  if(days<0) return {txt:`${-days}d OVERDUE`, cls:"ov", days};
+  if(days<=30) return {txt:`${days}d${gran!=="day"?"~":""}`, cls:"soon", days};
+  return {txt:`${days}d${gran!=="day"?"~":""}`, cls:"ok", days};
+}
+
+/* ── derive attention signals from whatever state we hold ───── */
+function deriveAlerts(s){
+  const a=[];
+  s.deadlines.forEach(d=>{const c=countdown(d.due); if(c.days!==null&&c.days<0)
+    a.push({sev:"crit",msg:`Deadline <em>${c.txt}</em> — ${d.t}`,tag:d.matter});});
+  s.inFlight.filter(t=>t.due).forEach(t=>{const c=countdown(t.due); if(c.days!==null&&c.days<0)
+    a.push({sev:"warn",msg:`In-flight todo past due <em>(${c.txt})</em> — ${t.id.replace('todo:','')}`,tag:t.dom||""});});
+  const blockers=s.todos.filter(t=>/block/i.test(t.d));
+  blockers.forEach(t=>a.push({sev:"warn",msg:`Blocker open — ${t.d}`,tag:"high"}));
+  // cross-surface divergence: a todo id that is also an open bus thread
+  const todoSlugs=new Set([...s.inFlight,...s.todos].map(t=>t.id.replace('todo:','')));
+  s.bus.forEach(b=>{ if(todoSlugs.has(b))
+    a.push({sev:"warn",msg:`Divergence — <em>${b}</em> is open on BOTH a todo and an unread bus thread`,tag:"two surfaces"});});
+  if(s.bus.length>=8) a.push({sev:"info",msg:`${s.bus.length} unread bus threads across seats — coordination backlog`,tag:"bus"});
+  if(s.audit&&s.audit.warn>1000) a.push({sev:"info",msg:`Audit: ${s.audit.warn.toLocaleString()} warnings, ${s.audit.crit} critical`,tag:"audit"});
+  const order={crit:0,warn:1,info:2}; return a.sort((x,y)=>order[x.sev]-order[y.sev]);
+}
+
+/* ── render ─────────────────────────────────────────────────── */
+const $=s=>document.querySelector(s);
+function esc(t){return (t||"").replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+
+function render(s){
+  $("#sess").textContent=s.session||"—";
+  // attention — prefer server-computed alerts from /control-tower/data
+  const alerts=s.alerts||deriveAlerts(s);
+  $("#alerts").innerHTML = alerts.length? alerts.map(al=>`
+    <div class="alert">
+      <span class="lt sev-${al.sev}" style="background:currentColor"></span>
+      <span class="sev sev-${al.sev}">${al.sev}</span>
+      <span class="msg">${al.msg}</span>
+      <span class="tag">${esc(al.tag)}</span>
+    </div>`).join("")
+    : `<div class="empty">no derived signals — fleet nominal</div>`;
+
+  const panels=[];
+  // sessions / continuity
+  panels.push(panel("span12","SESSIONS · CONTINUITY","cyan",`${s.continuity.length} in chain`,`
+    <div class="chain">${s.continuity.map((n,i)=>`
+      <span class="node ${n==='HERE'?'here':''}">${n==='HERE'?'◉ this session':esc(n)}</span>
+      ${i<s.continuity.length-1?'<span class="arr">→</span>':''}`).join("")}</div>
+    <div class="row"><span class="k">last close</span><span class="meta">${esc(s.lastSession)}</span></div>`));
+
+  // open carryover items
+  panels.push(panel("span6","OPEN ITEMS","amber",s.openItems.length,
+    s.openItems.map(o=>`<div class="row"><div class="id">${esc(o.id)}</div><div class="desc">${esc(o.d)}</div></div>`).join("")));
+
+  // deadlines
+  panels.push(panel("span6","DEADLINES","red",s.deadlines.length,
+    s.deadlines.map(d=>{const c=countdown(d.due);return `<div class="row" style="grid-template-columns:1fr auto">
+      <div><div class="desc">${esc(d.t)}</div><div class="meta">${esc(d.matter)} · ${esc(d.due)}</div></div>
+      <div class="countdown ${c.cls}">${c.txt}</div></div>`;}).join("")));
+
+  // in-flight
+  panels.push(panel("span6","IN-FLIGHT","",s.inFlight.length,
+    s.inFlight.map(t=>`<div class="row"><div class="busline"><span class="id">${esc(t.id)}</span>
+      <span class="chip flight">${esc(t.dom||'')}</span>${t.due?`<span class="chip">due ${esc(t.due)}</span>`:''}</div>
+      <div class="desc">${esc(t.d)}</div></div>`).join("")));
+
+  // todo queue
+  panels.push(panel("span6","TODO QUEUE","",`${s.todos.length} / ${s.todosTotal}`,
+    s.todos.map(t=>`<div class="row"><div class="busline"><span class="id">${esc(t.id)}</span>
+      ${t.high?'<span class="chip high">high</span>':''}</div><div class="desc">${esc(t.d)}</div></div>`).join("")
+    + `<div class="row"><span class="meta">+ ${s.todosTotal-s.todos.length} more — query by intent in cortex</span></div>`));
+
+  // bus
+  panels.push(panel("span6","AGENT BUS · UNREAD","amber",s.bus.length,`
+    <div class="row"><div style="width:100%"><span class="meta">${s.bus.length} unread threads</span>
+      <div class="gauge"><i style="width:${Math.min(100,s.bus.length*10)}%"></i></div></div></div>`
+    + s.bus.map(b=>`<div class="row"><span class="id">${esc(b)}</span></div>`).join("")));
+
+  // recent mentions
+  panels.push(panel("span6","RECENT ACTIVITY · 7d","cyan",s.mentions.length,
+    s.mentions.map(m=>`<div class="row"><div class="busline"><span class="id">${esc(m.id)}</span>
+      <span class="new">+${m.n}</span><span class="meta">${esc(m.ago)} ago</span></div>
+      <div class="desc">${esc(m.t)}</div></div>`).join("")));
+
+  // plan phases
+  panels.push(panel("span12","RECENT PLAN PHASES","",s.planPhases.length,
+    s.planPhases.map(p=>`<div class="row" style="grid-template-columns:auto 1fr auto">
+      <span style="color:var(--phos)">${p.done?'✓':'◌'}</span><span class="id">${esc(p.id)}</span>
+      <span class="desc">${esc(p.d)}</span></div>`).join("")));
+
+  const g=$("#grid"); g.innerHTML=panels.join("");
+  [...g.children].forEach((el,i)=>el.style.animationDelay=(i*55)+"ms");
+}
+function panel(span,title,cls,count,inner){
+  return `<section class="panel ${cls} ${span}"><div class="ph"><span class="bar"></span>
+    <h2>${title}</h2><span class="ct">${count}</span></div>
+    <div class="body">${inner||'<div class="empty">—</div>'}</div></section>`;
+}
+
+/* ── hydrate: /control-tower/data with snapshot-first paint ─── */
+function formatAgo(iso){
+  if(!iso) return "—";
+  const sec=Math.max(0,Math.round((Date.now()-new Date(iso).getTime())/1000));
+  if(sec<60) return sec+"s";
+  if(sec<3600) return Math.round(sec/60)+"m";
+  if(sec<86400) return Math.round(sec/3600)+"h";
+  return Math.round(sec/86400)+"d";
+}
+function normalizeFromApi(j){
+  const chain=j.continuity||[];
+  return {
+    session:j.session,
+    continuity:chain.length&&!chain.includes("HERE")?[...chain,"HERE"]:chain.length?chain:["HERE"],
+    lastSession:j.last_session,
+    openItems:(j.open_items||[]).map(o=>({id:o.id||"",d:o.d||String(o)})),
+    inFlight:j.in_flight||[],
+    todos:j.todos||[],
+    todosTotal:j.todos_total??(j.todos||[]).length,
+    planPhases:j.plan_phases||[],
+    deadlines:j.deadlines||[],
+    bus:j.bus||[],
+    mentions:(j.mentions||[]).map(m=>({id:m.id,t:m.t,n:m.n,ago:m.ago||formatAgo(m.last)})),
+    audit:j.audit,
+    alerts:j.alerts,
+  };
+}
+async function getJSON(url,ms){
+  const ctrl=new AbortController();
+  const t=setTimeout(()=>ctrl.abort(),ms);
+  try{
+    const r=await fetch(url,{headers:{accept:"application/json"},signal:ctrl.signal});
+    if(!r.ok) throw new Error(String(r.status));
+    return r.json();
+  } finally { clearTimeout(t); }
+}
+async function hydrate(){
+  const base=CONFIG.CORTEX_API_BASE.trim();
+  if(!base){
+    render(SNAPSHOT);
+    setMode("snap","embedded boot snapshot — "+SNAPSHOT.session);
+    return;
+  }
+  render(SNAPSHOT);
+  setMode("snap","loading live · "+base+"/control-tower/data …");
+  try{
+    const j=await getJSON(base+"/control-tower/data",CONFIG.FETCH_MS);
+    render(normalizeFromApi(j));
+    setMode("live","live · "+base+"/control-tower/data");
+  }catch(e){
+    render(SNAPSHOT);
+    setMode("snap","snapshot fallback · "+(e.message||"fetch failed"));
+  }
+}
+function setMode(kind,src){
+  const m=$("#mode"); m.className="pill "+(kind==="live"?"live":"snap");
+  m.innerHTML='<span class="dot"></span>'+(kind==="live"?"live":"snapshot");
+  $("#src").textContent=src;
+}
+
+/* ── clock ──────────────────────────────────────────────────── */
+function tick(){const d=new Date();
+  $("#clock").textContent=d.toISOString().slice(11,19);
+  $("#tz").textContent="utc · "+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+" local";
+}
+setInterval(tick,1000); tick();
+$("#refresh").onclick=hydrate;
+hydrate();
+if(CONFIG.CORTEX_API_BASE.trim()) setInterval(hydrate, CONFIG.REFRESH_MS);
+</script>

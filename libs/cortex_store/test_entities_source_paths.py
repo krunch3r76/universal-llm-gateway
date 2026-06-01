@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 
+from cortex_store.rag_resolver import _source_uri_to_absolute_path
 from cortex_store.routes.entities import list_entity_source_paths
 
 _FILES_ROOT = "/mnt/torus/mcp-data/files"
@@ -68,10 +70,38 @@ def test_source_paths_dedupes_plain_relative() -> None:
     ):
         resp = list_entity_source_paths()
 
-    expected = f"{_FILES_ROOT}/agent-skills/foo.md"
+    expected = str(Path(f"{_FILES_ROOT}/agent-skills/foo.md").resolve())
     assert resp.count == 1
     assert resp.paths == [expected]
     assert resp.unresolved == 0
+
+
+def test_source_paths_canonicalizes_dot_segments(tmp_path: Path) -> None:
+    """Producer paths must match RAG Path.resolve() (F1 acceptance)."""
+    files_root = tmp_path / "mcp-files"
+    nested = files_root / "nested"
+    nested.mkdir(parents=True)
+    doc = nested / "doc.pdf"
+    doc.touch()
+
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status, source_uri, created_at) "
+        "VALUES ('doc:dot', 'document', 'Dot', 'confirmed', ?, '2026-06-01T00:00:00Z')",
+        ("nested/../nested/doc.pdf",),
+    )
+    conn.commit()
+
+    with (
+        _patch_conn(conn),
+        patch("cortex_store.rag_resolver._FILES_ROOT", str(files_root)),
+    ):
+        resp = list_entity_source_paths()
+
+    rag_consult = str(doc.resolve())
+    assert resp.paths == [rag_consult]
+    with patch("cortex_store.rag_resolver._FILES_ROOT", str(files_root)):
+        assert _source_uri_to_absolute_path("nested/../nested/doc.pdf") == rag_consult
 
 
 def test_source_paths_unresolved_increments_without_500() -> None:

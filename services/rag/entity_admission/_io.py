@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from typing import TYPE_CHECKING
 
 import aiohttp
 from transport_utils import DEFAULT_CORTEX_URL, make_async_client
+from universal_logging import get_logger
+
+from services.rag.events.indexing import rag_entity_gate_io_failed
 
 from ._constants import (
     _BACKSTOP_INTERVAL_S,
@@ -24,7 +26,7 @@ from ._constants import (
 if TYPE_CHECKING:
     from .gate import EntityAdmissionGate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def _refresh(gate: EntityAdmissionGate) -> None:
@@ -51,6 +53,10 @@ async def _refresh(gate: EntityAdmissionGate) -> None:
                 len(gate._admitted),
                 exc,
             )
+            if gate._event_bus is not None:
+                await gate._event_bus.publish_nowait(
+                    rag_entity_gate_io_failed(operation="refresh", error=str(exc))
+                )
             return
 
         raw_paths = data.get("paths") if isinstance(data, dict) else None
@@ -138,4 +144,8 @@ async def _subscribe_loop(gate: EntityAdmissionGate) -> None:
                 _RECONNECT_DELAY_S,
                 exc,
             )
+            if gate._event_bus is not None:
+                await gate._event_bus.publish_nowait(
+                    rag_entity_gate_io_failed(operation="subscribe", error=str(exc))
+                )
             await asyncio.sleep(_RECONNECT_DELAY_S)

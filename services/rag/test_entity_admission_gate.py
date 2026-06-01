@@ -10,7 +10,10 @@ import pytest
 from services.rag.config import RagConfig, WatchDirectory
 from services.rag.entity_admission import EntityAdmissionGate
 from services.rag.entity_admission._io import _refresh
-from services.rag.events.indexing import rag_file_indexing_gated
+from services.rag.events.indexing import (
+    rag_entity_gate_io_failed,
+    rag_file_indexing_gated,
+)
 from services.rag.watcher_manager import WatcherManager
 
 
@@ -95,6 +98,32 @@ async def test_refresh_fail_safe_keeps_prior_set_on_http_error() -> None:
 
     assert gate._admitted == {"/backed/doc.pdf"}
     assert gate._ready is True
+
+
+@pytest.mark.asyncio
+async def test_refresh_failure_emits_io_failed_event() -> None:
+    gate = EntityAdmissionGate(event_bus=MagicMock())
+    gate._event_bus.publish_nowait = AsyncMock()
+    gate._admitted = {"/backed/doc.pdf"}
+    gate._ready = True
+
+    with patch(
+        "services.rag.entity_admission._io.make_async_client",
+        side_effect=RuntimeError("cortex-api down"),
+    ):
+        await _refresh(gate)
+
+    gate._event_bus.publish_nowait.assert_awaited_once()
+    published = gate._event_bus.publish_nowait.await_args.args[0]
+    assert published.signal == "rag.entity.gate.io.failed"
+    assert published.payload["operation"] == "refresh"
+    assert "cortex-api down" in published.payload["error"]
+
+
+def test_rag_entity_gate_io_failed_factory_shape() -> None:
+    ev = rag_entity_gate_io_failed(operation="subscribe", error="ws reset")
+    assert ev.signal == "rag.entity.gate.io.failed"
+    assert ev.payload == {"operation": "subscribe", "error": "ws reset"}
 
 
 @pytest.mark.asyncio

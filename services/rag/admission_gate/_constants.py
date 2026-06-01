@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
+from transport_utils import EVENTS_QUERY_SOCKET_PATH, EVENTS_SUBSCRIBE_PATH
 
-_EVENT_QUERY_SOCK = os.environ.get(
-    "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
-)
-_SUBSCRIBE_PATH = "http://localhost/v1/subscribe"  # host ignored with UDS
+_EVENT_QUERY_SOCK = EVENTS_QUERY_SOCKET_PATH
+_SUBSCRIBE_PATH = EVENTS_SUBSCRIBE_PATH
 _SNAPSHOT_TIMEOUT_S = 5.0
 _RECONNECT_DELAY_S = 5.0

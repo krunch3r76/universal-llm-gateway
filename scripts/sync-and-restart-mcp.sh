@@ -137,6 +137,41 @@ if fp:
 web_fetcher = (cfg.get('WEB_FETCHER_URL') or cfg.get('web_fetcher_url') or '').strip()
 if web_fetcher:
     print('export WEB_FETCHER_URL=' + shlex.quote(web_fetcher))
+
+def _export_x_credential(key, value):
+    if value:
+        print(f'export {key}=' + shlex.quote(value))
+
+for _x_key in ('X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET'):
+    _x_val = (cfg.get(_x_key) or os.environ.get(_x_key) or '').strip()
+    _export_x_credential(_x_key, _x_val)
+
+_x_env_file = (cfg.get('x_account_env_file') or '').strip()
+if not _x_env_file:
+    _default_x_env = Path('/mnt/torus/projects/xpharmdbot/.env')
+    if _default_x_env.is_file():
+        _x_env_file = str(_default_x_env)
+if _x_env_file:
+    _x_path = Path(_x_env_file).expanduser()
+    if _x_path.is_file():
+        for _line in _x_path.read_text().splitlines():
+            _line = _line.strip()
+            if not _line or _line.startswith('#'):
+                continue
+            if _line.startswith('export '):
+                _line = _line[7:]
+            if '=' not in _line:
+                continue
+            _k, _, _v = _line.partition('=')
+            _k = _k.strip()
+            if _k not in ('X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_SECRET'):
+                continue
+            if (cfg.get(_k) or os.environ.get(_k) or '').strip():
+                continue
+            _v = _v.strip()
+            if len(_v) >= 2 and _v[0] == _v[-1] and _v[0] in (chr(34), chr(39)):
+                _v = _v[1:-1]
+            _export_x_credential(_k, _v)
 ")"
 
 cd "$WORKSPACE_ROOT"
