@@ -249,6 +249,29 @@ def rag_file_indexing_failure_skipped(
 
 
 @event_factory
+def rag_file_indexing_gated(
+    *,
+    file: str,
+    layer: str,
+) -> Event:
+    """Emitted when a file in an entity-gated watch root is skipped at index
+    time because no cortex entity points at it via source_uri (thread 1136
+    A1/A5). Coordination signal — NOT a failure row, so it does not pollute
+    indexing_failures or conflate "out of scope" with "broken".
+
+    layer ∈ {"watcher_sweep", "index_funnel"} — whether Layer 1
+    (WatcherManager._should_attempt) or Layer 2 (indexing._index_file_impl)
+    caught it. At most once per source per sweep: sweeps short-circuit at
+    Layer 1, so a sweep-skipped file never reaches Layer 2 (no double emission).
+    """
+    return Event(
+        signal="rag.file.indexing.gated",
+        role="coordination",
+        payload={"file": file, "layer": layer},
+    )
+
+
+@event_factory
 def rag_file_indexing_failure_cleared(
     *,
     file: str,

@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
+from pydantic import BaseModel
 from universal_logging import get_logger
 
 from ..card import (
@@ -18,6 +19,7 @@ from ..card import (
     get_entity_card,
 )
 from ..db import cortex_conn
+from ..db import query as db_query
 from ..entity_crud import (
     create_entity_impl,
     list_entities_impl,
@@ -45,6 +47,19 @@ _create_entity_impl = create_entity_impl
 
 logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
+
+
+class SourcePathsResponse(BaseModel):
+    """Resolved absolute filesystem paths of every entity carrying a source_uri.
+
+    Consumed by the RAG EntityAdmissionGate (plan:rag-entity-gated-indexing).
+    `unresolved` counts source_uris that could not be resolved to a path
+    (e.g. a cortex:// URI to a missing entity) — they are simply not admitted.
+    """
+
+    paths: list[str]
+    count: int
+    unresolved: int = 0
 
 
 @router.get("")
@@ -107,6 +122,42 @@ def list_entities(
     if field_list:
         return data
     return EntityList(items=[EntitySummary(**item) for item in data["items"]])
+
+
+@router.get("/source-paths", response_model=SourcePathsResponse)
+def list_entity_source_paths() -> SourcePathsResponse:
+    """Resolved absolute paths of every entity that carries a source_uri.
+
+    cortex-api owns the entities table and imports the canonical resolver
+    (_source_uri_to_absolute_path), keeping _FILES_ROOT / _WORKSPACES_ROOT
+    authoritative server-side; RAG never opens cortex.db ([universal:rest]).
+    Paths are deduplicated — multiple entities resolving to the same path
+    collapse to one set member. An unresolvable source_uri is skipped (counted
+    under `unresolved`) rather than failing the whole snapshot, so the
+    consuming gate stays fail-closed.
+    """
+    from ..rag_resolver import _source_uri_to_absolute_path
+
+    with cortex_conn() as conn:
+        rows = db_query(
+            conn,
+            "SELECT source_uri FROM entities "
+            "WHERE source_uri IS NOT NULL AND TRIM(source_uri) != ''",
+        )
+
+    paths: set[str] = set()
+    unresolved = 0
+    for row in rows:
+        source_uri = row.get("source_uri")
+        if not isinstance(source_uri, str) or not source_uri.strip():
+            continue
+        try:
+            paths.add(_source_uri_to_absolute_path(source_uri.strip()))
+        except Exception:
+            unresolved += 1
+    return SourcePathsResponse(
+        paths=sorted(paths), count=len(paths), unresolved=unresolved
+    )
 
 
 @router.get("/{entity_id}")

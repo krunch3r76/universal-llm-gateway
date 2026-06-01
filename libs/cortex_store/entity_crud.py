@@ -24,6 +24,7 @@ from universal_logging import get_logger
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
+from .event_publisher import cortex_entity_source_changed
 from .entity_exhibit_lint import (
     enforce_exhibit_belongs_to,
     insert_exhibit_belongs_to_relationship,
@@ -349,12 +350,34 @@ def update_entity_impl(
 
         closure_gap_emit = _deferred_emit
 
+    source_uri_emit: Callable[[], None] | None = None
+    if "source_uri" in updates:
+        _eid_su = entity_id
+        _new_su = updates.get("source_uri")
+
+        def _deferred_source_emit(
+            _eid: str = _eid_su,
+            _new: object = _new_su,
+        ) -> None:
+            cortex_entity_source_changed(
+                entity_id=_eid,
+                change="dropped" if not _new else "changed",
+                source_uri=_new if isinstance(_new, str) else None,
+            )
+
+        source_uri_emit = _deferred_source_emit
+
     if commit:
         conn.commit()
         if closure_gap_emit is not None:
             closure_gap_emit()
-    elif closure_gap_emit is not None and post_commit_emits is not None:
-        post_commit_emits.append(closure_gap_emit)
+        if source_uri_emit is not None:
+            source_uri_emit()
+    else:
+        if closure_gap_emit is not None and post_commit_emits is not None:
+            post_commit_emits.append(closure_gap_emit)
+        if source_uri_emit is not None and post_commit_emits is not None:
+            post_commit_emits.append(source_uri_emit)
 
     rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     assertion_rows = db_query(
@@ -462,6 +485,13 @@ def create_entity_impl(
         )
     if commit:
         conn.commit()
+        if body.source_uri:
+            # Refresh nudge for the RAG EntityAdmissionGate; backstop self-heals
+            # if this races a deferred commit (commit=False callers are covered
+            # by the periodic backstop). Never blocks the write path.
+            cortex_entity_source_changed(
+                entity_id=body.id, change="set", source_uri=body.source_uri
+            )
     rows = db_query(conn, "SELECT * FROM entities WHERE id = ?", (body.id,))
     if not rows:
         logger.error("Entity create succeeded but no row returned for id=%s", body.id)

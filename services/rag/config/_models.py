@@ -24,6 +24,11 @@ class WatchDirectory:
     recursive: bool = True
     chunk_tokens: int | None = None
     exclude: list[str] = field(default_factory=list)
+    # When True, RAG indexes a file under this root only if a cortex entity
+    # points at it via source_uri (thread 1136 A2). Default False preserves
+    # today's filesystem-open behaviour for bulk corpora; set True for legal
+    # and evidence in ~/.gateway/rag.yaml.
+    entity_gated: bool = False
 
 
 @dataclass(slots=True, kw_only=True)
@@ -175,3 +180,31 @@ class RagConfig:
             return candidates[0][0]
         candidates.sort(key=lambda x: x[1])
         return candidates[0][0]
+
+    def is_path_entity_gated(self, file_path: str) -> bool:
+        """Longest-prefix match over watch roots; return the matched root's flag.
+
+        Layer-2 authority (thread 1136 A2): the index funnel has only the
+        absolute source path, not the WatchDirectory, so it resolves the
+        governing root here. WatchDirectory.path is already resolved at parse
+        time (config/_parsing._resolve_path), so this is pure string work — no
+        filesystem syscall. A nested child watch root overrides a broader
+        parent's policy (mirrors get_scope_for_path's longest-prefix discipline).
+        The trailing-separator guard is intentionally stricter than
+        get_scope_for_path so e.g. '/legal-archive' does not match a '/legal'
+        root.
+
+        Consulted only on the index funnel (inotify / admin / changed file),
+        not per-file in sweeps — sweeps decide via the entity_gated flag threaded
+        into _should_attempt.
+        """
+        best_length = -1
+        gated = False
+        for wd in self.watch_directories:
+            root = wd.path.rstrip("/")
+            if (file_path == root or file_path.startswith(root + "/")) and len(
+                root
+            ) > best_length:
+                best_length = len(root)
+                gated = wd.entity_gated
+        return gated

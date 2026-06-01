@@ -208,3 +208,31 @@ def cortex_subgraph_render_failed(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def cortex_entity_source_changed(
+    entity_id: str,
+    change: str,
+    source_uri: str | None = None,
+) -> Event:
+    """cortex.entity.source.changed — emitted when an entity's source_uri is
+    set, changed, or dropped. Drives the RAG EntityAdmissionGate dirty-flag +
+    debounced full re-fetch (plan:rag-entity-gated-indexing Phase 2).
+
+    change ∈ {"set", "changed", "dropped"}. Fire-and-forget refresh nudge — a
+    periodic backstop in the gate self-heals a missed emission, so correctness
+    never depends on this event firing (thread 1136 A6).
+    """
+    ev = Event(
+        signal="cortex.entity.source.changed",
+        role="observation",
+        scope="global",
+        payload={
+            "entity_id": entity_id,
+            "change": change,
+            **({"source_uri": source_uri} if source_uri is not None else {}),
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

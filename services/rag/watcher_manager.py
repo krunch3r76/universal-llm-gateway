@@ -24,6 +24,7 @@ from services.rag.events.indexing import (
     rag_file_deletion_failed,
     rag_file_indexing_failed,
     rag_file_indexing_failure_skipped,
+    rag_file_indexing_gated,
 )
 from services.rag.events.lifecycle import (
     rag_watch_directory_missing,
@@ -41,6 +42,7 @@ from services.rag.events.lifecycle import (
 if TYPE_CHECKING:
     from universal_event_bus import Event, EventBus
 
+    from services.rag.entity_admission import EntityAdmissionGate
     from services.rag.property_index import PropertyIndex
 
 logger = logging.getLogger(__name__)
@@ -128,6 +130,7 @@ class WatcherManager:
         scope_repair_runner: ScopeRepairRunnerFn | None = None,
         scope_repair_debounce_s: float = 30.0,
         property_index: PropertyIndex | None = None,
+        entity_admission_gate: EntityAdmissionGate | None = None,
     ) -> None:
         self._index_fn: IndexFn = index_fn
         self._delete_fn: DeleteFn = (
@@ -150,6 +153,7 @@ class WatcherManager:
         self._pending_repair_scopes: set[str] = set()
         self._rag_config: RagConfig | None = None
         self._property_index: PropertyIndex | None = property_index
+        self._entity_admission_gate: EntityAdmissionGate | None = entity_admission_gate
         self._baseline_extensions: tuple[str, ...] = _normalize_extensions(
             BASELINE_EXTENSIONS
         )
@@ -360,19 +364,34 @@ class WatcherManager:
         except TimeoutError:
             return False
 
-    async def _should_attempt(self, fp: Path) -> bool:
-        """Consult indexing_failures to decide if fp may be dispatched.
+    async def _should_attempt(self, fp: Path, *, entity_gated: bool = False) -> bool:
+        """Consult the entity-admission gate and indexing_failures.
 
-        Returns False iff a permanent failure row exists with unchanged
-        content. Transient failures are no longer rate-limited here —
-        admission throttling is event-driven (Stargate's
-        `capacity.admission.paused/resumed` consumed by the AdmissionGate),
-        so a re-attempt at reconcile time will block at the gate if the
-        backend is unhealthy and proceed otherwise.
+        Layer 1 (thread 1136 A1): in an entity-gated root, an unbacked file is
+        skipped BEFORE byte-read / chunk / failure-record — this removes the
+        per-sweep retry cost for unbacked files. Fail-closed + self-healing: an
+        unknown / not-yet-loaded admitted set holds (skip) and the next reconcile
+        sweep re-attempts once the gate refreshes. A gated skip emits the gated
+        coordination signal and writes NO failure row.
+
+        Otherwise returns False iff a permanent failure row exists with unchanged
+        content. Transient failures are not rate-limited here — admission
+        throttling is event-driven (the AdmissionGate consumes Stargate's
+        capacity.admission.paused/resumed), so a re-attempt at reconcile time
+        blocks at that gate if the backend is unhealthy and proceeds otherwise.
         """
+        source = str(fp)
+        if (
+            entity_gated
+            and self._entity_admission_gate is not None
+            and not self._entity_admission_gate.is_admitted(source)
+        ):
+            await self._emit(
+                rag_file_indexing_gated(file=source, layer="watcher_sweep")
+            )
+            return False
         if self._property_index is None:
             return True
-        source = str(fp)
         failure = self._property_index.get_indexing_failure(source)
         if failure is None:
             return True
@@ -502,7 +521,9 @@ class WatcherManager:
 
         eligible: list[Path] = []
         for fp in file_paths:
-            if await self._should_attempt(fp):
+            if await self._should_attempt(
+                fp, entity_gated=watch_directory.entity_gated
+            ):
                 eligible.append(fp)
         file_paths = eligible
         if not file_paths:
@@ -591,7 +612,9 @@ class WatcherManager:
 
         eligible: list[Path] = []
         for fp in file_paths:
-            if await self._should_attempt(fp):
+            if await self._should_attempt(
+                fp, entity_gated=watch_directory.entity_gated
+            ):
                 eligible.append(fp)
         file_paths = eligible
 

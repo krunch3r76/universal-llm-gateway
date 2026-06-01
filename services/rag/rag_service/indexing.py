@@ -22,6 +22,7 @@ from services.rag.events.indexing import (
     rag_file_indexed,
     rag_file_indexing_failed,
     rag_file_indexing_failure_cleared,
+    rag_file_indexing_gated,
     rag_file_skipped,
     rag_html_normalization_completed,
     rag_html_normalization_failed,
@@ -114,6 +115,28 @@ async def _index_file_impl(
     schema_version = state._config.knowledge_extraction.schema_version
     extraction_model = state._config.knowledge_extraction.extraction_model
     source_stat = await asyncio.to_thread(file_path.stat)
+
+    # Layer 2 — authoritative entity-admission gate (thread 1136 A1). Every
+    # entry path (inotify, reconcile, initial sweep, admin reindex) funnels
+    # through _index_file_impl, so "no backing entity ⇒ not indexed" holds as a
+    # true invariant for an entity-gated root, not only for sweeps. Orthogonal
+    # to `force` (force re-chunks unchanged content; it does not override
+    # backing). Fail-closed + self-healing: an unknown / not-yet-loaded admitted
+    # set holds (skip) and the reconcile loop re-attempts once the gate
+    # refreshes. This is NOT a failure (no indexing_failures row); the gated
+    # signal is coordination, not failure. Sweeps short-circuit at Layer 1
+    # before reaching here, so a sweep-skipped file is never double-emitted.
+    entity_gate = state._entity_admission_gate
+    if (
+        entity_gate is not None
+        and state._config.is_path_entity_gated(source)
+        and not entity_gate.is_admitted(source)
+    ):
+        if state._event_bus is not None:
+            await state._event_bus.publish_nowait(
+                rag_file_indexing_gated(file=source, layer="index_funnel")
+            )
+        return IndexResult(deleted=0, indexed=0, unchanged=True, file=source)
 
     if prop_index is not None:
         cached_source = prop_index.get_indexed_source(source)

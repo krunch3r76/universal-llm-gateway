@@ -108,6 +108,8 @@ def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
             for e in (raw_exclude if isinstance(raw_exclude, list) else [])
             if isinstance(e, str) and e.strip()
         ]
+        entity_gated_raw = item.get("entity_gated", False)
+        entity_gated = entity_gated_raw if isinstance(entity_gated_raw, bool) else False
         watch_directories.append(
             WatchDirectory(
                 path=_resolve_path(path.strip()),
@@ -115,6 +117,7 @@ def _parse_watch_directories(raw_watchers: object) -> list[WatchDirectory]:
                 recursive=recursive,
                 chunk_tokens=chunk_tokens,
                 exclude=exclude,
+                entity_gated=entity_gated,
             )
         )
     return watch_directories

@@ -25,6 +25,7 @@ from services.rag.article_registry import (
     to_article_rows,
 )
 from services.rag.config import load_config
+from services.rag.entity_admission import EntityAdmissionGate
 from services.rag.embeddings import close as close_embeddings
 from services.rag.embeddings import configure as configure_embeddings
 from services.rag.embeddings import set_event_bus as set_embeddings_event_bus
@@ -117,6 +118,17 @@ async def _startup() -> None:
 
     state._property_index = PropertyIndex()
     await state._property_index.start()
+
+    # Entity-admission gate for entity-gated watch roots (legal, evidence).
+    # Best-effort startup snapshot over cortex-api UDS; fail-closed until the
+    # set loads (the backstop retries). Started before the watcher runtime so
+    # the first sweep sees a populated admitted set.
+    state._entity_admission_gate = EntityAdmissionGate(event_bus=state._event_bus)
+    await state._entity_admission_gate.start()
+    logger.info(
+        "EntityAdmissionGate started (admitted=%d)",
+        state._entity_admission_gate.snapshot_size(),
+    )
 
     # Non-fatal backstop GC for orphaned contextualize cache rows —
     # primary cleanup happens inside remove_source_metadata; this sweep
@@ -213,6 +225,9 @@ async def _shutdown() -> None:
     if state._admission_gate is not None:
         await state._admission_gate.stop()
         state._admission_gate = None
+    if state._entity_admission_gate is not None:
+        await state._entity_admission_gate.stop()
+        state._entity_admission_gate = None
     if state._event_bus is not None:
         await state._event_bus.publish(rag_shutdown())
     if state._watcher_manager is not None:

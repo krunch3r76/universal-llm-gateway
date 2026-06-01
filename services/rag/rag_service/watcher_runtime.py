@@ -63,6 +63,7 @@ async def _start_watcher_runtime(config: RagConfig) -> None:
         reconcile_interval_s=config.reconcile_interval_s,
         post_reconcile_repair=_post_reconcile_scope_freshness,
         property_index=state._property_index,
+        entity_admission_gate=state._entity_admission_gate,
     )
 
     post_index_steps = list(POST_INDEX_STEPS)
