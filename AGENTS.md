@@ -256,7 +256,9 @@ Full policy: `agent_skill:grokbuild` (cortex, consolidated v3 — 2026-05-22) co
 
 ## Worktree discipline
 
-The **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-workflow.md` §Arc worktree binding — is **insurance** against two failure modes headless writers lack: (1) **concurrency** (multiple writers colliding on one working tree) and (2) **unattended landing** (diffs committing without human review). Direct Cursor IDE use avoids both: single-writer serialization by operator attention, and operator-attended landing on every diff. **grok-direct** and other headless/concurrent/unattended writers **require** the arc substrate; the **lead** integrates to master via the gated `git_integrate` primitive (`decision:lead-agent-git-integration`), approval bound to the reviewed `diff_sha256`. grokbuild is **retired** (assertion 11588). **cursorbuild** is a programmatic **interface to the Cursor IDE** (11479) — not a headless multi-writer harness; it inherits Cursor's protective properties and is **not** force-routed through arc worktrees by default (`decision:cursorbuild-ide-interface`).
+> **⚠ STATUS (2026-06-01) — EXPERIMENTAL / PARKED, NOT IN ACTIVE USE.** We are currently not using worktrees at all. Arc-worktree-binding was experimented with and may be revisited ONLY if a code-modifying API harness lands (an API writer that modifies code *in place* — NOT diff-apply, which needs no worktree). `grokbuild`, the original motivating harness, is **archived**; `grok-direct` is vestigial with it. Cursor composer-in-IDE and `cursorbuild` do **not** need this (`decision:cursorbuild-ide-interface`). Treat everything below as **design-of-record for that future case**, not the live default. Refs: `decision:arc-worktree-binding` (parked — assertion 11621), `decision:grokbuild-retirement-sequenced` (11622).
+
+The **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-workflow.md` §Arc worktree binding — is **insurance** against two failure modes headless writers lack: (1) **concurrency** (multiple writers colliding on one working tree) and (2) **unattended landing** (diffs committing without human review). Direct Cursor IDE use avoids both: single-writer serialization by operator attention, and operator-attended landing on every diff. **grok-direct** (vestigial — grokbuild-bound, archived) and other headless/concurrent/unattended writers **would** require the arc substrate if/when the parked workflow is revisited; the **lead** integrates to master via the gated `git_integrate` primitive (`decision:lead-agent-git-integration`), approval bound to the reviewed `diff_sha256`. grokbuild is **archived** (assertions 11588, 11622). **cursorbuild** is a programmatic **interface to the Cursor IDE** (11479) — not a headless multi-writer harness; it inherits Cursor's protective properties and is **not** force-routed through arc worktrees by default (`decision:cursorbuild-ide-interface`).
 
 1. **Arc binding** — `∀ arc : one_worktree(arc) ∧ one_branch(arc)`. Coordinator kickoff (once per arc):
 
@@ -264,9 +266,9 @@ The **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-
    git worktree add <WORKTREE_ROOT>/<plan-name> -b arc/<plan-name> <base-sha>
    ```
 
-   Declare `arc_branch`, `arc_worktree_path`, and `arc_base_sha` on the `plan:` entity at seed time. Resume reads them — never re-derive per session. **Required for** grok-direct and API diff-appliers (e.g. gpt-5.5 session reviews); **not required by default for** cursorbuild (see item 5).
+   Declare `arc_branch`, `arc_worktree_path`, and `arc_base_sha` on the `plan:` entity at seed time. Resume reads them — never re-derive per session. **Would be required for** grok-direct (vestigial) and API diff-appliers (e.g. gpt-5.5 session reviews) when the arc workflow is active; **not required by default for** cursorbuild (see item 5).
 
-2. **Location** — default arc root `/mnt/torus/projects/ulg-grok-worktrees/<name>` (or path on the plan entity). Headless/concurrent code-modifying dispatches go here — not the live checkout while Cursor may be editing the same tree.
+2. **Location** — default arc root `/mnt/torus/projects/ulg-grok-worktrees/<name>` (or path on the plan entity). Headless/concurrent code-modifying dispatches would go here — not the live checkout while Cursor may be editing the same tree.
 
 3. **Read-only** — inspection, RAG, events, and non-mutating cortex work may use the live repo cwd.
 
@@ -276,16 +278,15 @@ The **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-
 
    | Harness | Where edits land | Who merges |
    |---|---|---|
-   | `grok-direct` (CLI) | arc worktree cwd | lead via `git_integrate` |
+   | `grok-direct` (CLI, vestigial) | arc worktree cwd *(if arc workflow active)* | lead via `git_integrate` |
    | `cursorbuild` (IDE interface) | live checkout or Cursor-native `~/.cursor/worktrees` (operator-attended apply/review) | operator via Cursor (not `git_integrate` by default) |
-   | API diff-appliers (e.g. gpt-5.5 session reviews) | arc worktree cwd | lead via `git_integrate` |
-   | `grokbuild` *(retired — 11588)* | — | — |
+   | API diff-appliers (e.g. gpt-5.5 session reviews) | arc worktree cwd *(if arc workflow active)* | lead via `git_integrate` |
 
    **cursorbuild** inherits Cursor's single-writer + operator-attended properties: Cursor manages isolation (live checkout or native worktrees, auto-pruned); dispatches are operator-triggered and watched. **Arc-binding applies to cursorbuild ONLY IF** multiple dispatches run concurrently **AND** unattended (landing without per-diff human review). **Anti-pattern**: programmatic dispatch writing the **live checkout** concurrently with interactive IDE editing on the same tree — serialize dispatches with interactive use, or use Cursor-native worktrees for isolation.
 
-6. **Concurrency** — grok-direct and interactive Cursor must not share cwd on the live checkout. Headless writers use **unique arc worktrees** (or one arc per plan) as the conflict-avoidance primitive. cursorbuild dispatches serialized with interactive IDE use, or isolated via Cursor-native worktrees, avoid the collision grok-direct's concurrency introduced.
+6. **Concurrency** — when the arc workflow is active, grok-direct and interactive Cursor must not share cwd on the live checkout. Headless writers use **unique arc worktrees** (or one arc per plan) as the conflict-avoidance primitive. cursorbuild dispatches serialized with interactive IDE use, or isolated via Cursor-native worktrees, avoid the collision grok-direct's concurrency introduced.
 
-7. **⚠ Open — ad-hoc grok-direct worktree bootstrap** — `scripts/grok-worktree` / `scripts/grok-worktree-cleanup` still exist and POST/DELETE to grokbuild-worker (`/api/v1/grokbuild/worktrees`), but grokbuild MCP ops are retired. No confirmed forward replacement for ad-hoc (non-arc) grok-direct session worktree creation. Arc kickoff uses plain `git worktree add` above. Operator decision pending before documenting a new path.
+7. **Parked — ad-hoc grok-direct worktree bootstrap** — `scripts/grok-worktree` / `scripts/grok-worktree-cleanup` still exist and POST/DELETE to grokbuild-worker (`/api/v1/grokbuild/worktrees`), but grokbuild is archived and grok-direct is vestigial. This open question is largely **moot** while worktrees remain parked; arc kickoff would use plain `git worktree add` above if the workflow is revisited.
 
 8. **Depth reference** — arc binding + integration gates: `agent-skills/implementation-plan-workflow.md` §Arc worktree binding. grokbuild history: `agent-skills/grokbuild.md`. Git integration primitives: `decision:lead-agent-git-integration`. cursorbuild IDE-interface framing: `decision:cursorbuild-ide-interface`.
 
