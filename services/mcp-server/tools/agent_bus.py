@@ -576,7 +576,7 @@ def _fetch_dispatch(
     last: int = 10,
     unread: bool = False,
     mark_read: bool = False,
-    compact: bool = True,
+    compact: bool = False,
     all: bool = False,
 ) -> dict[str, Any]:
     """Dispatch wrapper for fetch — normalizes empty strings and resolves last/all/unread.
@@ -585,6 +585,11 @@ def _fetch_dispatch(
     - all=True  → no limit (fetches every matching turn); overrides last
     - unread=True → no limit on the unread set; last is ignored (use fetch_unread)
     - otherwise  → last capped at MCP_AGENT_BUS_CONTEXT_CAP (default 50)
+    - compact defaults False so windowed fetches project turn `body` (matching
+      fetch_unread, get, and the CLI). A True default silently nulled bodies on
+      thread-only/windowed fetches — a populated thread read as empty (BUG 4,
+      thread 1154). Pass compact=true explicitly for metadata-only byte savings;
+      the response_size_guard windows oversize payloads regardless.
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -910,7 +915,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
           fetch_unread  (to?, thread?, mark_read?, compact?)                        — fetch ALL unread turns for a recipient or thread; no count cap; at least one of to/thread required
-          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false)
+          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false); compact default false (bodies projected) — pass compact=true for metadata-only
           get           (thread, turn_number)                           — get one specific turn
           post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.
           reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.
