@@ -1,13 +1,18 @@
 # Entity-Backed Claim Provenance — Architecture Spec v1
 
 **Status:** v1
-**Authors:** Opus 4.7 (drafter), gpt-5.5 / gemini-2.5-pro / Opus 4.7-on-cursor-seat (reviewers — see Appendix B for independence disclosure)
-**Origin session:** web-2026-05-12-2121
-**Strategic frame:** cortex assertion 9149 on `project:universal-llm-gateway`
-**Source materials:**
-- `notes/legal/property-tax/dispatch/entity-provenance-schema-substrate.md` — review substrate
-- `notes/legal/property-tax/dispatch/entity-provenance-schema-responses.md` — Q-by-Q reviewer comparison
-- `agent-bus:968` — review thread, five turns
+**Authors:** drafted by one frontier model; independently reviewed by three others (see Appendix B for the independence disclosure)
+**Parent spec:** [`cortex-provenance-substrate-v1.md`](cortex-provenance-substrate-v1.md) — the universal discipline this spec instantiates for one domain
+**Read model:** [`docs/cortex-spec.md`](../cortex-spec.md) — entity/assertion/edge schema
+
+---
+
+> **Note on citations.** This spec is self-contained. Inline tokens such as
+> `assertion N`, `agent-bus:<thread>`, `todo:<slug>`, and bare session IDs are a
+> provenance trail into the project's private Cortex knowledge graph — useful to
+> the maintainers, skippable by an outside reader. The `cortex://...` URIs shown
+> in §1–§6 are *worked examples of the citation grammar this spec defines*; they
+> are illustrative and self-explanatory, not dangling references.
 
 ---
 

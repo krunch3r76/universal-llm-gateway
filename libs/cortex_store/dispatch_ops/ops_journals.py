@@ -13,6 +13,7 @@ from universal_logging import get_logger
 from ..db import cortex_conn, execute, json_encode, query
 from ..routes.assertions import _create_assertion_impl
 from ..routes.deadlines import _RESOLVED_OUTCOMES, _list_deadlines_impl
+from ..routes.session_handoff import _upsert_session_handoff_impl
 from ..routes.session_journals import (
     _close_session_impl,
     _create_session_journal_impl,
@@ -576,3 +577,31 @@ def _op_session_close(
     result["transcript_warnings"] = transcript_warnings
 
     return result
+
+
+def _op_session_handoff_upsert(
+    session_id: str,
+    handoff_prompt: str,
+    **_: Any,
+) -> dict[str, Any]:
+    """Upsert handoff_prompt on a closed session (journal row + transcript mirror)."""
+    try:
+        return _upsert_session_handoff_impl(
+            {"session_id": session_id, "handoff_prompt": handoff_prompt}
+        )
+    except HTTPException as exc:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            return {
+                "error": detail.get("message") or "session_handoff_upsert rejected",
+                **detail,
+            }
+        return {"error": str(detail), "reason": "session_handoff_upsert.rejected"}
+    except Exception as exc:
+        logger.error(
+            "session_handoff_upsert: route handler raised for %s: %s",
+            session_id,
+            exc,
+            exc_info=True,
+        )
+        return {"error": f"Session handoff upsert failed: {exc}"}

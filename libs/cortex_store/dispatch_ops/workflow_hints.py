@@ -59,6 +59,10 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "entity_get on transcript_entity_id to confirm the full record. "
         "Review staged_assertions from review_queue (F2) — to graduate, supersede each with the missing reasoning_summary or chunk_id (carryover preserves the rest; new row is the committed version). reasoning_summary is immutable post-creation per v1.3-additions §7.5.3."
     ),
+    "session_handoff_upsert": (
+        "next: entity_get on transcript_entity_id (or journal row via session_id) "
+        "to verify the handoff_prompt is retrievable on explicit reference"
+    ),
     "search": (
         "next: extract entity_ids from results → activate (for structurally "
         "connected assertions the query wouldn't find directly); "

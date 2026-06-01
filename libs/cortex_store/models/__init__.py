@@ -82,6 +82,8 @@ from .extraction import (
 from .journals import (
     SessionCloseRequest,
     SessionCloseResponse,
+    SessionHandoffUpsertRequest,
+    SessionHandoffUpsertResponse,
     SessionJournalCreate,
     SessionJournalItem,
     SessionJournalList,
@@ -177,6 +179,8 @@ __all__ = [
     # journals
     "SessionCloseRequest",
     "SessionCloseResponse",
+    "SessionHandoffUpsertRequest",
+    "SessionHandoffUpsertResponse",
     "SessionJournalCreate",
     "SessionJournalItem",
     "SessionJournalList",

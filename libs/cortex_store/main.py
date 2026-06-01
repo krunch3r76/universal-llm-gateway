@@ -36,6 +36,7 @@ from .routes import (
     relationships,
     resolve,
     salience,
+    session_handoff,
     session_journals,
     stats,
     subgraph,
@@ -137,6 +138,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(relationships.router)
     app.include_router(deadlines.router)
     app.include_router(session_journals.router)
+    app.include_router(session_handoff.router)
     app.include_router(stats.router)
     app.include_router(salience.router)
     app.include_router(boot.router)

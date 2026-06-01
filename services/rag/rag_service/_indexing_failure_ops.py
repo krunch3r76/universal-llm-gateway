@@ -46,6 +46,8 @@ def _classify_indexing_failure(
         return ("permanent", "contextualize_model_not_in_catalog")
     if isinstance(exc, zipfile.BadZipFile) or exc_type_name == "PackageNotFoundError":
         return ("permanent", "corrupt_archive")
+    if "exceeds max batch size" in msg_lower:
+        return ("permanent", "exceeds_chroma_max_batch_size")
 
     if isinstance(exc, asyncio.TimeoutError | TimeoutError):
         return ("transient", "timeout")

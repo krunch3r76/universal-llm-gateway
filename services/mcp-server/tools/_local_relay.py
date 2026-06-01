@@ -140,7 +140,7 @@ def relay(
                     parsed_err = None
                 if isinstance(parsed_err, dict):
                     detail_value = parsed_err.get("detail")
-                    if isinstance(detail_value, dict):
+                    if detail_value is not None:
                         err["detail"] = detail_value
                 return err
 

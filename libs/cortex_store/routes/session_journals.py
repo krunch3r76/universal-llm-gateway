@@ -739,6 +739,11 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                             "closed_at": now,
                             "status": "confirmed",
                             "transcript_depth": body.transcript_depth,
+                            **(
+                                {"handoff_prompt": handoff_prompt}
+                                if handoff_prompt
+                                else {}
+                            ),
                         }
                     ),
                     now,

@@ -300,6 +300,14 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
     assert journal is not None
     assert journal["handoff_prompt"] == handoff
 
+    entity = _query_one(
+        db_path,
+        "SELECT attributes FROM entities WHERE id = ?",
+        ("transcript:orion-2026-05-04-0844",),
+    )
+    assert entity is not None
+    assert json.loads(entity["attributes"])["handoff_prompt"] == handoff
+
     edge = _query_one(
         db_path,
         "SELECT * FROM session_edges WHERE from_node = ? AND to_node = ? AND edge_type = 'continues'",

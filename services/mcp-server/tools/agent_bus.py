@@ -10,6 +10,7 @@ All HTTP I/O delegates to ``_relay()`` from ``local_api.py``.
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 import os
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,42 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _FETCH_CONTEXT_CAP = max(1, int(os.getenv("MCP_AGENT_BUS_CONTEXT_CAP", "50")))
+_VALID_TURN_STATUSES = ("open", "resolved", "superseded", "waiting")
+
+
+def _relay_detail(result: dict[str, Any]) -> Any:
+    """Extract FastAPI ``detail`` from a relay error envelope."""
+    detail = result.get("detail")
+    if detail is not None:
+        return detail
+    body = result.get("body")
+    if isinstance(body, str):
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed.get("detail")
+    return None
+
+
+def _format_agent_bus_error(result: dict[str, Any], *, op: str) -> str:
+    """Turn relay failures into agent-actionable messages."""
+    if result.get("status_code") == 422:
+        detail = _relay_detail(result)
+        if isinstance(detail, list):
+            for err in detail:
+                if not isinstance(err, dict):
+                    continue
+                loc = err.get("loc") or ()
+                if any(part == "status" for part in loc):
+                    allowed = ", ".join(_VALID_TURN_STATUSES)
+                    return (
+                        f"{op}: invalid status value — turn status must be one of: "
+                        f"{allowed}. Thread status (active|blocked|waiting|closed) "
+                        "belongs on update_thread, not reply/post."
+                    )
+    return f"agent-bus error: {result.get('error', 'unknown error')}"
 
 
 def _structured_body_too_large(
@@ -110,7 +147,7 @@ def _post_impl(
         guard = structured_route_guard(result)
         if guard is not None:
             return guard
-        return {"error": f"agent-bus error creating thread: {result['error']}"}
+        return {"error": _format_agent_bus_error(result, op="post")}
 
     thread_data = result.get("thread", {})
     turn_data = result.get("turn", {})
@@ -174,7 +211,7 @@ def _reply_impl(
         structured = _structured_body_too_large(result, op="reply")
         if structured is not None:
             return structured
-        return {"error": f"agent-bus error: {result['error']}"}
+        return {"error": _format_agent_bus_error(result, op="reply")}
 
     turn_number = result.get("turn_number") or result.get("id")
     effective_turn_number = turn_number if turn_number is not None else 1
@@ -227,8 +264,10 @@ def _fetch_impl(
         params["thread"] = thread
     if to is not None:
         params["to"] = to
-        params["unread"] = unread
-        params["compact"] = compact
+    if unread:
+        params["unread"] = "true"
+    if compact:
+        params["compact"] = "true"
     if last is not None:
         params["last"] = last
     if mark_read:
@@ -535,7 +574,7 @@ def _fetch_dispatch(
     to: str | None = None,
     thread: str | int | None = None,
     last: int = 10,
-    unread: bool = True,
+    unread: bool = False,
     mark_read: bool = False,
     compact: bool = True,
     all: bool = False,
@@ -544,7 +583,7 @@ def _fetch_dispatch(
 
     Semantics:
     - all=True  → no limit (fetches every matching turn); overrides last
-    - unread=True → no limit on the unread set; last is ignored for the unread filter
+    - unread=True → no limit on the unread set; last is ignored (use fetch_unread)
     - otherwise  → last capped at MCP_AGENT_BUS_CONTEXT_CAP (default 50)
     """
     if isinstance(thread, int):
@@ -554,7 +593,6 @@ def _fetch_dispatch(
     if all:
         effective_last = None
     elif unread:
-        # Fetch all unread; last is irrelevant when the filter already constrains the set
         effective_last = None
     else:
         effective_last = max(1, min(last, _FETCH_CONTEXT_CAP))
@@ -872,7 +910,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           threads       (status?, tags?, lifecycle_state?)              — list threads; status: active|blocked|waiting|closed|all (default active); tags: AND-filter; lifecycle_state: pending|admitted|delivered|failed (exact match)
           create_thread (slug, summary?, tags?, lifecycle_state?, thread_id?) — create a thread without a turn; use lifecycle_state="pending" for lifecycle-managed threads that will be dispatched later
           fetch_unread  (to?, thread?, mark_read?, compact?)                        — fetch ALL unread turns for a recipient or thread; no count cap; at least one of to/thread required
-          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored); last caps context-only fetches (default 10)
+          fetch         (to?, thread?, last?, unread?, compact?, mark_read?, all?)  — get turns; at least one of to/thread required; all=true fetches every turn (no limit); unread=true fetches all unread (last ignored; prefer fetch_unread); last caps windowed fetches (default 10, unread default false)
           get           (thread, turn_number)                           — get one specific turn
           post          (slug, to, subject, body, from_agent, summary?, attachments?, tags?, allow_long_body?) — start a new thread (atomic: creates thread + first turn). from_agent is REQUIRED — name the seat authoring the turn (e.g. "cursor", "claude-web", "gpt-cursor", "claude-api"); there is no default.
           reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.

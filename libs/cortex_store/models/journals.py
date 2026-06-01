@@ -106,9 +106,11 @@ class SessionCloseRequest(BaseModel):
       prior_session_id:   creates a ``continues`` edge.
       handoff_prompt:     forward-pickup narrative for the next session;
         persisted on the ``session_journals`` row in the
-        ``handoff_prompt`` column (added in migration 044) and surfaced
-        via ``GET /boot-continuity``. Replaces the prior write path
-        through ``reflective_journal`` (retired per
+        ``handoff_prompt`` column (added in migration 044) and mirrored to
+        ``transcript:{session_id}`` entity attributes for explicit retrieval
+        via ``entity_get``. Boot omits handoffs (see
+        ``decision:transcript-scoped-handoff-explicit-load``). Replaces the
+        prior write path through ``reflective_journal`` (retired per
         ``decision:rj-handoff-kind-retirement``, agent-bus thread 1107).
       assistant_label:    H3 heading label for assistant blocks in the
         assembled verbatim layer (default ``"Assistant"``).
@@ -165,3 +167,18 @@ class SessionCloseResponse(BaseModel):
     # v1.3.1 Path 3 advisory (non-blocking): normalization refusals detected
     # in session-written assertions via the ledger. Never causes 422.
     audit_warnings: list[dict[str, Any]] | None = None
+
+
+class SessionHandoffUpsertRequest(BaseModel):
+    """Post-close handoff upsert input."""
+
+    handoff_prompt: str
+
+
+class SessionHandoffUpsertResponse(BaseModel):
+    """Post-close handoff upsert result."""
+
+    session_id: str
+    handoff_prompt: str
+    transcript_entity_id: str | None = None
+    journal_row_id: int

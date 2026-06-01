@@ -16,11 +16,16 @@ from typing import Any
 
 import pytest
 
+import agent_seat
+
 from systems.pipeline.core.execution.errors import FrontierDispatchExhaustedError
-from systems.pipeline.core.handlers import frontier_dispatch as fd_mod
 from systems.pipeline.core.handlers.frontier_dispatch import (
     FrontierDispatchHandler,
+    native_loop as fd_native_mod,
 )
+from systems.pipeline.core.handlers.frontier_dispatch_tools import XAI_BUILTIN_TOOLS
+
+_TEST_MODEL_ENTITY_ID = "model:test-slug"
 
 
 class _FakeStep:
@@ -109,6 +114,7 @@ class _FakeBundle:
         self.section_counts = {"briefing_bytes": 42, "todos": 3}
         self.continuation_id = None
         self.agent_meta = AgentMeta(capability_tier=capability_tier)
+        self.inline_only = capability_tier == "inline-only"
 
 
 class _FakeLoopResult:
@@ -171,9 +177,9 @@ async def test_handler_team_mode_fires_hydrated_event(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "hydrate_agent", fake_hydrate)
-    monkeypatch.setattr(fd_mod, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -207,8 +213,8 @@ async def test_handler_persona_free_mode_skips_hydration(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "hydrate_agent", fake_hydrate)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep(system_prompt="You are a test assistant.")
     context = _make_context(
@@ -254,7 +260,7 @@ async def test_handler_resolves_via_model_ref_through_async_delegation(
         captured["model"] = kwargs["model"]
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep(model_ref="anthropic/claude-sonnet-4-6")
     context = _make_context(options={})
@@ -279,7 +285,7 @@ async def test_handler_resolves_via_model_requirements_when_model_ref_absent(
         captured["model"] = kwargs["model"]
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep(
         model_ref=None,
@@ -311,7 +317,7 @@ async def test_handler_pipeline_options_model_short_circuits_async_resolution(
     async def fake_loop(**kwargs: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep(model_ref="some/model-ref")
     monkeypatch.setattr(step, "get_target_model_id_async", loud_async)
@@ -331,7 +337,7 @@ async def test_handler_exhausted_emits_exhausted_signal(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(exhausted=True, turns_used=3, provider="xai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "xai/grok-4-fast-reasoning"})
@@ -354,7 +360,7 @@ async def test_handler_exhausted_empty_content_raises(
             content="", exhausted=True, turns_used=16, provider="openai"
         )
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4"})
@@ -368,11 +374,14 @@ async def test_handler_exhausted_empty_content_raises(
 
 
 def test_tool_event_translation_produces_frontier_signals(
-    handler: FrontierDispatchHandler,
     published_events: list[Any],
 ) -> None:
+    from systems.pipeline.core.handlers.frontier_dispatch_streaming import (
+        build_on_tool_event,
+    )
+
     context = _make_context(options={})
-    cb = handler._build_on_tool_event(context, agent="gatherer")
+    cb = build_on_tool_event(context, agent="gatherer", publish=published_events.append)
 
     cb(
         "pipeline.frontier.dispatch.tool.called",
@@ -406,7 +415,7 @@ async def test_handler_anthropic_allows_remote_mcp_false(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -487,7 +496,7 @@ async def test_handler_mcp_false_suppresses_tools(
         captured["remote_mcp"] = kwargs["req"].remote_mcp
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4", "mcp": False})
@@ -527,10 +536,10 @@ async def test_handler_non_anthropic_agent_uses_live_mcp_tools(
         captured["tools"] = kwargs["req"].tools
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "hydrate_agent", fake_hydrate)
-    monkeypatch.setattr(fd_mod, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(fd_mod, "get_mcp_tool_definitions", fake_defs)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
+    monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4", "role": "gatherer"})
@@ -570,10 +579,8 @@ async def test_handler_persona_free_defaults_use_full_mcp_catalog(
         captured["tools"] = kwargs["req"].tools
         return _FakeLoopResult(provider="openai")
 
-    import agent_seat
-
     monkeypatch.setattr(agent_seat, "get_mcp_tool_definitions", fake_defs)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4"})
@@ -612,8 +619,8 @@ async def test_handler_endpoint_supplied_tools_accept_live_mcp_names(
         captured["tools"] = kwargs["req"].tools
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "resolve_tool_definitions", fake_resolve)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "resolve_tool_definitions", fake_resolve)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -667,8 +674,8 @@ async def test_handler_endpoint_agent_plus_tools_preserves_persona_metadata(
         captured["system"] = kwargs["req"].system
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "resolve_tool_definitions", fake_resolve)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "resolve_tool_definitions", fake_resolve)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -724,7 +731,7 @@ async def test_handler_anthropic_opus47_reasoning_effort_uses_adaptive_thinking(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -753,7 +760,7 @@ async def test_handler_anthropic_legacy_reasoning_effort_keeps_budget_tokens(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -794,7 +801,7 @@ async def test_handler_anthropic_adaptive_family_uses_adaptive_thinking(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -829,7 +836,7 @@ async def test_handler_extended_reasoning_effort_vocabulary_accepted(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -863,7 +870,7 @@ async def test_handler_anthropic_legacy_skips_thinking_for_extended_effort(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="anthropic")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -895,7 +902,7 @@ async def test_handler_google_effort_is_lowercase(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="google")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -927,7 +934,7 @@ async def test_handler_grok43_defaults_to_high_reasoning_effort(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "xai/grok-4.3", "mcp": False})
@@ -955,7 +962,7 @@ async def test_handler_grok43_caller_effort_wins_over_default(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -987,7 +994,7 @@ async def test_handler_grok43_empty_string_effort_triggers_default(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -1018,7 +1025,7 @@ async def test_handler_non_default_model_unaffected_by_default_resolution(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="openai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(options={"model": "openai/gpt-5.4", "mcp": False})
@@ -1066,7 +1073,7 @@ async def test_handler_surfaces_canonical_model_entity_id(
     async def fake_loop(**_kwargs: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="google")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -1087,8 +1094,12 @@ async def test_handler_surfaces_canonical_model_entity_id(
 
 
 def test_resolve_remote_mcp_defaults_by_provider() -> None:
-    h = FrontierDispatchHandler()
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        resolve_remote_mcp,
+    )
+
     step = _FakeStep()
+    published: list[Any] = []
     # Default: True iff provider=anthropic AND mcp_enabled.
     cases = [
         ("anthropic/claude-sonnet-4-6", "anthropic", True, True),
@@ -1099,14 +1110,16 @@ def test_resolve_remote_mcp_defaults_by_provider() -> None:
     ]
     for model, provider, mcp_enabled, expected in cases:
         context = _make_context(options={"model": model})
-        result = h._resolve_remote_mcp(
+        result = resolve_remote_mcp(
             opts=context.options,
             step=step,
             context=context,
             provider=provider,
             model=model,
+            model_entity_id=_TEST_MODEL_ENTITY_ID,
             agent=None,
             mcp_enabled=mcp_enabled,
+            publish=published.append,
         )
         assert result is expected, (
             f"{provider} mcp={mcp_enabled}: expected {expected}, got {result}"
@@ -1124,7 +1137,7 @@ def test_resolve_agent_uses_options_then_domain_field() -> None:
 
     step_with_domain = _FakeStep(domain_fields={"role": "synthesizer"})
     assert resolve_agent({}, step_with_domain) == "synthesizer"
-    assert resolve_agent({"role": "web"}, step_with_domain) == "web"
+    assert resolve_agent({"role": "web"}, step_with_domain) == "claude-web"
     assert resolve_agent({"role": ""}, step_with_domain) == "synthesizer"
     assert resolve_agent({}, _FakeStep()) is None
 
@@ -1139,6 +1152,9 @@ def test_reject_unknown_runtime_options_raises_on_unknown_keys(
 ) -> None:
     """Unknown ``runtime_options`` keys must raise ``UnknownPipelineOptionsError``."""
     from systems.pipeline.core.execution.errors import UnknownPipelineOptionsError
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        reject_unknown_runtime_options,
+    )
 
     step = _FakeStep()
     context = _make_context(
@@ -1146,7 +1162,9 @@ def test_reject_unknown_runtime_options_raises_on_unknown_keys(
         runtime_options={"unknown_key": True, "another_bad_key": 42},
     )
     with pytest.raises(UnknownPipelineOptionsError) as exc_info:
-        handler._reject_unknown_runtime_options(step, context)
+        reject_unknown_runtime_options(
+            step, context, handler._ACCEPTED_RUNTIME_OPTION_KEYS
+        )
     assert "unknown_key" in str(exc_info.value)
 
 
@@ -1154,6 +1172,10 @@ def test_reject_unknown_runtime_options_passes_on_accepted_keys(
     handler: FrontierDispatchHandler,
 ) -> None:
     """All keys in ``_ACCEPTED_RUNTIME_OPTION_KEYS`` must be admitted without error."""
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        reject_unknown_runtime_options,
+    )
+
     step = _FakeStep()
     context = _make_context(
         options={"model": "anthropic/claude-sonnet-4-6"},
@@ -1161,7 +1183,31 @@ def test_reject_unknown_runtime_options_passes_on_accepted_keys(
             k: True for k in FrontierDispatchHandler._ACCEPTED_RUNTIME_OPTION_KEYS
         },
     )
-    handler._reject_unknown_runtime_options(step, context)
+    reject_unknown_runtime_options(step, context, handler._ACCEPTED_RUNTIME_OPTION_KEYS)
+
+
+def test_reject_unknown_runtime_options_ignores_injected_stream_flag(
+    handler: FrontierDispatchHandler,
+) -> None:
+    """Framework-injected ``stream`` must NOT trip the unknown-key gate.
+
+    Regression for the all-generate-fails outage: ``_coerce_stream_flag`` at
+    proxy ingress injects ``stream`` into the request body, which
+    ``extract_runtime_options`` folds into ``runtime_options`` for the generate
+    handler's passthrough branch. Frontier dispatch is non-streaming and does
+    not list ``stream`` in ``_ACCEPTED_RUNTIME_OPTION_KEYS``; the gate must
+    treat it as framework-injected and admit the dispatch.
+    """
+    from systems.pipeline.core.handlers.frontier_dispatch_admission import (
+        reject_unknown_runtime_options,
+    )
+
+    step = _FakeStep()
+    context = _make_context(
+        options={"model": "anthropic/claude-sonnet-4-6"},
+        runtime_options={"stream": False, "model": "anthropic/claude-sonnet-4-6"},
+    )
+    reject_unknown_runtime_options(step, context, handler._ACCEPTED_RUNTIME_OPTION_KEYS)
 
 
 def test_check_agent_model_consistency_allows_role_provider_override() -> None:
@@ -1175,6 +1221,7 @@ def test_check_agent_model_consistency_allows_role_provider_override() -> None:
     check_agent_model_consistency(
         agent="reviewer",
         model="openai/gpt-5.5",
+        model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider="openai",
         execution_id="exec-test-0001",
         publish=published.append,
@@ -1196,6 +1243,7 @@ def test_check_agent_model_consistency_rejects_concrete_seat_mismatch() -> None:
         check_agent_model_consistency(
             agent="grok-api-multi",
             model="anthropic/claude-sonnet-4-6",
+            model_entity_id=_TEST_MODEL_ENTITY_ID,
             provider="anthropic",
             execution_id="exec-test-0001",
             publish=published.append,
@@ -1225,6 +1273,7 @@ def test_check_agent_model_consistency_accepts_valid_family() -> None:
     check_agent_model_consistency(
         agent="skeptic",
         model="xai/grok-4.20-multi-agent-0309",
+        model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider="xai",
         execution_id="exec-test-0001",
         publish=published.append,
@@ -1246,6 +1295,7 @@ def test_check_agent_model_consistency_allows_non_multi_agent_for_skeptic_role()
     check_agent_model_consistency(
         agent="skeptic",
         model="anthropic/claude-sonnet-4-6",
+        model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider="anthropic",
         execution_id="exec-test-0002",
         publish=published.append,
@@ -1269,6 +1319,7 @@ def test_check_agent_model_consistency_rejects_non_multi_agent_for_concrete_seat
         check_agent_model_consistency(
             agent="grok-api-multi",
             model="xai/grok-4-fast-reasoning",
+            model_entity_id=_TEST_MODEL_ENTITY_ID,
             provider="xai",
             execution_id="exec-test-0002",
             publish=published.append,
@@ -1296,6 +1347,7 @@ def test_check_agent_model_consistency_passes_unknown_agent() -> None:
     check_agent_model_consistency(
         agent="custom-bot",
         model="anthropic/claude-sonnet-4-6",
+        model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider="anthropic",
         execution_id="exec-test-0001",
         publish=published.append,
@@ -1327,6 +1379,7 @@ def test_check_agent_model_consistency_accepts_agents_without_variant_requiremen
     check_agent_model_consistency(
         agent=agent,
         model=model,
+        model_entity_id=_TEST_MODEL_ENTITY_ID,
         provider=provider,
         execution_id="exec-test-s4",
         publish=published.append,
@@ -1368,7 +1421,7 @@ async def test_handler_persona_free_accepts_multi_agent_model(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     step = _FakeStep()
     context = _make_context(
@@ -1413,9 +1466,9 @@ def _make_skeptic_fixtures(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "hydrate_agent", fake_hydrate)
-    monkeypatch.setattr(fd_mod, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
+    monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
     return captured
 
 
@@ -1431,7 +1484,7 @@ async def test_skeptic_injects_xai_builtin_tools_by_default(
 
     po = captured["req"].provider_options
     assert po is not None
-    assert po.get("xai", {}).get("tools") == fd_mod._XAI_BUILTIN_TOOLS
+    assert po.get("xai", {}).get("tools") == XAI_BUILTIN_TOOLS
     assert captured["req"].tools is None  # no client-side tools
 
 
@@ -1506,8 +1559,8 @@ async def test_skeptic_explicit_tools_via_frontier_dispatch_suppresses_injection
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="xai")
 
-    monkeypatch.setattr(fd_mod, "resolve_tool_definitions", fake_resolve)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(agent_seat, "resolve_tool_definitions", fake_resolve)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     context = _make_skeptic_context(
         tools=[],
@@ -1553,14 +1606,9 @@ async def test_inline_only_capability_tier_forces_empty_tool_surface(
         captured["req"] = kwargs["req"]
         return _FakeLoopResult(provider="xai")
 
-    # ``hydrate_agent`` and ``assemble_system_prompt`` are looked up via lazy
-    # ``from agent_seat import ...`` inside ``resolve_dispatch_tool_set``, so
-    # patches must land on the package re-export, not on ``fd_mod``.
-    import agent_seat
-
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
     monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     context = _make_context(
         options={"model": "xai/grok-4.20-0309-reasoning", "role": "artisan"},
@@ -1612,16 +1660,12 @@ async def test_default_capability_tier_does_not_suppress(
     async def fake_loop(**_k: Any) -> _FakeLoopResult:
         return _FakeLoopResult(provider="anthropic")
 
-    # See companion test for rationale on patching ``agent_seat`` directly
-    # (lazy import inside ``resolve_dispatch_tool_set``).
-    import agent_seat
-
     from systems.pipeline.core.handlers import frontier_dispatch_tools as fdt_mod
 
     monkeypatch.setattr(agent_seat, "hydrate_agent", fake_hydrate)
     monkeypatch.setattr(fdt_mod, "resolve_default_tools", fake_resolve)
     monkeypatch.setattr(agent_seat, "assemble_system_prompt", fake_assemble)
-    monkeypatch.setattr(fd_mod, "run_native_tool_loop", fake_loop)
+    monkeypatch.setattr(fd_native_mod, "run_native_tool_loop", fake_loop)
 
     # ``remote_mcp: False`` forces the client-side tool branch (default for
     # anthropic is remote_mcp=True, which would empty the tool set first).

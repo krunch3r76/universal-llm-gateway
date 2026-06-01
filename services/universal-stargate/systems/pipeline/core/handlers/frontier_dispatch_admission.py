@@ -208,6 +208,16 @@ def check_boot_provider_compatibility(
     # provider_options.xai.tools still available.
 
 
+# Keys injected into ``runtime_options`` by the framework itself — never
+# caller-meaningful pipeline_options. ``stream`` is surfaced from the outer
+# request body (coerced at proxy ingress by ``_coerce_stream_flag`` and folded
+# into runtime_options by ``extract_runtime_options``) for the generate
+# handler's stream-passthrough branch. Frontier dispatch is non-streaming and
+# does not accept it as a caller option, so it must be excluded from the
+# unknown-key computation rather than rejected.
+_FRAMEWORK_INJECTED_RUNTIME_OPTION_KEYS: frozenset[str] = frozenset({"stream"})
+
+
 def reject_unknown_runtime_options(
     step: StepConfig,
     context: PipelineContext,
@@ -217,12 +227,14 @@ def reject_unknown_runtime_options(
 
     Validates only caller-supplied HTTP keys, not YAML defaults folded in by
     the framework (those appear in ``context.options`` but not in
-    ``context.runtime_options``).
+    ``context.runtime_options``) and not framework-injected normalization keys
+    such as ``stream`` (see ``_FRAMEWORK_INJECTED_RUNTIME_OPTION_KEYS``).
     """
     runtime: dict[str, Any] = getattr(context, "runtime_options", None) or {}
     if not runtime:
         return
-    unknown = sorted(set(runtime.keys()) - accepted_keys)
+    candidate_keys = set(runtime.keys()) - _FRAMEWORK_INJECTED_RUNTIME_OPTION_KEYS
+    unknown = sorted(candidate_keys - accepted_keys)
     if not unknown:
         return
     role_raw = runtime.get("role")

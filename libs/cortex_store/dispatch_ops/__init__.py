@@ -50,6 +50,7 @@ from .ops_journals import (
     _op_journal_write,
     _op_session_close,
     _op_session_close_preflight,
+    _op_session_handoff_upsert,
 )
 from .ops_misc import (
     _op_resolve,
@@ -117,6 +118,7 @@ _OPS: dict[str, Any] = {
     "journal_write": _op_journal_write,
     "session_close": _op_session_close,
     "session_close_preflight": _op_session_close_preflight,
+    "session_handoff_upsert": _op_session_handoff_upsert,
     "assemble_transcript": _op_assemble_transcript,
     "review_queue": _op_review_queue,
     "edge_create": _op_edge_create,

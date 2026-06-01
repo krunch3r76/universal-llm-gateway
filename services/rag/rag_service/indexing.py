@@ -32,7 +32,12 @@ from services.rag.indexing_helpers import all_ids_match_prefix, file_hash
 from services.rag.models import IndexResult
 from services.rag.rag_service._indexing_article_sync import _run_article_sync_phase
 from services.rag.rag_service._indexing_commit import _run_commit_phase
-from services.rag.rag_service._indexing_delete import _enqueue_for_extraction
+from services.rag.rag_service._indexing_delete import (
+    _delete_file as _delete_file,
+)
+from services.rag.rag_service._indexing_delete import (
+    _enqueue_for_extraction,
+)
 from services.rag.rag_service._indexing_embed import _run_embed_phase
 from services.rag.rag_service._indexing_failure_ops import (
     _record_indexing_failure_best_effort,

@@ -337,12 +337,15 @@ def _agent_bus_manifest(
     """Build a selective-read manifest for oversized agent-bus payloads."""
     kind, items = _agent_bus_items(payload)
     request_meta = current_request_metadata()
-    adaptive_last = _adaptive_limit(
-        size_bytes=size,
-        item_count=len(items),
-        threshold_bytes=threshold,
-        requested_limit=_normalize_optional_int(request_meta.get("agent_bus_last")),
-    )
+    agent_bus_tool = str(request_meta.get("agent_bus_tool") or "").strip()
+    adaptive_last = None
+    if kind in {"turns", "single_turn"}:
+        adaptive_last = _adaptive_limit(
+            size_bytes=size,
+            item_count=len(items),
+            threshold_bytes=threshold,
+            requested_limit=_normalize_optional_int(request_meta.get("agent_bus_last")),
+        )
     manifest: dict[str, Any] = {
         "large_payload": True,
         "tool": "agent_bus",
@@ -357,6 +360,8 @@ def _agent_bus_manifest(
         "full_retrieve_last_resort": f'retrieve(id="{ref_id}")',
         "adaptive_last": adaptive_last,
     }
+    if agent_bus_tool:
+        manifest["agent_bus_tool"] = agent_bus_tool
 
     if kind in {"turns", "single_turn"}:
         thread_ids = [
@@ -421,17 +426,16 @@ def _agent_bus_manifest(
         ]
         example_thread = thread_ids[0] if thread_ids else ""
         selective_options = [
-            'agent_bus(tool="threads", arguments=\'{"status":"active"}\')',
+            'agent_bus(tool="threads", arguments=\'{"status":"active","limit":20}\')',
+            'agent_bus(tool="threads", arguments=\'{"status":"active","tags":["project:YOUR_PROJECT"]}\')',
         ]
-        if adaptive_last is not None and example_thread:
-            selective_options.append(
-                f'agent_bus(tool="fetch", arguments=\'{{"thread":"{example_thread}","last":{adaptive_last},"compact":true}}\')'
-            )
         if example_thread:
             selective_options.append(
-                f'agent_bus(tool="fetch", arguments=\'{{"thread":"{example_thread}","last":3,"compact":true}}\')'
+                f'agent_bus(tool="get", arguments=\'{{"thread":"{example_thread}","turn_number":1}}\')'
             )
+        selective_options.append(f'retrieve(id="{ref_id}")')
         manifest["selective_options"] = selective_options
+        manifest["listing_op"] = True
         return manifest
 
     manifest["selective_options"] = [f'retrieve(id="{ref_id}")']
@@ -713,9 +717,14 @@ def _replacement_result(
             f"Size: {manifest['size_kb']}KB over {manifest['threshold_kb']}KB threshold.",
             f"Stored as: {ref_id} (expires in 10 min).",
         ]
-        if manifest.get("adaptive_last") is not None:
+        if manifest.get("adaptive_last") is not None and not manifest.get("listing_op"):
             note_lines.append(
                 f"Suggested smaller window: last={manifest['adaptive_last']}."
+            )
+        if manifest.get("listing_op"):
+            note_lines.append(
+                "Suggested narrowing: filter threads by status, tags, or limit "
+                "(threads() has no last= window — use fetch(thread=...) for turn windows)."
             )
         note_lines.extend(
             [

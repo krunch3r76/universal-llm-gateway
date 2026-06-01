@@ -192,7 +192,7 @@ If you are an agent encountering this repo for the first time:
 
 1. **Boot**: `cortex_boot(agent="your_agent")` — returns session state, life context, continuation, and operational context
 2. **Tool reference**: `docs/tool-reference.md` — all MCP tool signatures, sandbox routing, dispatch catalog
-3. **Cursor orientation**: `.cursor/commands/cortex-boot.md` — loads the Cortex/agent-bus/team-collaboration rule stack before calling `cortex_boot`
+3. **Agent guide**: `AGENTS.md` — identity, cortex boot ritual, MCP wiring, and session-close protocol (Cursor IDE users also get `.cursor/commands/cortex-boot.md`, which is IDE-local and not part of this repo)
 4. **Cortex skills**: `agent_skill` entities surfaced by boot; read full skill docs from `agent-skills/<NAME>.md` in the Cortex sandbox
 5. **Feature registry**: `docs/cursor/cortex-registry.md` — belief revision primitives and operational extensions, classification guide
 6. **Boot sequence**: `notes/system/shared/boot-sequence.md` (cortex sandbox) — boot flow and on-demand modules
@@ -228,7 +228,7 @@ universal-llm-gateway/
 
 | Area                    | Location                                                                                                               |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| System architecture     | `[docs/architecture/](docs/architecture/overview.md)`                                                                  |
+| System architecture     | `[docs/architecture/](docs/architecture/)`                                                                             |
 | Pipeline system         | `[services/universal-stargate/systems/pipeline/README.md](services/universal-stargate/systems/pipeline/README.md)`     |
 | Federation              | `[services/universal-stargate/systems/federation/README.md](services/universal-stargate/systems/federation/README.md)` |
 | RAG service             | `[services/rag/README.md](services/rag/README.md)`                                                                     |

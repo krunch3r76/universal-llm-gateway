@@ -132,9 +132,16 @@ README_REVISED.md
 !/docs/architecture/*.md
 !/docs/architecture/appendices/*.md
 !/docs/architecture/design/*.md
+# Public-promoted reference docs (linked from README; see docs-write-guard_ws.mdc)
+!/docs/agm-compliance-report.md
+!/docs/tool-reference.md
+!/docs/cortex-spec.md
+!/docs/cursor/cortex-registry.md
 !services/rag/README.md
 !services/universal_cloud_proxy/README.md
 !services/mcp-server/README.md
+!services/universal-stargate/systems/pipeline/README.md
+!services/universal-stargate/systems/federation/README.md
 !agent-surface/
 !agent-surface/**/*.md
 !notes/

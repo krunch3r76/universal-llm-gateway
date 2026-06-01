@@ -1,18 +1,28 @@
 # Cortex Provenance Substrate — Architecture Spec v1
 
-**Status:** draft (session `claude-web-2026-05-13-1806`, continuing from `claude-web-2026-05-13-1728`; v1.2 revision continuing from audit session `claude-web-2026-05-13-1921`)
 **Version:** v1.2
-**Audience:** Cortex agents (all seats, all platforms); spec readers without Cortex internals
+**Audience:** spec readers without Cortex internals; Cortex agents (all seats, all platforms)
 **Scope:** Universal write-time provenance discipline for the Cortex epistemic substrate
-**Companion artifacts:**
-- `document:entity-backed-claim-provenance-v1` — first domain instantiation (legal briefs / authored artifacts)
-- `artifact:epistemic-substrate-paper-draft` — public-narrative research paper (Memory + Provenance + Consensus)
-- `artifact:goose-grant-packet-v3` — Goose AAIF grant application narrative
+**Read model:** [`docs/cortex-spec.md`](../cortex-spec.md) — the entity/assertion/edge schema this spec layers discipline on top of
+**Companion spec:** [`entity-backed-claim-provenance.md`](entity-backed-claim-provenance.md) — first domain instantiation (authored artifacts)
 
 **Changelog:**
-- v1.2 — Adds Appendix A subsection "Lineage and belief-revision lineages," clarifying Cortex's relationship to provenance semirings, Datalog / TMS lineage models, CRDT-based knowledge graphs, bitemporal property graphs, and AGM / Hansson belief-revision substrates. Descriptive related work; no normative protocol changes. Triggered by the Q6 finding in the SuperHeavy substrate-review audit (`notes/system/threads/979-grok-superheavy-substrate-review-AUDIT.md`).
-- v1.1 — Post-initial-draft refinements ahead of SuperHeavy review dispatch.
-- v1.0 — Initial draft (session `claude-web-2026-05-13-1806`).
+- v1.2 — Adds Appendix A subsection "Lineage and belief-revision lineages," clarifying Cortex's relationship to provenance semirings, Datalog / TMS lineage models, CRDT-based knowledge graphs, bitemporal property graphs, and AGM / Hansson belief-revision substrates. Descriptive related work; no normative protocol changes.
+- v1.1 — Post-initial-draft refinements ahead of external substrate review.
+- v1.0 — Initial draft.
+
+---
+
+> **Note on citations.** This spec is self-contained: every architectural claim
+> stands on its own argument. Inline tokens such as `service:cortex assertion N`,
+> `transcript:<session>`, `agent-bus:<thread>`, `todo:<slug>`, and `cortex://...`
+> resource IDs are durable references into the project's private Cortex knowledge
+> graph — they form a provenance trail for the maintainers, not load-bearing
+> reading for an outside audience, and can be skipped. (Worked `cortex://` URIs
+> shown as *examples of the URI grammar* are illustrative and self-explanatory.)
+> The empirical figure cited throughout — long-horizon recall accuracy rising
+> from 61.6% (similarity-only) to 93.3% (prospective-indexed) — is from the
+> Kumiho LoCoMo-Plus benchmark.
 
 ---
 

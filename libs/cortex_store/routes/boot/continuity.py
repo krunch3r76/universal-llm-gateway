@@ -1,4 +1,4 @@
-"""GET /boot-continuity — last-session handoff and continuation chain for boot."""
+"""GET /boot-continuity — last-session continuity chain for boot."""
 
 from __future__ import annotations
 
@@ -82,14 +82,14 @@ def get_boot_continuity(
         ..., description="Agent whose latest session continuity to render"
     ),
 ) -> dict[str, Any]:
-    """Return last-session handoff state and continuation context for boot cards."""
+    """Return last-session continuity context for boot cards (handoff omitted)."""
     conn = cortex_conn()
     try:
         rows = db_query(
             conn,
             """
             SELECT id, session_id, agent, timestamp, summary, open_items,
-                   prior_session_id, handoff_prompt
+                   prior_session_id
             FROM session_journals
             WHERE agent = ?
             ORDER BY id DESC
@@ -100,7 +100,6 @@ def get_boot_continuity(
         if not rows:
             return {
                 "last_session": None,
-                "handoff": None,
                 "continuity_chain": [],
                 "continuations": [],
                 "hints": [],
@@ -108,8 +107,6 @@ def get_boot_continuity(
 
         row = rows[0]
         transcript_entity_id = f"transcript:{row['session_id']}"
-        handoff_text = row.get("handoff_prompt")
-        handoff = {"text": handoff_text} if handoff_text else None
         continuity_chain = _build_continuity_chain(conn, row["session_id"])
         continuations = _get_sibling_continuations(
             conn,
@@ -142,7 +139,6 @@ def get_boot_continuity(
                 "open_items": _decode_json_list(row.get("open_items")),
                 "transcript_entity_id": transcript_entity_id,
             },
-            "handoff": handoff,
             "continuity_chain": continuity_chain,
             "continuations": continuations,
             "hints": hints,

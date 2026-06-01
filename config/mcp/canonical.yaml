@@ -410,6 +410,34 @@ tools:
   cache_priority: always_loaded
   introduced: 2026-05-22
 
+- canonical_name: cortex_session_handoff_upsert
+  domain: cortex
+  operation: session_handoff_upsert
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: session_handoff_upsert
+  flat_call_shape:
+    tool: cortex_session_handoff_upsert
+    substrate_qualified: user-vortex__cortex_session_handoff_upsert
+  fol_descriptor: |
+    ∀ session_id ∈ closed(session_journals) ∧ handoff_prompt ≠ ∅:
+      session_handoff_upsert(session_id, handoff_prompt) ⟹
+        journal_row.handoff_prompt updated ∧ transcript entity mirrored when present.
+    Mutating. Upsert (replaces prior). Boot omits handoffs — explicit retrieval only.
+    See decision:transcript-scoped-handoff-explicit-load.
+  json_schema:
+    type: object
+    properties:
+      session_id: {type: string}
+      handoff_prompt: {type: string}
+    required: [session_id, handoff_prompt]
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: 2026-05-31
+
 - canonical_name: cortex_search
   domain: cortex
   operation: search
