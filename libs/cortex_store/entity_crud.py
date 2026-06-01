@@ -53,6 +53,15 @@ logger = get_logger("cortex-api.entity_crud")
 # Widen this set only after a dependency check scoped to the candidate type.
 _PROVISIONAL_BIRTH_TYPES = frozenset({"decision"})
 
+# Fork D (G1, thread 1173): the confidence axis is DERIVED from backing
+# assertions, not hand-set. Birth default flips confirmed→unsubstantiated and
+# hand-set confidence-axis writes are frozen (ignored, not rejected, to avoid
+# 422-ing the many existing callers that still pass status='confirmed'). The
+# lifecycle axis remains caller-settable. Kept local to dodge a circular import
+# with dispatch_ops._shared (which imports this module's impls).
+_CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
+_LIFECYCLE_AXIS_STATUS = frozenset({"merged", "deprecated", "reaped"})
+
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
 
 
@@ -263,6 +272,19 @@ def update_entity_impl(
     prior = decode_row(full_rows[0], ENTITY_JSON_FIELDS)
     prior_workflow_state = prior.get("workflow_state")
 
+    # Fork D: freeze hand-set confidence-axis status updates. A caller may still
+    # transition the lifecycle axis (merged/deprecated/reaped); a confidence-axis
+    # status (unsubstantiated/provisional/confirmed) is dropped — that axis is
+    # derived from backing assertions, not asserted directly on the entity.
+    if updates.get("status") is not None and updates["status"] in _CONFIDENCE_AXIS_STATUS:
+        logger.info(
+            "Ignoring hand-set confidence-axis status=%r on entity_update id=%s "
+            "(Fork D: confidence is derived from assertions)",
+            updates["status"],
+            entity_id,
+        )
+        updates = {k: v for k, v in updates.items() if k != "status"}
+
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():
         if value is None:
@@ -438,10 +460,27 @@ def create_entity_impl(
         if schema is not None:
             workflow_state = str(schema["initial_state"])
 
+    # Fork D: confidence-axis birth default is `unsubstantiated` (creation
+    # implies a record exists, not that it is believed/confirmed). Workflow
+    # provisional-birth types keep `provisional` for workflow coherence.
     default_status = (
-        "provisional" if body.type in _PROVISIONAL_BIRTH_TYPES else "confirmed"
+        "provisional" if body.type in _PROVISIONAL_BIRTH_TYPES else "unsubstantiated"
     )
-    status = body.status or default_status
+    # Freeze hand-set confidence-axis writes: only an explicit lifecycle-axis
+    # status (merged/deprecated/reaped) is honored from the caller; a hand-set
+    # confidence-axis value is ignored in favor of the derived/default state.
+    if body.status is not None and body.status in _LIFECYCLE_AXIS_STATUS:
+        status = body.status
+    else:
+        if body.status is not None and body.status in _CONFIDENCE_AXIS_STATUS:
+            logger.info(
+                "Ignoring hand-set confidence-axis status=%r on entity_create id=%s "
+                "(Fork D: confidence is derived from assertions); using %r",
+                body.status,
+                body.id,
+                default_status,
+            )
+        status = default_status
 
     conn.execute(
         "INSERT INTO entities (id, type, name, description, status, "

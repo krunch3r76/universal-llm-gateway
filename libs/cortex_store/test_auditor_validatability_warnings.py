@@ -207,6 +207,7 @@ def _make_conn(tmp_path: Path) -> sqlite3.Connection:
             name TEXT NOT NULL,
             description TEXT,
             status TEXT,
+            content_hash TEXT,
             attributes TEXT
         );
         CREATE TABLE assertions (

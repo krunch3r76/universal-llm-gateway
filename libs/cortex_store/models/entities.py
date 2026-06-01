@@ -32,7 +32,14 @@ class _EntityCommon(BaseModel):
     )
 
 
-EntityStatus = Literal["confirmed", "provisional", "merged", "deprecated", "reaped"]
+# Confidence axis: unsubstantiated/provisional/confirmed — DERIVED from backing
+# assertions under Fork D (G1, thread 1173). `unsubstantiated` is the birth
+# default; `confirmed` is no longer hand-settable (see entity_crud freeze).
+# Lifecycle axis: merged/deprecated/reaped. Full split into record_state +
+# substantiation_state is full-D, out of D-core scope.
+EntityStatus = Literal[
+    "unsubstantiated", "confirmed", "provisional", "merged", "deprecated", "reaped"
+]
 RetentionPolicy = Literal["permanent", "ephemeral", "archival"]
 
 

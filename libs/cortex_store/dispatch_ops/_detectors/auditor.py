@@ -14,45 +14,67 @@ import json
 import re
 from typing import Any
 
+from ...confidence_field import confidence_field
 from ...db import query
 from ._shared import _IDENT_SHAPED_VALUE_RE, _finding
+from .substantiation import CONFIRMED, derive_substantiation_state
 
 
 def detect_confirmed_entity_no_assertions(
     conn, subject: str | None = None
 ) -> list[dict[str, Any]]:
-    """Entities at status='confirmed' with zero confirmed-confidence assertions.
+    """Entities whose stored status='confirmed' does NOT derive from assertions.
 
-    Check 4: an auditor reading the entity card cannot validate confirmed
-    status when there are no confirmed assertions supporting it.
+    Fork D (G1, thread 1173): the confidence axis is DERIVED, not hand-set. This
+    detector no longer fires merely because a status was hand-set to 'confirmed'
+    — birth default is now 'unsubstantiated' and hand-set confidence-axis writes
+    are frozen, so the false-positive class cannot regenerate. What remains is
+    the legacy population: rows that still STORE status='confirmed' but whose
+    derived substantiation state (from backing assertions) is not 'confirmed'.
+    Those are the sweep's residual debt, surfaced here via the canonical
+    derivation rather than an inline existence check.
+
+    Check 4, Gate-0 aware: each type's auditable-confidence axis is declared in
+    type_confidence_fields and read via confidence_field(). The finding fires
+    only for `status`-axis types; `none`/`workflow_state` types never fire, and
+    `content_hash` types fire only when the structural verifier is absent.
     """
     sql = """
-        SELECT id, type, name FROM entities
+        SELECT id, type, name, content_hash FROM entities
         WHERE status = 'confirmed'
-        AND type NOT IN ('todo', 'assertion')
-        AND NOT EXISTS (
-            SELECT 1 FROM assertions
-            WHERE entity_id = entities.id
-              AND confidence = 'confirmed'
-              AND superseded_by IS NULL
-        )
+        AND type != 'assertion'
     """
     params: tuple = ()
     if subject:
         sql += " AND id = ?"
         params = (subject,)
     rows = query(conn, sql, params)
-    return [
-        _finding(
-            "confirmed_entity_no_assertions",
-            r["id"],
-            f"{r['type']} '{r['name']}' is at status:confirmed but has zero assertions "
-            f"at confidence:confirmed — auditor cannot validate confirmed status from entity "
-            f"card alone. Seed a confirmed assertion citing the source. "
-            f"See agent_skill:auditor-validatable-confidence.",
+    findings: list[dict[str, Any]] = []
+    for r in rows:
+        # Derive substantiation from backing assertions; an entity whose stored
+        # status claims confirmed but derives as confirmed is consistent and not
+        # flagged. This replaces the prior inline NOT EXISTS check so full-D can
+        # evolve the rule in one place.
+        if derive_substantiation_state(conn, r["id"]) == CONFIRMED:
+            continue
+        cf = confidence_field(conn, r["type"])
+        if cf in ("none", "workflow_state"):
+            continue  # Gate 0: status is not this type's confidence axis.
+        if cf == "content_hash" and r["content_hash"]:
+            continue  # Gate 0: structural verifier satisfies the binding.
+        findings.append(
+            _finding(
+                "confirmed_entity_no_assertions",
+                r["id"],
+                f"{r['type']} '{r['name']}' stores status:confirmed but its derived "
+                f"substantiation (from backing assertions) is not 'confirmed' — auditor "
+                f"cannot validate confirmed status from the entity card alone. Under Fork D "
+                f"confidence is derived: seed a confirmed assertion citing the source (the "
+                f"derived state then becomes 'confirmed'), or let the entity fall back to "
+                f"'unsubstantiated'. See agent_skill:auditor-validatable-confidence.",
+            )
         )
-        for r in rows
-    ]
+    return findings
 
 
 def detect_confirmed_attribute_no_assertion(
@@ -78,7 +100,7 @@ def detect_confirmed_attribute_no_assertion(
         SELECT id, type, name, attributes FROM entities
         WHERE status = 'confirmed'
         AND attributes IS NOT NULL
-        AND type NOT IN ('todo', 'assertion')
+        AND type != 'assertion'
     """
     params: tuple = ()
     if subject:
@@ -88,6 +110,12 @@ def detect_confirmed_attribute_no_assertion(
     findings = []
 
     for r in rows:
+        cf = confidence_field(conn, r["type"])
+        if cf in ("none", "workflow_state"):
+            continue  # Gate 0: status is not this type's confidence axis.
+        # content_hash + status types continue: a structural binding does NOT
+        # cover INTERPRETED attributes ([policy:content-hash-scope], Q2), so
+        # attribute findings still require a backing assertion.
         attrs_raw = r.get("attributes")
         if not attrs_raw:
             continue

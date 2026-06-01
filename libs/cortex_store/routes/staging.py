@@ -256,6 +256,17 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST, "Entity 'id' is required for 'add' action"
             )
+        # Fork D (G1, thread 1173): the confidence axis is derived from
+        # assertions, not hand-set. A staged entity is born 'provisional'
+        # (pending-review semantics, surfaced by the review-queue detector); a
+        # hand-set confidence-axis value (e.g. 'confirmed') is ignored. Lifecycle
+        # status is not applicable on the staging-add path.
+        _proposed_status = pj.get("status")
+        _staged_status = (
+            _proposed_status
+            if _proposed_status in ("merged", "deprecated", "reaped")
+            else "provisional"
+        )
         conn.execute(
             "INSERT INTO entities (id, type, name, description, status, "
             "aliases, attributes, notes, source_uri, created_at, updated_at) "
@@ -265,7 +276,7 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
                 pj.get("type", ""),
                 pj.get("name", ""),
                 pj.get("description"),
-                pj.get("status", "provisional"),
+                _staged_status,
                 json_encode(pj.get("aliases")),
                 json_encode(pj.get("attributes")),
                 pj.get("notes"),

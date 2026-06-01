@@ -1,12 +1,19 @@
-"""P1 regression tests — type-scoped provisional birth-status (thread 1116).
+"""Birth-status regression tests — Fork D (G1, thread 1173) + thread 1116.
 
-Verifies ``_PROVISIONAL_BIRTH_TYPES`` logic added to ``create_entity_impl``:
+Fork D flips the confidence axis to DERIVED: the birth default for ordinary
+types is ``unsubstantiated`` (not ``confirmed``), and a hand-set confidence-axis
+status (``confirmed``/``provisional``/``unsubstantiated``) is FROZEN (ignored).
+An explicit lifecycle-axis status (``merged``/``deprecated``/``reaped``) is still
+honored. ``_PROVISIONAL_BIRTH_TYPES`` (currently ``{decision}``) keep their
+``provisional`` birth for workflow coherence (thread 1116).
 
   1. ``decision`` created without explicit status → born ``provisional``
-  2. ``decision`` created with explicit ``status='confirmed'`` → stays ``confirmed``
-     (operator-supplied value always wins)
-  3. Non-decision type (``project``) created without status → still ``confirmed``
-     (no regression for types outside ``_PROVISIONAL_BIRTH_TYPES``)
+  2. ``decision`` created with hand-set ``status='confirmed'`` → frozen, stays
+     ``provisional`` (Fork D: confidence is derived, not hand-set)
+  3. Non-decision type (``project``) created without status → born
+     ``unsubstantiated`` (Fork D default flip)
+  4. Non-decision type with hand-set ``confirmed`` → frozen to ``unsubstantiated``
+  5. Explicit lifecycle-axis status (``deprecated``) → honored
 """
 
 from __future__ import annotations
@@ -64,8 +71,8 @@ def test_decision_without_status_born_provisional() -> None:
     )
 
 
-def test_decision_with_explicit_confirmed_stays_confirmed() -> None:
-    """An explicitly-supplied status='confirmed' MUST win over the provisional default."""
+def test_decision_with_hand_set_confirmed_is_frozen() -> None:
+    """Fork D: a hand-set confidence-axis status is ignored; decision stays provisional."""
     c = _conn()
     result = create_entity_impl(
         c,
@@ -76,17 +83,52 @@ def test_decision_with_explicit_confirmed_stays_confirmed() -> None:
             "status": "confirmed",
         },
     )
-    assert result["status"] == "confirmed", (
-        f"expected 'confirmed', got {result['status']!r}"
+    assert result["status"] == "provisional", (
+        f"hand-set confirmed must be frozen; expected 'provisional', got {result['status']!r}"
     )
 
 
-def test_non_decision_without_status_born_confirmed() -> None:
-    """Non-decision types outside _PROVISIONAL_BIRTH_TYPES MUST still default to confirmed."""
+def test_non_decision_without_status_born_unsubstantiated() -> None:
+    """Fork D: ordinary types default to 'unsubstantiated', not 'confirmed'."""
     c = _conn()
     result = create_entity_impl(
         c, {"id": "project:test-proj", "type": "project", "name": "Test"}
     )
-    assert result["status"] == "confirmed", (
-        f"expected 'confirmed', got {result['status']!r}"
+    assert result["status"] == "unsubstantiated", (
+        f"expected 'unsubstantiated', got {result['status']!r}"
+    )
+
+
+def test_non_decision_hand_set_confirmed_frozen_to_unsubstantiated() -> None:
+    """Fork D: hand-set confidence-axis status on an ordinary type is frozen."""
+    c = _conn()
+    result = create_entity_impl(
+        c,
+        {
+            "id": "project:test-frozen",
+            "type": "project",
+            "name": "Test",
+            "status": "confirmed",
+        },
+    )
+    assert result["status"] == "unsubstantiated", (
+        f"hand-set confirmed must be frozen; expected 'unsubstantiated', "
+        f"got {result['status']!r}"
+    )
+
+
+def test_explicit_lifecycle_status_is_honored() -> None:
+    """Fork D: lifecycle-axis status (deprecated) is still settable at birth."""
+    c = _conn()
+    result = create_entity_impl(
+        c,
+        {
+            "id": "project:test-deprecated",
+            "type": "project",
+            "name": "Test",
+            "status": "deprecated",
+        },
+    )
+    assert result["status"] == "deprecated", (
+        f"lifecycle status must be honored; expected 'deprecated', got {result['status']!r}"
     )

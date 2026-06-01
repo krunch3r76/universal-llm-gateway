@@ -36,7 +36,13 @@ else:
     )
 _DEFAULT_USER_ENTITY = os.getenv("CORTEX_DEFAULT_USER_ENTITY", "")
 
-_VALID_STATUS = frozenset({"confirmed", "provisional", "merged", "deprecated"})
+_VALID_STATUS = frozenset(
+    {"unsubstantiated", "confirmed", "provisional", "merged", "deprecated"}
+)
+# Confidence-axis status is DERIVED (Fork D, G1 thread 1173): frozen from
+# hand-set writes at entity_create/update. Lifecycle-axis status stays settable.
+_CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
+_LIFECYCLE_AXIS_STATUS = frozenset({"merged", "deprecated", "reaped"})
 _VALID_CONFIDENCE = frozenset({"confirmed", "believed", "suspected", "hypothesized"})
 # Agent slug may contain hyphens (e.g. ``claude-web``, ``api-claude``):
 # one or more lowercase-word segments separated by single hyphens, then the
