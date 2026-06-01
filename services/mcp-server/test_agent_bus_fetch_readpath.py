@@ -12,7 +12,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from request_profile import bind_request
-from response_size_guard import _agent_bus_manifest
+from fastmcp.tools.tool import ToolResult
+from response_size_guard import (
+    _agent_bus_manifest,
+    _measure_result,
+    _try_window_agent_bus_result,
+)
 from tools.agent_bus import (  # noqa: E402
     _fetch_dispatch,
     _fetch_impl,
@@ -150,6 +155,34 @@ def test_threads_manifest_uses_listing_hints_not_last_window() -> None:
     assert "limit" in options
     assert "tags" in options
     assert '"last":' not in options
+
+
+def test_oversize_fetch_windowed_fixture_passes_through_guard() -> None:
+    """todo:agent-bus-oversize-fetch-windowed-fixture — window before size guard."""
+    from response_size_guard import _reasoning_target_bytes
+
+    turns = [
+        {
+            "thread": "1138",
+            "turn_number": n,
+            "subject": f"turn {n}",
+            "body": "x" * 6_000,
+        }
+        for n in range(20, 0, -1)
+    ]
+    payload = {"turns": turns}
+    full = ToolResult(structured_content=payload)
+    threshold = 128_000
+    assert _measure_result(full) > _reasoning_target_bytes(threshold)
+
+    with bind_request("default", agent_bus_tool="fetch", agent_bus_last=3):
+        windowed = _try_window_agent_bus_result(full, threshold=threshold)
+
+    assert windowed is not None
+    out_turns = windowed.structured_content["turns"]
+    assert len(out_turns) == 3
+    assert all(t.get("body") for t in out_turns)
+    assert _measure_result(windowed) < _measure_result(full)
 
 
 def test_turn_fetch_manifest_still_suggests_last_window() -> None:

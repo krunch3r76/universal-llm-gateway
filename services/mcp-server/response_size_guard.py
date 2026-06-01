@@ -328,6 +328,77 @@ def _agent_bus_items(payload: Any) -> tuple[str, list[dict[str, Any]]]:
     return "unknown", []
 
 
+def _rebuild_agent_bus_payload(
+    payload: Any, kind: str, items: list[dict[str, Any]]
+) -> Any:
+    """Reconstruct an agent-bus structured payload after slicing a turn list."""
+    if kind == "turns" and isinstance(payload, list):
+        return items
+    if kind == "turns" and isinstance(payload, dict):
+        return {**payload, "turns": items}
+    if kind == "single_turn" and isinstance(payload, dict) and items:
+        return {**payload, "turn": items[0]}
+    return payload
+
+
+def _try_window_agent_bus_result(
+    result: ToolResult, *, threshold: int
+) -> ToolResult | None:
+    """Apply fetch windowing before the size guard when the payload is still too large.
+
+    Backend ``last`` should bound rows, but oversize threads can still exceed the
+    reasoning target when bodies are huge or the relay returned an unbounded set.
+    Honor ``agent_bus_last`` from request metadata (and adaptive fallback) by
+    slicing the serialized turns **before** measuring for guard/store.
+    """
+    meta = current_request_metadata()
+    agent_bus_tool = str(meta.get("agent_bus_tool") or "").strip()
+    if agent_bus_tool not in {"", "fetch"}:
+        return None
+
+    payload = result.structured_content
+    kind, items = _agent_bus_items(payload)
+    if kind not in {"turns", "single_turn"} or len(items) <= 1:
+        return None
+
+    size = _measure_result(result)
+    effective_limit = _reasoning_target_bytes(threshold)
+    if size <= effective_limit:
+        return None
+
+    requested = _normalize_optional_int(meta.get("agent_bus_last"))
+    window = requested
+    if window is None:
+        window = _adaptive_limit(
+            size_bytes=size,
+            item_count=len(items),
+            threshold_bytes=threshold,
+            requested_limit=None,
+        )
+    if window is None or len(items) <= window:
+        return None
+
+    sliced = items[:window]
+    # Drop wire content — it may still carry the pre-window JSON blob and would
+    # defeat the size measurement (BUG 1, thread 1154/1163).
+    windowed = ToolResult(
+        structured_content=_rebuild_agent_bus_payload(payload, kind, sliced),
+    )
+    if _measure_result(windowed) > effective_limit:
+        return None
+
+    record(
+        "mcp.agentbus.fetch.windowed_pass_through",
+        requested_last=requested or 0,
+        applied_last=window,
+        turn_count_before=len(items),
+        turn_count_after=len(sliced),
+        original_bytes=size,
+        windowed_bytes=_measure_result(windowed),
+    )
+    return windowed
+
+
 def _agent_bus_manifest(
     ref_id: str,
     payload: Any,
@@ -338,14 +409,18 @@ def _agent_bus_manifest(
     kind, items = _agent_bus_items(payload)
     request_meta = current_request_metadata()
     agent_bus_tool = str(request_meta.get("agent_bus_tool") or "").strip()
+    requested_limit = _normalize_optional_int(request_meta.get("agent_bus_last"))
     adaptive_last = None
     if kind in {"turns", "single_turn"}:
-        adaptive_last = _adaptive_limit(
-            size_bytes=size,
-            item_count=len(items),
-            threshold_bytes=threshold,
-            requested_limit=_normalize_optional_int(request_meta.get("agent_bus_last")),
-        )
+        # Per-turn bodies can exceed the guard even when the row count already
+        # matches the requested window — do not suggest another last= slice.
+        if requested_limit is None or len(items) > requested_limit:
+            adaptive_last = _adaptive_limit(
+                size_bytes=size,
+                item_count=len(items),
+                threshold_bytes=threshold,
+                requested_limit=requested_limit,
+            )
     manifest: dict[str, Any] = {
         "large_payload": True,
         "tool": "agent_bus",
@@ -817,6 +892,12 @@ class ResponseSizeGuard(Middleware):
         if tool_name == "retrieve":
             return result
 
+        threshold = _threshold_for_profile()
+        if tool_name == "agent_bus":
+            windowed = _try_window_agent_bus_result(result, threshold=threshold)
+            if windowed is not None:
+                result = windowed
+
         if not _validate_utf8_content(result):
             record("mcp.response.encoding.rejected", tool_name=tool_name)
             return ToolResult(
@@ -826,7 +907,6 @@ class ResponseSizeGuard(Middleware):
                 )
             )
 
-        threshold = _threshold_for_profile()
         reasoning_target = _reasoning_target_bytes(threshold)
         needs_semantic_guard = tool_name in _SEMANTIC_GUARD_TOOLS
 
