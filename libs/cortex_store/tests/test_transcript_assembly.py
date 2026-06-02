@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,9 @@ from cortex_store.transcript_assembly import (
     assemble_verbatim_md,
     compose_full_transcript,
     compute_text_content_hash,
+    derive_session_id_from_jsonl_start,
     resolve_jsonl_path,
+    session_id_timing_hint,
 )
 
 
@@ -177,3 +180,35 @@ def test_transcripts_root_default_when_env_unset(
 ) -> None:
     monkeypatch.delenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", raising=False)
     assert ta._transcripts_root().name == "agent-transcripts"
+
+
+def test_derive_session_id_from_jsonl_start_uses_mtime(
+    transcripts_root: Path,
+) -> None:
+    jsonl = transcripts_root / "uuid" / "uuid.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text("{}\n")
+    derived = derive_session_id_from_jsonl_start(
+        jsonl_path=jsonl, agent="cursor"
+    )
+    assert re.fullmatch(r"cursor-\d{4}-\d{2}-\d{2}-\d{4}", derived)
+
+
+def test_session_id_timing_hint_when_ids_differ(transcripts_root: Path) -> None:
+    jsonl = transcripts_root / "u" / "u.jsonl"
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text("{}\n")
+    from_jsonl = derive_session_id_from_jsonl_start(jsonl_path=jsonl, agent="cursor")
+    assert session_id_timing_hint(
+        session_id="cursor-2099-12-31-2359",
+        jsonl_path=jsonl,
+        agent="cursor",
+    )
+    assert (
+        session_id_timing_hint(
+            session_id=from_jsonl,
+            jsonl_path=jsonl,
+            agent="cursor",
+        )
+        is None
+    )

@@ -310,46 +310,52 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
   Filter by provider: `list_models(filter="anthropic")` / `list_models(filter="local")` / `list_models(filter="openrouter")`
   Always call this before guessing a model ID — wrong format → 404.
 
-Inference routing:
-- `llm_generate(model=..., messages=...)` — universal, works for any model ID (including `google/gemini-2.5-pro`), routes via /v1/chat/completions
-- `team_dispatch(op=..., role=..., messages=..., ...)` — role-based native-frontier dispatch. `op="generate"` returns content inline; `op="to_thread"` posts reply to `thread`. Role contract from `role:{slug}`; tools surface universal; provider quirks via silent coercion.
-- `frontier_dispatch(op=..., model=..., messages=..., ...)` — direct native-frontier dispatch (no role envelope). Same `op` enum as `team_dispatch`.
-- OpenRouter and local models → use `llm_generate`, not provider-native tools"""
+Inference routing (pick by capability — see boot briefing):
+- `frontier_dispatch(op=..., model=..., messages=..., ...)` — consult a specific model (`provider/model`; bare name 404). No role envelope. `mcp=False` default (one-shot); pass `mcp=True` for tool loop.
+- `team_dispatch(op=..., role=..., messages=..., ...)` — consult by role (`reviewer`, `skeptic`, …). Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models.
+- `llm_generate(model=..., messages=...)` — universal chat/completions path for any model ID (including `google/gemini-2.5-pro`); no dispatch role/tools/transcript_id surface.
+- OpenRouter and local models → use `llm_generate`, not provider-native dispatch tools"""
 
 TEAM_CONSULTATION = """\
 ## Team Consultation
 Reach out to other agents on substantive work. Consulting peers should be a
 natural part of how you work, not an exceptional event.
 
-**Role-based dispatch (preferred)**:
-For any team-seat consultation, use `team_dispatch(op=..., role=..., messages=...,
-generation_options=...)`. Roles are model-agnostic: explicit `model=...` may
-fill any role, while omitted models resolve from the role's `default_model`.
-Role-based dispatch enforces `allowed_options`, auto-assembles role briefing +
-continuation, and rejects contract violations with a structured error envelope
-**before** dispatch. Returns immediately with
-`{execution_id, ...}`; poll with `pipeline(op="result", execution_id=...,
-wait_seconds=60)`. Runs detached, survives session boundaries.
+**Pick by capability** (same axis as the boot briefing — not "always team first"):
+- Consult a **specific model** (e.g. `openai/gpt-5.5`, `xai/grok-4.3`) →
+  `frontier_dispatch(op=..., model="provider/model", messages=...)`.
+- Consult a **role / seat function** (adversarial pushback, gatherer extraction,
+  durable reviewer persona) → `team_dispatch(op=..., role=..., messages=...)`.
 
-**Output channel (`op` parameter)**:
+Both return `{execution_id, ...}` immediately; poll with
+`pipeline(op="result", execution_id=..., wait_seconds=60)`. Runs detached,
+survives session boundaries.
+
+**Direct frontier dispatch (model picker)**:
+`frontier_dispatch(op=..., model=..., messages=..., generation_options=...)`.
+No role envelope, no role briefing assembly. Model strings must be
+`provider/model` (bare name 404). `mcp` defaults to `False` (one-shot reasoning);
+pass `mcp=True` when the consult needs the MCP tool loop.
+
+**Role-based dispatch (role picker)**:
+`team_dispatch(op=..., role=..., messages=..., generation_options=...)`.
+Roles are model-agnostic: explicit `model=...` may fill any role; omitted
+models resolve from the role's `default_model`. Enforces `allowed_options`,
+auto-assembles role briefing + continuation, and rejects contract violations
+with a structured error envelope **before** dispatch.
+
+**Output channel (`op` parameter)** — same for both tools:
 - `op="generate"` — direct mode. Content returned via `pipeline(op="result")`.
   Use for single-shot consults where the caller acts on the reply within the session.
-- `op="to_thread"` — bus mode. Stargate posts the model's reply to the bus
-  `thread` on the role/model's behalf after the dispatch completes; the
-  caller does not need to instruct the model to call `agent_bus.reply`.
-  Read with `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`.
+- `op="to_thread"` — bus mode. Stargate posts the reply to the bus `thread`
+  on the role/model's behalf after dispatch completes; the callee does not need
+  `agent_bus.reply`. Read with `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`.
   Use when the reply is a durable artifact for multi-agent workflows or future sessions.
 
-**MCP access**: client-side MCP tools available by default for role-based
-dispatch. Some provider models suppress client-side function calling and use
-server-side builtins instead — silent coercion in
-`resolve_dispatch_tool_set`.
-
-**Direct frontier dispatch (no role envelope)**:
-`frontier_dispatch(op=..., model=..., messages=..., generation_options=...)` is the
-canonical role-free door — direct native-frontier call without role contract.
-No allowlists, no briefing assembly. Same `op` enum as above. Use when the
-work is model-bounded and a role envelope adds no value.
+**MCP access**: `team_dispatch` enables client-side MCP tools by default for
+non-xAI models. `frontier_dispatch` defaults to no tool loop (`mcp=False`);
+pass `mcp=True` for the full catalog. Some provider models suppress client-side
+function calling — silent coercion in `resolve_dispatch_tool_set`.
 
 **When to reach out:**
 - Architecture or design decisions with real trade-offs
@@ -381,35 +387,36 @@ agent bus — the next session picks it up."""
 
 FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing
-Primary consult path via role envelope:
+Pick by capability (aligned with boot briefing and `claude-web-dispatch-decision-table` §3):
 
+**Consult a specific model** — `frontier_dispatch`:
+```
+frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=..., reasoning_effort=..., caller_agent=...)
+```
+then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Model must be
+`provider/model`. `mcp=False` by default; pass `mcp=True` for MCP tool loop.
+
+**Consult by role** — `team_dispatch`:
 ```
 team_dispatch(op="generate", role=..., messages=..., generation_options=..., caller_agent=...)
 ```
-then `pipeline(op="result", execution_id=..., wait_seconds=60)` to retrieve content.
+then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Role contract:
+`default_model` when model omitted, `allowed_options`, briefing + continuation
+assembly. Contract violations return structured errors with `field` and
+`request_id` BEFORE dispatch.
 
-For durable bus artifacts (review workflows, multi-agent handoffs):
+**Durable bus artifacts** (either tool, `op="to_thread"`):
 ```
-team_dispatch(op="to_thread", role=..., thread="<id>", messages=..., subject=..., caller_agent=...)
-```
-then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')` to read the reply.
-Stargate posts the role's reply to the thread on its behalf when the dispatch
-completes — the role doesn't need an `agent_bus.reply` tool call to deliver.
-
-MCP access available by default; some provider models suppress client-side
-function tools and use server-side builtins instead — see
-`frontier_dispatch_tools.resolve_dispatch_tool_set`.
-
-`team_dispatch` validates the role contract: `default_model` resolution for
-omitted models, explicit model override admission, `allowed_options`, briefing +
-continuation assembly all happen there. Contract violations return a structured
-error envelope with `field` and `request_id` BEFORE dispatch.
-
-Direct frontier dispatch (no role envelope):
-```
-frontier_dispatch(op="generate", model=..., messages=..., generation_options=...)
 frontier_dispatch(op="to_thread", model=..., thread="<id>", messages=..., subject=...)
+team_dispatch(op="to_thread", role=..., thread="<id>", messages=..., subject=...)
 ```
+then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`. Stargate posts
+on the callee's behalf — no `agent_bus.reply` required from the dispatched model.
+
+MCP: `team_dispatch` enables client-side tools by default (non-xAI); some
+providers suppress client-side function tools — see
+`frontier_dispatch_tools.resolve_dispatch_tool_set`. `frontier_dispatch` defaults
+to no tools unless `mcp=True`.
 
 Pipeline composition entry point:
 `pipeline(op="async", pipeline_id="frontier-dispatch", pipeline_options={...}, messages=[...])`

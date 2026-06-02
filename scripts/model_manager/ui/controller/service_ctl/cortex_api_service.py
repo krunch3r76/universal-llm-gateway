@@ -18,7 +18,7 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from ...model.service_state import ServiceState
-from ..service_config import GATEWAY_DIR, load_mcp_config
+from ..service_config import GATEWAY_DIR, build_service_env, load_mcp_config
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 
 _logger = get_logger(__name__)
@@ -66,21 +66,67 @@ _CORTEX_HTTP_PORT = int(os.environ.get("CORTEX_API_HTTP_PORT", "8202"))
 _CORTEX_HTTP_PID_FILE = GATEWAY_DIR / "cortex-api-http.pid"
 
 
+def _build_cortex_runtime_env(root: Path) -> dict[str, str]:
+    """Env overrides shared by UDS cortex-api and the HTTP /control-tower forwarder."""
+    extra_env: dict[str, str] = {}
+    cfg = load_mcp_config()
+    if cfg is not None:
+        extra_env["CORTEX_FILES_ROOT"] = str(Path(cfg.data_dir).expanduser() / "files")
+        if cfg.agent_bus_token:
+            extra_env["AGENT_BUS_TOKEN"] = cfg.agent_bus_token
+    transcripts_root = os.environ.get("CURSOR_AGENT_TRANSCRIPTS_ROOT")
+    if not transcripts_root:
+        transcripts_root = str(
+            Path.home()
+            / ".cursor"
+            / "projects"
+            / "mnt-torus-projects-universal-llm-gateway"
+            / "agent-transcripts"
+        )
+    extra_env["CURSOR_AGENT_TRANSCRIPTS_ROOT"] = transcripts_root
+    return extra_env
+
+
+def _http_forwarder_cmdline(pid: int) -> str:
+    try:
+        return (
+            Path(f"/proc/{pid}/cmdline")
+            .read_bytes()
+            .replace(b"\0", b" ")
+            .decode(errors="replace")
+        )
+    except OSError:
+        return ""
+
+
+def _http_forwarder_running() -> bool:
+    """True when pid file points at our uvicorn on the control-tower port."""
+    if not _CORTEX_HTTP_PID_FILE.exists():
+        return False
+    try:
+        pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
+        return False
+    cmd = _http_forwarder_cmdline(pid)
+    if "cortex_store.main:app" in cmd and str(_CORTEX_HTTP_PORT) in cmd:
+        return True
+    _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
+    return False
+
+
 def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
     """Second uvicorn on TCP for browser /control-tower (MCP keeps UDS)."""
-    if _CORTEX_HTTP_PID_FILE.exists():
-        try:
-            old_pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
-            os.kill(old_pid, 0)
-            return (
-                f"HTTP listener already on {_CORTEX_HTTP_HOST}:{_CORTEX_HTTP_PORT} "
-                f"(PID {old_pid})"
-            )
-        except (OSError, ValueError):
-            _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
+    if _http_forwarder_running():
+        pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
+        return (
+            f"HTTP listener already on {_CORTEX_HTTP_HOST}:{_CORTEX_HTTP_PORT} "
+            f"(PID {pid})"
+        )
     venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
     python = str(venv_python) if venv_python.exists() else "python3"
-    env = os.environ.copy()
+    env = build_service_env(root)
     env.update(extra_env)
     libs_path = str(root / "libs")
     env["PYTHONPATH"] = (
@@ -113,14 +159,25 @@ def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
 
 
 def _stop_http_forwarder() -> None:
-    if not _CORTEX_HTTP_PID_FILE.exists():
-        return
+    if _CORTEX_HTTP_PID_FILE.exists():
+        try:
+            pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
+            os.kill(pid, 15)
+        except (OSError, ValueError):
+            pass
+        _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
+    # Best-effort: rogue manual starts may leave uvicorn on the port while the
+    # pid file points at a dead bash wrapper (observed 2026-06-01).
     try:
-        pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
-        os.kill(pid, 15)
-    except (OSError, ValueError):
+        subprocess.run(
+            ["fuser", "-k", f"{_CORTEX_HTTP_PORT}/tcp"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
         pass
-    _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
 
 
 async def start_cortex_api(
@@ -146,23 +203,10 @@ async def start_cortex_api(
     #     default is the workspace's Cursor IDE agent-transcripts
     #     directory; operators override via env when running cortex-api
     #     against a different workspace.
-    extra_env: dict[str, str] = {}
-    cfg = load_mcp_config()
-    if cfg is not None:
-        extra_env["CORTEX_FILES_ROOT"] = str(Path(cfg.data_dir).expanduser() / "files")
-    transcripts_root = os.environ.get("CURSOR_AGENT_TRANSCRIPTS_ROOT")
-    if not transcripts_root:
-        transcripts_root = str(
-            Path.home()
-            / ".cursor"
-            / "projects"
-            / "mnt-torus-projects-universal-llm-gateway"
-            / "agent-transcripts"
-        )
-    extra_env["CURSOR_AGENT_TRANSCRIPTS_ROOT"] = transcripts_root
+    extra_env = _build_cortex_runtime_env(root)
     _logger.info(
         "Cortex API will read Cursor agent-transcripts from %s",
-        transcripts_root,
+        extra_env["CURSOR_AGENT_TRANSCRIPTS_ROOT"],
     )
     def _on_uvicorn_ready(
         _socket_path: Path | None,

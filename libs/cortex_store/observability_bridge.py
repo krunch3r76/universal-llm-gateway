@@ -27,7 +27,9 @@ logger = get_logger("cortex-api.observability_bridge")
 
 _EVENTS_QUERY_URL = f"unix://{os.environ.get('EVENTS_QUERY_SOCK', '/tmp/universal-protocol/events-query.sock')}"
 _AGENT_BUS_URL = f"unix://{os.environ.get('AGENT_BUS_SOCK', '/tmp/universal-protocol/agent-bus.sock')}"
-_AGENT_BUS_TOKEN = os.environ.get("AGENT_BUS_TOKEN", "")
+def _agent_bus_token() -> str:
+    """Read at call time — HTTP forwarder may start without token at import."""
+    return os.environ.get("AGENT_BUS_TOKEN", "").strip()
 
 
 def _signal_matches(signal: str, pattern: str) -> bool:
@@ -74,14 +76,18 @@ def query_event_service(operation: str, params: dict[str, Any]) -> dict[str, Any
 
 
 def query_agent_bus_threads() -> list[dict[str, Any]]:
-    if not _AGENT_BUS_TOKEN:
+    token = _agent_bus_token()
+    if not token:
+        logger.warning(
+            "Agent-bus thread query skipped: AGENT_BUS_TOKEN not configured"
+        )
         return []
     try:
         with make_sync_client(_AGENT_BUS_URL, timeout=5.0) as client:
             resp = client.get(
                 "/threads",
                 params={"status": "active"},
-                headers={"Authorization": f"Bearer {_AGENT_BUS_TOKEN}"},
+                headers={"Authorization": f"Bearer {token}"},
             )
             if resp.status_code == 200:
                 return resp.json().get("threads", [])

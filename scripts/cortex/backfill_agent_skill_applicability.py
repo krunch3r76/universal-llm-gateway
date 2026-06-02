@@ -67,6 +67,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:named-entity-verification-gate",
         "agent_skill:no-silent-inference",
         "agent_skill:pre-deploy-gate-discipline",
+        "agent_skill:pipeline-substrate-capabilities",
         "agent_skill:prose-discipline",
         "agent_skill:review-protocol-mandatory-chronology-verification",
         "agent_skill:session-close",

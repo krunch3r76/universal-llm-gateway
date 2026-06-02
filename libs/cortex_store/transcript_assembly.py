@@ -35,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -274,6 +275,39 @@ def compose_full_transcript(verbatim_md: str, session_summary_md: str) -> str:
     return base + session_summary_md.rstrip("\n") + "\n"
 
 
+def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str:
+    """Derive ``{agent}-YYYY-MM-DD-HHMM`` from when the JSONL file was created.
+
+    Cursor agent-transcripts files are created at session start; their birth
+    time (Linux ``st_birthtime``, else ``st_mtime``) is the canonical proxy when
+    the agent did not hold a ``cortex_boot`` ``session_id``.  Minute resolution
+    matches web-claude and ``_parse_opened_at`` on close.
+    """
+    st = jsonl_path.stat()
+    started = getattr(st, "st_birthtime", None)
+    if started is None or started <= 0:
+        started = st.st_mtime
+    dt = datetime.fromtimestamp(started, tz=UTC)
+    return f"{agent}-{dt.strftime('%Y-%m-%d-%H%M')}"
+
+
+def session_id_timing_hint(
+    *,
+    session_id: str,
+    jsonl_path: Path,
+    agent: str,
+) -> str | None:
+    """Advisory when ``session_id`` looks like close-time, not JSONL start."""
+    from_jsonl = derive_session_id_from_jsonl_start(jsonl_path=jsonl_path, agent=agent)
+    if session_id == from_jsonl:
+        return None
+    return (
+        f"session_id {session_id!r} differs from JSONL session-start "
+        f"{from_jsonl!r}; use the boot-held session_id or the JSONL-start ID "
+        "(web-claude convention), not UTC wall clock at close."
+    )
+
+
 def compute_text_content_hash(text: str) -> str:
     """Return ``sha256:<hex>`` of the UTF-8 bytes of *text*.
 
@@ -290,5 +324,7 @@ __all__ = [
     "assemble_verbatim_md",
     "compose_full_transcript",
     "compute_text_content_hash",
+    "derive_session_id_from_jsonl_start",
     "resolve_jsonl_path",
+    "session_id_timing_hint",
 ]

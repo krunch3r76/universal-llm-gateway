@@ -267,73 +267,10 @@ def _read_html(path: Path) -> str:
 
 
 def read_eml(path: Path) -> str:
-    """Reads the content of an EML file, extracting headers, body, and attachment content.
+    """Reads the content of an EML file, extracting headers, body, and attachment content."""
+    from document_text.eml import parse_eml_file
 
-    Prioritizes plain text body over HTML. Extracts PDF attachments as markdown.
-    """
-    import email
-    import email.policy
-
-    with path.open("rb") as file_handle:
-        msg = email.message_from_binary_file(file_handle, policy=email.policy.default)
-
-    lines: list[str] = []
-    lines.append("---")
-    for header in ("from", "to", "cc", "subject", "date", "message-id"):
-        value = msg.get(header, "")
-        if value:
-            lines.append(f"{header}: {value}")
-    lines.append("---")
-    lines.append("")
-
-    body = ""
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            disposition = str(part.get("Content-Disposition", ""))
-            if content_type == "text/plain" and "attachment" not in disposition:
-                body = part.get_content()
-                break
-        if not body:
-            for part in msg.walk():
-                content_type = part.get_content_type()
-                disposition = str(part.get("Content-Disposition", ""))
-                if content_type == "text/html" and "attachment" not in disposition:
-                    import html2text
-
-                    body = html2text.html2text(part.get_content())
-                    break
-    else:
-        body = msg.get_content()
-
-    lines.append(body.strip())
-
-    for part in msg.walk():
-        filename = part.get_filename()
-        if not filename:
-            continue
-        lines.append("")
-        lines.append("---")
-        lines.append(f"## Attachment: {filename}")
-        lines.append("")
-        content_type = part.get_content_type()
-        if content_type == "application/pdf":
-            import pymupdf  # type: ignore[import-untyped]
-            import pymupdf4llm  # type: ignore[import-untyped]
-
-            data = part.get_payload(decode=True)
-            doc = None
-            try:
-                doc = pymupdf.open(stream=data, filetype="pdf")
-                text = pymupdf4llm.to_markdown(doc)
-            finally:
-                if doc:
-                    doc.close()
-            lines.append(text.strip())
-        else:
-            lines.append(f"[{content_type} — not extracted]")
-
-    return "\n".join(lines)
+    return parse_eml_file(path).text
 
 
 def _pdf_sidecar_candidates(path: Path) -> list[Path]:

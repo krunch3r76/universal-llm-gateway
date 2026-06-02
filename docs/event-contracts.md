@@ -2227,15 +2227,16 @@ still running or failed. All signals: `role="observation"`, `scope="global"`.
 |---|---|---|
 | `email.ingest.started` | `run_id`, `run_type`, `staged`, `requested_message_count` | Ingest run row created and request accepted. |
 | `email.ingest.selected` | `run_id`, `selected_count`, `requested_message_count` | Requested message IDs or pending queue resolved to DB rows. |
-| `email.ingest.message.started` | `run_id`, `message_id`, `staged`, `has_rendered_path` | Per-message ingest work began. |
+| `email.ingest.message.started` | `run_id`, `message_id`, `has_eml_path` | Per-message ingest work began. |
 | `email.ingest.rendered.loaded` | `run_id`, `message_id`, `rendered_path`, `text_bytes` | Rendered markdown file loaded before pipeline submission. |
-| `email.pipeline.started` | `run_id`, `message_id`, `text_bytes`, `email_date` | `email-extract` pipeline request submitted to Stargate. |
+| `email.capture.entity_created` | `message_id`, `entity_id`, `profile` | Sparse correspondence entity created at capture. |
+| `email.ingest.message.captured` | `run_id`, `message_id`, `entity_id`, `profile`, `duration_s` | Capture-only ingest succeeded. |
+| `email.pipeline.started` | `run_id`, `message_id`, `text_bytes`, `email_date`, `eml_path` | `eml-extract` pipeline request submitted to Stargate (`pipeline_options.eml_path` required). |
 | `email.pipeline.completed` | `run_id`, `message_id`, `duration_s`, `entity_count`, `claim_count`, `relationship_count`, `edge_count` | Pipeline returned parseable proposal JSON. |
 | `email.pipeline.failed` | `run_id`, `message_id`, `error_type`, `duration_s` | Pipeline transport, HTTP, JSON, or unexpected failure. May also carry `status_code` and `error`. |
-| `email.ingest.message.staged` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `entity_count`, `claim_count`, `relationship_count`, `edge_count`, `secrets_suppressed` | Extracted proposals persisted to the staging table. |
-| `email.ingest.message.committed` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `new_entities`, `assertions_seeded`, `assertion_conflicts`, `relationships_seeded`, `reasoning_edges_seeded` | Direct ingest seeded Cortex successfully. |
-| `email.ingest.message.failed` | `run_id`, `message_id`, `stage`, `error`, `duration_s` | Per-message terminal failure. `stage` identifies the failing boundary (`rendered_path`, `rendered_file`, `extract_email`, `pipeline_result`, `stage_extraction`, or `ingest_email`). |
-| `email.ingest.completed` | `run_id`, `run_type`, `staged`, `selected_count`, `emails_succeeded`, `emails_failed`, `pipeline_version`, `duration_s` | Batch finished and `ingest_runs` was updated. |
+| `email.ingest.message.committed` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `new_entities`, `assertions_seeded`, `assertion_conflicts`, `relationships_seeded`, `reasoning_edges_seeded` | Reviewer commit seeded Cortex successfully. |
+| `email.ingest.message.failed` | `run_id`, `message_id`, `stage`, `error`, `duration_s` | Per-message terminal failure. `stage` identifies the failing boundary (`eml_path`, `capture`, `extract_email`, `pipeline_result`, or `review_extract`). |
+| `email.ingest.completed` | `run_id`, `run_type`, `selected_count`, `emails_succeeded`, `emails_failed`, `duration_s` | Batch finished and `ingest_runs` was updated. |
 
 
 ### Document OCR Signals

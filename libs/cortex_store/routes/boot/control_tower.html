@@ -225,8 +225,10 @@ function deriveAlerts(s){
   blockers.forEach(t=>a.push({sev:"warn",msg:`Blocker open — ${t.d}`,tag:"high"}));
   // cross-surface divergence: a todo id that is also an open bus thread
   const todoSlugs=new Set([...s.inFlight,...s.todos].map(t=>t.id.replace('todo:','')));
-  s.bus.forEach(b=>{ if(todoSlugs.has(b))
-    a.push({sev:"warn",msg:`Divergence — <em>${b}</em> is open on BOTH a todo and an unread bus thread`,tag:"two surfaces"});});
+  s.bus.forEach(b=>{
+    const slug=typeof b==="string"?b:(b.slug||b.id||"");
+    if(todoSlugs.has(slug))
+    a.push({sev:"warn",msg:`Divergence — <em>${esc(slug)}</em> is open on BOTH a todo and an unread bus thread`,tag:"two surfaces"});});
   if(s.bus.length>=8) a.push({sev:"info",msg:`${s.bus.length} unread bus threads across seats — coordination backlog`,tag:"bus"});
   if(s.audit&&s.audit.warn>1000) a.push({sev:"info",msg:`Audit: ${s.audit.warn.toLocaleString()} warnings, ${s.audit.crit} critical`,tag:"audit"});
   const order={crit:0,warn:1,info:2}; return a.sort((x,y)=>order[x.sev]-order[y.sev]);
@@ -283,7 +285,15 @@ function render(s){
   panels.push(panel("span6","AGENT BUS · UNREAD","amber",s.bus.length,`
     <div class="row"><div style="width:100%"><span class="meta">${s.bus.length} unread threads</span>
       <div class="gauge"><i style="width:${Math.min(100,s.bus.length*10)}%"></i></div></div></div>`
-    + s.bus.map(b=>`<div class="row"><span class="id">${esc(b)}</span></div>`).join("")));
+    + s.bus.map(b=>{
+      const id=typeof b==="string"?"":(b.id||"");
+      const slug=typeof b==="string"?b:(b.slug||b.id||"");
+      const unread=typeof b==="string"?0:(b.unread||0);
+      return `<div class="row"><div class="busline"><span class="id">${esc(id||slug)}</span>`
+        + (id?`<span class="desc">${esc(slug)}</span>`:"")
+        + (unread?`<span class="new">${unread}</span>`:"")
+        + `</div></div>`;
+    }).join("")));
 
   // recent mentions
   panels.push(panel("span6","RECENT ACTIVITY · 7d","cyan",s.mentions.length,
@@ -327,7 +337,7 @@ function normalizeFromApi(j){
     todosTotal:j.todos_total??(j.todos||[]).length,
     planPhases:j.plan_phases||[],
     deadlines:j.deadlines||[],
-    bus:j.bus||[],
+    bus:(j.bus||[]).map(b=>typeof b==="string"?{id:"",slug:b,unread:0}:b),
     mentions:(j.mentions||[]).map(m=>({id:m.id,t:m.t,n:m.n,ago:m.ago||formatAgo(m.last)})),
     audit:j.audit,
     alerts:j.alerts,

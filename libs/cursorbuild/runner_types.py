@@ -51,6 +51,9 @@ class RunnerSpec:
     skip_worktree_setup: bool = False
     stream_partial_output: bool = False
     recursion_depth: int | None = None
+    git_status_pre: str = ""
+    dirty_admission: bool = False
+    proc_pid_holder: list[int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +67,10 @@ class RunnerResult:
     duration_s: float
     sidecar_path: str | None
     truncated: bool
+    git_status_post: str = ""
+    git_diff_stat: str = ""
+    audit_incomplete: bool = False
+    sidecar_gaps: int = 0
     error: str = ""
     reason_code: str = ""
     resolved_session_id: str | None = None

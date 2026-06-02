@@ -171,7 +171,11 @@ def _aggregate(conn: Any) -> dict[str, Any]:
     }
 
     bus = [
-        t.get("slug") or t.get("id")
+        {
+            "id": t.get("id"),
+            "slug": t.get("slug") or t.get("id"),
+            "unread": int(t.get("unread_count") or 0),
+        }
         for t in query_agent_bus_threads()
         if (t.get("unread_count") or 0) > 0
     ]
@@ -230,7 +234,8 @@ def _derive_alerts(state: dict[str, Any]) -> list[dict[str, str]]:
     todo_slugs = {
         _strip_todo_prefix(t["id"]) for t in (*state["in_flight"], *state["todos"])
     }
-    for slug in state["bus"]:
+    for entry in state["bus"]:
+        slug = entry if isinstance(entry, str) else (entry.get("slug") or entry.get("id"))
         if slug in todo_slugs:
             alerts.append(
                 {

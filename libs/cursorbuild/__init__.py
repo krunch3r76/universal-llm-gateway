@@ -20,6 +20,14 @@ from cursorbuild.home import (
     dispatch_home_path,
     setup_dispatch_home,
 )
+from cursorbuild.dispatch import dispatch_op
+from cursorbuild.fetch_result import fetch_result_op
+from cursorbuild.green_gate import run_consumer_verification
+from cursorbuild.lifecycle import (
+    enrich_system_context_for_boot,
+    session_close_kwargs_from_dispatch,
+)
+from cursorbuild.runner import run_dispatch
 from cursorbuild.runner_types import RunnerResult, RunnerSpec
 
 from . import sidecar  # noqa: F401,I001
@@ -34,5 +42,11 @@ __all__ = [
     "setup_dispatch_home",
     "RunnerResult",
     "RunnerSpec",
+    "dispatch_op",
+    "fetch_result_op",
+    "run_dispatch",
+    "run_consumer_verification",
+    "enrich_system_context_for_boot",
+    "session_close_kwargs_from_dispatch",
     "sidecar",
 ]

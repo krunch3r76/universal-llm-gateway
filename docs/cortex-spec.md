@@ -210,10 +210,51 @@ with claim text untouched. No data moves.
 
 ---
 
-## 8. Edge model
+## 8. Relationship model
+
+Cortex carries **two** kinds of typed, directed link. *Edge* is the genus that
+spans them; the two species are the **structural relationship** (this section)
+and the **reasoning edge** (§9). They differ along four axes — durability, node
+types, attribution, and belief-revision governance:
+
+| Axis | Structural relationship | Reasoning edge (§9) |
+|---|---|---|
+| Substrate | `relationships` table | `session_edges` table |
+| API | `relationship_create` | `edge_create` |
+| Nodes | entity → entity | entity or `assertion:{id}` |
+| Durability | durable structural fact; consensus-shared | session-attributed; two agents may seed different edges |
+| Attribution | not session-scoped | seeded by a session/agent |
+| Belief revision | AGM-governed, soft-deleted (§10) | retired (`edge_retire`), not AGM-governed |
+
+A **structural relationship** is a typed, directed edge between two *entities* —
+durable, consensus-shared, and the audit ground truth. It records structure that
+holds independent of any one reasoning session.
+
+- Relationship types include: `child_of`, `references`, `related_to`,
+  `archives_to`, `belongs_to`, `depends_on`, `blocked_by`, `requires`.
+- Nodes: entity IDs only (entity → entity).
+- Role / strength: a relationship may carry a `role` label and a `strength`
+  (0.0–1.0).
+- Governance: relationships are soft-deleted (the row is preserved for
+  provenance) and participate in belief revision (§10).
+- `requires` is the manifest-dependency relation (e.g. a `project` / `plan`
+  requires an `agent_skill`); audit detectors treat the structural side as the
+  ground truth.
+
+A type name may be registered on **both** substrates intentionally — the same
+concept mirrored onto the structural and reasoning layers so each substrate's
+traversal can follow it (e.g. `requires`, `depends_on`). The substrate is
+determined by which API created the link (`relationship_create` vs
+`edge_create`) and which table a query reads, not by the type string alone.
+
+---
+
+## 9. Reasoning edge model
 
 Typed, directed reasoning links connect entities (and assertions) across
-sessions, making dependency structure queryable.
+sessions, making cognitive/dependency structure queryable. Unlike structural
+relationships, reasoning edges are session-attributed: two agents may seed
+different edges, and they are retired rather than AGM-superseded.
 
 Edge types include: `reasoned_about`, `caused_by`, `contradicts`, `extends`,
 `supersedes`, `analogous_to`, `evidence_for`, `derived_from`, `depends_on`,
@@ -226,7 +267,7 @@ Edge types include: `reasoned_about`, `caused_by`, `contradicts`, `extends`,
 
 ---
 
-## 9. Belief revision (AGM)
+## 10. Belief revision (AGM)
 
 Cortex is AGM-compliant (Alchourrón–Gärdenfors–Makinson). Supersession preserves
 both rows; the chain is queryable; lower-entrenchment beliefs contract first;
@@ -237,7 +278,7 @@ Recovery intentionally rejected).
 
 ---
 
-## 10. Forward-looking provenance (v3)
+## 11. Forward-looking provenance (v3)
 
 Two assertion fields make the supersession chain a *learning substrate*, not just
 an audit trail:
@@ -255,7 +296,7 @@ fields is in the provenance-substrate spec (§4.7).
 
 ---
 
-## 11. Version history
+## 12. Version history
 
 | Version | Changes |
 |---|---|

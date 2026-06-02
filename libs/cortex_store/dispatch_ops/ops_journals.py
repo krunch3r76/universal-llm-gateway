@@ -28,7 +28,9 @@ from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
     compose_full_transcript,
+    derive_session_id_from_jsonl_start,
     resolve_jsonl_path,
+    session_id_timing_hint,
 )
 from ._shared import _FILES_ROOT, _derive_session_id_local, record
 from .ops_audit_detectors import run_detectors
@@ -305,6 +307,7 @@ def _op_session_close_preflight(
         return {"ok": False, **arg_error}
     assert session_id and agent and session_summary_md and summary
 
+    jsonl_resolved = None
     if transcript_depth == "none":
         # No assembly, no guards. Audit + structural-warnings still run
         # against session_summary_md.
@@ -314,6 +317,7 @@ def _op_session_close_preflight(
         if transcript_jsonl_path:
             try:
                 resolved = resolve_jsonl_path(transcript_jsonl_path)
+                jsonl_resolved = resolved
                 verbatim_md, turn_count = assemble_verbatim_md(
                     jsonl_path=resolved, session_id=session_id
                 )
@@ -363,7 +367,7 @@ def _op_session_close_preflight(
     structural_warnings = _validate_transcript_structure(
         composed, summary_len=len(summary), transcript_depth=transcript_depth
     )
-    return {
+    preflight: dict[str, Any] = {
         "ok": True,
         "audit": audit_outcome,
         "turn_count": turn_count,
@@ -373,6 +377,20 @@ def _op_session_close_preflight(
         "warnings": structural_warnings,
         "transcript_depth": transcript_depth,
     }
+    if jsonl_resolved is not None:
+        preflight["session_id_from_jsonl_start"] = (
+            derive_session_id_from_jsonl_start(
+                jsonl_path=jsonl_resolved, agent=agent
+            )
+        )
+        timing_hint = session_id_timing_hint(
+            session_id=session_id,
+            jsonl_path=jsonl_resolved,
+            agent=agent,
+        )
+        if timing_hint:
+            preflight["warnings"] = [*structural_warnings, timing_hint]
+    return preflight
 
 
 def _op_session_close(
