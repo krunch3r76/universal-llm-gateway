@@ -8,7 +8,7 @@ credibility (Ψ) are separate arcs; this hook applies the binary D-core gate
 ``unsubstantiated``).
 
 Gates (shared with ``substantiation_sync_shadow``):
-  * ``type_confidence_fields``: confidence axis must be ``status``
+  * ``type_confidence_fields``: confidence axis must be ``confidence_band``
   * lifecycle-axis legacy ``status`` (merged/deprecated/reaped) — skip
   * ``decision`` types — adoption semantics, skip
   * fail-closed on band demotion (e.g. confirmed → unsubstantiated)

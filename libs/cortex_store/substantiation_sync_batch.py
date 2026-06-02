@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from universal_logging import get_logger
 
-from .confidence_field import confidence_field
+from .confidence_field import confidence_field, uses_confidence_band_axis
 from .db import query
 from .status_trait_read import entity_has_trait_columns
 from .substantiation_sync import recompute_entity_substantiation_status
@@ -59,7 +59,7 @@ def run_substantiation_sync_batch(
         eid = row["id"]
         etype = row.get("type") or ""
 
-        if confidence_field(conn, etype) != "status":
+        if not uses_confidence_band_axis(confidence_field(conn, etype)):
             counts.skipped_non_status_confidence_field += 1
             continue
 

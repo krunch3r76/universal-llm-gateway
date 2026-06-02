@@ -22,6 +22,7 @@ from ..routes.assertions import (
 )
 from ..routes.graph import activate, analyze_impact_semantic
 from ..routes.triage import AgeStagedRequest, age_staged
+from ..status_trait_read import effective_confidence_band
 from ._shared import _VALID_CONFIDENCE
 from .ops_assertions_update import (
     _op_assertion_get,
@@ -191,7 +192,7 @@ def _op_review_queue(
     thin_descriptions = []
     if not entities.get("error"):
         for e in entities.get("items", []):
-            band = e.get("confidence_band") or e.get("status")
+            band = effective_confidence_band(e)
             if band == "provisional":
                 provisional.append({**e, "priority": 4, "reason": "provisional"})
             desc = e.get("description") or ""

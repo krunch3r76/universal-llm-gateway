@@ -10,9 +10,9 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from .confidence_field import confidence_field
+from .confidence_field import confidence_field, uses_confidence_band_axis
 from .db import query
-from .status_trait_read import effective_confidence_band
+from .status_trait_read import effective_confidence_band, effective_lifecycle
 
 # Confidence-axis status values (legacy overload). Lifecycle axis is caller-owned.
 _CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
@@ -47,7 +47,7 @@ def resolve_substantiation_sync_scope(
 
     rows = query(
         conn,
-        "SELECT type, status, confidence_band FROM entities WHERE id = ?",
+        "SELECT type, lifecycle, confidence_band FROM entities WHERE id = ?",
         (entity_id,),
     )
     if not rows:
@@ -60,9 +60,8 @@ def resolve_substantiation_sync_scope(
         )
     row = rows[0]
     entity_type = row.get("type") or ""
-    current_status = row.get("status")
 
-    if confidence_field(conn, entity_type) != "status":
+    if not uses_confidence_band_axis(confidence_field(conn, entity_type)):
         return SubstantiationSyncScope(
             entity_id=entity_id,
             entity_type=entity_type,
@@ -71,7 +70,7 @@ def resolve_substantiation_sync_scope(
             skip_reason="non_status_confidence_field",
         )
 
-    if current_status is not None and current_status not in _CONFIDENCE_AXIS_STATUS:
+    if effective_confidence_band(row) is None and effective_lifecycle(row) is not None:
         return SubstantiationSyncScope(
             entity_id=entity_id,
             entity_type=entity_type,

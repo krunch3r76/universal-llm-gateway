@@ -219,7 +219,7 @@ def test_frontier_to_thread_requires_thread() -> None:
 
 def _patch_bus(monkeypatch: pytest.MonkeyPatch, transport: httpx.MockTransport) -> None:
     monkeypatch.setattr(
-        "systems.frontier_consult.service.make_async_client",
+        "systems.frontier_consult.admission.make_async_client",
         lambda *a, **k: httpx.AsyncClient(
             transport=transport, base_url="http://localhost"
         ),

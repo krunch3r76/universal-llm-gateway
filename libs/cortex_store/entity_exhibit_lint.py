@@ -109,7 +109,7 @@ def enforce_exhibit_belongs_to(
         row[1] == "lifecycle"
         for row in conn.execute("PRAGMA table_info(entities)").fetchall()
     )
-    parent_cols = "id, lifecycle, status" if has_lifecycle else "id, status"
+    parent_cols = "id, lifecycle" if has_lifecycle else "id"
     case_rows = query(
         conn,
         f"SELECT {parent_cols} FROM entities WHERE id = ?",
@@ -131,11 +131,7 @@ def enforce_exhibit_belongs_to(
             },
         )
     parent = case_rows[0]
-    deprecated = parent.get("status") == "deprecated"
-    if has_lifecycle:
-        deprecated = parent.get("lifecycle") == "deprecated" or (
-            parent.get("lifecycle") is None and deprecated
-        )
+    deprecated = has_lifecycle and parent.get("lifecycle") == "deprecated"
     if deprecated:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

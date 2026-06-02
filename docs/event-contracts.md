@@ -1833,6 +1833,9 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `pipeline.estimate.requested` | `pipeline_id`, `item_count`, `total_chars` | - |
 | `pipeline.estimate.completed` | `pipeline_id`, `item_count`, `batch_count`, `total_source_tokens`, `budget_tokens` | `estimated_validate_tokens` |
 | `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
+| `pipeline.compaction.archived` | `execution_id`, `chat_id`, `anchor_id`, `turn_index`, `role`, `artifact_uri`, `assertion_id`, `tool_calls_count`, `synthesized` | Emitted when `archive_*_turn_v1` persists a turn to cortex (node-scoped) |
+| `pipeline.compaction.assembled` | `execution_id`, `chat_id`, `anchor_id`, `turn_index`, `window_size`, `messages_count`, `total_turn_pairs` | Emitted when `assemble_thread_v1` builds the referential prefix (node-scoped) |
+| `pipeline.compaction.summarized` | `execution_id`, `chat_id`, `anchor_id`, `turns_summarized`, `summary_assertion_id` | Emitted when chat summarization collapses older turns (Phase C) (node-scoped) |
 | `pipeline.rag.query.analysis.completed` | `pipeline_id`, `execution_id`, `step_name`, `needs_retrieval`, `scope`, `scope_confidence`, `out_of_scope_reason` | - |
 | `pipeline.rag.query.rewrite.completed` | `pipeline_id`, `execution_id`, `step_name`, `rewrite_count`, `hyde_present` | - |
 | `pipeline.rag.query.rewrite.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | reasons: `rewrite_disabled`, `needs_retrieval_false`, `step_condition_false` |

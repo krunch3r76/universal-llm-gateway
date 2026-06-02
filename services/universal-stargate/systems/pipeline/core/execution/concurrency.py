@@ -13,8 +13,8 @@ YAML surface (stable across the FifoCapacityGate swap)::
 
 Resolution rules:
 
-- ``{context.chat_id}`` is the only documented placeholder. Any other
-  ``{...}`` token raises ``ValueError`` at run time.
+- ``{context.chat_id}`` and ``{context.dispatch_thread_id}`` are the
+  supported placeholders. Any other ``{...}`` token raises ``ValueError`` at run time.
 - ``chat_id`` absent when the key references ``{context.chat_id}``
   raises ``ValueError`` — matches ``assemble_thread_v1``'s
   raise-on-missing-chat-id discipline (handlers/assemble_thread.py).
@@ -144,7 +144,8 @@ def _render_key(
 ) -> str:
     """Replace ``{context.<attr>}`` placeholders with concrete values.
 
-    Phase A supports only ``{context.chat_id}``. Unknown placeholder
+    Supports ``{context.chat_id}`` and ``{context.dispatch_thread_id}``.
+    Unknown placeholder
     names raise ``ValueError`` (closes the substring-permissive
     ``.replace()`` gap). A referenced attribute that resolves to
     ``None`` or empty also raises — matching the runtime

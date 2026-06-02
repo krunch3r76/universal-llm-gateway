@@ -20,32 +20,6 @@ def _count_by(conn: object, table: str, column: str) -> dict[str, int]:
     return {str(r[column] or "null"): r["cnt"] for r in rows}
 
 
-def _count_by_lifecycle(conn: object) -> dict[str, int]:
-    """Group-count by effective lifecycle (trait column with status fallback)."""
-    rows = query(
-        conn,  # type: ignore[arg-type]
-        "SELECT COALESCE(lifecycle, CASE WHEN status IN ('merged','deprecated','reaped') "
-        "THEN status END) AS v, COUNT(*) AS cnt FROM entities GROUP BY v",
-    )
-    return {str(r["v"] or "null"): r["cnt"] for r in rows}
-
-
-def _count_by_confidence_band(conn: object) -> dict[str, int]:
-    """Group-count by effective confidence band (trait column with status fallback)."""
-    rows = query(
-        conn,  # type: ignore[arg-type]
-        "SELECT COALESCE(confidence_band, CASE WHEN status IN "
-        "('unsubstantiated','provisional','confirmed') THEN status END) AS v, "
-        "COUNT(*) AS cnt FROM entities GROUP BY v",
-    )
-    return {str(r["v"] or "null"): r["cnt"] for r in rows}
-
-
-def _count_by_status_legacy(conn: object) -> dict[str, int]:
-    """Legacy raw ``entities.status`` bucket counts (compat)."""
-    return _count_by(conn, "entities", "status")
-
-
 @router.get("")
 def get_stats() -> dict:
     """Dashboard counts across all Cortex tables."""
@@ -67,11 +41,12 @@ def get_stats() -> dict:
         entity_stats: dict[str, object] = {
             "total": e_total,
             "by_type": _count_by(conn, "entities", "type"),
-            "by_status": _count_by_status_legacy(conn),
         }
         if entity_has_trait_columns(conn):
-            entity_stats["by_lifecycle"] = _count_by_lifecycle(conn)
-            entity_stats["by_confidence_band"] = _count_by_confidence_band(conn)
+            entity_stats["by_lifecycle"] = _count_by(conn, "entities", "lifecycle")
+            entity_stats["by_confidence_band"] = _count_by(
+                conn, "entities", "confidence_band"
+            )
 
         return {
             "entities": entity_stats,

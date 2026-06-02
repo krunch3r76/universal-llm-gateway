@@ -231,13 +231,16 @@ def _insert_entity(
     status: str = "confirmed",
     attributes: dict | None = None,
 ) -> None:
+    band = status if status in ("unsubstantiated", "provisional", "confirmed") else None
     conn.execute(
-        "INSERT INTO entities (id, type, name, status, attributes) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO entities (id, type, name, status, confidence_band, attributes) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
         (
             entity_id,
             entity_type,
             entity_id,
             status,
+            band,
             json.dumps(attributes) if attributes else None,
         ),
     )

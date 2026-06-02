@@ -52,7 +52,7 @@ def _detect_workflow_state_incoherent(
     active ``supersedes`` edge (retirement evidence), else ``accepted``.
     """
     clauses = ["e.type = ?", _ADOPTED_DECISION]
-    params: list[Any] = [entity_type, *adopted_status, "confirmed"]
+    params: list[Any] = [entity_type, *adopted_status]
 
     state_clauses: list[str] = []
     non_null = [s for s in pre_adoption_states if s is not None]
@@ -135,7 +135,7 @@ def detect_decision_deprecated_not_terminal(
         _DEPRECATED_DECISION,
         f"(workflow_state IS NULL OR workflow_state NOT IN ({term_ph}))",
     ]
-    params: list[Any] = ["deprecated", "deprecated", *terminals]
+    params: list[Any] = ["deprecated", *terminals]
     if subject:
         clauses.append("id = ?")
         params.append(subject)

@@ -2,7 +2,7 @@
 
 Phase 3 cutover preview: same eligibility as ``recompute_entity_substantiation_status``
 (via ``substantiation_sync_gating``). Compares stored ``confidence_band`` vs D-core
-target; informational ``status`` column diff. No DB writes.
+target. No DB writes.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import datetime
 import sqlite3
 from dataclasses import dataclass, field
 
-from .confidence_field import confidence_field
+from .confidence_field import confidence_field, uses_confidence_band_axis
 from .db import query
 from .status_trait_read import entity_has_trait_columns
 from .substantiation_sync_gating import resolve_substantiation_sync_scope
@@ -23,7 +23,6 @@ _BANDS = ("unsubstantiated", "provisional", "confirmed")
 class SubstantiationSyncShadowRow:
     entity_id: str
     entity_type: str
-    status: str | None
     confidence_band: str | None
     derived_state: str
     target_band: str
@@ -44,10 +43,7 @@ class SubstantiationSyncShadowReport:
     skipped_demotion_blocked: int
     in_scope: int
     would_change_confidence_band: int
-    would_change_status_if_live_sync: int
     band_already_matches: int
-    status_equals_target: int
-    status_differs_from_band: int
     provisional_band_would_overwrite: int
     would_demote_band: int
     confusion_band: dict[str, dict[str, int]]
@@ -101,10 +97,7 @@ def run_substantiation_sync_shadow(
             skipped_demotion_blocked=0,
             in_scope=0,
             would_change_confidence_band=0,
-            would_change_status_if_live_sync=0,
             band_already_matches=0,
-            status_equals_target=0,
-            status_differs_from_band=0,
             provisional_band_would_overwrite=0,
             would_demote_band=0,
             confusion_band=_empty_confusion(),
@@ -115,7 +108,7 @@ def run_substantiation_sync_shadow(
 
     from .dispatch_ops._detectors.substantiation import derive_substantiation_state
 
-    entities = query(conn, "SELECT id, type, status, confidence_band FROM entities")
+    entities = query(conn, "SELECT id, type, confidence_band FROM entities")
     confusion = _empty_confusion()
     report = SubstantiationSyncShadowReport(
         generated_at=datetime.datetime.now(tz=datetime.UTC).strftime(
@@ -131,10 +124,7 @@ def run_substantiation_sync_shadow(
         skipped_demotion_blocked=0,
         in_scope=0,
         would_change_confidence_band=0,
-        would_change_status_if_live_sync=0,
         band_already_matches=0,
-        status_equals_target=0,
-        status_differs_from_band=0,
         provisional_band_would_overwrite=0,
         would_demote_band=0,
         confusion_band=confusion,
@@ -150,7 +140,7 @@ def run_substantiation_sync_shadow(
 
     for row in entities:
         eid = row["id"]
-        if confidence_field(conn, row.get("type") or "") != "status":
+        if not uses_confidence_band_axis(confidence_field(conn, row.get("type") or "")):
             report.skipped_non_status_confidence_field += 1
             continue
 
@@ -172,7 +162,6 @@ def run_substantiation_sync_shadow(
         target = scope.target_band
         assert target is not None
         report.in_scope += 1
-        status = row.get("status")
         band = row.get("confidence_band")
         derived = derive_substantiation_state(conn, eid)
         backing_n, null_cred_n = _backing_credibility_counts(conn, eid)
@@ -193,7 +182,6 @@ def run_substantiation_sync_shadow(
                     SubstantiationSyncShadowRow(
                         entity_id=eid,
                         entity_type=row.get("type") or "",
-                        status=status,
                         confidence_band=band,
                         derived_state=derived,
                         target_band=target,
@@ -203,15 +191,6 @@ def run_substantiation_sync_shadow(
                 )
         else:
             report.band_already_matches += 1
-
-        if status != target:
-            report.would_change_status_if_live_sync += 1
-        else:
-            report.status_equals_target += 1
-        if status != band and (
-            status in {"unsubstantiated", "confirmed", "provisional"} or band in _BANDS
-        ):
-            report.status_differs_from_band += 1
 
     return report
 
@@ -224,10 +203,10 @@ def render_markdown(report: SubstantiationSyncShadowReport) -> str:
         f"- total entities: {report.total_entities}",
         "",
         "## Scope",
-        f"- in-scope (status-axis sync eligible): {report.in_scope}",
+        f"- in-scope (confidence_band-axis sync eligible): {report.in_scope}",
         f"- skipped lifecycle-axis: {report.skipped_lifecycle_axis}",
         f"- skipped adoption-type (decision): {report.skipped_adoption_type}",
-        f"- skipped non-status confidence_field: "
+        f"- skipped non-confidence_band confidence_field: "
         f"{report.skipped_non_status_confidence_field}",
         f"- skipped demotion-blocked (fail-closed): {report.skipped_demotion_blocked}",
         "",
@@ -237,12 +216,6 @@ def render_markdown(report: SubstantiationSyncShadowReport) -> str:
         f"- provisional band would be overwritten: "
         f"{report.provisional_band_would_overwrite}",
         f"- **would demote band** (blocked in production): {report.would_demote_band}",
-        "",
-        "## Live sync axis (status) — informational",
-        f"- would change status if legacy status sync ran: "
-        f"{report.would_change_status_if_live_sync}",
-        f"- status already equals target: {report.status_equals_target}",
-        f"- status ≠ confidence_band (in-scope): {report.status_differs_from_band}",
         "",
         "## Confusion (stored confidence_band ↓ vs D-core target →)",
         "| current \\ target | unsubstantiated | provisional | confirmed |",
@@ -279,7 +252,7 @@ def render_markdown(report: SubstantiationSyncShadowReport) -> str:
         for s in report.samples_band_change:
             lines.append(
                 f"- `{s.entity_id}` ({s.entity_type}) band={s.confidence_band!r} "
-                f"→ {s.target_band!r} status={s.status!r} derived={s.derived_state} "
+                f"→ {s.target_band!r} derived={s.derived_state} "
                 f"backing={s.backing_assertion_count} null_cred={s.null_credibility_backing}"
             )
     if report.missing_trait_columns:

@@ -45,7 +45,7 @@ def detect_confirmed_entity_no_assertions(
         WHERE {band_pred}
         AND type != 'assertion'
     """
-    params: tuple = ("confirmed", "confirmed")
+    params: tuple = ("confirmed",)
     if subject:
         sql += " AND id = ?"
         params = (*params, subject)
@@ -104,7 +104,7 @@ def detect_confirmed_attribute_no_assertion(
         AND attributes IS NOT NULL
         AND type != 'assertion'
     """
-    params: tuple = ("confirmed", "confirmed")
+    params: tuple = ("confirmed",)
     if subject:
         sql += " AND id = ?"
         params = (*params, subject)

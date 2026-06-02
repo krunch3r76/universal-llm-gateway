@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""Hybrid Phase-2 trait backfill (scope C) — hot entity types only.
+"""Status-trait backfill — hybrid scope C or predicate-equivalence (all types).
 
 Populates NULL ``lifecycle``, ``confidence_band``, and ``adoption`` from legacy
 ``entities.status`` without mutating ``status``. Idempotent.
 
 Usage:
   ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py --dry-run
-  ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py --db ~/.cortex/cortex.db
-  ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py --required-only
+  ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py --apply
+  ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py \\
+      --mode predicate-equivalence --db ~/.cortex/cortex.db --apply
 
-Operator binding: assertion 12020 ratified + scope C (todo:cortex-status-traits-phase2-cutover).
-Do NOT rerun ``run_confidence_shadow.py --persist`` unless hot-type bands are NULL/stale.
+Operator binding:
+- hybrid (default): assertion 12020 + scope C (todo:cortex-status-traits-phase2-cutover)
+- predicate-equivalence: gpt-5.5 4511b3f6 (todo:cortex-status-traits-phase3-drop-status)
 """
 
 from __future__ import annotations
@@ -26,16 +28,21 @@ from cortex_store.status_trait_backfill import (  # noqa: E402
     HOT_TYPES_DEFAULT,
     HOT_TYPES_REQUIRED,
     run_hybrid_trait_backfill,
+    run_predicate_equivalence_trait_backfill,
 )
 
 _DEFAULT_DB = os.path.expanduser("~/.cortex/cortex.db")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Hybrid status-trait backfill (scope C)"
-    )
+    parser = argparse.ArgumentParser(description="Status-trait backfill")
     parser.add_argument("--db", default=_DEFAULT_DB, help="cortex SQLite path")
+    parser.add_argument(
+        "--mode",
+        choices=("hybrid", "predicate-equivalence"),
+        default="hybrid",
+        help="hybrid=scope-C hot types; predicate-equivalence=all types (4511b3f6)",
+    )
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -44,22 +51,26 @@ def main() -> int:
     parser.add_argument(
         "--required-only",
         action="store_true",
-        help="Limit to todo, decision, agent_skill (exclude plan family)",
+        help="Hybrid only: limit to todo, decision, agent_skill (exclude plan family)",
     )
     args = parser.parse_args()
-
-    types = HOT_TYPES_REQUIRED if args.required_only else HOT_TYPES_DEFAULT
 
     dry_run = not args.apply
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row
 
-    counts = run_hybrid_trait_backfill(conn, types=types, dry_run=dry_run)
+    if args.mode == "predicate-equivalence":
+        counts = run_predicate_equivalence_trait_backfill(conn, dry_run=dry_run)
+        types_label = "all entity types"
+    else:
+        types = HOT_TYPES_REQUIRED if args.required_only else HOT_TYPES_DEFAULT
+        counts = run_hybrid_trait_backfill(conn, types=types, dry_run=dry_run)
+        types_label = ", ".join(sorted(types))
 
     mode = "dry-run" if dry_run else "applied"
-    print(f"## hybrid trait backfill ({mode})")
+    print(f"## {args.mode} trait backfill ({mode})")
     print(f"- db: {args.db}")
-    print(f"- types: {', '.join(sorted(types))}")
+    print(f"- types: {types_label}")
     print(f"- entities touched: {counts.entities_touched}")
     print(f"- confidence_band writes: {counts.confidence_band}")
     print(f"- lifecycle writes: {counts.lifecycle}")

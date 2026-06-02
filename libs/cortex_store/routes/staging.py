@@ -7,6 +7,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from universal_logging import get_logger
 
 from ..db import cortex_conn, json_decode, json_encode, query
+from ..status_trait_write import (
+    resolve_staged_entity_traits,
+    status_column_for_insert,
+    trait_insert_extras,
+)
 from ..models import (
     StagingApproval,
     StagingBatchCreate,
@@ -261,29 +266,42 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
         # (pending-review semantics, surfaced by the review-queue detector); a
         # hand-set confidence-axis value (e.g. 'confirmed') is ignored. Lifecycle
         # status is not applicable on the staging-add path.
-        _proposed_status = pj.get("status")
-        _staged_status = (
-            _proposed_status
-            if _proposed_status in ("merged", "deprecated", "reaped")
-            else "provisional"
-        )
+        staged = resolve_staged_entity_traits(pj.get("status"))
+        status_col = status_column_for_insert(conn, staged)
+        trait_cols, trait_vals = trait_insert_extras(conn, staged)
+        insert_cols = [
+            "id",
+            "type",
+            "name",
+            "description",
+            "aliases",
+            "attributes",
+            "notes",
+            "source_uri",
+            "created_at",
+            "updated_at",
+        ]
+        insert_vals: list[object] = [
+            eid,
+            pj.get("type", ""),
+            pj.get("name", ""),
+            pj.get("description"),
+            json_encode(pj.get("aliases")),
+            json_encode(pj.get("attributes")),
+            pj.get("notes"),
+            pj.get("source_uri"),
+            now,
+            now,
+        ]
+        if status_col is not None:
+            insert_cols.insert(4, "status")
+            insert_vals.insert(4, status_col)
+        insert_cols.extend(trait_cols)
+        insert_vals.extend(trait_vals)
+        placeholders = ", ".join(["?"] * len(insert_vals))
         conn.execute(
-            "INSERT INTO entities (id, type, name, description, status, "
-            "aliases, attributes, notes, source_uri, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                eid,
-                pj.get("type", ""),
-                pj.get("name", ""),
-                pj.get("description"),
-                _staged_status,
-                json_encode(pj.get("aliases")),
-                json_encode(pj.get("attributes")),
-                pj.get("notes"),
-                pj.get("source_uri"),
-                now,
-                now,
-            ),
+            f"INSERT INTO entities ({', '.join(insert_cols)}) VALUES ({placeholders})",
+            tuple(insert_vals),
         )
         return eid
 

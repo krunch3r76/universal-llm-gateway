@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Retain fire-and-forget publish tasks until completion — unreferenced tasks
+# may be GC'd before the event loop runs them.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 def publish_compaction_event(
     context: PipelineContext,
@@ -27,6 +31,14 @@ def publish_compaction_event(
         return
     try:
         event = factory(**payload)
-        asyncio.get_running_loop().create_task(event_bus.publish_nowait(event))
     except Exception as exc:
+        # Breadcrumb-only: cannot emit an event to report event-build failure.
         logger.warning("compaction event publish failed: %s", exc)
+        return
+
+    async def _publish() -> None:
+        await event_bus.publish_nowait(event)
+
+    task = asyncio.get_running_loop().create_task(_publish())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)

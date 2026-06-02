@@ -27,14 +27,15 @@ from __future__ import annotations
 
 import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from ..execution.resolver import NamespaceResolver, traverse_path
+from ..events.compaction import PipelineCompactionArchived
+from ..execution.resolver import NamespaceResolver
+from ._handler_input_resolve import _resolve_required_int, _resolve_required_str
 from .protocol import PipelineContext, StepOutput
 from .registry import register_handler
-from ..events.compaction import PipelineCompactionArchived
 from .thread_persistence import (
     cx_async,
     publish_compaction_event,
@@ -139,43 +140,3 @@ class ArchiveUserTurnV1Handler:
             "assertion_id": assertion_id,
         }
         return StepOutput(raw=json.dumps(payload), json=payload)
-
-
-def _resolve_input(resolver: NamespaceResolver, step: StepConfig, name: str) -> Any:
-    """Resolve a required handler_inputs binding to its final value."""
-    binding = step.handler_inputs.get(name)
-    if binding is None:
-        raise ValueError(f"Step '{step.id}' missing handler_inputs.{name}")
-    root = resolver.resolve(binding)
-    return traverse_path(
-        root,
-        binding.field_path,
-        step_name=step.id,
-        field_name=name,
-        binding_repr=str(binding),
-        resolver=resolver,
-    )
-
-
-def _resolve_required_str(
-    resolver: NamespaceResolver, step: StepConfig, name: str
-) -> str:
-    value = _resolve_input(resolver, step, name)
-    if not isinstance(value, str):
-        raise TypeError(
-            f"Step '{step.id}': handler_inputs.{name} must resolve to str, "
-            f"got {type(value).__name__}"
-        )
-    return value
-
-
-def _resolve_required_int(
-    resolver: NamespaceResolver, step: StepConfig, name: str
-) -> int:
-    value = _resolve_input(resolver, step, name)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(
-            f"Step '{step.id}': handler_inputs.{name} must resolve to int, "
-            f"got {type(value).__name__}"
-        )
-    return value

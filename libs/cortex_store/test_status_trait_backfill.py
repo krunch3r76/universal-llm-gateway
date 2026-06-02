@@ -120,3 +120,57 @@ def test_dry_run_no_writes(conn: sqlite3.Connection) -> None:
         "SELECT confidence_band FROM entities WHERE id = 'todo:t'"
     ).fetchone()
     assert row["confidence_band"] is None
+
+
+def test_predicate_equivalence_confirmed_maps_adoption_all_types() -> None:
+    from cortex_store.status_trait_backfill import planned_predicate_equivalence_updates
+
+    updates = planned_predicate_equivalence_updates(
+        "transcript",
+        "confirmed",
+        confidence_band=None,
+        lifecycle=None,
+        adoption=None,
+    )
+    assert updates == {"confidence_band": "confirmed", "adoption": "adopted"}
+
+
+def test_predicate_equivalence_decision_deprecated_lifecycle_and_adoption() -> None:
+    from cortex_store.status_trait_backfill import planned_predicate_equivalence_updates
+
+    updates = planned_predicate_equivalence_updates(
+        "decision",
+        "deprecated",
+        confidence_band=None,
+        lifecycle=None,
+        adoption=None,
+    )
+    assert updates == {"lifecycle": "deprecated", "adoption": "superseded"}
+
+
+def test_predicate_equivalence_backfill_all_types(conn: sqlite3.Connection) -> None:
+    from cortex_store.status_trait_backfill import (
+        run_predicate_equivalence_trait_backfill,
+    )
+
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status) "
+        "VALUES ('ai_agent:a', 'ai_agent', 'A', 'deprecated')"
+    )
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status) "
+        "VALUES ('transcript:t', 'transcript', 'T', 'confirmed')"
+    )
+    counts = run_predicate_equivalence_trait_backfill(conn, dry_run=False)
+    assert counts.lifecycle >= 1
+    assert counts.adoption >= 1
+    assert counts.confidence_band >= 1
+    agent = conn.execute(
+        "SELECT lifecycle FROM entities WHERE id = 'ai_agent:a'"
+    ).fetchone()
+    assert agent["lifecycle"] == "deprecated"
+    tx = conn.execute(
+        "SELECT confidence_band, adoption FROM entities WHERE id = 'transcript:t'"
+    ).fetchone()
+    assert tx["confidence_band"] == "confirmed"
+    assert tx["adoption"] == "adopted"

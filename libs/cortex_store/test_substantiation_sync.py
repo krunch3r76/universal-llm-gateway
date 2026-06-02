@@ -47,10 +47,12 @@ def _entity(
     *,
     etype: str = "person",
     band: str | None = None,
+    lifecycle: str | None = None,
 ) -> None:
     c.execute(
-        "INSERT INTO entities (id, type, status, confidence_band) VALUES (?, ?, ?, ?)",
-        (eid, etype, status, band),
+        "INSERT INTO entities (id, type, status, lifecycle, confidence_band) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (eid, etype, status, lifecycle, band),
     )
     c.commit()
 
@@ -111,7 +113,7 @@ def test_superseded_assertion_does_not_promote() -> None:
 
 def test_lifecycle_axis_status_never_synced() -> None:
     c = _conn()
-    _entity(c, "person:dep", "deprecated", band=None)
+    _entity(c, "person:dep", "deprecated", band=None, lifecycle="deprecated")
     _add(c, "person:dep", "confirmed")
     assert recompute_entity_substantiation_status(c, "person:dep") is None
     assert _band(c, "person:dep") is None

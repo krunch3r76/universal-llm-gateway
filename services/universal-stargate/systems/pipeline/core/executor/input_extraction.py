@@ -1,6 +1,6 @@
 """Request-input extraction helpers for the pipeline executor.
 
-These functions read the inbound HTTP request context to produce three
+These functions read the inbound HTTP request context to produce the
 inputs the executor needs before DAG construction:
 
 - ``extract_source_text`` — the user's most recent message text, used as
@@ -9,8 +9,10 @@ inputs the executor needs before DAG construction:
   pre-truncation capture on ``http_request.state``).
 - ``extract_chat_id`` — the persistent chat identifier (for pipelines
   like ``cortex-chat-openai`` that key concurrency or persistence on it).
+- ``extract_dispatch_thread_id`` — the team-dispatch compaction key for
+  the ``team-dispatch`` pipeline's thread persistence (Phase D).
 
-All three are pure functions of the request context; they hold no state.
+All four are pure functions of the request context; they hold no state.
 """
 
 from __future__ import annotations

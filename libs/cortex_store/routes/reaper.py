@@ -21,6 +21,7 @@ from universal_logging import get_logger
 
 from ..confidence_field import lifecycle_not_value_sql_predicate
 from ..db import cortex_conn, query
+from ..status_trait_write import write_entity_reaped
 
 _NOT_REAPED = lifecycle_not_value_sql_predicate("reaped")
 _NOT_REAPED_E = lifecycle_not_value_sql_predicate("reaped", "e")
@@ -143,10 +144,7 @@ def _reap_entity(conn: object, entity_id: str, now_iso: str) -> dict[str, int]:
         (now_iso, entity_id),
     ).rowcount
 
-    conn.execute(
-        "UPDATE entities SET status = 'reaped', updated_at = ? WHERE id = ?",
-        (now_iso, entity_id),
-    )
+    write_entity_reaped(conn, entity_id, now_iso)
 
     e_count = conn.execute(
         "UPDATE session_edges SET valid_until = ? "

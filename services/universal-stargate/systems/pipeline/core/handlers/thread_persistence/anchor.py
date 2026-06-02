@@ -8,11 +8,8 @@ walks to compute the next free turn index.
 
 from __future__ import annotations
 
-from universal_logging import get_logger
-
 from .events import cx_async
-
-logger = get_logger(__name__)
+from .turn_assertions import is_turn_assertion, next_turn_index
 
 
 async def resolve_or_create_anchor(
@@ -48,31 +45,18 @@ async def resolve_or_create_anchor(
             },
         )
         if "error" in create_res:
-            logger.error(
-                "Failed to create anchor entity %s: %s",
-                anchor_id,
-                create_res["error"],
+            raise RuntimeError(
+                f"thread persistence: failed to create anchor entity "
+                f"{anchor_id}: {create_res['error']}"
             )
         return anchor_id, 0
 
-    assert_res = await cx_async(
-        "assertions",
-        {"entity_id": anchor_id, "superseded": False, "limit": 100},
-    )
-    items = assert_res.get("items", []) if isinstance(assert_res, dict) else []
+    if "error" in get_res:
+        raise RuntimeError(
+            f"thread persistence: failed to load anchor {anchor_id}: {get_res['error']}"
+        )
 
-    max_turn = -1
-    for ass in items:
-        pred = ass.get("predicate_form")
-        if not pred:
-            continue
-        if not (pred.startswith("user_turn(") or pred.startswith("assistant_turn(")):
-            continue
-        try:
-            val = int(pred.split("(", 1)[1].rstrip(")"))
-        except (ValueError, IndexError):
-            continue
-        if val > max_turn:
-            max_turn = val
-
-    return anchor_id, max_turn + 1
+    turn_assertions = [
+        a for a in (get_res.get("assertions") or []) if is_turn_assertion(a)
+    ]
+    return anchor_id, next_turn_index(turn_assertions)

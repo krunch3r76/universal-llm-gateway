@@ -31,6 +31,11 @@ from ..session_close_validation import (
     _emit_rejected,
     build_validation_error,
 )
+from ..status_trait_write import (
+    status_column_for_insert,
+    trait_insert_extras,
+    transcript_birth_traits,
+)
 from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
@@ -723,32 +728,49 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         # for depth=none, no entity is created (file_path is also NULL on
         # the journal row).
         if transcript_entity_id is not None:
-            conn.execute(
-                "INSERT OR IGNORE INTO entities "
-                "(id, type, name, description, status, source_uri, attributes, "
-                "created_at, updated_at) "
-                "VALUES (?, 'transcript', ?, ?, 'confirmed', ?, ?, ?, ?)",
-                (
-                    transcript_entity_id,
-                    entity_name,
-                    body.summary,
-                    source_uri,
-                    json_encode(
-                        {
-                            "opened_at": opened_at,
-                            "closed_at": now,
-                            "status": "confirmed",
-                            "transcript_depth": body.transcript_depth,
-                            **(
-                                {"handoff_prompt": handoff_prompt}
-                                if handoff_prompt
-                                else {}
-                            ),
-                        }
-                    ),
-                    now,
-                    now,
+            tx_traits = transcript_birth_traits()
+            status_col = status_column_for_insert(conn, tx_traits)
+            trait_cols, trait_vals = trait_insert_extras(conn, tx_traits)
+            tx_cols = [
+                "id",
+                "type",
+                "name",
+                "description",
+                "source_uri",
+                "attributes",
+                "created_at",
+                "updated_at",
+            ]
+            tx_vals: list[object] = [
+                transcript_entity_id,
+                "transcript",
+                entity_name,
+                body.summary,
+                source_uri,
+                json_encode(
+                    {
+                        "opened_at": opened_at,
+                        "closed_at": now,
+                        "status": "confirmed",
+                        "transcript_depth": body.transcript_depth,
+                        **(
+                            {"handoff_prompt": handoff_prompt} if handoff_prompt else {}
+                        ),
+                    }
                 ),
+                now,
+                now,
+            ]
+            if status_col is not None:
+                tx_cols.insert(4, "status")
+                tx_vals.insert(4, status_col)
+            tx_cols.extend(trait_cols)
+            tx_vals.extend(trait_vals)
+            tx_ph = ", ".join(["?"] * len(tx_vals))
+            conn.execute(
+                f"INSERT OR IGNORE INTO entities ({', '.join(tx_cols)}) "
+                f"VALUES ({tx_ph})",
+                tuple(tx_vals),
             )
         cur = conn.execute(
             "INSERT INTO session_journals "

@@ -166,9 +166,7 @@ def _aggregate(conn: Any) -> dict[str, Any]:
         )[0]["n"],
         "info": db_query(
             conn,
-            "SELECT COUNT(*) AS n FROM entities WHERE "
-            "(confidence_band = 'provisional' OR "
-            "(confidence_band IS NULL AND status = 'provisional'))",
+            "SELECT COUNT(*) AS n FROM entities WHERE confidence_band = 'provisional'",
         )[0]["n"],
     }
 

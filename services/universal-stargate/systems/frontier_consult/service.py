@@ -4,45 +4,37 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import httpx
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
 from model_id import canonical_model_entity_id
-from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
+from .admission import (
+    EventPublisher,
+    FrontierEndpointError,
+    emit_rejection,
+    enforce_model,
+    enforce_options,
+    is_chat_completions_only,
+    mcp_enabled_for_team_dispatch,
+    verify_thread_writable,
+)
 from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     FrontierEndpointPersonaResolved,
-    FrontierEndpointRejected,
     FrontierEndpointRequested,
 )
 
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
 _TEAM_DISPATCH_PIPELINE_ID = "team-dispatch"
-EventPublisher = Callable[[Any], None]
 
-# Models that only support the Chat Completions API and are unavailable on the
-# OpenAI Responses API path used by frontier_dispatch. Callers must use
-# llm_generate (which routes through /v1/chat/completions) for these models.
-# ∀ new Chat-Completions-only OpenAI models: add to this set AND update
-# llm_generate docstring in services/mcp-server/tools/llm.py.
-_CHAT_COMPLETIONS_ONLY_MODELS: frozenset[str] = frozenset(
-    {
-        "openai/gpt-5-search-api",
-    }
-)
-
-
-def _is_chat_completions_only(model: str) -> bool:
-    """True iff model is known to be unavailable on the OpenAI Responses API."""
-    if model in _CHAT_COMPLETIONS_ONLY_MODELS:
-        return True
-    # Defense-in-depth: catch versioned/future *-search-api variants before
-    # they reach the Responses API endpoint and fail with an opaque 400/500.
-    return model.startswith("openai/") and model.endswith("-search-api")
+# Backward-compatible aliases for tests and route imports.
+_verify_thread_writable = verify_thread_writable
+_emit_rejection = emit_rejection
+_enforce_model = enforce_model
+_enforce_options = enforce_options
+_is_chat_completions_only = is_chat_completions_only
 
 
 @dataclass(slots=True)
@@ -67,144 +59,6 @@ class FrontierGenerateRequest:
     # On-behalf delivery (2026-05-22) — caller-supplied subject for the
     # reply turn posted by Stargate. None ⇒ delivery handler auto-derives.
     reply_subject: str | None = None
-
-
-@dataclass(slots=True)
-class FrontierEndpointError(Exception):
-    request_id: str
-    field: str
-    reason: str
-    status_code: int = 400
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "error": {"code": "persona_violation", "message": self.reason},
-            "field": self.field,
-            "request_id": self.request_id,
-        }
-
-
-async def _verify_thread_writable(
-    thread: str,
-    *,
-    request_id: str,
-    url: str = DEFAULT_AGENT_BUS_URL,
-    auth_token: str = "",
-) -> None:
-    """Raise FrontierEndpointError when the target thread is missing or closed.
-
-    Called by ``build_dispatch_body()`` for ``op="to_thread"`` dispatches before
-    the request reaches the pipeline tracker.  Fast-fail before admission so
-    callers discover thread problems via a 422 rather than a timeout.
-
-    ∀ transport/auth failure: raise with ``status_code=503`` so the route
-    returns a 5xx rather than silently admitting an undeliverable dispatch.
-    """
-    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
-    try:
-        async with make_async_client(url, timeout=5.0) as client:
-            resp = await client.get(f"/threads/{thread}", headers=headers)
-    except httpx.HTTPError as exc:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="thread",
-            reason=f"Agent-bus unreachable during thread check: {exc}",
-            status_code=503,
-        )
-    if resp.status_code == 404:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="thread",
-            reason=f"Thread '{thread}' not found.",
-            status_code=422,
-        )
-    if resp.status_code >= 400:
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="thread",
-            reason=f"Thread '{thread}' check failed: HTTP {resp.status_code}.",
-            status_code=503,
-        )
-    data: dict[str, Any] = resp.json()
-    status: str = data.get("status", "")
-    if status == "closed":
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="thread",
-            reason=f"Thread '{thread}' is closed; cannot deliver to_thread dispatch.",
-            status_code=422,
-        )
-
-
-def _emit_rejection(
-    *,
-    request_id: str,
-    agent: str | None,
-    field: str,
-    reason: str,
-    event_publisher: EventPublisher | None,
-) -> FrontierEndpointError:
-    if event_publisher is not None:
-        event_publisher(
-            FrontierEndpointRejected(
-                request_id=request_id, agent=agent, field=field, reason=reason
-            )
-        )
-    return FrontierEndpointError(request_id=request_id, field=field, reason=reason)
-
-
-def _enforce_model(
-    *,
-    request_id: str,
-    agent: str | None,
-    model: str,
-    meta: AgentMeta,
-    explicit_model: bool,
-    event_publisher: EventPublisher | None,
-) -> None:
-    if explicit_model:
-        return
-    if not meta.allowed_models:
-        return
-    if model in meta.allowed_models:
-        return
-    reason = (
-        f"model {model!r} not allowed for agent {agent!r}; "
-        f"allowed: {sorted(meta.allowed_models)}"
-    )
-    raise _emit_rejection(
-        request_id=request_id,
-        agent=agent,
-        field="model",
-        reason=reason,
-        event_publisher=event_publisher,
-    )
-
-
-def _enforce_options(
-    *,
-    request_id: str,
-    agent: str | None,
-    opts: dict[str, Any],
-    meta: AgentMeta,
-    event_publisher: EventPublisher | None,
-) -> None:
-    if meta.allowed_options is None:
-        return
-    extra = sorted(set(opts.keys()) - set(meta.allowed_options))
-    if not extra:
-        return
-    reason = (
-        f"generation_options keys {extra} not allowed for agent {agent!r}; "
-        f"persona allows: {sorted(meta.allowed_options)}"
-    )
-    raise _emit_rejection(
-        request_id=request_id,
-        agent=agent,
-        field="generation_options",
-        reason=reason,
-        event_publisher=event_publisher,
-    )
 
 
 async def build_dispatch_body(
@@ -254,11 +108,6 @@ async def build_dispatch_body(
                     ),
                 )
             )
-        # Role injection is driven by role presence. Role-free dispatches
-        # skip this branch entirely via the outer ``if req.role`` guard.
-        # The team_dispatch surface has no ``mcp`` knob — tool surface is
-        # derived from the role's frontier_kind in the mcp_enabled computation
-        # below (xAI roles → mcp=False; all others → mcp=True).
         system_assembled = assemble_system_prompt(
             req.role,
             briefing_card_md=bundle.briefing_card_md,
@@ -272,11 +121,11 @@ async def build_dispatch_body(
         raise FrontierEndpointError(
             request_id=request_id,
             field="model",
-            reason="`model` is required when role has no default_model",
+            reason="model is required when no role default is configured",
         )
-    model_entity_id = canonical_model_entity_id(effective_model)
 
-    _enforce_model(
+    model_entity_id = canonical_model_entity_id(effective_model)
+    enforce_model(
         request_id=request_id,
         agent=req.role,
         model=effective_model,
@@ -284,8 +133,8 @@ async def build_dispatch_body(
         explicit_model=req.model is not None,
         event_publisher=event_publisher,
     )
-    if _is_chat_completions_only(effective_model):
-        raise _emit_rejection(
+    if is_chat_completions_only(effective_model):
+        raise emit_rejection(
             request_id=request_id,
             agent=req.role,
             field="model",
@@ -301,14 +150,8 @@ async def build_dispatch_body(
         )
     generation_options = dict(req.generation_options or {})
     if req.reasoning_effort is not None:
-        # Typed param surfaces in generation_options so role
-        # allowed_options enforcement applies uniformly. setdefault so an
-        # explicit dict entry wins over the typed convenience arg.
         generation_options.setdefault("reasoning_effort", req.reasoning_effort)
     if "max_tool_turns" in generation_options:
-        # max_tool_turns is a dispatch-control param routed at the top level of
-        # pipeline_options — placing it inside generation_options has no effect.
-        # Hard-reject so the misuse surfaces as a 4xx rather than a silent no-op.
         raise FrontierEndpointError(
             request_id=request_id,
             field="generation_options.max_tool_turns",
@@ -317,22 +160,15 @@ async def build_dispatch_body(
                 "use the typed top-level parameter instead"
             ),
         )
-    _enforce_options(
+    enforce_options(
         request_id=request_id,
         agent=req.role,
         opts=generation_options,
         meta=meta,
         event_publisher=event_publisher,
     )
-    # Tools field retired from the public dispatch surface. For team_dispatch,
-    # tool availability is derived from the effective model, not from the role:
-    # roles are model-agnostic and any model may assume any role. xAI models get
-    # mcp=False because multi-agent variants reject client-side tools; other
-    # providers use the tool loop / remote MCP path.
-    # frontier_dispatch (no req.role) honors the caller's mcp knob and defaults
-    # to False at the wire (one-shot reasoning).
     if req.role is not None:
-        mcp_enabled = not effective_model.startswith("xai/")
+        mcp_enabled = mcp_enabled_for_team_dispatch(effective_model)
     else:
         mcp_enabled = bool(req.mcp) if req.mcp is not None else False
 
@@ -351,14 +187,10 @@ async def build_dispatch_body(
     if req.remote_mcp is not None:
         pipeline_options["remote_mcp"] = req.remote_mcp
 
-    # Phase 2 admission fast-fail: verify the target thread is open before admitting.
-    # This prevents silent undeliverable dispatches — callers learn via 422 rather
-    # than a 30-second delivery timeout.  Only performed for to_thread dispatches
-    # with a known token; skip if AGENT_BUS_TOKEN is absent (dev/test environments).
     if req.output_contract == "thread" and req.target_thread:
         _agent_bus_token = os.getenv("AGENT_BUS_TOKEN", "")
         if _agent_bus_token:
-            await _verify_thread_writable(
+            await verify_thread_writable(
                 req.target_thread,
                 request_id=request_id,
                 auth_token=_agent_bus_token,
@@ -396,7 +228,6 @@ async def build_dispatch_body(
         "model": pipeline_id,
         "messages": wire_messages,
         "pipeline_options": pipeline_options,
-        # dispatch-surface-split Phase 1: pass op discrimination through to tracker
         "output_contract": req.output_contract,
     }
     if req.timeout_seconds is not None:
@@ -406,19 +237,11 @@ async def build_dispatch_body(
     if dispatch_thread_id:
         body["dispatch_thread_id"] = dispatch_thread_id
     if req.transcript_id:
-        # Provenance attribution only: records the caller's session ID in the
-        # execution envelope so dispatches can be traced back to their origin.
-        # ∀ dispatched agents: this field is never forwarded into pipeline_options
-        # or the agent's context — the receiving model never sees it.
         body["caller_transcript_id"] = req.transcript_id
     if req.target_thread is not None:
         body["target_thread"] = req.target_thread
     if req.op is not None:
         body["op"] = req.op
-    # On-behalf delivery identity for op="to_thread" (2026-05-22).
-    # team_dispatch posts as the role; frontier_dispatch posts as a
-    # model-tagged identity. Both are deterministic and never equal the
-    # caller_agent (rejected by the agent-bus self-address guard).
     if req.op == "to_thread":
         if req.role:
             body["from_agent"] = req.role

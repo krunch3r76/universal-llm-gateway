@@ -21,7 +21,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
-from .confidence_field import DEFAULT_CONFIDENCE_FIELD, stored_confidence_band
+from .confidence_field import DEFAULT_CONFIDENCE_FIELD
 from .confidence_policy import (
     ALL_SIGNED_EDGE_TYPES,
     SIGN_MAP,
@@ -80,7 +80,7 @@ def _entity_has_column(conn: sqlite3.Connection, column: str) -> bool:
 
 
 def _load_confidence_fields(conn: sqlite3.Connection) -> dict[str, str]:
-    """type → confidence_field, defaulting unknown types to ``status``."""
+    """type → confidence_field, defaulting unknown types to ``confidence_band``."""
     if not table_exists(conn, "type_confidence_fields"):
         return {}
     rows = query(
@@ -91,16 +91,17 @@ def _load_confidence_fields(conn: sqlite3.Connection) -> dict[str, str]:
 
 def _load_entities(conn: sqlite3.Connection) -> dict[str, EntityNode]:
     has_source = _entity_has_column(conn, "source_uri")
-    cols = "id, type, status, confidence_band" + (", source_uri" if has_source else "")
+    cols = "id, type, confidence_band" + (", source_uri" if has_source else "")
     rows = query(conn, f"SELECT {cols} FROM entities ORDER BY id")
     field_map = _load_confidence_fields(conn)
     nodes: dict[str, EntityNode] = {}
     for r in rows:
         source_uri = r.get("source_uri") if has_source else None
+        band = r.get("confidence_band")
         nodes[r["id"]] = EntityNode(
             entity_id=r["id"],
             entity_type=r["type"],
-            stored_confidence_band=stored_confidence_band(r),
+            stored_confidence_band=str(band) if band is not None else None,
             confidence_field=field_map.get(r["type"], DEFAULT_CONFIDENCE_FIELD),
             source_key=normalized_source_key(source_uri) if source_uri else None,
         )

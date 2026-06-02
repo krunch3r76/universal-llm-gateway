@@ -39,6 +39,7 @@ def _fresh_conn(*, with_belongs_to_type: bool = True) -> sqlite3.Connection:
             name TEXT NOT NULL,
             description TEXT,
             status TEXT,
+            lifecycle TEXT,
             workflow_state TEXT,
             aliases TEXT,
             attributes TEXT,
@@ -101,12 +102,13 @@ def _seed_case(
     *,
     case_id: str = "case:boe19p-flintridge-appeal-2026",
     status: str = "confirmed",
+    lifecycle: str | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO entities (id, type, name, status, retention_policy, "
+        "INSERT INTO entities (id, type, name, status, lifecycle, retention_policy, "
         "created_at, updated_at) "
-        "VALUES (?, 'case', ?, ?, 'permanent', '2026-05-13', '2026-05-13')",
-        (case_id, "Test Case", status),
+        "VALUES (?, 'case', ?, ?, ?, 'permanent', '2026-05-13', '2026-05-13')",
+        (case_id, "Test Case", status, lifecycle),
     )
 
 
@@ -188,7 +190,7 @@ def test_enforce_rejects_missing_parent_case() -> None:
 
 def test_enforce_rejects_deprecated_parent_case() -> None:
     conn = _fresh_conn()
-    _seed_case(conn, status="deprecated")
+    _seed_case(conn, lifecycle="deprecated")
     with pytest.raises(HTTPException) as exc:
         enforce_exhibit_belongs_to(
             conn,

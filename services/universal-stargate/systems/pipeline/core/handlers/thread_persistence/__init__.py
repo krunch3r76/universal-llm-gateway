@@ -10,12 +10,12 @@ writer. Phase 4 handlers (``assemble_thread``, ``archive_user_turn``,
 from __future__ import annotations
 
 from .anchor import resolve_or_create_anchor
-from .binding import ThreadBinding, require_thread_binding
 from .archive_text import (
     is_tool_synthesized_archive_text,
     synthesize_assistant_archive_text,
 )
 from .artifact import turn_artifact_uri, write_turn_artifact
+from .binding import ThreadBinding, require_thread_binding
 from .events import cx_async
 from .observability import publish_compaction_event
 from .window import build_referential_window

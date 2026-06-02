@@ -1,11 +1,14 @@
-"""Hybrid Phase-2 trait backfill — scope C (hot types, legacy status → traits).
+"""Trait backfill — hybrid scope C and predicate-equivalence modes.
 
-Populates nullable ``lifecycle``, ``confidence_band``, and ``adoption`` from the
-legacy ``status`` column only where each trait is NULL. Never mutates ``status``.
-Idempotent: re-runs are no-ops once traits are set.
+Hybrid (scope C): hot entity types only; maps legacy ``status`` → traits where
+each trait is NULL. Never mutates ``status``. Idempotent.
 
-Conventions mirror ``status_trait_read`` and ``entity_crud`` axis splits.
-``decision`` types also map adoption from overloaded status values.
+Predicate-equivalence: all entity types; fills NULL traits wherever COALESCE
+fallback predicates in ``confidence_field.py`` would match but trait-only would
+miss (lifecycle, adoption_in, confidence_band). Idempotent.
+
+Conventions mirror ``status_trait_read``, ``status_trait_write``, and
+``entity_crud`` axis splits.
 """
 
 from __future__ import annotations
@@ -87,31 +90,68 @@ def planned_trait_updates(
     return updates
 
 
-def run_hybrid_trait_backfill(
+def planned_predicate_equivalence_updates(
+    entity_type: str,
+    status: str | None,
+    *,
+    confidence_band: str | None,
+    lifecycle: str | None,
+    adoption: str | None,
+) -> dict[str, str]:
+    """Backfill NULL traits wherever COALESCE fallback would match trait-only miss."""
+    updates = planned_trait_updates(
+        entity_type,
+        status,
+        confidence_band=confidence_band,
+        lifecycle=lifecycle,
+        adoption=adoption,
+    )
+    if status is None:
+        return updates
+    s = str(status)
+
+    # adoption_in debt: legacy status='confirmed' → adoption='adopted' (all types).
+    if adoption is None and s == "confirmed" and "adoption" not in updates:
+        updates["adoption"] = "adopted"
+
+    # Decision completeness: lifecycle-only status overload still needs adoption trait.
+    if (
+        entity_type == "decision"
+        and adoption is None
+        and "adoption" not in updates
+        and s in _LIFECYCLE_VALUES
+    ):
+        updates["adoption"] = "superseded"
+
+    return updates
+
+
+def _run_trait_backfill(
     conn: sqlite3.Connection,
     *,
-    types: frozenset[str] = HOT_TYPES_DEFAULT,
-    dry_run: bool = True,
+    where_sql: str | None = None,
+    where_params: tuple[object, ...] = (),
+    plan_fn,
+    dry_run: bool,
+    log_label: str,
 ) -> TraitBackfillCounts:
-    """Backfill NULL traits on *types* from legacy ``status``; never flip ``status``."""
+    """Shared scan/update loop for hybrid and predicate-equivalence backfills."""
     if not entity_has_trait_columns(conn):
-        logger.warning("Trait columns absent — skipping hybrid backfill")
+        logger.warning("Trait columns absent — skipping %s backfill", log_label)
         return TraitBackfillCounts()
 
-    type_list = sorted(types)
-    placeholders = ",".join(["?"] * len(type_list))
-    rows = conn.execute(
-        f"SELECT id, type, status, confidence_band, lifecycle, adoption "
-        f"FROM entities WHERE type IN ({placeholders})",
-        type_list,
-    ).fetchall()
+    base = "SELECT id, type, status, confidence_band, lifecycle, adoption FROM entities"
+    if where_sql is None:
+        rows = conn.execute(base).fetchall()
+    else:
+        rows = conn.execute(f"{base} WHERE {where_sql}", where_params).fetchall()
 
     counts = TraitBackfillCounts()
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for row in rows:
         entity_type = str(row["type"])
-        updates = planned_trait_updates(
+        updates = plan_fn(
             entity_type,
             row["status"],
             confidence_band=row["confidence_band"],
@@ -132,7 +172,8 @@ def run_hybrid_trait_backfill(
 
         if dry_run:
             logger.info(
-                "dry-run trait backfill id=%s type=%s updates=%s",
+                "dry-run %s trait backfill id=%s type=%s updates=%s",
+                log_label,
                 row["id"],
                 entity_type,
                 updates,
@@ -149,7 +190,8 @@ def run_hybrid_trait_backfill(
     if not dry_run:
         conn.commit()
         logger.info(
-            "Hybrid trait backfill committed: entities=%d band=%d lifecycle=%d adoption=%d",
+            "%s trait backfill committed: entities=%d band=%d lifecycle=%d adoption=%d",
+            log_label,
             counts.entities_touched,
             counts.confidence_band,
             counts.lifecycle,
@@ -158,11 +200,47 @@ def run_hybrid_trait_backfill(
     return counts
 
 
+def run_hybrid_trait_backfill(
+    conn: sqlite3.Connection,
+    *,
+    types: frozenset[str] = HOT_TYPES_DEFAULT,
+    dry_run: bool = True,
+) -> TraitBackfillCounts:
+    """Backfill NULL traits on *types* from legacy ``status``; never flip ``status``."""
+    type_list = sorted(types)
+    placeholders = ",".join(["?"] * len(type_list))
+    return _run_trait_backfill(
+        conn,
+        where_sql=f"type IN ({placeholders})",
+        where_params=tuple(type_list),
+        plan_fn=planned_trait_updates,
+        dry_run=dry_run,
+        log_label="hybrid",
+    )
+
+
+def run_predicate_equivalence_trait_backfill(
+    conn: sqlite3.Connection,
+    *,
+    dry_run: bool = True,
+) -> TraitBackfillCounts:
+    """Backfill all entity types for predicate-equivalence with COALESCE readers."""
+    return _run_trait_backfill(
+        conn,
+        where_sql=None,
+        plan_fn=planned_predicate_equivalence_updates,
+        dry_run=dry_run,
+        log_label="predicate-equivalence",
+    )
+
+
 __all__ = [
     "HOT_TYPES_DEFAULT",
     "HOT_TYPES_OPTIONAL",
     "HOT_TYPES_REQUIRED",
     "TraitBackfillCounts",
+    "planned_predicate_equivalence_updates",
     "planned_trait_updates",
     "run_hybrid_trait_backfill",
+    "run_predicate_equivalence_trait_backfill",
 ]

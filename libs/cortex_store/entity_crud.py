@@ -43,6 +43,12 @@ from .status_trait_read import (
     prior_confidence_corrupt,
     project_status_field_value,
 )
+from .status_trait_write import (
+    redirect_status_update_to_traits,
+    resolve_birth_traits,
+    status_column_for_insert,
+    trait_insert_extras,
+)
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -361,6 +367,7 @@ def update_entity_impl(
             prior.get("status"),
             incoming_status,
         )
+        updates = redirect_status_update_to_traits(conn, updates)
 
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():
@@ -536,52 +543,62 @@ def create_entity_impl(
         if schema is not None:
             workflow_state = str(schema["initial_state"])
 
-    # Fork D: confidence-axis birth default is `unsubstantiated` (creation
-    # implies a record exists, not that it is believed/confirmed). Workflow
-    # provisional-birth types keep `provisional` for workflow coherence.
-    default_status = (
-        "provisional" if body.type in _PROVISIONAL_BIRTH_TYPES else "unsubstantiated"
-    )
-    # Freeze hand-set confidence-axis writes: only an explicit lifecycle-axis
-    # status (merged/deprecated/reaped) is honored from the caller; a hand-set
-    # confidence-axis value is ignored in favor of the derived/default state.
-    if body.status is not None and body.status in _LIFECYCLE_AXIS_STATUS:
-        status = body.status
-    else:
-        if body.status is not None and body.status in _CONFIDENCE_AXIS_STATUS:
-            logger.info(
-                "Ignoring hand-set confidence-axis status=%r on entity_create id=%s "
-                "(Fork D: confidence is derived from assertions); using %r",
-                body.status,
-                body.id,
-                default_status,
-            )
-        status = default_status
-
-    conn.execute(
-        "INSERT INTO entities (id, type, name, description, status, "
-        "workflow_state, aliases, "
-        "attributes, notes, source_uri, content_hash, "
-        "retention_policy, retention_ttl_days, "
-        "created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
+    if body.status is not None and body.status in _CONFIDENCE_AXIS_STATUS:
+        logger.info(
+            "Ignoring hand-set confidence-axis status=%r on entity_create id=%s "
+            "(Fork D: confidence is derived from assertions)",
+            body.status,
             body.id,
-            body.type,
-            body.name,
-            body.description,
-            status,
-            workflow_state,
-            json_encode(body.aliases),
-            json_encode(body.attributes),
-            body.notes,
-            body.source_uri,
-            body.content_hash,
-            body.retention_policy or "permanent",
-            body.retention_ttl_days,
-            now,
-            now,
-        ),
+        )
+    birth = resolve_birth_traits(
+        body.type,
+        body.status,
+        provisional_birth_types=_PROVISIONAL_BIRTH_TYPES,
+    )
+    status_col = status_column_for_insert(conn, birth)
+    trait_cols, trait_vals = trait_insert_extras(conn, birth)
+
+    insert_cols = [
+        "id",
+        "type",
+        "name",
+        "description",
+        "workflow_state",
+        "aliases",
+        "attributes",
+        "notes",
+        "source_uri",
+        "content_hash",
+        "retention_policy",
+        "retention_ttl_days",
+        "created_at",
+        "updated_at",
+    ]
+    insert_vals: list[object] = [
+        body.id,
+        body.type,
+        body.name,
+        body.description,
+        workflow_state,
+        json_encode(body.aliases),
+        json_encode(body.attributes),
+        body.notes,
+        body.source_uri,
+        body.content_hash,
+        body.retention_policy or "permanent",
+        body.retention_ttl_days,
+        now,
+        now,
+    ]
+    if status_col is not None:
+        insert_cols.insert(4, "status")
+        insert_vals.insert(4, status_col)
+    insert_cols.extend(trait_cols)
+    insert_vals.extend(trait_vals)
+    placeholders = ", ".join(["?"] * len(insert_vals))
+    conn.execute(
+        f"INSERT INTO entities ({', '.join(insert_cols)}) VALUES ({placeholders})",
+        tuple(insert_vals),
     )
     sync_entity_aliases(
         conn,

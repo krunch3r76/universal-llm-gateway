@@ -2,18 +2,17 @@
 
 ``status`` on API read projections is a synthesized human-readable string
 combining confidence_band, lifecycle, and adoption without conflating axes.
-Trait keys are exposed separately when a value is present (trait column or
-legacy ``status`` fallback per ``confidence_field`` predicates).
+Trait keys are exposed separately when a value is present on the trait columns.
 """
 
 from __future__ import annotations
 
 import sqlite3
 
-# Confidence-axis values (legacy ``status`` column and ``confidence_band`` trait).
+# Confidence-axis values (``confidence_band`` trait).
 _CONFIDENCE_BAND_VALUES = frozenset({"unsubstantiated", "provisional", "confirmed"})
 
-# Lifecycle-axis values (trait ``lifecycle`` and legacy status overload).
+# Lifecycle-axis values (trait ``lifecycle``).
 _LIFECYCLE_VALUES = frozenset(
     {
         "active",
@@ -38,29 +37,19 @@ def entity_has_trait_columns(conn: sqlite3.Connection) -> bool:
 
 
 def effective_confidence_band(row: dict[str, object]) -> str | None:
-    """Trait-first confidence band; legacy ``status`` only when it names a band."""
+    """Confidence band from ``confidence_band`` trait only."""
     band = row.get("confidence_band")
-    if band is not None:
-        return str(band)
-    status = row.get("status")
-    if status is not None and str(status) in _CONFIDENCE_BAND_VALUES:
-        return str(status)
-    return None
+    return str(band) if band is not None else None
 
 
 def effective_lifecycle(row: dict[str, object]) -> str | None:
-    """Trait-first lifecycle; legacy ``status`` when it names a lifecycle value."""
+    """Lifecycle from ``lifecycle`` trait only."""
     lifecycle = row.get("lifecycle")
-    if lifecycle is not None:
-        return str(lifecycle)
-    status = row.get("status")
-    if status is not None and str(status) in _LIFECYCLE_VALUES:
-        return str(status)
-    return None
+    return str(lifecycle) if lifecycle is not None else None
 
 
 def effective_adoption(row: dict[str, object]) -> str | None:
-    """Adoption trait only — not inferred from legacy ``status``."""
+    """Adoption trait only."""
     adoption = row.get("adoption")
     return str(adoption) if adoption is not None else None
 
@@ -79,8 +68,7 @@ def synthesize_status_display(row: dict[str, object]) -> str | None:
         parts.append(adoption)
     if parts:
         return " · ".join(parts)
-    raw = row.get("status")
-    return str(raw) if raw is not None else None
+    return None
 
 
 def trait_keys_when_present(row: dict[str, object]) -> dict[str, str]:

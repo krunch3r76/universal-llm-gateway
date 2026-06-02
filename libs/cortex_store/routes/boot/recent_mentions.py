@@ -167,7 +167,7 @@ def get_boot_recent_mentions(
         days_arg,  # LEFT JOIN: created_at > window
         days_arg,  # WHERE: entity created_at > window
         "deprecated",
-        "deprecated",  # lifecycle_not_value predicate (trait + status fallback)
+        "deprecated",  # lifecycle_not_value predicate (trait-native)
     ]
     if excluded:
         placeholders = ",".join("?" * len(excluded))

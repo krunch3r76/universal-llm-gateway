@@ -39,8 +39,8 @@ def test_synthesize_decision_provisional_proposed() -> None:
     assert projected["adoption"] == "proposed"
 
 
-def test_synthesize_legacy_status_only_deprecated() -> None:
-    row = {"status": "deprecated"}
+def test_synthesize_lifecycle_trait_only_deprecated() -> None:
+    row = {"lifecycle": "deprecated"}
     assert synthesize_status_display(row) == "deprecated"
     projected = apply_option_c_read_projection(row)
     assert projected["lifecycle"] == "deprecated"
