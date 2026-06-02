@@ -122,7 +122,7 @@ CLAUDE_WEB_TOOL_SURFACE = """\
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
 On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s).
 - consult any model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → returns execution_id; poll pipeline(op="result", execution_id=…)
-- by role          → team_dispatch(op="generate", role="…", messages=[…])
+- by role          → team_dispatch(op="generate", role="…", dispatch_thread_id="…", messages=[…])
 - strategic / multi-model / in-pipeline RAG → dispatch(tool="advisor" | "agent_consult" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
 Note: frontier_dispatch/team_dispatch are standalone primary tools here via the standalone-domain promotion (thread 1146/1167); the promotion must stay committed or a rebuild reverts it to overflow. advisor/agent_consult/pipeline_consult remain overflow (via dispatch). Source of truth: cortex:notes/system/threads/claude-web-dispatch-decision-table.md (§2/§3/§4)."""
@@ -142,7 +142,7 @@ Edge protocol: entities only as edge nodes, never assertion IDs. `superseded_by`
 
 Inference routing (pick by capability — see boot briefing):
 - `frontier_dispatch(op=..., model=..., messages=..., ...)` — consult a specific model (`provider/model`; bare name 404). No role envelope. `mcp=False` default (one-shot); pass `mcp=True` for tool loop.
-- `team_dispatch(op=..., role=..., messages=..., ...)` — consult by role (`reviewer`, `skeptic`, …). Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models.
+- `team_dispatch(op=..., role=..., messages=..., dispatch_thread_id=..., ...)` — consult by role (`reviewer`, `skeptic`, …). Role briefing + contract from `role:{slug}`; MCP on by default for non-xAI models. `dispatch_thread_id` is required — stable per arc/session for server-owned thread compaction.
 - `llm_generate(model=..., messages=...)` — universal chat/completions path for any model ID (including `google/gemini-2.5-pro`); no dispatch role/tools/transcript_id surface.
 - OpenRouter and local models → use `llm_generate`, not provider-native dispatch tools"""
 
@@ -155,7 +155,7 @@ natural part of how you work, not an exceptional event.
 - Consult a **specific model** (e.g. `openai/gpt-5.5`, `xai/grok-4.3`) →
   `frontier_dispatch(op=..., model="provider/model", messages=...)`.
 - Consult a **role / seat function** (adversarial pushback, gatherer extraction,
-  durable reviewer persona) → `team_dispatch(op=..., role=..., messages=...)`.
+  durable reviewer persona) → `team_dispatch(op=..., role=..., dispatch_thread_id=..., messages=...)`.
 
 Both return `{execution_id, ...}` immediately; poll with
 `pipeline(op="result", execution_id=..., wait_seconds=60)`. Runs detached,
@@ -168,9 +168,11 @@ No role envelope, no role briefing assembly. Model strings must be
 pass `mcp=True` when the consult needs the MCP tool loop.
 
 **Role-based dispatch (role picker)**:
-`team_dispatch(op=..., role=..., messages=..., generation_options=...)`.
+`team_dispatch(op=..., role=..., dispatch_thread_id=..., messages=..., generation_options=...)`.
 Roles are model-agnostic: explicit `model=...` may fill any role; omitted
-models resolve from the role's `default_model`. Enforces `allowed_options`,
+models resolve from the role's `default_model`. `dispatch_thread_id` binds
+server-owned thread persistence — pass only the latest user turn in
+``messages``. Enforces `allowed_options`,
 auto-assembles role briefing + continuation, and rejects contract violations
 with a structured error envelope **before** dispatch.
 
@@ -228,7 +230,7 @@ then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Model must be
 
 **Consult by role** — `team_dispatch`:
 ```
-team_dispatch(op="generate", role=..., messages=..., generation_options=..., caller_agent=...)
+team_dispatch(op="generate", role=..., dispatch_thread_id=..., messages=..., generation_options=..., caller_agent=...)
 ```
 then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Role contract:
 `default_model` when model omitted, `allowed_options`, briefing + continuation
@@ -238,7 +240,7 @@ assembly. Contract violations return structured errors with `field` and
 **Durable bus artifacts** (either tool, `op="to_thread"`):
 ```
 frontier_dispatch(op="to_thread", model=..., thread="<id>", messages=..., subject=...)
-team_dispatch(op="to_thread", role=..., thread="<id>", messages=..., subject=...)
+team_dispatch(op="to_thread", role=..., dispatch_thread_id=..., thread="<id>", messages=..., subject=...)
 ```
 then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`. Stargate posts
 on the callee's behalf — no `agent_bus.reply` required from the dispatched model.

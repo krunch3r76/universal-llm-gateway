@@ -29,9 +29,15 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
+from ..events.compaction import PipelineCompactionAssembled
 from .protocol import PipelineContext, StepOutput
 from .registry import register_handler
-from .thread_persistence import build_referential_window, resolve_or_create_anchor
+from .thread_persistence import (
+    build_referential_window,
+    publish_compaction_event,
+    require_thread_binding,
+    resolve_or_create_anchor,
+)
 
 if TYPE_CHECKING:
     from ..schemas import StepConfig
@@ -51,12 +57,13 @@ class AssembleThreadV1Handler:
     async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         start = time.monotonic()
 
-        chat_id = context.chat_id
-        if not chat_id:
+        try:
+            binding = require_thread_binding(context)
+        except ValueError as exc:
             raise ValueError(
                 f"Step '{step.id}': assemble_thread_v1 requires "
-                f"context.chat_id (thread persistence active)"
-            )
+                f"context.chat_id or context.dispatch_thread_id"
+            ) from exc
 
         # window_size is a static numeric domain field, matching the
         # rag_search_v1 precedent for top_k. Pipeline YAML may set it
@@ -75,8 +82,25 @@ class AssembleThreadV1Handler:
                 f"Step '{step.id}': window_size must be >= 1, got {window_size}"
             )
 
-        anchor_id, turn_index = await resolve_or_create_anchor(chat_id)
+        anchor_id, turn_index = await resolve_or_create_anchor(
+            binding.kind, binding.key
+        )
         messages = await build_referential_window(anchor_id, k=window_size)
+
+        # Count distinct turn indices on anchor for assembled-event telemetry.
+        total_turn_pairs = turn_index
+
+        publish_compaction_event(
+            context,
+            PipelineCompactionAssembled,
+            execution_id=context.execution_id,
+            chat_id=binding.key,
+            anchor_id=anchor_id,
+            turn_index=turn_index,
+            window_size=window_size,
+            messages_count=len(messages),
+            total_turn_pairs=total_turn_pairs,
+        )
 
         duration_ms = (time.monotonic() - start) * 1000.0
         if duration_ms > _LATENCY_BUDGET_MS:
@@ -86,7 +110,7 @@ class AssembleThreadV1Handler:
                 "assemble_thread_v1 latency budget blown: %.2fms "
                 "(chat_id=%s, turn_index=%d, window_size=%d)",
                 duration_ms,
-                chat_id,
+                binding.key,
                 turn_index,
                 window_size,
             )

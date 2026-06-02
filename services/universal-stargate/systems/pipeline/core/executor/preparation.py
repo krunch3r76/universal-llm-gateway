@@ -35,7 +35,12 @@ from ..events.step import (
 from ..execution import DAGExecutor
 from ..handlers import PipelineContext
 from ..schemas import FragmentRef, PipelineSpec, StepConfig
-from .input_extraction import extract_chat_id, extract_messages, extract_source_text
+from .input_extraction import (
+    extract_chat_id,
+    extract_dispatch_thread_id,
+    extract_messages,
+    extract_source_text,
+)
 from .prepared import (
     PreparedPipelineExecution,
     _PipelineRequestContextProtocol,
@@ -122,6 +127,7 @@ def do_prepare_execution(
         runtime_options=runtime_options,
         _messages=messages,
         chat_id=extract_chat_id(context),
+        dispatch_thread_id=extract_dispatch_thread_id(context),
     )
 
     if runtime_options:

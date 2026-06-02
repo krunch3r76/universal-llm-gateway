@@ -13,13 +13,15 @@ from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
 from model_id import canonical_model_entity_id
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
+from .dispatch_messages import extract_last_user_message, wire_latest_user_turn
 from .events import (
     FrontierEndpointPersonaResolved,
     FrontierEndpointRejected,
     FrontierEndpointRequested,
 )
 
-_PIPELINE_ID = "frontier-dispatch"
+_FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
+_TEAM_DISPATCH_PIPELINE_ID = "team-dispatch"
 EventPublisher = Callable[[Any], None]
 
 # Models that only support the Chat Completions API and are unavailable on the
@@ -54,6 +56,7 @@ class FrontierGenerateRequest:
     generation_options: dict[str, Any] | None = None
     max_tool_turns: int | None = None
     transcript_id: str | None = None
+    dispatch_thread_id: str | None = None
     remote_mcp: bool | None = None
     caller_agent: str | None = None
     timeout_seconds: int | None = None
@@ -361,9 +364,37 @@ async def build_dispatch_body(
                 auth_token=_agent_bus_token,
             )
 
+    pipeline_id = (
+        _TEAM_DISPATCH_PIPELINE_ID if req.role else _FRONTIER_DISPATCH_PIPELINE_ID
+    )
+
+    if req.role:
+        dispatch_thread_id = (req.dispatch_thread_id or "").strip()
+        if not dispatch_thread_id:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="dispatch_thread_id",
+                reason=(
+                    "dispatch_thread_id is required for team_dispatch — "
+                    "binds server-owned assemble/archive on "
+                    "thread:dispatch:{dispatch_thread_id}"
+                ),
+            )
+        last_user = extract_last_user_message(req.messages)
+        if not last_user:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="messages",
+                reason="At least one non-empty user message is required",
+            )
+        wire_messages = wire_latest_user_turn(req.messages)
+    else:
+        dispatch_thread_id = None
+        wire_messages = req.messages
+
     body: dict[str, Any] = {
-        "model": _PIPELINE_ID,
-        "messages": req.messages,
+        "model": pipeline_id,
+        "messages": wire_messages,
         "pipeline_options": pipeline_options,
         # dispatch-surface-split Phase 1: pass op discrimination through to tracker
         "output_contract": req.output_contract,
@@ -372,6 +403,8 @@ async def build_dispatch_body(
         body["timeout_seconds"] = req.timeout_seconds
     if req.caller_agent:
         body["caller_agent"] = req.caller_agent
+    if dispatch_thread_id:
+        body["dispatch_thread_id"] = dispatch_thread_id
     if req.transcript_id:
         # Provenance attribution only: records the caller's session ID in the
         # execution envelope so dispatches can be traced back to their origin.

@@ -63,10 +63,12 @@ def _make_pipeline(
 def _make_context(
     chat_id: str | None = "chat-abc",
     *,
+    dispatch_thread_id: str | None = None,
     execution_id: str = "exec-1",
 ) -> MagicMock:
     context = MagicMock()
     context.chat_id = chat_id
+    context.dispatch_thread_id = dispatch_thread_id
     context.execution_id = execution_id
     return context
 
@@ -255,3 +257,20 @@ async def test_different_chat_ids_do_not_block() -> None:
 
     await asyncio.gather(hold_a(), hold_b())
     assert backend.gates_alive == 0, "both gates evicted after release"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_thread_id_placeholder_resolves() -> None:
+    """Phase D: ``dispatch:{context.dispatch_thread_id}`` resolves the key."""
+    pipeline = _make_pipeline(
+        concurrency={"key": "dispatch:{context.dispatch_thread_id}"}
+    )
+    context = _make_context(
+        chat_id=None, dispatch_thread_id="arc-42", execution_id="exec-d"
+    )
+    backend = InProcessConcurrencyBackend()
+
+    async with maybe_concurrency_gate(pipeline, context, backend):
+        assert backend._gates.get("dispatch:arc-42") is not None  # noqa: SLF001
+
+    assert backend.gates_alive == 0

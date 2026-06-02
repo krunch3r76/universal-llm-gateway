@@ -42,7 +42,7 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-7)  → returns execution_id; poll pipeline(op="result", execution_id=…)
-- by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…)
+- by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…, dispatch_thread_id=…)
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - multi-model advisory + cortex/RAG → dispatch(tool="agent_consult", arguments='{"query":"…"}')                              [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
@@ -56,7 +56,7 @@ _DISPATCH_CONSULT_BLOCK_GROK = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-7)
-- by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…)
+- by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…, dispatch_thread_id=…)
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
 - multi-model advisory + cortex/RAG → agent_consult (query)                   [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]

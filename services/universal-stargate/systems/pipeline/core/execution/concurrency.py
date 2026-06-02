@@ -54,7 +54,7 @@ if TYPE_CHECKING:
 
 
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
-_SUPPORTED_PLACEHOLDERS = frozenset({"context.chat_id"})
+_SUPPORTED_PLACEHOLDERS = frozenset({"context.chat_id", "context.dispatch_thread_id"})
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
@@ -159,13 +159,21 @@ def _render_key(
                 f"unsupported placeholder {{{token}}}. Supported: "
                 f"{sorted(_SUPPORTED_PLACEHOLDERS)}"
             )
-        # Only "context.chat_id" is supported in Phase A.
-        chat_id = pipeline_context.chat_id
-        if not chat_id:
+        if token == "context.chat_id":
+            chat_id = pipeline_context.chat_id
+            if not chat_id:
+                raise ValueError(
+                    f"Pipeline {pipeline.id!r}: concurrency.key references "
+                    f"{{context.chat_id}} but request did not provide chat_id"
+                )
+            return chat_id
+        dispatch_thread_id = getattr(pipeline_context, "dispatch_thread_id", None)
+        if not dispatch_thread_id:
             raise ValueError(
                 f"Pipeline {pipeline.id!r}: concurrency.key references "
-                f"{{context.chat_id}} but request did not provide chat_id"
+                f"{{context.dispatch_thread_id}} but request did not provide "
+                f"dispatch_thread_id"
             )
-        return chat_id
+        return dispatch_thread_id
 
     return _PLACEHOLDER_RE.sub(_substitute, key_template)

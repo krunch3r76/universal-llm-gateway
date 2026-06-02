@@ -48,10 +48,14 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
     ``role`` selects a ``role:{slug}`` execution contract (Phase 5 of the
     agent-naming cleanup arc). Replaces the legacy ``agent`` field.
+
+    ``dispatch_thread_id`` binds server-owned thread persistence on the
+    team-dispatch pipeline (distinct from ``transcript_id`` provenance-only).
     """
 
     op: Literal["generate"]
     role: str
+    dispatch_thread_id: str
     model: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
@@ -61,10 +65,14 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     """``team_dispatch`` with ``op="to_thread"`` — result posted to agent-bus thread.
 
     ``role`` selects a ``role:{slug}`` execution contract.
+
+    ``thread`` is the agent-bus delivery target. ``dispatch_thread_id`` is the
+    cortex compaction key (orthogonal — do not conflate the two).
     """
 
     op: Literal["to_thread"]
     role: str
+    dispatch_thread_id: str
     thread: str
     subject: str | None = None
     model: str | None = None
@@ -134,6 +142,8 @@ def _normalize_op_body(
     # the role's frontier_kind in service.build_dispatch_body.
     if hasattr(body, "role"):
         common["role"] = body.role
+    if hasattr(body, "dispatch_thread_id"):
+        common["dispatch_thread_id"] = body.dispatch_thread_id
     if hasattr(body, "model"):
         common["model"] = body.model
     if hasattr(body, "mcp"):

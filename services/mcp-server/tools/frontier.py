@@ -2,7 +2,7 @@
 
 Two tools, two contracts:
 
-- ``team_dispatch(op=..., role=..., messages=..., ...)`` is the role-required
+- ``team_dispatch(op=..., role=..., messages=..., dispatch_thread_id=..., ...)`` is the role-required
   door for team-seat consults. ``role`` selects a functional seat from the
   roster: lead / reviewer / gatherer / synthesizer / artisan / skeptic /
   investigator. Each resolves its own default (family, platform, model) via
@@ -163,6 +163,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         op: Literal["generate", "to_thread"],
         role: str,
         messages: list[dict[str, Any]],
+        dispatch_thread_id: str,
         model: str | None = None,
         system: str = "",
         reasoning_effort: str | None = None,
@@ -202,6 +203,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         Callers that need explicit no-role one-shot dispatch should use
         ``frontier_dispatch(mcp=False, ...)``.
 
+        ``dispatch_thread_id`` — required compaction key for server-owned
+        thread persistence on the ``team-dispatch`` pipeline. Prior turns are
+        assembled from cortex; pass only the **latest** user message in
+        ``messages``. Distinct from ``thread`` (agent-bus delivery on
+        ``op="to_thread"``) and ``transcript_id`` (provenance only).
+
         ``transcript_id`` — caller's session ID for provenance attribution only.
         It is recorded in the execution record alongside ``caller_agent`` so
         dispatches can be traced back to the originating session. It is NOT
@@ -212,6 +219,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             "op": op,
             "messages": messages,
             "role": role,
+            "dispatch_thread_id": dispatch_thread_id,
             "system": system,
         }
         if op == "generate":

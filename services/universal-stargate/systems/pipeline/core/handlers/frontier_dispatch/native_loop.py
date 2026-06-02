@@ -184,6 +184,19 @@ async def run_dispatch_loop(
         # above as a distinct tool-loop budget failure. Originally surfaced by
         # Orion execution d65c723b (Cortex assertion 7903).
         #
+        # Tool-only completion: MCP-heavy turns may finish with tool activity
+        # but no final assistant text. Downstream ``archive_assistant_turn_v1``
+        # synthesizes archive text from the tool-call trace — do not fail the
+        # respond step (cortex-chat-openai Phase E gap, assertion 12167).
+        if not (result.content or "").strip() and result.tool_calls_made > 0:
+            return LoopOutcome(
+                result=result,
+                latency_ms=latency_ms,
+                finish_reason=finish_reason,
+                block_reason=block_reason,
+                exhaustion_summary=exhaustion_summary,
+            )
+        #
         # Sub-case: a provider-managed tool loop (remote-MCP, or any loop where
         # the provider stops on its own ceiling) returns ``content=""`` with
         # ``finish_reason in {tool_calls, length}``. The native loop never sets

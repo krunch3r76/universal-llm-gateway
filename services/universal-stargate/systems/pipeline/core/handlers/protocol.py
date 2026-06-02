@@ -197,6 +197,8 @@ class PipelineContext:
 
     # Persistent thread chat_id identifier (None for non-chat or stateless pipelines)
     chat_id: str | None = None
+    # Team-dispatch thread key (Phase D); distinct from agent-bus ``to_thread`` id
+    dispatch_thread_id: str | None = None
 
     # Execution metadata
     execution_id: str = ""

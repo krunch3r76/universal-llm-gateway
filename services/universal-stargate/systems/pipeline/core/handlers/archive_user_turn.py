@@ -34,7 +34,13 @@ from universal_logging import get_logger
 from ..execution.resolver import NamespaceResolver, traverse_path
 from .protocol import PipelineContext, StepOutput
 from .registry import register_handler
-from .thread_persistence import cx_async, write_turn_artifact
+from ..events.compaction import PipelineCompactionArchived
+from .thread_persistence import (
+    cx_async,
+    publish_compaction_event,
+    require_thread_binding,
+    write_turn_artifact,
+)
 
 if TYPE_CHECKING:
     from ..schemas import StepConfig
@@ -42,7 +48,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _LATENCY_BUDGET_MS = 50.0
-_SEEDED_BY = "cortex-chat-openai"
 
 
 @register_handler
@@ -54,11 +59,9 @@ class ArchiveUserTurnV1Handler:
     async def execute(self, step: StepConfig, context: PipelineContext) -> StepOutput:
         start = time.monotonic()
 
-        chat_id = context.chat_id
-        if not chat_id:
-            raise ValueError(
-                f"Step '{step.id}': archive_user_turn_v1 requires context.chat_id"
-            )
+        binding = require_thread_binding(context)
+        storage_key = binding.storage_key
+        seeded_by = context.pipeline.id
 
         resolver = NamespaceResolver(context)
         anchor_id = _resolve_required_str(resolver, step, "anchor_id")
@@ -66,10 +69,11 @@ class ArchiveUserTurnV1Handler:
         user_text = _resolve_required_str(resolver, step, "user_text")
 
         artifact_uri = await write_turn_artifact(
-            chat_id=chat_id,
+            chat_id=storage_key,
             turn_index=turn_index,
             payload={
-                "chat_id": chat_id,
+                "thread_key": storage_key,
+                "thread_kind": binding.kind,
                 "turn_index": turn_index,
                 "role": "user",
                 "content": user_text,
@@ -90,7 +94,7 @@ class ArchiveUserTurnV1Handler:
                 "derivation_type": "agent_observation",
                 "evidence_uris": [artifact_uri],
                 "predicate_form": f"user_turn({turn_index})",
-                "seeded_by": _SEEDED_BY,
+                "seeded_by": seeded_by,
             },
         )
         if "error" in assert_res:
@@ -108,13 +112,25 @@ class ArchiveUserTurnV1Handler:
                 f"{sorted(assert_res.keys())}"
             )
 
+        publish_compaction_event(
+            context,
+            PipelineCompactionArchived,
+            execution_id=context.execution_id,
+            chat_id=storage_key,
+            anchor_id=anchor_id,
+            turn_index=turn_index,
+            role="user",
+            artifact_uri=artifact_uri,
+            assertion_id=assertion_id,
+        )
+
         duration_ms = (time.monotonic() - start) * 1000.0
         if duration_ms > _LATENCY_BUDGET_MS:
             logger.warning(
                 "archive_user_turn_v1 latency budget blown: %.2fms "
                 "(chat_id=%s, turn_index=%d)",
                 duration_ms,
-                chat_id,
+                storage_key,
                 turn_index,
             )
 

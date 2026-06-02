@@ -39,6 +39,7 @@ Caller::
 
     # Public surface (preferred):
     team_dispatch(op="generate", role="gatherer", model="openai/gpt-5.4",
+                  dispatch_thread_id="cursor-2026-06-02-example",
                   messages=[{"role": "user", "content": "..."}])
     frontier_dispatch(op="generate", model="openai/gpt-5.4",
                       messages=[{"role": "user", "content": "..."}])

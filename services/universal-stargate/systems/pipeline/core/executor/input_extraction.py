@@ -20,6 +20,18 @@ from typing import Any
 from .prepared import _PipelineRequestContextProtocol
 
 
+def extract_dispatch_thread_id(
+    context: _PipelineRequestContextProtocol,
+) -> str | None:
+    """Lift ``dispatch_thread_id`` for team-dispatch compaction (Phase D)."""
+    if not context.original_request:
+        return None
+    raw = context.original_request.get("dispatch_thread_id")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return None
+
+
 def extract_chat_id(context: _PipelineRequestContextProtocol) -> str | None:
     """Lift ``chat_id`` from ``context.original_request`` for persistent chat
     pipelines (e.g. ``cortex-chat-openai``).

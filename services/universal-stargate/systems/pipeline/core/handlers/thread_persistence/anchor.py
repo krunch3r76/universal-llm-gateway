@@ -16,7 +16,8 @@ logger = get_logger(__name__)
 
 
 async def resolve_or_create_anchor(
-    chat_id: str,
+    thread_kind: str,
+    thread_key: str,
 ) -> tuple[str, int]:
     """Return ``(entity_id, current_turn_index)``.
 
@@ -24,8 +25,11 @@ async def resolve_or_create_anchor(
     404. The returned index is the next free slot — 0 for a fresh
     anchor; one past the largest existing ``user_turn(N)`` /
     ``assistant_turn(N)`` predicate when extending an existing thread.
+
+    Anchor ids follow ``thread:{thread_kind}:{thread_key}`` — e.g.
+    ``thread:openai-chat:{chat_id}`` or ``thread:dispatch:{dispatch_thread_id}``.
     """
-    anchor_id = f"thread:openai-chat:{chat_id}"
+    anchor_id = f"thread:{thread_kind}:{thread_key}"
 
     get_res = await cx_async("entity_get", {"entity_id": anchor_id})
     if get_res.get("status_code") == 404:
@@ -34,11 +38,12 @@ async def resolve_or_create_anchor(
             {
                 "id": anchor_id,
                 "type": "thread",
-                "name": f"OpenAI Chat Thread {chat_id}",
+                "name": f"Thread {thread_kind} {thread_key}",
                 "status": "confirmed",
                 "workflow_state": "open",
                 "notes": (
-                    f"Created via cortex-chat-openai compactor for chat_id: {chat_id}"
+                    f"Created via thread persistence compactor "
+                    f"({thread_kind}={thread_key})"
                 ),
             },
         )

@@ -9,7 +9,7 @@
 
 ## Steps
 
-1. **Canary** — run sync without `--dry-run` against dev cortex socket; verify one `team_dispatch(role=reviewer, …)` consult succeeds.
+1. **Canary** — run sync without `--dry-run` against dev cortex socket; verify one `team_dispatch(role=reviewer, dispatch_thread_id="role-schema-canary", …)` consult succeeds.
 2. **Bulk upsert** — run full sync; confirm seven `role:*` entities in cortex-ui or `entity_get`.
 3. **Stop loading birth prompts** — confirm `libs/agent_seat/hydration.py` / frontier consult paths do not fetch `prompt:*-birth` for team roles (grep clean).
 4. **Retire `ai_agent:`** — for each legacy entity: export assertions if legally required, then DELETE or soft-retire per cortex capability. Hard-delete may require DB operator if API omits delete.

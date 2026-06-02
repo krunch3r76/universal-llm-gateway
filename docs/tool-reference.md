@@ -11,7 +11,7 @@ immediately after admission. The `op` parameter selects the output channel:
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | Team consults with role: `gatherer`, `skeptic`, `synthesizer`, `reviewer` | `op`, `agent`, `messages` | yes |
+| `team_dispatch` | Team consults with role: `gatherer`, `skeptic`, `synthesizer`, `reviewer` | `op`, `role`, `messages`, `dispatch_thread_id` | yes |
 | `frontier_dispatch` | Raw provider-native call, no role | `op`, `model`, `messages` | no |
 
 `op` values:
@@ -29,8 +29,9 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"` | Output channel |
-| `agent` | `"gatherer"\|"skeptic"\|"synthesizer"\|"reviewer"` | Required role slug |
-| `messages` | `list[dict]` | Conversation messages |
+| `role` | `"gatherer"\|"skeptic"\|"synthesizer"\|"reviewer"` | Required role slug |
+| `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread |
+| `dispatch_thread_id` | `str` | Required compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session (e.g. `cursor-2026-06-02-{topic}` or `transcript_id`). Distinct from `thread` (agent-bus delivery on `op="to_thread"`) |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
 | `subject` | `str\|None` | Bus reply subject (bus mode only) |
 | `model` | `str\|None` | Optional override; must be in persona's allowed set |
@@ -45,7 +46,8 @@ Examples:
 # Direct mode — result via pipeline(op="result")
 team_dispatch(
     op="generate",
-    agent="gatherer",
+    role="gatherer",
+    dispatch_thread_id="cursor-2026-06-02-design-review",
     messages=[{"role": "user", "content": "Review this design..."}],
     reasoning_effort="high",
     max_tool_turns=25,
@@ -55,7 +57,8 @@ team_dispatch(
 # Bus mode — agent posts reply to thread 123
 team_dispatch(
     op="to_thread",
-    agent="gatherer",
+    role="gatherer",
+    dispatch_thread_id="cursor-2026-06-02-design-review",
     thread="123",
     subject="Design review",
     messages=[{"role": "user", "content": "Review this design..."}],
