@@ -61,6 +61,10 @@ _PROVISIONAL_BIRTH_TYPES = frozenset({"decision"})
 # with dispatch_ops._shared (which imports this module's impls).
 _CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
 _LIFECYCLE_AXIS_STATUS = frozenset({"merged", "deprecated", "reaped"})
+# Full valid status enum (mirrors models.EntityStatus). A caller-supplied status
+# outside this set must be rejected at the write path: writing it corrupts the
+# row so the EntityDetail read-back 500s and the row becomes unrepairable.
+_VALID_ENTITY_STATUS = _CONFIDENCE_AXIS_STATUS | _LIFECYCLE_AXIS_STATUS
 
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
 
@@ -272,18 +276,52 @@ def update_entity_impl(
     prior = decode_row(full_rows[0], ENTITY_JSON_FIELDS)
     prior_workflow_state = prior.get("workflow_state")
 
+    # Write-side enum guard: a caller-supplied status outside the valid enum
+    # corrupts the row (EntityDetail read-back 500s). Reject before any write.
+    incoming_status = updates.get("status")
+    if incoming_status is not None and incoming_status not in _VALID_ENTITY_STATUS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "invalid_status",
+                "message": f"status {incoming_status!r} is not a valid EntityStatus",
+                "valid_status": sorted(_VALID_ENTITY_STATUS),
+            },
+        )
+
     # Fork D: freeze hand-set confidence-axis status updates. A caller may still
     # transition the lifecycle axis (merged/deprecated/reaped); a confidence-axis
     # status (unsubstantiated/provisional/confirmed) is dropped — that axis is
     # derived from backing assertions, not asserted directly on the entity.
-    if updates.get("status") is not None and updates["status"] in _CONFIDENCE_AXIS_STATUS:
+    #
+    # EXCEPTION — corruption repair: if the row's CURRENT stored status is itself
+    # out of the valid enum (a value that slipped past validation before this
+    # guard existed), a valid confidence-axis status is permitted through to
+    # overwrite it. Without this escape the freeze drops the fix and the row stays
+    # unreadable via EntityDetail.
+    prior_status = prior.get("status")
+    prior_status_corrupt = (
+        prior_status is not None and prior_status not in _VALID_ENTITY_STATUS
+    )
+    if (
+        incoming_status is not None
+        and incoming_status in _CONFIDENCE_AXIS_STATUS
+        and not prior_status_corrupt
+    ):
         logger.info(
             "Ignoring hand-set confidence-axis status=%r on entity_update id=%s "
             "(Fork D: confidence is derived from assertions)",
-            updates["status"],
+            incoming_status,
             entity_id,
         )
         updates = {k: v for k, v in updates.items() if k != "status"}
+    elif prior_status_corrupt and incoming_status is not None:
+        logger.warning(
+            "Repairing corrupt entity status: id=%s prior=%r -> %r",
+            entity_id,
+            prior_status,
+            incoming_status,
+        )
 
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():

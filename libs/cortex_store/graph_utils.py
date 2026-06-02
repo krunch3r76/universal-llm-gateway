@@ -19,7 +19,18 @@ from .db import query
 
 logger = get_logger("cortex-api.graph")
 
-_DEPENDENCY_EDGE_TYPES = ("depends_on", "evidence_for", "extends")
+# Union dependency set spanning both substrates (cortex-spec §§8–9 + migration
+# 041). Types absent from a substrate simply yield no rows there. graph_utils
+# does not validate against a type registry, so the shared set is safe for both
+# the structural `relationships` and reasoning `session_edges` halves.
+_DEPENDENCY_EDGE_TYPES = (
+    "requires",
+    "depends_on",
+    "blocked_by",
+    "derived_from",
+    "evidence_for",
+    "extends",
+)
 
 _ENTITY_ID_PATTERN = re.compile(
     r"\b([a-z][a-z_]*:[a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE
@@ -37,6 +48,7 @@ class ImpactedEntity:
     path_trace: list[str]
     assertion_count: int
     edge_types: list[str]
+    substrates: list[str]
 
 
 @dataclass
@@ -52,19 +64,20 @@ def analyze_impact(
     seed_entity: str,
     depth: int = 2,
 ) -> ImpactResult:
-    """BFS from *seed_entity* over dependency edges, collecting impacted entities.
+    """BFS from *seed_entity* over dependency edges across BOTH substrates.
 
-    Follows **incoming** ``depends_on``, ``evidence_for``, and ``extends`` edges
-    (active only — ``valid_until IS NULL``).  Edge convention: ``A depends_on B``
-    means A's ``from_node`` → B's ``to_node``.  When B (seed) changes, A is
-    impacted — so we follow edges where ``to_node = seed`` and collect
-    ``from_node`` as the impacted entity.
+    Reverse-dependency closure (cortex-spec §§8–9, contract C1): an edge
+    ``X --type--> Y`` means X depends on Y, so when Y (seed) changes X is
+    impacted.  We follow edges where the *target* is the current node and
+    collect the *source* as the impacted dependent — uniformly over the
+    structural ``relationships`` table and the reasoning ``session_edges``
+    table (migration 041 dual-registration).  Each impacted entity carries
+    the substrate(s) its dependency edge came from: ``structural`` is
+    consensus ground truth, ``reasoning`` is session-attributed.
 
     Depth is clamped to [1, 5].  Cycle detection via visited set.
     """
     depth = max(1, min(depth, 5))
-
-    edge_type_ph = ",".join("?" for _ in _DEPENDENCY_EDGE_TYPES)
 
     visited: set[str] = {seed_entity}
     # Each entry: (entity_id, hop_distance, path from seed)
@@ -76,27 +89,17 @@ def analyze_impact(
         next_frontier: list[tuple[str, int, list[str]]] = []
 
         for entity_id, hop, path in frontier:
-            rows = query(
-                conn,
-                "SELECT from_node, edge_type FROM session_edges "
-                f"WHERE to_node = ? AND edge_type IN ({edge_type_ph}) "
-                "AND valid_until IS NULL",
-                (entity_id, *_DEPENDENCY_EDGE_TYPES),
-            )
-
-            for row in rows:
-                target = row["from_node"]
-                if target in visited:
+            for dep in _dependency_sources(conn, entity_id):
+                if dep in visited:
                     continue
-                visited.add(target)
-                new_path = [*path, target]
-                next_frontier.append((target, hop + 1, new_path))
+                visited.add(dep)
+                next_frontier.append((dep, hop + 1, [*path, dep]))
 
         for entity_id, hop, path in next_frontier:
             entity_name = _entity_name(conn, entity_id)
             a_count = _active_assertion_count(conn, entity_id)
             total_assertions += a_count
-            edge_types_used = _path_edge_types(conn, path, edge_type_ph)
+            edge_types_used, substrates_used = _path_edges(conn, path)
 
             impacted.append(
                 ImpactedEntity(
@@ -106,6 +109,7 @@ def analyze_impact(
                     path_trace=path,
                     assertion_count=a_count,
                     edge_types=sorted(set(edge_types_used)),
+                    substrates=sorted(set(substrates_used)),
                 )
             )
 
@@ -134,28 +138,66 @@ def _active_assertion_count(conn: sqlite3.Connection, entity_id: str) -> int:
     return rows[0]["cnt"] if rows else 0
 
 
-def _path_edge_types(
+def _dependency_sources(conn: sqlite3.Connection, node: str) -> list[str]:
+    """Distinct source entities of incoming dependency edges into *node*.
+
+    Reverse-dependency direction (contract C1): select edges whose *target*
+    is ``node`` and return the *source* (the impacted dependent).  Unions
+    both substrates with their respective active predicates (contract C5);
+    ``UNION`` de-dups the source set across substrates.
+
+      * reasoning  — ``session_edges`` (from_node/to_node/edge_type;
+                     active = ``valid_until IS NULL``)
+      * structural — ``relationships`` (from_entity/to_entity/type;
+                     active = ``active = 1 AND valid_until IS NULL``)
+    """
+    type_ph = ",".join("?" for _ in _DEPENDENCY_EDGE_TYPES)
+    rows = query(
+        conn,
+        f"SELECT from_node AS dep FROM session_edges "
+        f"WHERE to_node = ? AND edge_type IN ({type_ph}) AND valid_until IS NULL "
+        f"UNION "
+        f"SELECT from_entity AS dep FROM relationships "
+        f"WHERE to_entity = ? AND type IN ({type_ph}) "
+        f"AND active = 1 AND valid_until IS NULL",
+        (node, *_DEPENDENCY_EDGE_TYPES, node, *_DEPENDENCY_EDGE_TYPES),
+    )
+    return [str(r["dep"]) for r in rows]
+
+
+def _path_edges(
     conn: sqlite3.Connection,
     path: list[str],
-    edge_type_ph: str,
-) -> list[str]:
-    """Collect distinct edge types along a path trace.
+) -> tuple[list[str], list[str]]:
+    """Edge types + substrates traversed along *path* (seed → impacted).
 
-    Path goes seed → impacted, but edges point impacted → seed (from_node
-    depends_on to_node).  So for consecutive path nodes [A, B], the edge is
-    ``from_node=B, to_node=A``.
+    Path goes seed → impacted, but dependency edges point impacted → seed
+    (``from`` depends on ``to``).  So for consecutive path nodes [A, B] the
+    edge is ``from = B, to = A``.  Unions both substrates (contract C6) and
+    returns parallel ``(types, substrates)`` lists for provenance aggregation.
     """
+    type_ph = ",".join("?" for _ in _DEPENDENCY_EDGE_TYPES)
     types: list[str] = []
+    substrates: list[str] = []
     for i in range(len(path) - 1):
+        frm, to = path[i + 1], path[i]
         rows = query(
             conn,
-            "SELECT DISTINCT edge_type FROM session_edges "
-            f"WHERE from_node = ? AND to_node = ? AND edge_type IN ({edge_type_ph}) "
-            "AND valid_until IS NULL",
-            (path[i + 1], path[i], *_DEPENDENCY_EDGE_TYPES),
+            f"SELECT DISTINCT edge_type AS etype, 'reasoning' AS substrate "
+            f"FROM session_edges "
+            f"WHERE from_node = ? AND to_node = ? AND edge_type IN ({type_ph}) "
+            f"AND valid_until IS NULL "
+            f"UNION "
+            f"SELECT DISTINCT type AS etype, 'structural' AS substrate "
+            f"FROM relationships "
+            f"WHERE from_entity = ? AND to_entity = ? AND type IN ({type_ph}) "
+            f"AND active = 1 AND valid_until IS NULL",
+            (frm, to, *_DEPENDENCY_EDGE_TYPES, frm, to, *_DEPENDENCY_EDGE_TYPES),
         )
-        types.extend(r["edge_type"] for r in rows)
-    return types
+        for r in rows:
+            types.append(str(r["etype"]))
+            substrates.append(str(r["substrate"]))
+    return types, substrates
 
 
 # ── C2: Write-Path Contradiction Check ───────────────────────────────────

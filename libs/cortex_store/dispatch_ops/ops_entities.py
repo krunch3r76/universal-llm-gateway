@@ -222,6 +222,12 @@ def _op_entity_update(
     updates: dict[str, object] = {
         k: v for k, v in kwargs.items() if k in _ENTITY_MUTABLE
     }
+    status_val = updates.get("status")
+    if status_val is not None and status_val not in _VALID_STATUS:
+        return {
+            "error": f"Invalid status {status_val!r}. "
+            f"Must be one of: {sorted(_VALID_STATUS)}"
+        }
     if (
         "source_uri" in updates
         and updates["source_uri"] is not None

@@ -31,9 +31,14 @@ def impact_analysis(
 ) -> dict[str, Any]:
     """Compute transitive dependency cascade from an entity.
 
-    Follows outgoing ``depends_on``, ``evidence_for``, and ``extends`` edges
-    to surface all downstream entities whose beliefs depend on the seed.
-    Useful when an assertion is superseded — shows what else might need revision.
+    Follows **incoming** dependency edges (``requires``, ``depends_on``,
+    ``blocked_by``, ``derived_from``, ``evidence_for``, ``extends``) where the
+    target is the seed, collecting the source as the impacted dependent —
+    across BOTH the structural ``relationships`` and reasoning ``session_edges``
+    substrates (cortex-spec §§8–9, migration 041).  Each impacted entity reports
+    ``substrates`` (``structural`` = consensus ground truth, ``reasoning`` =
+    session-attributed).  Useful when an assertion is superseded — shows what
+    else might need revision.
     """
     conn = cortex_conn()
     try:
@@ -60,6 +65,7 @@ def impact_analysis(
                 "path_trace": ie.path_trace,
                 "assertion_count": ie.assertion_count,
                 "edge_types": ie.edge_types,
+                "substrates": ie.substrates,
             }
             for ie in result.impacted_entities
         ],
