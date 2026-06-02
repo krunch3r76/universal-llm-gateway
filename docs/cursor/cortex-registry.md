@@ -24,7 +24,7 @@ When a primitive affects belief revision semantics, note the relevant AGM postul
 | B1 | FTS5 Fulltext Search | Lexical retrieval covers claims plus enrichment text | `assertions_fts` table (migration 020), `_fts_search()` in `routes/assertions.py` | `GET /assertions/search?q=...` | `search` | Complete |
 | B2 | Vector Search + CombMAX Fusion | Hybrid retrieval merges dense and sparse evidence into one result surface | `vector_store.py`, `embeddings.py`, `_combmax_fuse()` in `routes/assertions.py` | `GET /assertions/search?q=...` (hybrid) | `search` | Complete |
 | B3 | Client-Side LLM Reranking Metadata | Retrieval outputs expose score components so callers can rerank or inspect evidence provenance | `bm25_score`, `cosine_similarity`, `combmax_score`, `retrieval_source` in search results | `GET /assertions/search` response fields | `search` results | Complete |
-| C1 | Impact Analysis (BFS) | Revision blast radius is queryable across dependency edges | `graph_utils.py` `analyze_impact()`, `routes/graph.py` | `GET /edges/impact?entity_id=...` | `impact` | Complete |
+| C1 | Impact Analysis (BFS) | Revision blast radius is queryable across dependency edges spanning **both** substrates (structural `relationships` ∪ reasoning `session_edges`); each impacted entity carries substrate provenance | `graph_utils.py` `analyze_impact()` (shared `edge_walk.active_edges`), `routes/graph.py` | `GET /edges/impact?entity_id=...` | `impact` | Complete |
 | C2 | Write-Path Contradiction Detection | Cross-entity contradictions are flagged at write time rather than only during later review | `graph_utils.py` `check_contradictions()`, auto-runs at `POST /assertions` | Automatic at assertion create | Automatic | Complete |
 | D1 | Safety-Hardened Consolidation (Dream State) | Automated contraction is guarded by staged application, circuit breakers, and dry-run defaults | `pipelines/dream_state/` (7-step pipeline), `GuardedApplyHandler`, 50% circuit breaker, dry-run default | Pipeline execution | `pipeline(pipeline="dream-state", ...)` | Complete |
 
@@ -52,7 +52,7 @@ Capabilities beyond the foundational belief revision primitives. Classified by o
 | ID | Capability | Classification | Implementation | REST Endpoint | MCP Dispatch Op |
 |---|---|---|---|---|---|
 | X11 | Entrenchment Ordering | retrieval | `entrenchment.py` `compute_entrenchment()`, concrete implementation of AGM K*7/K*8 contraction ordering | `GET /assertions/entrenchment?entity_id=...` | Embedded in search/boot results |
-| X12 | Spreading Activation (C3) | retrieval | `activation.py` `spreading_activation()`, BFS with decay + hub suppression | `GET /assertions/activate?entity_ids=...` | `activate` |
+| X12 | Spreading Activation (C3) | retrieval | `activation.py` `spreading_activation()`, BFS with decay + hub suppression over **both** substrates (structural `relationships` ∪ reasoning `session_edges`) via shared `edge_walk.active_edges`; hub degree + denominator span both substrates; `substrates_traversed` provenance on results | `GET /assertions/activate?entity_ids=...` | `activate` |
 | X13 | Assertion Embeddings | retrieval | `embeddings.py`, `vector_store.py` (ChromaDB), background embedding on write | Automatic at write + `GET /assertions/search` | Via `search` (hybrid mode) |
 
 ### Post-v3 (Boot Redesign, 2026-04-07)

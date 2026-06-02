@@ -277,32 +277,55 @@ primitive walks:
 | Reverse-dependency BFS | `impact` | **both** — `relationships` ∪ `session_edges` |
 | Subgraph render | `render_subgraph` | `relationships` only (structural) |
 | Reasoning-edge walk | `edge_traverse` | `session_edges` only (reasoning) |
-| Spreading activation | `activate` | `session_edges` only (reasoning) |
+| Spreading activation | `activate` | **both** — `relationships` ∪ `session_edges` |
 | Entity read / card | `entity_get`, `card` | both (surfaced separately) |
 | Semantic pre-write impact | `analyze_impact` | neither — FTS5 + vector over claim text, not an edge walk |
 
-**`impact` is the only edge-walk primitive that unions both substrates.** It
-answers "if seed *S* changes, what depends on *S*?" as the reverse-dependency
-closure: at each frontier node *N* it follows dependency edges whose **target**
-is *N* and collects the **source** as a newly impacted dependent (an edge
-`X --type--> Y` means *X* depends on *Y*, so a change to *Y* impacts *X*). The
-propagating type set is the knowledge-propagation union
-`{requires, depends_on, derived_from, evidence_for, extends}`; `blocked_by` is
-excluded (workflow/scheduling state, not content/validity dependency). Each
-substrate applies its own active predicate: `session_edges` requires
+**Two edge-walk primitives union both substrates** — `impact` and `activate` —
+through the shared read-layer primitive `edge_walk.active_edges(node, *, types,
+direction)`, so the two substrates are reconciled **once** rather than per-call.
+Each substrate applies its own active predicate: `session_edges` requires
 `valid_until IS NULL`; `relationships` requires `active = 1 AND valid_until IS NULL`.
 
-**De-dup rule.** Since the same logical dependency can be mirrored on both
-substrates (e.g. `requires`), the union de-dups on the source entity per hop, and
-each impacted entity records the substrate(s) it was found on — `structural`
-(consensus ground truth) and/or `reasoning` (session-attributed). A dependency
-present on both substrates collapses to a single impacted entity whose provenance
-carries **both** substrate tags.
+`impact` answers "if seed *S* changes, what depends on *S*?" as the
+reverse-dependency closure (`direction="reverse"`): at each frontier node *N* it
+follows dependency edges whose **target** is *N* and collects the **source** as a
+newly impacted dependent (an edge `X --type--> Y` means *X* depends on *Y*, so a
+change to *Y* impacts *X*). Its propagating type set is the knowledge-propagation
+union `{requires, depends_on, derived_from, evidence_for, extends}`.
 
-**Known gap.** `activate` (spreading activation) reads `session_edges` only and
-does not yet union structural `relationships`; structural-only dependencies (e.g.
-an audit-enforced `requires`) are invisible to it. Treat its blast radius as
-reasoning-substrate-only until that primitive is reconciled.
+`activate` answers "what is associatively related to seed *S*?" as an undirected
+spread (`direction="both"`): at each frontier node it collects the opposite
+endpoint of every incident edge. Because association is broader than dependency,
+it walks the full knowledge-association set `{relates_to, related_to, references,
+child_of, belongs_to, archives_to, depends_on, requires, derived_from,
+evidence_for, extends, supersedes, caused_by, analogous_to, contradicts}`, and its
+hub-suppression denominator and per-entity degree both count both substrates so
+the IDF penalty stays coherent with the unioned walk. Each activated assertion
+carries `substrates_traversed`.
+
+`blocked_by` is excluded from **both** type sets — it is workflow/scheduling state
+("A waits on B"), not content/validity dependency or knowledge association. A
+workflow view ("what is waiting on this?") is an explicit opt-in, never a default
+traversal.
+
+**De-dup rule.** Since the same logical link can be mirrored on both substrates
+(e.g. `requires`, `contradicts`), the union de-dups neighbors per hop — the visited
+set guards node re-visits, and `active_edges` emits one row per substrate so a
+mirrored edge legitimately contributes from each. `impact` records the substrate(s)
+each impacted entity was found on — `structural` (consensus ground truth) and/or
+`reasoning` (session-attributed); a dependency present on both collapses to a
+single impacted entity whose provenance carries **both** substrate tags.
+
+**Known gap.** `check_contradictions` — the edge-based write-path contradiction
+check in `graph_utils` that runs at `POST /assertions` — reads `session_edges`
+only and walks the `contradicts` type. `contradicts` is registered on **both**
+substrates (a reasoning edge type *and* a structural `relationship_type`), so a
+`contradicts` link created via `relationship_create` would be invisible to it.
+This is currently *latent* — no structural `contradicts` rows exist live today —
+but it is the last graph-traversal primitive not yet reconciled across both
+substrates. (`render_subgraph` is structural-only and `edge_traverse` is
+reasoning-only **by design** — these are entry-point contracts, not gaps.)
 
 ---
 
