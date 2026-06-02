@@ -20,13 +20,18 @@ from .db import query
 logger = get_logger("cortex-api.graph")
 
 # Union dependency set spanning both substrates (cortex-spec §§8–9 + migration
-# 041). Types absent from a substrate simply yield no rows there. graph_utils
-# does not validate against a type registry, so the shared set is safe for both
-# the structural `relationships` and reasoning `session_edges` halves.
+# 041). Knowledge-propagation semantics only: "if Y changes, what is downstream
+# and should be re-examined?". `blocked_by` is deliberately EXCLUDED — it is
+# workflow/scheduling state ("A waits on B"), not content/validity dependency
+# (thread 1174 turn 7; cortex:notes/system/threads/1174-union-implementation-notes.md).
+# A workflow view ("what is waiting on this?") would be an explicit opt-in, never
+# the default blast-radius set. Types absent from a substrate simply yield no rows
+# there; graph_utils does not validate against a type registry, so the shared set
+# is safe for both the structural `relationships` and reasoning `session_edges`
+# halves.
 _DEPENDENCY_EDGE_TYPES = (
     "requires",
     "depends_on",
-    "blocked_by",
     "derived_from",
     "evidence_for",
     "extends",

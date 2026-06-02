@@ -32,8 +32,8 @@ def impact_analysis(
     """Compute transitive dependency cascade from an entity.
 
     Follows **incoming** dependency edges (``requires``, ``depends_on``,
-    ``blocked_by``, ``derived_from``, ``evidence_for``, ``extends``) where the
-    target is the seed, collecting the source as the impacted dependent —
+    ``derived_from``, ``evidence_for``, ``extends``) where the target is the
+    seed, collecting the source as the impacted dependent —
     across BOTH the structural ``relationships`` and reasoning ``session_edges``
     substrates (cortex-spec §§8–9, migration 041).  Each impacted entity reports
     ``substrates`` (``structural`` = consensus ground truth, ``reasoning`` =
