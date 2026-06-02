@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from universal_logging import get_logger
 
 from .db import query
+from .edge_walk import active_edges
 
 logger = get_logger("cortex-api.graph")
 
@@ -146,28 +147,16 @@ def _active_assertion_count(conn: sqlite3.Connection, entity_id: str) -> int:
 def _dependency_sources(conn: sqlite3.Connection, node: str) -> list[str]:
     """Distinct source entities of incoming dependency edges into *node*.
 
-    Reverse-dependency direction (contract C1): select edges whose *target*
-    is ``node`` and return the *source* (the impacted dependent).  Unions
-    both substrates with their respective active predicates (contract C5);
-    ``UNION`` de-dups the source set across substrates.
-
-      * reasoning  — ``session_edges`` (from_node/to_node/edge_type;
-                     active = ``valid_until IS NULL``)
-      * structural — ``relationships`` (from_entity/to_entity/type;
-                     active = ``active = 1 AND valid_until IS NULL``)
+    Reverse-dependency direction (contract C1): edges whose *target* is
+    ``node``, returning the *source* (the impacted dependent), unioned across
+    both substrates with their per-substrate active predicates (contract C5) via
+    the shared :func:`edge_walk.active_edges` primitive.  De-dups neighbors
+    first-seen — the visited set in :func:`analyze_impact` makes order
+    immaterial; ``_path_edges`` recomputes per-edge substrate provenance
+    separately.
     """
-    type_ph = ",".join("?" for _ in _DEPENDENCY_EDGE_TYPES)
-    rows = query(
-        conn,
-        f"SELECT from_node AS dep FROM session_edges "
-        f"WHERE to_node = ? AND edge_type IN ({type_ph}) AND valid_until IS NULL "
-        f"UNION "
-        f"SELECT from_entity AS dep FROM relationships "
-        f"WHERE to_entity = ? AND type IN ({type_ph}) "
-        f"AND active = 1 AND valid_until IS NULL",
-        (node, *_DEPENDENCY_EDGE_TYPES, node, *_DEPENDENCY_EDGE_TYPES),
-    )
-    return [str(r["dep"]) for r in rows]
+    edges = active_edges(conn, node, types=_DEPENDENCY_EDGE_TYPES, direction="reverse")
+    return list(dict.fromkeys(e.neighbor for e in edges))
 
 
 def _path_edges(

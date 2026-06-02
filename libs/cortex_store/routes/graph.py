@@ -187,6 +187,7 @@ def activate(
                 "hop_distance": a.hop_distance,
                 "activation_path": a.activation_path,
                 "edge_types_traversed": a.edge_types_traversed,
+                "substrates_traversed": a.substrates_traversed,
             }
             for a in result.activated
         ],
