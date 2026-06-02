@@ -265,6 +265,45 @@ Edge types include: `reasoned_about`, `caused_by`, `contradicts`, `extends`,
 - `derived_from` / `depends_on` enable impact-analysis traversal (downstream
   propagation, blast-radius queries).
 
+### Traversal contract (both substrates)
+
+Because a type may be mirrored onto both substrates (§8), a graph primitive that
+reads only one substrate silently under-counts links that live on the other. The
+contract is therefore stated **per entry point** — which substrate(s) each
+primitive walks:
+
+| Entry point | Op | Substrate(s) walked |
+|---|---|---|
+| Reverse-dependency BFS | `impact` | **both** — `relationships` ∪ `session_edges` |
+| Subgraph render | `render_subgraph` | `relationships` only (structural) |
+| Reasoning-edge walk | `edge_traverse` | `session_edges` only (reasoning) |
+| Spreading activation | `activate` | `session_edges` only (reasoning) |
+| Entity read / card | `entity_get`, `card` | both (surfaced separately) |
+| Semantic pre-write impact | `analyze_impact` | neither — FTS5 + vector over claim text, not an edge walk |
+
+**`impact` is the only edge-walk primitive that unions both substrates.** It
+answers "if seed *S* changes, what depends on *S*?" as the reverse-dependency
+closure: at each frontier node *N* it follows dependency edges whose **target**
+is *N* and collects the **source** as a newly impacted dependent (an edge
+`X --type--> Y` means *X* depends on *Y*, so a change to *Y* impacts *X*). The
+propagating type set is the knowledge-propagation union
+`{requires, depends_on, derived_from, evidence_for, extends}`; `blocked_by` is
+excluded (workflow/scheduling state, not content/validity dependency). Each
+substrate applies its own active predicate: `session_edges` requires
+`valid_until IS NULL`; `relationships` requires `active = 1 AND valid_until IS NULL`.
+
+**De-dup rule.** Since the same logical dependency can be mirrored on both
+substrates (e.g. `requires`), the union de-dups on the source entity per hop, and
+each impacted entity records the substrate(s) it was found on — `structural`
+(consensus ground truth) and/or `reasoning` (session-attributed). A dependency
+present on both substrates collapses to a single impacted entity whose provenance
+carries **both** substrate tags.
+
+**Known gap.** `activate` (spreading activation) reads `session_edges` only and
+does not yet union structural `relationships`; structural-only dependencies (e.g.
+an audit-enforced `requires`) are invisible to it. Treat its blast radius as
+reasoning-substrate-only until that primitive is reconciled.
+
 ---
 
 ## 10. Belief revision (AGM)
