@@ -126,7 +126,10 @@ def _load_registry_from_disk() -> None:
         return
     try:
         data = json.loads(REGISTRY_PATH.read_text())
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "cursorbuild registry load failed; discarding %s: %s", REGISTRY_PATH, exc
+        )
         return
     if data.get("schema_version") != SCHEMA_VERSION:
         logger.warning(

@@ -18,17 +18,6 @@ logger = get_logger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Fixture (a): live agent_bus _post_impl path
-_FIXTURE_POST_IMPL = _REPO_ROOT / "services/mcp-server/test_agent_bus_post_impl.py"
-# Fixture (b): dispatch admission ignores injected stream key
-_FIXTURE_STREAM_INJECT = (
-    _REPO_ROOT
-    / "services/universal-stargate/systems/pipeline/core/handlers"
-    / "test_frontier_dispatch.py::test_reject_unknown_runtime_options_ignores_injected_stream_flag"
-)
-# Fixture (c): import-time _delete_file resolution
-_FIXTURE_INDEXING = _REPO_ROOT / "services/rag/test_indexing_consumer_resolution.py"
-
 CONSUMER_FIXTURE_NODEIDS: tuple[str, ...] = (
     "services/mcp-server/test_agent_bus_post_impl.py",
     (

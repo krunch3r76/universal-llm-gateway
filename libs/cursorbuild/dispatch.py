@@ -9,7 +9,7 @@ import uuid
 from typing import Any, Literal
 
 from cursorbuild.constants import _VALID_TIERS
-from cursorbuild.dispatch_helpers import _ResolvedParams, _resolve_params
+from cursorbuild.dispatch_helpers import _resolve_params, _ResolvedParams
 from cursorbuild.envelope import (
     _envelope_rejected,
     _envelope_result,
@@ -55,15 +55,7 @@ async def dispatch_op(
             dispatch_id, mode, cwd, session_id, model, "bad_tier", reason
         )
 
-    try:
-        resolved = _resolve_params(
-            tier=tier, model=model, timeout_seconds=timeout_seconds
-        )
-    except KeyError:
-        reason = f"tier must be one of {sorted(_VALID_TIERS)!r}, got {tier!r}"
-        return _envelope_rejected(
-            dispatch_id, mode, cwd, session_id, model, "bad_tier", reason
-        )
+    resolved = _resolve_params(tier=tier, model=model, timeout_seconds=timeout_seconds)
 
     vr = await asyncio.get_running_loop().run_in_executor(
         None,

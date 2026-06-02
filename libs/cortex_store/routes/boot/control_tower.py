@@ -10,7 +10,7 @@ the ATTENTION signals computed server-side. The HTML client fetches this
 endpoint directly (not the legacy ``/boot-*`` fan-out).
 
 LOCALHOST-ONLY: cortex-api has no auth layer (assertion 10605). MCP uses UDS;
-browser access is via manage's HTTP listener (default 0.0.0.0:8202; override
+browser access is via manage's HTTP listener (default 127.0.0.1:8202; override
 CORTEX_API_HTTP_HOST). Restrict at the network edge if exposing beyond trusted LAN.
 Port 8200 is not cortex-api on typical hosts (often docker/cloud-proxy).
 """
@@ -197,7 +197,7 @@ def _aggregate(conn: Any) -> dict[str, Any]:
     }
 
 
-def _derive_alerts(state: dict[str, Any]) -> list[dict[str, str]]:
+def _derive_alerts(state: dict[str, Any], conn: Any) -> list[dict[str, str]]:
     """Server-side port of the client deriveAlerts() — the divergence spec."""
     alerts: list[dict[str, str]] = []
 
@@ -235,7 +235,9 @@ def _derive_alerts(state: dict[str, Any]) -> list[dict[str, str]]:
         _strip_todo_prefix(t["id"]) for t in (*state["in_flight"], *state["todos"])
     }
     for entry in state["bus"]:
-        slug = entry if isinstance(entry, str) else (entry.get("slug") or entry.get("id"))
+        slug = (
+            entry if isinstance(entry, str) else (entry.get("slug") or entry.get("id"))
+        )
         if slug in todo_slugs:
             alerts.append(
                 {
@@ -252,7 +254,7 @@ def _derive_alerts(state: dict[str, Any]) -> list[dict[str, str]]:
         matter = d.get("matter")
         c = _countdown(d.get("due"))
         if matter and c["days"] is not None and c["days"] >= 0:
-            if not _matter_has_owning_session(matter):
+            if not _matter_has_owning_session(matter, conn):
                 alerts.append(
                     {
                         "sev": "warn",
@@ -284,18 +286,14 @@ def _derive_alerts(state: dict[str, Any]) -> list[dict[str, str]]:
     return sorted(alerts, key=lambda a: order[a["sev"]])
 
 
-def _matter_has_owning_session(matter: str) -> bool:
-    conn = cortex_conn()
-    try:
-        rows = db_query(
-            conn,
-            "SELECT 1 FROM session_journals "
-            "WHERE timestamp > datetime('now', '-30 days') "
-            "AND (summary LIKE ? OR open_items LIKE ?) LIMIT 1",
-            (f"%{matter}%", f"%{matter}%"),
-        )
-    finally:
-        conn.close()
+def _matter_has_owning_session(matter: str, conn: Any) -> bool:
+    rows = db_query(
+        conn,
+        "SELECT 1 FROM session_journals "
+        "WHERE timestamp > datetime('now', '-30 days') "
+        "AND (summary LIKE ? OR open_items LIKE ?) LIMIT 1",
+        (f"%{matter}%", f"%{matter}%"),
+    )
     return bool(rows)
 
 
@@ -305,9 +303,9 @@ def get_control_tower_data() -> dict[str, Any]:
     conn = cortex_conn()
     try:
         state = _aggregate(conn)
+        state["alerts"] = _derive_alerts(state, conn)
     finally:
         conn.close()
-    state["alerts"] = _derive_alerts(state)
     return state
 
 

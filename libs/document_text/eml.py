@@ -59,7 +59,7 @@ def _attachment_sections(msg: Message) -> list[str]:
                 doc = pymupdf.open(stream=data, filetype="pdf")
                 text = pymupdf4llm.to_markdown(doc)
             finally:
-                if doc:
+                if doc is not None:
                     doc.close()
             sections.append(text.strip())
         else:

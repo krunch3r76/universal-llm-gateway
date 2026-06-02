@@ -48,9 +48,6 @@ from .ops_journals import (
     _op_deadlines,
     _op_journal_read,
     _op_journal_write,
-    _op_session_close,
-    _op_session_close_preflight,
-    _op_session_handoff_upsert,
 )
 from .ops_misc import (
     _op_resolve,
@@ -75,6 +72,11 @@ from .ops_relationships import (
     _op_relationships,
 )
 from .ops_review import _op_case_audit, _op_fill_gaps, _op_session_audit
+from .ops_session_close import (
+    _op_session_close,
+    _op_session_close_preflight,
+    _op_session_handoff_upsert,
+)
 from .ops_subgraph import _op_render_subgraph
 from .ops_todos import _op_todo_audit, _op_todo_candidates
 from .ops_transcript_assembly import _op_assemble_transcript

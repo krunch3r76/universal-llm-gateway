@@ -61,7 +61,7 @@ _CORTEX_SOCKET = Path(
 _CORTEX_LOG_DIR = Path("/tmp/logs/cortex-api")
 # Browser-facing HTTP for /control-tower. Port 8200 is often cloud-proxy or
 # other docker services on this host; cortex-api itself stays on UDS for MCP.
-_CORTEX_HTTP_HOST = os.environ.get("CORTEX_API_HTTP_HOST", "0.0.0.0")
+_CORTEX_HTTP_HOST = os.environ.get("CORTEX_API_HTTP_HOST", "127.0.0.1")
 _CORTEX_HTTP_PORT = int(os.environ.get("CORTEX_API_HTTP_PORT", "8202"))
 _CORTEX_HTTP_PID_FILE = GATEWAY_DIR / "cortex-api-http.pid"
 
@@ -208,6 +208,7 @@ async def start_cortex_api(
         "Cortex API will read Cursor agent-transcripts from %s",
         extra_env["CURSOR_AGENT_TRANSCRIPTS_ROOT"],
     )
+
     def _on_uvicorn_ready(
         _socket_path: Path | None,
         _tcp_config: tuple[str, int] | None,

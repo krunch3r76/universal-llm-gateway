@@ -68,7 +68,7 @@ def _terminal_status(exit_record: dict[str, Any]) -> str:
     return str(exit_record.get("status") or "failed")
 
 
-def _duration_s(started: dict[str, Any], exit_record: dict[str, Any]) -> float:
+def _duration_s(exit_record: dict[str, Any]) -> float:
     if "duration_s" in exit_record:
         return float(exit_record["duration_s"])
     return 0.0
@@ -107,7 +107,7 @@ def result_envelope(
         stdout=stdout,
         stderr=stderr,
         exit_code=exit_record.get("exit_code"),
-        duration_s=_duration_s(started_meta, exit_record),
+        duration_s=_duration_s(exit_record),
         sidecar_path=sidecar_path,
         truncated=truncated,
         git_status_post=str(exit_record.get("git_status_post") or ""),

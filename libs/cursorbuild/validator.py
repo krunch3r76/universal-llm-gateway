@@ -9,15 +9,15 @@ import subprocess
 from dataclasses import dataclass
 from typing import Literal
 
+from universal_logging import get_logger
+
 from cursorbuild.constants import (
+    _SIDECAR_DIR,
+    _VALID_TIERS,
     CURSOR_AGENT_BIN,
     DEFAULT_READ_ONLY_MODE,
     FORBIDDEN_ARGV_TOKENS,
-    OUTPUT_FORMAT,
     READ_ONLY_MODES,
-    _SIDECAR_DIR,
-    _VALID_TIERS,
-    DEFAULT_TIMEOUT_SECONDS,
 )
 
 
@@ -30,6 +30,9 @@ class ValidationResult:
     git_status_pre: str = ""
     dirty_admission: bool = False
     read_only_mode: str = DEFAULT_READ_ONLY_MODE
+
+
+logger = get_logger(__name__)
 
 
 def _reject(reason_code: str, reason: str) -> ValidationResult:
@@ -54,7 +57,8 @@ def _git_status_pre(cwd: str) -> tuple[str, bool]:
             timeout=5,
             check=True,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("git status probe failed for cwd=%s: %s", cwd, exc)
         return "", True
     status = proc.stdout
     return status, bool(status.strip())
@@ -136,9 +140,3 @@ def validate_dispatch(  # noqa: PLR0911
         dirty_admission=False,
         read_only_mode=read_only_mode,
     )
-
-
-def default_timeout_if_none(timeout_seconds: int | None) -> int | None:
-    if timeout_seconds is None:
-        return DEFAULT_TIMEOUT_SECONDS
-    return timeout_seconds

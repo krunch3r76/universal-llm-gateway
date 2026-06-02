@@ -2085,8 +2085,9 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
 | `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
 | `mcp.tool.file.read` | `path`, `resolved`, `binary`, `auto_binary`, `chars`, `bytes`, `batched` (optional) | File read completed; `auto_binary=True` when a binary-extension file was silently routed to binary mode despite `binary=False`; `batched=True` when emitted from a `read_multi` batch operation |
-| `mcp.fs.binary.detect.magic.match` | `path` | Magic-byte probe (`filetype.guess`, 261-byte read) identified a file as binary when its extension was absent or unrecognised by `BINARY_EXTENSIONS`; file was auto-routed to base64 |
+| `mcp.fs.binary.magic.match` | `path` | Magic-byte probe (`filetype.guess`, 261-byte read) identified a file as binary when its extension was absent or unrecognised by `BINARY_EXTENSIONS`; file was auto-routed to base64 |
 | `mcp.fs.binary.detect.failed` | `path`, `error` | `filetype.guess()` raised `OSError`/`ValueError` during the magic-byte probe; file falls through to text-mode read (silent binary may still corrupt if extension is also unrecognised) |
+| `mcp.fs.html.parse.failed` | `path`, `error` | `html2text.handle()` raised while converting an HTML file to markdown in `_read_html`; exception re-raised |
 | `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
 | `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
 | `mcp.tool.file.trashed` | `sandbox`, `path`, `trash_path` | `delete_file` soft-deleted to trash/ (conflict resolved as `<stem>-NN.<ext>`) |

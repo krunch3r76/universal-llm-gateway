@@ -10,12 +10,12 @@ from typing import Literal
 
 from universal_logging import get_logger
 
-from cursorbuild.argv import build_argv, _build_env
+from cursorbuild import sidecar
+from cursorbuild.argv import _build_env, build_argv
 from cursorbuild.constants import _SIDECAR_DIR
 from cursorbuild.home import CursorbuildConfigError, setup_dispatch_home
 from cursorbuild.registry import record_pid
 from cursorbuild.runner_types import RunnerResult, RunnerSpec
-from cursorbuild import sidecar
 
 logger = get_logger(__name__)
 
@@ -53,6 +53,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             mcp_enabled=spec.mcp_enabled,
         )
     except (OSError, CursorbuildConfigError) as exc:
+        logger.warning("dispatch_home_setup_failed for %s: %s", spec.dispatch_id, exc)
         return RunnerResult(
             status="failed",
             stdout="",
@@ -88,6 +89,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             },
         )
     except OSError as exc:
+        logger.warning("sidecar_write_failed for %s: %s", spec.dispatch_id, exc)
         return RunnerResult(
             status="failed",
             stdout="",
@@ -111,6 +113,7 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
             start_new_session=True,
         )
     except OSError as exc:
+        logger.warning("spawn_failed for %s: %s", spec.dispatch_id, exc)
         if spec.proc_pid_holder is not None:
             spec.proc_pid_holder.append(-1)
         duration_s = time.monotonic() - t0
@@ -182,6 +185,12 @@ async def run_dispatch(spec: RunnerSpec) -> RunnerResult:
                 "sidecar_gaps": gaps[0],
             },
             gaps,
+        )
+        logger.warning(
+            "timeout for %s after %.1fs (limit=%s)",
+            spec.dispatch_id,
+            duration_s,
+            spec.timeout_seconds,
         )
         return RunnerResult(
             status="timeout",

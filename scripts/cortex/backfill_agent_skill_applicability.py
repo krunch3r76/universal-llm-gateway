@@ -31,13 +31,10 @@ PARTITION will go stale otherwise):
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 import urllib.parse
-import urllib.request
 
-CORTEX_SOCKET = "/tmp/universal-protocol/cortex-api.sock"
-
+from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 PARTITION: dict[str, list[str]] = {
     "*": [
@@ -140,37 +137,22 @@ OVERRIDES: dict[str, list[str]] = {
 }
 
 
-class _UDSConnection:
-    """Tiny UDS HTTP client — avoids dragging in httpx for a 28-entity batch."""
+def _request(
+    client: object, method: str, path: str, body: dict | None = None
+) -> tuple[int, dict]:
+    """Issue an HTTP request via the shared httpx client; return (status, body)."""
+    import httpx
 
-    def __init__(self, socket_path: str) -> None:
-        import http.client
-        import socket
-
-        self._http_client = http.client
-        self._socket_path = socket_path
-        self._socket = socket
-
-    def _connect(self):  # type: ignore[no-untyped-def]
-        sock = self._socket.socket(self._socket.AF_UNIX, self._socket.SOCK_STREAM)
-        sock.connect(self._socket_path)
-        conn = self._http_client.HTTPConnection("localhost")
-        conn.sock = sock
-        return conn
-
-    def request(
-        self, method: str, path: str, body: dict | None = None
-    ) -> tuple[int, dict]:
-        conn = self._connect()
-        try:
-            headers = {"content-type": "application/json"} if body else {}
-            payload = json.dumps(body).encode() if body is not None else None
-            conn.request(method, path, body=payload, headers=headers)
-            resp = conn.getresponse()
-            data = resp.read()
-            return resp.status, (json.loads(data) if data else {})
-        finally:
-            conn.close()
+    assert isinstance(client, httpx.Client)
+    kwargs: dict = {}
+    if body is not None:
+        kwargs["json"] = body
+    resp = client.request(method, path, **kwargs)
+    try:
+        data = resp.json()
+    except Exception:
+        data = {}
+    return resp.status_code, data
 
 
 def _slug_for(entity_id: str) -> str:
@@ -193,13 +175,15 @@ def _applicable_for(entity_id: str) -> tuple[list[str], str]:
         return agents, f"override → {agents}"
     slug = _slug_for(entity_id)
     applicable = ["*"] if slug == "*" else [slug]
-    label = {"*": "universal", "web": "web-only", "claude-cursor": "cursor-only"}.get(
-        slug, slug
-    )
+    label = {
+        "*": "universal",
+        "claude-web": "web-only",
+        "claude-cursor": "cursor-only",
+    }.get(slug, slug)
     return applicable, label
 
 
-def _audit(client: _UDSConnection) -> int:
+def _audit(client: object) -> int:
     """Read-only drift report between live cortex state and this script.
 
     Surfaces three classes:
@@ -213,7 +197,7 @@ def _audit(client: _UDSConnection) -> int:
       - Orphan: id in PARTITION/OVERRIDES but no matching live entity
         (typically a deleted or renamed skill).
     """
-    status, body = client.request("GET", "/entities?type=agent_skill&limit=500")
+    status, body = _request(client, "GET", "/entities?type=agent_skill&limit=500")
     if status != 200:
         print(f"AUDIT FAIL: GET /entities {status} → {body}")
         return 2
@@ -238,8 +222,8 @@ def _audit(client: _UDSConnection) -> int:
     drifted: list[tuple[str, list[str] | None, list[str]]] = []
     for entity_id in sorted(partitioned & live_ids):
         expected, _label = _applicable_for(entity_id)
-        status, body = client.request(
-            "GET", f"/entities/{urllib.parse.quote(entity_id, safe=':')}"
+        status, body = _request(
+            client, "GET", f"/entities/{urllib.parse.quote(entity_id, safe=':')}"
         )
         if status != 200:
             continue
@@ -283,7 +267,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    client = _UDSConnection(CORTEX_SOCKET)
+    client = make_sync_client(DEFAULT_CORTEX_URL)
 
     if args.audit:
         return _audit(client)
@@ -299,7 +283,8 @@ def main() -> int:
     for entity_id in all_ids:
         applicable, label = _applicable_for(entity_id)
 
-        status, body = client.request(
+        status, body = _request(
+            client,
             "GET",
             f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
         )
@@ -322,7 +307,8 @@ def main() -> int:
             print(f"  WOULD {entity_id:60s}  → {applicable}  ({label})  prior={prior}")
             continue
 
-        status, body = client.request(
+        status, body = _request(
+            client,
             "PATCH",
             f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
             body={"attributes": merged},
