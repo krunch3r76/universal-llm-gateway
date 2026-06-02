@@ -435,6 +435,7 @@ tools:
     properties:
       session_id: {type: string}
       handoff_prompt: {type: string}
+      handoff_source_path: {type: string}
     required: [session_id, handoff_prompt]
   skill_uri: agent_skill:cortex
   seat_visibility: [mcp, mcp_claude, mcp_grok]
