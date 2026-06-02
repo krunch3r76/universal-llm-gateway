@@ -6,9 +6,8 @@ basic session-edge management.
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, HTTPException, Query
+from universal_logging import get_logger
 
 from ..activation import spreading_activation
 from ..belief_guard import analyze_assertion_impact
@@ -16,19 +15,24 @@ from ..db import cortex_conn
 from ..db import query as db_query
 from ..graph_utils import analyze_impact
 from ..models import (
+    ActivatedAssertionItem,
+    ActivateResponse,
     ImpactAnalysisRequest,
     ImpactAnalysisResponse,
+    ImpactedEntityItem,
+    ImpactResponse,
     TouchedAssertionItem,
 )
 
 router = APIRouter(tags=["graph"])
+logger = get_logger("cortex-api.graph")
 
 
-@router.get("/edges/impact")
+@router.get("/edges/impact", response_model=ImpactResponse)
 def impact_analysis(
     entity_id: str = Query(..., description="Seed entity for impact analysis"),
     depth: int = Query(2, ge=1, le=5, description="Max BFS depth"),
-) -> dict[str, Any]:
+) -> ImpactResponse:
     """Compute transitive dependency cascade from an entity.
 
     Follows **incoming** dependency edges (``requires``, ``depends_on``,
@@ -54,23 +58,23 @@ def impact_analysis(
     finally:
         conn.close()
 
-    return {
-        "seed_entity": result.seed_entity,
-        "depth": result.depth,
-        "impacted_entities": [
-            {
-                "entity_id": ie.entity_id,
-                "entity_name": ie.entity_name,
-                "hop_distance": ie.hop_distance,
-                "path_trace": ie.path_trace,
-                "assertion_count": ie.assertion_count,
-                "edge_types": ie.edge_types,
-                "substrates": ie.substrates,
-            }
+    return ImpactResponse(
+        seed_entity=result.seed_entity,
+        depth=result.depth,
+        impacted_entities=[
+            ImpactedEntityItem(
+                entity_id=ie.entity_id,
+                entity_name=ie.entity_name,
+                hop_distance=ie.hop_distance,
+                path_trace=ie.path_trace,
+                assertion_count=ie.assertion_count,
+                edge_types=ie.edge_types,
+                substrates=ie.substrates,
+            )
             for ie in result.impacted_entities
         ],
-        "total_impacted_assertions": result.total_impacted_assertions,
-    }
+        total_impacted_assertions=result.total_impacted_assertions,
+    )
 
 
 @router.post("/assertions/analyze-impact", response_model=ImpactAnalysisResponse)
@@ -117,7 +121,7 @@ def analyze_impact_semantic(
     )
 
 
-@router.get("/assertions/activate")
+@router.get("/assertions/activate", response_model=ActivateResponse)
 def activate(
     entity_ids: str = Query(..., description="Comma-separated seed entity IDs"),
     depth: int = Query(1, ge=1, le=3, description="Max walk depth"),
@@ -127,7 +131,7 @@ def activate(
     ),
     suppress_hubs: bool = Query(True, description="Dampen high-degree hub entities"),
     decay_factor: float = Query(0.5, ge=0.0, le=1.0, description="Score decay per hop"),
-) -> dict[str, Any]:
+) -> ActivateResponse:
     """Spreading activation — walk the graph from seed entities to find related assertions.
 
     After hybrid search retrieves initial results, call this with the seed
@@ -137,7 +141,13 @@ def activate(
     """
     seeds = [s.strip() for s in entity_ids.split(",") if s.strip()]
     if not seeds:
-        return {"seed_entities": [], "depth": depth, "activated": []}
+        return ActivateResponse(
+            seed_entities=[],
+            depth=depth,
+            hub_suppression=suppress_hubs,
+            count=0,
+            activated=[],
+        )
 
     parsed_exclude: list[int] = []
     if exclude_ids:
@@ -157,38 +167,37 @@ def activate(
             decay_factor=decay_factor,
             suppress_hubs=suppress_hubs,
         )
-        if seeds:
-            try:
-                conn.executemany(
-                    "INSERT INTO entity_access_log "
-                    "(entity_id, agent, operation, source) "
-                    "VALUES (?, 'system', 'activate', 'activate')",
-                    [(s,) for s in seeds],
-                )
-                conn.commit()
-            except Exception:
-                pass
+        try:
+            conn.executemany(
+                "INSERT INTO entity_access_log "
+                "(entity_id, agent, operation, source) "
+                "VALUES (?, 'system', 'activate', 'activate')",
+                [(s,) for s in seeds],
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.warning("activate access-log insert failed: %s", exc)
     finally:
         conn.close()
 
-    return {
-        "seed_entities": result.seed_entities,
-        "depth": result.depth,
-        "hub_suppression": result.hub_suppression,
-        "count": len(result.activated),
-        "activated": [
-            {
-                "assertion_id": a.assertion_id,
-                "entity_id": a.entity_id,
-                "claim": a.claim,
-                "confidence": a.confidence,
-                "entrenchment_score": a.entrenchment_score,
-                "activation_score": a.activation_score,
-                "hop_distance": a.hop_distance,
-                "activation_path": a.activation_path,
-                "edge_types_traversed": a.edge_types_traversed,
-                "substrates_traversed": a.substrates_traversed,
-            }
+    return ActivateResponse(
+        seed_entities=result.seed_entities,
+        depth=result.depth,
+        hub_suppression=result.hub_suppression,
+        count=len(result.activated),
+        activated=[
+            ActivatedAssertionItem(
+                assertion_id=a.assertion_id,
+                entity_id=a.entity_id,
+                claim=a.claim,
+                confidence=a.confidence,
+                entrenchment_score=a.entrenchment_score,
+                activation_score=a.activation_score,
+                hop_distance=a.hop_distance,
+                activation_path=a.activation_path,
+                edge_types_traversed=a.edge_types_traversed,
+                substrates_traversed=a.substrates_traversed,
+            )
             for a in result.activated
         ],
-    }
+    )

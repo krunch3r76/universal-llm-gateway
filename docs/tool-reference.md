@@ -231,8 +231,9 @@ Cortex knowledge system — entities, assertions, relationships, edges, journals
 | `relationships` | entity_id?, type_id?, limit? | List with names, strength |
 | `relationship_create` | source_id, target_id, type_id, role?, strength?, evidence?, chunk_id?, valid_from?, valid_until?, source_uri?, session_id?, agent? | Create structural relationship. Pass `session_id` + `agent` for provenance (nullable; recommended for new writes). |
 | `stats` | — | Dashboard counts |
-| `surface_forms` | entity_id?, mention?, mention_type?, limit? | Resolution cache |
-| `deadlines` | — | Legal deadlines |
+| `search` | query, limit?, superseded?, entity_type? | FTS5 fulltext search over assertions (claim + prospective + events). Prefer over `assertions` for natural-language queries |
+| `impact` | entity_id, depth? | Transitive reverse-dependency BFS from entity. Returns `{seed_entity, depth, impacted_entities: [{entity_id, entity_name, hop_distance, path_trace, assertion_count, edge_types, substrates}], total_impacted_assertions}`. Walks both substrates via `_DEPENDENCY_EDGE_TYPES` (`requires`, `depends_on`, `derived_from`, `evidence_for`, `extends`). |
+| `activate` | entity_ids, depth?, max_results?, exclude_ids?, suppress_hubs?, decay_factor? | Spreading activation from seed entities. Returns `{seed_entities, depth, hub_suppression, count, activated: [{assertion_id, entity_id, claim, confidence, entrenchment_score, activation_score, hop_distance, activation_path, edge_types_traversed, substrates_traversed}]}`. Walks both substrates via the full 15-type association set. `entity_ids` is comma-separated. |
 | `journal_read` | limit? | Recent session journals |
 | `journal_write` | timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, file_path? | Write journal |
 | `review_queue` | limit? | Provisional entities + flagged assertions + low-confidence + thin descriptions |

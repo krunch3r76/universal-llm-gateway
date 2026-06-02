@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from universal_logging import get_logger
 
 from .db import query
-from .edge_walk import active_edges
+from .edge_walk import active_edges, active_edges_between
 
 logger = get_logger("cortex-api.graph")
 
@@ -169,28 +169,16 @@ def _path_edges(
     (``from`` depends on ``to``).  So for consecutive path nodes [A, B] the
     edge is ``from = B, to = A``.  Unions both substrates (contract C6) and
     returns parallel ``(types, substrates)`` lists for provenance aggregation.
+    Delegates to :func:`edge_walk.active_edges_between` to avoid mirroring the
+    per-substrate active predicates here ([universal:libs-first]).
     """
-    type_ph = ",".join("?" for _ in _DEPENDENCY_EDGE_TYPES)
     types: list[str] = []
     substrates: list[str] = []
     for i in range(len(path) - 1):
         frm, to = path[i + 1], path[i]
-        rows = query(
-            conn,
-            f"SELECT DISTINCT edge_type AS etype, 'reasoning' AS substrate "
-            f"FROM session_edges "
-            f"WHERE from_node = ? AND to_node = ? AND edge_type IN ({type_ph}) "
-            f"AND valid_until IS NULL "
-            f"UNION "
-            f"SELECT DISTINCT type AS etype, 'structural' AS substrate "
-            f"FROM relationships "
-            f"WHERE from_entity = ? AND to_entity = ? AND type IN ({type_ph}) "
-            f"AND active = 1 AND valid_until IS NULL",
-            (frm, to, *_DEPENDENCY_EDGE_TYPES, frm, to, *_DEPENDENCY_EDGE_TYPES),
-        )
-        for r in rows:
-            types.append(str(r["etype"]))
-            substrates.append(str(r["substrate"]))
+        for edge in active_edges_between(conn, frm, to, types=_DEPENDENCY_EDGE_TYPES):
+            types.append(edge.edge_type)
+            substrates.append(edge.substrate)
     return types, substrates
 
 

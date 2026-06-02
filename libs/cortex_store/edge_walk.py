@@ -43,6 +43,42 @@ class ActiveEdge:
     substrate: str  # "structural" | "reasoning"
 
 
+def active_edges_between(
+    conn: sqlite3.Connection,
+    frm: str,
+    to: str,
+    *,
+    types: Sequence[str],
+) -> list[ActiveEdge]:
+    """Active edges from *frm* to *to* across both substrates, filtered to *types*.
+
+    Unlike :func:`active_edges` (node-incident, direction-aware), this is a
+    directed pair-wise query — callers that need substrate provenance along a
+    known path use this to avoid re-mirroring the per-substrate active predicates.
+    The ``neighbor`` field in each returned ``ActiveEdge`` is always *to*.
+    """
+    if not types:
+        return []
+    type_ph = ",".join("?" for _ in types)
+    types_t = tuple(types)
+    sql = (
+        f"SELECT DISTINCT edge_type AS etype, 'reasoning' AS substrate "
+        f"FROM session_edges "
+        f"WHERE from_node = ? AND to_node = ? AND edge_type IN ({type_ph}) "
+        f"AND valid_until IS NULL "
+        f"UNION "
+        f"SELECT DISTINCT type AS etype, 'structural' AS substrate "
+        f"FROM relationships "
+        f"WHERE from_entity = ? AND to_entity = ? AND type IN ({type_ph}) "
+        f"AND active = 1 AND valid_until IS NULL"
+    )
+    params = (frm, to, *types_t, frm, to, *types_t)
+    return [
+        ActiveEdge(to, str(r["etype"]), str(r["substrate"]))
+        for r in query(conn, sql, params)
+    ]
+
+
 def active_edges(
     conn: sqlite3.Connection,
     node: str,

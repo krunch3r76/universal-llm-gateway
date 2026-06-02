@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-_MIG_PATH = Path(__file__).parent / "migrations" / "048_correspondence_workflow_and_confidence.py"
+_MIG_PATH = (
+    Path(__file__).parent
+    / "migrations"
+    / "048_correspondence_workflow_and_confidence.py"
+)
 _spec = importlib.util.spec_from_file_location(
     "migration_048_correspondence_workflow_and_confidence", _MIG_PATH
 )

@@ -188,9 +188,7 @@ def test_derive_session_id_from_jsonl_start_uses_mtime(
     jsonl = transcripts_root / "uuid" / "uuid.jsonl"
     jsonl.parent.mkdir(parents=True)
     jsonl.write_text("{}\n")
-    derived = derive_session_id_from_jsonl_start(
-        jsonl_path=jsonl, agent="cursor"
-    )
+    derived = derive_session_id_from_jsonl_start(jsonl_path=jsonl, agent="cursor")
     assert re.fullmatch(r"cursor-\d{4}-\d{2}-\d{2}-\d{4}", derived)
 
 

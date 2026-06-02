@@ -17,29 +17,28 @@ from dataclasses import dataclass
 
 from .db import query
 from .edge_walk import active_edges
+from .graph_utils import _DEPENDENCY_EDGE_TYPES
 
 # Association type set spanning both substrates (cortex-spec §§8–9, migration
 # 041; thread 1174). `activate` is associative retrieval (relatedness spreading),
-# so it walks every knowledge-association type on either substrate — making this
-# module's former "all active edge types" claim genuinely true. `blocked_by` is
-# EXCLUDED (uniform invariant with analyze_impact): it is transient
-# workflow/scheduling state, not knowledge association; a "what is waiting on
-# this?" view is an explicit opt-in, never the default spread. Reasoning-only
-# types (contradicts, supersedes, caused_by, analogous_to) match no structural
-# rows and vice versa (child_of, references, …); the shared set is safe for both
-# halves since neither substrate validates against a type registry.
+# so it walks every knowledge-association type on either substrate.
+#
+# Composition: _DEPENDENCY_EDGE_TYPES ⊆ _ACTIVATE_EDGE_TYPES is principled —
+# dependency is a kind of knowledge association — so we encode it rather than
+# coincidentally duplicating the 5 shared members. `blocked_by` is EXCLUDED
+# uniformly from both sets: workflow/scheduling state is never a default spread
+# (thread 1174 turn 7). Reasoning-only types (contradicts, supersedes, caused_by,
+# analogous_to) match no structural rows and vice versa (child_of, references, …);
+# the shared set is safe for both halves since neither substrate validates against
+# a type registry.
 _ACTIVATE_EDGE_TYPES = (
+    *_DEPENDENCY_EDGE_TYPES,
     "relates_to",
     "related_to",
     "references",
     "child_of",
     "belongs_to",
     "archives_to",
-    "depends_on",
-    "requires",
-    "derived_from",
-    "evidence_for",
-    "extends",
     "supersedes",
     "caused_by",
     "analogous_to",
@@ -78,7 +77,7 @@ def spreading_activation(
     exclude_ids: list[int] | None = None,
     decay_factor: float = 0.5,
     suppress_hubs: bool = True,
-    hub_threshold_pct: float = 0.30,
+    hub_threshold_pct: float = 0.03,
 ) -> ActivationResult:
     """BFS from seed entities over association edges (both substrates), scoring by entrenchment x decay.
 
@@ -94,6 +93,11 @@ def spreading_activation(
     exceeding *hub_threshold_pct* of total active edges get their contribution
     dampened by ``1 / log(1 + degree)``.  Degree and the total-edge denominator
     both span both substrates so the IDF threshold is coherent with the walk.
+
+    CF-5 probe (2026-06-02, master @ af10e56e): total_active_edges=8277,
+    max_node_degree=257 (3.1% of total).  The prior default of 0.30 was
+    unreachable in any real graph; retuned to 0.03 so the highest-degree nodes
+    actually receive the penalty.
     """
     depth = max(1, min(depth, 3))
     exclude_set = set(exclude_ids) if exclude_ids else set()

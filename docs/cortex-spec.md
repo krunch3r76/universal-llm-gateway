@@ -277,6 +277,7 @@ primitive walks:
 | Reverse-dependency BFS | `impact` | **both** — `relationships` ∪ `session_edges` |
 | Subgraph render | `render_subgraph` | `relationships` only (structural) |
 | Reasoning-edge walk | `edge_traverse` | `session_edges` only (reasoning) |
+| Write-path contradiction | `check_contradictions` | `session_edges` only (reasoning — by design; see below) |
 | Spreading activation | `activate` | **both** — `relationships` ∪ `session_edges` |
 | Entity read / card | `entity_get`, `card` | both (surfaced separately) |
 | Semantic pre-write impact | `analyze_impact` | neither — FTS5 + vector over claim text, not an edge walk |
@@ -317,15 +318,31 @@ each impacted entity was found on — `structural` (consensus ground truth) and/
 `reasoning` (session-attributed); a dependency present on both collapses to a
 single impacted entity whose provenance carries **both** substrate tags.
 
-**Known gap.** `check_contradictions` — the edge-based write-path contradiction
-check in `graph_utils` that runs at `POST /assertions` — reads `session_edges`
-only and walks the `contradicts` type. `contradicts` is registered on **both**
-substrates (a reasoning edge type *and* a structural `relationship_type`), so a
-`contradicts` link created via `relationship_create` would be invisible to it.
-This is currently *latent* — no structural `contradicts` rows exist live today —
-but it is the last graph-traversal primitive not yet reconciled across both
-substrates. (`render_subgraph` is structural-only and `edge_traverse` is
-reasoning-only **by design** — these are entry-point contracts, not gaps.)
+**Provenance field semantics.** `impact.substrates` is **aggregated provenance** —
+for each impacted entity, `_path_edges` recomputes all edge rows along the path
+and unions both substrates, so a dual-mirrored edge contributes both tags.
+`activate.substrates_traversed` is a **per-hop path trace** — each entry records
+the substrate of the edge actually traversed; the BFS visited-set short-circuits
+the second substrate row for a mirrored neighbor, so first-seen is the correct
+trace.  The two fields answer different questions and their asymmetry is
+intentional, not a coverage gap.
+
+**Per-primitive substrate contract.** `check_contradictions` — the write-path
+belief-contradiction check in `graph_utils` at `POST /assertions` — reads
+`session_edges` only and walks the `contradicts` type **by design**, not by
+omission.  The structural and reasoning `contradicts` are homonymous but
+semantically distinct: migration 007 registers structural `contradicts` as one of
+the eight event-to-event relation types in the event-chain infrastructure (sibling
+to `precedes`, `causes`, `enables`, `elaborates`, `co_occurs`, `supersedes`,
+`responds_to`), expressing tension between *events*, not between beliefs or
+assertions.  The reasoning `contradicts` on `session_edges` is the AGM-adjacent
+belief-tension type that `check_contradictions` is designed to detect.  Unioning
+both substrates would conflate these concepts, causing the belief-contradiction
+check to consume event-chain tension as if it were assertion conflict — a semantic
+error, not a coverage fix.  This substrate boundary is documented as a
+per-primitive contract (cortex assertion 11854).  (`render_subgraph` is
+structural-only and `edge_traverse` is reasoning-only — both are entry-point
+contracts by the same reasoning.)
 
 ---
 

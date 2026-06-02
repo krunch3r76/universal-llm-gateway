@@ -79,6 +79,12 @@ from .extraction import (
     ExtractionRunComplete,
     ExtractionRunItem,
 )
+from .graph import (
+    ActivatedAssertionItem,
+    ActivateResponse,
+    ImpactedEntityItem,
+    ImpactResponse,
+)
 from .journals import (
     SessionCloseRequest,
     SessionCloseResponse,
@@ -176,6 +182,11 @@ __all__ = [
     "ExtractionCheckResponse",
     "ExtractionRunComplete",
     "ExtractionRunItem",
+    # graph traversal
+    "ActivatedAssertionItem",
+    "ActivateResponse",
+    "ImpactedEntityItem",
+    "ImpactResponse",
     # journals
     "SessionCloseRequest",
     "SessionCloseResponse",

@@ -192,3 +192,72 @@ def test_hub_degree_counts_both_substrates() -> None:
     assert _entity_edge_degree(conn, hub) == 5  # 3 structural + 2 reasoning
     assert _total_active_edge_count(conn) == 5
     conn.close()
+
+
+def test_dual_substrate_mirror_records_first_seen() -> None:
+    """CF-4: activate records first-seen substrate for a mirrored neighbor.
+
+    This is BY DESIGN (cortex-spec §9): ``substrates_traversed`` is a
+    per-hop *path trace* (first-seen substrate per visited neighbor), not the
+    aggregated provenance that ``impact.substrates`` carries.  For a neighbor
+    mirrored on both substrates, the BFS visited-set short-circuits the second
+    substrate row — recording only the one whose edge was processed first.
+    """
+    conn = _conn()
+    seed, neighbor = "entity:seed", "entity:mirror-neighbor"
+    _entity(conn, seed)
+    _entity(conn, neighbor)
+    _assertion(conn, neighbor, "mirrored assertion")
+    # mirror the edge on both substrates
+    _rel(conn, neighbor, seed, "requires")
+    _session_edge(conn, neighbor, seed, "requires")
+    conn.commit()
+
+    result = spreading_activation(conn, [seed], depth=1, suppress_hubs=False)
+    assert len(result.activated) == 1
+    a = result.activated[0]
+    assert a.entity_id == neighbor
+    # path trace records exactly one substrate (first-seen), not both
+    assert len(a.substrates_traversed) == 1
+    conn.close()
+
+
+def test_hub_penalty_dampens_score() -> None:
+    """CF-5: hub penalty fires and dampens score when degree exceeds threshold fraction.
+
+    Validates the integration path (threshold → degree check → penalty applied):
+    a hub entity with many spokes gets a lower activation_score than a same-
+    entrenchment normal entity that is below the degree threshold.
+    Uses hub_threshold_pct=0.5 so the threshold fires cleanly on a synthetic
+    graph (hub degree 31 > int(32 * 0.5) = 16).
+    """
+    conn = _conn()
+    seed, hub, normal = "entity:seed", "entity:hub", "entity:normal"
+    _entity(conn, seed)
+    _entity(conn, hub)
+    _entity(conn, normal)
+    _assertion(conn, hub, "hub claim", score=0.9)
+    _assertion(conn, normal, "normal claim", score=0.9)
+    _session_edge(conn, seed, hub, "relates_to")
+    _session_edge(conn, seed, normal, "relates_to")
+    # give hub many spokes so degree > int(total * 0.5)
+    for i in range(30):
+        _entity(conn, f"entity:spoke{i}")
+        _session_edge(conn, hub, f"entity:spoke{i}", "relates_to")
+    # total = 2 (seed→hub, seed→normal) + 30 (hub→spokes) = 32
+    # threshold = int(32 * 0.5) = 16; hub degree ≈ 31 > 16 → penalty fires
+    conn.commit()
+
+    result = spreading_activation(
+        conn, [seed], depth=1, suppress_hubs=True, hub_threshold_pct=0.5
+    )
+    hub_scores = [a.activation_score for a in result.activated if a.entity_id == hub]
+    normal_scores = [
+        a.activation_score for a in result.activated if a.entity_id == normal
+    ]
+    assert hub_scores, "hub must appear in activated"
+    assert normal_scores, "normal must appear in activated"
+    assert hub_scores[0] < normal_scores[0], (
+        "hub score must be dampened vs equally-entrenched normal"
+    )
+    conn.close()
