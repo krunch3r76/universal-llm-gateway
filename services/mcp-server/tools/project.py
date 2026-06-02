@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,8 +28,20 @@ from typing import TYPE_CHECKING, Any, cast
 
 from mcp_events import record
 
-from ._file_helpers import read_file_result
+from ._file_helpers import load_searchable_text, read_file_result
+from ._search_helpers import (
+    SEARCH_BINARY_SUFFIXES,
+    SearchBudgetState,
+    load_text_for_search_file,
+)
 from .file_editor import perform_edit
+from .filesystem._ops_search import (
+    DEFAULT_MAX_RESULTS,
+    SEARCH_CONVERTED_BUDGET_S,
+    SEARCH_CONVERTED_FILE_CAP,
+    compile_pattern,
+    search_in_text,
+)
 from .filesystem._paths import SANDBOX_ROOT, trash_destination
 
 if TYPE_CHECKING:
@@ -46,52 +57,9 @@ _PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower()
     "on",
 }
 
-_BINARY_SUFFIXES = {
-    ".pyc",
-    ".pyo",
-    ".so",
-    ".dll",
-    ".dylib",
-    ".o",
-    ".a",
-    ".whl",
-    ".egg",
-    ".gz",
-    ".tar",
-    ".zip",
-    ".bz2",
-    ".xz",
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".bmp",
-    ".ico",
-    ".webp",
-    ".svg",
-    ".mp3",
-    ".mp4",
-    ".wav",
-    ".avi",
-    ".mov",
-    ".bin",
-    ".dat",
-    ".db",
-    ".sqlite",
-    ".sqlite3",
-    ".pkl",
-    ".pickle",
-    ".npy",
-    ".npz",
-    ".gguf",
-    ".ggml",
-    ".safetensors",
-    ".ttf",
-    ".otf",
-    ".woff",
-    ".woff2",
-    ".pdf",
-}
+_BINARY_SUFFIXES = (
+    SEARCH_BINARY_SUFFIXES  # listing/write gate; search uses _search_helpers
+)
 
 _WRITABLE_SUFFIXES = {
     ".py",
@@ -549,9 +517,9 @@ def register_project_tools(mcp: FastMCP) -> None:
     def search_project_files(
         pattern: str,
         directory: str = "",
-        max_results: int = 50,
+        max_results: int = DEFAULT_MAX_RESULTS,
         include_untracked: bool = True,
-    ) -> dict[str, list[dict[str, str | int]] | bool]:
+    ) -> dict[str, Any]:
         """Search for an exact regex pattern across project files.
 
         This is literal/regex text search — use rag(op="search", arguments={...})
@@ -561,7 +529,13 @@ def register_project_tools(mcp: FastMCP) -> None:
         like tmp/, prompts/, build artifacts). Set include_untracked=False
         to restrict to git-tracked files only.
 
-        Binary files are always skipped.
+        Converted documents (PDF/DOCX/ODT/EML/HTML) are searched via the
+        shared sidecar-first text loader — converted ≠ truly-binary
+        (narrows decision:mcp-list-include-binary-paths / agent-bus:188).
+        Converted-file extraction is bounded by an aggregate wall-clock budget
+        and a per-call converted-file cap; files beyond either bound are
+        reported in ``skipped_converted``. Truly-binary files (images,
+        archives, compiled artifacts) are skipped.
 
         Args:
             pattern: Regex pattern to search for (case-sensitive).
@@ -570,59 +544,92 @@ def register_project_tools(mcp: FastMCP) -> None:
             include_untracked: If True, search all files (not just git-tracked).
 
         Returns:
-            {"matches": [{"file": "...", "line": N, "text": "..."}, ...],
-             "truncated": false}
+            Unified search envelope with ``mode`` ``file`` or ``directory``.
         """
+        compiled = compile_pattern(pattern)
+        resolved_root = _PROJECT_ROOT.resolve()
+
         if directory:
             target = _safe_project_path(directory)
+            if not target.exists():
+                raise FileNotFoundError(f"Path not found: {directory!r}")
+            if target.is_file():
+                text, method = load_searchable_text(target)
+                matches: list[dict[str, str | int]] = []
+                truncated = search_in_text(
+                    text,
+                    compiled,
+                    matches,
+                    rel_path=None,
+                    max_results=max_results,
+                )
+                extraction_method = method or "native_text"
+                logger.info(
+                    "search_project_files: pattern=%r file=%s → %d matches%s",
+                    pattern,
+                    directory,
+                    len(matches),
+                    " (truncated)" if truncated else "",
+                )
+                return {
+                    "path": directory,
+                    "mode": "file",
+                    "matches": matches,
+                    "truncated": truncated,
+                    "skipped_converted": 0,
+                    "extraction_method": extraction_method,
+                }
             if not target.is_dir():
-                raise ValueError(f"Path is not a directory: {directory!r}")
+                raise ValueError(f"Path is not a file or directory: {directory!r}")
 
-        try:
-            compiled = re.compile(pattern)
-        except re.error as e:
-            raise ValueError(f"Invalid regex pattern: {e}")
-
-        resolved_root = _PROJECT_ROOT.resolve()
+        # Enumeration layer (F2/188): skip_binary=False so converted formats
+        # enter the candidate list; load_text_for_search_file filters per file.
         if include_untracked:
-            tracked, _, _ = _filesystem_listing(directory)
+            candidates, _, _ = _filesystem_listing(directory, skip_binary=False)
         else:
-            tracked = _git_tracked_files(directory)
-        matches: list[dict[str, str | int]] = []
+            candidates = _git_tracked_files(directory)
 
-        for rel_path in tracked:
-            if _is_binary(Path(rel_path)):
-                continue
+        matches = []
+        state = SearchBudgetState()
+        truncated = False
+
+        for rel_path in candidates:
             abs_path = resolved_root / rel_path
-            try:
-                text = abs_path.read_text(encoding="utf-8", errors="replace")
-            except (OSError, PermissionError) as e:
-                logger.warning("Failed to read file %s for search: %s", abs_path, e)
+            text, _method = load_text_for_search_file(
+                abs_path,
+                state,
+                budget_s=SEARCH_CONVERTED_BUDGET_S,
+                file_cap=SEARCH_CONVERTED_FILE_CAP,
+            )
+            if text is None:
                 continue
 
-            for line_num, line in enumerate(text.splitlines(), start=1):
-                if compiled.search(line):
-                    matches.append(
-                        {
-                            "file": rel_path,
-                            "line": line_num,
-                            "text": line.rstrip(),
-                        }
-                    )
-                    if len(matches) >= max_results:
-                        break
-            if len(matches) >= max_results:
+            if search_in_text(
+                text, compiled, matches, rel_path=rel_path, max_results=max_results
+            ):
+                truncated = True
                 break
 
-        truncated = len(matches) >= max_results
         logger.info(
-            "search_project_files: pattern=%r dir=%s → %d matches%s",
+            "search_project_files: pattern=%r dir=%s → %d matches "
+            "(converted=%d, skipped_converted=%d)%s",
             pattern,
             directory or "/",
             len(matches),
+            state.converted_extracted,
+            state.skipped_converted,
             " (truncated)" if truncated else "",
         )
-        return {"matches": matches, "truncated": truncated}
+        return {
+            "path": directory,
+            "mode": "directory",
+            "matches": matches,
+            "truncated": truncated,
+            "skipped_converted": state.skipped_converted,
+            "extraction_method": "+".join(sorted(state.methods))
+            if state.methods
+            else "native_text",
+        }
 
     @mcp.tool(title="Write Project File")
     def write_project_file(path: str, content: str) -> dict[str, str]:

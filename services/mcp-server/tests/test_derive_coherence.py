@@ -49,4 +49,6 @@ def test_ci_registered_tools_match_canonical_or_allowlist() -> None:
         allowlist=INTENTIONAL_OVERFLOW,
         canonical_yaml_path=_CANONICAL,
     )
-    assert drift == [], f"undeclared registered tools (add canonical or allowlist): {drift}"
+    assert drift == [], (
+        f"undeclared registered tools (add canonical or allowlist): {drift}"
+    )

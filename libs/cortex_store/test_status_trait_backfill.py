@@ -1,0 +1,122 @@
+"""Tests for hybrid Phase-2 trait backfill (scope C)."""
+
+from __future__ import annotations
+
+import importlib.util
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from cortex_store.status_trait_backfill import (
+    planned_trait_updates,
+    run_hybrid_trait_backfill,
+)
+
+_MIG_PATH = (
+    Path(__file__).parent / "migrations" / "050_status_trait_normalization_phase0.py"
+)
+_spec = importlib.util.spec_from_file_location(
+    "migration_050_status_trait_normalization_phase0", _MIG_PATH
+)
+assert _spec is not None and _spec.loader is not None
+migration_050 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(migration_050)
+
+
+@pytest.fixture()
+def conn() -> sqlite3.Connection:
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    c.executescript(
+        """
+        CREATE TABLE entities (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            name TEXT,
+            status TEXT,
+            workflow_state TEXT,
+            lifecycle TEXT,
+            confidence_band TEXT,
+            adoption TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        """
+    )
+    migration_050.migrate(c)
+    return c
+
+
+def test_planned_decision_provisional_maps_adoption_and_band() -> None:
+    updates = planned_trait_updates(
+        "decision",
+        "provisional",
+        confidence_band=None,
+        lifecycle=None,
+        adoption=None,
+    )
+    assert updates == {"confidence_band": "provisional", "adoption": "proposed"}
+
+
+def test_planned_decision_confirmed_maps_adopted() -> None:
+    updates = planned_trait_updates(
+        "decision",
+        "confirmed",
+        confidence_band=None,
+        lifecycle=None,
+        adoption=None,
+    )
+    assert updates == {"confidence_band": "confirmed", "adoption": "adopted"}
+
+
+def test_planned_deprecated_lifecycle_only() -> None:
+    updates = planned_trait_updates(
+        "project",
+        "deprecated",
+        confidence_band=None,
+        lifecycle=None,
+        adoption=None,
+    )
+    assert updates == {"lifecycle": "deprecated"}
+
+
+def test_idempotent_skips_when_traits_present(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status, confidence_band, adoption) "
+        "VALUES ('decision:d', 'decision', 'D', 'confirmed', 'confirmed', 'adopted')"
+    )
+    counts = run_hybrid_trait_backfill(
+        conn, types=frozenset({"decision"}), dry_run=False
+    )
+    assert counts.entities_touched == 0
+
+
+def test_backfill_does_not_mutate_status(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status) "
+        "VALUES ('agent_skill:s', 'agent_skill', 'S', 'confirmed')"
+    )
+    run_hybrid_trait_backfill(conn, types=frozenset({"agent_skill"}), dry_run=False)
+    row = conn.execute(
+        "SELECT status, confidence_band, lifecycle, adoption FROM entities "
+        "WHERE id = 'agent_skill:s'"
+    ).fetchone()
+    assert row["status"] == "confirmed"
+    assert row["confidence_band"] == "confirmed"
+    assert row["lifecycle"] is None
+    assert row["adoption"] is None
+
+
+def test_dry_run_no_writes(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status) "
+        "VALUES ('todo:t', 'todo', 'T', 'unsubstantiated')"
+    )
+    counts = run_hybrid_trait_backfill(conn, types=frozenset({"todo"}), dry_run=True)
+    assert counts.entities_touched == 1
+    assert counts.confidence_band == 1
+    row = conn.execute(
+        "SELECT confidence_band FROM entities WHERE id = 'todo:t'"
+    ).fetchone()
+    assert row["confidence_band"] is None

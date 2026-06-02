@@ -31,6 +31,7 @@ from ...models import (
 )
 from ...near_dup import check_near_duplicate, record_near_duplicate
 from ...predicate_extract_dispatch import dispatch_predicate_extract_background
+from ...substantiation_sync import recompute_entity_substantiation_status
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
@@ -329,6 +330,12 @@ def create_assertion(
                 # append note alongside any existing review state.
                 if normalize_result and normalize_result.get("requires_human_review"):
                     _flag_predicate_normalize_review(conn, new_id, normalize_result)
+
+                # Fork D write side: a new backing assertion may change the
+                # entity's derived confidence-axis status. Recompute inside the
+                # same transaction so the label tracks auditor-validatability
+                # without a hand-set entity_update (which Fork D rejects).
+                recompute_entity_substantiation_status(conn, body.entity_id)
 
             conn.commit()
 

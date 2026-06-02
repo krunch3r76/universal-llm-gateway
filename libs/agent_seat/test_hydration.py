@@ -37,11 +37,19 @@ async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None
             "/session-journals": [
                 {
                     "agent": "gatherer",
-                    "summary": "last session was productive",
+                    "summary": "stale journal open items",
                     "timestamp": "2026-04-19T12:00:00Z",
                     "open_items": ["verify X", "ship Y"],
                 }
             ],
+            "/boot-continuity": {
+                "last_session": {
+                    "agent": "gatherer",
+                    "summary": "last session was productive",
+                    "timestamp": "2026-04-19T12:00:00Z",
+                    "open_items": ["reconciled-only"],
+                },
+            },
             "/deadlines": [{"deadline_date": "2026-04-25", "deadline_name": "Filing"}],
             "/staging": [{"id": 1}, {"id": 2}],
             "/boot-todos": [
@@ -74,6 +82,8 @@ async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Agent Bus" in card
     assert "Review Queue" in card
     assert "Last Session" in card and "productive" in card
+    assert "reconciled-only" in card
+    assert "verify X" not in card
     assert "Todos" in card and "todo:foo" in card
     assert "Your Notes" in card
 
@@ -84,6 +94,7 @@ async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None
 
     # Parallel fetch actually called the expected endpoints.
     assert any("session-journals" in c for c in cortex_fake.calls)
+    assert any("boot-continuity" in c for c in cortex_fake.calls)
     assert any("boot-todos" in c for c in cortex_fake.calls)
     assert any("threads" in c for c in bus_fake.calls)
 

@@ -7,8 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Query
 
 from ...compaction import POINTER_SQL_LIKE
+from ...confidence_field import lifecycle_not_value_sql_predicate
 from ...db import cortex_conn
 from ...db import query as db_query
+
+_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated", "e")
 
 router = APIRouter(tags=["boot"])
 
@@ -61,7 +64,7 @@ _RECENT_MENTIONS_DEFAULT_EXCLUDE = (
 #   [N+1] days_arg       — HAVING: entity created_at > window
 #   [N+2] include_flag
 #   [N+3] limit
-_RECENT_MENTIONS_SQL = """
+_RECENT_MENTIONS_SQL = f"""
     SELECT
         e.id AS entity_id,
         e.name AS entity_name,
@@ -88,8 +91,8 @@ _RECENT_MENTIONS_SQL = """
             e.created_at > datetime('now', ?)
             OR a.id IS NOT NULL
           )
-      AND (e.status IS NULL OR e.status != 'deprecated')
-      {type_filter}
+      AND {_DEPRECATED_EXCLUDE}
+      {{type_filter}}
     GROUP BY e.id
     HAVING (
         e.created_at > datetime('now', ?)
@@ -163,6 +166,8 @@ def get_boot_recent_mentions(
         days_arg,  # enriched_count subquery: created_at <= window
         days_arg,  # LEFT JOIN: created_at > window
         days_arg,  # WHERE: entity created_at > window
+        "deprecated",
+        "deprecated",  # lifecycle_not_value predicate (trait + status fallback)
     ]
     if excluded:
         placeholders = ",".join("?" * len(excluded))

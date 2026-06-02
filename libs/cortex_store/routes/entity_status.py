@@ -34,6 +34,7 @@ from ..status_models import (
     ThreadReference,
     TodoReference,
 )
+from ..status_trait_read import apply_option_c_read_projection
 from .assertions import _ASSERTION_COLS
 
 logger = get_logger("cortex-api.entity_status")
@@ -149,7 +150,7 @@ def get_entity_status(
             conn,
             "SELECT id, name, "
             "json_extract(attributes, '$.priority') as priority "
-            "FROM entities WHERE type = 'todo' AND status = 'confirmed' "
+            "FROM entities WHERE type = 'todo' "
             "AND workflow_state = 'open' "
             "AND json_extract(attributes, '$.domain') = ?",
             (entity_slug,),
@@ -237,15 +238,21 @@ def get_entity_status(
         session_mention_count=len(recent_sessions),
     )
 
+    entity_read = apply_option_c_read_projection(
+        decode_row(entity_row, _ENTITY_JSON_FIELDS)
+    )
     return EntityStatusResponse(
         entity=StatusEntity(
-            id=entity_row["id"],
-            type=entity_row["type"],
-            name=entity_row["name"],
-            description=entity_row.get("description"),
-            status=entity_row.get("status"),
-            aliases=entity_row.get("aliases"),
-            attributes=entity_row.get("attributes"),
+            id=str(entity_read["id"]),
+            type=str(entity_read["type"]),
+            name=str(entity_read["name"]),
+            description=entity_read.get("description"),
+            status=entity_read.get("status"),
+            lifecycle=entity_read.get("lifecycle"),
+            confidence_band=entity_read.get("confidence_band"),
+            adoption=entity_read.get("adoption"),
+            aliases=entity_read.get("aliases"),
+            attributes=entity_read.get("attributes"),
         ),
         freshness=freshness,
         active_assertions=active_assertions,

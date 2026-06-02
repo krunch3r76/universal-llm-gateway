@@ -262,8 +262,12 @@ async def hydrate_agent(
     todo_qs = urlencode({"limit": 15})
     skills_qs = urlencode({"type": "agent_skill", "limit": 50})
 
+    continuity_qs = urlencode({"agent": normalized_agent})
     tasks: dict[str, asyncio.Task[Any]] = {
         "sessions": asyncio.create_task(_cortex_get(f"/session-journals?{session_qs}")),
+        "continuity": asyncio.create_task(
+            _cortex_get(f"/boot-continuity?{continuity_qs}"),
+        ),
         "threads": asyncio.create_task(_bus_get("/threads?status=active")),
         "unread_turns": asyncio.create_task(_bus_get(f"/turns?{unread_qs}")),
         "todos": asyncio.create_task(_cortex_get(f"/boot-todos?{todo_qs}")),
@@ -307,6 +311,14 @@ async def hydrate_agent(
         continuation_md, continuation_id = await continuation_task
 
     sessions = _safe_list(raw.get("sessions"))
+    continuity_raw = raw.get("continuity")
+    last_session: dict[str, Any] | None = None
+    if isinstance(continuity_raw, dict):
+        ls = continuity_raw.get("last_session")
+        if isinstance(ls, dict):
+            last_session = ls
+    if last_session is None and sessions and isinstance(sessions[0], dict):
+        last_session = sessions[0]
     deadlines = _safe_list(raw.get("deadlines"))
     threads = _safe_list(raw.get("threads"), "threads")
     unread_turns = _safe_list(raw.get("unread_turns"), "turns")
@@ -331,6 +343,7 @@ async def hydrate_agent(
     briefing = _render_briefing(
         agent,
         sessions=sessions,
+        last_session=last_session,
         deadlines=deadlines,
         todos=todos,
         unread_count=len(unread_turns),

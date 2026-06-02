@@ -14,6 +14,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from .confidence_field import lifecycle_not_value_sql_predicate
 from .db import query
 from .scoring import (
     batch_contextual,
@@ -25,6 +26,8 @@ from .scoring import (
 )
 
 logger = get_logger("cortex-api.salience")
+
+_NOT_REAPED = lifecycle_not_value_sql_predicate("reaped")
 
 # Per-persona salience weights: (temporal, structural, contextual, frequency)
 PERSONA_WEIGHTS: dict[str, tuple[float, float, float, float]] = {
@@ -186,10 +189,11 @@ def compute_all_salience(
     else:
         entities = query(
             conn,
-            "SELECT id, type, name, attributes FROM entities "
-            "WHERE status != 'reaped' AND NOT ("
+            f"SELECT id, type, name, attributes FROM entities "
+            f"WHERE {_NOT_REAPED} AND NOT ("
             "  type = 'todo' AND workflow_state != 'open'"
             ")",
+            ("reaped", "reaped"),
         )
 
     if not entities:

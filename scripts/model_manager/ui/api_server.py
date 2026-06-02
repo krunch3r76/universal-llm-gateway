@@ -195,7 +195,9 @@ class ManageAPIServer:
         )
 
         try:
-            result = await execute(self._controller, method, service, params)
+            result = await execute(
+                self._controller, method, service, params, event_bus=self._event_bus
+            )
         except ValueError as exc:
             duration = round(time.monotonic() - t0, 3)
             await self._event_bus.publish(

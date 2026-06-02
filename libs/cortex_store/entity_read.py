@@ -24,6 +24,7 @@ from .models import (
     RelationshipItem,
 )
 from .relationship_sql import FROM_CLAUSE, SELECT_COLUMNS
+from .status_trait_read import apply_option_c_read_projection
 from .routes.assertions import _ASSERTION_COLS
 from .routes.edges import _EDGE_COLS
 
@@ -128,8 +129,9 @@ def get_entity_impl(
     relationships = [RelationshipItem(**row) for row in rel_rows]
     edges = [EdgeItem(**row) for row in edge_rows]
     hints = detect_expired_unresolved([a.model_dump() for a in assertions])
+    detail_row = apply_option_c_read_projection(decode_row(entity, ENTITY_JSON_FIELDS))
     return EntityDetail(
-        **decode_row(entity, ENTITY_JSON_FIELDS),
+        **detail_row,
         assertions=assertions,
         relationships=relationships,
         reasoning_edges=edges,

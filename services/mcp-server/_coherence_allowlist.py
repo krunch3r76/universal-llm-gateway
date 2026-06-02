@@ -57,7 +57,6 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "openai_imagine",
         "view_image",
         # Cortex extended ops not yet promoted to canonical flat shapes
-        "cortex_boot",
         "cortex_chunk_create",
         "cortex_chunk_get",
         "cortex_staging_list",

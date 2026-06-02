@@ -49,12 +49,11 @@ def server_state() -> dict:
     }
 
 
-# Phase D promotes pipeline/rag/grokbuild/observability/manage to primary (11-tool
+# Phase D promotes pipeline/rag/grokbuild/observability/manage to primary (14-domain
 # catalog); tool_search manifest covers overflow/demoted tools only.
 # frontier_dispatch/team_dispatch promoted to PRIMARY via standalone domains
 # (thread 1146/1167) — no longer in the overflow manifest.
 _EXPECTED_DEMOTED = {
-    "cortex_boot",
     "web_fetch",
     "boot_inspect",
     "model_status",
@@ -99,9 +98,13 @@ GOLDEN_QUERIES: list[tuple[str, str]] = [
     ("model status", "model_status"),
     ("query events", "query_observability_preview"),
     ("pipeline consult", "pipeline_consult"),
-    # P2 (Phase A) — cortex boot session warmup should surface cortex_boot.
-    ("cortex boot", "cortex_boot"),
 ]
+
+
+def test_cortex_boot_is_primary_not_overflow(server_state: dict) -> None:
+    """cortex_boot promoted to primary 2026-06-02 — not in overflow manifest."""
+    assert "cortex_boot" in server_state["primary"]
+    assert "cortex_boot" not in server_state["manifest"]
 
 
 @pytest.mark.parametrize("query,expected_top", GOLDEN_QUERIES)

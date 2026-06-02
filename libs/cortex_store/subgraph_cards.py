@@ -13,6 +13,7 @@ from typing import Any
 
 from .card import get_entity_card
 from .db import json_decode, query
+from .status_trait_read import synthesize_status_display
 
 
 class CardBuildError(Exception):
@@ -66,10 +67,17 @@ def augment_entity_columns(
     """
     if not visited_ids:
         return {}, {}
+    table_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
+    }
+    select_cols = ["id", "description", "status"]
+    for col in ("lifecycle", "confidence_band", "adoption"):
+        if col in table_cols:
+            select_cols.append(col)
     ph = ",".join("?" for _ in visited_ids)
     rows = query(
         conn,
-        f"SELECT id, description, status FROM entities WHERE id IN ({ph})",
+        f"SELECT {', '.join(select_cols)} FROM entities WHERE id IN ({ph})",
         tuple(visited_ids),
     )
     descriptions: dict[str, str] = {}
@@ -77,7 +85,8 @@ def augment_entity_columns(
     for row in rows:
         eid = str(row["id"])
         descriptions[eid] = str(row["description"] or "")
-        statuses[eid] = str(row["status"] or "")
+        display = synthesize_status_display(row)
+        statuses[eid] = display if display is not None else ""
     return descriptions, statuses
 
 

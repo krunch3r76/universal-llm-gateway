@@ -9,6 +9,8 @@ from fastapi import APIRouter, Query
 
 from ...db import cortex_conn
 from ...db import query as db_query
+from ...open_items.reconcile import reconcile_open_items
+from ...open_items.resolution_index import fetch_resolution_index_records
 
 router = APIRouter(tags=["boot"])
 
@@ -81,6 +83,13 @@ def get_boot_continuity(
     agent: str = Query(
         ..., description="Agent whose latest session continuity to render"
     ),
+    omit_resolved: bool = Query(
+        True,
+        description=(
+            "When true, drop open_items reconciled against recently-resolved "
+            "work; when false, prefix matched items with [RESOLVED] for audit"
+        ),
+    ),
 ) -> dict[str, Any]:
     """Return last-session continuity context for boot cards (handoff omitted)."""
     conn = cortex_conn()
@@ -130,13 +139,19 @@ def get_boot_continuity(
             if earlier:
                 hints.append("prior_session_id_omitted")
 
+        raw_open_items = _decode_json_list(row.get("open_items"))
+        resolved = fetch_resolution_index_records(conn)
+        open_items = reconcile_open_items(
+            raw_open_items, resolved, omit_resolved=omit_resolved
+        )
+
         return {
             "last_session": {
                 "session_id": row["session_id"],
                 "agent": row["agent"],
                 "timestamp": row["timestamp"],
                 "summary": row["summary"],
-                "open_items": _decode_json_list(row.get("open_items")),
+                "open_items": open_items,
                 "transcript_entity_id": transcript_entity_id,
             },
             "continuity_chain": continuity_chain,

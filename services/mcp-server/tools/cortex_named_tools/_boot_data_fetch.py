@@ -58,7 +58,7 @@ def _fetch_async_dispatches_from_events(agent: str) -> list[dict[str, Any]]:
             )
             resp.raise_for_status()
             data = resp.json()
-    except (httpx.RequestError, httpx.HTTPError, ValueError) as exc:
+    except (httpx.HTTPError, ValueError) as exc:
         logger.debug("async dispatch event query failed: %s", exc)
         return []
 
@@ -200,17 +200,12 @@ def build_futures_spec(
     futures_spec["skills"] = (
         wrapped_cx,
         "GET",
-        f"/boot-skills?{urlencode({'limit': 50, 'for_agent': agent})}",
+        f"/boot-skills?{urlencode({'limit': 120, 'for_agent': agent})}",
     )
     # read-only: fetch recent plan/todo activity summary
     futures_spec["recent_work"] = (wrapped_cx, "GET", "/boot-recent-work")
-    # read-only: graph-only audit (no filesystem) — surfaces critical alert counts
-    futures_spec["audit"] = (
-        wrapped_cx,
-        "POST",
-        "/dispatch",
-        {"tool": "audit", "arguments": {}},
-    )
+    # read-only: severity counts only — ¬full audit findings payload (~MB-scale)
+    futures_spec["audit"] = (wrapped_cx, "GET", "/boot-audit-counters")
     # read-only: in-flight async dispatches for this agent from event service
     futures_spec["async_dispatches"] = (
         _fetch_async_dispatches_from_events,
@@ -309,10 +304,14 @@ def extract_boot_results(
     if profile.get("include_review_queue", True):
         review_total = len(staging_items)
 
-    # Audit — extract severity counters; degrade gracefully if unavailable.
+    # Audit — extract severity counters; omit section when unavailable.
     _audit_raw = raw.get("audit", {})
     audit_counters: dict[str, int] | None = None
-    if isinstance(_audit_raw, dict) and "criticals" in _audit_raw:
+    if (
+        isinstance(_audit_raw, dict)
+        and not _audit_raw.get("unavailable")
+        and "criticals" in _audit_raw
+    ):
         audit_counters = {
             "criticals": int(_audit_raw.get("criticals", 0)),
             "warnings": int(_audit_raw.get("warnings", 0)),

@@ -55,11 +55,26 @@ def get_entity_card(
     """Build the Card v0 payload via projection-aware fetch + adapter dispatch."""
     rows_materialized = 0
 
+    table_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
+    }
+    ent_cols = ["id", "type", "name", "description", "status"]
+    for col in ("lifecycle", "confidence_band", "adoption"):
+        if col in table_cols:
+            ent_cols.append(col)
+    ent_cols.extend(
+        [
+            "workflow_state",
+            "attributes",
+            "source_uri",
+            "content_hash",
+            "created_at",
+            "updated_at",
+        ]
+    )
     ent_rows = query(
         conn,
-        "SELECT id, type, name, description, status, workflow_state, "
-        "attributes, source_uri, content_hash, "
-        "created_at, updated_at FROM entities WHERE id = ?",
+        f"SELECT {', '.join(ent_cols)} FROM entities WHERE id = ?",
         (entity_id,),
     )
     rows_materialized += len(ent_rows)

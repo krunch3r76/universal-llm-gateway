@@ -95,11 +95,16 @@ class BaseCardAdapter:
         ]
 
     def status_summary(self, entity: dict[str, Any]) -> dict[str, Any] | None:
-        return {
-            "status": entity.get("status"),
-            "workflow_state": entity.get("workflow_state"),
-            "updated_at": entity.get("updated_at"),
-        }
+        # Option C: ``status`` is synthesized display; traits are separate keys.
+        from ..status_trait_read import card_status_summary_option_c
+
+        return card_status_summary_option_c(
+            entity,
+            extra={
+                "workflow_state": entity.get("workflow_state"),
+                "updated_at": entity.get("updated_at"),
+            },
+        )
 
     def summary_row(self, entity: dict[str, Any]) -> str | None:
         desc = entity.get("description")

@@ -217,10 +217,7 @@ class StreamParser:
             )
         else:
             n = len(parsed_chunks)
-            return (
-                f"Streaming Response\n\nReceived {n} chunks "
-                f"but no content extracted"
-            )
+            return f"Streaming Response\n\nReceived {n} chunks but no content extracted"
 
     def _create_streaming_placeholder(self, response_data: dict[str, Any]) -> str:
         """

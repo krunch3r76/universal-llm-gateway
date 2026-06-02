@@ -55,7 +55,6 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:financial-reasoning",
         "agent_skill:frontier-model-instructions",
         "agent_skill:grok-web-dispatch",
-        "agent_skill:grokbuild",
         "agent_skill:image-video-generation",
         "agent_skill:jupiter-browser-via-mcp",
         "agent_skill:lawyer-stance",
@@ -69,6 +68,9 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:review-protocol-mandatory-chronology-verification",
         "agent_skill:session-close",
         "agent_skill:session-close-audit",
+        "agent_skill:session-close-handoff",
+        "agent_skill:session-close-reflective-journal",
+        "agent_skill:session-close-transcript",
         "agent_skill:skill-document-writing",
         "agent_skill:thirdparty-api-mirror",
         # Case-specific skills — applicable across both seats since cases are
@@ -110,11 +112,19 @@ PARTITION: dict[str, list[str]] = {
     ],
     "claude-web": [
         "agent_skill:implement-todo",
-        # Reconciled 2026-05-29: web-only by skill definition.
-        "agent_skill:claude-web-boot",
         "agent_skill:mode-b-web-orchestrator",
     ],
 }
+
+# Harness/archived skills — excluded from boot via status=deprecated (boot SQL
+# filters `status != 'deprecated'`). Run with --deprecate-retired to apply.
+RETIRED_BOOT_SKILLS: tuple[str, ...] = (
+    "agent_skill:grokbuild",
+    "agent_skill:grokbuild-v1",
+    "agent_skill:grokbuild-v2",
+    "agent_skill:grok-build-dispatch",
+    "agent_skill:claude-web-boot",
+)
 
 
 # Multi-agent assignments. Wins over the bucket-derived value above.
@@ -249,6 +259,46 @@ def _audit(client: object) -> int:
     return 0 if not (unpartitioned or drifted or orphan) else 1
 
 
+def _deprecate_retired(client: object, *, dry_run: bool) -> int:
+    """Set status=deprecated on RETIRED_BOOT_SKILLS entities still live."""
+    failures = 0
+    print(f"Deprecating {len(RETIRED_BOOT_SKILLS)} retired boot skill(s)")
+    if dry_run:
+        print("DRY RUN — no writes will be issued")
+    print()
+    for entity_id in RETIRED_BOOT_SKILLS:
+        status, body = _request(
+            client,
+            "GET",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
+        )
+        if status == 404:
+            print(f"  SKIP  {entity_id:60s}  [not found]")
+            continue
+        if status != 200:
+            print(f"  FAIL  {entity_id:60s}  [GET {status}]")
+            failures += 1
+            continue
+        if body.get("status") == "deprecated":
+            print(f"  noop  {entity_id:60s}  (already deprecated)")
+            continue
+        if dry_run:
+            print(f"  WOULD {entity_id:60s}  → status=deprecated")
+            continue
+        status, body = _request(
+            client,
+            "PATCH",
+            f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
+            body={"status": "deprecated"},
+        )
+        if status != 200:
+            print(f"  FAIL  {entity_id:60s}  [PATCH {status}] {body}")
+            failures += 1
+        else:
+            print(f"  OK    {entity_id:60s}  → deprecated")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -265,9 +315,21 @@ def main() -> int:
             "entries. Exit 0 when clean, 1 when drift detected."
         ),
     )
+    parser.add_argument(
+        "--deprecate-retired",
+        action="store_true",
+        help=(
+            "Set status=deprecated on RETIRED_BOOT_SKILLS (grokbuild*, "
+            "claude-web-boot). Composes with the applicability backfill."
+        ),
+    )
     args = parser.parse_args()
 
     client = make_sync_client(DEFAULT_CORTEX_URL)
+
+    exit_code = 0
+    if args.deprecate_retired:
+        exit_code = max(exit_code, _deprecate_retired(client, dry_run=args.dry_run))
 
     if args.audit:
         return _audit(client)
@@ -322,7 +384,8 @@ def main() -> int:
 
     print()
     print(f"Wrote {written} / {len(all_ids)} entities ({skipped} skipped)")
-    return 0 if skipped == 0 else 1
+    backfill_code = 0 if skipped == 0 else 1
+    return max(exit_code, backfill_code)
 
 
 if __name__ == "__main__":

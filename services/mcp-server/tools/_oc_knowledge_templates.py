@@ -100,7 +100,7 @@ Never treat "too large" as "skip" — it means "navigate differently.\""""
 
 JOURNALING_PROTOCOL = """\
 ## Session Journaling
-Session close: see `agent-skills/session-close.md` (canonical protocol for all \
+Session close: see `agent-skills/session-close-kernel.md` (canonical protocol for all \
 agents; per-agent bindings — `agent` field, session_id prefix — in the bindings \
 table at end of that skill)."""
 

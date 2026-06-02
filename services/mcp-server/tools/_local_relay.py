@@ -21,6 +21,14 @@ _ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
     ("email-bridge", "POST", "/ingest"): 120.0,
     ("email-bridge", "POST", "/pull"): 120.0,
 }
+# Parameterized routes (path embeds an id) matched by suffix. review_extract
+# (POST /review/{message_id}/extract) runs the probate-eml-extract pipeline —
+# two sonnet stages, pipeline options.timeout_seconds=180 — so the relay budget
+# must exceed the pipeline budget or the client aborts a still-running extract.
+# review_dismiss has no LLM stage and stays on the default budget.
+_ROUTE_SUFFIX_TIMEOUTS: list[tuple[str, str, str, float]] = [
+    ("email-bridge", "POST", "/extract", 200.0),
+]
 
 _SERVICES: dict[str, dict[str, str]] = {
     "journal-bridge": {
@@ -41,8 +49,19 @@ _SERVICES: dict[str, dict[str, str]] = {
 
 
 def resolve_timeout(service: str, method: str, path: str) -> float:
-    """Return the client budget for a local relay route."""
-    return _ROUTE_TIMEOUTS.get((service, method.upper(), path), _REQUEST_TIMEOUT)
+    """Return the client budget for a local relay route.
+
+    Exact (service, method, path) match wins; otherwise a suffix rule matches
+    parameterized routes whose path embeds an id; otherwise the default budget.
+    """
+    method = method.upper()
+    exact = _ROUTE_TIMEOUTS.get((service, method, path))
+    if exact is not None:
+        return exact
+    for svc, mth, suffix, timeout in _ROUTE_SUFFIX_TIMEOUTS:
+        if service == svc and method == mth and path.endswith(suffix):
+            return timeout
+    return _REQUEST_TIMEOUT
 
 
 def relay(

@@ -9,11 +9,14 @@ Providers with native MCP (Anthropic ``mcp_servers``, OpenAI/xAI Responses
 API ``type: "mcp"``) bypass this entirely — the provider connects back to
 the MCP server and runs its own tool loop.
 
-System-prompt boot directive: when the first system message matches
-``cortex_boot(family="<family>", platform="<platform>")``, the executor
-pre-calls the tool and replaces the system message with the briefing
-card so the model starts with full operational context rather than an
-opaque instruction.
+System-prompt boot directive: when the first system message contains a
+``cortex_boot(...)`` call with primary params (``agent`` and/or
+``family`` / ``platform`` / optional ``role``), the executor pre-calls
+the MCP tool and replaces the directive span with the briefing card so
+the model starts with operational context rather than an opaque
+instruction. Resolution precedence matches the MCP ``cortex_boot`` tool:
+``agent`` overrides explicit ``family`` / ``platform`` when the slug
+parses as ``{family}-{platform}``.
 """
 
 from __future__ import annotations
@@ -21,13 +24,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import time
 from copy import deepcopy
 from typing import Any
 
 import httpx
 from llm_adapters._tool_schema import sanitize_tool_parameters
+
+from services.universal_cloud_proxy.boot_directive import (
+    boot_tool_arguments,
+    parse_boot_directive,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +46,6 @@ _RESTART_ERROR_CODE = -32099
 _RESTART_ERROR_REASON = "server_restarting"
 _RESTART_ERROR_MESSAGE = "MCP server is restarting; retry in 30s"
 _RESTART_RETRY_DELAYS_S = (5.0, 15.0)
-
-_BOOT_DIRECTIVE_RE = re.compile(
-    r"""cortex_boot\(\s*agent\s*=\s*["'](\w+)["']\s*\)""",
-)
 
 _DISPATCH_COMPAT_TOOL_DEFS: dict[str, dict[str, Any]] = {
     "web_fetch": {
@@ -126,6 +129,23 @@ def _payload_is_restart_error(payload: dict[str, Any]) -> bool:
         error.get("code") == _RESTART_ERROR_CODE
         and isinstance(data, dict)
         and data.get("reason") == _RESTART_ERROR_REASON
+    )
+
+
+def _is_restart_transport_error(exc: Exception) -> bool:
+    """True when the failure looks like MCP died mid-TLS read during restart."""
+    if isinstance(
+        exc,
+        httpx.RemoteProtocolError
+        | httpx.ConnectError
+        | httpx.ConnectTimeout
+        | httpx.ReadError,
+    ):
+        return True
+    text = str(exc)
+    return (
+        "UNEXPECTED_EOF_WHILE_READING" in text
+        or "EOF occurred in violation of protocol" in text
     )
 
 
@@ -263,12 +283,10 @@ class McpToolExecutor:
                     if isinstance(b, dict) and b.get("type") == "text"
                 ]
                 return "\n".join(parts) if parts else json.dumps(result)
-            except (
-                httpx.RemoteProtocolError,
-                httpx.ConnectError,
-                httpx.ConnectTimeout,
-                httpx.ReadError,
-            ) as exc:
+            except Exception as exc:
+                if not _is_restart_transport_error(exc):
+                    logger.error("McpToolExecutor tool %s failed: %s", name, exc)
+                    return json.dumps({"error": f"Tool execution failed: {exc}"})
                 if attempt_index < len(_RESTART_RETRY_DELAYS_S):
                     delay_s = _RESTART_RETRY_DELAYS_S[attempt_index]
                     logger.info(
@@ -284,20 +302,15 @@ class McpToolExecutor:
                     exc,
                 )
                 return json.dumps(_restart_error_payload())
-            except Exception as exc:
-                logger.error("McpToolExecutor tool %s failed: %s", name, exc)
-                return json.dumps({"error": f"Tool execution failed: {exc}"})
         return json.dumps(_restart_error_payload())
 
     async def _resolve_boot_directive(self, messages: list[dict[str, Any]]) -> None:
-        """Pre-execute ``cortex_boot(agent="...")`` if it appears in the system prompt.
+        """Pre-execute ``cortex_boot(...)`` when primary params appear in system prompt.
 
-        When OpenWebUI (or any client) includes
-        ``cortex_boot(family="grok", platform="api-multi")`` in the system
-        message, the model can't reliably interpret it as a tool call
-        instruction.  Instead we execute it server-side and replace the
-        directive with the briefing card inline, preserving any surrounding
-        system prompt content.
+        Supported directive shapes mirror the MCP tool's primary params:
+        ``agent="<seat-slug>"`` (hyphenated slugs), and/or
+        ``family="..."``, ``platform="..."``, optional ``role="..."``.
+        Unrecognized or param-less ``cortex_boot(...)`` spans are left unchanged.
         """
         if not messages:
             return
@@ -305,18 +318,19 @@ class McpToolExecutor:
         if first.get("role") != "system":
             return
         content = first.get("content") or ""
-        m = _BOOT_DIRECTIVE_RE.search(content)
-        if not m:
+        parsed = parse_boot_directive(content)
+        if not parsed:
             return
-        agent = m.group(1)
-        logger.info("McpToolExecutor: resolving boot directive for agent=%s", agent)
-        result = await self.execute_tool("cortex_boot", {"agent": agent})
+        matched_span, directive_kwargs = parsed
+        boot_args = boot_tool_arguments(directive_kwargs)
+        logger.info("McpToolExecutor: resolving boot directive %s", boot_args)
+        result = await self.execute_tool("cortex_boot", boot_args)
         try:
             boot_data = json.loads(result)
             briefing = boot_data.get("briefing_card", result)
         except (json.JSONDecodeError, AttributeError):
             briefing = result
-        first["content"] = content.replace(m.group(0), briefing, 1)
+        first["content"] = content.replace(matched_span, briefing, 1)
 
     async def run_tool_loop(
         self,

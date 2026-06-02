@@ -27,6 +27,7 @@ from typing import Any
 # Deterministic ref tags appended to open_items by agents.
 _ASSERTION_REF_RE = re.compile(r"\[(?:assertion|ref):(\d+)\]", re.IGNORECASE)
 _TODO_REF_RE = re.compile(r"\[todo:([a-z0-9][a-z0-9-]*)\]", re.IGNORECASE)
+_BARE_TODO_PREFIX_RE = re.compile(r"^\s*todo:([a-z0-9][a-z0-9-]*)", re.IGNORECASE)
 
 _RESOLVED_PREFIX = "[RESOLVED]"
 
@@ -245,6 +246,9 @@ def is_resolved(item: str, index: ResolutionIndex) -> bool:
     for m in _TODO_REF_RE.finditer(item):
         if m.group(1).lower() in index.resolved_slugs:
             return True
+    bare = _BARE_TODO_PREFIX_RE.match(item)
+    if bare and bare.group(1).lower() in index.resolved_slugs:
+        return True
 
     item_lower = item.lower()
     if any(phrase in item_lower for phrase in index.key_phrases):

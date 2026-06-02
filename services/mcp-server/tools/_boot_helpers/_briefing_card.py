@@ -65,12 +65,11 @@ def render_briefing_card(
     audit_counters: dict[str, int] | None = None,
     family: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Render a compact briefing card (~3-5KB) and section manifest.
+    """Render a compact briefing card and section manifest.
 
     Returns (card_markdown, sections_available).
-    The card contains only priority signals — enough for the agent to orient
-    and decide what to pull deeper. Heavy sections are replaced with counts
-    and fetch hints in the manifest.
+    Priority signals and indexed agent skills compose the card; other heavy
+    sections stay as counts + fetch hints in the manifest.
     """
     now = datetime.now(UTC)
     local_now = now.astimezone(_LA)

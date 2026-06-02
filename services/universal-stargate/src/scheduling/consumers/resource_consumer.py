@@ -74,13 +74,9 @@ class ResourceUpdateConsumer:
         self.gateway_manager._resource_cache[gateway_url] = resource_state
 
         vram = (
-            f"{resource_state['available_vram_mb']}/"
-            f"{resource_state['total_vram_mb']}"
+            f"{resource_state['available_vram_mb']}/{resource_state['total_vram_mb']}"
         )
-        ram = (
-            f"{resource_state['available_ram_mb']}/"
-            f"{resource_state['total_ram_mb']}"
-        )
+        ram = f"{resource_state['available_ram_mb']}/{resource_state['total_ram_mb']}"
         loaded = list(resource_state["loaded_models"]) or "NONE"
         logger.info(
             f"📊 Updated resource cache for {gateway_url}: "

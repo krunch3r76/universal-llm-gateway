@@ -18,8 +18,8 @@ Cursor's local enforcement surfaces (`.cursor/commands/session-end.md`, \
 `.cursor/rules/session-close.mdc`) implement the canonical protocol."""
 
 WEB_TRANSCRIPT_PREPROCESSING = """\
-Web's close discipline is `agent-skills/session-close.md` (canonical; Step 2 \
-dual-layer + mechanical-copy; Step 3b 422-retry). Web also applies \
+Web's close discipline is `agent-skills/session-close-kernel.md` (canonical; \
+transcript/handoff siblings at gate). Web also applies \
 `agent-skills/web-transcript-preprocessing.md` to trim raw tool payloads before \
 `session_close`."""
 
@@ -27,7 +27,7 @@ WEB_SESSION_CLOSE_GENERIC = """\
 Session close (web platform): write transcript markdown to \
 `notes/system/transcripts/web-YYYY-MM-DD-HHmm.md`, seed assertions, \
 create transcript entity, write journal row, post to agent-activity-journal \
-(thread 480). See `agent-skills/session-close.md` for the canonical close \
+(thread 480). See `agent-skills/session-close-kernel.md` for the canonical close \
 sequence."""
 
 SUBAGENT_INHERITANCE = """\
@@ -74,7 +74,13 @@ wrong (the response includes a `_next` hint that steers away from search loops).
 Catalog membership decisions live in `services/mcp-server/server.py`
 (`_PRIMARY_TOOLS`); the demoted set is auto-derived. Promotion to primary is
 warranted only when descriptor_bytes × 50 turns × N sessions justifies the cost
-— see `tasks/discoveries/mcp-tool-definition-context-churn.md` for the rubric."""
+— see `tasks/discoveries/mcp-tool-definition-context-churn.md` for the rubric.
+
+`git_*` tools (`git_status`, `git_diff`, `git_commit`, `git_integrate`,
+`git_land`) are intentionally NOT in the Claude primary catalog and are
+**headless / arc-worktree only** (`decision:cursorbuild-ide-interface`). A Cursor
+IDE session does not use them even if `tool_search` surfaces them — use the
+editor + native apply/review instead. See `commit-and-git-scope_ws.mdc`."""
 
 GROK_WEB_TOOL_SURFACE = """\
 ## Grok.com Tool Surface

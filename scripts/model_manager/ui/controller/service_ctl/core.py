@@ -630,7 +630,9 @@ class ServiceController:
         out = await proc.communicate()
         text = out[0].decode(errors="replace") if out[0] else ""
         if proc.returncode != 0:
-            logger.error("MCP sync/restart failed (exit %d):\n%s", proc.returncode, text)
+            logger.error(
+                "MCP sync/restart failed (exit %d):\n%s", proc.returncode, text
+            )
             return f"MCP sync/restart failed (exit {proc.returncode}).\n{text}"
         return f"MCP server synced and restarted.\n{text}"
 

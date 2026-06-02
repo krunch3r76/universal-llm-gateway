@@ -17,8 +17,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...confidence_field import (
+    adoption_in_sql_predicate,
+    lifecycle_is_value_sql_predicate,
+)
 from ...db import query
 from ._shared import _finding
+
+_ADOPTED_DECISION = adoption_in_sql_predicate(
+    ("adopted", "canonical"), ("confirmed",), "e"
+)
+_DEPRECATED_DECISION = lifecycle_is_value_sql_predicate("deprecated")
 
 # Parameterization per the design: entity_type -> (adopted_status_set,
 # pre_adoption_state_set). ``None`` in the pre-adoption set matches a NULL
@@ -26,7 +35,7 @@ from ._shared import _finding
 # and register the matching kind to extend the gate to a new workflow-typed
 # entity; the detection engine below is type-agnostic.
 _COHERENCE_RULES: dict[str, tuple[tuple[str, ...], tuple[str | None, ...]]] = {
-    "decision": (("confirmed",), (None, "proposed")),
+    "decision": (("adopted", "canonical"), (None, "proposed")),
 }
 
 
@@ -42,9 +51,8 @@ def _detect_workflow_state_incoherent(
     suggested_target is ``superseded`` when the entity is the target of an
     active ``supersedes`` edge (retirement evidence), else ``accepted``.
     """
-    status_ph = ",".join(["?"] * len(adopted_status))
-    clauses = ["e.type = ?", f"e.status IN ({status_ph})"]
-    params: list[Any] = [entity_type, *adopted_status]
+    clauses = ["e.type = ?", _ADOPTED_DECISION]
+    params: list[Any] = [entity_type, *adopted_status, "confirmed"]
 
     state_clauses: list[str] = []
     non_null = [s for s in pre_adoption_states if s is not None]
@@ -78,7 +86,8 @@ def _detect_workflow_state_incoherent(
         _finding(
             kind,
             r["id"],
-            f"{entity_type} status IN {adopted_status} but workflow_state="
+            f"{entity_type} adoption IN {adopted_status} (legacy status=confirmed) "
+            f"but workflow_state="
             f"{r['workflow_state'] or 'NULL'!r} (pre-adoption/unset) — "
             f"advance to {r['suggested_target']!r}",
         )
@@ -123,10 +132,10 @@ def detect_decision_deprecated_not_terminal(
     term_ph = ",".join(["?"] * len(terminals))
     clauses = [
         "type = 'decision'",
-        "status = 'deprecated'",
+        _DEPRECATED_DECISION,
         f"(workflow_state IS NULL OR workflow_state NOT IN ({term_ph}))",
     ]
-    params: list[Any] = list(terminals)
+    params: list[Any] = ["deprecated", "deprecated", *terminals]
     if subject:
         clauses.append("id = ?")
         params.append(subject)

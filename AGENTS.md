@@ -1,5 +1,16 @@
 # Universal LLM Gateway — Agent Guide (grok-direct)
 
+> **⚠ IF YOU ARE RUNNING INSIDE CURSOR IDE: this file is NOT your guide.**
+> Cursor auto-injects this repo-root `AGENTS.md` into your always-applied
+> context, but it is the **grok-direct (headless terminal) projection**. The
+> sections on **Worktree discipline**, **git integration** (`git_integrate` /
+> `git_land` / `git worktree`), and **session close via `transcript_md`** describe
+> the *headless* seat and **do not apply to a Cursor IDE session**. In Cursor:
+> you do not use `git_*` MCP tools or git CLI (`commit-and-git-scope_ws.mdc`
+> Invariant 2); commit is optional and not a finality gate (Invariant 1); and
+> session close follows `.cursor/rules/session-close.mdc` (JSONL), not `transcript_md`.
+> Your canonical rules are `.cursor/rules/` + `/mnt/torus/projects/.cursor/rules/`.
+
 This repository is the **Universal LLM Gateway (ULG)** workspace: the integration hub for local and cloud LLM routing (Stargate), inference workers, MCP tooling (vortex), pipelines, RAG, cortex memory, and agent-bus coordination. Operators and agents working here share one ecosystem; conventions below apply when you boot **cold in a terminal** via the Grok CLI (`grok`) with vortex MCP wired—not when you are inside Cursor IDE.
 
 Canonical rule sources remain `.cursor/rules/` and `/mnt/torus/projects/.cursor/rules/`. This file is the **grok-direct projection** (Phase 0 hand-authored). Deeper subtree scope: `services/AGENTS.md`, `libs/AGENTS.md`.
@@ -256,6 +267,12 @@ Full policy: `agent_skill:grokbuild` (cortex, consolidated v3 — 2026-05-22) co
 
 ## Worktree discipline
 
+> **Cursor IDE seats: NOT APPLICABLE.** Everything in this section (arc worktrees,
+> `git_integrate` / `git_land`, raw `git worktree`) is a **headless / external-agent**
+> concern. A Cursor IDE session never reaches for git_* tools or git CLI — see
+> `.cursor/rules/commit-and-git-scope_ws.mdc` Invariant 2. Read on only if you are
+> grok-direct or another headless seat.
+
 > **⚠ STATUS (2026-06-01) — EXPERIMENTAL / PARKED, NOT IN ACTIVE USE.** We are currently not using worktrees at all. Arc-worktree-binding was experimented with and may be revisited ONLY if a code-modifying API harness lands (an API writer that modifies code *in place* — NOT diff-apply, which needs no worktree). `grokbuild`, the original motivating harness, is **archived**; `grok-direct` is vestigial with it. Cursor composer-in-IDE and `cursorbuild` do **not** need this (`decision:cursorbuild-ide-interface`). Treat everything below as **design-of-record for that future case**, not the live default. Refs: `decision:arc-worktree-binding` (parked — assertion 11621), `decision:grokbuild-retirement-sequenced` (11622).
 
 The **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-workflow.md` §Arc worktree binding — is **insurance** against two failure modes headless writers lack: (1) **concurrency** (multiple writers colliding on one working tree) and (2) **unattended landing** (diffs committing without human review). Direct Cursor IDE use avoids both: single-writer serialization by operator attention, and operator-attended landing on every diff. **grok-direct** (vestigial — grokbuild-bound, archived) and other headless/concurrent/unattended writers **would** require the arc substrate if/when the parked workflow is revisited; the **lead** integrates to master via the gated `git_integrate` primitive (`decision:lead-agent-git-integration`), approval bound to the reviewed `diff_sha256`. grokbuild is **archived** (assertions 11588, 11622). **cursorbuild** is a programmatic **interface to the Cursor IDE** (11479) — not a headless multi-writer harness; it inherits Cursor's protective properties and is **not** force-routed through arc worktrees by default (`decision:cursorbuild-ide-interface`).
@@ -307,7 +324,7 @@ cortex(tool="session_close",
 ```
 
 - **Do not** pass `transcript_jsonl_path` (Cursor-only).
-- Authoritative shared protocol: load `session-close.mdc` and cortex skill `agent-skills/session-close.md` via `fs` when closing.
+- Authoritative shared protocol: load `session-close.mdc` and cortex skill `agent-skills/session-close-kernel.md` via `fs` when closing.
 
 **MQ1 adapter (not yet in repo):** `tools/grok-session-to-transcript-md` will convert Grok session logs to markdown for `transcript_md`. **BLOCKED** until the operator verifies on-disk session log shape (presumed `~/.grok/sessions/<id>.json`—confirm before implementing).
 

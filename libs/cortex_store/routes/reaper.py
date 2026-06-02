@@ -19,7 +19,11 @@ from typing import Any
 from fastapi import APIRouter, Query
 from universal_logging import get_logger
 
+from ..confidence_field import lifecycle_not_value_sql_predicate
 from ..db import cortex_conn, query
+
+_NOT_REAPED = lifecycle_not_value_sql_predicate("reaped")
+_NOT_REAPED_E = lifecycle_not_value_sql_predicate("reaped", "e")
 
 logger = get_logger("cortex-api.reaper")
 router = APIRouter(prefix="/reaper", tags=["reaper"])
@@ -51,7 +55,8 @@ def _find_candidates(
         conn,
         "SELECT id, name, type, retention_ttl_days, last_accessed_at, created_at "
         "FROM entities "
-        "WHERE retention_policy = 'ephemeral' AND status != 'reaped'",
+        f"WHERE retention_policy = 'ephemeral' AND {_NOT_REAPED}",
+        ("reaped", "reaped"),
     )
 
     now = datetime.now(UTC)
@@ -112,9 +117,9 @@ def _check_permanent_inbound(conn: object, entity_id: str) -> str | None:
         "SELECT se.from_node FROM session_edges se "
         "JOIN entities e ON e.id = se.from_node "
         "WHERE se.to_node = ? AND se.valid_until IS NULL "
-        "AND e.retention_policy != 'ephemeral' AND e.status != 'reaped' "
+        f"AND e.retention_policy != 'ephemeral' AND {_NOT_REAPED_E} "
         "LIMIT 1",
-        (entity_id,),
+        (entity_id, "reaped", "reaped"),
     )
     if rows:
         return rows[0]["from_node"]
@@ -123,9 +128,9 @@ def _check_permanent_inbound(conn: object, entity_id: str) -> str | None:
         "SELECT se.to_node FROM session_edges se "
         "JOIN entities e ON e.id = se.to_node "
         "WHERE se.from_node = ? AND se.valid_until IS NULL "
-        "AND e.retention_policy != 'ephemeral' AND e.status != 'reaped' "
+        f"AND e.retention_policy != 'ephemeral' AND {_NOT_REAPED_E} "
         "LIMIT 1",
-        (entity_id,),
+        (entity_id, "reaped", "reaped"),
     )
     return rows[0]["to_node"] if rows else None
 

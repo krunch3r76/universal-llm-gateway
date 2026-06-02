@@ -2232,7 +2232,7 @@ still running or failed. All signals: `role="observation"`, `scope="global"`.
 | `email.ingest.rendered.loaded` | `run_id`, `message_id`, `rendered_path`, `text_bytes` | Rendered markdown file loaded before pipeline submission. |
 | `email.capture.entity_created` | `message_id`, `entity_id`, `profile` | Sparse correspondence entity created at capture. |
 | `email.ingest.message.captured` | `run_id`, `message_id`, `entity_id`, `profile`, `duration_s` | Capture-only ingest succeeded. |
-| `email.pipeline.started` | `run_id`, `message_id`, `text_bytes`, `email_date`, `eml_path` | `eml-extract` pipeline request submitted to Stargate (`pipeline_options.eml_path` required). |
+| `email.pipeline.started` | `run_id`, `message_id`, `text_bytes`, `email_date`, `eml_path` | `probate-eml-extract` pipeline request submitted to Stargate (`pipeline_options.eml_path` required). |
 | `email.pipeline.completed` | `run_id`, `message_id`, `duration_s`, `entity_count`, `claim_count`, `relationship_count`, `edge_count` | Pipeline returned parseable proposal JSON. |
 | `email.pipeline.failed` | `run_id`, `message_id`, `error_type`, `duration_s` | Pipeline transport, HTTP, JSON, or unexpected failure. May also carry `status_code` and `error`. |
 | `email.ingest.message.committed` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `new_entities`, `assertions_seeded`, `assertion_conflicts`, `relationships_seeded`, `reasoning_edges_seeded` | Reviewer commit seeded Cortex successfully. |

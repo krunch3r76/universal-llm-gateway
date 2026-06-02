@@ -335,7 +335,33 @@ binary ingest, or image/model transfer between tools.
 | `insert_at_line` | path, content, line | Insert at line number |
 | `list` | path? | List directory (defaults to sandbox root) |
 | `delete` | path | Delete file |
-| `search` | path (dir), content (regex) | Search (workspaces sandbox only) |
+| `search` | path (file or dir), content (regex) | Regex search (cortex + workspaces) |
+
+#### `fs(op="search")` — regex search (both sandboxes)
+
+Conversion-aware regex search over text and converted documents
+(PDF/DOCX/ODT/EML/HTML). PDFs are loaded sidecar-first
+(`decision:mcp-fs-timeout-observability`). `path` may be a file or a directory.
+
+Response envelope (single shape, `mode` discriminator):
+
+```json
+{
+  "path": "<requested path>",
+  "mode": "file" | "directory",
+  "matches": [
+    {"file": "<rel path, directory mode only>", "line": 42, "text": "..."}
+  ],
+  "truncated": false,
+  "skipped_converted": 0,
+  "extraction_method": "sidecar_markdown | pymupdf_plaintext | converted | native_text"
+}
+```
+
+Directory search bounds converted-file extraction by an aggregate wall-clock
+budget and a converted-file cap; files beyond either bound increment
+`skipped_converted`. Truly-binary files are skipped (`_BINARY_SUFFIXES`
+unchanged — converted ≠ truly-binary, narrowing decision:mcp-list-include-binary-paths).
 
 ### Markdown section ops (for large docs >5k chars)
 

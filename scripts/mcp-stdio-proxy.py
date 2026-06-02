@@ -47,6 +47,7 @@ import json
 import os
 import queue
 import socket
+import ssl
 import sys
 import threading
 import time
@@ -240,29 +241,39 @@ def _text_is_restart_error(text: str) -> bool:
     return _payload_is_restart_error(payload)
 
 
+def _ssl_eof_restart_signal(text: str) -> bool:
+    return (
+        "UNEXPECTED_EOF_WHILE_READING" in text
+        or "EOF occurred in violation of protocol" in text
+    )
+
+
 def _is_restart_disconnect(exc: Exception) -> bool:
     if isinstance(
         exc,
-        (
-            http.client.RemoteDisconnected,
-            ConnectionResetError,
-            ConnectionRefusedError,
-            ConnectionAbortedError,
-        ),
+        http.client.RemoteDisconnected
+        | ConnectionResetError
+        | ConnectionRefusedError
+        | ConnectionAbortedError
+        | ssl.SSLEOFError,
     ):
+        return True
+    if _ssl_eof_restart_signal(str(exc)):
         return True
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
+        if isinstance(reason, ssl.SSLEOFError):
+            return True
+        if _ssl_eof_restart_signal(str(reason)):
+            return True
         return isinstance(
             reason,
-            (
-                http.client.RemoteDisconnected,
-                ConnectionResetError,
-                ConnectionRefusedError,
-                ConnectionAbortedError,
-                socket.gaierror,
-                TimeoutError,
-            ),
+            http.client.RemoteDisconnected
+            | ConnectionResetError
+            | ConnectionRefusedError
+            | ConnectionAbortedError
+            | socket.gaierror
+            | TimeoutError,
         )
     return False
 

@@ -26,6 +26,7 @@ def _op_audit(
     subject: str | None = None,
     kinds: list[str] | None = None,
     include_filesystem: bool = False,
+    emit: bool = True,
     **_: object,
 ) -> dict[str, Any]:
     """Run audit detectors for a subject (entity, case, or all).
@@ -33,8 +34,12 @@ def _op_audit(
     - kinds=None → graph-only set by default (W1 for session_audit).
     - include_filesystem=true → adds the 4 fs-touching detectors.
     - Returns {findings: [...], gap_count, criticals, warnings, infos, duration_ms, kinds_run}.
-    - Emits cortex.audit.completed and per-gap cortex.audit.gap.detected (kind in payload).
-    - Budget enforced via timing; WARN event if exceeded.
+    - emit=True (full ``cortex(tool='audit')`` op) emits cortex.audit.completed,
+      one cortex.audit.gap.detected per finding, and cortex.audit.budget.exceeded.
+    - emit=False (counts-only callers, e.g. /boot-audit-counters) suppresses all
+      three: the graph today holds ~17k gaps, so per-gap emission on every boot
+      write-amplifies the Event Service and breaks the INSPECT no-side-effects
+      contract. The counts-only caller emits at most one summary event itself.
     """
     if kinds and not all(k in ALL_KINDS for k in kinds):
         return {
@@ -58,36 +63,38 @@ def _op_audit(
         if include_filesystem:
             kinds_run = kinds_run + list(FS_TOUCHING_KINDS)
 
-    # Emit events per plan §6 (using existing record() shim per change-scope)
-    record(
-        "cortex.audit.completed",
-        subject=subject or "all",
-        gap_count=len(findings),
-        criticals=len(criticals),
-        warnings=len(warnings),
-        infos=len(infos),
-        kinds_run=kinds_run,
-        duration_ms=duration_ms,
-        include_filesystem=include_filesystem,
-    )
-
-    for f in findings:
+    # Emit events per plan §6 (using existing record() shim per change-scope).
+    # Counts-only callers pass emit=False to avoid the per-gap event storm.
+    if emit:
         record(
-            "cortex.audit.gap.detected",
-            kind=f["kind"],
-            subject=f["subject"],
-            severity=f["severity"],
-            detail=f["detail"],
-            audit_id=f["audit_id"],
-        )
-
-    if duration_ms > (100 if not include_filesystem else 2000):
-        record(
-            "cortex.audit.budget.exceeded",
+            "cortex.audit.completed",
+            subject=subject or "all",
+            gap_count=len(findings),
+            criticals=len(criticals),
+            warnings=len(warnings),
+            infos=len(infos),
+            kinds_run=kinds_run,
             duration_ms=duration_ms,
-            budget_ms=100 if not include_filesystem else 2000,
-            subject=subject,
+            include_filesystem=include_filesystem,
         )
+
+        for f in findings:
+            record(
+                "cortex.audit.gap.detected",
+                kind=f["kind"],
+                subject=f["subject"],
+                severity=f["severity"],
+                detail=f["detail"],
+                audit_id=f["audit_id"],
+            )
+
+        if duration_ms > (100 if not include_filesystem else 2000):
+            record(
+                "cortex.audit.budget.exceeded",
+                duration_ms=duration_ms,
+                budget_ms=100 if not include_filesystem else 2000,
+                subject=subject,
+            )
 
     return {
         "findings": findings,

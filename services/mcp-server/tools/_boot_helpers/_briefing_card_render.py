@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from ._skill_bodies import skill_relpath, skill_slug
+
 # Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
 # the truncator prefers the last sentence boundary at-or-before the cap so the
 # preview doesn't chop mid-sentence ("If I sit with —" was the canonical bug).
@@ -149,34 +151,30 @@ _CLASS_HEADERS: dict[str, str] = {
 }
 
 
-def _skill_slug(skill: dict[str, Any]) -> str:
-    entity_id = skill.get("id") or skill.get("entity_id") or "?"
-    return skill.get("name") or str(entity_id).removeprefix("agent_skill:")
-
-
-def _skill_short(skill: dict[str, Any]) -> str:
-    short = skill.get("description_first_sentence")
-    if not short:
-        full = (skill.get("description") or "").strip()
-        short = full.split(". ", 1)[0].rstrip(".")
-    return short or ""
-
-
-def _append_skill_rows(lines: list[str], bucket: list[dict[str, Any]]) -> None:
-    for skill in sorted(bucket, key=_skill_slug):
-        lines.append(f"- **{_skill_slug(skill)}** — {_skill_short(skill)}")
+def _append_skill_index(lines: list[str], bucket: list[dict[str, Any]]) -> None:
+    for skill in sorted(bucket, key=skill_slug):
+        slug = skill_slug(skill)
+        rel = skill_relpath(skill)
+        trigger = (skill.get("description_first_sentence") or "").strip()
+        trigger_part = f" — {trigger}" if trigger else ""
+        lines.append(
+            f"- **`{slug}`**{trigger_part} | "
+            f'`fs(sandbox="cortex", op="md_read", path="{rel}")`'
+        )
 
 
 def render_skills_section(
     skills: list[dict[str, Any]],
     skills_unpartitioned_count: int,
 ) -> list[str]:
-    """Group agent skills by class (and tool_manual exposure) for the boot card."""
+    """Group agent skills by class; index slugs + triggers (bodies on demand via fs md_*)."""
     lines: list[str] = [
-        "\n## Agent Skills "
-        "(read on trigger match — "
-        "`fs(sandbox='cortex', op='read', "
-        "path='agent-skills/<NAME>.md')`)"
+        f"\n## Agent Skills ({len(skills)} on this seat — manifest only)",
+        (
+            "> Full SKILL.md bodies are **not** inlined. Browse: "
+            '`fs(sandbox="cortex", op="md_list", path="agent-skills/")`; '
+            "read one: `md_read` / section ops on the path below."
+        ),
     ]
     by_class: dict[str | None, list[dict[str, Any]]] = {}
     for skill in skills:
@@ -199,21 +197,21 @@ def render_skills_section(
                 if not sub:
                     continue
                 lines.append(_EXPOSURE_HEADERS[exposure])
-                _append_skill_rows(lines, sub)
+                _append_skill_index(lines, sub)
             for exposure in sorted(by_exposure):
                 lines.append(f"### Tool Manuals — {exposure.replace('_', ' ').title()}")
-                _append_skill_rows(lines, by_exposure[exposure])
+                _append_skill_index(lines, by_exposure[exposure])
         else:
             lines.append(_CLASS_HEADERS[skill_class])
-            _append_skill_rows(lines, bucket)
+            _append_skill_index(lines, bucket)
 
     for skill_class in sorted(by_class):
         lines.append(f"### {skill_class.replace('_', ' ').title()}")
-        _append_skill_rows(lines, by_class[skill_class])
+        _append_skill_index(lines, by_class[skill_class])
 
     if no_class:
         lines.append("### Other Skills")
-        _append_skill_rows(lines, no_class)
+        _append_skill_index(lines, no_class)
 
     if skills_unpartitioned_count:
         lines.append(

@@ -1,9 +1,9 @@
-# Cortex Read-Model Spec (v2.4 + v3.0)
+# Cortex Read-Model Spec (v2.5 + v3.0)
 
-**Status:** consolidated public reference
+**Status:** consolidated public reference (`spec:cortex-v2.5`)
 **Scope:** The Cortex storage and read model — entities, assertions, edges, the
-confidence/derivation/temporal taxonomy, the `cortex://` URI scheme, and the
-BYO-storage model.
+confidence/derivation/temporal taxonomy, the status-trait normalization read
+model (Phase 0), the `cortex://` URI scheme, and the BYO-storage model.
 
 This document is the read-model layer. The **write-time discipline** that sits on
 top of it — auditor-validatability, cross-model independence, forward-looking
@@ -46,16 +46,84 @@ entities
 ├── type: TEXT             — namespace: person, organization, decision, todo, ...
 ├── name: TEXT             — display name
 ├── description: TEXT      — contrastive, used for entity resolution
-├── status: TEXT           — confirmed / provisional / merged / deprecated
+├── status: TEXT           — LEGACY overloaded axis; read-authoritative (Phase 0). See §2.1.
 ├── aliases: TEXT (JSON)   — alternate surface forms
 ├── attributes: TEXT (JSON)— structured properties
 ├── notes: TEXT
 ├── source_uri: TEXT
+│
+│   v2.5 status-trait normalization (migration 050, Phase 0 — shadow):
+├── lifecycle: TEXT        — hand-set life state: active / superseded / merged / invalidated / dismissed
+├── confidence_band: TEXT  — derived band: unsubstantiated / provisional / confirmed (no setter)
+├── confidence_score: REAL — derived graded score (propagation Φ*, see §2.2)
+├── adoption: TEXT         — decision-type-only: proposed / adopted / superseded
 └── created_at, updated_at: TEXT
 ```
 
 - **ID format:** `type:slug` (the database primary key).
 - **URI format:** `cortex://type/slug[?r=N][&a=artifact]` (see §6).
+
+### 2.1 Status-trait normalization (v2.5, Phase 0)
+
+The legacy `status` column multiplexed **three orthogonal axes** —
+derived confidence, hand-set lifecycle, and (for `decision`) adoption — which is
+the root cause of the stuck-label class, the "freeze half a field" contortion,
+and the per-type `decision` carve-out. Migration 050 normalizes those axes into
+dedicated nullable trait columns. The trait model and its research basis (5GNF
+trait externalization, belief-graph Φ/Ψ separation, BiTRDF bitemporal) are
+specified in `cortex:notes/system/specs/cortex-status-trait-normalization-spec-2026-06-02.md`.
+
+| Trait | Column(s) | Nature | Setter |
+|---|---|---|---|
+| **confidence** | `confidence_band`, `confidence_score` | derived, read-only by construction (propagation from backing assertions) | none — derived only (§2.2) |
+| **lifecycle** | `lifecycle` | hand-set judgment call (life state) | caller-owned |
+| **adoption** | `adoption` | `decision`-type only (was the status-word hijack) | caller-owned |
+
+**Read authority is `status`, not the traits (Phase 0).** The trait columns are
+nullable and shadow-populated by the derivation batch (migration 050 is strictly
+additive; no read site references them). `status` remains authoritative for every
+read site — boot card, audit detectors, `status_summary`. The read cutover to the
+trait columns is a **separate, operator-gated step** (Phase 2;
+`todo:cortex-status-traits-phase2-cutover`); the eventual drop of `status` is
+Phase 3. This spec does **not** claim `status` is retired.
+
+### 2.2 Derived confidence (`confidence_band` / `confidence_score`)
+
+`confidence_score` is a graded propagation value Φ* in [0,1]; `confidence_band`
+is its label band (`unsubstantiated` / `provisional` / `confirmed`) under a
+promotion threshold τ plus a confirmed-evidence gate. Both are **derived only —
+there is no setter** (nothing to "freeze"): they are computed from the entity's
+backing assertions, their `credibility` (§3), and signed reasoning edges (§9).
+The full derivation contract — Φ/Ψ separation, cluster-max prior, the signed
+propagation operator, the confirmed-evidence gate, and the band thresholds — is
+specified in the confidence-derivation policy
+(`cortex:notes/system/specs/cortex-confidence-derivation-policy-v2.md`,
+`derivation_policy_version = confidence-derivation/v2`). Auditor-validatability
+is preserved: a `confirmed` band still requires a confirmed, source-citing
+assertion, never propagated score alone.
+
+### 2.3 Per-type confidence-field registry (`type_confidence_fields`, migration 047)
+
+Not every entity type carries its auditable confidence on `status`. Migration 047
+adds a `type_confidence_fields` registry — a single source of truth declaring
+**which field carries each type's auditable confidence axis** — consumed by the
+auditor-validatability detectors so Gate-0 membership is a data consequence of
+the declaration, not a hand-maintained scope list in detector code.
+
+```
+type_confidence_fields
+├── entity_type: TEXT PK     — the entity type
+└── confidence_field: TEXT   — status | workflow_state | content_hash | none
+```
+
+Unregistered types default to `status` (normal Gate-1..4 gating), preserving
+historical detector behavior. Seeded non-default declarations:
+
+| Entity type | `confidence_field` | Meaning |
+|---|---|---|
+| `test` | `none` | `status` is not a confidence axis (bulk fixtures) |
+| `todo` | `workflow_state` | confidence rides the workflow lifecycle column |
+| `transcript` | `content_hash` | a structural verifier binds entity ↔ artifact |
 
 ---
 
@@ -71,6 +139,7 @@ assertions
 ├── entity_id: TEXT FK        — the subject entity
 ├── claim: TEXT               — short factual text (always inline)
 ├── confidence: TEXT          — confirmed / believed / suspected / hypothesized
+├── credibility: TEXT         — external per-source/per-assertion trust Ψ (v2.5, migration 050); see §3.3
 ├── derivation_type: TEXT     — see §4
 ├── evidence: TEXT            — free-text justification
 ├── evidence_uris: TEXT(JSON) — source pointers
@@ -106,6 +175,19 @@ Two independent time axes:
 
 Supersession ≠ validity-end: superseding corrects the *record*; setting
 `valid_until` marks that the *world* changed. These are different events.
+
+### 3.3 Credibility Ψ (v2.5)
+
+`credibility` is **external** trust — how much we trust *where a claim came
+from* (source provenance / annotation quality), kept deliberately separate from
+the internal, derived entity `confidence` (§2.2). It lives on the assertion, is
+a-priori, and feeds the derivation as the Ψ term (`b = λΨ + (1−λ)c`). The column
+is nullable (migration 050); NULL resolves to the `unrated` floor at derivation
+time. The credibility ladder and its host/derivation-type resolution are part of
+the derivation policy (§2.2): operator `user_statement` / `direct_observation`
+self-source as `internal-authority`; `agent_observation` as `external-KB`;
+external citation hosts resolve via a computed `*.gov`→authority rule plus a
+small hand-maintained host list.
 
 ---
 
@@ -384,4 +466,5 @@ fields is in the provenance-substrate spec (§4.7).
 | v2.2 | Session edges (Phase 1) |
 | v2.3 | Session-edge reasoning graph |
 | v2.4 | Write-time enforcement, commitment tracking, ingest tooling |
+| v2.5 | Status-trait normalization Phase 0 (migration 050): nullable `lifecycle` / `confidence_band` / `confidence_score` / `adoption` entity traits + assertion `credibility`, shadow-populated, `status` still read-authoritative; per-type `type_confidence_fields` registry (migration 047). See `cortex:notes/system/specs/cortex-status-trait-normalization-spec-2026-06-02.md` and confidence-derivation/v2 policy. |
 | v3.0 | URI scheme, BYO-storage, prospective indexing, event extraction, 2 new edge types |

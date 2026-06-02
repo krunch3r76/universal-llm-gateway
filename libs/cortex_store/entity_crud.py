@@ -37,6 +37,12 @@ from .models import (
 )
 from .routes.assertions import _ASSERTION_COLS
 from .type_schemas import validate_required_attributes
+from .status_trait_read import (
+    apply_option_c_read_projection,
+    entity_has_trait_columns,
+    prior_confidence_corrupt,
+    project_status_field_value,
+)
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -128,6 +134,30 @@ _PROJECTABLE_COLUMNS = frozenset(
     }
 )
 _SAFE_FIELD = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+_LIST_BASE_COLUMNS = (
+    "id",
+    "type",
+    "name",
+    "description",
+    "status",
+    "workflow_state",
+    "content_hash",
+    "created_at",
+)
+_TRAIT_READ_COLUMNS = ("lifecycle", "confidence_band", "adoption")
+
+
+def _entities_list_select_columns(conn: sqlite3.Connection) -> str:
+    """PRAGMA-safe SELECT list for entity list / read projection."""
+    table_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
+    }
+    parts = list(_LIST_BASE_COLUMNS)
+    for col in _TRAIT_READ_COLUMNS:
+        if col in table_cols:
+            parts.insert(parts.index("created_at"), col)
+    return ", ".join(parts)
 
 
 def _build_field_projection(fields: list[str]) -> tuple[str, list[str]]:
@@ -237,15 +267,18 @@ def list_entities_impl(
         )
         params.append(limit)
         rows = db_query(conn, sql, tuple(params))
-        return {"items": [_project_row(row, out_keys) for row in rows]}
+        items = [_project_row(row, out_keys) for row in rows]
+        for item in items:
+            if "status" in item:
+                item["status"] = project_status_field_value(item)
+        return {"items": items}
 
-    sql = (
-        "SELECT id, type, name, description, status, workflow_state, content_hash, "
-        f"created_at FROM entities{where} ORDER BY created_at DESC LIMIT ?"
-    )
+    list_cols = _entities_list_select_columns(conn)
+    sql = f"SELECT {list_cols} FROM entities{where} ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     rows = db_query(conn, sql, tuple(params))
-    return {"items": [EntitySummary(**row).model_dump() for row in rows]}
+    projected = [apply_option_c_read_projection(row) for row in rows]
+    return {"items": [EntitySummary(**row).model_dump() for row in projected]}
 
 
 def update_entity_impl(
@@ -299,10 +332,8 @@ def update_entity_impl(
     # guard existed), a valid confidence-axis status is permitted through to
     # overwrite it. Without this escape the freeze drops the fix and the row stays
     # unreadable via EntityDetail.
-    prior_status = prior.get("status")
-    prior_status_corrupt = (
-        prior_status is not None and prior_status not in _VALID_ENTITY_STATUS
-    )
+    prior_status_corrupt = prior_confidence_corrupt(prior, _VALID_ENTITY_STATUS)
+    trait_cols = entity_has_trait_columns(conn)
     if (
         incoming_status is not None
         and incoming_status in _CONFIDENCE_AXIS_STATUS
@@ -315,11 +346,19 @@ def update_entity_impl(
             entity_id,
         )
         updates = {k: v for k, v in updates.items() if k != "status"}
+    elif (
+        incoming_status is not None
+        and incoming_status in _LIFECYCLE_AXIS_STATUS
+        and trait_cols
+    ):
+        updates = dict(updates)
+        updates["lifecycle"] = incoming_status
+        updates.pop("status", None)
     elif prior_status_corrupt and incoming_status is not None:
         logger.warning(
             "Repairing corrupt entity status: id=%s prior=%r -> %r",
             entity_id,
-            prior_status,
+            prior.get("status"),
             incoming_status,
         )
 
@@ -458,9 +497,8 @@ def update_entity_impl(
                 entity_id,
                 exc_info=True,
             )
-    return EntityDetail(
-        **decode_row(rows[0], ENTITY_JSON_FIELDS), assertions=assertions
-    ).model_dump(mode="json")
+    detail_row = apply_option_c_read_projection(decode_row(rows[0], ENTITY_JSON_FIELDS))
+    return EntityDetail(**detail_row, assertions=assertions).model_dump(mode="json")
 
 
 def create_entity_impl(
@@ -576,9 +614,8 @@ def create_entity_impl(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Entity created but could not be read back",
         )
-    return EntityDetail(
-        **decode_row(rows[0], ENTITY_JSON_FIELDS), assertions=[]
-    ).model_dump(mode="json")
+    detail_row = apply_option_c_read_projection(decode_row(rows[0], ENTITY_JSON_FIELDS))
+    return EntityDetail(**detail_row, assertions=[]).model_dump(mode="json")
 
 
 # Module-level convenience for callers that want a connection-scoped variant.

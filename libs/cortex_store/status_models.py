@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .models import AssertionItem, EntityStatus, RelationshipItem
+from .models import AssertionItem, RelationshipItem
 
 StalenessSignal = Literal["active", "recent", "aging", "stale", "dormant"]
 
@@ -76,7 +76,10 @@ class StatusEntity(BaseModel):
     type: str
     name: str
     description: str | None = None
-    status: EntityStatus | None = None
+    status: str | None = None
+    lifecycle: str | None = None
+    confidence_band: str | None = None
+    adoption: str | None = None
     aliases: list[str] | None = None
     attributes: dict[str, Any] | None = None
 

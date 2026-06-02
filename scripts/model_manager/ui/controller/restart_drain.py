@@ -21,7 +21,9 @@ the MCP dispatch path (``api_dispatch.execute``) and the TUI workers
 
 from __future__ import annotations
 
+import asyncio
 import os
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
@@ -306,3 +308,72 @@ async def run_gated(
     finally:
         await gate.release(service)
     return {"status": "ok", "message": message}
+
+
+BackgroundCompleteHook = Callable[[str, float], Awaitable[None]]
+BackgroundFailedHook = Callable[[str, float], Awaitable[None]]
+
+# Strong refs to in-flight deferred-restart tasks. asyncio holds only a weak
+# reference to a bare create_task() result; without this the task can be GC'd
+# mid-flight, and since _background's finally is the sole release of the held
+# restart-mutex slot, a dropped task leaks the slot for the process lifetime.
+_DEFERRED_RESTART_TASKS: set[asyncio.Task[None]] = set()
+
+
+async def run_gated_deferred(
+    gate: RestartDrainGate,
+    action: str,
+    service: str,
+    *,
+    force: bool,
+    lifecycle: Callable[[], Awaitable[str]],
+    scheduled_message: str,
+    on_background_complete: BackgroundCompleteHook | None = None,
+    on_background_failed: BackgroundFailedHook | None = None,
+) -> dict[str, Any]:
+    """Acquire the restart gate, schedule lifecycle in background, return immediately.
+
+    Used for MCP ``sync_restart`` / ``rebuild`` so the manage.sock JSON-RPC response
+    is flushed before the MCP container is stopped (the triggering MCP tool call
+    otherwise dies with the container). The caller MUST still pass a gated action
+    (``stop``, ``restart``, ``sync_restart``); ``evaluate`` + ``release`` discipline
+    matches ``run_gated``, but lifecycle runs in ``asyncio.create_task``.
+    """
+    if action not in GATED_ACTIONS:
+        return {"status": "ok", "message": await lifecycle()}
+    outcome = await gate.evaluate(service, force=force)
+    if outcome is not None:
+        return outcome.to_result()
+
+    async def _background() -> None:
+        t0 = time.monotonic()
+        try:
+            message = await lifecycle()
+            duration_s = time.monotonic() - t0
+            logger.info(
+                "deferred %s %s completed in %.1fs: %s",
+                action,
+                service,
+                duration_s,
+                message[:200],
+            )
+            if on_background_complete is not None:
+                await on_background_complete(message, duration_s)
+        except Exception as exc:
+            duration_s = time.monotonic() - t0
+            logger.exception(
+                "deferred %s %s failed after %.1fs: %s",
+                action,
+                service,
+                duration_s,
+                exc,
+            )
+            if on_background_failed is not None:
+                await on_background_failed(str(exc), duration_s)
+        finally:
+            await gate.release(service)
+
+    task = asyncio.create_task(_background())
+    _DEFERRED_RESTART_TASKS.add(task)
+    task.add_done_callback(_DEFERRED_RESTART_TASKS.discard)
+    return {"status": "ok", "message": scheduled_message}

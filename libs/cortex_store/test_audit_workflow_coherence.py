@@ -19,7 +19,9 @@ def _setup_conn() -> sqlite3.Connection:
             id TEXT PRIMARY KEY,
             type TEXT NOT NULL,
             status TEXT,
-            workflow_state TEXT
+            workflow_state TEXT,
+            lifecycle TEXT,
+            adoption TEXT
         );
         CREATE TABLE relationships (
             id INTEGER PRIMARY KEY,
@@ -49,8 +51,10 @@ def test_flags_confirmed_null_and_proposed() -> None:
     conn = _setup_conn()
     conn.executescript(
         """
-        INSERT INTO entities VALUES ('decision:null-legacy', 'decision', 'confirmed', NULL);
-        INSERT INTO entities VALUES ('decision:proposed-live', 'decision', 'confirmed', 'proposed');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:null-legacy', 'decision', 'confirmed', NULL);
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:proposed-live', 'decision', 'confirmed', 'proposed');
         """
     )
     findings = detect_decision_workflow_state_incoherent(conn)
@@ -67,7 +71,8 @@ def test_skips_provisional_at_proposed() -> None:
     """A provisional (not-yet-adopted) decision at proposed is coherent — no false positive."""
     conn = _setup_conn()
     conn.execute(
-        "INSERT INTO entities VALUES ('decision:prov', 'decision', 'provisional', 'proposed')"
+        "INSERT INTO entities (id, type, status, workflow_state) "
+        "VALUES ('decision:prov', 'decision', 'provisional', 'proposed')"
     )
     assert detect_decision_workflow_state_incoherent(conn) == []
 
@@ -76,8 +81,10 @@ def test_skips_confirmed_accepted_and_implemented() -> None:
     conn = _setup_conn()
     conn.executescript(
         """
-        INSERT INTO entities VALUES ('decision:a', 'decision', 'confirmed', 'accepted');
-        INSERT INTO entities VALUES ('decision:i', 'decision', 'confirmed', 'implemented');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:a', 'decision', 'confirmed', 'accepted');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:i', 'decision', 'confirmed', 'implemented');
         """
     )
     assert detect_decision_workflow_state_incoherent(conn) == []
@@ -87,8 +94,10 @@ def test_suggests_superseded_when_supersedes_edge_present() -> None:
     conn = _setup_conn()
     conn.executescript(
         """
-        INSERT INTO entities VALUES ('decision:old', 'decision', 'confirmed', 'proposed');
-        INSERT INTO entities VALUES ('decision:new', 'decision', 'confirmed', 'accepted');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:old', 'decision', 'confirmed', 'proposed');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:new', 'decision', 'confirmed', 'accepted');
         INSERT INTO relationships (type, from_entity, to_entity, active)
             VALUES ('supersedes', 'decision:new', 'decision:old', 1);
         """
@@ -102,8 +111,10 @@ def test_subject_filter() -> None:
     conn = _setup_conn()
     conn.executescript(
         """
-        INSERT INTO entities VALUES ('decision:x', 'decision', 'confirmed', 'proposed');
-        INSERT INTO entities VALUES ('decision:y', 'decision', 'confirmed', NULL);
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:x', 'decision', 'confirmed', 'proposed');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:y', 'decision', 'confirmed', NULL);
         """
     )
     assert len(detect_decision_workflow_state_incoherent(conn)) == 2
@@ -116,9 +127,12 @@ def test_deprecated_not_terminal_info() -> None:
     conn = _setup_conn()
     conn.executescript(
         """
-        INSERT INTO entities VALUES ('decision:dep-null', 'decision', 'deprecated', NULL);
-        INSERT INTO entities VALUES ('decision:dep-prop', 'decision', 'deprecated', 'proposed');
-        INSERT INTO entities VALUES ('decision:dep-sup', 'decision', 'deprecated', 'superseded');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:dep-null', 'decision', 'deprecated', NULL);
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:dep-prop', 'decision', 'deprecated', 'proposed');
+        INSERT INTO entities (id, type, status, workflow_state)
+        VALUES ('decision:dep-sup', 'decision', 'deprecated', 'superseded');
         """
     )
     findings = detect_decision_deprecated_not_terminal(conn)

@@ -10,6 +10,7 @@ try:
 except ImportError:
     psutil = None
 
+
 # Structured error codes for stream termination
 class StreamErrorCode:
     CANCELLED = "cancelled"

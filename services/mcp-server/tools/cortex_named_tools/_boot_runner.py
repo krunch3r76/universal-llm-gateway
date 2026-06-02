@@ -158,8 +158,8 @@ def run_cortex_boot(
         views        — optional list of entity IDs to materialize as subgraph views
                        in the briefing card (structural counts + manifest hints, no prose)
 
-    Returns a slim briefing card (~5-10KB) with a section manifest pointing to
-    existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
+    Returns a slim briefing card (~25-35KB typical) with a section manifest pointing
+    to existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
     """
     # Resolve (family, platform); defaults to (claude, cursor) when both are None.
     resolved_family, resolved_platform = resolve_seat(family=family, platform=platform)
@@ -247,7 +247,7 @@ def run_cortex_boot(
                 "Could not write operational context to %s: %s", op_ctx_path, exc
             )
             record(
-                "mcp.cortex.boot.op_context.write_failed",
+                "mcp.cortex.boot.opcontext.writefailed",
                 agent=seat_slug,
                 path=op_ctx_path,
                 error=str(exc),

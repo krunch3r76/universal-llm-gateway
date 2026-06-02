@@ -25,9 +25,13 @@ class DocumentAdapter(BaseCardAdapter):
     label_reasoning_edges = "Reasoning edges"
 
     def status_summary(self, entity: dict[str, Any]) -> dict[str, Any] | None:
-        return {
-            "status": entity.get("status"),
-            "source_uri": entity.get("source_uri"),
-            "content_hash": entity.get("content_hash"),
-            "updated_at": entity.get("updated_at"),
-        }
+        from ..status_trait_read import card_status_summary_option_c
+
+        return card_status_summary_option_c(
+            entity,
+            extra={
+                "source_uri": entity.get("source_uri"),
+                "content_hash": entity.get("content_hash"),
+                "updated_at": entity.get("updated_at"),
+            },
+        )

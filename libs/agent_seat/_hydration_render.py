@@ -75,6 +75,7 @@ def _render_briefing(
     agent: str,
     *,
     sessions: list[dict[str, Any]],
+    last_session: dict[str, Any] | None = None,
     deadlines: list[dict[str, Any]],
     todos: list[dict[str, Any]],
     unread_count: int,
@@ -136,16 +137,16 @@ def _render_briefing(
     if review_total > 0:
         parts.append(f"\n## Review Queue — {review_total} item(s)")
 
-    if sessions:
-        last = sessions[0]
+    display_last = last_session or (sessions[0] if sessions else None)
+    if display_last:
         parts.append(
-            f"\n## Last Session — {last.get('agent', '?')} "
-            f"({last.get('timestamp', '?')})",
+            f"\n## Last Session — {display_last.get('agent', '?')} "
+            f"({display_last.get('timestamp', '?')})",
         )
-        summary = (last.get("summary") or "")[:300]
+        summary = (display_last.get("summary") or "")[:300]
         if summary:
             parts.append(summary)
-        open_items = last.get("open_items") or []
+        open_items = display_last.get("open_items") or []
         if isinstance(open_items, list) and open_items:
             parts.append(f"**Open items** ({len(open_items)}):")
             for item in open_items[:5]:

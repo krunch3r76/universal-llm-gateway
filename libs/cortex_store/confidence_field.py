@@ -51,3 +51,55 @@ def confidence_field(conn: sqlite3.Connection, entity_type: str) -> str:
     if not rows:
         return DEFAULT_CONFIDENCE_FIELD
     return rows[0]["confidence_field"]
+
+
+def confidence_band_sql_predicate(column_prefix: str = "") -> str:
+    """Phase 2 read cutover: match a band on ``confidence_band``, legacy ``status`` fallback.
+
+    Use with two bound parameters (same band value twice), e.g.
+    ``WHERE {confidence_band_sql_predicate()}`` + ``(band, band)``.
+    """
+    p = f"{column_prefix}." if column_prefix else ""
+    return f"({p}confidence_band = ? OR ({p}confidence_band IS NULL AND {p}status = ?))"
+
+
+def stored_confidence_band(row: dict[str, object]) -> str | None:
+    """Effective stored confidence band for API/dispatch reads (trait-first)."""
+    band = row.get("confidence_band")
+    if band is not None:
+        return str(band)
+    status = row.get("status")
+    return str(status) if status is not None else None
+
+
+def lifecycle_not_value_sql_predicate(value: str, column_prefix: str = "") -> str:
+    """Phase 2 read cutover: exclude entities at lifecycle *value* (status fallback).
+
+    Bind ``(value, value)`` — same value twice for trait column and legacy status.
+    """
+    p = f"{column_prefix}." if column_prefix else ""
+    return (
+        f"({p}lifecycle IS NULL OR {p}lifecycle != ?) "
+        f"AND ({p}lifecycle IS NOT NULL OR {p}status IS NULL OR {p}status != ?)"
+    )
+
+
+def lifecycle_is_value_sql_predicate(value: str, column_prefix: str = "") -> str:
+    """Phase 2 read cutover: match lifecycle *value* (status fallback when trait NULL)."""
+    p = f"{column_prefix}." if column_prefix else ""
+    return f"({p}lifecycle = ? OR ({p}lifecycle IS NULL AND {p}status = ?))"
+
+
+def adoption_in_sql_predicate(
+    adoption_values: tuple[str, ...],
+    legacy_status_values: tuple[str, ...] = ("confirmed",),
+    column_prefix: str = "",
+) -> str:
+    """Phase 2 read cutover: match adoption trait, legacy status when trait NULL."""
+    p = f"{column_prefix}." if column_prefix else ""
+    adop_ph = ",".join(["?"] * len(adoption_values))
+    status_ph = ",".join(["?"] * len(legacy_status_values))
+    return (
+        f"({p}adoption IN ({adop_ph}) OR "
+        f"({p}adoption IS NULL AND {p}status IN ({status_ph})))"
+    )

@@ -41,6 +41,8 @@ domains:
 - frontier_dispatch
 - team_dispatch
 
+- cortex_boot
+
 tools:
 
   # ─── domain: cortex ──────────────────────────────────────────────────────────
@@ -1224,10 +1226,10 @@ tools:
     tool: fs_search
     substrate_qualified: user-vortex__fs_search
   fol_descriptor: |
-    ∀ sandbox = "workspaces" ∧ path ∈ str ∧ content ∈ str:
+    ∀ sandbox ∈ {"cortex","workspaces"} ∧ path ∈ str ∧ content ∈ str:
       fs_search(sandbox, path, content) ⟹
-        result ∈ List[Match] ∧ ∀ m ∈ result: m.line ∋ regex(content).
-    Read-only. workspaces sandbox only. See agent_skill:fs.
+        result.mode ∈ {"file","directory"} ∧ matches are regex line hits.
+    Conversion-aware (PDF/DOCX/ODT/EML/HTML). Read-only. See agent_skill:fs.
   json_schema:
     type: object
     properties:
@@ -1849,7 +1851,11 @@ tools:
       expected_diff_sha256: {type: string}
       remove_worktree: {type: boolean, default: true}
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # headless/arc-only: git is an external-agent / manual-worktree concern, not a
+  # Cursor-IDE concern (decision:cursorbuild-ide-interface). Demoted off mcp_claude
+  # → overflow for Claude seats (still tool_search-discoverable for a Claude lead);
+  # stays primary on mcp_grok (grok-direct is the seat the arc git flow was built for).
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -1882,7 +1888,8 @@ tools:
       commit_message: {type: string, default: ""}
       remove_worktree: {type: boolean, default: true}
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -1907,7 +1914,8 @@ tools:
     properties:
       worktree_path: {type: string}
     required: [worktree_path]
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -1936,7 +1944,8 @@ tools:
       path_filter: {type: string, default: ""}
       include_full_diff: {type: boolean, default: true}
     required: [worktree_path]
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -1970,7 +1979,8 @@ tools:
       commit_message: {type: string, default: ""}
       dry_run: {type: boolean, default: false}
     required: [worktree_path, expected_branch, paths]
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2473,3 +2483,38 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: '2026-05-30'
+
+  # ─── domain: cortex_boot ─────────────────────────────────────────────────────
+  # Primary session boot on Claude /mcp — ¬via dispatch wrapper (avoids ~2× wire tax).
+
+- canonical_name: cortex_boot_session
+  domain: cortex_boot
+  operation: session
+  dispatcher_call_shape:
+    tool: cortex_boot
+    dispatch_key: op
+    dispatch_value: session
+  flat_call_shape:
+    tool: cortex_boot
+    substrate_qualified: user-vortex__cortex_boot
+  fol_descriptor: |
+    ∀ seat ∈ AgentSeats:
+      cortex_boot(agent?, family?, platform?, role?, transcript_id?, views?) ⟹
+        briefing_card ∈ Markdown ∧ sections_available ∈ List[ManifestEntry]
+        ∧ agent_skill bodies indexed (slug + trigger) — ¬inlined;
+        load via fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md").
+    LIVE boot writes operational_context to disk. Read-only fetch graph. See agent_skill:cortex.
+  json_schema:
+    type: object
+    properties:
+      agent: {type: string, description: "Seat slug (claude-web, claude-cursor, grok-direct, ...)"}
+      family: {type: string, enum: [claude, gpt, grok, gemini]}
+      platform: {type: string, enum: [cursor, api, web]}
+      role: {type: string}
+      transcript_id: {type: string}
+      views: {type: array, items: {type: string}}
+  skill_uri: agent_skill:cortex
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: always_loaded
+  introduced: '2026-06-02'

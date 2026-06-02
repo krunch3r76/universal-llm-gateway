@@ -103,10 +103,11 @@ def build_manifest(
                 "section": "skills",
                 "count": len(skills),
                 "hint": (
-                    "cortex(tool='entities', "
-                    'arguments=\'{"type": "agent_skill"}\') — '
-                    "then fs(sandbox='cortex', op='read', path=<source_uri>) "
-                    "for the full SKILL.md"
+                    "Index on briefing_card ## Agent Skills. Browse: "
+                    'fs(sandbox="cortex", op="md_list", path="agent-skills/"); '
+                    'read: fs(sandbox="cortex", op="md_read", path="agent-skills/<slug>.md"). '
+                    "Refresh entity list: cortex(tool='entities', "
+                    'arguments=\'{"type": "agent_skill"}\')'
                 ),
             }
         )

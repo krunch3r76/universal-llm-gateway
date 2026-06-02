@@ -65,12 +65,13 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         views: list[str] | None = None,
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
-        (~5-10KB) with priority signals and a section manifest for on-demand pulls.
+        (~25-35KB typical) with priority signals and a section manifest for on-demand pulls.
 
         The briefing card contains: deadlines, unread bus summary, review queue
-        count, last session summary, top todos, self-observations, and temporal
-        alerts. The Last Session block renders the session summary; handoff
-        prose is NOT auto-surfaced (handoffs are user-facing artifacts for
+        count, last session summary, top todos, self-observations, temporal
+        alerts, and an agent-skills **index** (slug + trigger + fs md_read hint —
+        full SKILL.md bodies are not inlined). The Last Session block renders the
+        session summary; handoff prose is NOT auto-surfaced (handoffs are user-facing artifacts for
         manual copy-paste at end of chat, not boot orientation material — see
         assertion 8384, session web-2026-05-04-1057). The section manifest
         includes a `continuity` entry pointing at `GET /boot-continuity via

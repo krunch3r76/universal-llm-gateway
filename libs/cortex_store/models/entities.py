@@ -59,7 +59,11 @@ class EntitySummary(BaseModel):
     type: str
     name: str
     description: str | None = None
-    status: EntityStatus | None = None
+    # Option C read: synthesized display string (not raw ``entities.status`` alone).
+    status: str | None = None
+    lifecycle: str | None = None
+    confidence_band: str | None = None
+    adoption: str | None = None
     workflow_state: str | None = None
     content_hash: str | None = None
     created_at: str
@@ -70,7 +74,10 @@ class EntityDetail(_EntityCommon):
     type: str
     name: str
     description: str | None = None
-    status: EntityStatus | None = None
+    status: str | None = None
+    lifecycle: str | None = None
+    confidence_band: str | None = None
+    adoption: str | None = None
     workflow_state: str | None = None
     created_at: str
     updated_at: str

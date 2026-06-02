@@ -1,8 +1,9 @@
 """Manage service tool — agent-driven service lifecycle via manage.sock.
 
 Connects to /tmp/universal-protocol/manage.sock (JSON-RPC 2.0 over UDS).
-Exposes start, stop, rebuild, restart, status, health, and wait_healthy
-for gateway-managed services. Single entry point reduces agent context overhead.
+Exposes status, health, start, stop, restart, sync_restart, rebuild,
+wait_healthy, and busy_status for gateway-managed services. Single entry
+point reduces agent context overhead.
 """
 
 from __future__ import annotations
@@ -250,9 +251,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
         "active_work"} where state ∈ {busy, in_progress, probe_error}. Honor
         retry_after_s and retry, or pass force=true to preempt in-flight work.
 
-        Self-restart caveat: sync_restart(service="mcp") graceful-stops the
-        container; during the restart window calls may get -32099 with
-        data.reason="server_restarting" and Retry-After: 30.
+        Self-restart (mcp): sync_restart/rebuild returns status=ok immediately
+        (manage.sock defers container stop to a background task). The triggering
+        call should not hang or die with transport error. During the ~30s restart
+        window other calls may get -32099 with data.reason="server_restarting"
+        and Retry-After: 30 — retry or use wait_healthy(service="mcp").
         """
         if action == "rebuild" and service in {"gateway", "mcp"}:
             heavy = (

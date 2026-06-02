@@ -18,8 +18,14 @@ from ._pdf_read import (
     PDF_METHOD_SIDECAR,
     PDF_READ_TIMEOUT_S,
     _read_pdf_text,
+    extract_pdf_plaintext_with_timeout,
     read_pdf,
 )
+
+# Method tags for search text loading (load_searchable_text). PDF routes reuse
+# PDF_METHOD_SIDECAR; the remaining tags are search-specific.
+SEARCH_METHOD_PDF_PLAINTEXT = "pymupdf_plaintext"
+SEARCH_METHOD_CONVERTED = "converted"
 
 FILES_ROOT = Path("/data/files")
 
@@ -160,6 +166,39 @@ def extract_text_content(path: Path) -> str:
 def is_converted_format(path: Path) -> bool:
     """True when *path* requires format conversion (not natively UTF-8 text)."""
     return path.suffix.lower() in _FORMAT_READERS
+
+
+def load_searchable_text(path: Path) -> tuple[str, str | None]:
+    """Load text for regex search, sidecar-stat-first.
+
+    Satisfies ``decision:mcp-fs-timeout-observability`` (agent-bus:962):
+    durable readable sidecars are preferred before any PDF extraction. PDFs
+    without a sidecar use layout-free plaintext extraction
+    (``_extract_pdf_plaintext``, <1s) rather than the pymupdf4llm layout pass,
+    so directory scans stay within the remote-connector wall-clock window.
+    Other converted formats route through ``extract_text_content``; native
+    text is read directly.
+
+    Returns ``(text, method)`` where method is one of:
+      - ``sidecar_markdown`` — read from a markdown sidecar
+      - ``pymupdf_plaintext`` — PDF extracted layout-free (timeout-bounded)
+      - ``converted`` — non-PDF converted format (DOCX/ODT/EML/HTML)
+      - ``None`` — native UTF-8 text (search envelope reports ``native_text``)
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        sidecar = next((c for c in _pdf_sidecar_candidates(path) if c.is_file()), None)
+        if sidecar is not None:
+            return sidecar.read_text(
+                encoding="utf-8", errors="replace"
+            ), PDF_METHOD_SIDECAR
+        return (
+            extract_pdf_plaintext_with_timeout(path),
+            SEARCH_METHOD_PDF_PLAINTEXT,
+        )
+    if is_converted_format(path):
+        return extract_text_content(path), SEARCH_METHOD_CONVERTED
+    return path.read_text(encoding="utf-8", errors="replace"), None
 
 
 def resolve_files_path(relative: str, root: Path = FILES_ROOT) -> Path:

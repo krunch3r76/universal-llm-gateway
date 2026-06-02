@@ -12,9 +12,16 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-from .controller.restart_drain import run_gated
+from .controller.restart_drain import (
+    BackgroundCompleteHook,
+    BackgroundFailedHook,
+    run_gated,
+    run_gated_deferred,
+)
 
 if TYPE_CHECKING:
+    from universal_event_bus import EventBus
+
     from .controller.service_ctl.core import ServiceController
     from .model.service_state import ServiceInfo, ServiceState
 
@@ -59,7 +66,12 @@ SYNC_RESTART_SERVICES = frozenset(
 
 
 async def execute(
-    ctl: ServiceController, method: str, service: str, params: dict[str, Any]
+    ctl: ServiceController,
+    method: str,
+    service: str,
+    params: dict[str, Any],
+    *,
+    event_bus: EventBus | None = None,
 ) -> dict[str, Any]:
     """Dispatch a validated JSON-RPC method to ServiceController."""
     svc = ctl.service_state
@@ -124,6 +136,18 @@ async def execute(
                     f"rebuild not supported for '{service}'; "
                     f"supported: {', '.join(sorted(REBUILD_SERVICES))}"
                 )
+            if service == "mcp":
+                on_ok, on_fail = _mcp_background_hooks(event_bus, "rebuild")
+                return await run_gated_deferred(
+                    ctl.restart_gate,
+                    "sync_restart",
+                    service,
+                    force=bool(params.get("force", False)),
+                    lifecycle=lambda: _mcp_deferred_lifecycle(ctl, no_cache=True),
+                    scheduled_message=_MCP_RESTART_SCHEDULED_MSG,
+                    on_background_complete=on_ok,
+                    on_background_failed=on_fail,
+                )
             msg = await _rebuild(ctl, service)
             return {"status": "ok", "message": msg}
 
@@ -133,6 +157,18 @@ async def execute(
                 raise ValueError(
                     f"sync_restart not supported for '{service}'; "
                     f"supported: {', '.join(sorted(SYNC_RESTART_SERVICES))}"
+                )
+            if service == "mcp":
+                on_ok, on_fail = _mcp_background_hooks(event_bus, "sync_restart")
+                return await run_gated_deferred(
+                    ctl.restart_gate,
+                    "sync_restart",
+                    service,
+                    force=bool(params.get("force", False)),
+                    lifecycle=lambda: _mcp_deferred_lifecycle(ctl, no_cache=False),
+                    scheduled_message=_MCP_RESTART_SCHEDULED_MSG,
+                    on_background_complete=on_ok,
+                    on_background_failed=on_fail,
                 )
             return await run_gated(
                 ctl.restart_gate,
@@ -291,8 +327,6 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
     'sync_restart' (which is just 'restart' under bind-mount). Engine rebuilds
     go through the TUI Build Image flow.
     """
-    if service == "mcp":
-        return await ctl.sync_restart_mcp(no_cache=True)
     if service == "event_service":
         return await ctl.rebuild_event_service()
     if service == "cortex_api":
@@ -312,21 +346,64 @@ async def _rebuild(ctl: ServiceController, service: str) -> str:
 # than on the next agent's session start. See agent-bus thread 883.
 _BOOT_RENDER_DIFF_SERVICES = frozenset({"cortex_api", "mcp"})
 
+_MCP_RESTART_SCHEDULED_MSG = (
+    "MCP restart scheduled; container will drain and restart in background. "
+    "Retry tool calls after ~30s if you see -32099 or transport errors. "
+    "Follow with manage(action='wait_healthy', service='mcp') to confirm readiness."
+)
+
+
+def _mcp_background_hooks(
+    event_bus: EventBus | None,
+    method: str,
+) -> tuple[BackgroundCompleteHook | None, BackgroundFailedHook | None]:
+    """Optional manage.service.* events when a deferred MCP lifecycle finishes."""
+    if event_bus is None:
+        return None, None
+    from .manage_events import ManageServiceCompleted, ManageServiceFailed
+
+    async def on_complete(_message: str, duration_s: float) -> None:
+        await event_bus.publish(
+            ManageServiceCompleted(
+                method=method,
+                service="mcp",
+                duration_s=round(duration_s, 3),
+            )
+        )
+
+    async def on_failed(error: str, duration_s: float) -> None:
+        await event_bus.publish(
+            ManageServiceFailed(
+                method=method,
+                service="mcp",
+                error=error,
+                duration_s=round(duration_s, 3),
+            )
+        )
+
+    return on_complete, on_failed
+
+
+async def _mcp_deferred_lifecycle(ctl: ServiceController, *, no_cache: bool) -> str:
+    """Full MCP sync/restart + optional boot-render-diff (runs in background)."""
+    msg = await ctl.sync_restart_mcp(no_cache=no_cache)
+    diff_msg = await _run_boot_render_diff()
+    if diff_msg:
+        msg = f"{msg}\n\n{diff_msg}"
+    return msg
+
 
 async def _sync_restart(ctl: ServiceController, service: str) -> str:
     """Deploy local source edits and bring the service back up.
 
     Per-service strategy:
       gateway      → restart (libs/, services/, config/ are bind-mounted)
-      mcp          → scripts/sync-and-restart-mcp.sh (docker cp sync + restart)
+      mcp          → deferred via ``run_gated_deferred`` in ``execute`` (API path)
       stargate, rag, cloud_proxy, cortex_api, agent_bus, event_service → restart
     """
-    if service == "mcp":
-        msg = await ctl.sync_restart_mcp(no_cache=False)
-    else:
-        stop_msg = await _stop(ctl, service)
-        start_msg = await _start(ctl, service)
-        msg = f"{stop_msg}\n{start_msg}"
+    stop_msg = await _stop(ctl, service)
+    start_msg = await _start(ctl, service)
+    msg = f"{stop_msg}\n{start_msg}"
 
     if service in _BOOT_RENDER_DIFF_SERVICES:
         diff_msg = await _run_boot_render_diff()

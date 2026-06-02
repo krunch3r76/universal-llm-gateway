@@ -191,7 +191,8 @@ def _op_review_queue(
     thin_descriptions = []
     if not entities.get("error"):
         for e in entities.get("items", []):
-            if e.get("status") == "provisional":
+            band = e.get("confidence_band") or e.get("status")
+            if band == "provisional":
                 provisional.append({**e, "priority": 4, "reason": "provisional"})
             desc = e.get("description") or ""
             if len(desc) < 50:

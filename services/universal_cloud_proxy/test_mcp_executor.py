@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
 from services.universal_cloud_proxy import mcp_executor as mcp_executor_module
+from services.universal_cloud_proxy.boot_directive import parse_boot_directive
 from services.universal_cloud_proxy.mcp_executor import (
     McpToolExecutor,
     _compat_dispatch_tool_defs,
@@ -52,6 +55,136 @@ def test_mcp_schema_to_openai_tool_sanitizes_function_schema() -> None:
 def test_compat_dispatch_tool_defs_restores_web_fetch() -> None:
     defs = _compat_dispatch_tool_defs({"web_search", "dispatch"})
     assert [d["function"]["name"] for d in defs] == ["web_fetch"]
+
+
+def test_parse_boot_directive_non_match() -> None:
+    assert parse_boot_directive("hello world") is None
+    assert parse_boot_directive('cortex_boot(transcript_id="foo")') is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_boot_directive_agent_claude_cursor() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+        calls.append((name, arguments))
+        return json.dumps({"briefing_card": "BRIEFING"})
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
+    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
+
+    messages = [
+        {
+            "role": "system",
+            "content": 'Start with cortex_boot(agent="claude-cursor") then work.',
+        }
+    ]
+    await executor._resolve_boot_directive(messages)
+
+    assert calls == [("cortex_boot", {"agent": "claude-cursor"})]
+    assert messages[0]["content"] == "Start with BRIEFING then work."
+
+
+@pytest.mark.asyncio
+async def test_resolve_boot_directive_agent_grok_direct() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+        calls.append((name, arguments))
+        return json.dumps({"briefing_card": "GROK BRIEF"})
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
+    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
+
+    messages = [
+        {
+            "role": "system",
+            "content": "cortex_boot(agent='grok-direct')",
+        }
+    ]
+    await executor._resolve_boot_directive(messages)
+
+    assert calls == [("cortex_boot", {"agent": "grok-direct"})]
+    assert messages[0]["content"] == "GROK BRIEF"
+
+
+@pytest.mark.asyncio
+async def test_resolve_boot_directive_family_platform() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+        calls.append((name, arguments))
+        return json.dumps({"briefing_card": "API MULTI"})
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
+    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
+
+    messages = [
+        {
+            "role": "system",
+            "content": 'cortex_boot(family="Grok", platform="api-multi")',
+        }
+    ]
+    await executor._resolve_boot_directive(messages)
+
+    assert calls == [
+        ("cortex_boot", {"family": "Grok", "platform": "api-multi"}),
+    ]
+    assert messages[0]["content"] == "API MULTI"
+
+
+@pytest.mark.asyncio
+async def test_resolve_boot_directive_passes_all_primary_params() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+        calls.append((name, arguments))
+        return json.dumps({"briefing_card": "CARD"})
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
+    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                'cortex_boot(agent="claude-web", family="grok", '
+                'platform="cursor", role="lead")'
+            ),
+        }
+    ]
+    await executor._resolve_boot_directive(messages)
+
+    assert calls == [
+        (
+            "cortex_boot",
+            {
+                "agent": "claude-web",
+                "family": "grok",
+                "platform": "cursor",
+                "role": "lead",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_boot_directive_leaves_unmatched_prompt() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
+        calls.append((name, arguments))
+        return json.dumps({"briefing_card": "CARD"})
+
+    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
+    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
+
+    original = "No boot directive here."
+    messages = [{"role": "system", "content": original}]
+    await executor._resolve_boot_directive(messages)
+
+    assert calls == []
+    assert messages[0]["content"] == original
 
 
 @pytest.mark.asyncio
@@ -210,7 +343,6 @@ async def test_execute_tool_does_not_retry_generic_503() -> None:
 
     result = await executor.execute_tool("fs", {"op": "list"})
 
-    # Single attempt, generic 503 surfaces as Tool execution failed (raised by raise_for_status).
     assert calls == 1
     assert "Tool execution failed" in result or "restart" not in result
 

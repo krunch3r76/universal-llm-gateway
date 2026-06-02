@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any
 
+from ._fs_dispatch import sandbox_op_names
 from ._ops_binary import append_binary_impl, write_binary_impl
 from ._ops_paths import copy_file_impl, delete_file_impl, move_file_impl
+from ._ops_search import search_path_impl
 from ._ops_text import (
     edit_file_impl,
     list_files_impl,
@@ -18,8 +19,6 @@ from ._paths import DROPBOX_COPY_WARNING, DROPBOX_READ_HINT, FS_WORKFLOW_HINTS
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
-
-logger = logging.getLogger(__name__)
 
 
 def register_files_tool(mcp: FastMCP) -> None:
@@ -72,6 +71,12 @@ def register_files_tool(mcp: FastMCP) -> None:
           replace — find-and-replace in file (path, target required; content = replacement)
           insert_at_line — insert at line N (path, content, line required)
           list   — list files in directory (path optional, defaults to root)
+          search — regex-search a file or directory (path required, content =
+              regex pattern). Searches text and converted documents
+              (PDF/DOCX/ODT/EML/HTML), sidecar-first for PDFs. File mode returns
+              {path, mode: "file", matches: [{line, text}], truncated,
+              extraction_method}; directory mode adds a "file" key per match and
+              a "skipped_converted" count (converted-file extraction is cost-bounded).
           move   — move or rename a file (path = source, target = destination)
           copy   — copy a file (path = source, target = destination)
           delete — soft-delete a file to trash/ (path required); name conflicts
@@ -139,6 +144,16 @@ def register_files_tool(mcp: FastMCP) -> None:
             return append_binary_impl(path, content)
         if op == "list":
             return list_files_impl(path)
+        if op == "search":
+            if not path:
+                raise ValueError("'path' is required for search")
+            if not content:
+                raise ValueError(
+                    "'content' is required for search and holds the regex "
+                    "pattern. Example: fs(sandbox='cortex', op='search', "
+                    "path='notes/paper.pdf', content='credibility')"
+                )
+            return search_path_impl(path, content)
         if op in ("append", "prepend"):
             if not path:
                 raise ValueError(f"'path' is required for {op}")
@@ -187,8 +202,4 @@ def register_files_tool(mcp: FastMCP) -> None:
             result = delete_file_impl(path)
             result["_next"] = FS_WORKFLOW_HINTS["delete"]
             return result
-        raise ValueError(
-            f"Unknown op: {op!r}. "
-            "Use: read, read_multi, write, write_binary, append_binary, "
-            "append, prepend, replace, insert_at_line, list, move, copy, delete"
-        )
+        raise ValueError(f"Unknown op: {op!r}. Use: {sandbox_op_names('cortex')}")

@@ -237,8 +237,7 @@ class StreamingSafeExecutor:
     ) -> AsyncGenerator:
         """Handle HTTPException during active streaming."""
         logger.error(
-            f"[{request_id}] HTTPException during streaming"
-            f"({operation}): {exc.detail}",
+            f"[{request_id}] HTTPException during streaming({operation}): {exc.detail}",
             exc_info=True,
         )
 

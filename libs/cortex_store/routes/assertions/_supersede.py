@@ -26,6 +26,7 @@ from ...models import (
     SupersedeRequest,
     SupersedeResponse,
 )
+from ...substantiation_sync import recompute_entity_substantiation_status
 from ._shared import (
     _ASSERTION_COLS,
     _JSON_FIELDS,
@@ -268,6 +269,12 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
                     "auto-created by supersede tool",
                 ),
             )
+
+            # Fork D write side: supersession changes the active backing set
+            # (old assertion closed, replacement opened), which may flip the
+            # entity's derived confidence-axis status. Recompute in-transaction.
+            recompute_entity_substantiation_status(conn, body.entity_id)
+
             conn.commit()
 
         enrich_old_assertion_events(conn, body.old_assertion_id)

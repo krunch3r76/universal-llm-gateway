@@ -57,6 +57,7 @@ from tools.extract_directory import register_extract_directory_tools
 from tools.extract_document import register_extract_document_tools
 from tools.filesystem import register_filesystem_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
+from tools.filesystem._fs_dispatch import dispatch_workspaces_op, sandbox_op_doc
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
@@ -368,6 +369,8 @@ def _build_server() -> tuple[
         "md_delete": "delete_section",
     }
 
+    _fs_standard_ops_doc = sandbox_op_doc()
+
     @mcp.tool(title="File I/O (Sandboxed)")
     def fs(
         op: str,
@@ -383,13 +386,13 @@ def _build_server() -> tuple[
         include_untracked: bool = True,
         binary: bool = False,
     ) -> dict[str, Any]:
-        """File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.
+        f"""File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.
 
         `read` is unified across sandboxes: source files plus text-oriented
         document formats such as PDF, DOCX, ODT, EML, and HTML can be read in
         text mode from `cortex` or `workspaces`. Image files, archives, and other
         binary formats auto-route to base64 even without `binary=True` — reading a
-        `.png`, `.jpg`, or archive returns `{content_base64, auto_binary: true}`
+        `.png`, `.jpg`, or archive returns {{content_base64, auto_binary: true}}
         rather than corrupted text. Pass `binary=True` explicitly when you need base64
         for an arbitrary file type or to make the intent clear. Use `write_binary`
         (cortex sandbox only) to stage base64-encoded binary files (PDFs, images)
@@ -416,21 +419,7 @@ def _build_server() -> tuple[
 
         Use op="list" for directories; op="read" on a directory path returns an error.
 
-        Standard ops:
-          read           (path)                           — read file (text or PDF/DOCX/ODT/EML/HTML)
-          read_multi     (paths: list)                    — read multiple files
-          write          (path, content)                  — write/create file
-          append         (path, content)                  — append to file
-          prepend        (path, content)                  — prepend to file
-          replace        (path, target, content, all_occurrences?) — replace text
-          insert_at_line (path, content, line)            — insert at line number
-          list           (path?)                          — list directory
-          delete         (path)                           — delete file
-          search         (path, content)                  — regex search (workspaces sandbox only)
-          move           (path, target)                   — rename/relocate file
-          copy           (path, target, target_sandbox?)  — copy file; when target_sandbox
-                           differs from sandbox, copy server-side between sandboxes
-          write_binary   (path, content)                  — write base64-encoded binary (cortex sandbox only)
+{_fs_standard_ops_doc}
 
         Markdown section ops (for large docs):
           md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)
@@ -515,113 +504,40 @@ def _build_server() -> tuple[
             return result
 
         if sandbox == "workspaces":
-            if op == "read":
-                fn = overflow_registry.get("read_project_file")
-                if fn is None:
-                    return {"error": "read_project_file tool not available"}
-                return fn(path, binary=binary)
-            if op == "write":
-                fn = overflow_registry.get("write_project_file")
-                if fn is None:
-                    return {"error": "write_project_file tool not available"}
-                return fn(path, content)
-            if op == "list":
-                fn = overflow_registry.get("list_project_files")
-                if fn is None:
-                    return {"error": "list_project_files tool not available"}
-                return fn(path, include_untracked=include_untracked)
-            if op == "search":
-                if not content:
-                    return {
-                        "error": (
-                            "'content' is required for search and holds the "
-                            "regex query string. Example: fs(op='search', "
-                            "sandbox='workspaces', "
-                            "path='universal-llm-gateway', "
-                            "content='Error occurred')"
-                        )
-                    }
-                fn = overflow_registry.get("search_project_files")
-                if fn is None:
-                    return {"error": "search_project_files tool not available"}
-                return fn(content, directory=path, include_untracked=include_untracked)
-            if op in {"append", "prepend"}:
-                fn = overflow_registry.get("edit_project_file")
-                if fn is None:
-                    return {"error": "edit_project_file tool not available"}
-                return fn(path, op, content)
-            if op == "replace":
-                fn = overflow_registry.get("edit_project_file")
-                if fn is None:
-                    return {"error": "edit_project_file tool not available"}
-                return fn(
-                    path,
-                    "replace",
-                    content,
-                    target_str=target,
-                    all_occurrences=all_occurrences,
-                )
-            if op == "insert_at_line":
-                fn = overflow_registry.get("edit_project_file")
-                if fn is None:
-                    return {"error": "edit_project_file tool not available"}
-                return fn(path, "insert_at_line", content, line=line)
-            if op == "move":
-                fn = overflow_registry.get("move_project_file")
-                if fn is None:
-                    return {"error": "move_project_file tool not available"}
-                return fn(path, target)
-            if op == "copy":
-                fn = overflow_registry.get("copy_project_file")
-                if fn is None:
-                    return {"error": "copy_project_file tool not available"}
-                return fn(path, target)
-            if op == "delete":
-                if not path:
-                    return {"error": "'path' is required for delete"}
-                fn = overflow_registry.get("delete_project_file")
-                if fn is None:
-                    return {"error": "delete_project_file tool not available"}
-                result = fn(path)
-                if "error" not in result:
-                    result["_next"] = FS_WORKFLOW_HINTS["delete_workspaces"]
-                return result
-            valid = "read, write, append, prepend, replace, insert_at_line, move, copy, delete, list, search"
-            return {"error": f"Unknown workspaces op: {op!r}. Available: {valid}"}
+            return dispatch_workspaces_op(
+                op,
+                path,
+                paths,
+                content,
+                target,
+                line,
+                all_occurrences,
+                include_untracked,
+                binary,
+                overflow_registry,
+                FS_WORKFLOW_HINTS,
+            )
 
         tool_name = sandbox_tool[sandbox]
         fn = overflow_registry.get(tool_name)
         if fn is None:
             return {"error": f"{tool_name} tool not available"}
-        if sandbox == "cortex":
-            if op == "read_multi":
-                paths = paths or []
-                return fn(
-                    op=op,
-                    path=path,
-                    paths=paths,
-                    content=content,
-                    target=target,
-                    binary=binary,
-                )
+        # Catch ValueError from the cortex dispatcher (raises for unknown ops /
+        # missing params) so both sandbox paths return uniform {error: str} dicts.
+        # ∀ non-ValueError (I/O, etc.) still propagates to the outer envelope.
+        try:
             return fn(
                 op=op,
                 path=path,
+                paths=paths or [],
                 content=content,
                 target=target,
                 line=line,
                 all_occurrences=all_occurrences,
                 binary=binary,
             )
-        return fn(
-            op=op,
-            path=path,
-            content=content,
-            target=target,
-            line=line,
-            all_occurrences=all_occurrences,
-            binary=binary,
-        )
+        except ValueError as exc:
+            return {"error": str(exc)}
 
     rag_op_tool: dict[str, str] = {
         "search": "rag_search",

@@ -44,6 +44,33 @@ def _extract_pdf_plaintext(path: Path) -> str:
         doc.close()
 
 
+def extract_pdf_plaintext_with_timeout(
+    path: Path,
+    timeout_s: float = PDF_READ_TIMEOUT_S,
+) -> str:
+    """Run ``_extract_pdf_plaintext`` behind a wall-clock cap for search paths.
+
+    Converts a pymupdf hang into ``TimeoutError`` so directory scans can count
+    the file in ``skipped_converted`` instead of stalling past the remote MCP
+    window (decision:mcp-fs-timeout-observability).
+    """
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mcp-pdf-search")
+    future = executor.submit(_extract_pdf_plaintext, path)
+    try:
+        return future.result(timeout=timeout_s)
+    except FutureTimeoutError as exc:
+        record(
+            "mcp.fs.search.pdf.plaintext.timeout",
+            path=str(path),
+            timeout_s=timeout_s,
+        )
+        raise TimeoutError(
+            f"PDF plaintext extraction exceeded {timeout_s:.0f}s for {path.name}"
+        ) from exc
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
 def _extract_pdf_markdown(path: Path) -> tuple[str, str]:
     """Run PDF extraction without timeout handling.
 

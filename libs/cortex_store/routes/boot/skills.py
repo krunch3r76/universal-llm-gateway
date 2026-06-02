@@ -7,8 +7,11 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
+from ...confidence_field import lifecycle_not_value_sql_predicate
 from ...db import cortex_conn
 from ...db import query as db_query
+
+_DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
 
 router = APIRouter(tags=["boot"])
 
@@ -17,13 +20,13 @@ router = APIRouter(tags=["boot"])
 # may contain `"*"` (visible to every agent) and/or specific slugs. Skills
 # without the attribute are treated as `["*"]` via COALESCE so the default
 # behaviour pre-backfill is "show to everyone" — no silent narrowing.
-_BOOT_SKILLS_SQL = """
+_BOOT_SKILLS_SQL = f"""
     SELECT id, name, description,
            json_extract(attributes, '$.skill_binding') AS skill_binding_json
     FROM entities
     WHERE type = 'agent_skill'
-      AND (status IS NULL OR status != 'deprecated')
-      {for_agent_filter}
+      AND {_DEPRECATED_EXCLUDE}
+      {{for_agent_filter}}
     ORDER BY name ASC
     LIMIT ?
 """
@@ -40,11 +43,11 @@ _FOR_AGENT_CLAUSE = """
     )
 """
 
-_UNPARTITIONED_COUNT_SQL = """
+_UNPARTITIONED_COUNT_SQL = f"""
     SELECT COUNT(*) AS n
     FROM entities
     WHERE type = 'agent_skill'
-      AND (status IS NULL OR status != 'deprecated')
+      AND {_DEPRECATED_EXCLUDE}
       AND json_extract(attributes, '$.applicable_agents') IS NULL
 """
 
@@ -52,11 +55,8 @@ _UNPARTITIONED_COUNT_SQL = """
 def _first_sentence(text: str | None) -> str:
     """Return the first sentence of `text`, stripped of trailing whitespace.
 
-    Boot card renders skills as `**slug** — <trigger>`. The full SKILL.md is
-    behind a `fs read` on trigger match, so the briefing only needs the first
-    sentence — the trigger condition. Splitting on `. ` matches the pre-existing
-    renderer's behaviour (`_briefing_card.py`); shipping pre-split saves the
-    rest of the description bytes on the wire.
+    Boot card renders skills as slug + trigger index. Full SKILL.md is loaded
+    on demand via fs md_* on agent-skills/<slug>.md (¬inlined at boot).
     """
     if not text:
         return ""
@@ -125,10 +125,10 @@ def get_boot_skills(
     Replaces the wider `/entities?type=agent_skill` fetch on the boot path.
     Each row ships id/entity_id, name, description_first_sentence, and when
     present the skill_binding axes (skill_class, tool_binding, binding_kind).
-    Full SKILL.md is loaded on demand via `fs read` once an agent's task
-    matches a trigger.
+    Full SKILL.md for each row is loaded server-side into the briefing card
+    (not returned on this API — keeps the projection compact).
     """
-    params: list[Any] = []
+    params: list[Any] = ["deprecated", "deprecated"]
     if for_agent:
         for_agent_filter = _FOR_AGENT_CLAUSE
         params.append(for_agent)
@@ -143,7 +143,9 @@ def get_boot_skills(
         # this as a drift reminder so the partition script doesn't go stale
         # silently as Kaywan adds new and temp skills. Single SQL query, no
         # row data, ~30 bytes on the wire.
-        unpartitioned_rows = db_query(conn, _UNPARTITIONED_COUNT_SQL, ())
+        unpartitioned_rows = db_query(
+            conn, _UNPARTITIONED_COUNT_SQL, ("deprecated", "deprecated")
+        )
     finally:
         conn.close()
     items = [_boot_skill_row(r) for r in rows]

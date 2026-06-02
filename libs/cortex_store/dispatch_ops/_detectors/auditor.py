@@ -14,7 +14,7 @@ import json
 import re
 from typing import Any
 
-from ...confidence_field import confidence_field
+from ...confidence_field import confidence_band_sql_predicate, confidence_field
 from ...db import query
 from ._shared import _IDENT_SHAPED_VALUE_RE, _finding
 from .substantiation import CONFIRMED, derive_substantiation_state
@@ -39,15 +39,16 @@ def detect_confirmed_entity_no_assertions(
     only for `status`-axis types; `none`/`workflow_state` types never fire, and
     `content_hash` types fire only when the structural verifier is absent.
     """
-    sql = """
-        SELECT id, type, name, content_hash FROM entities
-        WHERE status = 'confirmed'
+    band_pred = confidence_band_sql_predicate()
+    sql = f"""
+        SELECT id, type, name, content_hash, status, confidence_band FROM entities
+        WHERE {band_pred}
         AND type != 'assertion'
     """
-    params: tuple = ()
+    params: tuple = ("confirmed", "confirmed")
     if subject:
         sql += " AND id = ?"
-        params = (subject,)
+        params = (*params, subject)
     rows = query(conn, sql, params)
     findings: list[dict[str, Any]] = []
     for r in rows:
@@ -96,16 +97,17 @@ def detect_confirmed_attribute_no_assertion(
     removes the common false-negative suppressions (``date`` in ``candidate``,
     ``type`` in ``prototype``, …).
     """
-    sql = """
-        SELECT id, type, name, attributes FROM entities
-        WHERE status = 'confirmed'
+    band_pred = confidence_band_sql_predicate()
+    sql = f"""
+        SELECT id, type, name, attributes, status, confidence_band FROM entities
+        WHERE {band_pred}
         AND attributes IS NOT NULL
         AND type != 'assertion'
     """
-    params: tuple = ()
+    params: tuple = ("confirmed", "confirmed")
     if subject:
         sql += " AND id = ?"
-        params = (subject,)
+        params = (*params, subject)
     rows = query(conn, sql, params)
     findings = []
 
