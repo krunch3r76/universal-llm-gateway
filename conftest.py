@@ -53,6 +53,7 @@ def _configure_for_path(path: str) -> None:
         _purge_namespace("src", "services/universal-stargate")
         _purge_namespace("systems", "services/universal-stargate")
         _purge_namespace("tests", "services/universal-stargate/tests")
+        _ensure_path(REPO_ROOT, position=0)
         _ensure_path(STARGATE, position=0)
         if "/services/universal-stargate/tests/" in path:
             _ensure_path(STARGATE_TESTS, position=0)

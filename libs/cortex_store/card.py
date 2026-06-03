@@ -58,7 +58,7 @@ def get_entity_card(
     table_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
     }
-    ent_cols = ["id", "type", "name", "description", "status"]
+    ent_cols = ["id", "type", "name", "description"]
     for col in ("lifecycle", "confidence_band", "adoption"):
         if col in table_cols:
             ent_cols.append(col)

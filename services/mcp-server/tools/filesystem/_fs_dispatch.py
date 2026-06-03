@@ -28,6 +28,7 @@ OP_SANDBOXES: dict[str, frozenset[str]] = {
     "replace": frozenset({"cortex", "workspaces"}),
     "insert_at_line": frozenset({"cortex", "workspaces"}),
     "list": frozenset({"cortex", "workspaces"}),
+    "find": frozenset({"workspaces"}),
     "delete": frozenset({"cortex", "workspaces"}),
     "move": frozenset({"cortex", "workspaces"}),
     "copy": frozenset({"cortex", "workspaces"}),
@@ -51,9 +52,10 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "prepend": ("(path, content)", "prepend to file"),
     "replace": ("(path, target, content, all_occurrences?)", "replace text"),
     "insert_at_line": ("(path, content, line)", "insert at line number"),
-    "list": ("(path?)", "list directory"),
+    "list": ("(path?, max_depth?)", "list directory (max_depth default 3)"),
+    "find": ("(path?, content)", "glob filename find (workspaces only)"),
     "delete": ("(path)", "delete file"),
-    "search": ("(path, content)", "regex search"),
+    "search": ("(path, content)", "regex content search; literal filenames → find"),
     "move": ("(path, target)", "rename/relocate file"),
     "copy": (
         "(path, target, target_sandbox?)",
@@ -114,6 +116,7 @@ def dispatch_workspaces_op(
     all_occurrences: bool,
     include_untracked: bool,
     binary: bool,
+    max_depth: int,
     overflow_registry: dict[str, Callable[..., Any]],
     workflow_hints: dict[str, Any],
 ) -> dict[str, Any]:
@@ -158,7 +161,21 @@ def dispatch_workspaces_op(
         fn = overflow_registry.get("list_project_files")
         if fn is None:
             return {"error": "list_project_files tool not available"}
-        return fn(path, include_untracked=include_untracked)
+        return fn(path, include_untracked=include_untracked, max_depth=max_depth)
+
+    if op == "find":
+        if not content:
+            return {
+                "error": (
+                    "'content' is required for find and holds the filename or "
+                    "glob pattern. Example: fs(op='find', sandbox='workspaces', "
+                    "path='universal-llm-gateway', content='session_handoff.py')"
+                )
+            }
+        fn = overflow_registry.get("find_project_files")
+        if fn is None:
+            return {"error": "find_project_files tool not available"}
+        return fn(content, directory=path, max_depth=max_depth)
 
     if op == "search":
         if not content:

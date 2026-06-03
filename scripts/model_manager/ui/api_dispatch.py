@@ -121,6 +121,17 @@ async def execute(
 
         case "restart":
             require_service(service)
+            if service == "mcp":
+                # Plain stop→start reuses the baked /app image; alias to sync_restart
+                # so services/mcp-server/ edits actually load (todo:mcp-restart-silent-noop-load).
+                return await _mcp_deferred_sync_restart(
+                    ctl,
+                    event_bus,
+                    method="restart",
+                    force=bool(params.get("force", False)),
+                    no_cache=False,
+                    scheduled_message=_MCP_RESTART_ALIASED_MSG,
+                )
             return await run_gated(
                 ctl.restart_gate,
                 "restart",
@@ -137,16 +148,13 @@ async def execute(
                     f"supported: {', '.join(sorted(REBUILD_SERVICES))}"
                 )
             if service == "mcp":
-                on_ok, on_fail = _mcp_background_hooks(event_bus, "rebuild")
-                return await run_gated_deferred(
-                    ctl.restart_gate,
-                    "sync_restart",
-                    service,
+                return await _mcp_deferred_sync_restart(
+                    ctl,
+                    event_bus,
+                    method="rebuild",
+                    gate_action="sync_restart",
                     force=bool(params.get("force", False)),
-                    lifecycle=lambda: _mcp_deferred_lifecycle(ctl, no_cache=True),
-                    scheduled_message=_MCP_RESTART_SCHEDULED_MSG,
-                    on_background_complete=on_ok,
-                    on_background_failed=on_fail,
+                    no_cache=True,
                 )
             msg = await _rebuild(ctl, service)
             return {"status": "ok", "message": msg}
@@ -159,16 +167,12 @@ async def execute(
                     f"supported: {', '.join(sorted(SYNC_RESTART_SERVICES))}"
                 )
             if service == "mcp":
-                on_ok, on_fail = _mcp_background_hooks(event_bus, "sync_restart")
-                return await run_gated_deferred(
-                    ctl.restart_gate,
-                    "sync_restart",
-                    service,
+                return await _mcp_deferred_sync_restart(
+                    ctl,
+                    event_bus,
+                    method="sync_restart",
                     force=bool(params.get("force", False)),
-                    lifecycle=lambda: _mcp_deferred_lifecycle(ctl, no_cache=False),
-                    scheduled_message=_MCP_RESTART_SCHEDULED_MSG,
-                    on_background_complete=on_ok,
-                    on_background_failed=on_fail,
+                    no_cache=False,
                 )
             return await run_gated(
                 ctl.restart_gate,
@@ -352,6 +356,12 @@ _MCP_RESTART_SCHEDULED_MSG = (
     "Follow with manage(action='wait_healthy', service='mcp') to confirm readiness."
 )
 
+_MCP_RESTART_ALIASED_MSG = (
+    f"{_MCP_RESTART_SCHEDULED_MSG} "
+    "Plain manage(action='restart', service='mcp') is aliased to sync_restart "
+    "(docker cp syncs workspace source into /app before restart)."
+)
+
 
 def _mcp_background_hooks(
     event_bus: EventBus | None,
@@ -382,6 +392,30 @@ def _mcp_background_hooks(
         )
 
     return on_complete, on_failed
+
+
+async def _mcp_deferred_sync_restart(
+    ctl: ServiceController,
+    event_bus: EventBus | None,
+    *,
+    method: str,
+    force: bool,
+    no_cache: bool,
+    gate_action: str | None = None,
+    scheduled_message: str | None = None,
+) -> dict[str, Any]:
+    """Deferred MCP sync+restart (shared by sync_restart, rebuild, and restart alias)."""
+    on_ok, on_fail = _mcp_background_hooks(event_bus, method)
+    return await run_gated_deferred(
+        ctl.restart_gate,
+        gate_action or method,
+        "mcp",
+        force=force,
+        lifecycle=lambda: _mcp_deferred_lifecycle(ctl, no_cache=no_cache),
+        scheduled_message=scheduled_message or _MCP_RESTART_SCHEDULED_MSG,
+        on_background_complete=on_ok,
+        on_background_failed=on_fail,
+    )
 
 
 async def _mcp_deferred_lifecycle(ctl: ServiceController, *, no_cache: bool) -> str:

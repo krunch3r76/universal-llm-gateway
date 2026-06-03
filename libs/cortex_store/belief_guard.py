@@ -39,6 +39,19 @@ CONTRADICTION_MIN_SIM_THRESHOLD = 0.35
 
 _CONFIDENCE_RANK = {"confirmed": 3, "believed": 2, "suspected": 1, "hypothesized": 0}
 
+# Event-log anchor entities (conversation turn records, id scheme
+# ``thread:{kind}:{key}`` — see thread_persistence/binding.py) are append-only.
+# Their assertions are immutable turn events, not belief claims, so they sit
+# categorically outside AGM entity-local consistency (C2). Running C2 on them
+# hard-blocks a reused dispatch_thread_id replay the moment two turns share a
+# status-antonym pair (agent-bus:1195).
+_EVENT_LOG_ANCHOR_PREFIXES = ("thread:",)
+
+
+def is_event_log_entity(entity_id: str) -> bool:
+    """True iff ``entity_id`` is an append-only conversation-log anchor."""
+    return entity_id.startswith(_EVENT_LOG_ANCHOR_PREFIXES)
+
 
 # ── Entity-Scoped Hybrid Search ──────────────────────────────────────────
 
@@ -313,16 +326,36 @@ def guard_assertion_write(
     *,
     force: bool = False,
 ) -> WriteGuardResult:
-    """Run C2 contradiction check. Returns immediately if force=True."""
+    """Run C2 contradiction check. Returns immediately if force=True.
+
+    Event-log anchor entities (``thread:*``) are exempt: their assertions are
+    immutable turn records, not belief claims, so C2 must not run on them.
+    """
     if force:
+        return WriteGuardResult(allowed=True)
+    if is_event_log_entity(entity_id):
         return WriteGuardResult(allowed=True)
 
     result = check_write_contradiction(conn, entity_id, claim)
     if result.safe:
         return WriteGuardResult(allowed=True)
 
-    confirmed = [c for c in result.conflicts if c.confidence == "confirmed"]
-    if confirmed:
+    # Hard-block (409) only on genuine high-similarity confirmed near-duplicates.
+    # A polarity conflict above the 0.35 candidate floor but below
+    # CONTRADICTION_SIMILARITY_THRESHOLD is NOT a contradiction — on high-density
+    # service/decision entities, distinct claims share incidental vocabulary and
+    # score ~0.4–0.7 against unrelated confirmed assertions. Blocking those
+    # silently suppresses legitimate distinct writes (notably `friction`
+    # observations on busy service entities — agent-bus:1193 hazard 2).
+    # Sub-threshold confirmed conflicts and all believed conflicts proceed with
+    # review_status='flagged' and the conflict pointer attached as a warning.
+    blocking = [
+        c
+        for c in result.conflicts
+        if c.confidence == "confirmed"
+        and c.similarity >= CONTRADICTION_SIMILARITY_THRESHOLD
+    ]
+    if blocking:
         return WriteGuardResult(
             allowed=False,
             review_status="flagged",
@@ -330,8 +363,8 @@ def guard_assertion_write(
             block_detail={
                 "error": "contradiction_detected",
                 "message": (
-                    f"Contradicts {len(confirmed)} confirmed assertion(s) "
-                    f"on {entity_id}"
+                    f"Contradicts {len(blocking)} confirmed assertion(s) "
+                    f"on {entity_id} (similarity ≥ {CONTRADICTION_SIMILARITY_THRESHOLD})"
                 ),
                 "conflicts": [
                     {
@@ -340,7 +373,7 @@ def guard_assertion_write(
                         "confidence": c.confidence,
                         "similarity": c.similarity,
                     }
-                    for c in confirmed
+                    for c in blocking
                 ],
             },
         )

@@ -13,7 +13,11 @@ from typing import Final
 #   coarser family marker (e.g. "claude-opus-4" → 32k) and silently caps
 #   output at 1/4 of the model's real ceiling — see assertions on
 #   todo:investigate-anthropic-api-failure-modes-2026-05-16.
+#   Opus 4.8 is treated as the 4.7 tier (operator-confirmed same price/tier);
+#   without an entry it would fall through to "claude-opus-4" → 32k.
 _ANTHROPIC_MAX_OUTPUT_TOKENS: tuple[tuple[str, int], ...] = (
+    ("claude-opus-4-8", 128000),
+    ("claude-opus-4.8", 128000),
     ("claude-opus-4-7", 128000),
     ("claude-opus-4.7", 128000),
     ("claude-opus-4-6", 128000),

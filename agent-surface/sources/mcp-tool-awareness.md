@@ -43,8 +43,9 @@ For large markdown files, prefer section-level access over full reads:
 | `md_replace` | Replace section body | `path`, `section`, `content` |
 | `md_append` | Append to section body | `path`, `section`, `content` |
 | `md_delete` | Delete section + body | `path`, `section` |
-| `list` | Directory listing | `path` |
-| `read` | Full file read | `path` |
+| `list` | Directory listing | `path`, optional `max_depth` (default 3) |
+| `find` | Filename/glob locate (workspaces only) | `path` (repo scope), `content` (pattern) |
+| `read` | Full file read | `path` (repo-relative refs auto-resolve) |
 | `write` | Write/overwrite file | `path`, `content` |
 
 ## Sandbox Routing

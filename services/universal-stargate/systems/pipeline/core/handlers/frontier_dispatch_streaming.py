@@ -22,6 +22,17 @@ if TYPE_CHECKING:
 
 DISPATCH_STALL_TIMEOUT_S = 180.0
 
+# Wall-clock ceiling for a single remote-MCP provider call. The provider runs
+# the MCP tool loop server-side and keeps the SSE stream alive with periodic
+# ``ping`` events, which reset ``stall_timeout`` on every frame (see
+# sse/accumulator.py). With no overall ceiling a server-side loop that makes no
+# token progress (e.g. the provider's MCP connector fails to reach/auth the
+# vortex endpoint) hangs indefinitely with 0 tokens and no terminal event —
+# observed on execution 0bca04f6 (claude-web thread 1191). The wall-clock cap
+# converts that silent hang into a loud SSETimeoutError. Callers may override
+# via the step's ``timeout_seconds`` option for legitimately long consults.
+REMOTE_MCP_OVERALL_TIMEOUT_S = 300.0
+
 
 def build_cancel_check(context: PipelineContext) -> Callable[[], bool]:
     """Poll the dispatch tracker for cancellation at tool-loop boundaries."""
@@ -92,6 +103,7 @@ def build_in_process_sender(
     agent: str | None,
     publish: Callable[[object], None],
     cancel_check: Callable[[], bool],
+    default_overall_timeout: float | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]:
     """Construct the ``send_native`` closure for ``run_native_tool_loop``.
 
@@ -115,7 +127,10 @@ def build_in_process_sender(
     from ..events.dispatch import PipelineFrontierDispatchToolRequested
 
     execution_id = context.execution_id
-    pipeline_timeout: float | None = None
+    # An explicit per-step ``timeout_seconds`` wins; otherwise fall back to the
+    # caller-supplied default (set for remote-MCP dispatches so a token-stalled
+    # server-side loop fails loudly rather than hanging behind ping keepalives).
+    pipeline_timeout: float | None = default_overall_timeout
     step_opts = getattr(context, "options", None)
     if step_opts and isinstance(step_opts, dict):
         raw_timeout = step_opts.get("timeout_seconds")

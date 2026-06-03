@@ -128,11 +128,20 @@ def _gate(entity_assertions: list[SourceAssertion]) -> tuple[bool, str]:
     (external-KB+ OR internal-authority — source citing + eligible already hold
     for every snapshot row). Pass iff ≥1 authority/internal-authority cluster
     (single-cluster short-circuit) OR ≥2 independent external-KB+ clusters.
+
+    D1 firewall (1172-C): assertions with ``derivation_type=inference`` are
+    excluded from the qualifying set regardless of confidence or Ψ-band.  They
+    are NOT auditor-validatable and cannot satisfy the gate for their own entity
+    or contribute a backing cluster to any other claim.  Source_keys from D3
+    filtering (external-URI-only) already exclude internal-provenance URIs from
+    the ``independent_cluster_count`` input.
     """
     qualifying = [
         a
         for a in entity_assertions
-        if a.confidence == pol.CONFIRMED and a.psi_band in pol.GATE_QUALIFYING_BANDS
+        if a.confidence == pol.CONFIRMED
+        and a.psi_band in pol.GATE_QUALIFYING_BANDS
+        and a.derivation_type != pol.INFERENCE_DERIVATION
     ]
     if not qualifying:
         return False, "no_qualifying_confirmed_source_citing_evidence"

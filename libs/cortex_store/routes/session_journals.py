@@ -30,9 +30,15 @@ from ..session_close_validation import (
     _audit_normalization_refusals_for_session,
     _emit_rejected,
     build_validation_error,
+    normalize_session_summary_heading,
 )
+from ..session_handoff import (
+    WRITE_PATH_SESSION_CLOSE,
+    build_handoff_provenance,
+    check_handoff_prompt_in_source,
+)
+from ..status_trait_read import entity_has_trait_columns
 from ..status_trait_write import (
-    status_column_for_insert,
     trait_insert_extras,
     transcript_birth_traits,
 )
@@ -117,11 +123,26 @@ def _ensure_transcript_entity(
     entity_id = f"transcript:{transcript_id}"
     if source_uri is None:
         source_uri = f"files://notes/system/transcripts/{transcript_id}.md"
+    traits = transcript_birth_traits()
+    trait_cols, trait_vals = trait_insert_extras(conn, traits)  # type: ignore[arg-type]
+    cols = ["id", "type", "name", "source_uri", "created_at", "updated_at"]
+    vals: list[object] = [
+        entity_id,
+        "transcript",
+        transcript_id,
+        source_uri,
+        timestamp,
+        timestamp,
+    ]
+    if not entity_has_trait_columns(conn):  # type: ignore[arg-type]
+        cols.insert(3, "status")
+        vals.insert(3, traits.legacy_status)
+    cols.extend(trait_cols)
+    vals.extend(trait_vals)
+    ph = ", ".join(["?"] * len(vals))
     conn.execute(  # type: ignore[union-attr]
-        "INSERT OR IGNORE INTO entities "
-        "(id, type, name, status, source_uri, created_at, updated_at) "
-        "VALUES (?, 'transcript', ?, 'confirmed', ?, ?, ?)",
-        (entity_id, transcript_id, source_uri, timestamp, timestamp),
+        f"INSERT OR IGNORE INTO entities ({', '.join(cols)}) VALUES ({ph})",
+        tuple(vals),
     )
     conn.execute(  # type: ignore[union-attr]
         "UPDATE entities SET source_uri = ?, updated_at = ? "
@@ -426,32 +447,21 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             "session_summary.invalid",
             "session_summary_md",
             body.session_summary_md,
-            "non-empty markdown with '## Session Summary' heading",
+            "non-empty structural-layer markdown",
             ["## Session Summary\\n…\\n## Decisions\\n…"],
             (
                 "session_summary_md is the structural layer the agent "
-                "composes — must start with a '## Session Summary' H2."
+                "composes — it must be non-empty. A '## Session Summary' "
+                "heading is added automatically if absent."
             ),
             "session_summary_md is required (structural layer).",
         )
-    if "## Session Summary" not in body.session_summary_md:
-        _structured(
-            "session_summary.invalid",
-            "session_summary_md",
-            body.session_summary_md[:120]
-            + ("…" if len(body.session_summary_md) > 120 else ""),
-            "must contain heading '## Session Summary'",
-            ["## Session Summary\\n…\\n## Decisions\\n…"],
-            (
-                "Add a '## Session Summary' H2 to the structural layer "
-                "(decisions, files modified, continuation state)."
-            ),
-            (
-                "session_summary_md must contain a '## Session Summary' "
-                "heading; this is the structural layer the agent composes "
-                "(decisions, files modified, continuation state)."
-            ),
-        )
+    # Postel's law: normalize a near-miss heading (or prepend it) instead of
+    # rejecting — the agent-authored body is intact, so a 422 here just costs a
+    # retry. Any rewrite rides the response's audit_warnings channel.
+    body.session_summary_md, heading_warning = normalize_session_summary_heading(
+        body.session_summary_md
+    )
 
     # Verbatim source: either-of {transcript_jsonl_path, transcript_md}.
     # jsonl_path wins on conflict (cursor canonical path; web wouldn't
@@ -729,7 +739,6 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         # the journal row).
         if transcript_entity_id is not None:
             tx_traits = transcript_birth_traits()
-            status_col = status_column_for_insert(conn, tx_traits)
             trait_cols, trait_vals = trait_insert_extras(conn, tx_traits)
             tx_cols = [
                 "id",
@@ -741,29 +750,36 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 "created_at",
                 "updated_at",
             ]
+            tx_attributes: dict[str, object] = {
+                "opened_at": opened_at,
+                "closed_at": now,
+                "status": "confirmed",
+                "transcript_depth": body.transcript_depth,
+                **(
+                    {
+                        "handoff_prompt": handoff_prompt,
+                        "handoff_provenance": build_handoff_provenance(
+                            write_path=WRITE_PATH_SESSION_CLOSE,
+                            source_path=body.handoff_source_path,
+                            files_root=_FILES_ROOT,
+                            written_at=now,
+                        ),
+                    }
+                    if handoff_prompt
+                    else {}
+                ),
+            }
+            tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 transcript_entity_id,
                 "transcript",
                 entity_name,
                 body.summary,
                 source_uri,
-                json_encode(
-                    {
-                        "opened_at": opened_at,
-                        "closed_at": now,
-                        "status": "confirmed",
-                        "transcript_depth": body.transcript_depth,
-                        **(
-                            {"handoff_prompt": handoff_prompt} if handoff_prompt else {}
-                        ),
-                    }
-                ),
+                tx_attributes_json,
                 now,
                 now,
             ]
-            if status_col is not None:
-                tx_cols.insert(4, "status")
-                tx_vals.insert(4, status_col)
             tx_cols.extend(trait_cols)
             tx_vals.extend(trait_vals)
             tx_ph = ", ".join(["?"] * len(tx_vals))
@@ -771,6 +787,17 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 f"INSERT OR IGNORE INTO entities ({', '.join(tx_cols)}) "
                 f"VALUES ({tx_ph})",
                 tuple(tx_vals),
+            )
+            # INSERT OR IGNORE is a no-op when transcript:{session_id} already
+            # exists — reachable when an out-of-order close back-creates a bare
+            # prior-session entity via _ensure_transcript_entity (agent-bus
+            # thread 1188). Without this UPDATE the close-time attributes
+            # (handoff_prompt + provenance, closed_at, status, depth) would
+            # land only in the journal column, never the entity attribute the
+            # entity_get/continue-from-handoff surface reads — silent drift.
+            conn.execute(
+                "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
+                (tx_attributes_json, now, transcript_entity_id),
             )
         cur = conn.execute(
             "INSERT INTO session_journals "
@@ -811,6 +838,23 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
         conn.commit()
         findings = _audit_normalization_refusals_for_session(conn, body.session_id)
+        # (2-B) warn-only: when both handoff_source_path and handoff_prompt
+        # are supplied, flag (never block) a prompt that is not a substring
+        # of its claimed source file (thread 1188 / 2-B).
+        handoff_mismatch = check_handoff_prompt_in_source(
+            handoff_prompt=handoff_prompt,
+            source_path=body.handoff_source_path,
+            files_root=_FILES_ROOT,
+        )
+        if handoff_mismatch is not None:
+            findings = [*findings, handoff_mismatch]
+            logger.warning(
+                "session_close: %s handoff_prompt mismatch vs source %s",
+                body.session_id,
+                body.handoff_source_path,
+            )
+        if heading_warning is not None:
+            findings = [*findings, heading_warning]
         audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()

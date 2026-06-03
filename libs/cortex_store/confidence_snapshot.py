@@ -29,6 +29,7 @@ from .confidence_policy import (
     credibility_for_keys,
     effective_psi,
     is_eligible_review_status,
+    is_external_source_uri,
     normalized_source_key,
     psi_for_derivation,
 )
@@ -55,6 +56,7 @@ class SourceAssertion:
     psi: float
     confidence: str | None
     c: float
+    derivation_type: str | None = None  # D1 (1172-C): inference firewall in _gate
 
 
 @dataclass(frozen=True)
@@ -138,14 +140,21 @@ def _load_source_assertions(
         derivation_type = r.get("derivation_type")
         seeded_by = r.get("seeded_by")
         uris = json_decode(r.get("evidence_uris"), fallback=[]) or []
-        keys = (
-            tuple(sorted({normalized_source_key(str(u)) for u in uris if u}))
-            if isinstance(uris, list) and uris
-            else ()
-        )
+        if isinstance(uris, list) and uris:
+            # D3 (1172-C): only external-source URIs count toward cluster_count.
+            # Internal/provenance URIs (agent-bus:, cortex:, email-bridge:, bare
+            # paths) are recorded on the assertion but excluded from source_keys.
+            ext_uris = [str(u) for u in uris if u and is_external_source_uri(str(u))]
+            keys = (
+                tuple(sorted({normalized_source_key(u) for u in ext_uris}))
+                if ext_uris
+                else ()
+            )
+        else:
+            keys = ()
         if not keys:
-            # No external citation — self-source iff an internal-trust derivation
-            # type (§3b). Anything else still contributes 0 to the prior (§8).
+            # No eligible external citation — self-source iff an internal-trust
+            # derivation type (§3b). Anything else contributes 0 to the prior (§8).
             if psi_for_derivation(derivation_type) is None:
                 continue
             keys = (f"internal:{seeded_by or entity_id}",)
@@ -165,6 +174,7 @@ def _load_source_assertions(
                 psi=psi,
                 confidence=r.get("confidence"),
                 c=confidence_weight(r.get("confidence")),
+                derivation_type=derivation_type,  # D1: stored for gate firewall
             )
         )
     out.sort(key=lambda a: (a.entity_id, a.source_keys))

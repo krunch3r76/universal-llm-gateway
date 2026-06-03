@@ -26,7 +26,7 @@ profiles:
       - session-close-transcript
     allowed_models:
       - anthropic/claude-sonnet-4-6
-      - anthropic/claude-opus-4-7
+      - anthropic/claude-opus-4-8
 
   claude/api:
     provider: anthropic
@@ -40,7 +40,7 @@ profiles:
     allowed_models:
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-4
-      - anthropic/claude-opus-4-7
+      - anthropic/claude-opus-4-8
       - anthropic/claude-3-5-sonnet
 
   claude/web:
@@ -188,7 +188,7 @@ profiles:
     # participation under the gemini-api slug. See agent-identity-signoff.mdc
     # "Four-layer model" for the seat ≡ MCP-wired runtime criterion.
     provider: google
-    default_model: google/gemini-2.5-flash
+    default_model: google/gemini-3-flash-preview
     tool_surface: mcp
     delivery: auto
     include_deadlines: true
@@ -204,7 +204,7 @@ profiles:
   gemini/cursor:
     # Cursor seat for Gemini.
     provider: google
-    default_model: google/gemini-2.5-flash
+    default_model: google/gemini-3-flash-preview
     tool_surface: mcp
     delivery: manual
     include_deadlines: true
@@ -219,6 +219,25 @@ profiles:
       - google/gemini-2.5-flash
       - google/gemini-3-flash-preview
       - google/gemini-3.1-pro-preview
+
+  gemini/web:
+    # CANDIDATE SEAT — tool_surface=mcp is ASPIRATIONAL until a round-trip MCP
+    # call is verified under the gemini-web slug. Gemini's web app
+    # (gemini.google.com) remote-MCP/connector support is unconfirmed; treat as
+    # candidate, not seat. See agent-identity-signoff.mdc "Four-layer model".
+    provider: google
+    default_model: null
+    tool_surface: mcp
+    delivery: manual
+    include_deadlines: true
+    include_review_queue: true
+    confirm_and_proceed: true
+    dispatchable: false
+    addenda:
+      - gemini-web-tool-surface
+      - session-close-pointer-web-generic
+      - session-close-markdown-audit
+      - session-close-transcript
 
   subagent/subagent:
     provider: anthropic
@@ -248,7 +267,7 @@ roles:
     default_model: anthropic/claude-sonnet-4-6
     allowed_models:
       - anthropic/claude-sonnet-4-6
-      - anthropic/claude-opus-4-7
+      - anthropic/claude-opus-4-8
 
   gatherer:
     description: "Context gathering, structured extraction, broad research"
@@ -265,7 +284,7 @@ roles:
     description: "Generalist analysis, multimodal, broad-knowledge synthesis"
     default_family: gemini
     default_platform: api
-    default_model: google/gemini-2.5-flash
+    default_model: google/gemini-3-flash-preview
     allowed_models:
       - google/gemini-2.5-pro
       - google/gemini-2.5-flash

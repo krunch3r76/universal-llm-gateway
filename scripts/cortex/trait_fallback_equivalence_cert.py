@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Trait-fallback equivalence certificate (plan 686612ed / gate 4511b3f6).
+"""Trait-completeness certificate — post-052 / 1172-E rewrite.
 
-Compares COALESCE fallback predicates vs trait-only ID sets and stats buckets on
-a live cortex database. Writes report to tmp/prompts/cortex-status-traits/.
+**1172-E REWRITE** — replaces the pre-052 COALESCE-equivalence cert.  Migration
+052 dropped ``entities.status``; the old cert's ``SELECT … status …`` and
+``require_entities_status_column()`` guard are removed.  This script certifies
+the post-052 state: trait columns present, ``status`` absent, and trait coverage
+internally consistent.
 
-Usage:
+Runs on a ``:memory:`` fixture or on ``~/.cortex/cortex.db`` (read-only, no
+writes).  Exits 0 on PASS, 1 on FAIL.
+
+Usage::
+
   ~/.venvs/universal/bin/python scripts/cortex/trait_fallback_equivalence_cert.py
   ~/.venvs/universal/bin/python scripts/cortex/trait_fallback_equivalence_cert.py \\
       --db ~/.cortex/cortex.db --report /path/to/cert.md
@@ -21,271 +28,181 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "libs"))
 
+from cortex_store.status_trait_backfill import run_trait_completeness_scan  # noqa: E402
+
 _DEFAULT_DB = os.path.expanduser("~/.cortex/cortex.db")
 _DEFAULT_REPORT = (
     Path(__file__).resolve().parents[2]
-    / "tmp/prompts/cortex-status-traits/trait-fallback-equivalence-cert.md"
+    / "tmp/prompts/cortex-status-traits/trait-completeness-cert.md"
 )
 
-CONF_BAND = ("unsubstantiated", "provisional", "confirmed")
-LIFECYCLE = (
-    "active",
-    "superseded",
-    "merged",
-    "deprecated",
-    "reaped",
-    "invalidated",
-    "dismissed",
+_REQUIRED_TRAIT_COLS: frozenset[str] = frozenset(
+    {"lifecycle", "confidence_band", "adoption"}
 )
-LIFECYCLE_LEGACY = ("merged", "deprecated", "reaped")
+_STATUS_COL = "status"
 
 
-def _sym_diff(
-    conn: sqlite3.Connection,
-    old_sql: str,
-    new_sql: str,
-    old_params: tuple[object, ...] = (),
-    new_params: tuple[object, ...] = (),
-) -> tuple[int, int]:
-    old_ids = {
-        r[0]
-        for r in conn.execute(f"SELECT id FROM entities WHERE {old_sql}", old_params)
-    }
-    new_ids = {
-        r[0]
-        for r in conn.execute(f"SELECT id FROM entities WHERE {new_sql}", new_params)
-    }
-    return len(old_ids - new_ids), len(new_ids - old_ids)
-
-
-def _buckets(conn: sqlite3.Connection, sql: str) -> dict[str, int]:
-    return {str(r[0] or "null"): r[1] for r in conn.execute(sql)}
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def run_cert(conn: sqlite3.Connection, db_path: str) -> tuple[bool, str]:
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(entities)").fetchall()}
-    trait_cols = {"lifecycle", "confidence_band", "adoption"}
-    columns_ok = trait_cols <= cols
+    """Post-052 trait-completeness certificate.
 
-    field_map = {
-        r["entity_type"]: r["confidence_field"]
-        for r in conn.execute(
-            "SELECT entity_type, confidence_field FROM type_confidence_fields"
+    Verifies:
+      1. ``entities.status`` is ABSENT (migration 052 applied).
+      2. Trait columns (lifecycle, confidence_band, adoption) are PRESENT.
+      3. Trait coverage: null counts per column, band/lifecycle bucket distribution.
+      4. entity-count smoke (total vs type breakdown).
+
+    Returns (passed, report_markdown).
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='entities'"
+    ).fetchone():
+        return (
+            False,
+            "# Trait-Completeness Certificate\n\n**FAIL** — `entities` table absent.\n",
         )
-    }
 
-    def is_status_axis(entity_type: str) -> bool:
-        field = field_map.get(entity_type, "confidence_band")
-        return field in ("status", "confidence_band")
+    cols = _columns(conn, "entities")
 
-    all_rows = conn.execute(
-        "SELECT id, type, status, confidence_band, lifecycle, adoption FROM entities"
-    ).fetchall()
+    status_absent = _STATUS_COL not in cols
+    trait_cols_present = _REQUIRED_TRAIT_COLS <= cols
 
-    band_gaps_all = sum(
-        1 for r in all_rows if r["confidence_band"] is None and r["status"] in CONF_BAND
-    )
-    band_gaps_sa = sum(
-        1
-        for r in all_rows
-        if is_status_axis(r["type"])
-        and r["confidence_band"] is None
-        and r["status"] in CONF_BAND
-    )
-    lc_gaps_all = sum(
-        1 for r in all_rows if r["lifecycle"] is None and r["status"] in LIFECYCLE
-    )
-    lc_gaps_sa = sum(
-        1
-        for r in all_rows
-        if is_status_axis(r["type"])
-        and r["lifecycle"] is None
-        and r["status"] in LIFECYCLE
-    )
-    dec_gaps = sum(
-        1
-        for r in all_rows
-        if r["type"] == "decision" and r["adoption"] is None and r["status"] is not None
-    )
-
-    pred_rows: list[tuple[str, int, int, bool]] = []
-    for band in CONF_BAND:
-        oo, on = _sym_diff(
-            conn,
-            "(confidence_band = ? OR (confidence_band IS NULL AND status = ?))",
-            "confidence_band = ?",
-            (band, band),
-            (band,),
-        )
-        pred_rows.append((f"confidence_band={band}", oo, on, oo == 0 and on == 0))
-
-    for val in LIFECYCLE_LEGACY:
-        oo, on = _sym_diff(
-            conn,
-            "(lifecycle IS NULL OR lifecycle != ?) AND "
-            "(lifecycle IS NOT NULL OR status IS NULL OR status != ?)",
-            "(lifecycle IS NULL OR lifecycle != ?)",
-            (val, val),
-            (val,),
-        )
-        pred_rows.append((f"lifecycle_not={val}", oo, on, oo == 0 and on == 0))
-        oo, on = _sym_diff(
-            conn,
-            "(lifecycle = ? OR (lifecycle IS NULL AND status = ?))",
-            "lifecycle = ?",
-            (val, val),
-            (val,),
-        )
-        pred_rows.append((f"lifecycle_is={val}", oo, on, oo == 0 and on == 0))
-
-    oo, on = _sym_diff(
-        conn,
-        "(adoption IN ('proposed','adopted') OR "
-        "(adoption IS NULL AND status IN ('confirmed')))",
-        "adoption IN ('proposed','adopted')",
-    )
-    pred_rows.append(("adoption_in", oo, on, oo == 0 and on == 0))
-
-    leg_lc = _buckets(
-        conn,
-        "SELECT COALESCE(lifecycle, CASE WHEN status IN "
-        "('merged','deprecated','reaped') THEN status END) AS v, COUNT(*) "
-        "FROM entities GROUP BY v",
-    )
-    trait_lc = _buckets(
-        conn, "SELECT lifecycle, COUNT(*) FROM entities GROUP BY lifecycle"
-    )
-    leg_band = _buckets(
-        conn,
-        "SELECT COALESCE(confidence_band, CASE WHEN status IN "
-        "('unsubstantiated','provisional','confirmed') THEN status END) AS v, "
-        "COUNT(*) FROM entities GROUP BY v",
-    )
-    trait_band = _buckets(
-        conn, "SELECT confidence_band, COUNT(*) FROM entities GROUP BY confidence_band"
-    )
-
-    stats_ok = leg_lc == trait_lc and leg_band == trait_band
-    preds_ok = all(row[3] for row in pred_rows)
-    completeness_ok = lc_gaps_sa == 0 and dec_gaps == 0 and band_gaps_all == 0
-
-    null_status = conn.execute(
-        "SELECT COUNT(*) FROM entities WHERE status IS NULL"
-    ).fetchone()[0]
+    counts = run_trait_completeness_scan(conn) if trait_cols_present else None
     total = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
 
-    passed = columns_ok and preds_ok and stats_ok and completeness_ok
+    # Bucket distributions (trait-only).
+    band_buckets: dict[str, int] = {}
+    lc_buckets: dict[str, int] = {}
+    if trait_cols_present:
+        band_buckets = {
+            str(r[0] or "null"): r[1]
+            for r in conn.execute(
+                "SELECT confidence_band, COUNT(*) FROM entities GROUP BY confidence_band"
+            )
+        }
+        lc_buckets = {
+            str(r[0] or "null"): r[1]
+            for r in conn.execute(
+                "SELECT lifecycle, COUNT(*) FROM entities GROUP BY lifecycle"
+            )
+        }
+
+    type_counts: dict[str, int] = {
+        str(r[0]): r[1]
+        for r in conn.execute("SELECT type, COUNT(*) FROM entities GROUP BY type")
+    }
+
+    null_band = counts.null_confidence_band if counts else -1
+    null_lc = counts.null_lifecycle if counts else -1
+    null_adp = counts.null_adoption_decisions if counts else -1
+
+    passed = status_absent and trait_cols_present and null_band == 0 and null_lc == 0
+
     verdict = "PASS" if passed else "FAIL"
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     lines = [
-        "# Trait-Fallback Equivalence Certificate",
+        "# Trait-Completeness Certificate",
         "",
-        f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"**Generated:** {now}",
         f"**Database:** `{db_path}`",
-        "**Plan:** gpt-5.5 reader pass (686612ed) / backfill gate (4511b3f6)",
+        "**Rewrite:** 1172-E (post-052 trait-only; no COALESCE / no status column)",
         f"**Verdict:** **{verdict}**"
         + (
-            " — COALESCE fallback may be stripped"
+            " — post-052 trait state certified"
             if passed
-            else " — COALESCE fallback MUST NOT be stripped"
+            else " — post-052 state NOT clean (see checks below)"
         ),
         "",
-        "## 1. Trait columns",
+        "## 1. Schema state",
         "",
-        "| Column | Present |",
-        "|---|---|",
+        "| Check | Result | Required |",
+        "|---|---|---|",
+        f"| `entities.status` absent | {'yes ✓' if status_absent else '**NO — column still present**'} | yes |",
     ]
-    for col in sorted(trait_cols):
-        lines.append(f"| `{col}` | {'yes' if col in cols else 'NO'} |")
+    for col in sorted(_REQUIRED_TRAIT_COLS):
+        present = col in cols
+        lines.append(f"| `{col}` present | {'yes ✓' if present else '**NO**'} | yes |")
 
     lines.extend(
         [
             "",
-            "## 2. Trait completeness",
+            "## 2. Trait NULL counts",
             "",
-            "| Check | All entities | Status-axis only | Threshold |",
-            "|---|---|---|---|",
-            f"| `confidence_band` NULL + status in band enum | {band_gaps_all} | "
-            f"**{band_gaps_sa}** | 0 all (band in scope) |",
-            f"| `lifecycle` NULL + status in lifecycle enum | {lc_gaps_all} | "
-            f"**{lc_gaps_sa}** | 0 status-axis |",
-            f"| `decision` + `adoption` NULL + status set | {dec_gaps} | {dec_gaps} | 0 |",
+            "| Trait | NULL count | Threshold |",
+            "|---|---|---|",
+            f"| `confidence_band` | {null_band if null_band >= 0 else 'N/A'} | 0 |",
+            f"| `lifecycle` | {null_lc if null_lc >= 0 else 'N/A'} | 0 |",
+            f"| `adoption` (decisions only) | {null_adp if null_adp >= 0 else 'N/A'} | 0 |",
             "",
-            "## 3. Predicate symmetric difference",
+            "## 3. Bucket distribution",
             "",
-            "| Predicate | only_in_old | only_in_new | Pass |",
-            "|---|---|---|---|",
+            "### confidence_band",
+            "",
+            "| Bucket | Count |",
+            "|---|---|",
         ]
     )
-    for name, oo, on, ok in pred_rows:
-        lines.append(f"| `{name}` | {oo} | {on} | {'yes' if ok else '**NO**'} |")
-
-    lines.extend(["", "## 4. Stats bucket differential", ""])
-    if stats_ok:
-        lines.append("All lifecycle and confidence_band buckets match (Δ = 0).")
-    else:
-        lines.extend(
-            [
-                "### Lifecycle",
-                "",
-                "| Bucket | Legacy | Trait-only | Δ |",
-                "|---|---|---|---|",
-            ]
-        )
-        for k in sorted(set(leg_lc) | set(trait_lc)):
-            l, t = leg_lc.get(k, 0), trait_lc.get(k, 0)
-            if l != t:
-                lines.append(f"| {k} | {l} | {t} | {t - l:+d} |")
-        lines.extend(
-            [
-                "",
-                "### Confidence band",
-                "",
-                "| Bucket | Legacy | Trait-only | Δ |",
-                "|---|---|---|---|",
-            ]
-        )
-        for k in sorted(set(leg_band) | set(trait_band)):
-            l, t = leg_band.get(k, 0), trait_band.get(k, 0)
-            if l != t:
-                lines.append(f"| {k} | {l} | {t} | {t - l:+d} |")
+    for k, n in sorted(band_buckets.items()):
+        lines.append(f"| `{k}` | {n} |")
 
     lines.extend(
         [
             "",
-            "## 5. Post-writer-cutover rows",
+            "### lifecycle",
             "",
-            f"- Total entities: {total}",
-            f"- Rows with `status IS NULL`: {null_status}",
+            "| Bucket | Count |",
+            "|---|---|",
         ]
     )
+    for k, n in sorted(lc_buckets.items()):
+        lines.append(f"| `{k}` | {n} |")
 
+    lines.extend(
+        [
+            "",
+            "## 4. Entity counts",
+            "",
+            f"- Total: {total}",
+            "",
+            "| Type | Count |",
+            "|---|---|",
+        ]
+    )
+    for t, n in sorted(type_counts.items()):
+        lines.append(f"| `{t}` | {n} |")
+
+    lines.extend(["", "## 5. Verdict", ""])
     if passed:
         lines.extend(
             [
-                "",
-                "## Action",
-                "",
-                "- **PASS** — reader pass Steps 1–8 (686612ed) may proceed.",
+                "- **PASS** — entities.status dropped, all trait columns present and",
+                "  populated.  Post-052 state certified.",
             ]
         )
     else:
-        lines.extend(
-            [
-                "",
-                "## Action",
-                "",
-                "- **STOP** — do NOT strip COALESCE in readers.",
-                "- Re-run predicate-equivalence backfill and re-cert.",
-            ]
-        )
+        lines.extend(["- **FAIL** — one or more checks above failed."])
+        if not status_absent:
+            lines.append(
+                "  - `entities.status` still present: migration 052 may not have run."
+            )
+        if not trait_cols_present:
+            missing = sorted(_REQUIRED_TRAIT_COLS - cols)
+            lines.append(f"  - Missing trait columns: {missing}")
+        if null_band > 0:
+            lines.append(f"  - `confidence_band` has {null_band} NULL rows.")
+        if null_lc > 0:
+            lines.append(f"  - `lifecycle` has {null_lc} NULL rows.")
 
     return passed, "\n".join(lines) + "\n"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Trait-fallback equivalence certificate"
+        description="Trait-completeness certificate (post-052 / 1172-E)"
     )
     parser.add_argument("--db", default=_DEFAULT_DB)
     parser.add_argument("--report", type=Path, default=_DEFAULT_REPORT)

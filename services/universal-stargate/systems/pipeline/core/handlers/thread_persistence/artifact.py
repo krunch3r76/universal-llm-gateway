@@ -24,6 +24,7 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _ARTIFACT_SUBDIR = (".runtime", "thread-artifacts")
+_WORKSPACES_SCHEME = "workspaces://universal-llm-gateway/"
 
 
 def _workspace_root() -> Path:
@@ -38,6 +39,18 @@ def _workspace_root() -> Path:
     if env_root:
         return Path(env_root)
     return Path(__file__).resolve().parents[7]
+
+
+def resolve_artifact_path(uri: str) -> Path | None:
+    """Resolve a ``workspaces://universal-llm-gateway/`` URI to a local path.
+
+    Returns None when *uri* does not match the expected scheme/namespace so
+    callers can silently skip non-workspace URIs without branching on scheme.
+    """
+    if not uri.startswith(_WORKSPACES_SCHEME):
+        return None
+    relative = uri[len(_WORKSPACES_SCHEME) :]
+    return _workspace_root() / relative
 
 
 def turn_artifact_uri(chat_id: str, turn_index: int) -> str:

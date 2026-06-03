@@ -313,3 +313,37 @@ def test_create_force_supersedes_id_first_chain_link_succeeds(
         "SELECT superseded_by FROM assertions WHERE id = ?", (target,)
     ).fetchone()
     assert row["superseded_by"] == new_id
+
+
+def test_create_supersedes_id_without_force_warns_and_leaves_target_unchanged(
+    conn: sqlite3.Connection,
+) -> None:
+    """supersedes_id WITHOUT force=true returns a protocol validation_warning,
+    succeeds as a sibling, and leaves the target's superseded_by untouched.
+
+    Regression for todo:cortex-assert-supersedes-id-friction: the silent
+    sibling create (no warning, no lineage chain) was the friction. The fix
+    keeps the non-breaking sibling behaviour but makes it VISIBLE.
+    """
+    target = _insert(conn)  # superseded_by IS NULL
+
+    body = {k: v for k, v in _BASE_CREATE_BODY.items() if k != "force"}
+    body["supersedes_id"] = target
+    result = _create_assertion_impl(body)
+
+    # The create still succeeds (non-breaking — sibling assertion).
+    assert result["item"]["id"] is not None
+    # Target lineage pointer was NOT chained — confirms the documented gap.
+    row = conn.execute(
+        "SELECT superseded_by FROM assertions WHERE id = ?", (target,)
+    ).fetchone()
+    assert row["superseded_by"] is None
+    # The gap is now VISIBLE via a protocol validation_warning.
+    warnings = result["validation_warnings"] or []
+    protocol = [
+        w
+        for w in warnings
+        if w.get("field") == "supersedes_id" and w.get("category") == "protocol"
+    ]
+    assert len(protocol) == 1
+    assert "force=true" in protocol[0]["message"]

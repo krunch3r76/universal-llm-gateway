@@ -62,7 +62,12 @@ class AssertionCreate(BaseModel):
     )
     supersedes_id: int | None = Field(
         None,
-        description="Assertion to supersede when force=True",
+        description=(
+            "Assertion to supersede. Requires force=True to chain lineage — "
+            "without force, the target's superseded_by is NOT set and the new "
+            "assertion is created as a sibling (a protocol validation_warning "
+            "is returned). Prefer the `supersede` op for atomic close+create."
+        ),
     )
     # Auditor-validatability opt-outs: pass one or more of
     # ['no_evidence_uris', 'inference_confirmed', 'no_verbatim'] to suppress

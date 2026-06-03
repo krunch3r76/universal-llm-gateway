@@ -19,8 +19,10 @@ PROJECT_READ_ONLY (default true). Toggle via project_access in mcp.yaml.
 
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -29,6 +31,12 @@ from typing import TYPE_CHECKING, Any, cast
 from mcp_events import record
 
 from ._file_helpers import load_searchable_text, read_file_result
+from ._project_paths import (
+    multi_repo_root_unscoped,
+    normalize_directory_arg,
+    resolve_existing_file,
+    workspaces_relative,
+)
 from ._search_helpers import (
     SEARCH_BINARY_SUFFIXES,
     SearchBudgetState,
@@ -88,7 +96,7 @@ _LIST_CAP = 2000
 def _safe_project_path(relative: str) -> Path:
     """Resolve *relative* inside the project root, rejecting traversal."""
     clean = relative.lstrip("/")
-    resolved_root = _PROJECT_ROOT  # Assuming _PROJECT_ROOT is already resolved
+    resolved_root = _PROJECT_ROOT.resolve()
     candidate = resolved_root / clean
     try:
         candidate.relative_to(resolved_root)
@@ -97,6 +105,34 @@ def _safe_project_path(relative: str) -> Path:
             f"Path {relative!r} resolves outside project root; traversal rejected"
         )
     return candidate
+
+
+def _resolve_project_file_path(relative: str) -> tuple[Path, str]:
+    """Resolve a readable file, including repo-relative refs without repo prefix."""
+    resolved = resolve_existing_file(relative, root=_PROJECT_ROOT.resolve())
+    if resolved is not None:
+        rel = workspaces_relative(resolved, _PROJECT_ROOT.resolve())
+        return resolved, rel
+    return _safe_project_path(relative), relative.lstrip("/")
+
+
+_LITERAL_FILENAME_PATTERN = re.compile(r"^[\w./-]+$")
+_REGEX_METACHAR_PATTERN = re.compile(r"[\\^$|+()\[\]{}]")
+# A literal-looking token is only treated as a filename when it carries a
+# filename signal: a path separator (`/`) or an extension-like trailing dot
+# (`.py`, `.md`). A bare identifier word ("provenance", "handoff_provenance")
+# is a legitimate content-search term, NOT a filename — routing it to filename
+# `find` silently returns matches:[] for a string that is actually present
+# (agent-bus:1193 hazard 1). When filename lookup is intended, op=find exists.
+_FILENAME_SIGNAL_PATTERN = re.compile(r"/|\.\w+$")
+
+
+def _looks_like_literal_filename(pattern: str) -> bool:
+    return (
+        bool(_LITERAL_FILENAME_PATTERN.match(pattern))
+        and not _REGEX_METACHAR_PATTERN.search(pattern)
+        and bool(_FILENAME_SIGNAL_PATTERN.search(pattern))
+    )
 
 
 def _is_binary(path: Path) -> bool:
@@ -312,14 +348,16 @@ def register_project_tools(mcp: FastMCP) -> None:
             Binary mode: {"content_base64", "mime_type", "encoding", "bytes", "path",
                 "auto_binary": true (when auto-routed)}
         """
-        src = _safe_project_path(path)
+        src, rel_path = _resolve_project_file_path(path)
         if not src.exists():
             raise FileNotFoundError(f"File not found: {path!r}")
         if not src.is_file():
             raise ValueError(f"Path is not a file: {path!r}")
 
-        result = read_file_result(path, root=_PROJECT_ROOT, binary=binary)
-        result["path"] = path
+        result = read_file_result(rel_path, root=_PROJECT_ROOT, binary=binary)
+        result["path"] = rel_path
+        if rel_path != path.lstrip("/"):
+            result["resolved_from"] = path
         auto_binary = bool(result.get("auto_binary"))
         if binary or auto_binary:
             logger.info(
@@ -464,6 +502,7 @@ def register_project_tools(mcp: FastMCP) -> None:
               "truncated": false,
             }
         """
+        directory = normalize_directory_arg(directory)
         if directory:
             target = _safe_project_path(directory)
             if not target.is_dir():
@@ -513,6 +552,80 @@ def register_project_tools(mcp: FastMCP) -> None:
         )
         return {"files": files, "directories": directories, "truncated": truncated}
 
+    @mcp.tool(title="Find Project Files")
+    def find_project_files(
+        pattern: str,
+        directory: str = "",
+        max_depth: int = 8,
+        max_results: int = DEFAULT_MAX_RESULTS,
+    ) -> dict[str, Any]:
+        """Find files by glob-style name under a scoped directory.
+
+        *pattern* is matched against each file's basename and full repo-relative
+        path. If it contains no ``*`` or ``?``, ``*{pattern}*`` is used.
+
+        Prefer this over ``search`` when locating a file by name; ``search`` scans
+        file *contents* with a regex and is expensive at the workspaces root.
+        """
+        directory = normalize_directory_arg(directory)
+        if multi_repo_root_unscoped(_PROJECT_ROOT.resolve()) and not directory:
+            return {
+                "error": (
+                    "find at workspaces root without a repo prefix is too broad. "
+                    "Scope path to a repo, e.g. path='universal-llm-gateway'."
+                ),
+                "hint": (
+                    "fs(op='find', sandbox='workspaces', "
+                    "path='universal-llm-gateway', content='session_handoff.py')"
+                ),
+            }
+        glob_pat = pattern if any(ch in pattern for ch in "*?[]") else f"*{pattern}*"
+        if directory:
+            target = _safe_project_path(directory)
+            if not target.is_dir():
+                if target.is_file():
+                    rel = workspaces_relative(target, _PROJECT_ROOT.resolve())
+                    matched = fnmatch.fnmatch(target.name, glob_pat) or fnmatch.fnmatch(
+                        rel, glob_pat
+                    )
+                    paths = [rel] if matched else []
+                    return {
+                        "path": directory,
+                        "mode": "file",
+                        "matches": paths,
+                        "truncated": False,
+                        "pattern": glob_pat,
+                    }
+                raise ValueError(f"Path is not a directory: {directory!r}")
+
+        files, _, truncated = _filesystem_listing(
+            directory,
+            max_depth=max_depth,
+            skip_binary=False,
+        )
+        matches: list[str] = []
+        for rel_path in files:
+            base = Path(rel_path).name
+            if fnmatch.fnmatch(base, glob_pat) or fnmatch.fnmatch(rel_path, glob_pat):
+                matches.append(rel_path)
+                if len(matches) >= max_results:
+                    truncated = True
+                    break
+        logger.info(
+            "find_project_files: pattern=%r dir=%s → %d paths%s",
+            glob_pat,
+            directory or "/",
+            len(matches),
+            " (truncated)" if truncated else "",
+        )
+        return {
+            "path": directory,
+            "mode": "directory",
+            "matches": matches,
+            "truncated": truncated,
+            "pattern": glob_pat,
+        }
+
     @mcp.tool(title="Search Project Files")
     def search_project_files(
         pattern: str,
@@ -546,6 +659,28 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             Unified search envelope with ``mode`` ``file`` or ``directory``.
         """
+        directory = normalize_directory_arg(directory)
+        if _looks_like_literal_filename(pattern):
+            return find_project_files(
+                pattern,
+                directory,
+                max_depth=12,
+                max_results=max_results,
+            )
+        if (
+            multi_repo_root_unscoped(resolved_root := _PROJECT_ROOT.resolve())
+            and not directory
+        ):
+            return {
+                "error": (
+                    "search at workspaces root without a repo prefix scans every "
+                    "mounted repo and may time out."
+                ),
+                "hint": (
+                    "Scope path to a repo (path='universal-llm-gateway') or use "
+                    "fs(op='find', content='filename.py') for name lookup."
+                ),
+            }
         compiled = compile_pattern(pattern)
         resolved_root = _PROJECT_ROOT.resolve()
 

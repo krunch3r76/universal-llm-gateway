@@ -45,8 +45,18 @@ def _op_relationship_create(
     session_id: str | None = None,
     agent: str | None = None,
     resolve_aliases: bool = True,
+    from_entity: str | None = None,
+    to_entity: str | None = None,
+    type: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
+    # Forgive the SQL-column param names that agent docs historically showed:
+    # from_entity/to_entity/type are the relationships-table columns, not the
+    # tool params. Accepting them as aliases removes a recurring friction where
+    # docs-following callers hit "source_id is required".
+    source_id = source_id or from_entity
+    target_id = target_id or to_entity
+    type_id = type_id or type
     for field, val in [
         ("source_id", source_id),
         ("target_id", target_id),

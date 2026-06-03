@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 """Status-trait backfill — hybrid scope C or predicate-equivalence (all types).
 
+**POST-052 (1172-E):** Migration 052 dropped ``entities.status``.  This script
+calls :func:`require_entities_status_column` from the backfill lib — it exits 2
+with ``entities.status dropped (migration 052); rewrite required (1172-E)`` when
+run against a post-DROP cortex DB.  That is the expected P0-fence behaviour; do
+not bypass it.
+
+For a read-only trait coverage report on a post-052 DB, use
+:func:`cortex_store.status_trait_backfill.run_trait_completeness_scan` directly
+or the rewritten cert:
+``~/.venvs/universal/bin/python scripts/cortex/trait_fallback_equivalence_cert.py``
+
 Populates NULL ``lifecycle``, ``confidence_band``, and ``adoption`` from legacy
 ``entities.status`` without mutating ``status``. Idempotent.
 
-Usage:
+Usage::
+
   ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py --dry-run
   ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py --apply
   ~/.venvs/universal/bin/python scripts/cortex/backfill_status_traits_hybrid.py \\
@@ -27,6 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "libs"))
 from cortex_store.status_trait_backfill import (  # noqa: E402
     HOT_TYPES_DEFAULT,
     HOT_TYPES_REQUIRED,
+    require_entities_status_column,
     run_hybrid_trait_backfill,
     run_predicate_equivalence_trait_backfill,
 )
@@ -58,6 +71,7 @@ def main() -> int:
     dry_run = not args.apply
     conn = sqlite3.connect(args.db)
     conn.row_factory = sqlite3.Row
+    require_entities_status_column(conn)
 
     if args.mode == "predicate-equivalence":
         counts = run_predicate_equivalence_trait_backfill(conn, dry_run=dry_run)

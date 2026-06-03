@@ -180,7 +180,7 @@ if [[ "$ENABLE_BROWSER_TOOLS" == "true" ]]; then
   COMPOSE_ARGS+=(-f docker/compose/mcp-server-browser.override.yml)
 fi
 
-cleanup_orphan_mcp_containers() {
+purge_mcp_compose_orphans() {
   # `docker compose up` recreate-on-image-change can leave behind a rename-pattern
   # orphan (e.g. `d1e48bbeb4e3_mcp-server`) in Created state when the rename
   # succeeds but the subsequent create step fails. These orphans then block
@@ -194,14 +194,18 @@ cleanup_orphan_mcp_containers() {
     echo "Removing orphan mcp-server containers: $(echo "$orphans" | tr '\n' ' ')"
     echo "$orphans" | xargs -r docker rm -f >/dev/null 2>&1 || true
   fi
+}
 
+remove_mcp_container_for_image_recreate() {
+  purge_mcp_compose_orphans
   # After a full image rebuild the existing mcp-server container (if any) must
   # be removed before `docker compose up` attempts to create a new one — compose
   # performs an internal rename-then-create that fails with a "name already in
   # use" conflict when the old container is still present and the daemon cannot
-  # atomically swap it.
+  # atomically swap it. NOT used on the routine sync path: docker cp into /app
+  # lives in the container writable layer and must survive stop→start.
   if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
-    echo "Removing existing mcp-server container before recreate..."
+    echo "Removing existing mcp-server container before image recreate..."
     docker rm -f mcp-server >/dev/null 2>&1 || true
   fi
 }
@@ -233,6 +237,14 @@ wait_for_mcp_healthy() {
   done
 }
 
+write_source_sync_stamp() {
+  local c=mcp-server
+  local stamp
+  stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  docker exec -u 0 "$c" sh -c "printf '%s\n' '${stamp}' > /app/.source_sync_stamp && chown mcp:mcp /app/.source_sync_stamp"
+  echo "Wrote source sync stamp: ${stamp}"
+}
+
 sync_source_into_container() {
   local c=mcp-server
   echo "Syncing MCP source into ${c} (docker cp — no image rebuild)..."
@@ -251,8 +263,8 @@ sync_source_into_container() {
   docker exec -u 0 "$c" chown -R mcp:mcp \
     /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py \
     /app/pipelines.local /app/services/mcp-server/tools/local 2>/dev/null || \
-    docker exec -u 0 "$c" chown -R mcp:mcp \
-      /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
+  docker exec -u 0 "$c" chown -R mcp:mcp \
+    /app/libs /app/services /app/config /app/pipelines /app/sitecustomize.py
 }
 
 ensure_mcp_container() {
@@ -265,8 +277,8 @@ ensure_mcp_container() {
 }
 
 restart_mcp_gracefully() {
-  cleanup_orphan_mcp_containers
-  echo "Restarting MCP server (graceful stop)..."
+  purge_mcp_compose_orphans
+  echo "Restarting MCP server (graceful stop — preserving synced /app layer)..."
   docker compose "${COMPOSE_ARGS[@]}" stop -t 30 mcp-server
   docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
 }
@@ -276,13 +288,20 @@ if [[ "$NO_CACHE" == "true" ]]; then
   curl -fsSL https://x.ai/cli/install.sh | bash
   echo "Building MCP server (no cache, pulling fresh base images)..."
   bash docker/scripts/build/build-mcp.sh --no-cache
-  cleanup_orphan_mcp_containers
+  remove_mcp_container_for_image_recreate
   echo "Starting MCP server..."
   docker compose "${COMPOSE_ARGS[@]}" up -d mcp-server
 else
   ensure_mcp_container
   sync_source_into_container
   restart_mcp_gracefully
+fi
+
+# Stamp must run after the container is up; never gate on health (fleet can pass
+# sync while health is still warming). Fail-soft so a stamp error does not mask
+# a successful sync.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx 'mcp-server'; then
+  write_source_sync_stamp || echo "WARNING: failed to write /app/.source_sync_stamp" >&2
 fi
 
 if wait_for_mcp_healthy; then
@@ -298,6 +317,7 @@ if wait_for_mcp_healthy; then
     fi
   fi
 else
+  echo "WARNING: MCP server not healthy after sync/restart (check docker ps / logs)." >&2
   echo "WARNING: Skipping descriptor refresh because MCP server is not healthy." >&2
 fi
 

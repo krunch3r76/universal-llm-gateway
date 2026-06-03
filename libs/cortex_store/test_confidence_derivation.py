@@ -543,6 +543,144 @@ def test_gate_unit_no_qualifying():
     assert _gate([a]) == (False, "no_qualifying_confirmed_source_citing_evidence")
 
 
+# --- D1 inference_confirmed firewall (1172-C) ---
+
+
+def test_inference_confirmed_excluded_from_gate_with_external_uris(conn):
+    """inference+confirmed with external evidence_uris contributes to prior but NOT gate."""
+    _entity(conn, "fact:inf")
+    _assert(
+        conn,
+        "fact:inf",
+        confidence="confirmed",
+        credibility="external-KB",
+        hosts=["a.com"],
+        derivation_type="inference",
+    )
+    r = run_shadow_derivation(conn).results["fact:inf"]
+    # Prior still computed (source-citing via external URI).
+    assert r.has_source_citing
+    # But gate MUST fail — inference assertions are firewalled (D1).
+    assert not r.gate_pass
+    assert r.final_band == "provisional"  # score ≥ τ_prov, gate blocked
+
+
+def test_inference_confirmed_two_clusters_still_fails_gate(conn):
+    """Two external-KB clusters with inference type BOTH fail gate (D1)."""
+    _entity(conn, "fact:inf2")
+    _assert(
+        conn,
+        "fact:inf2",
+        confidence="confirmed",
+        credibility="external-KB",
+        hosts=["a.com"],
+        seeded_by="ag1",
+        derivation_type="inference",
+    )
+    _assert(
+        conn,
+        "fact:inf2",
+        confidence="confirmed",
+        credibility="external-KB",
+        hosts=["b.com"],
+        seeded_by="ag2",
+        derivation_type="inference",
+    )
+    r = run_shadow_derivation(conn).results["fact:inf2"]
+    # Two independent clusters — but both inference, so gate still fails.
+    assert not r.gate_pass
+    assert r.final_band == "provisional"
+
+
+def test_inference_mixed_with_qualifying_passes_gate(conn):
+    """Inference assertion alongside a qualifying non-inference assertion — gate passes."""
+    _entity(conn, "fact:mix")
+    _assert(
+        conn,
+        "fact:mix",
+        confidence="confirmed",
+        credibility="external-KB",
+        hosts=["a.com"],
+        seeded_by="ag1",
+        derivation_type="inference",  # firewalled
+    )
+    _assert(
+        conn,
+        "fact:mix",
+        confidence="confirmed",
+        credibility="authority",
+        hosts=["b.gov"],
+        seeded_by="ag2",
+        derivation_type=None,  # regular — qualifies
+    )
+    r = run_shadow_derivation(conn).results["fact:mix"]
+    assert r.gate_pass  # authority from non-inference assertion passes gate
+
+
+# --- D3 internal URI classifier (1172-C) ------------------------------------
+
+
+def test_internal_uri_excluded_from_cluster_count(conn):
+    """A cortex: URI is classified as internal and does NOT count as a cluster."""
+    _entity(conn, "fact:internal")
+    # Insert an assertion with a cortex: URI — must be inserted raw (not via _assert helper)
+    import json
+
+    conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, credibility, "
+        "evidence_uris, seeded_by, derivation_type, review_status, superseded_by) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "fact:internal",
+            "c",
+            "confirmed",
+            "external-KB",
+            json.dumps(["cortex:notes/system/threads/1172-c-policy.md"]),
+            None,
+            None,
+            None,
+            None,
+        ),
+    )
+    r = run_shadow_derivation(conn).results["fact:internal"]
+    # cortex: URI filtered out → no external source keys → assertion dropped from source
+    assert not r.has_source_citing
+    assert r.score == pytest.approx(0.0)
+
+
+def test_mixed_internal_external_uris_only_external_counts(conn):
+    """Mixed evidence_uris: only external ones count toward cluster_count."""
+    _entity(conn, "fact:mixed")
+    import json
+
+    conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, credibility, "
+        "evidence_uris, seeded_by, derivation_type, review_status, superseded_by) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "fact:mixed",
+            "c",
+            "confirmed",
+            "authority",
+            json.dumps(
+                [
+                    "https://leginfo.legislature.ca.gov/page",
+                    "cortex:notes/internal-trace",
+                    "agent-bus:1172",
+                ]
+            ),
+            "ag1",
+            None,
+            None,
+            None,
+        ),
+    )
+    r = run_shadow_derivation(conn).results["fact:mixed"]
+    # Only the https URL is external → authority cluster → gate passes.
+    assert r.has_source_citing
+    assert r.gate_pass and r.gate_reason == "authority_cluster"
+
+
 # --- persistence + §16 ------------------------------------------------------
 
 

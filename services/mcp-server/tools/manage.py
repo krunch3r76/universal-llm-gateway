@@ -223,12 +223,17 @@ def register_manage_tools(mcp: FastMCP) -> None:
           health        (service)           — health detail for one service
           start         (service)           — start a stopped service
           stop          (service)           — stop a running service
-          restart       (service)           — stop then start (no source sync)
+          restart       (service)           — stop then start. Host processes only;
+                                             for mcp this is aliased to sync_restart
+                                             (plain restart would reuse baked /app
+                                             without loading services/mcp-server edits).
           sync_restart  (service)           — deploy local code edits. gateway
                                              uses bind-mounts (restart only); mcp
                                              runs scripts/sync-and-restart-mcp.sh
                                              (docker cp sync + restart, no rebuild);
-                                             host procs just restart.
+                                             host procs just restart. After mcp sync,
+                                             GET /health includes source_synced_at
+                                             and deploy_mode (image_only vs source_synced).
           rebuild       (service)           — full --no-cache rebuild. Forbidden
                                              for gateway/mcp via this tool — use
                                              sync_restart. Ops-only via TUI for

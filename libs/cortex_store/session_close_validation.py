@@ -37,6 +37,81 @@ _ASSISTANT_VOICE_RE = re.compile(
     r"\*\*Assistant:\*\*|\bAssistant:\s|^#{1,4}\s+Assistant\b", re.MULTILINE
 )
 
+# Canonical structural-layer heading. The contract requires this literal H2;
+# `normalize_session_summary_heading` liberalizes near-misses to it.
+_SUMMARY_HEADING_LITERAL = "## Session Summary"
+# Line-anchored canonical check. A bare substring test gives a false positive
+# for `### Session Summary` (the H2 literal is a substring of the H3 line), so
+# the no-op short-circuit must match the literal as its own heading line.
+_SUMMARY_HEADING_CANONICAL_RE = re.compile(r"^## Session Summary[ \t]*$", re.MULTILINE)
+# A near-miss heading line: any heading level (`#`..`######`), optional
+# surrounding whitespace, "session summary" case-insensitive, optional
+# trailing colon. Matches `# Session Summary`, `### session summary:`,
+# `##  Session   Summary`, etc. — but NOT a bare `## Summary` (no "session").
+_SUMMARY_HEADING_VARIANT_RE = re.compile(
+    r"^[ \t]*#{1,6}[ \t]*session[ \t]+summary[ \t]*:?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def normalize_session_summary_heading(
+    session_summary_md: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """Liberalize the ``## Session Summary`` heading (Postel's law).
+
+    The structural-layer contract requires a literal ``## Session Summary``
+    H2. Agents under load routinely emit a near-miss (``# Session Summary``,
+    ``### Session Summary:``, extra whitespace) or omit the heading entirely
+    while still authoring valid body content. Rejecting these costs a round
+    trip; the agent-authored content is intact. This normalizes in place:
+
+      - literal heading already present  → unchanged, no warning
+      - a recognizable heading *variant* → that line rewritten to the literal
+      - no recognizable heading at all   → literal prepended above the content
+
+    Returns ``(normalized_md, warning | None)``. ``warning`` mirrors the
+    audit-finding shape (``kind``/``subject``/``severity``/``detail``) so it
+    rides the existing ``audit_warnings`` channel. Idempotent: re-applying to
+    already-normalized markdown is a no-op (literal-present short-circuit).
+
+    Empty/whitespace input is returned unchanged with no warning — the
+    non-empty precondition is enforced separately by the caller.
+    """
+    if not session_summary_md.strip():
+        return session_summary_md, None
+    if _SUMMARY_HEADING_CANONICAL_RE.search(session_summary_md):
+        return session_summary_md, None
+
+    variant = _SUMMARY_HEADING_VARIANT_RE.search(session_summary_md)
+    if variant is not None:
+        normalized = (
+            session_summary_md[: variant.start()]
+            + _SUMMARY_HEADING_LITERAL
+            + session_summary_md[variant.end() :]
+        )
+        warning = {
+            "kind": "session_summary_heading_normalized",
+            "subject": "session_summary_md",
+            "severity": "info",
+            "detail": (
+                f"structural-layer heading {variant.group().strip()!r} "
+                f"normalized to '{_SUMMARY_HEADING_LITERAL}'."
+            ),
+        }
+        return normalized, warning
+
+    normalized = f"{_SUMMARY_HEADING_LITERAL}\n\n{session_summary_md.lstrip()}"
+    warning = {
+        "kind": "session_summary_heading_normalized",
+        "subject": "session_summary_md",
+        "severity": "info",
+        "detail": (
+            "structural-layer markdown had no recognizable 'Session Summary' "
+            f"heading; '{_SUMMARY_HEADING_LITERAL}' was prepended."
+        ),
+    }
+    return normalized, warning
+
 
 # Reason enum for mcp.session.close.rejected — see docs/event-contracts.md
 _REJECT_REASONS = frozenset(
@@ -185,10 +260,27 @@ def _validate_session_close_args(
                 "hint": (f"Supply a non-empty {field} on the session_close call."),
             }
     if transcript_depth != "none" and not transcript_jsonl_path and not transcript_md:
+        # Seat-specific guidance: the slug tells us which source the agent
+        # should have supplied, so the retry is a one-shot fix rather than a
+        # guess between two options.
+        is_cursor_seat = bool(agent) and "cursor" in agent
+        if is_cursor_seat:
+            seat_hint = (
+                "This is a Cursor seat: re-run Step 0 "
+                "(`ls -lt $CURSOR_AGENT_TRANSCRIPTS_ROOT | head -2`), take the "
+                "most-recently-modified UUID directory, and pass its .jsonl "
+                "as transcript_jsonl_path. Do NOT read or paste the file."
+            )
+        else:
+            seat_hint = (
+                "This is a web/API seat: pass the verbatim conversation "
+                "markdown via transcript_md (server assembles the dual layer)."
+            )
         detail = (
-            f"either transcript_jsonl_path (cursor) or transcript_md (web) "
-            f"is required for transcript_depth={transcript_depth!r} — "
-            "neither was supplied"
+            f"transcript_depth={transcript_depth!r} requires a transcript "
+            f"source, but neither transcript_jsonl_path nor transcript_md was "
+            f'supplied. {seat_hint} (Or pass transcript_depth="none" for '
+            "mechanical / bus-durable sessions that need no transcript archival.)"
         )
         if emit_rejected and session_id and agent:
             _emit_rejected(
@@ -200,22 +292,17 @@ def _validate_session_close_args(
         return {
             "error": detail,
             "reason": "transcript_source.missing",
-            "field": "transcript_jsonl_path|transcript_md",
+            "field": ("transcript_jsonl_path" if is_cursor_seat else "transcript_md"),
             "received": None,
             "expected": (
-                f"exactly one of {{transcript_jsonl_path (cursor), "
-                f"transcript_md (web)}} for transcript_depth="
-                f"{transcript_depth!r}; omit only when "
-                'transcript_depth="none"'
-            ),
+                "transcript_jsonl_path (Cursor seat)"
+                if is_cursor_seat
+                else "transcript_md (web/API seat)"
+            )
+            + f" for transcript_depth={transcript_depth!r}; omit only when "
+            'transcript_depth="none"',
             "examples": [],
-            "hint": (
-                "Cursor agents pass transcript_jsonl_path under "
-                "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
-                "verbatim markdown via transcript_md. For mechanical or "
-                "bus-durable sessions where no transcript archival is "
-                'needed, pass transcript_depth="none".'
-            ),
+            "hint": seat_hint,
         }
     assert session_id and agent and session_summary_md and summary
 
@@ -283,25 +370,25 @@ def _validate_session_close_args(
                 detail=f"summary must be >= 20 characters (got {len(summary)})",
             )
         )
-    if "## Session Summary" not in session_summary_md:
+    # Heading presence is no longer a hard reject: the close path normalizes
+    # near-misses (or prepends the heading) via normalize_session_summary_heading
+    # and emits an advisory warning instead of a 422. Only genuinely empty /
+    # whitespace-only structural layers are rejected here.
+    if not session_summary_md.strip():
         return _reject(
             build_validation_error(
                 reason="session_summary.invalid",
                 field="session_summary_md",
-                received=session_summary_md[:120]
-                + ("…" if len(session_summary_md) > 120 else ""),
-                expected="must contain heading '## Session Summary'",
+                received=session_summary_md,
+                expected="non-empty structural-layer markdown",
                 examples=["## Session Summary\\n…\\n## Decisions\\n…"],
                 hint=(
                     "session_summary_md is the structural layer the agent "
                     "composes (decisions, files modified, continuation "
-                    "state) — start it with a '## Session Summary' H2."
+                    "state) — it must be non-empty. A '## Session Summary' "
+                    "heading is added automatically if absent."
                 ),
-                detail=(
-                    "session_summary_md must contain a '## Session Summary' "
-                    "heading (structural layer the agent composes — "
-                    "decisions, files modified, continuation state)."
-                ),
+                detail="session_summary_md must be non-empty (structural layer).",
             )
         )
     return None

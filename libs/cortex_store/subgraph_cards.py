@@ -70,7 +70,7 @@ def augment_entity_columns(
     table_cols = {
         row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
     }
-    select_cols = ["id", "description", "status"]
+    select_cols = ["id", "description"]
     for col in ("lifecycle", "confidence_band", "adoption"):
         if col in table_cols:
             select_cols.append(col)

@@ -52,6 +52,8 @@ def normalize_agent_slug(slug: str) -> str:
         "superheavy": "grok-web",
         "cursor_gemini": "gemini-cursor",
         "gemini": "gemini-cursor",
+        "web_gemini": "gemini-web",
+        "gemini_web": "gemini-web",
         # New canonical seat slugs (hyphen form stored under underscore key
         # since norm replaces hyphens with underscores above)
         "claude_cursor": "claude-cursor",

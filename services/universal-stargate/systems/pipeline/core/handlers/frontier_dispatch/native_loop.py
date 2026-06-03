@@ -30,6 +30,7 @@ from ...execution.errors import (
     FrontierDispatchExhaustedError,
 )
 from ..frontier_dispatch_streaming import (
+    REMOTE_MCP_OVERALL_TIMEOUT_S,
     build_cancel_check,
     build_in_process_sender,
     build_on_tool_event,
@@ -81,7 +82,14 @@ async def run_dispatch_loop(
 
     cancel_check = build_cancel_check(context)
     send_native = build_in_process_sender(
-        context, step.id, agent, publish=publish, cancel_check=cancel_check
+        context,
+        step.id,
+        agent,
+        publish=publish,
+        cancel_check=cancel_check,
+        default_overall_timeout=(
+            REMOTE_MCP_OVERALL_TIMEOUT_S if admission.remote_mcp else None
+        ),
     )
     on_tool_event = build_on_tool_event(context, agent, publish=publish)
 

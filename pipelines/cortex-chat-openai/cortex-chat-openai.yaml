@@ -5,7 +5,7 @@
 # provider call are server-assembled from the
 # thread:openai-chat:{chat_id} anchor by assemble_thread_v1 (Phase 4).
 #
-# Four-step compaction DAG:
+# Five-step compaction DAG:
 #
 #     assemble   ── builds referential window prefix from cortex assertions
 #       │
@@ -14,6 +14,9 @@
 #       └── respond ─── frontier_dispatch_v1 with handler_inputs.messages
 #                  │
 #                  └── archive_assistant ── persists assistant output
+#                                 │
+#                                 └── summarize ── §6.10 consolidation summary
+#                                                  (Stage A: no supersede)
 #
 # archive_user runs in parallel with respond (both only depend on assemble).
 # archive_assistant runs after respond (binds respond.json.content); the
@@ -117,3 +120,22 @@ steps:
       exhausted: respond.json.exhausted
     handler_outputs:
       artifact_uri: archive_assistant.json.artifact_uri
+
+  # 5) Summarize older turns into a §6.10 consolidation claim (Stage A:
+  #    summary written, turns NOT superseded — supersede_collapsed=false).
+  #    Runs after archive_assistant (DAG-gated via archive_done binding).
+  #    No-ops when turn_index <= window_size + summarize_margin (12 here).
+  #    The summary is injected by build_referential_window on the next turn.
+  - name: summarize
+    type: summarize_thread_v1
+    window_size: 8
+    summarize_margin: 4
+    summary_model: openai/gpt-5.5-mini
+    supersede_collapsed: false
+    handler_inputs:
+      anchor_id: assemble.json.anchor_id
+      turn_index: assemble.json.turn_index
+      archive_done: archive_assistant.json.artifact_uri
+    handler_outputs:
+      summary_assertion_id: summarize.json.summary_assertion_id
+      turns_summarized: summarize.json.turns_summarized

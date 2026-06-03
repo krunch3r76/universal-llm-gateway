@@ -19,6 +19,9 @@ def _conn() -> sqlite3.Connection:
             name TEXT NOT NULL,
             description TEXT,
             status TEXT,
+            lifecycle TEXT,
+            confidence_band TEXT,
+            adoption TEXT,
             workflow_state TEXT,
             aliases TEXT,
             attributes TEXT,
@@ -39,7 +42,7 @@ def _insert_skill(
     conn: sqlite3.Connection,
     eid: str,
     *,
-    status: str = "confirmed",
+    confidence_band: str = "confirmed",
     applicable_agents: list[str] | None = None,
 ) -> None:
     attrs = (
@@ -48,9 +51,9 @@ def _insert_skill(
         else None
     )
     conn.execute(
-        "INSERT INTO entities (id, type, name, status, attributes, created_at) "
+        "INSERT INTO entities (id, type, name, confidence_band, attributes, created_at) "
         "VALUES (?, 'agent_skill', ?, ?, ?, '2026-05-19T00:00:00Z')",
-        (eid, eid.split(":", 1)[-1], status, attrs),
+        (eid, eid.split(":", 1)[-1], confidence_band, attrs),
     )
 
 

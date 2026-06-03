@@ -9,7 +9,6 @@ from universal_logging import get_logger
 from ..db import cortex_conn, json_decode, json_encode, query
 from ..status_trait_write import (
     resolve_staged_entity_traits,
-    status_column_for_insert,
     trait_insert_extras,
 )
 from ..models import (
@@ -267,7 +266,6 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
         # hand-set confidence-axis value (e.g. 'confirmed') is ignored. Lifecycle
         # status is not applicable on the staging-add path.
         staged = resolve_staged_entity_traits(pj.get("status"))
-        status_col = status_column_for_insert(conn, staged)
         trait_cols, trait_vals = trait_insert_extras(conn, staged)
         insert_cols = [
             "id",
@@ -293,9 +291,6 @@ def _apply_proposal(conn: sqlite3.Connection, proposal: dict) -> str:
             now,
             now,
         ]
-        if status_col is not None:
-            insert_cols.insert(4, "status")
-            insert_vals.insert(4, status_col)
         insert_cols.extend(trait_cols)
         insert_vals.extend(trait_vals)
         placeholders = ", ".join(["?"] * len(insert_vals))

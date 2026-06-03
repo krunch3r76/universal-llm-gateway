@@ -323,6 +323,80 @@ def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> 
     assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
 
+def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
+    session_env: dict[str, Path],
+) -> None:
+    """Out-of-order close must not drift attribute from column (agent-bus 1188).
+
+    When session B closes with ``prior_session_id=A`` before A closes,
+    ``_ensure_transcript_entity`` back-creates a BARE ``transcript:A`` (no
+    attributes). A's later close hits ``INSERT OR IGNORE`` as a no-op, so the
+    handoff (and provenance) would land only in the journal column unless the
+    explicit attribute UPDATE runs. Assert attribute == column.
+    """
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    session_a = "orion-2026-05-04-0700"
+    session_b = "orion-2026-05-04-0847"
+
+    handoff_file = files_root / "notes/system/sessions/a-handoff.md"
+    handoff_file.parent.mkdir(parents=True, exist_ok=True)
+    handoff_file.write_text("Next decision: G2 policy.", encoding="utf-8")
+
+    # B closes first → back-creates a bare transcript:A via prior_session_id.
+    b_result = ops_journals._op_session_close(
+        **_payload(
+            session_id=session_b,
+            prior_session_id=session_a,
+            transcripts_root=session_env["transcripts_root"],
+        )
+    )
+    assert "error" not in b_result, b_result
+    bare = _query_one(
+        db_path,
+        "SELECT attributes FROM entities WHERE id = ?",
+        (f"transcript:{session_a}",),
+    )
+    assert bare is not None  # pre-existing bare entity
+    bare_attrs = json.loads(bare["attributes"]) if bare["attributes"] else {}
+    assert "handoff_prompt" not in bare_attrs
+
+    # A closes with a handoff → INSERT OR IGNORE no-op on the pre-existing
+    # entity; the explicit UPDATE must carry the attribute state.
+    handoff = "Resume from the G2 confirmed+inference policy."
+    a_payload = _payload(
+        session_id=session_a,
+        handoff_prompt=handoff,
+        transcripts_root=session_env["transcripts_root"],
+    )
+    a_payload["handoff_source_path"] = "notes/system/sessions/a-handoff.md"
+    a_result = ops_journals._op_session_close(**a_payload)
+    assert "error" not in a_result, a_result
+
+    column = _query_one(
+        db_path,
+        "SELECT handoff_prompt FROM session_journals WHERE session_id = ?",
+        (session_a,),
+    )
+    assert column is not None and column["handoff_prompt"] == handoff
+
+    entity = _query_one(
+        db_path,
+        "SELECT attributes FROM entities WHERE id = ?",
+        (f"transcript:{session_a}",),
+    )
+    assert entity is not None
+    attrs = json.loads(entity["attributes"])
+    # The drift bug would leave the attribute empty; it must match the column.
+    assert attrs["handoff_prompt"] == column["handoff_prompt"]
+    assert attrs["status"] == "confirmed"
+    assert attrs["closed_at"]
+    prov = attrs["handoff_provenance"]
+    assert prov["write_path"] == "session_close"
+    assert prov["source_file"] == "notes/system/sessions/a-handoff.md"
+    assert prov["source_file_sha256"].startswith("sha256:")
+
+
 def test_session_close_without_handoff_is_clean_no_warnings(
     session_env: dict[str, Path],
 ) -> None:

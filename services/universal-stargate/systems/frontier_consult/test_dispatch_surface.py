@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from .admission import verify_thread_writable
 from .route import (
     FrontierDispatchGenerateBody,
     FrontierDispatchToThreadBody,
@@ -24,7 +25,7 @@ from .route import (
     _normalize_op_body,
     team_router,
 )
-from .service import FrontierEndpointError, _verify_thread_writable
+from .service import FrontierEndpointError
 
 # ---------------------------------------------------------------------------
 # S1 — direct mode: _normalize_op_body sets output_contract=inline, op=generate
@@ -234,7 +235,7 @@ async def test_d3_missing_thread_raises_422(monkeypatch: pytest.MonkeyPatch) -> 
     _patch_bus(monkeypatch, httpx.MockTransport(handler))
 
     with pytest.raises(FrontierEndpointError) as exc_info:
-        await _verify_thread_writable(
+        await verify_thread_writable(
             "999999999",
             request_id="req-d3",
             auth_token="",
@@ -259,7 +260,7 @@ async def test_d4_closed_thread_raises_422(monkeypatch: pytest.MonkeyPatch) -> N
     _patch_bus(monkeypatch, httpx.MockTransport(handler))
 
     with pytest.raises(FrontierEndpointError) as exc_info:
-        await _verify_thread_writable(
+        await verify_thread_writable(
             "42",
             request_id="req-d4",
             auth_token="",
@@ -284,7 +285,7 @@ async def test_d3_open_thread_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_bus(monkeypatch, httpx.MockTransport(handler))
 
     # Must not raise
-    await _verify_thread_writable("42", request_id="req-d3-ok", auth_token="")
+    await verify_thread_writable("42", request_id="req-d3-ok", auth_token="")
 
 
 # ---------------------------------------------------------------------------

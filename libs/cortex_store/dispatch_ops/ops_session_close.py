@@ -13,6 +13,7 @@ from ..session_close_validation import (
     _check_transcript_hollow_guards,
     _validate_session_close_args,
     _validate_transcript_structure,
+    normalize_session_summary_heading,
 )
 from ..transcript_assembly import (
     TranscriptPathError,
@@ -215,6 +216,10 @@ def _op_session_close_preflight(
         return {"ok": False, **arg_error}
     assert session_id and agent and session_summary_md and summary
 
+    # Mirror the close-path heading normalization so the preview reflects what
+    # would actually be written (idempotent when the literal heading is present).
+    session_summary_md, _ = normalize_session_summary_heading(session_summary_md)
+
     asm = _assemble_transcript_in_memory(
         session_id=session_id,
         agent=agent,
@@ -281,6 +286,7 @@ def _op_session_close(
     entity_ids: list[str] | None = None,
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
+    handoff_source_path: str | None = None,
     assistant_label: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     dry_run: bool = False,
@@ -325,6 +331,10 @@ def _op_session_close(
             return {"dry_run": True, "would_fail": True, **arg_error}
         return {k: v for k, v in arg_error.items() if k != "reason"}
     assert session_id and agent and session_summary_md and summary
+
+    # Heading normalization (idempotent) — applied before dry_run preview and
+    # before handing the body to the route handler, which normalizes again.
+    session_summary_md, _ = normalize_session_summary_heading(session_summary_md)
 
     audit_outcome = _safe_run_audit(
         session_id=session_id,
@@ -386,6 +396,7 @@ def _op_session_close(
         ("entity_ids", entity_ids),
         ("prior_session_id", prior_session_id),
         ("handoff_prompt", handoff_prompt),
+        ("handoff_source_path", handoff_source_path),
         ("assistant_label", assistant_label),
     ]:
         if val is not None:
@@ -447,13 +458,18 @@ def _op_session_close(
 def _op_session_handoff_upsert(
     session_id: str,
     handoff_prompt: str,
+    handoff_source_path: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Upsert handoff_prompt on a closed session (journal row + transcript mirror)."""
     try:
-        return _upsert_session_handoff_impl(
-            {"session_id": session_id, "handoff_prompt": handoff_prompt}
-        )
+        payload: dict[str, Any] = {
+            "session_id": session_id,
+            "handoff_prompt": handoff_prompt,
+        }
+        if handoff_source_path is not None:
+            payload["handoff_source_path"] = handoff_source_path
+        return _upsert_session_handoff_impl(payload)
     except HTTPException as exc:
         detail = exc.detail
         if isinstance(detail, dict):

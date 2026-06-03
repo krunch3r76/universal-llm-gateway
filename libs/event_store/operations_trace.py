@@ -128,12 +128,24 @@ async def _pipeline_trace(params: dict[str, Any], store: EventStore) -> dict[str
             step_info["model_entity_id"] = payload["model_entity_id"]
         if "duration_ms" in payload:
             step_info["duration_ms"] = payload["duration_ms"]
-        if "tokens_in" in payload:
-            step_info["tokens_in"] = payload["tokens_in"]
-            total_tokens_in += payload["tokens_in"]
-        if "tokens_out" in payload:
-            step_info["tokens_out"] = payload["tokens_out"]
-            total_tokens_out += payload["tokens_out"]
+        tokens_in = payload.get("tokens_in")
+        if tokens_in is None:
+            tokens_in = payload.get("prompt_tokens")
+        if tokens_in is None:
+            tokens_in = payload.get("input_tokens")
+        if tokens_in is not None:
+            tokens_in = int(tokens_in)
+            step_info["tokens_in"] = tokens_in
+            total_tokens_in += tokens_in
+        tokens_out = payload.get("tokens_out")
+        if tokens_out is None:
+            tokens_out = payload.get("completion_tokens")
+        if tokens_out is None:
+            tokens_out = payload.get("output_tokens")
+        if tokens_out is not None:
+            tokens_out = int(tokens_out)
+            step_info["tokens_out"] = tokens_out
+            total_tokens_out += tokens_out
         if "status" in payload:
             step_info["status"] = payload["status"]
 

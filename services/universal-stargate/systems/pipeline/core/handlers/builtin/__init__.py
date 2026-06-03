@@ -25,6 +25,7 @@ from .. import parse_json as _parse_json  # noqa: E402, F401
 from .. import pipeline_call as _pipeline_call  # noqa: E402, F401
 from .. import rag_search as _rag_search  # noqa: E402, F401
 from .. import select_output as _select_output  # noqa: E402, F401
+from .. import summarize_thread_v1 as _summarize_thread_v1  # noqa: E402, F401
 
 # generate: imported via GenericGenerateHandler below
 from ..generate import GenericGenerateHandler  # noqa: E402, F401

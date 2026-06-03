@@ -77,7 +77,13 @@ A *directive* means implement now. A *ticket* or *todo* means deferred work. Ack
 - Thread **slug** (e.g. `"grokbuild-deterministic-commit-op"`) is a human label at creation; it is NOT a routing key for append.
 - **`post` always creates** a new thread. To continue thread N: `reply(thread="N", after_turn=<last turn you read>)`.
 - Author field: **`from_agent`** (seat slug). The route accepts `from` as an alias; prefer `from_agent`.
-- On `dispatch.rejected` with unknown fields — do not retry by swapping names into the wrong op; re-read accepted params for that op."""
+- On `dispatch.rejected` with unknown fields — do not retry by swapping names into the wrong op; re-read accepted params for that op.
+
+**Code refs in bus messages (verification):**
+- `fs(sandbox="workspaces")` paths MUST include the repo prefix: `universal-llm-gateway/…`
+- Repo-relative refs (`routes/foo.py`) are auto-resolved on `read` when unambiguous
+- Locate a file by name: `fs(op="find", path="universal-llm-gateway", content="foo.py")` — NOT `search` (content regex scans file bodies)
+- Scoped listing: `fs(op="list", path="universal-llm-gateway", max_depth=2)` — avoid bare `path="."` at the multi-repo root (128KB cap)"""
 
 AGENT_BUS_EXAMPLES = """\
 ### Replying to an unread turn

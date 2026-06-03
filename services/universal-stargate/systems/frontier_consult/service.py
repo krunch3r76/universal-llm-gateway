@@ -29,13 +29,6 @@ from .events import (
 _FRONTIER_DISPATCH_PIPELINE_ID = "frontier-dispatch"
 _TEAM_DISPATCH_PIPELINE_ID = "team-dispatch"
 
-# Backward-compatible aliases for tests and route imports.
-_verify_thread_writable = verify_thread_writable
-_emit_rejection = emit_rejection
-_enforce_model = enforce_model
-_enforce_options = enforce_options
-_is_chat_completions_only = is_chat_completions_only
-
 
 @dataclass(slots=True)
 class FrontierGenerateRequest:

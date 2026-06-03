@@ -41,7 +41,7 @@ def detect_confirmed_entity_no_assertions(
     """
     band_pred = confidence_band_sql_predicate()
     sql = f"""
-        SELECT id, type, name, content_hash, status, confidence_band FROM entities
+        SELECT id, type, name, content_hash, confidence_band FROM entities
         WHERE {band_pred}
         AND type != 'assertion'
     """
@@ -99,7 +99,7 @@ def detect_confirmed_attribute_no_assertion(
     """
     band_pred = confidence_band_sql_predicate()
     sql = f"""
-        SELECT id, type, name, attributes, status, confidence_band FROM entities
+        SELECT id, type, name, attributes, confidence_band FROM entities
         WHERE {band_pred}
         AND attributes IS NOT NULL
         AND type != 'assertion'

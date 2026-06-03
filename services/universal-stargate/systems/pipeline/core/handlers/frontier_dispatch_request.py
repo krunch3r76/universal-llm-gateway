@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 # Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
 # knob on ``frontier_dispatch`` / ``/api/v1/frontier/dispatch``.
 #
-# - Anthropic adaptive-capable models (Mythos Preview, Opus 4.7, Opus 4.6,
-#   Sonnet 4.6) get ``{"type": "adaptive"}``; effort is surfaced separately
+# - Anthropic adaptive-capable models (Mythos Preview, Opus 4.8, Opus 4.7,
+#   Opus 4.6, Sonnet 4.6) get ``{"type": "adaptive"}``; effort is surfaced separately
 #   via ``req.effort`` → ``output_config.effort`` in the adapter. Per
 #   adaptive-thinking.md, manual ``{type: enabled, budget_tokens}`` is
 #   deprecated on the 4.6 family and rejected on Opus 4.7.
@@ -62,11 +62,14 @@ _REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
 
 _ANTHROPIC_ADAPTIVE_MODELS: tuple[str, ...] = (
     # Per docs/thirdparty/claude-api/upstream/adaptive-thinking.md. Mythos
-    # Preview defaults to adaptive whenever ``thinking`` is unset; Opus 4.7
-    # accepts only adaptive (manual budget-tokens returns 400); Opus 4.6
+    # Preview defaults to adaptive whenever ``thinking`` is unset; Opus 4.8 and
+    # Opus 4.7 accept only adaptive (manual ``{type: enabled, budget_tokens}``
+    # returns 400 — verified on 4-8 via execution e08ae9a7, "thinking.type.enabled
+    # is not supported for this model. Use thinking.type.adaptive"); Opus 4.6
     # and Sonnet 4.6 accept either, but ``enabled+budget_tokens`` is
     # deprecated on those models.
     "claude-mythos-preview",
+    "claude-opus-4-8",
     "claude-opus-4-7",
     "claude-opus-4-6",
     "claude-sonnet-4-6",

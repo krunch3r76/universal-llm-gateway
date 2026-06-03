@@ -127,15 +127,6 @@ def trait_insert_extras(
     return cols, vals
 
 
-def status_column_for_insert(
-    conn: sqlite3.Connection, traits: BirthTraits
-) -> str | None:
-    """Legacy ``status`` value for INSERT; NULL when trait cutover is active."""
-    if entity_has_trait_columns(conn):
-        return None
-    return traits.legacy_status
-
-
 def redirect_status_update_to_traits(
     conn: sqlite3.Connection,
     updates: dict[str, object],
@@ -161,7 +152,6 @@ __all__ = [
     "redirect_status_update_to_traits",
     "resolve_birth_traits",
     "resolve_staged_entity_traits",
-    "status_column_for_insert",
     "trait_insert_extras",
     "transcript_birth_traits",
     "write_entity_reaped",

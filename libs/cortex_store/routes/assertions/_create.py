@@ -112,6 +112,28 @@ def create_assertion(
             validation_warnings = []
         validation_warnings.extend(auditor_warnings)
 
+    # Protocol guard: supersedes_id chains lineage ONLY when force=true. The CAS
+    # UPDATE that writes the target's superseded_by (below) is gated on
+    # `body.force and body.supersedes_id`. Without force, the parameter name
+    # implies supersession but the write is a silent sibling — the target row is
+    # left untouched. Surface a visible advisory rather than no-op silently.
+    # See todo:cortex-assert-supersedes-id-friction.
+    if body.supersedes_id is not None and not body.force:
+        if validation_warnings is None:
+            validation_warnings = []
+        validation_warnings.append(
+            {
+                "field": "supersedes_id",
+                "category": "protocol",
+                "message": (
+                    f"supersedes_id={body.supersedes_id} has no effect without "
+                    "force=true: the target's superseded_by is NOT set and this "
+                    "assertion is created as a sibling. Use the `supersede` op "
+                    "for atomic close+create, or pass force=true to chain lineage."
+                ),
+            }
+        )
+
     claim_hash = compute_claim_hash(body.entity_id, body.claim)
 
     conn = cortex_conn()

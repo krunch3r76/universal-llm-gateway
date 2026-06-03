@@ -9,12 +9,20 @@ miss (lifecycle, adoption_in, confidence_band). Idempotent.
 
 Conventions mirror ``status_trait_read``, ``status_trait_write``, and
 ``entity_crud`` axis splits.
+
+**POST-052 (1172-E):** Migration 052 dropped ``entities.status``.  The
+:func:`_run_trait_backfill` family still calls :func:`require_entities_status_column`
+and will exit 2 on a post-DROP DB (P0 fence, preserved).  The legacy
+``SELECT … status …`` query has been retired from the scan loop — use
+:func:`run_trait_completeness_scan` for a read-only trait coverage report on a
+post-DROP DB.
 """
 
 from __future__ import annotations
 
 import datetime
 import sqlite3
+import sys
 from dataclasses import dataclass, field
 
 from universal_logging import get_logger
@@ -22,6 +30,19 @@ from universal_logging import get_logger
 from .status_trait_read import entity_has_trait_columns
 
 logger = get_logger("cortex-api.status_trait_backfill")
+
+_ENTITIES_STATUS_DROPPED_MSG = (
+    "entities.status dropped (migration 052); rewrite required (1172-E)"
+)
+
+
+def require_entities_status_column(conn: sqlite3.Connection) -> None:
+    """Abort when migration 052 removed ``entities.status`` (post-DROP live DB)."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()}
+    if "status" not in cols:
+        print(_ENTITIES_STATUS_DROPPED_MSG, file=sys.stderr)
+        raise SystemExit(2)
+
 
 # Operator scope C (2026-06-02): required hot types + optional plan-family.
 HOT_TYPES_REQUIRED: frozenset[str] = frozenset({"todo", "decision", "agent_skill"})
@@ -135,11 +156,19 @@ def _run_trait_backfill(
     dry_run: bool,
     log_label: str,
 ) -> TraitBackfillCounts:
-    """Shared scan/update loop for hybrid and predicate-equivalence backfills."""
+    """Shared scan/update loop for hybrid and predicate-equivalence backfills.
+
+    Calls :func:`require_entities_status_column` (P0 fence) — exits 2 on a
+    post-052 DB.  The legacy ``SELECT … status …`` scan is retired; calling this
+    on a post-DROP DB would exit before reaching the query.
+    """
+    require_entities_status_column(conn)
     if not entity_has_trait_columns(conn):
         logger.warning("Trait columns absent — skipping %s backfill", log_label)
         return TraitBackfillCounts()
 
+    # Legacy scan path: retired — require_entities_status_column above exits 2
+    # on post-052 DBs, so this query is never reached on a DROP-ed cortex.
     base = "SELECT id, type, status, confidence_band, lifecycle, adoption FROM entities"
     if where_sql is None:
         rows = conn.execute(base).fetchall()
@@ -234,13 +263,79 @@ def run_predicate_equivalence_trait_backfill(
     )
 
 
+@dataclass
+class TraitCompletenessCounts:
+    """Null counts per trait column for a post-052 completeness scan."""
+
+    total: int = 0
+    null_confidence_band: int = 0
+    null_lifecycle: int = 0
+    null_adoption_decisions: int = 0
+    by_type: dict[str, int] = field(default_factory=dict)
+
+
+def run_trait_completeness_scan(
+    conn: sqlite3.Connection,
+    *,
+    types: frozenset[str] | None = None,
+) -> TraitCompletenessCounts:
+    """Read-only trait coverage scan for a post-052 DB (no ``entities.status``).
+
+    Does NOT call :func:`require_entities_status_column` — safe to run after
+    migration 052.  Returns null counts per trait column so the cert and
+    operators can verify migration completeness without a write.
+
+    ``types`` filters the scan to specific entity types; ``None`` scans all.
+    """
+    if not entity_has_trait_columns(conn):
+        logger.warning("Trait columns absent — cannot run completeness scan")
+        return TraitCompletenessCounts()
+
+    if types is not None:
+        type_list = sorted(types)
+        placeholders = ",".join(["?"] * len(type_list))
+        rows = conn.execute(
+            f"SELECT id, type, confidence_band, lifecycle, adoption FROM entities "
+            f"WHERE type IN ({placeholders})",
+            tuple(type_list),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, type, confidence_band, lifecycle, adoption FROM entities"
+        ).fetchall()
+
+    counts = TraitCompletenessCounts(total=len(rows))
+    for row in rows:
+        entity_type = str(row["type"])
+        counts.by_type[entity_type] = counts.by_type.get(entity_type, 0) + 1
+        if row["confidence_band"] is None:
+            counts.null_confidence_band += 1
+        if row["lifecycle"] is None:
+            counts.null_lifecycle += 1
+        if entity_type == "decision" and row["adoption"] is None:
+            counts.null_adoption_decisions += 1
+
+    logger.info(
+        "Trait completeness scan: total=%d null_band=%d null_lifecycle=%d null_adoption_decisions=%d",
+        counts.total,
+        counts.null_confidence_band,
+        counts.null_lifecycle,
+        counts.null_adoption_decisions,
+    )
+    return counts
+
+
 __all__ = [
     "HOT_TYPES_DEFAULT",
     "HOT_TYPES_OPTIONAL",
     "HOT_TYPES_REQUIRED",
+    "_ENTITIES_STATUS_DROPPED_MSG",
     "TraitBackfillCounts",
+    "TraitCompletenessCounts",
+    "require_entities_status_column",
     "planned_predicate_equivalence_updates",
     "planned_trait_updates",
     "run_hybrid_trait_backfill",
     "run_predicate_equivalence_trait_backfill",
+    "run_trait_completeness_scan",
 ]

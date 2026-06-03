@@ -7,6 +7,7 @@ from universal_logging import get_logger
 
 from ..db import cortex_conn
 from ..dispatch_ops._shared import (
+    _FILES_ROOT,
     _SESSION_ID_EXAMPLES,
     _SESSION_ID_RE,
     _SESSION_ID_RE_SOURCE,
@@ -15,6 +16,8 @@ from ..dispatch_ops._shared import (
 from ..models import SessionHandoffUpsertRequest, SessionHandoffUpsertResponse
 from ..session_close_validation import build_validation_error
 from ..session_handoff import (
+    WRITE_PATH_HANDOFF_UPSERT,
+    build_handoff_provenance,
     mirror_handoff_to_transcript_entity,
     require_closed_journal_row,
 )
@@ -80,7 +83,14 @@ def upsert_session_handoff(
             "UPDATE session_journals SET handoff_prompt = ? WHERE id = ?",
             (handoff_prompt, journal["id"]),
         )
-        mirrored = mirror_handoff_to_transcript_entity(conn, session_id, handoff_prompt)
+        provenance = build_handoff_provenance(
+            write_path=WRITE_PATH_HANDOFF_UPSERT,
+            source_path=body.handoff_source_path,
+            files_root=_FILES_ROOT,
+        )
+        mirrored = mirror_handoff_to_transcript_entity(
+            conn, session_id, handoff_prompt, provenance
+        )
         conn.commit()
     except HTTPException:
         conn.rollback()

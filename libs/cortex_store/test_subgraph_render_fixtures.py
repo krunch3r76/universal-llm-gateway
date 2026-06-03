@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 _SCHEMA = """
 CREATE TABLE entities (
     id TEXT PRIMARY KEY, type TEXT, name TEXT, description TEXT,
-    status TEXT, workflow_state TEXT, attributes TEXT,
+    status TEXT, lifecycle TEXT, confidence_band TEXT, adoption TEXT,
+    workflow_state TEXT, attributes TEXT,
     source_uri TEXT, content_hash TEXT,
     created_at TEXT, updated_at TEXT
 );
@@ -64,16 +65,27 @@ def add_entity(
     workflow_state: str | None = None,
 ) -> None:
     now = datetime.now(UTC).isoformat()
+    band = status if status in ("unsubstantiated", "provisional", "confirmed") else None
+    lifecycle = (
+        status
+        if status in ("merged", "deprecated", "reaped", "active", "superseded")
+        else None
+    )
+    adoption = "adopted" if etype == "decision" and status == "confirmed" else None
     conn.execute(
         "INSERT INTO entities (id, type, name, description, status, "
-        "workflow_state, attributes, source_uri, content_hash, "
-        "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "lifecycle, confidence_band, adoption, workflow_state, attributes, "
+        "source_uri, content_hash, created_at, updated_at) VALUES "
+        "(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             eid,
             etype,
             name if name is not None else eid,
             description,
             status,
+            lifecycle,
+            band,
+            adoption,
             workflow_state,
             None,
             None,

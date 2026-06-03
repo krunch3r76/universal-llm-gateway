@@ -184,7 +184,9 @@ class AuthMiddleware:
         path = request.url.path
 
         if path == "/health":
-            response = JSONResponse({"status": "ok"})
+            from _deploy_stamp import health_json
+
+            response = JSONResponse(health_json())
             await response(scope, receive, send)
             return
 

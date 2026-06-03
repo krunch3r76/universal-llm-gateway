@@ -98,3 +98,37 @@ async def test_pipeline_trace_aged_out_when_dispatch_journal_has_record(
         assert result["cold_record"]["model_entity_id"] == "model:gemini-2.5-pro"
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_pipeline_trace_sums_frontier_dispatch_prompt_completion_tokens() -> None:
+    """Frontier dispatch.completed uses prompt_tokens/completion_tokens, not tokens_in/out."""
+    store = EventStore(":memory:")
+    await store.open()
+    try:
+        await store.insert_events(
+            [
+                {
+                    "signal": "pipeline.frontier.dispatch.completed",
+                    "role": "coordination",
+                    "scope": "node",
+                    "timestamp": "2026-06-02T21:27:58Z",
+                    "source": "universal_stargate",
+                    "payload": {
+                        "execution_id": "exec-tokens",
+                        "prompt_tokens": 19500,
+                        "completion_tokens": 579,
+                    },
+                }
+            ]
+        )
+
+        result = await _pipeline_trace({"execution_id": "exec-tokens"}, store)
+
+        assert result["total_tokens_in"] == 19500
+        assert result["total_tokens_out"] == 579
+        assert result["total_tokens"] == 20079
+        assert result["steps"][0]["tokens_in"] == 19500
+        assert result["steps"][0]["tokens_out"] == 579
+    finally:
+        await store.close()

@@ -127,6 +127,40 @@ On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — 
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
 Note: frontier_dispatch/team_dispatch are standalone primary tools here via the standalone-domain promotion (thread 1146/1167); the promotion must stay committed or a rebuild reverts it to overflow. advisor/agent_consult/pipeline_consult remain overflow (via dispatch). Source of truth: cortex:notes/system/threads/claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
+GEMINI_WEB_TOOL_SURFACE = """\
+## Gemini App Tool Surface (gemini-web — CANDIDATE seat)
+
+**Platform builtins** (gemini.google.com — Google-native, no `tool_search` needed):
+Google Search grounding, Deep Research, Canvas, code execution, image generation,
+and file / Drive upload. This set is Google-native and differs from other web
+platforms — do not assume the grok.com or Anthropic builtin sets apply here.
+
+**MCP vortex catalog — UNCONFIRMED on this platform.** Whether the Gemini app
+exposes remote-MCP / connector access to the `user-vortex` `/mcp` surface has not
+been verified end-to-end. `tool_surface: mcp` on this seat is ASPIRATIONAL until a
+round-trip MCP call is confirmed under the gemini-web slug
+(`todo:gemini-web-mcp-wiring-verify` / shared verification arc). Until then, treat
+vortex tool access as candidate, not guaranteed.
+
+**If MCP is available** (verify before relying on it):
+- The shared surface is `user-vortex` `/mcp` — no Gemini-specific MCP endpoint exists.
+- Load deferred tools before calling:
+```
+tool_search(query="agent_bus")   # → enables agent_bus(tool="fetch", ...)
+tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
+```
+
+**Dispatch & Consult — pick by CAPABILITY, not model family:**
+- consult any model, one-shot → `frontier_dispatch(op="generate", model="provider/model", messages=...)` → poll `pipeline(op="result", execution_id=...)`
+- by role → `team_dispatch(op="generate", role=..., dispatch_thread_id=..., messages=...)`
+- close-to-code build (multi-writer) → `cursorbuild` (forward harness; grokbuild retired, assertion 11588)
+
+On the shared `/mcp` surface `frontier_dispatch` / `team_dispatch` are primary —
+call directly. Model strings = `provider/model` (bare name = 404). A build harness
+is not a model picker.
+
+Full dispatch shapes: `claude-web-dispatch-decision-table.md`."""
+
 TOOL_REFERENCE_POINTERS = """\
 ## Tool Reference
 Browse the canonical MCP docs: `fs(sandbox="workspaces", op="md_list", path="universal-llm-gateway/docs/tool-reference.md")`
@@ -326,4 +360,5 @@ ADDENDA_BLOCKS: dict[str, str] = {
     "session-close-transcript": TRANSCRIPT_CLOSE_PROTOCOL,
     "grok-web-tool-surface": GROK_WEB_TOOL_SURFACE,
     "claude-web-tool-surface": CLAUDE_WEB_TOOL_SURFACE,
+    "gemini-web-tool-surface": GEMINI_WEB_TOOL_SURFACE,
 }

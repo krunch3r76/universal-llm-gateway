@@ -385,6 +385,7 @@ def _build_server() -> tuple[
         all_occurrences: bool = False,
         include_untracked: bool = True,
         binary: bool = False,
+        max_depth: int = 3,
     ) -> dict[str, Any]:
         f"""File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.
 
@@ -419,6 +420,14 @@ def _build_server() -> tuple[
 
         Use op="list" for directories; op="read" on a directory path returns an error.
 
+        Repo-relative code refs (``routes/foo.py``) auto-resolve under the matching
+        git repo when PROJECT_ROOT is multi-repo (``/mnt/torus/projects``). Prefer
+        fully-qualified workspaces paths in agent-bus messages:
+        ``universal-llm-gateway/libs/.../routes/foo.py``.
+
+        ``find`` (workspaces only): locate files by name/glob — use instead of
+        ``search`` for filenames. ``search`` scans file *contents* with a regex.
+
 {_fs_standard_ops_doc}
 
         Markdown section ops (for large docs):
@@ -445,6 +454,7 @@ def _build_server() -> tuple[
                 all_occurrences,
                 include_untracked,
                 binary,
+                max_depth,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)
@@ -462,6 +472,7 @@ def _build_server() -> tuple[
         all_occurrences: bool,
         include_untracked: bool,
         binary: bool,
+        max_depth: int,
     ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
@@ -514,6 +525,7 @@ def _build_server() -> tuple[
                 all_occurrences,
                 include_untracked,
                 binary,
+                max_depth,
                 overflow_registry,
                 FS_WORKFLOW_HINTS,
             )

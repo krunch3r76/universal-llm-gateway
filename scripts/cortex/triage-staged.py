@@ -5,6 +5,10 @@
 
 Uses HTTP to /assertions with review_status=staged and groups results.
 Follows REST-first invariant — no direct DB access.
+
+Not for reconstruct mass disposition: staged-only ~7018 rows on live cortex (2026-06-02).
+Reconstruct flags require reviewer='reconstruct-2026-06-02' (2993) — see
+scripts/cortex/reconstruct_provenance.py STAGED_DISPOSITION_SQL.
 """
 
 import argparse

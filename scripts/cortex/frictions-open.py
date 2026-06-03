@@ -2,6 +2,9 @@
 """List open frictions and suggest resolutions (F5 friction→skill funnel).
 
 Queries for friction assertions that have not been superseded and have no recent agent_skill edge.
+
+Staged listing uses review_status=staged only — not the reconstruct disposition filter
+(reviewer='reconstruct-2026-06-02'; see reconstruct_provenance.py).
 """
 
 import argparse

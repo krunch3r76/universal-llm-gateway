@@ -37,6 +37,7 @@ _STUB_REGISTRY: dict = {
     "write_project_file": _stub_fn,
     "list_project_files": _stub_fn,
     "search_project_files": _stub_fn,
+    "find_project_files": _stub_fn,
     "edit_project_file": _stub_fn,
     "move_project_file": _stub_fn,
     "copy_project_file": _stub_fn,
@@ -58,6 +59,7 @@ _OP_ARGS: dict[str, dict] = {
     "move": {"path": "a.md", "target": "b.md"},
     "copy": {"path": "a.md", "target": "b.md"},
     "search": {"content": "query"},
+    "find": {"content": "*.py"},
     "write_binary": {},
     "append_binary": {},
 }
@@ -75,6 +77,7 @@ def _call(op: str) -> dict:
         all_occurrences=False,
         include_untracked=False,
         binary=False,
+        max_depth=3,
         overflow_registry=_STUB_REGISTRY,
         workflow_hints=_WF_HINTS,
     )

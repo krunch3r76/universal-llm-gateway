@@ -130,6 +130,7 @@ class SessionCloseRequest(BaseModel):
     entity_ids: list[str] | None = None
     prior_session_id: str | None = None
     handoff_prompt: str | None = None
+    handoff_source_path: str | None = None
     assistant_label: str | None = None
 
 
@@ -171,9 +172,18 @@ class SessionCloseResponse(BaseModel):
 
 
 class SessionHandoffUpsertRequest(BaseModel):
-    """Post-close handoff upsert input."""
+    """Post-close handoff upsert input.
+
+    ``handoff_source_path`` (optional) is the cortex-relative path to the
+    lead-authored ``.md`` handoff file this prompt was derived from. When
+    supplied, the server stamps ``handoff_provenance`` (write path, ts,
+    source file + sha256) on the transcript attribute so a reader can
+    distinguish a file-backed handoff from a detached/bled-through string
+    (agent-bus thread 1188; decision:handoff-surface-consistency).
+    """
 
     handoff_prompt: str
+    handoff_source_path: str | None = None
 
 
 class SessionHandoffUpsertResponse(BaseModel):

@@ -21,6 +21,15 @@ Grounding (corpus, thread 1180 turn 6):
     by ``seeded_by`` agent (``prov:wasAttributedTo``). Documented approximation
     pending real ``wasDerivedFrom``/``hadPrimarySource`` lineage (Phase 2).
 
+1172-C additions (D1/D2/D3):
+  * ``INFERENCE_DERIVATION`` + firewall constant (D1): inference assertions may
+    hold ``confirmed`` but are excluded from the auditor-validatability gate.
+  * ``_INTERNAL_URI_SCHEMES`` + ``is_external_source_uri`` (D3): split
+    ``evidence_uris`` into eligible external-source URIs (count toward
+    ``cluster_count``) vs internal/provenance URIs (recorded only).
+  * Authority-key normalizer: ``normalized_source_key`` already handles D2; the
+    same-lineage collapse (``seeded_by``) is in ``independent_cluster_count``.
+
 Everything here is calibration-provisional (policy §18): changing a knob is a
 recompute/backfill event under a bumped ``derivation_policy_version``, NOT a
 schema migration.
@@ -127,6 +136,20 @@ CONFIDENCE_FIELD_STATUS = "status"  # legacy registry value (pre-cutover types)
 CONFIDENCE_FIELD_BAND = "confidence_band"
 ADOPTION_STATUS_TYPES: frozenset[str] = frozenset({"decision"})
 
+# D1 (1172-C) — inference-derivation type constant.  ``confidence=confirmed``
+# with ``derivation_type=inference`` is FIREWALLED at the auditor gate: it may
+# appear on an entity but never satisfies the gate for itself or any other
+# entity.  The flag is a credibility gap record, not a license.
+INFERENCE_DERIVATION: str = "inference"
+
+# D3 (1172-C) — internal URI schemes.  URIs with these schemes are recorded as
+# provenance/trace but do NOT count toward ``cluster_count``.  Eligible
+# external-source authorities are network-resolvable (netloc present) or carry
+# a non-internal scheme.
+_INTERNAL_URI_SCHEMES: frozenset[str] = frozenset(
+    {"agent-bus", "cortex", "email-bridge", "internal"}
+)
+
 # §16 — legacy status → expected confidence band (the D-core legacy-derived
 # baseline, NOT ground truth). Lifecycle/adoption-valued statuses are out of
 # scope and excluded from the confusion matrix.
@@ -198,6 +221,36 @@ def credibility_for_keys(source_keys: tuple[str, ...]) -> str | None:
         if psi > best_psi:
             best_band, best_psi = band, psi
     return best_band
+
+
+def is_external_source_uri(uri: str) -> bool:
+    """True when a URI is an eligible external-source authority (D3, 1172-C).
+
+    Classification rules (in order):
+      * Empty / blank → False (no cluster contribution).
+      * Has a network host (netloc) → True (HTTP/HTTPS/FTP, externally
+        resolvable).
+      * Scheme is in ``_INTERNAL_URI_SCHEMES`` (``agent-bus``, ``cortex``,
+        ``email-bridge``, ``internal``) → False (provenance-only, not counted).
+      * Has any other scheme → True (non-internal schemed URI).
+      * Bare path (no scheme, no netloc) → False (local/session reference,
+        cannot be independently verified).
+
+    Internal URIs (``cortex:``, ``agent-bus:``, etc.) MAY appear in
+    ``evidence_uris`` as provenance trace records but must NOT count toward
+    the ``independent_cluster_count`` gate (D3).
+    """
+    if not uri:
+        return False
+    raw = uri.strip()
+    if not raw:
+        return False
+    parsed = urlparse(raw)
+    if parsed.netloc:
+        return True
+    if parsed.scheme:
+        return parsed.scheme not in _INTERNAL_URI_SCHEMES
+    return False  # bare path — no scheme, no netloc → local/internal reference
 
 
 def effective_psi(
@@ -337,6 +390,7 @@ __all__ = [
     "GATE_AUTHORITY_BANDS",
     "GATE_QUALIFYING_BANDS",
     "HOST_CREDIBILITY",
+    "INFERENCE_DERIVATION",
     "INTERNAL_AUTHORITY",
     "LAMBDA",
     "LEGACY_STATUS_TO_BAND",
@@ -356,6 +410,7 @@ __all__ = [
     "in_write_scope",
     "independent_cluster_count",
     "is_eligible_review_status",
+    "is_external_source_uri",
     "normalized_source_key",
     "psi_for",
     "psi_for_derivation",

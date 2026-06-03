@@ -46,7 +46,6 @@ from .status_trait_read import (
 from .status_trait_write import (
     redirect_status_update_to_traits,
     resolve_birth_traits,
-    status_column_for_insert,
     trait_insert_extras,
 )
 from .workflow_state import (
@@ -133,7 +132,6 @@ _PROJECTABLE_COLUMNS = frozenset(
         "type",
         "name",
         "description",
-        "status",
         "workflow_state",
         "content_hash",
         "created_at",
@@ -146,7 +144,6 @@ _LIST_BASE_COLUMNS = (
     "type",
     "name",
     "description",
-    "status",
     "workflow_state",
     "content_hash",
     "created_at",
@@ -166,19 +163,33 @@ def _entities_list_select_columns(conn: sqlite3.Connection) -> str:
     return ", ".join(parts)
 
 
-def _build_field_projection(fields: list[str]) -> tuple[str, list[str]]:
+def _build_field_projection(
+    conn: sqlite3.Connection, fields: list[str]
+) -> tuple[str, list[str]]:
     """Return (SELECT-list SQL, ordered output keys) for a projected query.
 
     `id` is always included. Base columns select directly; non-column names
-    resolve as json_extract(attributes,'$.<name>') AS <name>. Field names are
-    validated against a simple identifier grammar to keep them out of SQL
-    string interpolation risk (no params for identifiers/JSON paths in sqlite).
+    resolve as json_extract(attributes,'$.<name>') AS <name>. ``status`` is
+    never SQL-selected — trait columns load and Option C synthesis projects it.
+    Field names are validated against a simple identifier grammar to keep them
+    out of SQL string interpolation risk (no params for identifiers/JSON paths).
     """
+    table_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(entities)").fetchall()
+    }
+    trait_cols = [c for c in _TRAIT_READ_COLUMNS if c in table_cols]
     out_keys: list[str] = ["id"]
     select_parts: list[str] = ["id"]
+    trait_selected = False
     for raw in fields:
         name = raw.strip()
         if not name or name == "id" or not _SAFE_FIELD.fullmatch(name):
+            continue
+        if name == "status":
+            out_keys.append("status")
+            if trait_cols and not trait_selected:
+                select_parts.extend(trait_cols)
+                trait_selected = True
             continue
         out_keys.append(name)
         if name in _PROJECTABLE_COLUMNS:
@@ -267,16 +278,18 @@ def list_entities_impl(
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     if fields:
-        select_sql, out_keys = _build_field_projection(fields)
+        select_sql, out_keys = _build_field_projection(conn, fields)
         sql = (
             f"SELECT {select_sql} FROM entities{where} ORDER BY created_at DESC LIMIT ?"
         )
         params.append(limit)
         rows = db_query(conn, sql, tuple(params))
-        items = [_project_row(row, out_keys) for row in rows]
-        for item in items:
+        items: list[dict[str, object]] = []
+        for row in rows:
+            item = _project_row(row, out_keys)
             if "status" in item:
-                item["status"] = project_status_field_value(item)
+                item["status"] = project_status_field_value(row)
+            items.append(item)
         return {"items": items}
 
     list_cols = _entities_list_select_columns(conn)
@@ -328,46 +341,29 @@ def update_entity_impl(
             },
         )
 
-    # Fork D: freeze hand-set confidence-axis status updates. A caller may still
-    # transition the lifecycle axis (merged/deprecated/reaped); a confidence-axis
-    # status (unsubstantiated/provisional/confirmed) is dropped — that axis is
-    # derived from backing assertions, not asserted directly on the entity.
-    #
-    # EXCEPTION — corruption repair: if the row's CURRENT stored status is itself
-    # out of the valid enum (a value that slipped past validation before this
-    # guard existed), a valid confidence-axis status is permitted through to
-    # overwrite it. Without this escape the freeze drops the fix and the row stays
-    # unreadable via EntityDetail.
+    # Trait cutover: map legacy ``status`` payloads to trait columns; never
+    # UPDATE entities.status when Phase 0 columns exist.
     prior_status_corrupt = prior_confidence_corrupt(prior, _VALID_ENTITY_STATUS)
     trait_cols = entity_has_trait_columns(conn)
-    if (
-        incoming_status is not None
-        and incoming_status in _CONFIDENCE_AXIS_STATUS
-        and not prior_status_corrupt
-    ):
-        logger.info(
-            "Ignoring hand-set confidence-axis status=%r on entity_update id=%s "
-            "(Fork D: confidence is derived from assertions)",
-            incoming_status,
-            entity_id,
-        )
+    if incoming_status is not None and trait_cols:
+        if incoming_status in _CONFIDENCE_AXIS_STATUS and not prior_status_corrupt:
+            logger.info(
+                "Ignoring hand-set confidence-axis status=%r on entity_update "
+                "id=%s (confidence is derived from assertions)",
+                incoming_status,
+                entity_id,
+            )
+            updates = {k: v for k, v in updates.items() if k != "status"}
+        else:
+            if prior_status_corrupt:
+                logger.warning(
+                    "Repairing corrupt entity traits via status: id=%s prior=%r -> %r",
+                    entity_id,
+                    prior.get("status"),
+                    incoming_status,
+                )
+            updates = redirect_status_update_to_traits(conn, updates)
         updates = {k: v for k, v in updates.items() if k != "status"}
-    elif (
-        incoming_status is not None
-        and incoming_status in _LIFECYCLE_AXIS_STATUS
-        and trait_cols
-    ):
-        updates = dict(updates)
-        updates["lifecycle"] = incoming_status
-        updates.pop("status", None)
-    elif prior_status_corrupt and incoming_status is not None:
-        logger.warning(
-            "Repairing corrupt entity status: id=%s prior=%r -> %r",
-            entity_id,
-            prior.get("status"),
-            incoming_status,
-        )
-        updates = redirect_status_update_to_traits(conn, updates)
 
     merged: dict[str, object] = dict(prior)
     for field, value in updates.items():
@@ -543,10 +539,19 @@ def create_entity_impl(
         if schema is not None:
             workflow_state = str(schema["initial_state"])
 
+    if body.status is not None and body.status not in _VALID_ENTITY_STATUS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "invalid_status",
+                "message": f"status {body.status!r} is not a valid EntityStatus",
+                "valid_status": sorted(_VALID_ENTITY_STATUS),
+            },
+        )
     if body.status is not None and body.status in _CONFIDENCE_AXIS_STATUS:
         logger.info(
             "Ignoring hand-set confidence-axis status=%r on entity_create id=%s "
-            "(Fork D: confidence is derived from assertions)",
+            "(confidence is derived from assertions)",
             body.status,
             body.id,
         )
@@ -555,7 +560,6 @@ def create_entity_impl(
         body.status,
         provisional_birth_types=_PROVISIONAL_BIRTH_TYPES,
     )
-    status_col = status_column_for_insert(conn, birth)
     trait_cols, trait_vals = trait_insert_extras(conn, birth)
 
     insert_cols = [
@@ -590,9 +594,6 @@ def create_entity_impl(
         now,
         now,
     ]
-    if status_col is not None:
-        insert_cols.insert(4, "status")
-        insert_vals.insert(4, status_col)
     insert_cols.extend(trait_cols)
     insert_vals.extend(trait_vals)
     placeholders = ", ".join(["?"] * len(insert_vals))
