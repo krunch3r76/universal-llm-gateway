@@ -11,7 +11,33 @@ from universal_logging import get_logger
 from ..card import CARD_INTENTS_DEFERRED as _CARD_INTENTS_DEFERRED
 from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
 from ..db import cortex_conn
+from ..trait_vocabulary import (
+    ADOPTION_VALUES,
+    CONFIDENCE_BAND_VALUES,
+    LIFECYCLE_VALUES,
+)
 from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, record
+
+_TRAIT_VOCAB: dict[str, frozenset[str]] = {
+    "confidence_band": CONFIDENCE_BAND_VALUES,
+    "lifecycle": LIFECYCLE_VALUES,
+    "adoption": ADOPTION_VALUES,
+}
+
+
+def _validate_trait_updates(updates: dict[str, object]) -> dict[str, Any] | None:
+    """Reject out-of-vocab Option-C trait writes before they reach SQL.
+
+    Returns an error dict for the dispatch surface, or None when every supplied
+    trait value is valid (or absent).
+    """
+    for trait, vocab in _TRAIT_VOCAB.items():
+        value = updates.get(trait)
+        if value is not None and value not in vocab:
+            return {
+                "error": f"Invalid {trait} {value!r}. Must be one of: {sorted(vocab)}"
+            }
+    return None
 
 
 def _impls() -> tuple:
@@ -228,6 +254,9 @@ def _op_entity_update(
             "error": f"Invalid status {status_val!r}. "
             f"Must be one of: {sorted(_VALID_STATUS)}"
         }
+    trait_error = _validate_trait_updates(updates)
+    if trait_error is not None:
+        return trait_error
     if (
         "source_uri" in updates
         and updates["source_uri"] is not None

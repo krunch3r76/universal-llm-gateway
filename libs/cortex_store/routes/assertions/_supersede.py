@@ -26,6 +26,7 @@ from ...models import (
     SupersedeRequest,
     SupersedeResponse,
 )
+from ...predicate_extract_dispatch import dispatch_predicate_extract_background
 from ...substantiation_sync import recompute_entity_substantiation_status
 from ._shared import (
     _ASSERTION_COLS,
@@ -108,18 +109,32 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
         eff_chunk_id: str | None = _resolve("chunk_id")  # type: ignore[assignment]
         eff_confidence_score: float | None = _resolve("confidence_score")  # type: ignore[assignment]
 
-        # predicate_form: carry over from predecessor unless explicitly supplied.
-        # When caller explicitly passes predicate_form (non-null), normalise it
-        # before INSERT (same path as create). When carried over, use the stored
-        # canonical value as-is (already normalised at original write time).
+        # predicate_form resolution — three branches:
+        #  1. Explicit non-null supply  → normalise before INSERT (create path).
+        #  2. Claim changed, no explicit supply → DROP the inherited form and
+        #     schedule re-derivation. Cloning the predecessor's predicate_form
+        #     verbatim when the claim changed encodes the OLD claim's structure
+        #     on the new row (e.g. a status claim wearing the predecessor's
+        #     has_attribute(...)), producing phantom predicate_summary entries.
+        #     Ledger fields stay null until the async re-extract re-normalises
+        #     from the new claim — same contract as a fresh create.
+        #  3. Claim unchanged, no explicit supply → inherit canonical value
+        #     as-is (already normalised at original write time).
         # Explicit null in payload intentionally drops the field on the new row.
-        # Fixes friction 9826 / todo:cortex-supersede-predicate-form-carryover.
+        # (2) fixes the supersede-carryover staleness reported on thread 1227;
+        # (1)/(3) preserve friction 9826 / todo:cortex-supersede-predicate-form-carryover.
+        predicate_form_explicit = "predicate_form" in specified
+        claim_changed = body.claim != old_data.get("claim")
         eff_predicate_form: str | None = _resolve("predicate_form")  # type: ignore[assignment]
         normalize_result: dict | None = None
-        if "predicate_form" in specified and body.predicate_form is not None:
+        redrive_predicate_extract = False
+        if predicate_form_explicit and body.predicate_form is not None:
             eff_predicate_form, normalize_result = _normalize_predicate_form_for_write(
                 body.entity_id, body.predicate_form, body.claim, conn
             )
+        elif not predicate_form_explicit and claim_changed:
+            eff_predicate_form = None
+            redrive_predicate_extract = True
 
         raw_pf = (
             normalize_result.get("raw_predicate_form") if normalize_result else None
@@ -298,6 +313,13 @@ def supersede_assertion(body: SupersedeRequest) -> SupersedeResponse:
 
     threading.Thread(target=reindex_assertion_fts, args=(new_id,), daemon=True).start()
     enrich_background(new_id, body.claim, body.entity_id, body.confidence)
+
+    # Re-derive predicate_form from the new claim when the old form was dropped
+    # (claim changed, no explicit supply). Mirrors the create path's async
+    # extract so the new row's predicate_form reflects its own claim rather
+    # than the predecessor's. Best-effort; the pipeline is idempotent.
+    if redrive_predicate_extract:
+        dispatch_predicate_extract_background(new_id, body.claim, body.entity_id)
 
     if vector_store.is_initialized():
         vector_store.delete_assertion_embedding(body.old_assertion_id)

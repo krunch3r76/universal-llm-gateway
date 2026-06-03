@@ -70,6 +70,42 @@ def test_observe_same_turn_duplicate_key_doesnt_trip() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_classify_cortex_entity_get_404_entity_not_found() -> None:
+    failure = classify_tool_failure(
+        "cortex",
+        {
+            "tool": "entity_get",
+            "arguments": json.dumps({"entity_id": "todo:missing-slug"}),
+        },
+        '{"error": "HTTP 404: Entity not found: todo:missing-slug"}',
+    )
+    assert failure["tool"] == "cortex.entity_get"
+    assert failure["code"] == "entity_not_found"
+    assert failure["target"] == "todo:missing-slug"
+
+
+def test_observe_parallel_different_entity_get_404s_turn1_no_halt() -> None:
+    """Regression: two missing entities in one parallel batch must not collapse."""
+    tracker = ToolFrictionTracker()
+    tracker.observe(
+        make_cortex_call(
+            1,
+            "entity_get",
+            {"entity_id": "foo"},
+            result='{"error": "HTTP 404: Entity not found: foo"}',
+        )
+    )
+    tracker.observe(
+        make_cortex_call(
+            1,
+            "entity_get",
+            {"entity_id": "bar"},
+            result='{"error": "HTTP 404: Entity not found: bar"}',
+        )
+    )
+    assert not tracker.should_stop
+
+
 def test_classify_cortex_entity_get_distinguishes_entities() -> None:
     f1 = classify_tool_failure(
         "cortex",

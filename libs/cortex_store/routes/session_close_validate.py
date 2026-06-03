@@ -18,6 +18,7 @@ from ..session_close_validation import (
     _USER_VOICE_RE,
     build_validation_error,
     normalize_session_summary_heading,
+    reject_handoff_at_none_depth,
 )
 from ..transcript_assembly import (
     TranscriptPathError,
@@ -158,8 +159,25 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         body.session_summary_md
     )
 
+    handoff_reject = reject_handoff_at_none_depth(
+        transcript_depth=body.transcript_depth,
+        handoff_prompt=body.handoff_prompt,
+        handoff_source_path=body.handoff_source_path,
+    )
+    if handoff_reject is not None:
+        _structured_422(
+            body,
+            reason=handoff_reject["reason"],
+            field=handoff_reject["field"],
+            received=handoff_reject["received"],
+            expected=handoff_reject["expected"],
+            examples=list(handoff_reject.get("examples") or []),
+            hint=handoff_reject["hint"],
+            detail=handoff_reject.get("detail") or handoff_reject["error"],
+        )
+
     if (
-        body.transcript_depth != "none"
+        body.transcript_depth == "verbatim"
         and not body.transcript_jsonl_path
         and not body.transcript_md
     ):
@@ -177,9 +195,10 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             hint=(
                 "Cursor agents pass transcript_jsonl_path under "
                 "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
-                "verbatim markdown via transcript_md. For mechanical or "
-                "bus-durable sessions where no transcript archival is "
-                'needed, pass transcript_depth="none".'
+                "verbatim markdown via transcript_md. For structural-only "
+                'archival or handoff pickup use transcript_depth="light" '
+                '(session_summary_md is the file). Use "none" only when no '
+                "handoff and no transcript entity are needed."
             ),
             detail=(
                 f"either transcript_jsonl_path (cursor) or transcript_md "

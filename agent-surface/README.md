@@ -29,6 +29,10 @@ Run `scripts/gen-rules --target cursor --check` and
 | `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `.cursor/rules/mcp-tool-awareness_ws.mdc` | `<!-- gen-rules:start:mcp-tool-awareness -->` |
 | `subagent-model-table` | `table-variants/subagent-model-table.{cursor,grok}.md` | drift-check only | `<!-- gen-rules:start:subagent-model-table -->` |
 
+**Manual sync (cortex sandbox):** `sources/session-close-handoff-depth-gate.md` — paste or
+merge into `agent-skills/session-close-handoff.md` when the cortex skill drifts (kernel
+§ Depth dial already carries the FOL gate).
+
 ## Design
 
 Authoritative spec: `tmp/prompts/phase3-neutral-canonical-design.md` (v3 final).

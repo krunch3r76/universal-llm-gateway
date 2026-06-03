@@ -1,14 +1,19 @@
-"""v1.3.1 supersede ledger semantics — documents scope decision.
+"""Supersede ledger / predicate_form carryover semantics.
 
-The v1.3.1 supersede route does NOT take predicate_form in its request body
-and therefore does not invoke _normalize_predicate_form_for_write. Per the
-work-order, ledger fields on superseded rows are NULL — this is consistent
-with "pre-ledger rows stay NULL" and the shadow-mode invariant. A future
-release that extends SupersedeRequest with predicate_form (or moves
-predicate_form normalization to a sync step independent of the request body)
-would change this; for v1.3.1 the contract is NULL ledger on supersession.
+The supersede route resolves predicate_form in three branches (see
+routes/assertions/_supersede.py):
 
-This test pins the contract so future changes are deliberate.
+  1. Explicit non-null predicate_form supplied → normalised before INSERT,
+     ledger fields computed (post-v1.3.1; friction 9826).
+  2. Claim changed, predicate_form not supplied → inherited form is DROPPED
+     (would otherwise encode the OLD claim's structure on the new row) and a
+     background predicate-extract re-derivation is dispatched; ledger NULL
+     until re-extract runs (thread 1227 carryover fix).
+  3. Claim unchanged, predicate_form not supplied → inherited canonical value
+     carried over as-is; ledger NULL on the new row (predecessor's ledger
+     untouched).
+
+These tests pin the carryover/ledger contract so future changes are deliberate.
 """
 
 from __future__ import annotations
@@ -27,28 +32,26 @@ def _load_migration() -> object:
     return mod
 
 
-def test_supersede_writes_null_ledger_fields_documented_scope() -> None:
-    """Supersede route INSERT explicitly writes None for all 4 ledger columns.
+def test_supersede_drops_stale_predicate_form_on_claim_change() -> None:
+    """Claim-change branch drops the inherited predicate_form and re-derives.
 
-    Verifies the literal NULLs in libs/cortex_store/routes/assertions/_supersede.py
-    INSERT statement match the documented scope decision. If this test fails because
-    the INSERT now passes computed values, the supersede surface has been extended
-    (likely in a release after v1.3.1) and this test should be replaced with the
-    fresh-compute assertions per work-order §5.
+    Pins the thread-1227 carryover fix: when the claim changes and the caller
+    does not explicitly supply predicate_form, the supersede route must NOT
+    clone the predecessor's predicate_form (which encodes the OLD claim), and
+    must schedule a background re-extract from the new claim.
     """
     src = Path(__file__).parent / "routes" / "assertions" / "_supersede.py"
     text = src.read_text(encoding="utf-8")
-    # The INSERT must list the 4 ledger columns AND must pass them as None literals.
+    assert 'claim_changed = body.claim != old_data.get("claim")' in text, (
+        "Supersede must detect claim change for the predicate_form drop branch"
+    )
     assert (
-        "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
-        in text
-    ), "Supersede INSERT must list the 4 ledger columns"
-    # Count how many `None,` followed by another None,None,None appear right before the closing paren —
-    # we just check the textual block exists; tighter pinning would be too brittle.
-    assert (
-        "None,\n                    None,\n                    None,\n                    None,"
-        in text
-    ), "Supersede INSERT must pass None for the 4 ledger columns in v1.3.1"
+        "elif not predicate_form_explicit and claim_changed:" in text
+        and "eff_predicate_form = None" in text
+    ), "Supersede must drop the inherited predicate_form when the claim changed"
+    assert "dispatch_predicate_extract_background(new_id" in text, (
+        "Supersede must re-derive predicate_form via background extract on claim change"
+    )
 
 
 def test_supersede_path_round_trip_leaves_ledger_null() -> None:

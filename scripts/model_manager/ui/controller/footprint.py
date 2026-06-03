@@ -64,6 +64,13 @@ class FootprintInspector:
         )
         a(
             self._mf(
+                _GATEWAY_DIR / "cortex-api.yaml",
+                "Cortex API Control Tower HTTP bind (TUI-generated, editable)",
+                "config",
+            )
+        )
+        a(
+            self._mf(
                 _GATEWAY_DIR / "profiles.yaml",
                 "Stargate profiles (empty seed, editable)",
                 "config",

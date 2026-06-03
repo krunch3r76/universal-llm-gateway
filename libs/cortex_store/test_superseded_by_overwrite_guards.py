@@ -53,6 +53,7 @@ CREATE TABLE assertions (
     seeded_by TEXT,
     derivation_type TEXT,
     chunk_id INTEGER,
+    chunk_id_schema TEXT,
     reasoning_summary TEXT,
     is_atomic INTEGER DEFAULT 1,
     is_decontextualized INTEGER DEFAULT 1,
@@ -77,6 +78,7 @@ CREATE TABLE assertions (
     normalization_decision TEXT,
     candidate_set_fingerprint TEXT,
     normalizer_version TEXT,
+    attributes TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT
 );
@@ -335,18 +337,19 @@ def _insert_with_predicate_form(
     return cur.lastrowid  # type: ignore[return-value]
 
 
-def test_supersede_carries_over_predicate_form(
+def test_supersede_carries_over_predicate_form_when_claim_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Superseding an assertion with a populated predicate_form must preserve
-    it on the new row (when not explicitly overridden in the call)."""
+    """Superseding with the SAME claim and no explicit predicate_form preserves
+    the predecessor's canonical form on the new row (friction 9826)."""
     conn = _make_conn()
     _patch_supersede(monkeypatch, conn)
     target = _insert_with_predicate_form(
         conn, predicate_form="status(test:entity, active)"
     )
 
-    body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target}
+    # claim matches the predecessor's ("Test claim.") → carryover branch
+    body = {**_BASE_SUPERSEDE_BODY, "claim": "Test claim.", "old_assertion_id": target}
     result = _supersede_assertion_impl(body)
 
     new_id = result["new"]["id"]
@@ -354,6 +357,61 @@ def test_supersede_carries_over_predicate_form(
         "SELECT predicate_form FROM assertions WHERE id = ?", (new_id,)
     ).fetchone()
     assert row["predicate_form"] == "status(test:entity, active)"
+
+
+def test_supersede_drops_predicate_form_when_claim_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Superseding with a CHANGED claim and no explicit predicate_form must NOT
+    clone the predecessor's form (which encodes the old claim). It is dropped to
+    NULL; the async predicate-extract re-derives from the new claim (thread 1227).
+    """
+    conn = _make_conn()
+    _patch_supersede(monkeypatch, conn)
+    target = _insert_with_predicate_form(
+        conn,
+        predicate_form="has_attribute(test:entity, recovery_envelope_high, 27227.4)",
+    )
+
+    # _BASE_SUPERSEDE_BODY.claim = "Replacement claim." ≠ "Test claim." → drop branch
+    body = {**_BASE_SUPERSEDE_BODY, "old_assertion_id": target}
+    result = _supersede_assertion_impl(body)
+
+    new_id = result["new"]["id"]
+    row = conn.execute(
+        "SELECT predicate_form, raw_predicate_form, normalizer_version "
+        "FROM assertions WHERE id = ?",
+        (new_id,),
+    ).fetchone()
+    assert row["predicate_form"] is None
+    assert row["raw_predicate_form"] is None
+    assert row["normalizer_version"] is None
+
+
+def test_supersede_explicit_predicate_form_overrides_on_claim_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit predicate_form in the supersede call is honoured (normalised)
+    even when the claim changed — the drop branch only applies to inherited forms.
+    """
+    conn = _make_conn()
+    _patch_supersede(monkeypatch, conn)
+    target = _insert_with_predicate_form(
+        conn, predicate_form="status(test:entity, active)"
+    )
+
+    body = {
+        **_BASE_SUPERSEDE_BODY,
+        "old_assertion_id": target,
+        "predicate_form": "status(test:entity, archived)",
+    }
+    result = _supersede_assertion_impl(body)
+
+    new_id = result["new"]["id"]
+    row = conn.execute(
+        "SELECT predicate_form FROM assertions WHERE id = ?", (new_id,)
+    ).fetchone()
+    assert row["predicate_form"] == "status(test:entity, archived)"
 
 
 def test_supersede_drops_predicate_form_on_explicit_null(

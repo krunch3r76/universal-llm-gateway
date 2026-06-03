@@ -22,6 +22,7 @@ from ..session_close_validation import _emit_rejected, build_validation_error
 from ..status_trait_read import entity_has_trait_columns
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 
+
 def _parse_opened_at(transcript_id: str) -> str | None:
     """Derive ``opened_at`` ISO 8601 from transcript ID (``{agent}-YYYY-MM-DD-HHMM``)."""
     match = re.search(r"(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})$", transcript_id)

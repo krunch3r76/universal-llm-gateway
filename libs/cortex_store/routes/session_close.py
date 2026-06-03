@@ -40,8 +40,8 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         ``attributes.transcript_depth="light"``.
       - ``none``: no file, no transcript entity. Journal row written
         with ``file_path=NULL``; continues edge written per the universal
-        continuity path. handoff_prompt, when supplied, is persisted on
-        the journal row.
+        continuity path. handoff_prompt / handoff_source_path at ``none``
+        are rejected (422 ``handoff.requires_transcript_entity``).
         Response transcript_entity_id / transcript_path / content_hash
         are null.
 

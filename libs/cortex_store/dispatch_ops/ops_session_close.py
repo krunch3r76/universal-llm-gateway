@@ -186,6 +186,8 @@ def _op_session_close_preflight(
     session_summary_md: str | None = None,
     summary: str | None = None,
     transcript_depth: str = "verbatim",
+    handoff_prompt: str | None = None,
+    handoff_source_path: str | None = None,
     entity_ids: list[str] | None = None,
     defer_gaps: dict[str, str] | None = None,
     assistant_label: str | None = None,
@@ -211,6 +213,8 @@ def _op_session_close_preflight(
         session_summary_md=session_summary_md,
         summary=summary,
         transcript_depth=transcript_depth,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
         emit_rejected=False,
     )
     if arg_error is not None:
@@ -313,8 +317,8 @@ def _op_session_close(
     layer — ``light`` writes a structural-only file with the transcript
     entity flagged as non-enrichment-eligible; ``none`` writes no file
     and no transcript entity, only the journal row (plus the continues
-    edge; ``handoff_prompt``, when supplied, is persisted on the journal
-    row regardless of depth).
+    edge). ``handoff_prompt`` / ``handoff_source_path`` at ``none`` return
+    422 ``handoff.requires_transcript_entity`` — use ``light`` minimum.
     Continuity is preserved at all depths.
 
     See session-close-server-side-transcript Phase 2 for the architecture
@@ -329,12 +333,14 @@ def _op_session_close(
         session_summary_md=session_summary_md,
         summary=summary,
         transcript_depth=transcript_depth,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
         emit_rejected=not dry_run,
     )
     if arg_error is not None:
         if dry_run:
             return {"dry_run": True, "would_fail": True, **arg_error}
-        return {k: v for k, v in arg_error.items() if k != "reason"}
+        return arg_error
     assert session_id and agent and session_summary_md and summary
 
     # Heading normalization (idempotent) — applied before dry_run preview and

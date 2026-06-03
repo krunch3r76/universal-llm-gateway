@@ -18,7 +18,13 @@ from pathlib import Path
 from universal_logging import get_logger
 
 from ...model.service_state import ServiceState
-from ..service_config import GATEWAY_DIR, build_service_env, load_mcp_config
+from ..service_config import (
+    GATEWAY_DIR,
+    build_service_env,
+    cortex_api_http_bind,
+    ensure_cortex_api_config,
+    load_mcp_config,
+)
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 
 _logger = get_logger(__name__)
@@ -64,14 +70,6 @@ _CORTEX_LOG_DIR = Path("/tmp/logs/cortex-api")
 _CORTEX_HTTP_PID_FILE = GATEWAY_DIR / "cortex-api-http.pid"
 
 
-def _cortex_http_bind() -> tuple[str, int]:
-    """Host/port for browser /control-tower (read at call time for env + code updates)."""
-    return (
-        os.environ.get("CORTEX_API_HTTP_HOST", "0.0.0.0"),
-        int(os.environ.get("CORTEX_API_HTTP_PORT", "8202")),
-    )
-
-
 def _build_cortex_runtime_env(root: Path) -> dict[str, str]:
     """Env overrides shared by UDS cortex-api and the HTTP /control-tower forwarder."""
     extra_env: dict[str, str] = {}
@@ -107,7 +105,7 @@ def _http_forwarder_cmdline(pid: int) -> str:
 
 def _http_forwarder_running() -> bool:
     """True when pid file points at our uvicorn on the control-tower port."""
-    _host, port = _cortex_http_bind()
+    _host, port = cortex_api_http_bind()
     if not _CORTEX_HTTP_PID_FILE.exists():
         return False
     try:
@@ -125,7 +123,7 @@ def _http_forwarder_running() -> bool:
 
 def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
     """Second uvicorn on TCP for browser /control-tower (MCP keeps UDS)."""
-    host, port = _cortex_http_bind()
+    host, port = cortex_api_http_bind()
     if _http_forwarder_running():
         pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
         return f"HTTP listener already on {host}:{port} (PID {pid})"
@@ -170,7 +168,7 @@ def _stop_http_forwarder() -> None:
         _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
     # Best-effort: rogue manual starts may leave uvicorn on the port while the
     # pid file points at a dead bash wrapper (observed 2026-06-01).
-    _host, port = _cortex_http_bind()
+    _host, port = cortex_api_http_bind()
     try:
         subprocess.run(
             ["fuser", "-k", f"{port}/tcp"],
@@ -189,6 +187,7 @@ async def start_cortex_api(
     kill_and_wait: Callable[..., Awaitable[str]],  # noqa: ARG001
 ) -> str:
     """Start cortex-api as host process via uvicorn on UDS."""
+    ensure_cortex_api_config()
     smoke_error = _smoke_check_dispatch_ops()
     if smoke_error is not None:
         _logger.error("Cortex API dispatch_ops smoke check failed:\n%s", smoke_error)

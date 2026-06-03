@@ -675,22 +675,26 @@ def test_close_light_writes_structural_layer_only(
     assert attrs["transcript_depth"] == "light"
 
 
-def test_close_light_without_transcript_source_succeeds(
+def test_close_light_web_without_transcript_source_succeeds(
     session_env: dict[str, Path],
 ) -> None:
-    """light + source supplied (current validation requires source for light too)."""
-    summary = "Light-depth close with transcript source supplied for validation."
+    """light web close: session_summary_md is the file; no transcript_md required."""
+    summary = "Light-depth web close — structural layer only, no verbatim source."
+    summary_md = _session_summary(summary)
     result = ops_journals._op_session_close(
         session_id="web-2026-05-27-1003",
         agent="web",
-        transcript_md=_web_transcript_md("web-2026-05-27-1003"),
-        session_summary_md=_session_summary(summary),
+        session_summary_md=summary_md,
         summary=summary,
         transcript_depth="light",
     )
     assert "error" not in result, result
     assert result["transcript_depth"] == "light"
     assert result["transcript_entity_id"] is not None
+    on_disk = (session_env["files_root"] / result["transcript_path"]).read_text(
+        encoding="utf-8"
+    )
+    assert on_disk == summary_md
 
 
 def test_close_none_skips_file_and_entity(session_env: dict[str, Path]) -> None:
@@ -731,13 +735,13 @@ def test_close_none_skips_file_and_entity(session_env: dict[str, Path]) -> None:
     assert jr["file_path"] is None
 
 
-def test_close_none_with_handoff_persists_on_journal_row(
+def test_close_none_with_handoff_rejected(
     session_env: dict[str, Path],
 ) -> None:
-    """none + handoff ⟹ handoff_prompt on the journal row; no RJ row, no link."""
+    """none + handoff ⟹ 422 handoff.requires_transcript_entity (no journal write)."""
     db_path = session_env["db_path"]
     handoff = "Resume by running the depth-dial verification suite."
-    summary = "None-depth with handoff — persisted on the journal row."
+    summary = "None-depth with handoff — rejected before persist."
     result = ops_journals._op_session_close(
         session_id="web-2026-05-27-1005",
         agent="web",
@@ -746,20 +750,56 @@ def test_close_none_with_handoff_persists_on_journal_row(
         transcript_depth="none",
         handoff_prompt=handoff,
     )
-    assert "error" not in result, result
-    assert ("handoff_" + "entry_id") not in result
-    # depth=none ⟹ file_path NULL, but the journal row still carries the handoff.
+    assert "error" in result
+    assert result.get("reason") == "handoff.requires_transcript_entity"
     journal = _query_one(
         db_path,
-        "SELECT file_path, handoff_prompt FROM session_journals WHERE session_id = ?",
+        "SELECT id FROM session_journals WHERE session_id = ?",
         ("web-2026-05-27-1005",),
     )
-    assert journal is not None
-    assert journal["file_path"] is None
-    assert journal["handoff_prompt"] == handoff
-    # No reflective_journal row, no journal_links row.
-    assert _query_count(db_path, "SELECT COUNT(*) FROM reflective_journal") == 0
-    assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
+    assert journal is None
+
+
+def test_close_none_with_handoff_source_path_rejected(
+    session_env: dict[str, Path],
+) -> None:
+    """none + handoff_source_path ⟹ same 422 (derivation still needs an entity)."""
+    summary = "None-depth with handoff_source_path — rejected."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1015",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="none",
+        handoff_source_path="notes/system/sessions/missing-handoff.md",
+    )
+    assert "error" in result
+    assert result.get("reason") == "handoff.requires_transcript_entity"
+
+
+def test_close_light_with_handoff_mirrors_to_transcript_entity(
+    session_env: dict[str, Path],
+) -> None:
+    """light + handoff ⟹ entity attributes carry handoff (canonical pickup surface)."""
+    handoff = "Pick up phase 3 bus handoff — verify thread state first."
+    summary = "Light-depth close with handoff mirrored to transcript entity."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-05-27-1016",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="light",
+        handoff_prompt=handoff,
+    )
+    assert "error" not in result, result
+    assert result["transcript_entity_id"] == "transcript:web-2026-05-27-1016"
+    entity = _query_one(
+        session_env["db_path"],
+        "SELECT attributes FROM entities WHERE id = ?",
+        ("transcript:web-2026-05-27-1016",),
+    )
+    assert entity is not None
+    assert json.loads(entity["attributes"])["handoff_prompt"] == handoff
 
 
 def test_close_none_with_prior_session_writes_edge(

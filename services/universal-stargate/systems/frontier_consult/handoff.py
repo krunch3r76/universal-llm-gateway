@@ -43,29 +43,33 @@ def build_pointer_body(
     """Return the bus turn body.
 
     Uses caller override if given, else the standard handoff-dispatchers.mdc
-    pointer template. Enforces ≤ _POINTER_MAX_LINES lines on the override.
+    pointer template. Enforces ≤ _POINTER_MAX_LINES lines on the final body
+    regardless of which path produced it.
     """
-    if pointer_body is not None:
-        lines = pointer_body.splitlines()
-        if len(lines) > _POINTER_MAX_LINES:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="pointer_body",
-                reason=(
-                    "pointer body exceeds 25 lines; agent-bus is a table of "
-                    "contents, not a content carrier"
-                ),
-                status_code=422,
-            )
-        return pointer_body
-    return _POINTER_TEMPLATE.format(subject=subject, packet_path=packet_path)
+    body = (
+        pointer_body
+        if pointer_body is not None
+        else _POINTER_TEMPLATE.format(subject=subject, packet_path=packet_path)
+    )
+    lines = body.splitlines()
+    if len(lines) > _POINTER_MAX_LINES:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="pointer_body",
+            reason=(
+                "pointer body exceeds 25 lines; agent-bus is a table of "
+                "contents, not a content carrier"
+            ),
+            status_code=422,
+        )
+    return body
 
 
 def _slug_from_subject(subject: str) -> str:
     """Derive a kebab slug from a human subject string."""
     slug = subject.lower()
     slug = re.sub(r"[^a-z0-9]+", "-", slug)
-    return slug[:50].strip("-")
+    return slug[:50].strip("-") or "handoff"
 
 
 async def create_handoff_thread(
@@ -155,4 +159,12 @@ async def create_handoff_thread(
         )
 
     result: dict[str, Any] = resp.json()
-    return str(result["thread"]["id"])
+    try:
+        return str(result["thread"]["id"])
+    except (KeyError, TypeError) as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="thread",
+            reason=f"Agent-bus 2xx response malformed: {exc}",
+            status_code=502,
+        ) from exc

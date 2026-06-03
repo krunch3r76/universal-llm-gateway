@@ -87,10 +87,11 @@ class FrontierEndpointError(Exception):
     field: str
     reason: str
     status_code: int = 400
+    code: str = "persona_violation"
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "error": {"code": "persona_violation", "message": self.reason},
+            "error": {"code": self.code, "message": self.reason},
             "field": self.field,
             "request_id": self.request_id,
         }
@@ -148,6 +149,7 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
                 f"which is dispatchable — use op=generate/to_thread"
             ),
             status_code=422,
+            code="handoff_requires_web_seat",
         )
 
     return to_agent, family, platform

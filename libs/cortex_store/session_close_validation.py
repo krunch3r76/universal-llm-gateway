@@ -37,6 +37,53 @@ _ASSISTANT_VOICE_RE = re.compile(
     r"\*\*Assistant:\*\*|\bAssistant:\s|^#{1,4}\s+Assistant\b", re.MULTILINE
 )
 
+
+def handoff_close_requested(
+    *,
+    handoff_prompt: str | None = None,
+    handoff_source_path: str | None = None,
+) -> bool:
+    """True when session_close will persist or derive a handoff."""
+    if handoff_prompt and handoff_prompt.strip():
+        return True
+    return bool(handoff_source_path and handoff_source_path.strip())
+
+
+def reject_handoff_at_none_depth(
+    *,
+    transcript_depth: str,
+    handoff_prompt: str | None = None,
+    handoff_source_path: str | None = None,
+) -> dict[str, Any] | None:
+    """Reject depth=none when a handoff is supplied (no transcript entity to mirror)."""
+    if transcript_depth != "none":
+        return None
+    if not handoff_close_requested(
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
+    ):
+        return None
+    return build_validation_error(
+        reason="handoff.requires_transcript_entity",
+        field="transcript_depth",
+        received=transcript_depth,
+        expected=(
+            'transcript_depth in {"light", "verbatim"} when handoff_prompt or '
+            "handoff_source_path is set"
+        ),
+        examples=["light", "verbatim"],
+        hint=(
+            "Handoff mirrors to transcript:{session_id} entity attributes; "
+            'depth="none" creates no transcript entity. Use at least depth="light" '
+            "(session_summary_md alone is the on-disk file for web/API seats)."
+        ),
+        detail=(
+            'transcript_depth="none" is incompatible with handoff_prompt or '
+            "handoff_source_path — use light (minimum) or verbatim."
+        ),
+    )
+
+
 # Canonical structural-layer heading. The contract requires this literal H2;
 # `normalize_session_summary_heading` liberalizes near-misses to it.
 _SUMMARY_HEADING_LITERAL = "## Session Summary"
@@ -124,6 +171,7 @@ _REJECT_REASONS = frozenset(
         "transcript_jsonl.invalid",
         "session_summary.invalid",
         "transcript_source.missing",
+        "handoff.requires_transcript_entity",
         "agent.invalid",
     }
 )
@@ -224,6 +272,8 @@ def _validate_session_close_args(
     summary: str | None,
     transcript_md: str | None = None,
     transcript_depth: str = "verbatim",
+    handoff_prompt: str | None = None,
+    handoff_source_path: str | None = None,
     emit_rejected: bool = True,
 ) -> dict[str, Any] | None:
     """Lightweight arg-presence + session_id pattern + summary length gate.
@@ -235,12 +285,14 @@ def _validate_session_close_args(
     suppresses ``mcp.session.close.rejected`` for preflight/dry_run
     probing.
 
-    The verbatim source is conditionally required: when
-    ``transcript_depth ∈ {"verbatim", "light"}``, one of
-    ``{transcript_jsonl_path, transcript_md}`` MUST be present. When
-    ``transcript_depth == "none"``, neither is required (the close
-    writes a journal row only, with no transcript file or entity).
-    Cursor passes the path; web passes the markdown directly.
+    The verbatim source is required only when ``transcript_depth == "verbatim"``
+    (one of ``{transcript_jsonl_path, transcript_md}``). When
+    ``transcript_depth == "light"``, the on-disk file is ``session_summary_md``
+    only — no transcript source required. When ``transcript_depth == "none"``,
+    neither source nor transcript entity is written (journal row only).
+    Cursor passes the path at verbatim; web passes markdown at verbatim.
+
+    Handoff at ``none`` is rejected (``handoff.requires_transcript_entity``).
     """
     required = {
         "session_id": session_id,
@@ -259,7 +311,25 @@ def _validate_session_close_args(
                 "examples": [],
                 "hint": (f"Supply a non-empty {field} on the session_close call."),
             }
-    if transcript_depth != "none" and not transcript_jsonl_path and not transcript_md:
+    handoff_reject = reject_handoff_at_none_depth(
+        transcript_depth=transcript_depth,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
+    )
+    if handoff_reject is not None:
+        if emit_rejected and session_id and agent:
+            _emit_rejected(
+                handoff_reject["reason"],
+                session_id=session_id,
+                agent=agent,
+                detail=handoff_reject["error"],
+            )
+        return handoff_reject
+    if (
+        transcript_depth == "verbatim"
+        and not transcript_jsonl_path
+        and not transcript_md
+    ):
         # Seat-specific guidance: the slug tells us which source the agent
         # should have supplied, so the retry is a one-shot fix rather than a
         # guess between two options.
@@ -279,8 +349,9 @@ def _validate_session_close_args(
         detail = (
             f"transcript_depth={transcript_depth!r} requires a transcript "
             f"source, but neither transcript_jsonl_path nor transcript_md was "
-            f'supplied. {seat_hint} (Or pass transcript_depth="none" for '
-            "mechanical / bus-durable sessions that need no transcript archival.)"
+            f'supplied. {seat_hint} (Use transcript_depth="light" when a '
+            'structural summary + handoff suffice; "none" only when no handoff '
+            "and no transcript entity is needed.)"
         )
         if emit_rejected and session_id and agent:
             _emit_rejected(
@@ -299,8 +370,8 @@ def _validate_session_close_args(
                 if is_cursor_seat
                 else "transcript_md (web/API seat)"
             )
-            + f" for transcript_depth={transcript_depth!r}; omit only when "
-            'transcript_depth="none"',
+            + f" for transcript_depth={transcript_depth!r}; omit at light/none "
+            "(light uses session_summary_md as the file; none writes no file)",
             "examples": [],
             "hint": seat_hint,
         }

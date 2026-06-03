@@ -76,11 +76,11 @@ class SessionCloseRequest(BaseModel):
         is required. Current behavior; backward-compatible default.
       - ``light``    — structural-layer-only file written; transcript
         entity created with ``attributes.transcript_depth="light"``;
-        NOT enrichment-eligible (no verbatim turns to walk). Transcript
-        source is ignored; file content is ``session_summary_md``.
+        NOT enrichment-eligible (no verbatim turns to walk). File content
+        is ``session_summary_md``; no ``transcript_md`` / JSONL required.
       - ``none``     — no file, no transcript entity; journal row +
-        ``continues`` edge written; ``handoff_prompt``, when supplied,
-        persisted on the journal row. NOT enrichment-eligible.
+        ``continues`` edge only. NOT enrichment-eligible. Incompatible
+        with ``handoff_prompt`` / ``handoff_source_path`` (422).
 
     Continuity (journal row, prior_session_id linkage, open_items) is
     written for all depths. Only the transcript archival layer varies.
@@ -97,8 +97,8 @@ class SessionCloseRequest(BaseModel):
 
     Required conditionally on ``transcript_depth``:
       transcript_jsonl_path / transcript_md: required iff
-        ``transcript_depth ∈ {verbatim, light}``. Cursor passes the
-        path; web passes the markdown.
+        ``transcript_depth == "verbatim"``. Cursor passes the path;
+        web passes the markdown. ``light`` uses ``session_summary_md`` only.
 
     Optional fields:
       transcript_depth:   one of {"verbatim", "light", "none"}; default

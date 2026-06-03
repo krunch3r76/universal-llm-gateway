@@ -108,6 +108,25 @@ def classify_tool_failure(
         else:
             inner_args = {}
         target = _extract_cortex_target(inner_args)
+        if (
+            inner_tool == "entity_get"
+            and target
+            and (
+                "HTTP 404" in message
+                or "Entity not found" in message
+                or "entity_not_found" in message
+            )
+        ):
+            return {
+                "tool": "cortex.entity_get",
+                "code": "entity_not_found",
+                "target": target,
+                "message": message[:300],
+                "suggested_next_action": (
+                    "Verify entity_id via cortex search/entities before retrying; "
+                    "missing entities in parallel batches are independent failures."
+                ),
+            }
         if inner_tool == "entity_create" and (
             "HTTP 409" in message or "Entity already exists" in message
         ):
@@ -244,6 +263,7 @@ class ToolFrictionTracker:
             ),
             "suggested_continuation": [
                 "Use entity_get/entity_update when entity_create reports entity_exists.",
+                "Distinct entity_not_found targets in one parallel batch are not retry-loops.",
                 "Use md_list before retrying md_read after section_not_found.",
             ],
         }

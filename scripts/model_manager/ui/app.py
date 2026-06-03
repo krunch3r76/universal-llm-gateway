@@ -22,7 +22,11 @@ from scripts.model_manager.ensure_venv import find_workspace_root
 
 from .api_server import ManageAPIServer, ManageSocketBusyError
 from .controller.onboarding import OnboardingController
-from .controller.service_config import ensure_event_service_config, ensure_socket_dir
+from .controller.service_config import (
+    ensure_cortex_api_config,
+    ensure_event_service_config,
+    ensure_socket_dir,
+)
 from .controller.service_ctl import ServiceController
 from .controller.shutdown_gate import QUIT_DRAIN_TIMEOUT_S, BusySnapshot
 from .manage_events import ManageQuitDrainCompleted, ManageQuitDrainStarted
@@ -154,6 +158,7 @@ class ModelManagerApp(App):
         yield StatusBar()
 
     async def on_mount(self) -> None:
+        ensure_cortex_api_config()
         ensure_event_service_config()
         warning = self._service_controller.check_model_path_ownership()
         if warning:

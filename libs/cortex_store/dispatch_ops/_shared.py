@@ -74,6 +74,14 @@ _ENTITY_MUTABLE = frozenset(
         "status",
         "workflow_state",
         "content_hash",
+        # Option-C trait write surface — explicit trait columns are settable on
+        # update (mirrors entity_create + the published MCP descriptor). The
+        # legacy ``status`` mirror remains read-only on the confidence axis
+        # (update_entity_impl ignores hand-set confidence-axis status); the
+        # explicit columns below are the intentional write path.
+        "confidence_band",
+        "lifecycle",
+        "adoption",
     }
 )
 

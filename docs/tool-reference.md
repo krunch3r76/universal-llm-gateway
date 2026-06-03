@@ -11,7 +11,7 @@ immediately after admission. The `op` parameter selects the output channel:
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | Team consults with role: `gatherer`, `skeptic`, `synthesizer`, `reviewer` | `op`, `role`, `messages`, `dispatch_thread_id` | yes |
+| `team_dispatch` | Team consults with role: `gatherer`, `skeptic`, `synthesizer`, `reviewer`, `lead`, `investigator` | `op`, `role` (+ `messages`, `dispatch_thread_id` for generate/to_thread) | yes |
 | `frontier_dispatch` | Raw provider-native call, no role | `op`, `model`, `messages` | no |
 
 `op` values:
@@ -30,7 +30,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | `"gatherer"\|"skeptic"\|"synthesizer"\|"reviewer"` | Required role slug |
+| `role` | `"gatherer"\|"skeptic"\|"synthesizer"\|"reviewer"\|"lead"\|"investigator"` | Required role slug |
 | `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread. Unused by `op="handoff"`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
@@ -297,8 +297,8 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 | `threads` | status?, to?, limit? | List threads. status: active/archived/all |
 | `fetch` | thread, last?, compact?, mark_read? | Get turns from a thread. compact=true strips markdown. |
 | `get` | thread, turn_number | Get one specific turn |
-| `post` | slug, to, subject, body, from_agent?, tags? | Start a new thread |
-| `reply` | thread, to, subject, body, after_turn?, from_agent? | Reply to a thread |
+| `post` | slug, to, subject, body, from_agent, tags? | Start a new thread |
+| `reply` | thread, to, subject, body, after_turn?, from_agent | Reply to a thread |
 | `read` | thread, turn_number | Mark a turn as read |
 | `archive` | thread | Archive a thread |
 | `summary` | — | Unread counts per agent |

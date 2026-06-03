@@ -6,8 +6,10 @@ frontier_dispatch, with no legacy team_generate or frontier_generate tools.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from typing import Any
+from unittest.mock import patch
 
 from tools.frontier import register_frontier_tools
 
@@ -112,3 +114,62 @@ def test_team_dispatch_messages_has_default() -> None:
     assert param.default == [], (
         f"messages should default to [] for handoff callers; got {param.default!r}"
     )
+
+
+def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
+    """op='handoff' builds correct body, relays to /api/v1/team/handoff, records telemetry.
+
+    Verifies:
+    - _relay called with endpoint="/api/v1/team/handoff" and record_prefix="mcp.team.handoff"
+    - body contains op, role, packet_path, subject
+    - generate/to_thread-only fields (messages, dispatch_thread_id) omitted from handoff body
+    - record("mcp.team.handoff.called", ...) fired before relay
+    """
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    relay_calls: list[dict[str, Any]] = []
+    record_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append(
+            {"endpoint": endpoint, "body": body, "record_prefix": record_prefix}
+        )
+        return {"thread_id": "thread-test-123", "to_agent": "claude-web"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        record_calls.append((event, kwargs))
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="handoff",
+                role="lead",
+                packet_path="universal-llm-gateway/tmp/test-packet.md",
+                subject="Test handoff subject",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    call = relay_calls[0]
+    assert call["endpoint"] == "/api/v1/team/handoff"
+    assert call["record_prefix"] == "mcp.team.handoff"
+
+    body = call["body"]
+    assert body["op"] == "handoff"
+    assert body["role"] == "lead"
+    assert body["packet_path"] == "universal-llm-gateway/tmp/test-packet.md"
+    assert body["subject"] == "Test handoff subject"
+    # generate/to_thread-only fields must be absent from the handoff body
+    assert "messages" not in body
+    assert "dispatch_thread_id" not in body
+
+    # telemetry record fires before relay (record_calls is ordered)
+    telemetry_events = [ev for ev, _ in record_calls]
+    assert "mcp.team.handoff.called" in telemetry_events
