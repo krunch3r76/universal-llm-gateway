@@ -70,5 +70,45 @@ def test_team_dispatch_requires_dispatch_thread_id_param() -> None:
 
     sig = inspect.signature(recorder.functions["team_dispatch"])
     assert "dispatch_thread_id" in sig.parameters
-    param = sig.parameters["dispatch_thread_id"]
-    assert param.default is inspect.Parameter.empty
+    # dispatch_thread_id now defaults to "" (op=handoff callers omit it)
+    # — it was formerly required (no default); both are acceptable here.
+
+
+def test_team_dispatch_op_accepts_handoff() -> None:
+    """team_dispatch op parameter signature includes 'handoff'."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "op" in sig.parameters
+    op_annotation = sig.parameters["op"].annotation
+    # Literal["generate", "to_thread", "handoff"] — verify "handoff" appears in str
+    assert "handoff" in str(op_annotation), (
+        f"'handoff' not found in op annotation: {op_annotation}"
+    )
+
+
+def test_team_dispatch_handoff_params_present() -> None:
+    """Handoff-only params packet_path and subject are on the team_dispatch signature."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "packet_path" in sig.parameters, "packet_path missing from team_dispatch"
+    assert "subject" in sig.parameters, "subject missing from team_dispatch"
+    # Both are optional (default None) — handoff callers provide them; others omit
+    assert sig.parameters["packet_path"].default is None
+    assert sig.parameters["subject"].default is None
+
+
+def test_team_dispatch_messages_has_default() -> None:
+    """messages defaults to [] so op='handoff' callers can omit it."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "messages" in sig.parameters
+    param = sig.parameters["messages"]
+    assert param.default == [], (
+        f"messages should default to [] for handoff callers; got {param.default!r}"
+    )

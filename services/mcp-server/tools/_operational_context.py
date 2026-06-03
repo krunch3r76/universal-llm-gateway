@@ -183,7 +183,12 @@ def render_operational_context(
     # for inline-only subagent execution where the discipline belongs to the
     # dispatcher, not the executor.
     if not (family == "subagent" and platform == "subagent"):
-        sections.append(templates.FRONTIER_REASONING)
+        sections.append(
+            templates.render_frontier_reasoning(
+                lead_posture=agent
+                in frozenset({"claude-web", "claude-cursor", "grok-direct"})
+            )
+        )
     sections.append(_render_observe_and_search(agent))
     sections.append(templates.ASSERTION_SEARCH)
     sections.append(templates.NOTES_TO_SELF)

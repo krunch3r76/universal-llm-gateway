@@ -187,16 +187,6 @@ def test_build_summary_includes_distinct_turns_and_raw_count() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_should_skip_agent_consult_cap_unchanged() -> None:
-    tracker = ToolFrictionTracker()
-    args = {"tool": "agent_consult"}
-    skip1 = tracker.should_skip("dispatch", args, remaining_turns=5)
-    assert skip1 is None  # first call allowed — counter incremented
-    skip2 = tracker.should_skip("dispatch", args, remaining_turns=5)
-    assert skip2 is not None
-    assert skip2.reason == "agent_consult_cap"
-
-
 def test_observe_unicode_and_special_chars_in_args_hash_stable() -> None:
     # Inner args have no priority keys → falls through to stable args hash.
     args = {

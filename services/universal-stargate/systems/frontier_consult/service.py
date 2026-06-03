@@ -21,6 +21,7 @@ from .admission import (
     enforce_model,
     enforce_options,
     is_chat_completions_only,
+    mcp_enabled_for_frontier_dispatch,
     mcp_enabled_for_team_dispatch,
     verify_thread_writable,
 )
@@ -177,7 +178,7 @@ async def build_dispatch_body(
     if req.role is not None:
         mcp_enabled = mcp_enabled_for_team_dispatch(effective_model)
     else:
-        mcp_enabled = bool(req.mcp) if req.mcp is not None else False
+        mcp_enabled = mcp_enabled_for_frontier_dispatch(effective_model, req.mcp)
 
     pipeline_options: dict[str, Any] = {
         "model": effective_model,

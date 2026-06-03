@@ -6,9 +6,9 @@ Two tools, two contracts:
   door for team-seat consults. ``role`` selects a functional seat from the
   roster: lead / reviewer / gatherer / synthesizer / artisan / skeptic /
   investigator. Each resolves its own default (family, platform, model) via
-  ``role:{slug}`` execution contract in Cortex. Legacy persona names (oppie →
-  skeptic, forge → artisan, orion → gatherer, bard → synthesizer) are accepted
-  via normalize_agent_slug alias table (Phase 7 of the agent-naming cleanup arc).
+  ``role:{slug}`` execution contract in Cortex. ``role`` must be a canonical
+  role slug (lead, reviewer, gatherer, synthesizer, artisan, skeptic,
+  investigator).
   Op enum: "generate" (returns content via tracker) or "to_thread"
   (dispatches with reply landing on ``thread``).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is direct frontier
@@ -160,10 +160,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
-        op: Literal["generate", "to_thread"],
+        op: Literal["generate", "to_thread", "handoff"],
         role: str,
-        messages: list[dict[str, Any]],
-        dispatch_thread_id: str,
+        messages: list[dict[str, Any]] = [],  # noqa: B006
+        dispatch_thread_id: str = "",
         model: str | None = None,
         system: str = "",
         reasoning_effort: str | None = None,
@@ -174,6 +174,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         timeout_seconds: int | None = None,
         thread: str | None = None,
         subject: str | None = None,
+        packet_path: str | None = None,
+        pointer_body: str | None = None,
+        tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """Role-aware team-seat dispatch with explicit op discrimination.
 
@@ -181,11 +184,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         agent-naming cleanup arc). Available roles: lead, reviewer, gatherer,
         synthesizer, artisan, skeptic, investigator. Roles are model-agnostic:
         any explicit model may assume any role. Each role carries only a default
-        (family, platform, model) used when ``model`` is omitted. Legacy persona
-        names are accepted via the alias table (oppie → skeptic, forge →
-        artisan, orion → gatherer, bard → synthesizer, api_claude → reviewer).
+        (family, platform, model) used when ``model`` is omitted.
 
-        Two ops:
+        Three ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
           ``thread`` / ``subject`` must be absent when using this op.
@@ -194,6 +195,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           (system-on-behalf delivery). Tracker terminal status reflects
           the POST outcome. ``thread`` is required. ``subject`` is
           optional (defaults to ``"{role} reply — execution {short_id}"``).
+        - ``op="handoff"``: create an agent-bus thread addressed to the role's
+          web seat (``role`` must resolve to a manual, non-dispatchable web seat,
+          e.g. ``lead`` → claude-web). Requires ``packet_path`` (workspaces-relative
+          path to a pre-written six-block packet) and ``subject``. Returns
+          ``{thread_id, subject, to_agent, push_reminder}`` synchronously — no
+          model is dispatched; the web session starts only after the operator
+          pushes the bus message. Close your turn with the returned
+          ``push_reminder``. ``messages``, ``model``, ``thread``, and
+          ``dispatch_thread_id`` are unused by this op.
 
         Tool surface (no caller knob — derived from the effective model):
         - xAI multi-agent models — no client-side MCP tools.
@@ -204,10 +214,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``frontier_dispatch(mcp=False, ...)``.
 
         ``dispatch_thread_id`` — required compaction key for server-owned
-        thread persistence on the ``team-dispatch`` pipeline. Prior turns are
-        assembled from cortex; pass only the **latest** user message in
-        ``messages``. Distinct from ``thread`` (agent-bus delivery on
-        ``op="to_thread"``) and ``transcript_id`` (provenance only).
+        thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
+        only). Prior turns are assembled from cortex; pass only the **latest**
+        user message in ``messages``. Distinct from ``thread`` (agent-bus
+        delivery on ``op="to_thread"``) and ``transcript_id`` (provenance only).
 
         ``transcript_id`` — caller's session ID for provenance attribution only.
         It is recorded in the execution record alongside ``caller_agent`` so
@@ -215,6 +225,34 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         forwarded to the dispatched role's context — the receiving model never
         sees it.
         """
+        if op == "handoff":
+            if not packet_path or not subject:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "packet_path and subject are required when op='handoff'",
+                    }
+                }
+            handoff_body: dict[str, Any] = {
+                "op": "handoff",
+                "role": role,
+                "packet_path": packet_path,
+                "subject": subject,
+            }
+            for key, val in (
+                ("pointer_body", pointer_body),
+                ("tags", tags),
+                ("caller_agent", caller_agent),
+            ):
+                if val is not None:
+                    handoff_body[key] = val
+            record("mcp.team.handoff.called", role=role, to_agent="")
+            return await _relay(
+                endpoint="/api/v1/team/handoff",
+                body=handoff_body,
+                record_prefix="mcp.team.handoff",
+            )
+
         body: dict[str, Any] = {
             "op": op,
             "messages": messages,

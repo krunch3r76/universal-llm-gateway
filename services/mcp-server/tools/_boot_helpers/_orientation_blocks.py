@@ -25,8 +25,8 @@ from __future__ import annotations
 #   - claude /mcp (mcp, mcp_claude): canonical.yaml now declares standalone
 #     `frontier_dispatch`/`team_dispatch` DOMAINS (visibility mcp/mcp_claude), so
 #     their tool_name enters _PRIMARY_TOOLS in _derive.derive_claude_manifest —
-#     direct call, no dispatch step. (advisor/agent_consult/pipeline_consult are
-#     NOT promoted → still OVERFLOW via dispatch(tool="…").)
+#     direct call, no dispatch step. (advisor/pipeline_consult are NOT promoted
+#     → still OVERFLOW via dispatch(tool="…"). agent_consult removed 2026-06.)
 #   - grok /mcp/grok (mcp_grok): _derive.derive_grok_manifest emits a FLAT
 #     manifest where dispatch_frontier/dispatch_team are standalone tools — direct
 #     call as well. The grok-serving dispatch_* entries no longer carry mcp_claude
@@ -43,8 +43,8 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
 - by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…, dispatch_thread_id=…)
+- consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
-- multi-model advisory + cortex/RAG → dispatch(tool="agent_consult", arguments='{"query":"…"}')                              [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
 - close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
 - run a named pipeline              → pipeline (op=run|async)
@@ -57,8 +57,8 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
 - by role (reviewer/artisan/seat)   → team_dispatch (op=generate, role=…, dispatch_thread_id=…)
+- consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
-- multi-model advisory + cortex/RAG → agent_consult (query)                   [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
 - close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
 - run a named pipeline              → pipeline (op=run|async)
@@ -91,8 +91,9 @@ def render_orientation_blocks(family: str | None = None) -> list[str]:
       ``frontier_dispatch``/``team_dispatch`` as standalone tools → direct-call form.
     - any other family (claude/gpt/gemini on the ``mcp``/``mcp_claude`` surface) →
       the standalone-domain re-land puts ``frontier_dispatch``/``team_dispatch`` in
-      ``_PRIMARY_TOOLS`` → direct-call form here too. ``advisor``/``agent_consult``/
-      ``pipeline_consult`` remain OVERFLOW via ``dispatch(tool="…")``.
+      ``_PRIMARY_TOOLS`` → direct-call form here too. ``panel_dispatch`` is primary
+      on claude-web; ``advisor``/``pipeline_consult`` remain OVERFLOW via
+      ``dispatch(tool="…")``.
 
     Default (``family is None``) renders the claude direct-call form, matching
     the default ``(claude, cursor)`` seat.

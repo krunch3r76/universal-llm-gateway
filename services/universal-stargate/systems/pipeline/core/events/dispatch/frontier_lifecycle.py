@@ -35,7 +35,7 @@ def PipelineFrontierDispatchHydrated(  # noqa: N802
     persona is specified (persona-free dispatches skip hydration entirely).
 
     Payload:
-        agent: Dispatched-agent identity (``orion``, ``oppie``, ``bard``, ``web``)
+        agent: Dispatched role or seat slug (``gatherer``, ``skeptic``, ``claude-web``, …)
         execution_id: Pipeline execution UUID (joins with dispatch.* signals)
         briefing_bytes: Size of the rendered briefing card in characters
         section_counts: Per-section item counts (sessions, deadlines, todos, ...)

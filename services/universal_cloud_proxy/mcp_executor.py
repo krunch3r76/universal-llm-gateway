@@ -290,8 +290,9 @@ class McpToolExecutor:
                 if attempt_index < len(_RESTART_RETRY_DELAYS_S):
                     delay_s = _RESTART_RETRY_DELAYS_S[attempt_index]
                     logger.info(
-                        "McpToolExecutor tool %s saw MCP restart; retrying in %.0fs",
+                        "McpToolExecutor tool %s saw MCP restart (%s); retrying in %.0fs",
                         name,
+                        exc,
                         delay_s,
                     )
                     await asyncio.sleep(delay_s)

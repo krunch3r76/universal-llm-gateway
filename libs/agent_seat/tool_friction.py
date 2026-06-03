@@ -136,9 +136,6 @@ def classify_tool_failure(
             }
         target = f"{operation}:{execution_id}"
 
-    if name in {"dispatch", "agent_consult"} and tool == "agent_consult":
-        suggested = "Skip further consult calls and synthesize from current evidence."
-
     if not target:
         target = _args_hash(arguments)
 
@@ -159,27 +156,11 @@ class ToolFrictionTracker:
         self._failure_counts: Counter[tuple[str, str, str]] = Counter()
         # Turn numbers per key — distinct-turn set drives the halt predicate.
         self._failure_turns: dict[tuple[str, str, str], list[int]] = {}
-        self._consult_calls = 0
         self.exhaustion_reason: str | None = None
 
     def should_skip(
         self, name: str, arguments: dict[str, Any], *, remaining_turns: int
     ) -> ToolSkip | None:
-        tool = str(arguments.get("tool") or name)
-        if name in {"dispatch", "agent_consult"} and tool == "agent_consult":
-            if self._consult_calls >= 1:
-                return ToolSkip(
-                    reason="agent_consult_cap",
-                    message="agent_consult already ran once in this tool loop.",
-                    suggested_next_action="Use the existing consult result or synthesize from current evidence.",
-                )
-            if remaining_turns <= 2:
-                return ToolSkip(
-                    reason="agent_consult_final_turn_reserve",
-                    message="agent_consult skipped to reserve final turns for synthesis.",
-                    suggested_next_action="Summarize current evidence instead of spending the remaining turn budget on consult.",
-                )
-            self._consult_calls += 1
         return None
 
     def observe(self, call: ToolCallLike) -> None:
@@ -264,6 +245,5 @@ class ToolFrictionTracker:
             "suggested_continuation": [
                 "Use entity_get/entity_update when entity_create reports entity_exists.",
                 "Use md_list before retrying md_read after section_not_found.",
-                "Avoid further agent_consult calls when turn budget is low.",
             ],
         }

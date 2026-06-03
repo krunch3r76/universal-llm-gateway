@@ -182,7 +182,7 @@ async def resolve_model(
          matched via ``/v1/models/select``).
       4. ``agent``'s registered ``default_model`` — mirrors the
          admission-path fallback in ``build_dispatch_body`` so virtual-model
-         agent-seat pipelines (``agent: orion`` step-field, no
+         agent-seat pipelines (``role: gatherer`` step-field, no
          ``pipeline_options``) need not hard-code a model.
     """
     candidate: str | None = None
@@ -242,8 +242,8 @@ def resolve_agent(opts: dict[str, Any], step: StepConfig) -> str | None:
 
     Precedence: ``pipeline_options.role`` > step domain field ``role`` > None.
 
-    Uses normalize_agent_slug (handles case, Oppie/Oppia, hyphen/underscore
-    variants) so natural references work with the registry alias chain.
+    Uses normalize_agent_slug (handles case, hyphen/underscore variants, legacy
+    seat slugs) so natural references work with the registry alias chain.
     """
     role = opts.get("role") or step.get_domain_field("role")
     if role is None:

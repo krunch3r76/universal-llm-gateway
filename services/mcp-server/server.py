@@ -46,7 +46,6 @@ from tool_error_enricher import register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools.advisor import register_advisor_tools
 from tools.agent_bus import register_agent_bus_tools
-from tools.agent_consult import register_agent_consult_tools
 from tools.browse import register_browse_tool
 from tools.browser import register_browser_tools
 from tools.context import register_context_tools
@@ -317,7 +316,6 @@ def _build_server() -> tuple[
     register_git_integrate_tools(mcp)
     register_quality_tools(mcp)
     register_agent_bus_tools(mcp)
-    register_agent_consult_tools(mcp)
     register_cortex_tools(mcp)
     register_cortex_named_tools(mcp)
     register_llm_tools(mcp)

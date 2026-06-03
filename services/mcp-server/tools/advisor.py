@@ -7,7 +7,7 @@ provided context.
 
 Designed for the advisor timing pattern: checkpoint 1 (before substantive
 work), checkpoint 3 (recurring failure), and lightweight checkpoint 2 (before
-declaring done). Heavier consultations use ``/consult-*`` or ``agent_consult``.
+declaring done). Heavier consultations use ``team_dispatch``, ``panel_dispatch``, or ``/consult-*``.
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def register_advisor_tools(mcp: FastMCP) -> None:
 
         - Trivial/mechanical changes (rename, typo, format)
         - When you need tool access or code execution (use ``/consult-implement``)
-        - Complex multi-model advisory (use ``agent_consult``)
+        - Complex multi-model advisory (use ``panel_dispatch`` or paired ``team_dispatch``; see ``agent-skills/dispatch-workflow.md``)
         - Architectural planning (use ``/consult-plan`` or Plan mode)
 
         Args:

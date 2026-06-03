@@ -53,6 +53,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:entity-creation-discipline",
         "agent_skill:entity-lifecycle-discipline",
         "agent_skill:financial-reasoning",
+        "agent_skill:friction-review",
         "agent_skill:frontier-model-instructions",
         "agent_skill:grok-web-dispatch",
         "agent_skill:image-video-generation",

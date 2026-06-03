@@ -11,16 +11,9 @@ from __future__ import annotations
 
 from .profiles import get_profile, load_roles
 
-# Legacy seat / persona spellings → canonical {family}-{platform} slug.
+# Legacy seat spellings → canonical {family}-{platform} slug.
 # Shared by dispatch normalization and agent-bus recipient matching.
 _DISPATCH_ALIASES: dict[str, str] = {
-    # Legacy persona slugs → role slugs
-    "oppie": "skeptic",
-    "oppia": "skeptic",  # common misspelling
-    "forge": "artisan",
-    "cursor_forge": "artisan",
-    "orion": "gatherer",
-    "bard": "synthesizer",
     # Legacy seat slugs → new seat slugs
     "cursor": "claude-cursor",
     "cursor_claude": "claude-cursor",
@@ -28,7 +21,6 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "web_claude": "claude-web",
     "api": "claude-api",
     "api_claude": "claude-api",
-    "cursor_orion": "gpt-cursor",
     "cursor_grok": "grok-cursor",
     "grok": "grok-cursor",
     "web_grok": "grok-web",
@@ -74,10 +66,8 @@ def normalize_agent_slug(slug: str) -> str:
     in team_dispatch(role=...) and frontier_dispatch(agent=...) calls.
 
     Handles:
-    - Case variations (Oppie → skeptic)
-    - Common misspellings from model output (Oppia → skeptic)
+    - Case variations
     - Hyphen/underscore/space variants → canonical {family}-{platform} form
-    - Legacy persona names → new role slugs
     - Legacy seat slugs → new {family}-{platform} seat slugs
 
     Returns a canonical seat slug ({family}-{platform}) or role slug.

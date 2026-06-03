@@ -75,3 +75,39 @@ def FrontierEndpointRejected(  # noqa: N802
         },
         scope="node",
     )
+
+
+@event_factory
+def FrontierHandoffRequested(  # noqa: N802
+    request_id: str,
+    role: str,
+    to_agent: str,
+) -> Event:
+    """Handoff admission — seat resolved, thread creation pending."""
+    return Event(
+        signal="frontier.handoff.requested",
+        payload={
+            "request_id": request_id,
+            "role": role,
+            "to_agent": to_agent,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierHandoffCreated(  # noqa: N802
+    request_id: str,
+    to_agent: str,
+    thread_id: str,
+) -> Event:
+    """Handoff thread created on agent-bus."""
+    return Event(
+        signal="frontier.handoff.created",
+        payload={
+            "request_id": request_id,
+            "to_agent": to_agent,
+            "thread_id": thread_id,
+        },
+        scope="node",
+    )

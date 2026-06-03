@@ -104,7 +104,7 @@ async def test_explicit_model_override_can_fill_any_role(
 async def test_team_dispatch_xai_agent_auto_suppresses_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """xAI team agents (oppie, forge) get mcp=False auto-derived — no caller knob."""
+    """xAI team roles (skeptic, artisan) get mcp=False auto-derived — no caller knob."""
 
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
@@ -135,7 +135,7 @@ async def test_team_dispatch_xai_agent_auto_suppresses_mcp(
 async def test_team_dispatch_non_xai_agent_enables_mcp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Non-xAI team agents (orion, bard, api_claude) get mcp=True auto-derived."""
+    """Non-xAI team roles (gatherer, synthesizer, reviewer) get mcp=True auto-derived."""
 
     async def fake_hydrate(
         agent: str, transcript_id: str | None = None, **_k: Any
@@ -249,6 +249,38 @@ async def test_persona_free_mcp_true_propagates() -> None:
     )
     body = await build_dispatch_body(req)
     assert body["pipeline_options"]["mcp"] is True
+
+
+@pytest.mark.parametrize(
+    ("model", "caller_mcp", "expected"),
+    [
+        ("google/gemini-3.5-flash", True, False),
+        ("google/gemini-3.5-flash", None, False),
+        ("google/gemini-2.5-pro", True, False),
+        ("openai/gpt-5.4-mini", True, True),
+        ("openai/gpt-5.4-mini", None, False),
+        ("openai/gpt-5.4-mini", False, False),
+    ],
+)
+def test_mcp_enabled_for_frontier_dispatch_inline_only_clamp(
+    model: str, caller_mcp: bool | None, expected: bool
+) -> None:
+    from .admission import mcp_enabled_for_frontier_dispatch
+
+    assert mcp_enabled_for_frontier_dispatch(model, caller_mcp) is expected
+
+
+@pytest.mark.asyncio
+async def test_persona_free_gemini_mcp_true_clamped_false() -> None:
+    """Inline-only gemini: frontier_dispatch clamps mcp=True to False at admission."""
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="google/gemini-3.5-flash",
+        mcp=True,
+    )
+    body = await build_dispatch_body(req)
+    assert body["model"] == "frontier-dispatch"
+    assert body["pipeline_options"]["mcp"] is False
 
 
 @pytest.mark.asyncio

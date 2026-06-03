@@ -13,6 +13,7 @@ from typing import Any
 _DROP_KEYS: frozenset[str] = frozenset(
     {
         "additionalProperties",
+        "const",
         "default",
         "examples",
         "title",
@@ -75,6 +76,13 @@ def _sanitize_node(node: Any) -> Any:
     cleaned: dict[str, Any] = {}
     for key, value in node.items():
         if key in _DROP_KEYS:
+            continue
+        # Drop single-member ``enum`` globally (not only on the Gemini path):
+        # Gemini rejects it in function_declarations, and for client-side tool
+        # dispatch a one-value enum is a redundant pin — the value is already
+        # conveyed by the tool name + ``required`` + description, so removing it
+        # costs no real constraint on the permissive (OpenAI-format) path either.
+        if key == "enum" and isinstance(value, list) and len(value) == 1:
             continue
         cleaned[key] = _sanitize_node(value)
 

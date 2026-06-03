@@ -85,10 +85,10 @@ class UnknownPipelineOptionsError(PipelineError):
         return (
             f"[Step '{self.step_name}']{who} unknown pipeline_options "
             f"keys: {self.unknown_keys}. Accepted: {self.accepted_keys}. "
-            "For persona consults (oppie/orion/bard/api_claude/forge/cursor-*) prefer "
-            "`team_dispatch` — it validates options against the persona's "
-            "contract from Cortex ai_agent entity (MCP access granted to all "
-            "except Oppie/Oppia multi-agent). For raw persona-free dispatches "
+            "For team role consults (skeptic/gatherer/synthesizer/reviewer/artisan "
+            "or cursor-* seats) prefer `team_dispatch` — it validates options "
+            "against the role contract from Cortex. xAI multi-agent roles get "
+            "mcp=False auto-derived. For raw role-free dispatches "
             "prefer `frontier_dispatch`."
         )
 

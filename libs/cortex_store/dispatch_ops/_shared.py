@@ -61,7 +61,7 @@ _SESSION_ID_EXAMPLES = (
 # permissive shape check (no allowlist — agent is a routing/metadata hint).
 _AGENT_SLUG_RE_SOURCE = r"^[a-z][a-z0-9-]*$"
 _AGENT_SLUG_RE = re.compile(_AGENT_SLUG_RE_SOURCE)
-_AGENT_SLUG_EXAMPLES = ("cursor", "web", "claude-web", "api-claude", "orion")
+_AGENT_SLUG_EXAMPLES = ("cursor", "web", "claude-web", "api-claude", "gatherer")
 
 _ENTITY_MUTABLE = frozenset(
     {

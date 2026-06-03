@@ -52,6 +52,30 @@ def test_mcp_schema_to_openai_tool_sanitizes_function_schema() -> None:
     assert "default" not in headers
 
 
+def test_mcp_schema_to_openai_tool_drops_const_and_single_value_enum() -> None:
+    tool = {
+        "name": "cortex",
+        "description": "Cortex knowledge",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "tool": {
+                    "type": "string",
+                    "const": "entities",
+                    "enum": ["entities"],
+                },
+            },
+            "required": ["tool"],
+        },
+    }
+
+    params = _mcp_schema_to_openai_tool(tool)["function"]["parameters"]
+    tool_prop = params["properties"]["tool"]
+
+    assert "const" not in tool_prop
+    assert "enum" not in tool_prop
+
+
 def test_compat_dispatch_tool_defs_restores_web_fetch() -> None:
     defs = _compat_dispatch_tool_defs({"web_search", "dispatch"})
     assert [d["function"]["name"] for d in defs] == ["web_fetch"]

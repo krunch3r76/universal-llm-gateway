@@ -17,6 +17,7 @@ immediately after admission. The `op` parameter selects the output channel:
 `op` values:
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
 - `"to_thread"` — bus mode; agent posts substantive reply to `thread`; dispatcher reads with `agent_bus(tool="fetch")`.
+- `"handoff"` — fresh-WEB dispatch; creates an agent-bus thread for the role's web seat synchronously. Returns `{thread_id, subject, to_agent, push_reminder}`. No model dispatch; operator push required.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
 
@@ -28,17 +29,37 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 
 | Arg | Type | Description |
 |---|---|---|
-| `op` | `"generate"\|"to_thread"` | Output channel |
+| `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
 | `role` | `"gatherer"\|"skeptic"\|"synthesizer"\|"reviewer"` | Required role slug |
-| `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread |
-| `dispatch_thread_id` | `str` | Required compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session (e.g. `cursor-2026-06-02-{topic}` or `transcript_id`). Distinct from `thread` (agent-bus delivery on `op="to_thread"`) |
+| `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread. Unused by `op="handoff"`. |
+| `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
-| `subject` | `str\|None` | Bus reply subject (bus mode only) |
-| `model` | `str\|None` | Optional override; must be in persona's allowed set |
+| `subject` | `str\|None` | Bus reply subject (`to_thread`); required packet subject (`handoff`) |
+| `model` | `str\|None` | Optional override; must be in persona's allowed set. Unused by `op="handoff"`. |
 | `system` | `str\|None` | Extra caller-supplied system text appended during persona assembly |
 | `reasoning_effort` | `str\|None` | Provider-native reasoning effort. Accepted values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Provider support varies (see `docs/thirdparty/{provider}/upstream` for the documented surface — e.g. OpenAI accepts `none/low/medium/high/xhigh`; Anthropic adaptive accepts `low/medium/high/xhigh/max`; Gemini 3 accepts `minimal/low/medium/high`). Unsupported values for the chosen model are dropped at the adapter layer with an INFO log. |
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
+| `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to the pre-written six-block packet |
+| `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
+| `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff"]`) |
+
+**`op="handoff"` — web-seat handoff primitive** (fresh-WEB self-spawn):
+
+Creates an agent-bus thread addressed to the role's web seat (e.g. `lead` → `claude-web`)
+and returns `{thread_id, subject, to_agent, push_reminder}` synchronously — no model is
+dispatched. The web session starts only after the operator pushes the bus message. The
+endpoint enforces that the role resolves to a manual, non-dispatchable seat
+(`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
+are rejected with `handoff_requires_web_seat` 422.
+
+The pointer body defaults to the standard ≤25-line handoff-dispatchers.mdc template
+(packet path + six-block enumeration + reply instruction). Caller may supply
+`pointer_body` override up to 25 lines. Longer overrides are rejected 422.
+
+Caller **must** write the packet file before calling handoff; only a pointer is posted
+to the bus. Operator push is still mandatory — `push_reminder` in the response carries
+the formatted push instruction per `agent-bus-push-reminder_ws.mdc`.
 
 Examples:
 
@@ -66,6 +87,12 @@ team_dispatch(
     max_tool_turns=25,
     caller_agent="cursor",
 )
+
+# Handoff mode — fresh-WEB dispatch to claude-web; operator push required
+team_dispatch(op="handoff", role="lead",
+              packet_path="universal-llm-gateway/tmp/reviews/<task>-claude-web-packet.md",
+              subject="<Task> handoff — <subject>")
+# → {thread_id, subject, to_agent: "claude-web", push_reminder}
 ```
 
 ### `frontier_dispatch`
@@ -113,22 +140,24 @@ frontier_dispatch(
 Chat-Completions-only OpenAI search models (`openai/*-search-api`) are rejected
 on both dispatch tools. Use `llm_generate` for those.
 
-## agent_consult
+## panel_dispatch
 
-Multi-model advisory consultation with read-only Cortex + RAG tool access.
-
-Use it when a question benefits from independent reasoning paths over the same
-evidence base, such as legal strategy, financial analysis, or evidence
-triangulation. Prefer direct `cortex(...)` or `rag(...)` calls for simple
-lookups where latency matters more than depth.
-
-### Args
+Consensus panel helper — the **only** multi-family panel entry point. Fans out
+`skeptic` + `reviewer` (optional `synthesizer`) via `team_dispatch` admission;
+returns `panel_executions` for Menu D asserts. Read `agent-skills/consensus-steelman-posture.md`
+and `agent-skills/dispatch-workflow.md` before use. Lead adjudication remains
+NON-offloadable after the helper returns.
 
 | Arg | Type | Description |
 |---|---|---|
-| `query` | str | Advisory question or analysis request — REQUIRED |
-| `providers` | list[str]\|None | Provider subset. Default: all configured providers. |
-| `context_entities` | list[str]\|None | Entity IDs to pre-load into context before tool use |
+| `messages` | `list[dict]` | Latest user turn(s) per member |
+| `dispatch_thread_id` | `str` | Server-owned compaction key (required) |
+| `disposition` | `"panel"` | Must be `panel` |
+| `include_synthesizer` | `bool` | Optional gemini tiebreaker |
+| `poll` | `bool` | Block-poll each `execution_id` when true |
+
+The legacy `agent_consult` overflow tool was removed (2026-06); use
+`panel_dispatch` for ≥2-provider panels or explicit `team_dispatch` per role.
 
 ## dispatch
 

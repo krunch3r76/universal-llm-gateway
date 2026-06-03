@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Annotated, Any, Literal
 
 import httpx
@@ -11,6 +12,9 @@ from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
+from .admission import resolve_web_handoff_seat
+from .events import FrontierHandoffCreated, FrontierHandoffRequested
+from .handoff import build_pointer_body, create_handoff_thread
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -249,3 +253,104 @@ async def frontier_dispatch(
     """
     req = FrontierGenerateRequest(**_normalize_op_body(body))
     return await _dispatch(req, response)
+
+
+# ---- handoff: synchronous web-seat agent-bus thread creation ----
+
+
+class TeamHandoffBody(BaseModel):
+    """``POST /api/v1/team/handoff`` — create an agent-bus thread for a web seat.
+
+    ``op`` must be ``"handoff"``. ``role`` must resolve to a manual,
+    non-dispatchable (web/handoff) seat. ``packet_path`` must be a
+    workspaces-relative path to a pre-written six-block packet.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    op: Literal["handoff"]
+    role: str
+    packet_path: str
+    subject: str
+    pointer_body: str | None = None
+    tags: list[str] | None = None
+    caller_agent: str | None = None
+
+
+@team_router.post("/handoff", status_code=200, response_model=None)
+async def team_handoff(
+    body: TeamHandoffBody,
+    response: Response,
+) -> dict[str, Any] | JSONResponse:
+    """Create a web-claude handoff thread; return thread_id synchronously.
+
+    No model dispatch — the web session starts only after the operator pushes
+    the agent-bus message. Close your turn with the returned ``push_reminder``.
+    """
+    request_id = uuid.uuid4().hex[:12]
+
+    try:
+        from systems.proxy.dependencies import get_proxy
+
+        proxy = get_proxy()
+        event_bus = getattr(proxy, "event_bus", None)
+
+        def _publish(event: Any) -> None:
+            if event_bus is None:
+                return
+            event_bus.publish_from_sync(event)
+
+        to_agent, _family, _platform = resolve_web_handoff_seat(
+            body.role, request_id=request_id
+        )
+
+        _publish(
+            FrontierHandoffRequested(
+                request_id=request_id,
+                role=body.role,
+                to_agent=to_agent,
+            )
+        )
+
+        pointer = build_pointer_body(
+            request_id=request_id,
+            packet_path=body.packet_path,
+            subject=body.subject,
+            pointer_body=body.pointer_body,
+        )
+
+        thread_id = await create_handoff_thread(
+            request_id=request_id,
+            to_agent=to_agent,
+            subject=body.subject,
+            pointer_body=pointer,
+            caller_agent=body.caller_agent,
+            tags=body.tags,
+        )
+
+        _publish(
+            FrontierHandoffCreated(
+                request_id=request_id,
+                to_agent=to_agent,
+                thread_id=thread_id,
+            )
+        )
+
+    except FrontierEndpointError as exc:
+        logger.warning(
+            "handoff rejected: request_id=%s field=%s reason=%s",
+            exc.request_id,
+            exc.field,
+            exc.reason,
+        )
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+    return {
+        "thread_id": thread_id,
+        "subject": body.subject,
+        "to_agent": to_agent,
+        "push_reminder": (
+            f"**Action needed — push to web claude**: handoff posted to thread "
+            f"{thread_id}. Push the agent-bus message to trigger {to_agent}'s turn."
+        ),
+    }

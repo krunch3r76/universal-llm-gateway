@@ -45,7 +45,8 @@ profiles:
 
   claude/web:
     # Preferred reviewer when reviews go to agent-bus (claude-web + operator push).
-    # Not a team_dispatch generate target (dispatchable: false).
+    # Not a team_dispatch *generate* target (dispatchable: false); reachable via
+    # team_dispatch(op="handoff", ...) which creates the bus thread + returns thread_id.
     provider: anthropic
     default_model: null
     tool_surface: mcp
@@ -264,6 +265,8 @@ profiles:
 
 # Role dispatch policy:
 #   Review (preferred): claude-web via agent-bus + operator push.
+#   Web handoff (automated): team_dispatch(op="handoff", role="lead"|"investigator", ...)
+#     → creates bus thread for the role's web seat; returns thread_id + push_reminder.
 #   Review / MCP writes (automated): team_dispatch role=reviewer → gpt-5.5.
 #   Analysis (no substrate writes): role=synthesizer → gemini-3.5-flash (inline-only).
 #   Reliable MCP writers: claude-web, gpt-5.5, anthropic API. Anthropic API last (cost).

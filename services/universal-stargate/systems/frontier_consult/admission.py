@@ -8,7 +8,8 @@ from typing import Any
 
 import httpx
 from agent_seat import AgentMeta
-from agent_seat.profiles import inline_only_for_model
+from agent_seat.profiles import get_profile, inline_only_for_model, load_roles
+from agent_seat.registry import normalize_agent_slug
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
@@ -36,18 +37,45 @@ def is_chat_completions_only(model: str) -> bool:
     return mid.provider == "openai" and mid.base_id.endswith("-search-api")
 
 
+def _mcp_base_admitted(model: str) -> bool:
+    """Shared inline-only gate for every dispatch surface.
+
+    Inline-only families (e.g. gemini) never get a client-side MCP tool loop.
+    Both ``mcp_enabled_for_frontier_dispatch`` and
+    ``mcp_enabled_for_team_dispatch`` MUST pass through here before applying
+    their own (divergent) post-clamp policy, so a newly added inline-only
+    family is clamped on *every* surface — not just the one that remembered to
+    re-check. Returns ``False`` to force ``mcp=False``.
+    """
+    return not inline_only_for_model(model)
+
+
+def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bool:
+    """Persona-free ``frontier_dispatch``: honor ``req.mcp`` unless inline-only.
+
+    Default ``mcp=False`` when omitted (one-shot). Inline-only families (e.g.
+    gemini) clamp to ``False`` even when the caller passes ``mcp=True`` — the
+    inline-only gate is shared with ``mcp_enabled_for_team_dispatch`` via
+    ``_mcp_base_admitted``; the post-clamp policy (honor caller) is local.
+    """
+    if not _mcp_base_admitted(model):
+        return False
+    return bool(caller_mcp)
+
+
 def mcp_enabled_for_team_dispatch(model: str) -> bool:
     """Derive team_dispatch MCP tooling from the effective model at admission.
 
     Guard 1 (thread 1206 turn 7): capability binds to the **effective model**.
     Inline-only families (e.g. gemini on any role) are admitted but get
-    ``mcp=False`` here; hydration also sets ``inline_only`` and the pipeline
-    suppresses the client-side tool loop — ¬ strict admission reject.
+    ``mcp=False`` here via the shared ``_mcp_base_admitted`` gate; hydration
+    also sets ``inline_only`` and the pipeline suppresses the client-side tool
+    loop — ¬ strict admission reject.
 
     Only xAI *multi-agent* models additionally reject client-side function tools
     (server-side built-ins are injected via provider_options instead).
     """
-    if inline_only_for_model(model):
+    if not _mcp_base_admitted(model):
         return False
     mid = ModelId.parse(model)
     return not (mid.provider == "xai" and "multi-agent" in mid.base_id)
@@ -66,6 +94,63 @@ class FrontierEndpointError(Exception):
             "field": self.field,
             "request_id": self.request_id,
         }
+
+
+def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, str]:
+    """Return (to_agent_slug, family, platform) for a handoff-eligible role/seat.
+
+    Admission predicate (FOL):
+      admit(role) ⟺ profile.delivery == "manual" ∧ profile.dispatchable is False
+
+    Raises FrontierEndpointError(field="role", status_code=422) when:
+      - role/seat is unknown
+      - resolved profile is not a manual, non-dispatchable (web/handoff) seat
+        → reason code "handoff_requires_web_seat"
+    """
+    canonical = normalize_agent_slug(role)
+    roles = load_roles()
+    role_profile = roles.get(canonical)
+
+    if role_profile is not None:
+        family: str = role_profile.default_family
+        platform: str = role_profile.default_platform
+    else:
+        # Try as a seat slug of the form {family}-{platform}
+        parts = canonical.split("-", 1)
+        if len(parts) != 2 or parts[0] not in {"claude", "gpt", "grok", "gemini"}:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="role",
+                reason=f"Unknown role or seat {role!r}",
+                status_code=422,
+            )
+        family, platform = parts[0], parts[1]
+
+    try:
+        profile = get_profile(family, platform)
+    except KeyError:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason=f"Unknown role or seat {role!r}",
+            status_code=422,
+        )
+
+    to_agent = f"{family}-{platform}"
+
+    if not (profile.delivery == "manual" and not profile.dispatchable):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason=(
+                f"handoff op requires a web/manual seat (delivery=manual, "
+                f"dispatchable=false); role {role!r} resolved to {to_agent} "
+                f"which is dispatchable — use op=generate/to_thread"
+            ),
+            status_code=422,
+        )
+
+    return to_agent, family, platform
 
 
 async def verify_thread_writable(

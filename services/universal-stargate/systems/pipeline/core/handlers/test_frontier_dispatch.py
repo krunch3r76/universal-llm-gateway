@@ -1393,8 +1393,8 @@ def test_check_agent_model_consistency_accepts_agents_without_variant_requiremen
 def test_registry_default_model_satisfies_own_requirement(agent: str) -> None:
     """Default model for skeptic must satisfy the 'multi-agent' variant requirement.
 
-    Regression guard: the original bug was 'oppie' pointing at a non-multi-agent
-    model while the requirement mandated 'multi-agent'.
+    Regression guard: skeptic default must satisfy the multi-agent variant
+    requirement on grok-api-multi.
     """
     from agent_seat.registry import check_agent_model_requirement, resolve_agent_model
 

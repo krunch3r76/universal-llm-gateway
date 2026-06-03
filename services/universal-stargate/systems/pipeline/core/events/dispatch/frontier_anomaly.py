@@ -168,7 +168,7 @@ def PipelineFrontierDispatchAgentModelMismatch(  # noqa: N802
       family/platform seat (e.g. ``grok-api-multi`` + anthropic model).
       Functional roles are model-agnostic and do not emit this mismatch.
     - ``"variant"``: provider matches but the model fails the agent's
-      variant requirement (e.g. oppie + non-multi-agent xAI model).
+      variant requirement (e.g. skeptic + non-multi-agent xAI model).
       Suggests a stale model pin or missing beta-gate access.
 
     Precedes the terminal ``pipeline_execution_failed``. Distinguishes agent

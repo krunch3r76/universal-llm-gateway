@@ -225,7 +225,7 @@ async def test_execute_agent_bus_reply_injects_active_persona(
 
     monkeypatch.setattr(_ex, "_agent_bus_request", fake_request)
 
-    token = bind_active_persona("orion")
+    token = bind_active_persona("gatherer")
     try:
         await execute_tool(
             "agent_bus",
@@ -246,7 +246,7 @@ async def test_execute_agent_bus_reply_injects_active_persona(
         reset_active_persona(token)
 
     assert captured["body"] is not None
-    assert captured["body"]["from"] == "orion"
+    assert captured["body"]["from"] == "gatherer"
 
 
 @pytest.mark.asyncio

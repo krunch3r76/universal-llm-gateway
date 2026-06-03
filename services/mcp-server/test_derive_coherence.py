@@ -260,7 +260,6 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.git_integrate", "register_git_integrate_tools"),
         ("tools.quality", "register_quality_tools"),
         ("tools.agent_bus", "register_agent_bus_tools"),
-        ("tools.agent_consult", "register_agent_consult_tools"),
         ("tools.cortex", "register_cortex_tools"),
         ("tools.cortex_named_tools", "register_cortex_named_tools"),
         ("tools.llm", "register_llm_tools"),

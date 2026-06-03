@@ -74,7 +74,6 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "usps_track",
         # Domain tools not yet canonicalized
         "advisor",
-        "agent_consult",
         "boot_inspect",
         "extract_directory",
         "extract_document",

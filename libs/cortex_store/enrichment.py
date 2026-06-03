@@ -73,7 +73,7 @@ def _chat_completion(system: str, user: str) -> str | None:
 
 
 _PROSPECTIVE_SYSTEM = """\
-Cortex is a personal knowledge graph shared by multiple AI agents (web, cursor, oppie). \
+Cortex is a personal knowledge graph shared by multiple AI agents (web, cursor, team roles). \
 Assertions are epistemic claims about entities: people, decisions, services, legal matters, documents, todos.
 
 Confidence taxonomy: confirmed (verified), believed (working assumption), suspected (pattern inference), hypothesized (theory).

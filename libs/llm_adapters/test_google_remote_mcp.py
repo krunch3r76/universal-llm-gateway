@@ -69,3 +69,39 @@ def test_function_tools_are_sanitized_for_google() -> None:
     assert "additionalProperties" not in params
     assert "title" not in params["properties"]["url"]
     assert "additionalProperties" not in params["properties"]["headers"]
+
+
+def test_function_tools_drop_const_and_single_value_enum() -> None:
+    tool = {
+        "type": "function",
+        "function": {
+            "name": "cortex",
+            "description": "Cortex",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {
+                        "type": "string",
+                        "const": "entity_get",
+                        "enum": ["entity_get"],
+                    },
+                    "arguments": {"type": "string", "default": "{}"},
+                },
+                "required": ["tool"],
+            },
+        },
+    }
+
+    _url, _headers, body = _adapter().build_frontier_request(_base_req(tools=[tool]))
+    tool_prop = body["tools"][0]["functionDeclarations"][0]["parameters"]["properties"][
+        "tool"
+    ]
+
+    assert "const" not in tool_prop
+    assert "enum" not in tool_prop
+    assert (
+        "default"
+        not in body["tools"][0]["functionDeclarations"][0]["parameters"]["properties"][
+            "arguments"
+        ]
+    )

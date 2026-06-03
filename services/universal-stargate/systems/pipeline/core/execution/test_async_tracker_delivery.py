@@ -530,14 +530,14 @@ async def test_on_behalf_post_falls_back_to_last_turn_from(
 
     _patch_client(
         monkeypatch,
-        _make_thread_aware_transport(captured, last_turn_from="oppie"),
+        _make_thread_aware_transport(captured, last_turn_from="skeptic"),
     )
 
     outcome = await deliver_result(record, event_bus=bus, auth_token="secret")
     await asyncio.sleep(0)
 
     assert outcome.status == "delivered"
-    assert captured["post_body"]["to"] == "oppie"
+    assert captured["post_body"]["to"] == "skeptic"
 
 
 @pytest.mark.asyncio
