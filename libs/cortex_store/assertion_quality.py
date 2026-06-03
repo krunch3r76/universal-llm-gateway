@@ -21,6 +21,7 @@ _DATE_PATTERN = re.compile(
 )
 
 _SOURCED_TYPES = frozenset({"quotation", "compression"})
+_THREAD_COMPRESSION_TYPES = frozenset({"thread_compression"})
 _OBSERVATION_TYPES = frozenset(
     {"agent_observation", "direct_observation", "user_statement"}
 )
@@ -47,6 +48,10 @@ DERIVATION_TYPE_TAXONOMY: dict[str, dict[str, object]] = {
     "compression": {
         "description": "compressed from ingested document chunks",
         "requires": ["chunk_id", "evidence_uris"],
+    },
+    "thread_compression": {
+        "description": "thread compaction summary from workspace turn artifacts",
+        "requires": ["evidence_uris"],
     },
     "quotation": {
         "description": "verbatim quote from an ingested document chunk",
@@ -149,6 +154,24 @@ def validate_assertion(body: AssertionCreate) -> ValidationResult:
                 "commitment, stated, other.",
             )
         )
+
+    if body.derivation_type in _THREAD_COMPRESSION_TYPES:
+        if not body.evidence_uris:
+            result.hard_reject.append(
+                ValidationDiagnostic(
+                    field="evidence_uris",
+                    message="derivation_type='thread_compression' requires non-empty "
+                    "evidence_uris linking workspace turn artifacts",
+                )
+            )
+        if body.chunk_id is not None:
+            result.hard_reject.append(
+                ValidationDiagnostic(
+                    field="chunk_id",
+                    message="derivation_type='thread_compression' must not set chunk_id "
+                    "(document-ingestion chunk semantics are for compression/quotation)",
+                )
+            )
 
     if body.derivation_type in _SOURCED_TYPES:
         if body.chunk_id is None:

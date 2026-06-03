@@ -410,6 +410,27 @@ def test_check5_no_attributes_no_warn(tmp_path: Path) -> None:
     assert not findings
 
 
+def test_check5_malformed_attributes_json_emits_parse_finding(tmp_path: Path) -> None:
+    conn = _make_conn(tmp_path)
+    conn.execute(
+        "INSERT INTO entities (id, type, name, status, confidence_band, attributes) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            "legal_source:test-5f",
+            "legal_source",
+            "legal_source:test-5f",
+            "confirmed",
+            "confirmed",
+            '{"broken": ',
+        ),
+    )
+    conn.commit()
+    findings = detect_confirmed_attribute_no_assertion(
+        conn, subject="legal_source:test-5f"
+    )
+    assert any(f["kind"] == "attributes_json_parse_failed" for f in findings)
+
+
 def test_check5_provisional_entity_not_flagged(tmp_path: Path) -> None:
     conn = _make_conn(tmp_path)
     _insert_entity(

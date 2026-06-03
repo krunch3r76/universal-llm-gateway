@@ -49,8 +49,8 @@ def server_state() -> dict:
     }
 
 
-# Phase D promotes pipeline/rag/grokbuild/observability/manage to primary (14-domain
-# catalog); tool_search manifest covers overflow/demoted tools only.
+# Phase D promotes pipeline/rag/observability/manage to primary (13-domain catalog
+# after grokbuild demotion 2026-06-02); tool_search manifest covers overflow/demoted tools only.
 # frontier_dispatch/team_dispatch promoted to PRIMARY via standalone domains
 # (thread 1146/1167) — no longer in the overflow manifest.
 _EXPECTED_DEMOTED = {
@@ -93,7 +93,7 @@ GOLDEN_QUERIES: list[tuple[str, str]] = [
     ("restart service", "bot_supervisor"),
     ("fetch web page", "web_fetch"),
     ("raw sql query", "sql"),
-    ("build with grok", "grok_imagine"),
+    ("build with grok", "grokbuild"),  # overflow vestigial relay (11588); prefer cursorbuild
     ("rag semantic search query", "rag_search"),
     ("model status", "model_status"),
     ("query events", "query_observability_preview"),

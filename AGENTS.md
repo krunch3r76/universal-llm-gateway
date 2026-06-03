@@ -1,15 +1,15 @@
 # Universal LLM Gateway — Agent Guide (grok-direct)
 
-> **⚠ IF YOU ARE RUNNING INSIDE CURSOR IDE: this file is NOT your guide.**
-> Cursor auto-injects this repo-root `AGENTS.md` into your always-applied
-> context, but it is the **grok-direct (headless terminal) projection**. The
-> sections on **Worktree discipline**, **git integration** (`git_integrate` /
-> `git_land` / `git worktree`), and **session close via `transcript_md`** describe
-> the *headless* seat and **do not apply to a Cursor IDE session**. In Cursor:
-> you do not use `git_*` MCP tools or git CLI (`commit-and-git-scope_ws.mdc`
-> Invariant 2); commit is optional and not a finality gate (Invariant 1); and
-> session close follows `.cursor/rules/session-close.mdc` (JSONL), not `transcript_md`.
-> Your canonical rules are `.cursor/rules/` + `/mnt/torus/projects/.cursor/rules/`.
+> **⚠ CURSOR IDE — this file is NOT your guide.** Cursor auto-injects repo-root
+> `AGENTS.md`, but it is the **grok-direct (headless terminal) projection**.
+> **Read instead:** `.cursor/rules/` + `/mnt/torus/projects/.cursor/rules/` (canonical);
+> `.cursor/rules/cursor-environment_ws.mdc` (IDE briefing).
+> **Skip the sections below on:** Worktree discipline, grokbuild/grokbuild-worker,
+> Session close (`transcript_md`), git integration (`git_integrate` / `git_land`),
+> and the grok-build subagent rows in the generated subagent table.
+> In Cursor: no `git_*` MCP or git CLI (`commit-and-git-scope_ws.mdc` Invariant 2);
+> commit is optional (`Invariant 1`); session close is `.cursor/rules/session-close.mdc` (JSONL).
+> Code dispatch → **cursorbuild** or in-IDE; Grok consult → `frontier_dispatch`.
 
 This repository is the **Universal LLM Gateway (ULG)** workspace: the integration hub for local and cloud LLM routing (Stargate), inference workers, MCP tooling (vortex), pipelines, RAG, cortex memory, and agent-bus coordination. Operators and agents working here share one ecosystem; conventions below apply when you boot **cold in a terminal** via the Grok CLI (`grok`) with vortex MCP wired—not when you are inside Cursor IDE.
 
@@ -175,7 +175,7 @@ Authorization = "Bearer <MCP_AUTH_TOKEN>"
 
 **Hard-excluded MCP servers** (never available to grok-direct): `cursor-ide-browser`, `cursor-app-control`, `cursor-backend-control`. They are Cursor-internal; grok CLI cannot use them meaningfully.
 
-Primary tools: `cortex`, `cortex_boot`, `fs`, `agent_bus`, `observability`, `rag`, `pipeline`, `grokbuild`, `manage`, `dispatch`, `frontier_dispatch`, `team_dispatch`, and the rest of the vortex catalog.
+Primary tools: `cortex`, `cortex_boot`, `fs`, `agent_bus`, `observability`, `rag`, `pipeline`, `manage`, `dispatch`, `frontier_dispatch`, `team_dispatch`, and the rest of the vortex catalog. **`grokbuild` is retired** (11588) — overflow relay only via `tool_search` → `dispatch`; prefer `cursorbuild`.
 
 The TOML block above is auto-generated from `mcp-registry.toml` by `scripts/gen-agents-md` (Phase 2 wired 2026-05-22; `gen-agents-md:start/end` markers installed Phase 3).
 
@@ -192,11 +192,9 @@ Two skill pools—**different content by design**, not duplicates:
 
 Before non-standard document or tool work, read the matching skill from the boot manifest (`cortex` entities `agent_skill:*`).
 
-### Grokbuild (consolidated v3)
+### Grokbuild — RETIRED
 
-`agent_skill:grokbuild` — read for any grokbuild work. Consolidated V3 (2026-05-22) supersedes the former v1+v2 split. `agent_skill:grokbuild-v1` and `agent_skill:grokbuild-v2` are deprecated (kept for history).
-
-Workspace stub: `.cursor/skills/delegate-to-grok/SKILL.md` points at the consolidated skill.
+Harness archived (`decision:grokbuild-retirement-sequenced`, assertion 11588). Historical playbook: `agent-skills/grokbuild.md` (cortex). Use **cursorbuild** / **frontier_dispatch** instead (see `.cursor/skills/delegate-to-grok/SKILL.md`).
 
 ---
 
@@ -215,7 +213,7 @@ These encode *procedures*—in Cursor they appear as slash-commands or session p
 | `/session-end`, `session-close.mdc` | `cortex(tool="session_close", transcript_md=..., ...)` — see § Session close |
 | `/agent-bus` | `agent_bus(...)` directly |
 | `/implement-plan`, phase prompts | MCP + `fs`; no Plan-mode switch |
-| `delegate-to-grok` / grokbuild dispatches | `grokbuild(...)` MCP or shell scripts below |
+| Code dispatch (was delegate-to-grok) | **cursorbuild** or Cursor in-IDE (`grokbuild` retired) |
 | `cursor-boot_ws.mdc` Continue mode (`transcript:cursor-...`) | Not applicable; grok uses `transcript_md` path |
 
 ### General conduct (carries over directly)
@@ -265,47 +263,16 @@ Full policy: `agent_skill:grokbuild` (cortex, consolidated v3 — 2026-05-22) co
 
 ---
 
-## Worktree discipline
+## Worktree discipline (ARCHIVED — grok-direct only)
 
-> **Cursor IDE seats: NOT APPLICABLE.** Everything in this section (arc worktrees,
-> `git_integrate` / `git_land`, raw `git worktree`) is a **headless / external-agent**
-> concern. A Cursor IDE session never reaches for git_* tools or git CLI — see
-> `.cursor/rules/commit-and-git-scope_ws.mdc` Invariant 2. Read on only if you are
-> grok-direct or another headless seat.
+> **Cursor IDE: skip this section.** Parked arc-worktree binding — not in active use
+> (`decision:arc-worktree-binding`, assertion 11621). Original motivator `grokbuild` is
+> **archived** (11588); `grok-direct` is vestigial. Cursor composer and **cursorbuild**
+> do not need arc worktrees (`decision:cursorbuild-ide-interface`).
 
-> **⚠ STATUS (2026-06-01) — EXPERIMENTAL / PARKED, NOT IN ACTIVE USE.** We are currently not using worktrees at all. Arc-worktree-binding was experimented with and may be revisited ONLY if a code-modifying API harness lands (an API writer that modifies code *in place* — NOT diff-apply, which needs no worktree). `grokbuild`, the original motivating harness, is **archived**; `grok-direct` is vestigial with it. Cursor composer-in-IDE and `cursorbuild` do **not** need this (`decision:cursorbuild-ide-interface`). Treat everything below as **design-of-record for that future case**, not the live default. Refs: `decision:arc-worktree-binding` (parked — assertion 11621), `decision:grokbuild-retirement-sequenced` (11622).
-
-The **arc-worktree-binding** model — cortex `agent-skills/implementation-plan-workflow.md` §Arc worktree binding — is **insurance** against two failure modes headless writers lack: (1) **concurrency** (multiple writers colliding on one working tree) and (2) **unattended landing** (diffs committing without human review). Direct Cursor IDE use avoids both: single-writer serialization by operator attention, and operator-attended landing on every diff. **grok-direct** (vestigial — grokbuild-bound, archived) and other headless/concurrent/unattended writers **would** require the arc substrate if/when the parked workflow is revisited; the **lead** integrates to master via the gated `git_integrate` primitive (`decision:lead-agent-git-integration`), approval bound to the reviewed `diff_sha256`. grokbuild is **archived** (assertions 11588, 11622). **cursorbuild** is a programmatic **interface to the Cursor IDE** (11479) — not a headless multi-writer harness; it inherits Cursor's protective properties and is **not** force-routed through arc worktrees by default (`decision:cursorbuild-ide-interface`).
-
-1. **Arc binding** — `∀ arc : one_worktree(arc) ∧ one_branch(arc)`. Coordinator kickoff (once per arc):
-
-   ```
-   git worktree add <WORKTREE_ROOT>/<plan-name> -b arc/<plan-name> <base-sha>
-   ```
-
-   Declare `arc_branch`, `arc_worktree_path`, and `arc_base_sha` on the `plan:` entity at seed time. Resume reads them — never re-derive per session. **Would be required for** grok-direct (vestigial) and API diff-appliers (e.g. gpt-5.5 session reviews) when the arc workflow is active; **not required by default for** cursorbuild (see item 5).
-
-2. **Location** — default arc root `/mnt/torus/projects/ulg-grok-worktrees/<name>` (or path on the plan entity). Headless/concurrent code-modifying dispatches would go here — not the live checkout while Cursor may be editing the same tree.
-
-3. **Read-only** — inspection, RAG, events, and non-mutating cortex work may use the live repo cwd.
-
-4. **Integration invariants** — apply to headless/unattended writers on arc worktrees: `executor-does-not-self-integrate`: the seat that authors edits never merges its own unreviewed work. `integration-requires-approval`: master advances only via `git_integrate` / `git_land` with a valid `approval` bound to the exact reviewed `diff_sha256`. cursorbuild-as-IDE-interface uses Cursor's native apply/review flow instead.
-
-5. **Harness routing** —
-
-   | Harness | Where edits land | Who merges |
-   |---|---|---|
-   | `grok-direct` (CLI, vestigial) | arc worktree cwd *(if arc workflow active)* | lead via `git_integrate` |
-   | `cursorbuild` (IDE interface) | live checkout or Cursor-native `~/.cursor/worktrees` (operator-attended apply/review) | operator via Cursor (not `git_integrate` by default) |
-   | API diff-appliers (e.g. gpt-5.5 session reviews) | arc worktree cwd *(if arc workflow active)* | lead via `git_integrate` |
-
-   **cursorbuild** inherits Cursor's single-writer + operator-attended properties: Cursor manages isolation (live checkout or native worktrees, auto-pruned); dispatches are operator-triggered and watched. **Arc-binding applies to cursorbuild ONLY IF** multiple dispatches run concurrently **AND** unattended (landing without per-diff human review). **Anti-pattern**: programmatic dispatch writing the **live checkout** concurrently with interactive IDE editing on the same tree — serialize dispatches with interactive use, or use Cursor-native worktrees for isolation.
-
-6. **Concurrency** — when the arc workflow is active, grok-direct and interactive Cursor must not share cwd on the live checkout. Headless writers use **unique arc worktrees** (or one arc per plan) as the conflict-avoidance primitive. cursorbuild dispatches serialized with interactive IDE use, or isolated via Cursor-native worktrees, avoid the collision grok-direct's concurrency introduced.
-
-7. **Parked — ad-hoc grok-direct worktree bootstrap** — `scripts/grok-worktree` / `scripts/grok-worktree-cleanup` still exist and POST/DELETE to grokbuild-worker (`/api/v1/grokbuild/worktrees`), but grokbuild is archived and grok-direct is vestigial. This open question is largely **moot** while worktrees remain parked; arc kickoff would use plain `git worktree add` above if the workflow is revisited.
-
-8. **Depth reference** — arc binding + integration gates: `agent-skills/implementation-plan-workflow.md` §Arc worktree binding. grokbuild history: `agent-skills/grokbuild.md`. Git integration primitives: `decision:lead-agent-git-integration`. cursorbuild IDE-interface framing: `decision:cursorbuild-ide-interface`.
+Design-of-record (read on demand, not at boot): `agent-skills/implementation-plan-workflow.md`
+§Arc worktree binding; git integration: `decision:lead-agent-git-integration`; grokbuild
+history: `agent-skills/grokbuild.md` (cortex).
 
 ---
 
@@ -354,4 +321,4 @@ Recursion: `grokbuild` / `frontier_generate` depth ≤ 2 (MQ3)—enforcement Pha
 | Venv | `$HOME/.venvs/universal` (Python 3.12) |
 | PYTHONPATH | `libs/` via `sitecustomize.py` |
 | Stargate (default) | `http://localhost:9999` (`STARGATE_PORT` / `STARGATE_URL`; see `services/AGENTS.md`) |
-| grokbuild-worker | `127.0.0.1:8090` (via Stargate proxy `/api/v1/grokbuild/*`) |
+| grokbuild-worker | Vestigial — `127.0.0.1:8090` via Stargate `/api/v1/grokbuild/*` (decommission pending) |

@@ -310,6 +310,7 @@ def _build_server() -> tuple[
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_frontier_tools(mcp)
+    # Vestigial relay (harness retired 11588); see tools/grokbuild.py module doc.
     register_grokbuild_tools(mcp)
     register_git_integrate_tools(mcp)
     register_quality_tools(mcp)
@@ -376,8 +377,53 @@ def _build_server() -> tuple[
     }
 
     _fs_standard_ops_doc = sandbox_op_doc()
+    _fs_tool_description = (
+        "File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.\n\n"
+        "`read` is unified across sandboxes: source files plus text-oriented\n"
+        "document formats such as PDF, DOCX, ODT, EML, and HTML can be read in\n"
+        "text mode from `cortex` or `workspaces`. Image files, archives, and other\n"
+        "binary formats auto-route to base64 even without `binary=True` — reading a\n"
+        "`.png`, `.jpg`, or archive returns {content_base64, auto_binary: true}\n"
+        "rather than corrupted text. Pass `binary=True` explicitly when you need base64\n"
+        "for an arbitrary file type or to make the intent clear. Use `write_binary`\n"
+        "(cortex sandbox only) to stage base64-encoded binary files (PDFs, images)\n"
+        "— pass the base64 string as `content`. Use `move` to rename or relocate\n"
+        "a file within the selected sandbox. Prefer the markdown ops for large\n"
+        "structured docs when you need sections/TOC; for PDFs they operate on\n"
+        "markdown produced internally by ``pymupdf4llm.to_markdown()``.\n\n"
+        "**PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).\n"
+        "For tabular or columnar PDFs (statements, invoices, ledger exports),\n"
+        'prefer ``finance(op="inspect", path=...)`` which uses pdfplumber and\n'
+        'preserves table structure, or ``dispatch(tool="extract_document", ...)``\n'
+        "for scanned documents needing OCR sidecars. PDF reads include an\n"
+        "``extraction`` field with method info and alternative suggestions.\n\n"
+        "Sandboxes:\n"
+        "  cortex     — /data/files — user documents, notes, uploads, exports\n"
+        "  workspaces — /mnt/torus/projects/ — repository source, config, tasks, docs\n\n"
+        "workspaces paths MUST include the repo name prefix:\n"
+        '  fs(sandbox="workspaces", op="read", path="universal-llm-gateway/tasks/specs/foo.md")\n'
+        '  fs(sandbox="workspaces", op="list", path="universal-llm-gateway/config")\n'
+        '  fs(sandbox="workspaces", op="list", path="universal-llm-gateway")  ← repo root\n\n'
+        'Use op="list" for directories; op="read" on a directory path returns an error.\n\n'
+        "Repo-relative code refs (``routes/foo.py``) auto-resolve under the matching\n"
+        "git repo when PROJECT_ROOT is multi-repo (``/mnt/torus/projects``). Prefer\n"
+        "fully-qualified workspaces paths in agent-bus messages:\n"
+        "``universal-llm-gateway/libs/.../routes/foo.py``.\n\n"
+        "``find`` (workspaces only): locate files by name/glob — use instead of\n"
+        "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
+        f"{_fs_standard_ops_doc}\n\n"
+        "Markdown section ops (for large docs):\n"
+        "  md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)\n"
+        "  md_read    (path, section)           — read one section (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)\n"
+        "  md_replace (path, section, content)  — replace section (text files only)\n"
+        "  md_append  (path, section, content)  — append to section (text files only)\n"
+        "  md_delete  (path, section)           — delete section (text files only)\n"
+        "Converted formats such as PDF are read-only for markdown section ops:\n"
+        "use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /\n"
+        "``md_append`` / ``md_delete``."
+    )
 
-    @mcp.tool(title="File I/O (Sandboxed)")
+    @mcp.tool(title="File I/O (Sandboxed)", description=_fs_tool_description)
     def fs(
         op: str,
         sandbox: str,
@@ -393,59 +439,7 @@ def _build_server() -> tuple[
         binary: bool = False,
         max_depth: int = 3,
     ) -> dict[str, Any]:
-        f"""File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.
-
-        `read` is unified across sandboxes: source files plus text-oriented
-        document formats such as PDF, DOCX, ODT, EML, and HTML can be read in
-        text mode from `cortex` or `workspaces`. Image files, archives, and other
-        binary formats auto-route to base64 even without `binary=True` — reading a
-        `.png`, `.jpg`, or archive returns {{content_base64, auto_binary: true}}
-        rather than corrupted text. Pass `binary=True` explicitly when you need base64
-        for an arbitrary file type or to make the intent clear. Use `write_binary`
-        (cortex sandbox only) to stage base64-encoded binary files (PDFs, images)
-        — pass the base64 string as `content`. Use `move` to rename or relocate
-        a file within the selected sandbox. Prefer the markdown ops for large
-        structured docs when you need sections/TOC; for PDFs they operate on
-        markdown produced internally by ``pymupdf4llm.to_markdown()``.
-
-        **PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).
-        For tabular or columnar PDFs (statements, invoices, ledger exports),
-        prefer ``finance(op="inspect", path=...)`` which uses pdfplumber and
-        preserves table structure, or ``dispatch(tool="extract_document", ...)``
-        for scanned documents needing OCR sidecars. PDF reads include an
-        ``extraction`` field with method info and alternative suggestions.
-
-        Sandboxes:
-          cortex     — /data/files — user documents, notes, uploads, exports
-          workspaces — /mnt/torus/projects/ — repository source, config, tasks, docs
-
-        workspaces paths MUST include the repo name prefix:
-          fs(sandbox="workspaces", op="read", path="universal-llm-gateway/tasks/specs/foo.md")
-          fs(sandbox="workspaces", op="list", path="universal-llm-gateway/config")
-          fs(sandbox="workspaces", op="list", path="universal-llm-gateway")  ← repo root
-
-        Use op="list" for directories; op="read" on a directory path returns an error.
-
-        Repo-relative code refs (``routes/foo.py``) auto-resolve under the matching
-        git repo when PROJECT_ROOT is multi-repo (``/mnt/torus/projects``). Prefer
-        fully-qualified workspaces paths in agent-bus messages:
-        ``universal-llm-gateway/libs/.../routes/foo.py``.
-
-        ``find`` (workspaces only): locate files by name/glob — use instead of
-        ``search`` for filenames. ``search`` scans file *contents* with a regex.
-
-{_fs_standard_ops_doc}
-
-        Markdown section ops (for large docs):
-          md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)
-          md_read    (path, section)           — read one section (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)
-          md_replace (path, section, content)  — replace section (text files only)
-          md_append  (path, section, content)  — append to section (text files only)
-          md_delete  (path, section)           — delete section (text files only)
-        Converted formats such as PDF are read-only for markdown section ops:
-        use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /
-        ``md_append`` / ``md_delete``.
-        """
+        """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
             return _fs_impl(
                 op,

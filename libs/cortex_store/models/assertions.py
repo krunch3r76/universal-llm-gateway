@@ -15,6 +15,7 @@ from ._shared import (
 DerivationType = Literal[
     "quotation",
     "compression",
+    "thread_compression",
     "inference",
     "direct_observation",
     "agent_observation",

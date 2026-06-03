@@ -43,7 +43,11 @@ from typing import TYPE_CHECKING
 
 from universal_logging import get_logger
 
-from ..events.compaction import PipelineCompactionSummarized
+from ..events.compaction import (
+    PipelineCompactionArtifactLoadSkipped,
+    PipelineCompactionSummarized,
+    PipelineCompactionSupersedeFailed,
+)
 from ..execution.resolver import NamespaceResolver
 from ._handler_input_resolve import _resolve_required_int, _resolve_required_str
 from .builtin.call_model import call_model
@@ -142,7 +146,26 @@ class SummarizeThreadV1Handler:
             )
             return _noop_output()
 
-        artifacts = await load_collapse_set_artifacts(collapse_set)
+        artifacts, artifact_stats = await load_collapse_set_artifacts(collapse_set)
+        if artifact_stats.skipped > 0:
+            sample_uri: str | None = None
+            for ass in collapse_set:
+                uris = ass.get("evidence_uris") or []
+                if uris:
+                    sample_uri = str(uris[0])
+                    break
+            publish_compaction_event(
+                context,
+                PipelineCompactionArtifactLoadSkipped,
+                execution_id=context.execution_id,
+                chat_id=storage_key,
+                anchor_id=anchor_id,
+                attempted=artifact_stats.attempted,
+                loaded=artifact_stats.loaded,
+                skipped=artifact_stats.skipped,
+                skip_reasons=artifact_stats.skip_reasons,
+                sample_uri=sample_uri,
+            )
         summary_input = build_summary_input(collapse_set, artifacts=artifacts)
         model_result = await call_model(
             model_id=summary_model,
@@ -184,13 +207,25 @@ class SummarizeThreadV1Handler:
                     summary_assertion_id=summary_assertion_id,
                     seeded_by=seeded_by,
                 )
-            except RuntimeError:
+            except RuntimeError as exc:
                 logger.error(
                     "summarize_thread_v1: partial supersede — summary=%s written "
                     "but turns not fully superseded (anchor=%s, collapse_up_to=%d)",
                     summary_assertion_id,
                     anchor_id,
                     collapse_up_to,
+                )
+                publish_compaction_event(
+                    context,
+                    PipelineCompactionSupersedeFailed,
+                    execution_id=context.execution_id,
+                    chat_id=storage_key,
+                    anchor_id=anchor_id,
+                    summary_assertion_id=summary_assertion_id,
+                    collapse_up_to=collapse_up_to,
+                    superseded_count=0,
+                    collapse_set_size=len(collapse_set),
+                    error=str(exc),
                 )
                 raise
         else:

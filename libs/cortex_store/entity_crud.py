@@ -48,6 +48,10 @@ from .status_trait_write import (
     resolve_birth_traits,
     trait_insert_extras,
 )
+from .assertion_deserialize_telemetry import (
+    assertion_deserialize_skip_reason,
+    emit_assertion_deserialize_skipped,
+)
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -499,12 +503,17 @@ def update_entity_impl(
     for row in assertion_rows:
         try:
             assertions.append(AssertionItem(**decode_row(row, ASSERTION_JSON_FIELDS)))
-        except Exception:
+        except Exception as exc:
             logger.error(
                 "Skipping assertion %s for entity %s — deserialization failed",
                 row.get("id"),
                 entity_id,
                 exc_info=True,
+            )
+            emit_assertion_deserialize_skipped(
+                entity_id=entity_id,
+                assertion_id=row.get("id"),
+                reason=assertion_deserialize_skip_reason(exc),
             )
     detail_row = apply_option_c_read_projection(decode_row(rows[0], ENTITY_JSON_FIELDS))
     return EntityDetail(**detail_row, assertions=assertions).model_dump(mode="json")

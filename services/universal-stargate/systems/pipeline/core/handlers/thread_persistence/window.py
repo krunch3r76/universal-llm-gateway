@@ -19,6 +19,7 @@ hot-tail window without requiring the collapsed turns to be superseded.
 
 from __future__ import annotations
 
+from .thread_compression import parse_thread_compression_boundaries
 from .turn_assertions import (
     extract_latest_summary,
     is_turn_assertion,
@@ -52,7 +53,14 @@ async def build_referential_window(
     summary = extract_latest_summary(all_items)
     turn_items = [a for a in all_items if is_turn_assertion(a)]
     turns = turns_from_assertions(turn_items)
-    prefix = [{"role": r, "content": c} for _, r, c in turns]
+    hot_tail_start: int | None = None
+    if summary is not None:
+        _, hot_tail_start = parse_thread_compression_boundaries(summary)
+    if hot_tail_start is not None:
+        hot_turns = [(idx, r, c) for idx, r, c in turns if idx >= hot_tail_start]
+    else:
+        hot_turns = turns
+    prefix = [{"role": r, "content": c} for _, r, c in hot_turns]
     window = prefix[-k:] if len(prefix) > k else prefix
 
     if not summary:

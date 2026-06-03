@@ -181,7 +181,24 @@ async def build_dispatch_body(
         pipeline_options["remote_mcp"] = req.remote_mcp
 
     if req.output_contract == "thread" and req.target_thread:
-        _agent_bus_token = os.getenv("AGENT_BUS_TOKEN", "")
+        _agent_bus_token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+        _allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        if not _agent_bus_token and not _allow_unset:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="thread",
+                reason=(
+                    "AGENT_BUS_TOKEN is not configured; thread output contract "
+                    "requires agent-bus verification before dispatch. "
+                    "Set AGENT_BUS_TOKEN in the Stargate environment, or "
+                    "ALLOW_UNSET_AGENT_BUS_TOKEN=true for explicit local bypass."
+                ),
+                status_code=503,
+            )
         if _agent_bus_token:
             await verify_thread_writable(
                 req.target_thread,

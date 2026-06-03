@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import ast
-import sys
 from pathlib import Path
+
+from ._paths import ensure_import_paths
 
 
 def discover_handler_packages(root_dir: Path) -> list[Path]:
@@ -175,13 +176,7 @@ def load_runtime_builtin_step_types() -> set[str]:
     runtime registry once so validation sees the same built-ins Stargate does.
     """
 
-    project_root = Path(__file__).resolve().parents[2]
-    stargate_path = project_root / "services" / "universal-stargate"
-
-    if stargate_path.is_dir():
-        stargate_path_str = str(stargate_path)
-        if stargate_path_str not in sys.path:
-            sys.path.insert(0, stargate_path_str)
+    ensure_import_paths()
 
     try:
         from systems.pipeline.core.handlers.registry import HandlerRegistry

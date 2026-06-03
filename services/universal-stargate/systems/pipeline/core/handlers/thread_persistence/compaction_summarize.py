@@ -22,6 +22,7 @@ so the state can be repaired (retry or manual cleanup).
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -29,36 +30,49 @@ from universal_logging import get_logger
 
 from .artifact import resolve_artifact_path
 from .events import cx_async
+from .thread_compression import (
+    boundaries_from_exclusive_upper,
+    thread_compression_reasoning_summary,
+)
+from .turn_assertions import (
+    SUMMARY_CLAIM_PREFIX,
+    is_thread_summary_assertion,
+    is_turn_assertion,
+    parse_thread_summary_index,
+    parse_turn_index,
+)
+
+
+@dataclass(frozen=True)
+class ArtifactLoadStats:
+    """Counters for compaction artifact load attempts (telemetry-only)."""
+
+    attempted: int = 0
+    loaded: int = 0
+    skipped: int = 0
+    skip_reasons: dict[str, int] | None = None
+
+
+__all__ = [
+    "ArtifactLoadStats",
+    "SUMMARY_CLAIM_PREFIX",
+    "build_summary_input",
+    "is_already_summarized",
+    "is_thread_summary_assertion",
+    "load_collapse_set_artifacts",
+    "select_collapse_set",
+    "supersede_collapsed_turns",
+    "write_summary_assertion",
+]
 
 logger = get_logger(__name__)
 
-_THREAD_SUMMARY_PREFIX = "thread_summary("
-_SUMMARY_CLAIM_PREFIX = "archive summary: "
 _USER_TURN_PREFIX = "user_turn("
-_ASSISTANT_TURN_PREFIX = "assistant_turn("
 
 
 # ---------------------------------------------------------------------------
 # Pure helpers — no I/O
 # ---------------------------------------------------------------------------
-
-
-def is_thread_summary_assertion(assertion: dict[str, Any]) -> bool:
-    """True when *assertion* is a non-superseded ``thread_summary(N)`` predicate."""
-    if assertion.get("superseded_by"):
-        return False
-    pred = assertion.get("predicate_form") or ""
-    return pred.startswith(_THREAD_SUMMARY_PREFIX)
-
-
-def _parse_thread_summary_turn(predicate_form: str) -> int | None:
-    """Extract N from ``thread_summary(N)``."""
-    if not predicate_form.startswith(_THREAD_SUMMARY_PREFIX):
-        return None
-    try:
-        return int(predicate_form.split("(", 1)[1].rstrip(")"))
-    except (ValueError, IndexError):
-        return None
 
 
 def is_already_summarized(
@@ -77,23 +91,10 @@ def is_already_summarized(
     for ass in assertions:
         if not is_thread_summary_assertion(ass):
             continue
-        covered = _parse_thread_summary_turn(ass.get("predicate_form") or "")
+        covered = parse_thread_summary_index(ass.get("predicate_form") or "")
         if covered is not None and covered >= collapse_up_to:
             return True
     return False
-
-
-def _parse_turn_index_from_pred(predicate_form: str) -> int | None:
-    """Extract N from ``user_turn(N)`` or ``assistant_turn(N)``."""
-    if not (
-        predicate_form.startswith(_USER_TURN_PREFIX)
-        or predicate_form.startswith(_ASSISTANT_TURN_PREFIX)
-    ):
-        return None
-    try:
-        return int(predicate_form.split("(", 1)[1].rstrip(")"))
-    except (ValueError, IndexError):
-        return None
 
 
 def select_collapse_set(
@@ -109,10 +110,9 @@ def select_collapse_set(
     """
     result: list[dict[str, Any]] = []
     for ass in assertions:
-        if ass.get("superseded_by"):
+        if not is_turn_assertion(ass):
             continue
-        pred = ass.get("predicate_form") or ""
-        n = _parse_turn_index_from_pred(pred)
+        n = parse_turn_index(ass.get("predicate_form") or "")
         if n is None:
             continue
         if n < collapse_up_to:
@@ -131,7 +131,7 @@ def _strip_turn_prefix(claim: str) -> str:
 def _collapse_sort_key(assertion: dict[str, Any]) -> tuple[int, int]:
     """Sort key: (turn_index ASC, user_before_assistant)."""
     pred = assertion.get("predicate_form") or ""
-    n = _parse_turn_index_from_pred(pred) or 0
+    n = parse_turn_index(pred) or 0
     role_order = 0 if pred.startswith(_USER_TURN_PREFIX) else 1
     return (n, role_order)
 
@@ -185,47 +185,80 @@ def build_summary_input(
 # ---------------------------------------------------------------------------
 
 
-async def _load_artifact_json(uri: str) -> dict[str, Any] | None:
+def _artifact_skip_reason(
+    uri: str, path: Path | None, exc: BaseException | None
+) -> str:
+    if path is None:
+        return "missing"
+    if not path.exists():
+        return "missing"
+    if isinstance(exc, json.JSONDecodeError):
+        return "invalid_json"
+    if exc is not None:
+        return "read_error"
+    return "missing"
+
+
+async def _load_artifact_json(uri: str) -> tuple[dict[str, Any] | None, str | None]:
     """Load artifact JSON from a workspaces:// URI.
 
-    Returns None on URI mismatch, file-not-found, or parse error.
-    Failures are logged at DEBUG and treated as non-fatal.
+    Returns (data, skip_reason). *skip_reason* is set when load fails.
     """
     import aiofiles
 
     path: Path | None = resolve_artifact_path(uri)
     if path is None or not path.exists():
-        return None
+        return None, _artifact_skip_reason(uri, path, None)
     try:
         async with aiofiles.open(path, encoding="utf-8") as fh:
-            return json.loads(await fh.read())
+            return json.loads(await fh.read()), None
     except (OSError, json.JSONDecodeError) as exc:
-        logger.debug("compaction_summarize: artifact load skipped %s: %s", uri, exc)
-        return None
+        reason = _artifact_skip_reason(uri, path, exc)
+        logger.debug(
+            "compaction_summarize: artifact load skipped %s: %s (%s)",
+            uri,
+            exc,
+            reason,
+        )
+        return None, reason
 
 
 async def load_collapse_set_artifacts(
     collapse_set: list[dict[str, Any]],
-) -> dict[Any, dict[str, Any]]:
+) -> tuple[dict[Any, dict[str, Any]], ArtifactLoadStats]:
     """Load artifact JSON for each assertion in *collapse_set*.
 
-    Returns a mapping {assertion_id → artifact_dict} for assertions whose
-    primary evidence_uri resolves to a readable workspace artifact. Missing
-    or unreadable artifacts are silently skipped.
+    Returns ({assertion_id → artifact_dict}, load counters). Missing or
+    unreadable artifacts are omitted from the map; counters record skips.
 
     ∀ a ∈ collapse_set: first readable evidence_uri wins; remainder skipped.
     """
     result: dict[Any, dict[str, Any]] = {}
+    attempted = 0
+    loaded = 0
+    skipped = 0
+    reason_buckets: dict[str, int] = {}
     for ass in collapse_set:
         aid = ass.get("id")
         if aid is None:
             continue
         for uri in ass.get("evidence_uris") or []:
-            data = await _load_artifact_json(uri)
+            attempted += 1
+            data, skip_reason = await _load_artifact_json(uri)
             if data is not None:
                 result[aid] = data
+                loaded += 1
                 break
-    return result
+            skipped += 1
+            bucket = skip_reason or "missing"
+            reason_buckets[bucket] = reason_buckets.get(bucket, 0) + 1
+    stats = ArtifactLoadStats(
+        attempted=attempted,
+        loaded=loaded,
+        skipped=skipped,
+        skip_reasons=reason_buckets or None,
+    )
+    return result, stats
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +289,8 @@ async def write_summary_assertion(
     for ass in collapse_set:
         evidence_uris.extend(ass.get("evidence_uris") or [])
 
-    claim = f"{_SUMMARY_CLAIM_PREFIX}{summary_text}"
+    covered_through, hot_tail_start = boundaries_from_exclusive_upper(batch_turn_index)
+    claim = f"{SUMMARY_CLAIM_PREFIX}{summary_text}"
     return await cx_async(
         "assert",
         {
@@ -266,9 +300,13 @@ async def write_summary_assertion(
             "evidence": (
                 f"Summarized {len(collapse_set)} turns up to index {batch_turn_index}"
             ),
-            "derivation_type": "compression",
+            "derivation_type": "thread_compression",
             "evidence_uris": evidence_uris,
             "predicate_form": f"thread_summary({batch_turn_index})",
+            "reasoning_summary": thread_compression_reasoning_summary(
+                covered_through_turn_index=covered_through,
+                hot_tail_start_turn_index=hot_tail_start,
+            ),
             "seeded_by": seeded_by,
         },
     )

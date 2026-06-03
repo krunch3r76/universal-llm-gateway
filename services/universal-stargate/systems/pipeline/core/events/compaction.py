@@ -7,6 +7,8 @@ Signals:
 - ``pipeline.compaction.archived`` — turn artifact + assertion landed
 - ``pipeline.compaction.assembled`` — referential window built for this request
 - ``pipeline.compaction.summarized`` — chat summarization collapsed older turns
+- ``pipeline.compaction.artifact_load_skipped`` — artifact URI load skipped (sampled)
+- ``pipeline.compaction.supersede.failed`` — partial supersede after summary write
 """
 
 from __future__ import annotations
@@ -87,6 +89,65 @@ def PipelineCompactionSummarized(  # noqa: N802
             "anchor_id": anchor_id,
             "turns_summarized": turns_summarized,
             "summary_assertion_id": summary_assertion_id,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineCompactionArtifactLoadSkipped(  # noqa: N802
+    execution_id: str,
+    chat_id: str,
+    anchor_id: str,
+    attempted: int,
+    loaded: int,
+    skipped: int,
+    skip_reasons: dict[str, int] | None = None,
+    sample_uri: str | None = None,
+) -> Event:
+    """Emitted when one or more collapse-set artifact URIs fail to load."""
+    payload: dict[str, object] = {
+        "execution_id": execution_id,
+        "chat_id": chat_id,
+        "anchor_id": anchor_id,
+        "attempted": attempted,
+        "loaded": loaded,
+        "skipped": skipped,
+    }
+    if skip_reasons:
+        payload["skip_reasons"] = skip_reasons
+    if sample_uri:
+        payload["sample_uri"] = sample_uri
+    return Event(
+        signal="pipeline.compaction.artifact_load_skipped",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def PipelineCompactionSupersedeFailed(  # noqa: N802
+    execution_id: str,
+    chat_id: str,
+    anchor_id: str,
+    summary_assertion_id: int | str,
+    collapse_up_to: int,
+    superseded_count: int,
+    collapse_set_size: int,
+    error: str,
+) -> Event:
+    """Emitted when supersede_collapsed fails after the summary assertion exists."""
+    return Event(
+        signal="pipeline.compaction.supersede.failed",
+        payload={
+            "execution_id": execution_id,
+            "chat_id": chat_id,
+            "anchor_id": anchor_id,
+            "summary_assertion_id": summary_assertion_id,
+            "collapse_up_to": collapse_up_to,
+            "superseded_count": superseded_count,
+            "collapse_set_size": collapse_set_size,
+            "error": error,
         },
         scope="node",
     )

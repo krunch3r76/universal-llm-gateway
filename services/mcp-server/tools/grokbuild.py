@@ -1,5 +1,11 @@
 """grokbuild MCP tool — thin relay to grokbuild-worker via Stargate (V2).
 
+**Harness status (2026-06):** grokbuild dispatch harness is *retired* for new
+multi-writer work (assertion 11588 / 11622). Prefer ``cursorbuild`` for
+close-to-code dispatches. This MCP surface remains registered as a vestigial
+relay to ``grokbuild-worker`` for existing worktree/dispatch maintenance — not
+for new arc workflows.
+
 Routes every MCP op to the worker's ``/api/v1/grokbuild/*`` REST surface.
 The MCP tool descriptor (caller-visible op vocabulary, parameter schemas) is
 unchanged from V1 — only the execution host moved to grokbuild-worker.
@@ -156,6 +162,10 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     draft: bool = False,
 ) -> dict[str, Any]:
     """Dispatch grokbuild op to the matching handler.
+
+    **RETIRED harness (11588):** do not use for new multi-writer work. Prefer
+    ``cursorbuild`` (code dispatch) or ``frontier_dispatch`` (Grok consult).
+    Overflow relay only — worker maintenance ops (worktree_*, build_status, etc.).
 
     V1 op set: ``build`` (renamed from ``dispatch``), ``models``,
     ``worktree_create``, ``worktree_remove``, ``worktree_list``,
@@ -329,10 +339,11 @@ def _http_error_to_mcp(resp: httpx.Response) -> dict[str, Any]:
 
 
 def register_grokbuild_tools(mcp: FastMCP) -> None:
-    """Mount grokbuild on the MCP catalog (decoration-at-register-time).
+    """Mount grokbuild on the MCP catalog (vestigial relay — harness retired 11588).
 
-    Tool title is "Grok Build" (not "Grok Build Dispatch") — the V1 op set
-    covers many flows (build, worktrees, fetch_result, push, pr_create);
-    "Dispatch" was vestigial from when there was only the dispatch op.
+    Demoted off Claude/Cursor primary manifest (``mcp_claude`` removed from
+    canonical.yaml). Still registered for overflow ``dispatch(tool="grokbuild")``
+    and grok flat manifest (``mcp_grok``). See ``INTENTIONAL_OVERFLOW`` in
+    ``_coherence_allowlist.py``. Prefer cursorbuild / frontier_dispatch for new work.
     """
     mcp.tool(title="Grok Build")(grokbuild)

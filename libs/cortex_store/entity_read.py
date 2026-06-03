@@ -14,6 +14,10 @@ from fastapi import HTTPException, status
 from universal_logging import get_logger
 
 from .action_hints import detect_expired_unresolved
+from .assertion_deserialize_telemetry import (
+    assertion_deserialize_skip_reason,
+    emit_assertion_deserialize_skipped,
+)
 from .compaction import apply_compaction_filter
 from .db import decode_row, query
 from .models import (
@@ -95,12 +99,17 @@ def get_entity_impl(
     for row in assertion_rows:
         try:
             assertions.append(AssertionItem(**decode_row(row, ASSERTION_JSON_FIELDS)))
-        except Exception:
+        except Exception as exc:
             logger.error(
                 "Skipping assertion %s for entity %s — deserialization failed",
                 row.get("id"),
                 entity_id,
                 exc_info=True,
+            )
+            emit_assertion_deserialize_skipped(
+                entity_id=entity_id,
+                assertion_id=row.get("id"),
+                reason=assertion_deserialize_skip_reason(exc),
             )
 
     # §6.10 compaction-aware projection (Tier 0 — deterministic, no model)

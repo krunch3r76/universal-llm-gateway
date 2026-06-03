@@ -35,6 +35,7 @@ SEVERITY = {
     # Auditor-validatability gaps — warning severity (advisory, never critical)
     "confirmed_entity_no_assertions": "warning",
     "confirmed_attribute_no_assertion": "warning",
+    "attributes_json_parse_failed": "warning",
     "case_marker_absent": "info",
     # Skill-manifest structural drift (migrations 041 + 045). project /
     # plan / plan_phase / todo entities whose required_skills attribute and

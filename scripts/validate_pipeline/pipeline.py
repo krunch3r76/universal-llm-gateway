@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
+from ._paths import ensure_import_paths
 from .prompts import validate_prompt_ref
 
 
@@ -29,10 +29,7 @@ def validate_file(
     try:
         import yaml
 
-        # Add stargate to path for imports
-        stargate_path = Path("services/universal-stargate")
-        if stargate_path not in [Path(p) for p in sys.path]:
-            sys.path.insert(0, str(stargate_path))
+        ensure_import_paths()
 
         from systems.pipeline.core.schemas import PipelineSpec
         from systems.pipeline.core.validation import PipelineValidator

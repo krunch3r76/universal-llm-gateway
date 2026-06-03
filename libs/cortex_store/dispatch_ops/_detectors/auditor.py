@@ -123,7 +123,16 @@ def detect_confirmed_attribute_no_assertion(
             continue
         try:
             attrs = json.loads(attrs_raw) if isinstance(attrs_raw, str) else attrs_raw
-        except Exception:
+        except Exception as exc:
+            findings.append(
+                _finding(
+                    "attributes_json_parse_failed",
+                    r["id"],
+                    f"Entity {r['id']} ({r['type']}) attributes JSON could not be parsed "
+                    f"for confirmed-attribute scan — detector coverage skipped. "
+                    f"Reason: {type(exc).__name__}.",
+                )
+            )
             continue
         if not isinstance(attrs, dict) or not attrs:
             continue

@@ -1,7 +1,7 @@
 """Tests for /mcp Claude dispatcher route (Phase D).
 
 Four concerns:
-  1. tools/list returns 14 domain dispatcher tools matching derive_claude_manifest()
+  1. tools/list returns 13 domain dispatcher tools matching derive_claude_manifest()
   2. Primary tool count ≤ 24 (D3 P10 probe)
   3. Previously-absent domains (manage, pipeline, rag, observability) are
      accessible via dispatch (callpath wired, not just listed)
@@ -68,14 +68,15 @@ def test_claude_primary_tools_match_manifest(main_server_state: dict) -> None:
 
 
 def test_claude_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: Claude /mcp exposes exactly 14 dispatcher domains; cap ≤ 24 (D3/P10).
+    """D-T2: Claude /mcp exposes exactly 13 dispatcher domains; cap ≤ 24 (D3/P10).
 
     git_* (5) demoted off mcp_claude → overflow (thread 1179,
-    decision:cursorbuild-ide-interface): 18 → 13; cortex_boot promoted → 14.
+    decision:cursorbuild-ide-interface): 18 → 13; cortex_boot promoted → 14;
+    grokbuild demoted off mcp_claude → 13 (11588, 2026-06-02).
     """
     manifest = main_server_state["manifest"]
-    assert len(manifest) == 14, (
-        f"Expected 14 Claude dispatcher domains, got {len(manifest)}: "
+    assert len(manifest) == 13, (
+        f"Expected 13 Claude dispatcher domains, got {len(manifest)}: "
         f"{sorted(e['domain'] for e in manifest)}"
     )
     assert len(manifest) <= 24, f"D3 cap violated: {len(manifest)} > 24"

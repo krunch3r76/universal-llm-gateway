@@ -27,6 +27,7 @@ domains:
 - fs
 - pipeline
 - rag
+# grokbuild: domain retained for mcp_grok flat manifest + overflow relay (harness retired 11588)
 - grokbuild
 - git_integrate
 - git_land
@@ -1627,8 +1628,9 @@ tools:
   cache_priority: on_demand
   introduced: 2026-05-22
 
-  # ─── domain: grokbuild ───────────────────────────────────────────────────────
-  # Current: accessed via dispatch(tool="grokbuild", arguments='...')
+  # ─── domain: grokbuild (RETIRED harness — overflow relay only) ───────────────
+  # Off mcp_claude (11588). Worker maintenance: dispatch(tool="grokbuild", ...).
+  # New work: cursorbuild (code) / frontier_dispatch (Grok consult).
 
 - canonical_name: grokbuild_build
   domain: grokbuild
@@ -1659,7 +1661,8 @@ tools:
       timeout_s: {type: integer}
     required: [source_repo, name]
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1685,7 +1688,8 @@ tools:
       dispatch_id: {type: string}
     required: [dispatch_id]
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1712,7 +1716,8 @@ tools:
       dispatch_id: {type: string}
     required: [dispatch_id]
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1740,7 +1745,8 @@ tools:
       branch: {type: string}
     required: [source_repo, name]
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1766,7 +1772,8 @@ tools:
       name: {type: string}
     required: [name]
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: destructive
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1789,7 +1796,8 @@ tools:
     type: object
     properties: {}
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1819,7 +1827,8 @@ tools:
       reset_main: {type: boolean, default: false}
     required: [source_repo, slug]
   skill_uri: agent_skill:grokbuild
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
+  seat_visibility: [mcp, mcp_grok]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29

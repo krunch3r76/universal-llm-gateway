@@ -15,10 +15,11 @@ from .events import cx_async
 _USER_TURN_PREFIX = "user_turn("
 _ASSISTANT_TURN_PREFIX = "assistant_turn("
 
-# §6.10 consolidation summary — mirrors constants in compaction_summarize.py.
-# Both sides detect the same claim/predicate shape; keep values in sync.
-_SUMMARY_CLAIM_PREFIX = "archive summary: "
-_SUMMARY_PRED_PREFIX = "thread_summary("
+# §6.10 consolidation summary — shared with compaction_summarize.py.
+SUMMARY_CLAIM_PREFIX = "archive summary: "
+THREAD_SUMMARY_PREFIX = "thread_summary("
+_SUMMARY_CLAIM_PREFIX = SUMMARY_CLAIM_PREFIX
+_SUMMARY_PRED_PREFIX = THREAD_SUMMARY_PREFIX
 
 
 def is_turn_assertion(assertion: dict[str, Any]) -> bool:
@@ -80,12 +81,10 @@ def turns_from_assertions(
     return turns
 
 
-def _is_consolidation_summary(assertion: dict[str, Any]) -> bool:
+def is_thread_summary_assertion(assertion: dict[str, Any]) -> bool:
     """True when *assertion* is a non-superseded §6.10 consolidation summary.
 
-    Mirrors ``is_thread_summary_assertion`` in ``compaction_summarize.py``
-    but adds a claim-prefix check to filter out malformed predicates.
-    ∀ a: _is_consolidation_summary(a) ⟹ claim.startswith("archive summary: ")
+    ∀ a: is_thread_summary_assertion(a) ⟹ claim.startswith("archive summary: ")
     """
     if assertion.get("superseded_by"):
         return False
@@ -96,7 +95,7 @@ def _is_consolidation_summary(assertion: dict[str, Any]) -> bool:
     return claim.startswith(_SUMMARY_CLAIM_PREFIX)
 
 
-def _parse_summary_boundary(predicate_form: str) -> int | None:
+def parse_thread_summary_index(predicate_form: str) -> int | None:
     """Extract N from ``thread_summary(N)``."""
     if not predicate_form.startswith(_SUMMARY_PRED_PREFIX):
         return None
@@ -119,9 +118,9 @@ def extract_latest_summary(
     best: dict[str, Any] | None = None
     best_n = -1
     for ass in assertions:
-        if not _is_consolidation_summary(ass):
+        if not is_thread_summary_assertion(ass):
             continue
-        n = _parse_summary_boundary(ass.get("predicate_form") or "")
+        n = parse_thread_summary_index(ass.get("predicate_form") or "")
         if n is not None and n > best_n:
             best_n = n
             best = ass

@@ -33,11 +33,12 @@ applicable_targets = ["cursor", "grok-direct", "cortex-projection"]
 applicable_agents = ["*"]
 
 description = """
-Primary universal vortex MCP server. 22 deployed tools: cortex, cortex_boot, \
+Primary universal vortex MCP server. Primary Claude/Cursor catalog: cortex, cortex_boot, \
 boot_inspect, fs, agent_bus, observability, rag, pipeline, dispatch, \
-frontier_dispatch, team_dispatch, grokbuild, manage, sql, retrieve, \
+frontier_dispatch, team_dispatch, manage, sql, retrieve, \
 quality_gate, web_fetch, web_search, email, model_status, bot_supervisor, \
-claudeburst. Full vortex surface available to both Cursor and grok-direct \
+claudeburst. grokbuild is RETIRED (11588) — overflow relay only via tool_search. \
+Full vortex surface available to both Cursor and grok-direct \
 (ULG trust model: secure environment, sole consumer, operator discipline).
 """
 

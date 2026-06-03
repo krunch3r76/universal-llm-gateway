@@ -325,6 +325,25 @@ async def test_rejects_chat_completions_only_model_suffix_variant() -> None:
 
 
 @pytest.mark.asyncio
+async def test_thread_output_contract_fails_without_agent_bus_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENT_BUS_TOKEN", raising=False)
+    monkeypatch.delenv("ALLOW_UNSET_AGENT_BUS_TOKEN", raising=False)
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        model="openai/gpt-5.4-mini",
+        output_contract="thread",
+        target_thread="42",
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        await build_dispatch_body(req)
+    assert exc.value.status_code == 503
+    assert "AGENT_BUS_TOKEN" in exc.value.reason
+
+
+@pytest.mark.asyncio
 async def test_team_dispatch_requires_dispatch_thread_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

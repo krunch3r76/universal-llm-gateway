@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from ._paths import ensure_import_paths
 from .categories import (
     validate_categories_prompt_alignment,
     validate_categories_yaml,
@@ -51,8 +52,10 @@ Exit codes:
 
 def main() -> None:
     """Main entry point."""
+    project_root = ensure_import_paths()
+
     # Ensure running from project root
-    if not Path("services").exists():
+    if not (project_root / "services").is_dir():
         print("Error: Must run from project root", file=sys.stderr)
         sys.exit(2)
 

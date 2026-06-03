@@ -49,7 +49,7 @@ MCP_TOOL_SEARCH = """\
 
 The advertised MCP catalog is intentionally lean — primary tools are
 `agent_bus`, `cortex`, `cortex_boot`, `dispatch`, `frontier_dispatch`, `fs`,
-`grokbuild`, `manage`, `observability`, `pipeline`, `rag`, `retrieve`,
+`manage`, `observability`, `pipeline`, `rag`, `retrieve`,
 `team_dispatch`, and `tool_search`. Everything else is reachable in two steps:
 
 ```
