@@ -13,6 +13,8 @@ from typing import Any, Literal
 from transport_utils import make_sync_client
 from universal_logging import get_logger
 
+from .session_close_enrichment_telemetry import emit_session_close_debrief_failed
+
 logger = get_logger(__name__)
 
 DEBRIEF_THREAD = "480"
@@ -85,7 +87,7 @@ def compose_debrief_body(
     return "\n".join(lines)
 
 
-def _fetch_recent_turns() -> list[dict[str, Any]]:
+def _fetch_recent_turns(*, session_id: str, agent: str) -> list[dict[str, Any]]:
     params = {
         "thread": DEBRIEF_THREAD,
         "last": DEDUPE_SCAN_LAST,
@@ -97,15 +99,22 @@ def _fetch_recent_turns() -> list[dict[str, Any]]:
             logger.warning(
                 "session_close debrief dedupe scan failed: HTTP %s", resp.status_code
             )
+            emit_session_close_debrief_failed(
+                session_id=session_id,
+                agent=agent,
+                stage="dedupe_scan",
+                detail="GET /turns failed",
+                status_code=resp.status_code,
+            )
             return []
         data = resp.json()
         turns = data.get("turns", [])
         return turns if isinstance(turns, list) else []
 
 
-def _find_existing_debrief(session_id: str) -> int | None:
+def _find_existing_debrief(session_id: str, *, agent: str) -> int | None:
     token = session_debrief_token(session_id)
-    for turn in _fetch_recent_turns():
+    for turn in _fetch_recent_turns(session_id=session_id, agent=agent):
         body = turn.get("body") or ""
         if token in body:
             turn_number = turn.get("turn_number")
@@ -114,7 +123,9 @@ def _find_existing_debrief(session_id: str) -> int | None:
     return None
 
 
-def _post_debrief(*, from_agent: str, subject: str, body: str) -> int | None:
+def _post_debrief(
+    *, from_agent: str, subject: str, body: str, session_id: str
+) -> int | None:
     payload = {
         "thread": DEBRIEF_THREAD,
         "from": from_agent,
@@ -129,6 +140,13 @@ def _post_debrief(*, from_agent: str, subject: str, body: str) -> int | None:
                 "session_close debrief post failed: HTTP %s %s",
                 resp.status_code,
                 resp.text[:300],
+            )
+            emit_session_close_debrief_failed(
+                session_id=session_id,
+                agent=from_agent,
+                stage="post",
+                detail=resp.text[:300],
+                status_code=resp.status_code,
             )
             return None
         data = resp.json()
@@ -166,13 +184,24 @@ def attempt_session_close_debrief(
     )
 
     try:
-        existing = _find_existing_debrief(session_id)
+        existing = _find_existing_debrief(session_id, agent=agent)
         if existing is not None:
             return DebriefOutcome(existing, "skipped_existing")
 
         subject = f"Session close: {session_id}"
-        turn_number = _post_debrief(from_agent=agent, subject=subject, body=body)
+        turn_number = _post_debrief(
+            from_agent=agent,
+            subject=subject,
+            body=body,
+            session_id=session_id,
+        )
         if turn_number is None:
+            emit_session_close_debrief_failed(
+                session_id=session_id,
+                agent=agent,
+                stage="post",
+                detail="turn_number missing in agent-bus response",
+            )
             return DebriefOutcome(None, "failed", body)
         logger.info(
             "session_close debrief posted: session=%s thread=%s turn=%d",
@@ -181,11 +210,17 @@ def attempt_session_close_debrief(
             turn_number,
         )
         return DebriefOutcome(turn_number, "posted")
-    except Exception:
+    except Exception as exc:
         logger.warning(
             "session_close debrief failed for %s",
             session_id,
             exc_info=True,
+        )
+        emit_session_close_debrief_failed(
+            session_id=session_id,
+            agent=agent,
+            stage="unhandled",
+            detail=type(exc).__name__,
         )
         return DebriefOutcome(None, "failed", body)
 

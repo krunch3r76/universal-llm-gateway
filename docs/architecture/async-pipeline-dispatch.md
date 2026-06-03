@@ -276,7 +276,7 @@ return; the tracker record is not mutated. Callers that require guaranteed
 delivery must poll as a fallback or re-drive via MCP.
 
 Authentication uses `Authorization: Bearer $AGENT_BUS_TOKEN`. The
-`from`/`to` fields are constrained to the `AgentName` enum (9 fixed values)
+`from`/`to` fields use the `AgentName` type (`str` — includes dynamic `frontier:*` slugs)
 on the agent-bus side, capping impersonation surface to registered
 identities.
 
@@ -308,7 +308,7 @@ Pipeline caller shape:
   "pipeline_id": "frontier-dispatch",
   "pipeline_options": {
     "model": "openai/gpt-5.4",
-    "agent": "gatherer",
+    "role": "gatherer",
     "max_tool_turns": 10,
     "generation_parameters": {"reasoning_effort": "high"}
   },
@@ -316,7 +316,7 @@ Pipeline caller shape:
 }
 ```
 
-`pipeline_options.model` is required; `agent` is optional; everything else has
+`pipeline_options.model` is required; `role` is optional; everything else has
 sensible defaults.
 
 MCP callers typically reach this via `team_dispatch` for role consults or
@@ -338,25 +338,35 @@ team_dispatch(
 
 | Mode | Trigger | Behavior |
 |---|---|---|
-| Team-seat | `pipeline_options.agent ∈ {gatherer, skeptic, synthesizer, reviewer}` | Cortex hydration + birth prompt + curated team toolset (`cortex`, `rag`, `agent_bus`) injected for the call when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
-| Persona-free | `pipeline_options.agent` omitted | Raw native call. No hydration event. Optional read toolset (`cortex`, `rag`) via `pipeline_options.mcp` (default `true`). |
+| Team-seat | `pipeline_options.role ∈ {gatherer, skeptic, synthesizer, reviewer, lead, artisan, investigator}` | Cortex hydration + curated team toolset (`cortex`, `rag`, `agent_bus`) injected when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
+| Role-free | `pipeline_options.role` omitted | Raw native call. No hydration event. Optional read toolset (`cortex`, `rag`) via `pipeline_options.mcp` (default `true`). |
 
 Provider selection is derived from the model id prefix: `openai/*` → OpenAI
 Responses, `xai/*` → xAI Responses, `anthropic/*` → Anthropic Messages,
 `google/*` → Google generateContent. Reasoning is configured via
 `pipeline_options.generation_parameters` (e.g. `reasoning_effort: high` for
-OpenAI / Google compat, `thinking: {type: enabled, budget_tokens: N}` for
-Anthropic); xAI Grok reasoning is model-baked.
+OpenAI / Google compat). For Anthropic, `translate_reasoning_effort` in
+`frontier_dispatch_request.py` maps `reasoning_effort` to provider-native
+`thinking`:
+
+- **Adaptive-capable models** (Mythos Preview, Opus 4.8/4.7/4.6, Sonnet 4.6):
+  `thinking: {type: adaptive}` — effort is surfaced separately via
+  `output_config.effort`. Manual `{type: enabled, budget_tokens: N}` is
+  deprecated on 4.6+ and rejected on Opus 4.7+.
+- **Budget-mode (legacy) Anthropic models**: `thinking: {type: enabled, budget_tokens: N}`
+  with N from the low/medium/high budget map.
+
+xAI Grok reasoning is model-baked.
 
 ### Frontier Dispatch Handler (`frontier_dispatch_v1`)
 
 The step handler lives at
 `systems/pipeline/core/handlers/frontier_dispatch.py`. Per dispatch:
 
-1. **Resolve** — extract `model`, optional `agent`, `max_tool_turns`, and
+1. **Resolve** — extract `model`, optional `role`, `max_tool_turns`, and
    generation parameters from `pipeline_options` (step-level fields act as
    fallbacks).
-2. **Hydrate (team-seat only)** — async-fetch the dispatched agent's
+2. **Hydrate (team-seat only)** — async-fetch the dispatched role's
    Cortex boot via `libs/agent_seat/hydration.py`; assemble the system
    prompt (birth prompt + subagent preamble + hydration briefing card)
    via `libs/agent_seat/prompts.py`. Emits
@@ -387,7 +397,7 @@ Event signals emitted per dispatch (all `scope: node`):
 - `pipeline.frontier.dispatch.exhausted` — `max_tool_turns` hit without terminus
 
 All five carry `provider`; the four non-hydrated signals carry
-`agent: str | None` so persona-free dispatches remain attributable.
+`role: str | None` so role-free dispatches remain attributable.
 
 ### YAML layout
 
@@ -399,7 +409,7 @@ pipelines.local/
 
 Pipelines are auto-discovered at Stargate startup. `prompts.yaml` is not
 needed: the handler builds its system prompt from the caller-supplied
-`agent` field directly.
+`role` field directly.
 
 ### Shared library surface
 

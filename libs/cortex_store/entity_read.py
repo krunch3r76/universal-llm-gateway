@@ -31,6 +31,10 @@ from .models import (
 from .relationship_sql import FROM_CLAUSE, SELECT_COLUMNS
 from .routes.assertions import _ASSERTION_COLS
 from .routes.edges import _EDGE_COLS
+from .session_close_enrichment_telemetry import (
+    emit_entity_get_access_log_failed,
+    emit_entity_get_archives_to_lookup_failed,
+)
 from .status_trait_read import apply_option_c_read_projection
 
 logger = get_logger("cortex-api.entity_read")
@@ -95,6 +99,7 @@ def get_entity_impl(
             conn.commit()
         except Exception:
             logger.warning("Access log insert failed for %s", entity_id)
+            emit_entity_get_access_log_failed(entity_id=entity_id, agent=agent)
 
     assertions: list[AssertionItem] = []
     for row in assertion_rows:
@@ -127,6 +132,7 @@ def get_entity_impl(
         archives_to_children = [r["to_entity"] for r in arc_rows]
     except Exception:
         logger.warning("archives_to lookup failed for %s", entity_id)
+        emit_entity_get_archives_to_lookup_failed(entity_id=entity_id)
     projected_dicts, proj_meta = apply_compaction_filter(
         raw_dicts,
         include_compaction_pointers=include_compaction_pointers,

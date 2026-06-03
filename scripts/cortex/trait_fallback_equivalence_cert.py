@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""Trait-completeness certificate — post-052 / 1172-E rewrite.
+"""Trait-completeness certificate for post-052 cortex DBs.
 
-**1172-E REWRITE** — replaces the pre-052 COALESCE-equivalence cert.  Migration
-052 dropped ``entities.status``; the old cert's ``SELECT … status …`` and
-``require_entities_status_column()`` guard are removed.  This script certifies
-the post-052 state: trait columns present, ``status`` absent, and trait coverage
-internally consistent.
+Certifies trait columns are present, ``entities.status`` is absent (migration 052),
+and trait-column null counts are internally consistent. Runs on ``:memory:`` fixtures
+or ``~/.cortex/cortex.db`` (read-only).
 
 Runs on a ``:memory:`` fixture or on ``~/.cortex/cortex.db`` (read-only, no
 writes).  Exits 0 on PASS, 1 on FAIL.

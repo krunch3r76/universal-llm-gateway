@@ -402,7 +402,8 @@ async def test_team_dispatch_collapses_to_latest_user_turn(
         ("xai/grok-4.20-multi-agent-0309", False),
         ("anthropic/claude-opus-4-8", True),
         ("openai/gpt-5.5", True),
-        ("google/gemini-3.5-flash", True),
+        ("google/gemini-3.5-flash", False),
+        ("google/gemini-2.5-pro", False),
     ],
 )
 def test_mcp_enabled_for_team_dispatch_only_flattens_multi_agent_xai(
@@ -411,3 +412,37 @@ def test_mcp_enabled_for_team_dispatch_only_flattens_multi_agent_xai(
     from .admission import mcp_enabled_for_team_dispatch
 
     assert mcp_enabled_for_team_dispatch(model) is expected
+
+
+@pytest.mark.asyncio
+async def test_explicit_gemini_reviewer_admitted_with_mcp_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Guard 1: inline-only effective model is admitted; MCP suppressed at admission."""
+
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+                allowed_options=None,
+                capability_tier="inline-only",
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "x"}],
+        role="reviewer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        model="google/gemini-2.5-pro",
+    )
+    body = await build_dispatch_body(req)
+    assert body["pipeline_options"]["model"] == "google/gemini-2.5-pro"
+    assert body["pipeline_options"]["mcp"] is False

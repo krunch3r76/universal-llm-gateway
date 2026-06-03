@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 from agent_seat import AgentMeta
+from agent_seat.profiles import inline_only_for_model
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
@@ -36,17 +37,18 @@ def is_chat_completions_only(model: str) -> bool:
 
 
 def mcp_enabled_for_team_dispatch(model: str) -> bool:
-    """Derive team_dispatch MCP tooling from the effective model.
+    """Derive team_dispatch MCP tooling from the effective model at admission.
 
-    Only xAI *multi-agent* models reject client-side function tools (server-side
-    built-ins are injected via provider_options instead). Every other model —
-    including non-multi-agent grok (grok-4.3, grok-4.20-0309-reasoning) —
-    supports the in-process MCP tool loop. The legacy blanket ``provider !=
-    "xai"`` flatten over-suppressed non-multi-agent grok; it is removed. The
-    downstream tool-decision branch keeps an equivalent multi-agent guard as
-    defense in depth, and inline-only capability tiers are suppressed separately
-    via ``capability_tier``.
+    Guard 1 (thread 1206 turn 7): capability binds to the **effective model**.
+    Inline-only families (e.g. gemini on any role) are admitted but get
+    ``mcp=False`` here; hydration also sets ``inline_only`` and the pipeline
+    suppresses the client-side tool loop — ¬ strict admission reject.
+
+    Only xAI *multi-agent* models additionally reject client-side function tools
+    (server-side built-ins are injected via provider_options instead).
     """
+    if inline_only_for_model(model):
+        return False
     mid = ModelId.parse(model)
     return not (mid.provider == "xai" and "multi-agent" in mid.base_id)
 
@@ -136,6 +138,9 @@ def enforce_model(
     explicit_model: bool,
     event_publisher: EventPublisher | None,
 ) -> None:
+    # Guard 1: explicit model= may fill any role (TEAM_CONSULTATION). Disallowed
+    # capability (gemini inline-only on reviewer, etc.) is enforced via
+    # mcp_enabled_for_team_dispatch + hydration inline_only — not here.
     if explicit_model:
         return
     if not meta.allowed_models:

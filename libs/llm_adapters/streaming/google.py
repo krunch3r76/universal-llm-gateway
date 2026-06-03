@@ -62,6 +62,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sse.protocols import SSEMessage, SSEProviderError
+from universal_logging import WARNING, get_logger
+
+from llm_adapters.google_replay import normalize_gemini_parts
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -106,6 +111,12 @@ class GoogleStreamReducer:
         """
         payload = _parse_payload(event)
         if not payload:
+            if event.data:
+                logger.log(
+                    WARNING,
+                    "google stream reducer: dropped unparseable SSE frame (%d bytes)",
+                    len(str(event.data)),
+                )
             return False
 
         candidates = payload.get("candidates")
@@ -137,7 +148,7 @@ class GoogleStreamReducer:
         _ = state
         try:
             payload = _parse_payload(event)
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             payload = {"raw": event.data}
         raise SSEProviderError(f"Google stream error: {payload}")
 
@@ -157,7 +168,7 @@ class GoogleStreamReducer:
 
         candidate: dict[str, Any] = {
             "content": {
-                "parts": _normalize_terminal_parts(state.parts),
+                "parts": normalize_gemini_parts(state.parts),
                 "role": state.role,
             },
             "index": 0,
@@ -240,16 +251,6 @@ class GoogleStreamReducer:
                     state.parts.append(dict(part))
             else:
                 state.parts.append(dict(part))
-
-
-def _normalize_terminal_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop empty text-only parts from the synthesized terminal candidate."""
-    normalized: list[dict[str, Any]] = []
-    for part in parts:
-        if set(part.keys()) == {"text"} and not str(part.get("text", "")):
-            continue
-        normalized.append(part)
-    return normalized
 
 
 def _parse_payload(event: SSEMessage) -> dict[str, Any]:

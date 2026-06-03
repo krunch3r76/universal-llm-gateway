@@ -9,23 +9,11 @@ from __future__ import annotations
 
 import sqlite3
 
-# Confidence-axis values (``confidence_band`` trait).
-_CONFIDENCE_BAND_VALUES = frozenset({"unsubstantiated", "provisional", "confirmed"})
-
-# Lifecycle-axis values (trait ``lifecycle``).
-_LIFECYCLE_VALUES = frozenset(
-    {
-        "active",
-        "superseded",
-        "merged",
-        "deprecated",
-        "reaped",
-        "invalidated",
-        "dismissed",
-    }
+from .trait_vocabulary import (
+    ADOPTION_VALUES,
+    CONFIDENCE_BAND_VALUES,
+    LIFECYCLE_VALUES,
 )
-
-_ADOPTION_VALUES = frozenset({"proposed", "adopted", "superseded"})
 
 _LIFECYCLE_LEGACY_STATUS = frozenset({"merged", "deprecated", "reaped"})
 
@@ -113,11 +101,11 @@ def project_status_field_value(row: dict[str, object]) -> str | None:
 
 
 def lifecycle_axis_status_value(value: str) -> bool:
-    return value in _LIFECYCLE_LEGACY_STATUS or value in _LIFECYCLE_VALUES
+    return value in _LIFECYCLE_LEGACY_STATUS or value in LIFECYCLE_VALUES
 
 
 def confidence_axis_status_value(value: str) -> bool:
-    return value in _CONFIDENCE_BAND_VALUES
+    return value in CONFIDENCE_BAND_VALUES
 
 
 def prior_status_corrupt(
@@ -135,6 +123,6 @@ def prior_confidence_corrupt(
     if prior_status_corrupt(prior, valid_status):
         return True
     band = prior.get("confidence_band")
-    if band is not None and str(band) not in _CONFIDENCE_BAND_VALUES:
+    if band is not None and str(band) not in CONFIDENCE_BAND_VALUES:
         return True
     return False

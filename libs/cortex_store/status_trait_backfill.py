@@ -7,15 +7,10 @@ Predicate-equivalence: all entity types; fills NULL traits wherever COALESCE
 fallback predicates in ``confidence_field.py`` would match but trait-only would
 miss (lifecycle, adoption_in, confidence_band). Idempotent.
 
-Conventions mirror ``status_trait_read``, ``status_trait_write``, and
-``entity_crud`` axis splits.
-
-**POST-052 (1172-E):** Migration 052 dropped ``entities.status``.  The
-:func:`_run_trait_backfill` family still calls :func:`require_entities_status_column`
-and will exit 2 on a post-DROP DB (P0 fence, preserved).  The legacy
-``SELECT … status …`` query has been retired from the scan loop — use
-:func:`run_trait_completeness_scan` for a read-only trait coverage report on a
-post-DROP DB.
+Post-052 scoped backfills (NULL trait columns only) live in
+``status_trait_backfill_scoped``. Legacy ``_run_trait_backfill`` retains a P0 fence
+via :func:`require_entities_status_column` (exits 2 when ``entities.status`` is
+absent). Use :func:`run_trait_completeness_scan` for read-only coverage on live DBs.
 """
 
 from __future__ import annotations
@@ -23,12 +18,18 @@ from __future__ import annotations
 import datetime
 import sqlite3
 import sys
-from dataclasses import dataclass, field
-
 from universal_logging import get_logger
 
 from .db import table_exists
 from .status_trait_read import entity_has_trait_columns
+from .trait_vocabulary import (
+    ADOPTION_VALUES,
+    CONFIDENCE_BAND_VALUES,
+    LIFECYCLE_VALUES,
+    TraitBackfillCounts,
+    TraitCompletenessCounts,
+    default_confidence_band_for_type,
+)
 
 logger = get_logger("cortex-api.status_trait_backfill")
 
@@ -50,37 +51,12 @@ HOT_TYPES_REQUIRED: frozenset[str] = frozenset({"todo", "decision", "agent_skill
 HOT_TYPES_OPTIONAL: frozenset[str] = frozenset({"project", "plan", "plan_phase"})
 HOT_TYPES_DEFAULT: frozenset[str] = HOT_TYPES_REQUIRED | HOT_TYPES_OPTIONAL
 
-_CONFIDENCE_BAND_VALUES = frozenset({"unsubstantiated", "provisional", "confirmed"})
-_LIFECYCLE_VALUES = frozenset(
-    {
-        "active",
-        "superseded",
-        "merged",
-        "deprecated",
-        "reaped",
-        "invalidated",
-        "dismissed",
-    }
-)
-_ADOPTION_VALUES = frozenset({"proposed", "adopted", "superseded"})
-
 # Legacy decision status → adoption trait (workflow_coherence / Option C tests).
 _DECISION_STATUS_TO_ADOPTION: dict[str, str] = {
     "provisional": "proposed",
     "confirmed": "adopted",
     "superseded": "superseded",
 }
-
-
-@dataclass
-class TraitBackfillCounts:
-    """Per-trait write counts for a backfill run."""
-
-    confidence_band: int = 0
-    lifecycle: int = 0
-    adoption: int = 0
-    entities_touched: int = 0
-    by_type: dict[str, int] = field(default_factory=dict)
 
 
 def planned_trait_updates(
@@ -97,16 +73,16 @@ def planned_trait_updates(
     s = str(status)
     updates: dict[str, str] = {}
 
-    if confidence_band is None and s in _CONFIDENCE_BAND_VALUES:
+    if confidence_band is None and s in CONFIDENCE_BAND_VALUES:
         updates["confidence_band"] = s
 
-    if lifecycle is None and s in _LIFECYCLE_VALUES:
+    if lifecycle is None and s in LIFECYCLE_VALUES:
         updates["lifecycle"] = s
 
     if entity_type == "decision" and adoption is None:
         if s in _DECISION_STATUS_TO_ADOPTION:
             updates["adoption"] = _DECISION_STATUS_TO_ADOPTION[s]
-        elif s in _ADOPTION_VALUES:
+        elif s in ADOPTION_VALUES:
             updates["adoption"] = s
 
     return updates
@@ -141,7 +117,7 @@ def planned_predicate_equivalence_updates(
         entity_type == "decision"
         and adoption is None
         and "adoption" not in updates
-        and s in _LIFECYCLE_VALUES
+        and s in LIFECYCLE_VALUES
     ):
         updates["adoption"] = "superseded"
 
@@ -264,17 +240,6 @@ def run_predicate_equivalence_trait_backfill(
     )
 
 
-@dataclass
-class TraitCompletenessCounts:
-    """Null counts per trait column for a post-052 completeness scan."""
-
-    total: int = 0
-    null_confidence_band: int = 0
-    null_lifecycle: int = 0
-    null_adoption_decisions: int = 0
-    by_type: dict[str, int] = field(default_factory=dict)
-
-
 def run_trait_completeness_scan(
     conn: sqlite3.Connection,
     *,
@@ -326,229 +291,15 @@ def run_trait_completeness_scan(
     return counts
 
 
-_ENTITY_HAS_LIVE_COMMITTED_ASSERTION = """
-    EXISTS (
-        SELECT 1 FROM assertions a
-        WHERE a.entity_id = entities.id
-          AND a.superseded_by IS NULL
-          AND (a.review_status IS NULL OR a.review_status != 'staged')
-    )
-"""
-
-_SCOPED_LIFECYCLE_ACTIVE_SQL = """
-    SELECT id, type FROM entities
-    WHERE lifecycle IS NULL
-      AND id NOT IN (
-          SELECT DISTINCT entity_id FROM assertions
-          WHERE superseded_by IS NULL
-            AND review_status = 'staged'
-            AND entity_id IS NOT NULL
-      )
-"""
-
-_SCOPED_CONFIDENCE_BAND_SQL = """
-    SELECT id, type FROM entities
-    WHERE confidence_band IS NULL
-"""
-
-_SCOPED_GRADUATED_LIFECYCLE_SQL = f"""
-    SELECT id, type FROM entities
-    WHERE lifecycle IS NULL
-      AND {_ENTITY_HAS_LIVE_COMMITTED_ASSERTION.strip()}
-"""
-
-
-def _default_confidence_band_for_type(entity_type: str) -> str:
-    if entity_type == "transcript":
-        return "confirmed"
-    if entity_type == "decision":
-        return "provisional"
-    return "unsubstantiated"
-
-
-def count_graduated_null_lifecycle(conn: sqlite3.Connection) -> int:
-    """Entities with ≥1 live committed assertion and NULL ``lifecycle``."""
-    if not entity_has_trait_columns(conn):
-        return 0
-    if not table_exists(conn, "assertions"):
-        row = conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE lifecycle IS NULL"
-        ).fetchone()
-        return int(row[0]) if row else 0
-    row = conn.execute(
-        f"SELECT COUNT(*) FROM entities WHERE lifecycle IS NULL AND {_ENTITY_HAS_LIVE_COMMITTED_ASSERTION.strip()}"
-    ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def count_null_confidence_band(conn: sqlite3.Connection) -> int:
-    """Global NULL ``confidence_band`` count (post band backfill should be 0)."""
-    if not entity_has_trait_columns(conn):
-        return 0
-    row = conn.execute(
-        "SELECT COUNT(*) FROM entities WHERE confidence_band IS NULL"
-    ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def run_scoped_confidence_band_backfill(
-    conn: sqlite3.Connection,
-    *,
-    dry_run: bool = True,
-) -> TraitBackfillCounts:
-    """Post-052: set conservative ``confidence_band`` on NULL rows (1172 T43 batch)."""
-    if not entity_has_trait_columns(conn):
-        logger.warning(
-            "Trait columns absent — skipping scoped confidence_band backfill"
-        )
-        return TraitBackfillCounts()
-
-    rows = conn.execute(_SCOPED_CONFIDENCE_BAND_SQL).fetchall()
-    counts = TraitBackfillCounts()
-    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    for row in rows:
-        entity_type = str(row["type"])
-        band = _default_confidence_band_for_type(entity_type)
-        counts.entities_touched += 1
-        counts.by_type[entity_type] = counts.by_type.get(entity_type, 0) + 1
-        counts.confidence_band += 1
-        if dry_run:
-            logger.info(
-                "dry-run scoped confidence_band backfill id=%s type=%s -> %s",
-                row["id"],
-                entity_type,
-                band,
-            )
-            continue
-        conn.execute(
-            "UPDATE entities SET confidence_band = ?, updated_at = ? WHERE id = ?",
-            (band, now, row["id"]),
-        )
-
-    if not dry_run and counts.entities_touched:
-        conn.commit()
-        logger.info(
-            "Scoped confidence_band backfill committed: entities=%d band=%d",
-            counts.entities_touched,
-            counts.confidence_band,
-        )
-    return counts
-
-
-def count_scoped_graduated_lifecycle_candidates(conn: sqlite3.Connection) -> int:
-    """Count graduated entities with NULL ``lifecycle`` (1172 T45 batch)."""
-    if not entity_has_trait_columns(conn):
-        return 0
-    if not table_exists(conn, "assertions"):
-        return 0
-    row = conn.execute(
-        f"SELECT COUNT(*) FROM ({_SCOPED_GRADUATED_LIFECYCLE_SQL.strip()})"
-    ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def run_scoped_graduated_lifecycle_backfill(
-    conn: sqlite3.Connection,
-    *,
-    dry_run: bool = True,
-) -> TraitBackfillCounts:
-    """Post-052: ``lifecycle='active'`` on graduated NULL rows (1172 T45 / 364 batch)."""
-    if not entity_has_trait_columns(conn):
-        logger.warning(
-            "Trait columns absent — skipping scoped graduated lifecycle backfill"
-        )
-        return TraitBackfillCounts()
-
-    rows = conn.execute(_SCOPED_GRADUATED_LIFECYCLE_SQL).fetchall()
-    counts = TraitBackfillCounts()
-    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    for row in rows:
-        counts.entities_touched += 1
-        entity_type = str(row["type"])
-        counts.by_type[entity_type] = counts.by_type.get(entity_type, 0) + 1
-        counts.lifecycle += 1
-        if dry_run:
-            logger.info(
-                "dry-run scoped graduated lifecycle backfill id=%s type=%s -> active",
-                row["id"],
-                entity_type,
-            )
-            continue
-        conn.execute(
-            "UPDATE entities SET lifecycle = 'active', updated_at = ? WHERE id = ?",
-            (now, row["id"]),
-        )
-
-    if not dry_run and counts.entities_touched:
-        conn.commit()
-        logger.info(
-            "Scoped graduated lifecycle backfill committed: entities=%d lifecycle=%d",
-            counts.entities_touched,
-            counts.lifecycle,
-        )
-    return counts
-
-
-def count_scoped_lifecycle_active_candidates(conn: sqlite3.Connection) -> int:
-    """Count entities eligible for committed-style lifecycle='active' backfill."""
-    if not entity_has_trait_columns(conn):
-        return 0
-    if not table_exists(conn, "assertions"):
-        row = conn.execute(
-            "SELECT COUNT(*) FROM entities WHERE lifecycle IS NULL"
-        ).fetchone()
-        return int(row[0]) if row else 0
-    row = conn.execute(
-        f"SELECT COUNT(*) FROM ({_SCOPED_LIFECYCLE_ACTIVE_SQL.strip()})"
-    ).fetchone()
-    return int(row[0]) if row else 0
-
-
-def run_scoped_lifecycle_active_backfill(
-    conn: sqlite3.Connection,
-    *,
-    dry_run: bool = True,
-) -> TraitBackfillCounts:
-    """Post-052: set ``lifecycle='active'`` on NULL rows without staged assertions.
-
-    Matches 1172 T40 bucket: null lifecycle + no assertion with
-    ``review_status='staged'``. Idempotent; does not touch ``confidence_band``.
-    """
-    if not entity_has_trait_columns(conn):
-        logger.warning("Trait columns absent — skipping scoped lifecycle backfill")
-        return TraitBackfillCounts()
-
-    rows = conn.execute(_SCOPED_LIFECYCLE_ACTIVE_SQL).fetchall()
-    counts = TraitBackfillCounts()
-    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    for row in rows:
-        counts.entities_touched += 1
-        entity_type = str(row["type"])
-        counts.by_type[entity_type] = counts.by_type.get(entity_type, 0) + 1
-        counts.lifecycle += 1
-        if dry_run:
-            logger.info(
-                "dry-run scoped lifecycle backfill id=%s type=%s -> active",
-                row["id"],
-                entity_type,
-            )
-            continue
-        conn.execute(
-            "UPDATE entities SET lifecycle = 'active', updated_at = ? WHERE id = ?",
-            (now, row["id"]),
-        )
-
-    if not dry_run and counts.entities_touched:
-        conn.commit()
-        logger.info(
-            "Scoped lifecycle active backfill committed: entities=%d lifecycle=%d",
-            counts.entities_touched,
-            counts.lifecycle,
-        )
-    return counts
+from .status_trait_backfill_scoped import (
+    count_graduated_null_lifecycle,
+    count_null_confidence_band,
+    count_scoped_graduated_lifecycle_candidates,
+    count_scoped_lifecycle_active_candidates,
+    run_scoped_confidence_band_backfill,
+    run_scoped_graduated_lifecycle_backfill,
+    run_scoped_lifecycle_active_backfill,
+)
 
 
 __all__ = [

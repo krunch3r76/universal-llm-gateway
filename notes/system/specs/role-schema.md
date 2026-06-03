@@ -77,11 +77,11 @@ attributes:
 | `attributes.verification` | no | List of `{skill, hook}` gates. `skill` is a `skill:{slug}` reference; `hook ∈ {admit, pre_emit, post_emit}` and defaults conceptually to `admit` when omitted by older payloads. |
 | `attributes.failure_mode` | yes | Structured strings; linted recursively. |
 | `attributes.output_schema` | yes | Flat list of dispatcher-readable contract strings; linted recursively. |
-| `attributes.persona_seed_ref` | no | Reserved legacy pointer only; **not** linted. No current `role:*` entity populates it after the Phase 6 birth-prompt retirement. |
+| `attributes.persona_seed_ref` | no | Reserved pointer; **not** linted. Unused on current `role:*` entities. |
 
 ## Worked example — `role:synthesizer`
 
-`role:synthesizer` is the live functional replacement for the retired persona-keyed Gemini/Bard seat:
+`role:synthesizer` is the default multimodal synthesis seat (Gemini API profile is inline-only):
 
 ```yaml
 id: role:synthesizer
@@ -119,16 +119,17 @@ attributes:
 
 Final predicate set = **R1–R4** in `role_lint` (see linked spec). Web review on thread **953** tightened R2 and requested an observed-vocabulary receipt for R3; changes require updating `libs/role_lint/__init__.py` + tests + this doc in one commit.
 
-## Migration (Q4 + Phase 5E)
+## Migration (complete — Phase 5E)
 
-**Migrate-and-delete**:
+The `ai_agent:` → `role:` and birth-prompt retirement migration is **complete** on this workspace (operator gate 2026-05-12; Stargate `team_dispatch` / `frontier-dispatch` read `pipeline_options.role` only).
 
-1. For each legacy `ai_agent:{slug}` with a mapped functional role, distill execution-contract prose into `attributes.purpose` / `failure_mode` / `output_schema` (drop persona / birth / self-concept).
-2. Upsert `role:{slug}` via `scripts/cortex/sync_role_and_seat_entities.py` (or `entity_create` with lint passing payload).
-3. Remove hydration / dispatch code paths that still resolve `ai_agent:` for team dispatch (already complete in Stargate `role=` path — verify with repo grep).
-4. **Delete** `ai_agent:{slug}` entities and `prompt:*-birth` entities once no live readers remain (operator or scripted DELETE when cortex API exposes hard-delete; until then use soft-retire + `workflow_state=superseded` per operator policy).
+**Ongoing maintenance** (not a cutover checklist):
 
-Detailed operator checklist: [role-schema-migration-procedure.md](./role-schema-migration-procedure.md).
+1. Upsert or refresh `role:{slug}` from [`scripts/cortex/sync_role_and_seat_entities.py`](../../../scripts/cortex/sync_role_and_seat_entities.py) when `config/agents.yaml` `roles:` changes.
+2. Run `role_lint` on any hand-edited `role:` payloads before `entity_create` / PATCH.
+3. Grep the repo for vestigial `ai_agent:` / `prompt:*-birth` references in code paths (should be zero on dispatch surfaces).
+
+Historical operator checklist (archived): [role-schema-migration-procedure.md](./role-schema-migration-procedure.md).
 
 ## Consult outcomes (async)
 
@@ -137,4 +138,4 @@ Detailed operator checklist: [role-schema-migration-procedure.md](./role-schema-
 
 ## Sync
 
-Canonical script: [`scripts/cortex/sync_role_and_seat_entities.py`](../../../scripts/cortex/sync_role_and_seat_entities.py) (replaces deprecated `sync-agent-identity` naming from older phase docs).
+Canonical script: [`scripts/cortex/sync_role_and_seat_entities.py`](../../../scripts/cortex/sync_role_and_seat_entities.py).

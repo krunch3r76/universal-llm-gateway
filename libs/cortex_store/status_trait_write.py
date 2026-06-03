@@ -13,20 +13,12 @@ import sqlite3
 from dataclasses import dataclass
 
 from .status_trait_read import entity_has_trait_columns
-
-_CONFIDENCE_BAND_VALUES = frozenset({"unsubstantiated", "provisional", "confirmed"})
-_LIFECYCLE_VALUES = frozenset(
-    {
-        "active",
-        "superseded",
-        "merged",
-        "deprecated",
-        "reaped",
-        "invalidated",
-        "dismissed",
-    }
+from .trait_vocabulary import (
+    CONFIDENCE_BAND_VALUES,
+    LIFECYCLE_VALUES,
+    PROVISIONAL_BIRTH_TYPES,
+    default_confidence_band_for_type,
 )
-_PROVISIONAL_BIRTH_TYPES = frozenset({"decision"})
 
 
 @dataclass(frozen=True)
@@ -43,19 +35,17 @@ def resolve_birth_traits(
     entity_type: str,
     caller_status: str | None,
     *,
-    provisional_birth_types: frozenset[str] = _PROVISIONAL_BIRTH_TYPES,
+    provisional_birth_types: frozenset[str] = PROVISIONAL_BIRTH_TYPES,
 ) -> BirthTraits:
     """Map Fork D birth rules to trait columns + legacy ``status`` mirror."""
-    default_band = (
-        "provisional" if entity_type in provisional_birth_types else "unsubstantiated"
-    )
+    default_band = default_confidence_band_for_type(entity_type)
     lifecycle: str | None = "active"
     band = default_band
     adoption: str | None = "proposed" if entity_type == "decision" else None
 
-    if caller_status is not None and caller_status in _LIFECYCLE_VALUES:
+    if caller_status is not None and caller_status in LIFECYCLE_VALUES:
         lifecycle = caller_status
-    elif caller_status is not None and caller_status in _CONFIDENCE_BAND_VALUES:
+    elif caller_status is not None and caller_status in CONFIDENCE_BAND_VALUES:
         band = default_band
 
     legacy_status = lifecycle if lifecycle is not None else band
@@ -169,9 +159,9 @@ def redirect_status_update_to_traits(
     out = dict(updates)
     status_val = str(incoming)
     out.pop("status", None)
-    if status_val in _LIFECYCLE_VALUES:
+    if status_val in LIFECYCLE_VALUES:
         out["lifecycle"] = status_val
-    elif status_val in _CONFIDENCE_BAND_VALUES:
+    elif status_val in CONFIDENCE_BAND_VALUES:
         out["confidence_band"] = status_val
     return out
 

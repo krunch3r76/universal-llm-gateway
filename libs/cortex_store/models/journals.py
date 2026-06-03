@@ -164,8 +164,7 @@ class SessionCloseResponse(BaseModel):
     only ``verbatim`` is enrichment-eligible.
 
     The handoff prompt (when supplied) is persisted on the session_journals
-    row; journal_row_id is the durable handle. The separate RJ-row identifier
-    was retired per ``decision:rj-handoff-kind-retirement`` (agent-bus thread 1107).
+    row; journal_row_id is the durable handle for it.
     """
 
     transcript_entity_id: str | None = None

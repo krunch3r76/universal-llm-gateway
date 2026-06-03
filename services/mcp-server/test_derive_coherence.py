@@ -38,7 +38,15 @@ def test_derive_all_canonical_tool_names_nonempty() -> None:
 def test_derive_all_canonical_tool_names_includes_known() -> None:
     """Known flat and dispatcher shapes are present."""
     names = derive_all_canonical_tool_names(_CANONICAL_YAML)
-    expected = {"cortex", "agent_bus", "fs", "dispatch", "git_land", "rag"}
+    expected = {
+        "cortex",
+        "agent_bus",
+        "fs",
+        "dispatch",
+        "git_land",
+        "rag",
+        "panel_dispatch",
+    }
     missing = expected - names
     assert not missing, f"Expected names absent from canonical: {sorted(missing)}"
 
@@ -169,6 +177,14 @@ def test_git_land_in_canonical_post_phase1() -> None:
     )
 
 
+def test_panel_dispatch_in_canonical_post_phase2() -> None:
+    """panel_dispatch must be in canonical.yaml (thread 1206 Phase 2)."""
+    names = derive_all_canonical_tool_names(_CANONICAL_YAML)
+    assert "panel_dispatch" in names, (
+        "panel_dispatch absent from canonical.yaml — add entry before mcp-server rebuild."
+    )
+
+
 def test_git_land_not_in_intentional_overflow() -> None:
     """git_land must not be in INTENTIONAL_OVERFLOW once canonicalized."""
     assert "git_land" not in INTENTIONAL_OVERFLOW, (
@@ -239,6 +255,7 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.pipeline", "register_pipeline_tools"),
         ("tools.pipeline_consult", "register_pipeline_consult_tools"),
         ("tools.frontier", "register_frontier_tools"),
+        ("tools.panel_dispatch", "register_panel_dispatch_tools"),
         ("tools.grokbuild", "register_grokbuild_tools"),
         ("tools.git_integrate", "register_git_integrate_tools"),
         ("tools.quality", "register_quality_tools"),

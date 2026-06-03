@@ -9,7 +9,12 @@ import pytest
 
 from cortex_store import db
 from cortex_store.dispatch_ops import ops_journals
-from cortex_store.routes import session_journals
+from cortex_store.routes import (
+    session_close,
+    session_close_helpers,
+    session_close_persist,
+    session_journals,
+)
 
 
 def _install_schema(db_path: Path) -> None:
@@ -139,6 +144,9 @@ def session_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Pa
     # symbol on routes/session_journals.py as well to keep the test isolated
     # from the cortex-api host's CORTEX_FILES_ROOT.
     monkeypatch.setattr(session_journals, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close_persist, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close_helpers, "_FILES_ROOT", files_root)
     monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(transcripts_root))
     return {
         "db_path": db_path,
@@ -343,9 +351,7 @@ def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
     handoff_file = files_root / "notes/system/sessions/a-handoff.md"
     handoff_file.parent.mkdir(parents=True, exist_ok=True)
     handoff_file.write_text(
-        "<!-- handoff:start -->\n"
-        f"{handoff}\n"
-        "<!-- handoff:end -->\n",
+        f"<!-- handoff:start -->\n{handoff}\n<!-- handoff:end -->\n",
         encoding="utf-8",
     )
 
@@ -395,7 +401,7 @@ def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
     attrs = json.loads(entity["attributes"])
     # The drift bug would leave the attribute empty; it must match the column.
     assert attrs["handoff_prompt"] == column["handoff_prompt"]
-    assert attrs["status"] == "confirmed"
+    assert "status" not in attrs
     assert attrs["closed_at"]
     prov = attrs["handoff_provenance"]
     assert prov["write_path"] == "session_close"
@@ -454,7 +460,7 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_journal_insert_failu
     def _boom(*_args: Any, **_kwargs: Any) -> str:
         raise RuntimeError("journal insert failed")
 
-    monkeypatch.setattr(session_journals, "json_encode", _boom)
+    monkeypatch.setattr(session_close_persist, "json_encode", _boom)
 
     result = ops_journals._op_session_close(
         **_payload(

@@ -113,6 +113,7 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         # (canonical uses dispatch_frontier / dispatch_team flat shapes)
         "frontier_dispatch",
         "team_dispatch",
+        # panel_dispatch is canonicalized (thread 1206 Phase 2) — do not add here
         # MCP server heartbeat — infra-internal, not a domain tool
         "health",
         # Models listing tool not yet canonicalized

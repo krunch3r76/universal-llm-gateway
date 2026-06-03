@@ -14,7 +14,6 @@ sibling dispatch sees its own journal, todos, continuation, etc.).
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -24,6 +23,7 @@ from transport_utils import (
     DEFAULT_CORTEX_URL,
     make_async_client,
 )
+from universal_logging import get_logger
 
 from ._hydration_render import (
     PROFILES as _PROFILES,
@@ -45,7 +45,7 @@ from .profiles import (
 )
 from .registry import normalize_agent_slug
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _FETCH_TIMEOUT = 20.0
 

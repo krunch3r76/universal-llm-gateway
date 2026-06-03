@@ -253,8 +253,12 @@ def _full_items(fused: list[dict]) -> list[AssertionSearchItem]:
 @router.get("/search", response_model=AssertionSearchResult)
 def search_assertions(
     q: Annotated[str, Query(min_length=1, description="Search query")],
-    superseded: Annotated[bool, Query(description="Include superseded assertions")] = False,
-    entity_type: Annotated[str | None, Query(description="Filter to entity type")] = None,
+    superseded: Annotated[
+        bool, Query(description="Include superseded assertions")
+    ] = False,
+    entity_type: Annotated[
+        str | None, Query(description="Filter to entity type")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     intent: Annotated[
         Literal["summary", "full"],

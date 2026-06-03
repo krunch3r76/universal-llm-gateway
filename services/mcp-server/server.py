@@ -60,6 +60,7 @@ from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._fs_dispatch import dispatch_workspaces_op, sandbox_op_doc
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
+from tools.panel_dispatch import register_panel_dispatch_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
 from tools.grokbuild import register_grokbuild_tools
@@ -310,6 +311,7 @@ def _build_server() -> tuple[
     register_pipeline_tools(mcp)
     register_pipeline_consult_tools(mcp)
     register_frontier_tools(mcp)
+    register_panel_dispatch_tools(mcp)
     # Vestigial relay (harness retired 11588); see tools/grokbuild.py module doc.
     register_grokbuild_tools(mcp)
     register_git_integrate_tools(mcp)

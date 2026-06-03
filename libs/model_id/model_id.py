@@ -21,6 +21,27 @@ _CONTEXT_PATTERN = re.compile(r"-(\d{3,6})$")
 # Known routing layer prefixes — tell the system HOW to reach the provider
 _ROUTING_PREFIXES = frozenset({"openrouter"})
 
+# Bare cloud id families (no ``provider/`` prefix) — first match wins.
+BARE_CLOUD_PREFIX_RULES: tuple[tuple[str, str], ...] = (
+    ("gpt-", "openai"),
+    ("o1-", "openai"),
+    ("o3-", "openai"),
+    ("o4-", "openai"),
+    ("chatgpt-", "openai"),
+    ("claude-", "anthropic"),
+    ("grok-", "xai"),
+    ("gemini-", "google"),
+)
+
+
+def infer_cloud_provider_from_bare(bare: str) -> str | None:
+    """Infer cloud provider from a bare model id prefix, or None if unknown."""
+    lower = bare.lower()
+    for prefix, provider in BARE_CLOUD_PREFIX_RULES:
+        if lower.startswith(prefix):
+            return provider
+    return None
+
 
 @dataclass(frozen=True, slots=True)
 class ModelId:

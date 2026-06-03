@@ -1,7 +1,6 @@
 """Tests for bare cloud model id → provider/model wire resolution."""
 
 import pytest
-
 from model_id.wire_resolve import (
     WireModelResolutionError,
     require_cloud_provider,
@@ -48,3 +47,11 @@ def test_require_cloud_provider_rejects_none() -> None:
 def test_effort_suffix_stripped_before_inference() -> None:
     out = resolve_wire_model_id("gpt-5.5__effort_high", require_cloud=True)
     assert out.wire_id == "openai/gpt-5.5"
+
+
+def test_bare_cloud_prefix_before_local_heuristic() -> None:
+    """Cloud suffixes like ``chat`` must not trip the local-id heuristic."""
+    out = resolve_wire_model_id("gpt-5-chat", require_cloud=True)
+    assert out.wire_id == "openai/gpt-5-chat"
+    assert out.provider == "openai"
+    assert out.was_bare is True

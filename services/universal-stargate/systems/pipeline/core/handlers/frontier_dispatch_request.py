@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_seat import normalize_agent_slug
 from agent_seat.registry import resolve_agent_model
+from model_id import ModelId, WireModelResolutionError, resolve_wire_model_id
 
 from ..execution.resolver import NamespaceResolver, traverse_path
 
@@ -60,19 +61,15 @@ _REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
     "high": 24000,
 }
 
-_ANTHROPIC_ADAPTIVE_MODELS: tuple[str, ...] = (
-    # Per docs/thirdparty/claude-api/upstream/adaptive-thinking.md. Mythos
-    # Preview defaults to adaptive whenever ``thinking`` is unset; Opus 4.8 and
-    # Opus 4.7 accept only adaptive (manual ``{type: enabled, budget_tokens}``
-    # returns 400 — verified on 4-8 via execution e08ae9a7, "thinking.type.enabled
-    # is not supported for this model. Use thinking.type.adaptive"); Opus 4.6
-    # and Sonnet 4.6 accept either, but ``enabled+budget_tokens`` is
-    # deprecated on those models.
-    "claude-mythos-preview",
-    "claude-opus-4-8",
-    "claude-opus-4-7",
-    "claude-opus-4-6",
-    "claude-sonnet-4-6",
+# Per docs/thirdparty/claude-api/upstream/adaptive-thinking.md.
+_ANTHROPIC_ADAPTIVE_MODELS: frozenset[str] = frozenset(
+    {
+        "claude-mythos-preview",
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-sonnet-4-6",
+    }
 )
 
 
@@ -97,16 +94,30 @@ _DEFAULT_HIGH_EFFORT_MODELS: frozenset[str] = frozenset(
 )
 
 
+def _wire_model_key(model: str) -> str:
+    """Normalized provider/model id for defaults and adaptive-thinking gates."""
+    try:
+        return resolve_wire_model_id(model.strip()).wire_id
+    except WireModelResolutionError:
+        parsed = ModelId.parse(model.strip())
+        if parsed.provider:
+            return f"{parsed.provider}/{parsed.base_id}"
+        return model.strip()
+
+
 def resolve_default_reasoning_effort(model: str | None) -> str | None:
     """Return the implicit default ``reasoning_effort`` for ``model``, or None.
 
     Used by ``frontier_dispatch_v1`` to apply a model-specific default when
     the caller has not supplied one. Returning ``None`` means no default
     applies and the existing provider-native default takes over.
+
+    ``resolve_model`` normalizes bare ids before this runs; ``_wire_model_key``
+    still strips ``__effort_*`` suffixes and applies bare-family inference.
     """
     if not model:
         return None
-    if model in _DEFAULT_HIGH_EFFORT_MODELS:
+    if _wire_model_key(model) in _DEFAULT_HIGH_EFFORT_MODELS:
         return "high"
     return None
 
@@ -115,8 +126,9 @@ def _anthropic_uses_adaptive_thinking(model: str | None) -> bool:
     """Return true when Anthropic prefers (or requires) adaptive thinking."""
     if not model:
         return False
-    normalized = model.lower()
-    return any(m in normalized for m in _ANTHROPIC_ADAPTIVE_MODELS)
+    wire = _wire_model_key(model)
+    bare = wire.split("/", 1)[-1].lower()
+    return bare in _ANTHROPIC_ADAPTIVE_MODELS
 
 
 def translate_reasoning_effort(

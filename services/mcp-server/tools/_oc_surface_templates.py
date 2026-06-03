@@ -249,7 +249,22 @@ don't land in Cortex are lost — future sessions won't benefit from them.
 
 **Session close:** Before writing the journal, consider whether the session surfaced \
 anything another agent should know about or weigh in on. If so, post it to the \
-agent bus — the next session picks it up."""
+agent bus — the next session picks it up.
+
+**Material decisions (`agent_skill:consensus-steelman-posture`) — role/op table (Menu A):**
+
+| Situation | Transport | Role / target | Tier | Notes |
+|---|---|---|---|---|
+| Lead dialectic + adjudication | agent-bus + operator push | `claude-web` (lead) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
+| Automated review, closes w/o push | `team_dispatch(op=generate, role=reviewer)` | gpt-5.5 | full MCP | reviewer family MUST be gpt/claude — never gemini (Guard 1) |
+| Adversarial panel member | `team_dispatch` or `panel_dispatch` | `role=skeptic` | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
+| Analysis / RAG, NO writes | `team_dispatch(role=synthesizer)` | gemini | inline-only (enforced) | lead-adjudicated input only |
+| ≥2-family panel (hard triggers) | `panel_dispatch(disposition=panel, ...)` | skeptic + reviewer (+synthesizer tiebreaker) | mixed | returns `panel_executions`; lead artifact still required |
+| One-shot, no role | `frontier_dispatch(mcp=False)` | any | inline | explicit no-role path |
+
+**Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + lead-review of panelist writes + `lead_adjudication_artifact` NON-offloadable. (3) **Audit binding (helper validation only until session-close detector lands)** — `validate_panel_assert_attributes` / `build_panel_assert_attributes` check schema; `independent family := distinct provider` is not yet audit-gate bound.
+
+**Post-panel assert (Menu D, SPLIT storage):** `assert` for claim + `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`); `entity_update(attributes=...)` on the decision entity for `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `lead_adjudication_artifact` (use `agent_seat.panel_dispatch.build_panel_assert_attributes`). `panel` without lead artifact ⟹ stamp `steelman-only`. **Falsifier metric** (session-close detector, not yet landed): fraction of material `panel` decisions lacking a lead adjudication artifact over N≥20. Full skill: `fs(sandbox="cortex", op="read", path="agent-skills/consensus-steelman-posture.md")`."""
 
 FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing

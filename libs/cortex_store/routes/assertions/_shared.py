@@ -56,7 +56,9 @@ def _log_search_access(items: list) -> None:
             )
             conn.commit()
     except Exception:
-        logger.warning("Batch access log insert failed for search results", exc_info=True)
+        logger.warning(
+            "Batch access log insert failed for search results", exc_info=True
+        )
 
 
 def _embed_assertion_background(assertion_id: int, assertion_row: dict) -> None:

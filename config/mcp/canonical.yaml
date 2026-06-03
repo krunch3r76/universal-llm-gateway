@@ -41,6 +41,7 @@ domains:
 - tool_search
 - frontier_dispatch
 - team_dispatch
+- panel_dispatch
 
 - cortex_boot
 
@@ -2495,6 +2496,44 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: '2026-05-30'
+
+  # ─── domain: panel_dispatch ──────────────────────────────────────────────────
+  # Phase 2 consensus panel helper (thread 1206). Single-purpose tool — no op enum.
+
+- canonical_name: panel_dispatch
+  domain: panel_dispatch
+  operation: panel
+  dispatcher_call_shape:
+    tool: panel_dispatch
+    dispatch_key: op
+    dispatch_value: panel
+  flat_call_shape:
+    tool: panel_dispatch
+    substrate_qualified: user-vortex__panel_dispatch
+  fol_descriptor: |-
+    ∀ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey ∧ disposition = panel:
+      panel_dispatch(messages, dispatch_thread_id, disposition=panel) ⟹
+        panel_executions ∧ panel_families ∧ per-role dispatches.
+    Runs skeptic + reviewer (≥2 provider families) via team_dispatch admission.
+    Lead adjudication + Menu D assert NON-offloadable (Guard 2). Mutating.
+    See agent_skill:consensus-steelman-posture.
+  json_schema:
+    type: object
+    properties:
+      messages: {type: array, items: {type: object}}
+      dispatch_thread_id: {type: string}
+      disposition: {type: string, enum: [panel]}
+      include_synthesizer: {type: boolean}
+      poll: {type: boolean}
+      wait_seconds: {type: integer}
+      caller_agent: {type: string}
+      system: {type: string}
+    required: [messages, dispatch_thread_id]
+  skill_uri: agent_skill:consensus-steelman-posture
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-06-02'
 
   # ─── domain: cortex_boot ─────────────────────────────────────────────────────
   # Primary session boot on Claude /mcp — ¬via dispatch wrapper (avoids ~2× wire tax).

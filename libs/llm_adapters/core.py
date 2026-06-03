@@ -12,15 +12,12 @@ the caller explicitly passes it via ``provider_options`` (OAuth/web-only).
 
 from __future__ import annotations
 
-import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from llm_adapters.anthropic import AnthropicAdapter
 from llm_adapters.responses import ResponsesAPIAdapter
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "AnthropicAdapter",

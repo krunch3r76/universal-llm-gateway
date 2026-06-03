@@ -10,23 +10,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .model_id import ModelId
+from .model_id import ModelId, infer_cloud_provider_from_bare
 
 # Direct native providers (see cloud-model-routing_ws.mdc).
 KNOWN_CLOUD_PROVIDERS = frozenset(
     {"openai", "anthropic", "xai", "google", "openrouter", "chatgpt"}
-)
-
-# Ordered (prefix, provider) — first match wins.
-_BARE_CLOUD_PREFIX_RULES: tuple[tuple[str, str], ...] = (
-    ("gpt-", "openai"),
-    ("o1-", "openai"),
-    ("o3-", "openai"),
-    ("o4-", "openai"),
-    ("chatgpt-", "openai"),
-    ("claude-", "anthropic"),
-    ("grok-", "xai"),
-    ("gemini-", "google"),
 )
 
 # Heuristic markers for local gateway model IDs (not cloud aliases).
@@ -85,14 +73,6 @@ def _looks_like_local_model_id(model_id: str) -> bool:
     return False
 
 
-def _infer_provider_from_bare(bare: str) -> str | None:
-    lower = bare.lower()
-    for prefix, provider in _BARE_CLOUD_PREFIX_RULES:
-        if lower.startswith(prefix):
-            return provider
-    return None
-
-
 def _validate_prefixed_id(model_id: str) -> WireModelResolution:
     parsed = ModelId.parse(model_id)
     if parsed.provider is None:
@@ -142,6 +122,13 @@ def resolve_wire_model_id(
     if "/" in work:
         return _validate_prefixed_id(work)
 
+    # Bare cloud families before local-gateway heuristics so cloud suffixes
+    # like ``gpt-5-chat`` / ``grok-4-base`` are not misclassified as local ids.
+    provider = infer_cloud_provider_from_bare(work)
+    if provider is not None:
+        wire_id = f"{provider}/{work}"
+        return WireModelResolution(wire_id=wire_id, provider=provider, was_bare=True)
+
     if _looks_like_local_model_id(work):
         if require_cloud:
             raise WireModelResolutionError(
@@ -153,19 +140,14 @@ def resolve_wire_model_id(
             )
         return WireModelResolution(wire_id=work, provider=None, was_bare=False)
 
-    provider = _infer_provider_from_bare(work)
-    if provider is None:
-        raise WireModelResolutionError(
-            work,
-            (
-                f"Bare model id {work!r} cannot be routed — prefix with provider "
-                f"(e.g. openai/{work}, anthropic/{work}). Known bare families: "
-                "gpt-*, claude-*, grok-*, gemini-*."
-            ),
-        )
-
-    wire_id = f"{provider}/{work}"
-    return WireModelResolution(wire_id=wire_id, provider=provider, was_bare=True)
+    raise WireModelResolutionError(
+        work,
+        (
+            f"Bare model id {work!r} cannot be routed — prefix with provider "
+            f"(e.g. openai/{work}, anthropic/{work}). Known bare families: "
+            "gpt-*, claude-*, grok-*, gemini-*."
+        ),
+    )
 
 
 def require_cloud_provider(

@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, status
 
 from .db import json_encode
-from .handoff_marker import ExtractResult, extract_handoff_marker_region
 from .handoff_audit import check_handoff_prompt_in_source
+from .handoff_derivation import WRITE_PATH_SESSION_CLOSE
+from .handoff_marker import ExtractResult, extract_handoff_marker_region
 from .handoff_provenance import build_handoff_provenance, compute_source_file_sha256
 from .handoff_resolution import (
     DERIVATION_DETACHED_STRING,
@@ -32,7 +32,6 @@ from .handoff_resolution import (
     resolve_handoff_for_write,
 )
 
-WRITE_PATH_SESSION_CLOSE = "session_close"
 WRITE_PATH_HANDOFF_UPSERT = "session_handoff_upsert"
 
 __all__ = [

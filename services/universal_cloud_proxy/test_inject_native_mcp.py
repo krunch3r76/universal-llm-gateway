@@ -12,11 +12,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services.universal_cloud_proxy.native_routes import _inject_native_mcp
+from services.universal_cloud_proxy.native_mcp_inject import inject_native_mcp
 
 _PATCH_EXECUTOR = "services.universal_cloud_proxy.cloud_proxy._get_mcp_executor"
 _PATCH_CONFIG = (
-    "services.universal_cloud_proxy.native_routes._get_mcp_config_for_provider"
+    "services.universal_cloud_proxy.native_mcp_inject.get_mcp_config_for_provider"
 )
 _FAKE_CONFIG = {"url": "https://mcp.example.com/mcp", "token": "test-token"}
 
@@ -27,7 +27,7 @@ def _call_inject(provider_key: str) -> dict:
         patch(_PATCH_EXECUTOR, return_value=MagicMock()),
         patch(_PATCH_CONFIG, return_value=_FAKE_CONFIG),
     ):
-        _inject_native_mcp(provider_key, body)
+        inject_native_mcp(provider_key, body)
     return body
 
 
@@ -38,7 +38,7 @@ def test_xai_mcp_injection_skipped() -> None:
 
 def test_xai_mcp_skip_logs_info(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(
-        logging.INFO, logger="services.universal_cloud_proxy.native_routes"
+        logging.INFO, logger="services.universal_cloud_proxy.native_mcp_inject"
     ):
         _call_inject("xai")
     assert any(

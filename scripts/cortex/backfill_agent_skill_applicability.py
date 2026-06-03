@@ -120,8 +120,8 @@ PARTITION: dict[str, list[str]] = {
     ],
 }
 
-# Harness/archived skills — excluded from boot via status=deprecated (boot SQL
-# filters `status != 'deprecated'`). Run with --deprecate-retired to apply.
+# Harness/archived skills — excluded from boot via lifecycle=deprecated (boot SQL
+# uses lifecycle_not_value_sql_predicate). Run with --deprecate-retired to apply.
 RETIRED_BOOT_SKILLS: tuple[str, ...] = (
     "agent_skill:grokbuild",
     "agent_skill:grokbuild-v1",
@@ -227,10 +227,10 @@ def _audit(client: object) -> int:
     # bug). Exclude them from the active universe. They remain as entities
     # (tombstones) for supersession provenance — out of scope for partitioning.
     excluded_deprecated = sorted(
-        row["id"] for row in live_summaries if row.get("status") == "deprecated"
+        row["id"] for row in live_summaries if row.get("lifecycle") == "deprecated"
     )
     live_ids = {
-        row["id"] for row in live_summaries if row.get("status") != "deprecated"
+        row["id"] for row in live_summaries if row.get("lifecycle") != "deprecated"
     }
     partitioned = set(OVERRIDES.keys()) | {
         eid for ids in PARTITION.values() for eid in ids
@@ -270,7 +270,7 @@ def _audit(client: object) -> int:
 
 
 def _deprecate_retired(client: object, *, dry_run: bool) -> int:
-    """Set status=deprecated on RETIRED_BOOT_SKILLS entities still live."""
+    """Set lifecycle=deprecated on RETIRED_BOOT_SKILLS entities still live."""
     failures = 0
     print(f"Deprecating {len(RETIRED_BOOT_SKILLS)} retired boot skill(s)")
     if dry_run:
@@ -289,17 +289,17 @@ def _deprecate_retired(client: object, *, dry_run: bool) -> int:
             print(f"  FAIL  {entity_id:60s}  [GET {status}]")
             failures += 1
             continue
-        if body.get("status") == "deprecated":
+        if body.get("lifecycle") == "deprecated":
             print(f"  noop  {entity_id:60s}  (already deprecated)")
             continue
         if dry_run:
-            print(f"  WOULD {entity_id:60s}  → status=deprecated")
+            print(f"  WOULD {entity_id:60s}  → lifecycle=deprecated")
             continue
         status, body = _request(
             client,
             "PATCH",
             f"/entities/{urllib.parse.quote(entity_id, safe=':')}",
-            body={"status": "deprecated"},
+            body={"lifecycle": "deprecated"},
         )
         if status != 200:
             print(f"  FAIL  {entity_id:60s}  [PATCH {status}] {body}")
@@ -329,7 +329,7 @@ def main() -> int:
         "--deprecate-retired",
         action="store_true",
         help=(
-            "Set status=deprecated on RETIRED_BOOT_SKILLS (grokbuild*, "
+            "Set lifecycle=deprecated on RETIRED_BOOT_SKILLS (grokbuild*, "
             "claude-web-boot). Composes with the applicability backfill."
         ),
     )
