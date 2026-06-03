@@ -126,7 +126,7 @@ On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch
 - by API role → team_dispatch(op="generate", role="reviewer"|"gatherer"|"synthesizer"|"artisan"|"skeptic", dispatch_thread_id="…", messages=[…]) — ¬ role="claude-web"|"lead"|"web"
 - forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") even with model= — Stargate rejects before dispatch; model= only hits an API endpoint, never a web session
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
-- inbound handoff target only → team_dispatch(op="handoff", role="lead", packet_path=…, subject=…) is Cursor→web; claude-web executes handoffs, does not re-handoff to itself
+- inbound handoff target only → team_dispatch(op="handoff", role="lead", packet_path=…, subject=…) is Cursor→web; claude-web executes handoffs, does not re-handoff to itself. Dispatcher retrieves the reply via the returned result_handle → agent_bus(tool="wait", thread=…, completion="first_reply_from", from_agent="claude-web") — NOT pipeline(op="result") (handoff has no execution_id)
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
 Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
@@ -199,6 +199,11 @@ natural part of how you work, not an exceptional event.
 Both return `{execution_id, ...}` immediately; poll with
 `pipeline(op="result", execution_id=..., wait_seconds=60)`. Runs detached,
 survives session boundaries.
+
+Handoff is different: `team_dispatch(op="handoff", ...)` returns a
+`result_handle` (no `execution_id`). Retrieve the web reply with
+`agent_bus(tool="wait", thread=..., completion="first_reply_from",
+from_agent=...)`, never `pipeline(op="result")`.
 
 **Direct frontier dispatch (model picker)**:
 `frontier_dispatch(op=..., model=..., messages=..., generation_options=...)`.

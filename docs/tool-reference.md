@@ -17,7 +17,7 @@ immediately after admission. The `op` parameter selects the output channel:
 `op` values:
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
 - `"to_thread"` — bus mode; agent posts substantive reply to `thread`; dispatcher reads with `agent_bus(tool="fetch")`.
-- `"handoff"` — fresh-WEB dispatch; creates an agent-bus thread for the role's web seat synchronously. Returns `{thread_id, subject, to_agent, push_reminder}`. No model dispatch; operator push required.
+- `"handoff"` — fresh-WEB dispatch; creates an agent-bus thread for the role's web seat synchronously. Returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status, poll_hint}`. No `execution_id`; poll via `poll_hint` (`agent_bus(tool="wait")` with args from `result_handle`). No model dispatch; operator push required.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
 
@@ -57,8 +57,14 @@ use `fs` directly; peer consult → `frontier_dispatch` or an API role.
 **`op="handoff"` — web-seat handoff primitive** (Cursor→web inbound):
 
 Creates an agent-bus thread addressed to the role's web seat (e.g. `lead` → `claude-web`)
-and returns `{thread_id, subject, to_agent, push_reminder}` synchronously — no model is
-dispatched. The web session starts only after the operator pushes the bus message. The
+and returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status,
+poll_hint}` synchronously — no model is dispatched and no `execution_id` is minted.
+`result_handle.kind` is `"agent_bus_thread"` (authoritative for retrieval — use
+`agent_bus`, not `pipeline(op="result")`). Initial `handoff_status` is
+`awaiting_first_reply`. `poll_hint` carries ready-to-paste `agent_bus` wait args
+(`thread`, `after_turn`, `completion`, `from_agent`) — re-call with `wait_seconds`
+until `status` is `complete`. The web session starts only after the operator
+pushes the bus message. The
 endpoint enforces that the role resolves to a manual, non-dispatchable seat
 (`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
 are rejected with `handoff_requires_web_seat` 422.
@@ -70,6 +76,25 @@ The pointer body defaults to the standard ≤25-line handoff-dispatchers.mdc tem
 Caller **must** write the packet file before calling handoff; only a pointer is posted
 to the bus. Operator push is still mandatory — `push_reminder` in the response carries
 the formatted push instruction per `agent-bus-push-reminder_ws.mdc`.
+
+**Canonical retrieval** (submit → handle → wait):
+
+1. `team_dispatch(op="handoff", ...)` → read `result_handle`, `handoff_status`, `poll_hint`.
+2. Surface `push_reminder` to the operator; wait for push.
+3. `agent_bus(tool="wait", ...)` using `poll_hint.arguments` (or equivalent args from
+   `result_handle`: `thread`, `after_turn`, `completion=first_reply_from`, `from_agent`).
+   Re-call with `wait_seconds` 0 (snapshot) or up to 60 (server-side block) until
+   `complete=true` and `status=complete`.
+
+`agent_bus(tool="fetch")` is a **fallback** for manual inspection of thread turns —
+not the primary handoff poll path.
+
+**Anti-patterns** (handoff):
+
+- Calling `pipeline(op="result", execution_id=...)` — handoff returns no `execution_id`.
+- Polling the agent-bus "most recent thread" instead of the returned `thread_id`.
+- Client-side MCP poll loops or Stargate wait proxies — use one `agent_bus(wait)` per check.
+- Treating `model=` on `team_dispatch` as spawning a web session (web seats reject generate).
 
 Examples:
 
@@ -102,7 +127,12 @@ team_dispatch(
 team_dispatch(op="handoff", role="lead",
               packet_path="universal-llm-gateway/tmp/reviews/<task>-claude-web-packet.md",
               subject="<Task> handoff — <subject>")
-# → {thread_id, subject, to_agent: "claude-web", push_reminder}
+# → {thread_id, subject, to_agent: "claude-web", push_reminder,
+#     result_handle, handoff_status: "awaiting_first_reply", poll_hint}
+# poll_hint.tool == "wait"; poll with agent_bus(tool="wait", ...) — not pipeline(result)
+
+agent_bus(tool="wait", arguments='{"thread": "<thread_id>", "after_turn": 1,
+  "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "claude-web"}')
 ```
 
 ### `frontier_dispatch`
@@ -305,7 +335,8 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 | Op | Args | Description |
 |---|---|---|
 | `threads` | status?, to?, limit? | List threads. status: active/archived/all |
-| `fetch` | thread, last?, compact?, mark_read? | Get turns from a thread. compact=true strips markdown. |
+| `fetch` | thread, last?, compact?, mark_read? | Get turns from a thread (fallback / inspection). compact=true strips markdown. For handoff completion use `wait`, not fetch loops. |
+| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until reply lands (`completion=first_reply_from` + `from_agent`) or thread closes (`completion=thread_closed`). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, ...}`. Re-call to poll — one HTTP call per invocation. |
 | `get` | thread, turn_number | Get one specific turn |
 | `post` | slug, to, subject, body, from_agent, tags? | Start a new thread |
 | `reply` | thread, to, subject, body, after_turn?, from_agent | Reply to a thread |
@@ -317,6 +348,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 
 ```
 agent_bus(tool="fetch", arguments='{"thread": "111", "last": 3, "compact": true}')
+agent_bus(tool="wait", arguments='{"thread": "111", "after_turn": 1, "wait_seconds": 30, "completion": "first_reply_from", "from_agent": "claude-web"}')
 agent_bus(tool="post", arguments='{"slug": "review-bug", "to": "cursor", "subject": "Bug found", "body": "## Details\n...", "from_agent": "grok"}')
 ```
 

@@ -28,6 +28,9 @@ _ROUTE_TIMEOUTS: dict[tuple[str, str, str], float] = {
 # review_dismiss has no LLM stage and stays on the default budget.
 _ROUTE_SUFFIX_TIMEOUTS: list[tuple[str, str, str, float]] = [
     ("email-bridge", "POST", "/extract", 200.0),
+    # Handoff wait long-polls server-side up to MAX_WAIT_SECONDS (60); the relay
+    # budget must exceed it or the client aborts a still-blocking wait.
+    ("agent-bus", "GET", "/wait", 75.0),
 ]
 
 _SERVICES: dict[str, dict[str, str]] = {
@@ -58,8 +61,9 @@ def resolve_timeout(service: str, method: str, path: str) -> float:
     exact = _ROUTE_TIMEOUTS.get((service, method, path))
     if exact is not None:
         return exact
+    path_no_query = path.split("?", 1)[0]
     for svc, mth, suffix, timeout in _ROUTE_SUFFIX_TIMEOUTS:
-        if service == svc and method == mth and path.endswith(suffix):
+        if service == svc and method == mth and path_no_query.endswith(suffix):
             return timeout
     return _REQUEST_TIMEOUT
 

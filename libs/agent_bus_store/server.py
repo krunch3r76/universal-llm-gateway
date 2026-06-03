@@ -19,6 +19,7 @@ from .db import init_db
 from .routes.messages import router as messages_router
 from .routes.threads import router as threads_router
 from .routes.turns import router as turns_router
+from .routes.wait import router as wait_router
 from .turns_models import MAX_TURN_BODY_CHARS, body_too_large_envelope
 from .watchdog import run_watchdog
 
@@ -89,6 +90,7 @@ def create_app(*, db_path: str | None = None) -> FastAPI:
     app.include_router(messages_router)
     app.include_router(turns_router)
     app.include_router(threads_router)
+    app.include_router(wait_router)
     return app
 
 

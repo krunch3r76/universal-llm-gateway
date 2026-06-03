@@ -862,6 +862,46 @@ def _mark_read_dispatch(
     return {"status": "ok", "thread": thread, "turn_number": turn_number}
 
 
+def _wait_dispatch(
+    *,
+    thread: str | int = "",
+    after_turn: int = 1,
+    wait_seconds: float = 0.0,
+    completion: str = "first_reply_from",
+    from_agent: str | None = None,
+) -> dict[str, Any]:
+    """Thin relay to agent-bus GET /threads/{id}/wait.
+
+    Server-side block; ONE HTTP call. wait_seconds clamped <= 60 (server also
+    clamps). No client poll loop — re-call this op to continue polling.
+    """
+    if isinstance(thread, int):
+        thread = str(thread)
+    if not thread:
+        return {"error": 'wait requires: thread (str, e.g. "1234")'}
+    if completion == "first_reply_from" and not from_agent:
+        return {"error": "wait with completion=first_reply_from requires from_agent"}
+    wait_clamped = max(0.0, min(wait_seconds, 60.0))
+    params: list[tuple[str, str]] = [
+        ("after_turn", str(after_turn)),
+        ("wait", str(wait_clamped)),
+        ("completion", completion),
+    ]
+    if from_agent:
+        params.append(("from_agent", from_agent))
+    qs = urlencode(params)
+    record("mcp.agentbus.wait.called", thread=thread, completion=completion)
+    result = _relay("agent-bus", "GET", f"/threads/{thread}/wait?{qs}")
+    if isinstance(result, dict) and "error" in result:
+        return {"error": f"agent-bus error: {result['error']}"}
+    record(
+        "mcp.agentbus.wait.completed",
+        thread=thread,
+        status=str(result.get("status", "")) if isinstance(result, dict) else "",
+    )
+    return result
+
+
 AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "post": _post_dispatch,
     "reply": _reply_dispatch,
@@ -876,6 +916,7 @@ AGENT_BUS_OPS: dict[str, Callable[..., Any]] = {
     "delete_thread": _delete_thread_dispatch,
     "delete_turn": _delete_turn_dispatch,
     "mark_read": _mark_read_dispatch,
+    "wait": _wait_dispatch,
 }
 
 
@@ -921,6 +962,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
           reply         (thread, to, subject, body, after_turn, from_agent, status?, mark_read?, close?, attachments?, allow_long_body?) — reply to a thread; allow_long_body=true explicitly bypasses the 8k briefing limit for rare inline long-form messages; close=true posts this as the final turn and closes the thread (marks all turns read). from_agent is REQUIRED — name the seat authoring the turn; there is no default.
           update        (thread, turn_number, body?, append?, subject?) — edit or append to an existing turn
           mark_read     (thread, turn_number)                           — mark a turn as read
+          wait          (thread, after_turn?, wait_seconds?, completion?, from_agent?) — server-side short-block until a reply lands (completion=first_reply_from + from_agent) or the thread closes (completion=thread_closed); wait_seconds clamped <=60 (0=snapshot). Returns {thread_id, complete, status (awaiting_first_reply|complete), push_required, next_poll_after_s, turn_count, thread_status, pointer_read_at, qualifying_reply_turn}. Re-call to keep polling — this is one HTTP call, not a client loop.
           update_thread (thread, status?, summary?, tags?, from_agent?) — patch thread metadata (tags: omit=keep, []=clear, [...]=replace)
           close         (thread, summary?, mark_all_read?)              — close a thread (atomic: marks all turns read by default)
           delete_turn   (thread, turn_number, force?)                   — delete a single turn

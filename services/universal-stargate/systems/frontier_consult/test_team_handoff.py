@@ -133,6 +133,62 @@ def test_h1_route_lead_returns_all_fields(
     assert "push" in body["push_reminder"].lower()
 
 
+def test_handoff_response_includes_result_handle(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """Phase 1: handoff 200 carries result_handle / handoff_status / poll_hint."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-99"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "lead",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+
+    assert data["result_handle"] == {
+        "kind": "agent_bus_thread",
+        "thread_id": data["thread_id"],
+        "after_turn": 1,
+    }
+    assert data["handoff_status"] == "awaiting_first_reply"
+    assert data["poll_hint"]["tool"] == "wait"
+    assert data["poll_hint"]["arguments"]["thread"] == data["thread_id"]
+    assert data["poll_hint"]["arguments"]["from_agent"] == data["to_agent"]
+    assert data["poll_hint"]["arguments"]["completion"] == "first_reply_from"
+    assert "execution_id" not in data
+
+
+def test_handoff_response_backward_compatible_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """Existing keys remain present and unchanged (additive contract)."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-99"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "lead",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    data = resp.json()
+    assert {"thread_id", "subject", "to_agent", "push_reminder"} <= set(data)
+
+
 # ---------------------------------------------------------------------------
 # H2 — dispatchable role → 422 handoff_requires_web_seat
 # ---------------------------------------------------------------------------

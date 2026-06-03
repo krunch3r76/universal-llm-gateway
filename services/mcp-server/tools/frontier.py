@@ -203,11 +203,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           web seat (``role`` must resolve to a manual, non-dispatchable web seat,
           e.g. ``lead`` → claude-web). Requires ``packet_path`` (workspaces-relative
           path to a pre-written six-block packet) and ``subject``. Returns
-          ``{thread_id, subject, to_agent, push_reminder}`` synchronously — no
-          model is dispatched; the web session starts only after the operator
-          pushes the bus message. Close your turn with the returned
-          ``push_reminder``. ``messages``, ``model``, ``thread``, and
-          ``dispatch_thread_id`` are unused by this op.
+          ``{thread_id, subject, to_agent, push_reminder, result_handle,
+          handoff_status, poll_hint}``. ``result_handle.kind ==
+          "agent_bus_thread"`` is authoritative for retrieval routing — do NOT
+          expect an ``execution_id`` and do NOT poll ``pipeline(op="result")``.
+          ``poll_hint`` is ready-to-paste ``agent_bus`` args (fetch in Phase 1,
+          wait once available). Returns synchronously — no model is dispatched;
+          the web session starts only after the operator pushes the bus message.
+          Close your turn with the returned ``push_reminder``. ``messages``,
+          ``model``, ``thread``, and ``dispatch_thread_id`` are unused by this op.
 
         Tool surface (no caller knob — derived from the effective model):
         - xAI multi-agent models — no client-side MCP tools.

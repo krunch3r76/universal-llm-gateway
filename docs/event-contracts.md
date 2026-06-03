@@ -2216,6 +2216,8 @@ unnecessary — each operation succeeds or fails atomically.
 | `mcp.agentbus.turn.deleted` | `thread`, `turn_number`, `force` | Single turn deleted |
 | `mcp.agentbus.body.rejected` | `size_bytes`, `limit_bytes`, `field` | Inline body/append exceeded MCP inline limit |
 | `mcp.agentbus.body.file.resolved` | `body_file`, `op` | body_file read; manifest built for post/reply |
+| `mcp.agentbus.wait.called` | `thread`, `completion` | MCP wait relay invoked (server-side block) |
+| `mcp.agentbus.wait.completed` | `thread`, `status` | MCP wait relay returned |
 
 All signals: `role="observation"`, `scope="global"`.
 

@@ -15,6 +15,7 @@ from universal_logging import get_logger
 from .admission import resolve_web_handoff_seat
 from .events import FrontierHandoffCreated, FrontierHandoffRequested
 from .handoff import build_pointer_body, create_handoff_thread
+from .handoff_response import build_handoff_result
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -353,4 +354,5 @@ async def team_handoff(
             f"**Action needed — push to web claude**: handoff posted to thread "
             f"{thread_id}. Push the agent-bus message to trigger {to_agent}'s turn."
         ),
+        **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
     }
