@@ -17,11 +17,24 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from llm_adapters._tool_schema import sanitize_tool_parameters
+from llm_adapters.google_replay import (
+    log_tool_round_trace,
+    normalize_gemini_parts,
+    replay_model_turn_content,
+)
+from llm_adapters.google_tool_response import build_function_response_payload
 
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
 
 logger = logging.getLogger(__name__)
+
+_GEMINI_TOOL_LOOP_TERMINATION = (
+    "\n\n[Tool-loop contract] Stop calling tools once you have enough "
+    "information. Never repeat the same tool with identical arguments. "
+    "If any tool result has ok=false or passed=false, your final answer "
+    "must report the failure unless another tool call proves remediation."
+)
 
 
 def _openai_tool_to_gemini(tool: dict[str, Any]) -> dict[str, Any] | None:
@@ -135,8 +148,11 @@ class GoogleAdapter:
         # forward_native strips it before the actual upstream call to Google
         body: dict[str, Any] = {"model": req.model, "contents": contents}
 
-        if req.system.strip():
-            body["systemInstruction"] = {"parts": [{"text": req.system}]}
+        system = req.system
+        if req.tools and req.mcp_tool_loop:
+            system = (system or "") + _GEMINI_TOOL_LOOP_TERMINATION
+        if system.strip():
+            body["systemInstruction"] = {"parts": [{"text": system}]}
 
         gen_config: dict[str, Any] = {}
         model_lower = req.model.lower()
@@ -344,18 +360,16 @@ class GoogleAdapter:
         1. Append the model's response (with functionCall parts) to contents
         2. Append a user turn with functionResponse parts
         """
-        candidates = raw_response.get("candidates", [])
-        if candidates:
-            model_content = candidates[0].get("content") or {}
-            if model_content:
-                body["contents"].append(model_content)
+        model_content = replay_model_turn_content(raw_response)
+        if model_content:
+            body["contents"].append(model_content)
 
         response_parts: list[dict[str, Any]] = []
         for tr in tool_results:
             part: dict[str, Any] = {
                 "functionResponse": {
                     "name": tr["name"],
-                    "response": {"result": tr["content"]},
+                    "response": build_function_response_payload(tr["content"]),
                 }
             }
             if tr.get("id"):
@@ -363,7 +377,17 @@ class GoogleAdapter:
             response_parts.append(part)
 
         if response_parts:
-            body["contents"].append({"role": "user", "parts": response_parts})
+            body["contents"].append(
+                {
+                    "role": "user",
+                    "parts": normalize_gemini_parts(response_parts),
+                }
+            )
+        log_tool_round_trace(
+            phase="append_tool_round",
+            contents=body.get("contents", []),
+            tool_results=tool_results,
+        )
 
     def strip_tools(self, body: dict[str, Any]) -> None:
         """Remove tool inventory from the body for a no-tools synthesis turn.

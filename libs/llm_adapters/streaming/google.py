@@ -72,6 +72,7 @@ class _GoogleState:
     # parts appended as-is.
     parts: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str | None = None
+    finish_message: str | None = None
     grounding_metadata: dict[str, Any] | None = None
 
     # Response-level metadata — last frame wins (the final frame carries
@@ -155,11 +156,16 @@ class GoogleStreamReducer:
             }
 
         candidate: dict[str, Any] = {
-            "content": {"parts": state.parts, "role": state.role},
+            "content": {
+                "parts": _normalize_terminal_parts(state.parts),
+                "role": state.role,
+            },
             "index": 0,
         }
         if state.finish_reason is not None:
             candidate["finishReason"] = state.finish_reason
+        if state.finish_message is not None:
+            candidate["finishMessage"] = state.finish_message
         if state.grounding_metadata is not None:
             candidate["groundingMetadata"] = state.grounding_metadata
 
@@ -190,6 +196,10 @@ class GoogleStreamReducer:
         if isinstance(finish_reason, str) and finish_reason:
             state.finish_reason = finish_reason
 
+        finish_message = candidate.get("finishMessage")
+        if isinstance(finish_message, str) and finish_message:
+            state.finish_message = finish_message
+
         grounding = candidate.get("groundingMetadata")
         if isinstance(grounding, dict):
             state.grounding_metadata = grounding
@@ -209,13 +219,13 @@ class GoogleStreamReducer:
 
             if "text" in part:
                 is_thought = bool(part.get("thought"))
+                extra_keys = set(part.keys()) - {"text", "thought"}
                 merged = False
-                if state.parts:
+                if not extra_keys and state.parts:
                     last = state.parts[-1]
                     # Merge only if the last part is a plain text delta run
-                    # with matching thought flag; a ``thoughtSignature`` or
-                    # any other auxiliary key on the last part marks it as a
-                    # closed block and forces a new run.
+                    # with matching thought flag; auxiliary keys (e.g.
+                    # ``thoughtSignature``) force a new part.
                     if (
                         isinstance(last, dict)
                         and set(last.keys()).issubset({"text", "thought"})
@@ -227,14 +237,19 @@ class GoogleStreamReducer:
                         )
                         merged = True
                 if not merged:
-                    # Copy so later mutations to our accumulated dict do not
-                    # alias back into the caller's parsed payload.
-                    new_part: dict[str, Any] = {"text": str(part.get("text", ""))}
-                    if is_thought:
-                        new_part["thought"] = True
-                    state.parts.append(new_part)
+                    state.parts.append(dict(part))
             else:
                 state.parts.append(dict(part))
+
+
+def _normalize_terminal_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop empty text-only parts from the synthesized terminal candidate."""
+    normalized: list[dict[str, Any]] = []
+    for part in parts:
+        if set(part.keys()) == {"text"} and not str(part.get("text", "")):
+            continue
+        normalized.append(part)
+    return normalized
 
 
 def _parse_payload(event: SSEMessage) -> dict[str, Any]:

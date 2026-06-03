@@ -319,12 +319,14 @@ Pipeline caller shape:
 `pipeline_options.model` is required; `agent` is optional; everything else has
 sensible defaults.
 
-MCP callers typically reach this via `team_generate` for persona consults or
-`frontier_generate` for raw persona-free calls:
+MCP callers typically reach this via `team_dispatch` for role consults or
+`frontier_dispatch` for raw persona-free calls:
 
 ```python
-team_generate(
-    agent="gatherer",
+team_dispatch(
+    op="generate",
+    role="gatherer",
+    dispatch_thread_id="arc-topic-slug",
     messages=[{"role": "user", "content": "..."}],
     reasoning_effort="high",
     caller_agent="cursor",
@@ -406,7 +408,7 @@ The tool-resolution loop is the single source of truth for both transports:
 | Caller | Transport | Where |
 |---|---|---|
 | Stargate pipeline (`frontier_dispatch_v1`) | In-process `CloudProxyClient` | `systems/pipeline/core/handlers/frontier_dispatch.py` |
-| MCP `frontier_generate` | HTTP → Stargate `POST /api/v1/frontier/generate` (async dispatch envelope) | `services/mcp-server/tools/frontier.py` |
+| MCP `team_dispatch` / `frontier_dispatch` | HTTP → Stargate frontier dispatch routes (async dispatch envelope) | `services/mcp-server/tools/frontier.py` |
 
 Both callers depend on `libs/agent_seat/native_loop.run_native_tool_loop`
 (loop), `libs/llm_adapters/*` (provider request/response translation), and

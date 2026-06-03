@@ -28,7 +28,11 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "libs"))
 
-from cortex_store.status_trait_backfill import run_trait_completeness_scan  # noqa: E402
+from cortex_store.status_trait_backfill import (  # noqa: E402
+    count_graduated_null_lifecycle,
+    count_null_confidence_band,
+    run_trait_completeness_scan,
+)
 
 _DEFAULT_DB = os.path.expanduser("~/.cortex/cortex.db")
 _DEFAULT_REPORT = (
@@ -73,7 +77,13 @@ def run_cert(conn: sqlite3.Connection, db_path: str) -> tuple[bool, str]:
     counts = run_trait_completeness_scan(conn) if trait_cols_present else None
     total = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
 
-    # Bucket distributions (trait-only).
+    null_band_global = count_null_confidence_band(conn) if trait_cols_present else -1
+    null_lc_graduated = (
+        count_graduated_null_lifecycle(conn) if trait_cols_present else -1
+    )
+    null_lc_global = counts.null_lifecycle if counts else -1
+    null_adp = counts.null_adoption_decisions if counts else -1
+
     band_buckets: dict[str, int] = {}
     lc_buckets: dict[str, int] = {}
     if trait_cols_present:
@@ -95,11 +105,13 @@ def run_cert(conn: sqlite3.Connection, db_path: str) -> tuple[bool, str]:
         for r in conn.execute("SELECT type, COUNT(*) FROM entities GROUP BY type")
     }
 
-    null_band = counts.null_confidence_band if counts else -1
-    null_lc = counts.null_lifecycle if counts else -1
-    null_adp = counts.null_adoption_decisions if counts else -1
-
-    passed = status_absent and trait_cols_present and null_band == 0 and null_lc == 0
+    passed = (
+        status_absent
+        and trait_cols_present
+        and null_band_global == 0
+        and null_lc_graduated == 0
+        and null_adp == 0
+    )
 
     verdict = "PASS" if passed else "FAIL"
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -110,6 +122,7 @@ def run_cert(conn: sqlite3.Connection, db_path: str) -> tuple[bool, str]:
         f"**Generated:** {now}",
         f"**Database:** `{db_path}`",
         "**Rewrite:** 1172-E (post-052 trait-only; no COALESCE / no status column)",
+        "**Lifecycle scope:** graduated entities (≥1 live non-staged assertion)",
         f"**Verdict:** **{verdict}**"
         + (
             " — post-052 trait state certified"
@@ -132,11 +145,12 @@ def run_cert(conn: sqlite3.Connection, db_path: str) -> tuple[bool, str]:
             "",
             "## 2. Trait NULL counts",
             "",
-            "| Trait | NULL count | Threshold |",
-            "|---|---|---|",
-            f"| `confidence_band` | {null_band if null_band >= 0 else 'N/A'} | 0 |",
-            f"| `lifecycle` | {null_lc if null_lc >= 0 else 'N/A'} | 0 |",
-            f"| `adoption` (decisions only) | {null_adp if null_adp >= 0 else 'N/A'} | 0 |",
+            "| Trait | NULL count | Scope | Threshold |",
+            "|---|---|---|---|",
+            f"| `confidence_band` | {null_band_global if null_band_global >= 0 else 'N/A'} | global | 0 |",
+            f"| `lifecycle` | {null_lc_graduated if null_lc_graduated >= 0 else 'N/A'} | graduated (≥1 committed assertion) | 0 |",
+            f"| `lifecycle` (informational) | {null_lc_global if null_lc_global >= 0 else 'N/A'} | global (staged-buffer exempt) | — |",
+            f"| `adoption` (decisions only) | {null_adp if null_adp >= 0 else 'N/A'} | decisions | 0 |",
             "",
             "## 3. Bucket distribution",
             "",
@@ -192,10 +206,15 @@ def run_cert(conn: sqlite3.Connection, db_path: str) -> tuple[bool, str]:
         if not trait_cols_present:
             missing = sorted(_REQUIRED_TRAIT_COLS - cols)
             lines.append(f"  - Missing trait columns: {missing}")
-        if null_band > 0:
-            lines.append(f"  - `confidence_band` has {null_band} NULL rows.")
-        if null_lc > 0:
-            lines.append(f"  - `lifecycle` has {null_lc} NULL rows.")
+        if null_band_global > 0:
+            lines.append(
+                f"  - `confidence_band` has {null_band_global} NULL rows (global)."
+            )
+        if null_lc_graduated > 0:
+            lines.append(
+                f"  - `lifecycle` has {null_lc_graduated} NULL rows on graduated entities "
+                f"(global null lifecycle: {null_lc_global})."
+            )
 
     return passed, "\n".join(lines) + "\n"
 

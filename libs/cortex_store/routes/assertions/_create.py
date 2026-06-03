@@ -31,6 +31,7 @@ from ...models import (
 )
 from ...near_dup import check_near_duplicate, record_near_duplicate
 from ...predicate_extract_dispatch import dispatch_predicate_extract_background
+from ...status_trait_write import materialize_graduated_lifecycle
 from ...substantiation_sync import recompute_entity_substantiation_status
 from ._shared import (
     _ASSERTION_COLS,
@@ -358,6 +359,8 @@ def create_assertion(
                 # same transaction so the label tracks auditor-validatability
                 # without a hand-set entity_update (which Fork D rejects).
                 recompute_entity_substantiation_status(conn, body.entity_id)
+                if review_status != "staged":
+                    materialize_graduated_lifecycle(conn, body.entity_id)
 
             conn.commit()
 

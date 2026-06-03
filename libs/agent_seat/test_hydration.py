@@ -30,6 +30,43 @@ class _Scripted:
         return {"error": f"no fake for {path}"}
 
 
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        # gemini is policy inline-only on the (gemini, api) profile, so an
+        # explicit model=gemini override on any write-capable role is suppressed.
+        ("google/gemini-3.5-flash", True),
+        ("google/gemini-2.5-pro", True),
+        # Non-inline-only families are unaffected.
+        ("openai/gpt-5.5", False),
+        ("anthropic/claude-opus-4-8", False),
+        ("xai/grok-4.3", False),
+    ],
+)
+def test_inline_only_for_model_binds_to_effective_family(
+    model: str, expected: bool
+) -> None:
+    from agent_seat.profiles import inline_only_for_model
+
+    assert inline_only_for_model(model) is expected
+
+
+@pytest.mark.asyncio
+async def test_hydrate_reviewer_with_explicit_gemini_is_inline_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """reviewer (default gpt, write-capable) + explicit model=gemini must be
+    coerced to capability_tier=inline-only — capability binds to the effective
+    model, not the role label (Guard 1 anti-corruption)."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent("reviewer", model="google/gemini-2.5-pro")
+
+    assert bundle.inline_only is True
+    assert bundle.agent_meta.capability_tier == "inline-only"
+
+
 @pytest.mark.asyncio
 async def test_hydrate_agent_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     cortex_fake = _Scripted(
@@ -153,3 +190,17 @@ async def test_hydrate_agent_missing_transcript_logs_and_continues(
     assert bundle.continuation_md is None
     # Briefing still produced.
     assert bundle.briefing_card_md
+
+
+@pytest.mark.asyncio
+async def test_hydrate_synthesizer_inherits_gemini_api_inline_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """synthesizer → gemini/api capability_tier=inline-only suppresses MCP writes."""
+    monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
+
+    bundle = await hydrate_agent("synthesizer")
+
+    assert bundle.inline_only is True
+    assert bundle.agent_meta.capability_tier == "inline-only"

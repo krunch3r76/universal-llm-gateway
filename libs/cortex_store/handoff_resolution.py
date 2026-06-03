@@ -10,20 +10,19 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from .handoff_derivation import (
+    DERIVATION_DETACHED_STRING,
+    DERIVATION_SECTION,
+    DERIVATION_SECTION_AMBIGUOUS,
+    DERIVATION_SECTION_UNRESOLVED,
+    HANDOFF_PROMPT_MAX_CHARS,
+    HANDOFF_PROVENANCE_JSON_MAX_BYTES,
+    WRITE_PATH_SESSION_CLOSE,
+)
 from .handoff_marker import extract_handoff_marker_region
 from .handoff_paths import normalize_handoff_source_path, sha256_bytes, sha256_text
 from .handoff_provenance import build_handoff_provenance
 from .session_close_validation import build_validation_error
-
-DERIVATION_SECTION = "section"
-DERIVATION_SECTION_UNRESOLVED = "section_unresolved"
-DERIVATION_SECTION_AMBIGUOUS = "section_ambiguous"
-DERIVATION_DETACHED_STRING = "detached_string"
-
-HANDOFF_PROMPT_MAX_CHARS = 128_000
-HANDOFF_PROVENANCE_JSON_MAX_BYTES = 65_536
-
-WRITE_PATH_SESSION_CLOSE = "session_close"
 
 
 @dataclass(frozen=True)

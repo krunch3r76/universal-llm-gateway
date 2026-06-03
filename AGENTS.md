@@ -310,7 +310,7 @@ Grok-direct does **not** have these Cursor surfaces; do not assume parity:
 | Cursor hooks (`hooks.json`) | Not load-bearing in ULG today |
 | `CallMcpTool(server="user-vortex", ...)` syntax | Native MCP tool calls in Grok |
 
-Recursion: `grokbuild` / `frontier_generate` depth ≤ 2 (MQ3)—enforcement Phase 1 at MCP tool layer.
+Recursion: `grokbuild` / `frontier_dispatch` depth ≤ 2 (MQ3)—enforcement Phase 1 at MCP tool layer.
 
 ---
 

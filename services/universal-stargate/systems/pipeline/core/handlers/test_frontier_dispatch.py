@@ -1362,7 +1362,7 @@ def test_check_agent_model_consistency_passes_unknown_agent() -> None:
     [
         ("gatherer", "openai/gpt-5.4", "openai"),
         ("synthesizer", "google/gemini-2.5-pro", "google"),
-        ("reviewer", "anthropic/claude-sonnet-4-6", "anthropic"),
+        ("reviewer", "openai/gpt-5.5", "openai"),
     ],
 )
 def test_check_agent_model_consistency_accepts_agents_without_variant_requirement(

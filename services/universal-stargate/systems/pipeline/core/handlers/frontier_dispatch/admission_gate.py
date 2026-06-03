@@ -93,7 +93,7 @@ async def run_admission_gate(
     model_entity_id = str(
         opts.get("model_entity_id") or canonical_model_entity_id(model)
     )
-    provider = effective_provider_for_model(ModelId.parse(model).provider)
+    provider = effective_provider_for_model(ModelId.parse(model).provider, model=model)
     publish = lambda event: handler._publish_bus_event(context, event)  # noqa: E731
     if agent is not None:
         check_agent_model_consistency(

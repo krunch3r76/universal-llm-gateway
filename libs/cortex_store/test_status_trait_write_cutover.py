@@ -36,6 +36,7 @@ CREATE TABLE entities (
 CREATE TABLE assertions (
     id INTEGER PRIMARY KEY,
     entity_id TEXT,
+    review_status TEXT,
     superseded_by INTEGER,
     valid_until TEXT
 );
@@ -66,7 +67,7 @@ def test_create_writes_traits_not_status() -> None:
     ).fetchone()
     assert row["status"] is None
     assert row["confidence_band"] == "unsubstantiated"
-    assert row["lifecycle"] is None
+    assert row["lifecycle"] == "active"
 
 
 def test_create_decision_writes_band_and_adoption() -> None:
@@ -142,3 +143,47 @@ def test_resolve_staged_lifecycle_reaped() -> None:
     t = resolve_staged_entity_traits("reaped")
     assert t.lifecycle == "reaped"
     assert t.confidence_band is None
+
+
+def test_resolve_birth_default_lifecycle_active() -> None:
+    t = resolve_birth_traits("todo", None)
+    assert t.lifecycle == "active"
+    assert t.confidence_band == "unsubstantiated"
+
+
+def test_resolve_birth_decision_default_lifecycle_active() -> None:
+    t = resolve_birth_traits("decision", None)
+    assert t.lifecycle == "active"
+    assert t.confidence_band == "provisional"
+    assert t.adoption == "proposed"
+
+
+def test_resolve_staged_provisional_keeps_lifecycle_null() -> None:
+    t = resolve_staged_entity_traits("provisional")
+    assert t.lifecycle is None
+
+
+def test_transcript_birth_traits_lifecycle_active() -> None:
+    from cortex_store.status_trait_write import transcript_birth_traits
+
+    t = transcript_birth_traits()
+    assert t.lifecycle == "active"
+    assert t.confidence_band == "confirmed"
+
+
+def test_materialize_graduated_lifecycle_on_commit() -> None:
+    from cortex_store.status_trait_write import materialize_graduated_lifecycle
+
+    conn = _trait_conn()
+    conn.executescript(
+        """
+        INSERT INTO entities (id, type, name, lifecycle, confidence_band)
+        VALUES ('todo:m', 'todo', 'M', NULL, 'provisional');
+        INSERT INTO assertions (id, entity_id, review_status, superseded_by)
+        VALUES (1, 'todo:m', 'committed', NULL);
+        """
+    )
+    assert materialize_graduated_lifecycle(conn, "todo:m") is True
+    row = conn.execute("SELECT lifecycle FROM entities WHERE id = 'todo:m'").fetchone()
+    assert row["lifecycle"] == "active"
+    assert materialize_graduated_lifecycle(conn, "todo:m") is False

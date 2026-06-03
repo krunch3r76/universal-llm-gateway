@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote, urlencode
 
+from cortex_store.handoff_surface import build_handoff_surface
+
 from .._cortex_relay import cx
 from .._file_helpers import read_files_batch
 
@@ -52,6 +54,10 @@ def resolve_transcript(
     if isinstance(chain_raw, dict):
         chain_edges = chain_raw.get("items", [])
 
+    attrs = entity_raw.get("attributes")
+    handoff_surface = build_handoff_surface(attrs) if isinstance(attrs, dict) else None
+    handoff_prompt = attrs.get("handoff_prompt") if isinstance(attrs, dict) else None
+
     return {
         "transcript_id": clean_id,
         "entity_id": entity_key,
@@ -61,4 +67,6 @@ def resolve_transcript(
         "markdown": transcript_md,
         "assertions": entity_raw.get("assertions", []),
         "chain": chain_edges,
+        "handoff_prompt": handoff_prompt,
+        "handoff_surface": handoff_surface,
     }

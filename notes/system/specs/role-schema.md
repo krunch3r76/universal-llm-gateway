@@ -36,13 +36,15 @@ description: >-
   must pass self-concept lint).
 attributes:
   purpose: |
-    Third-person execution intent: what work this seat produces under what
-    quality bar. No second-person address to the model.
-  default_family: claude
+    Third-person execution intent: structured review and audit with reliable
+    MCP substrate writes when dispatched via API. Preferred human path is
+    claude-web on agent-bus; automated default is openai/gpt-5.5; anthropic
+    API models are last-resort overrides (cost).
+  default_family: gpt
   default_platform: api
-  default_model: anthropic/claude-sonnet-4-6
-  allowed_models: [anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-7]
-  frontier_kind: anthropic
+  default_model: openai/gpt-5.5
+  allowed_models: [openai/gpt-5.5, anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-8]
+  frontier_kind: openai
   required_tools: [cortex, fs]
   mcp_required: true
   verification:
@@ -98,8 +100,10 @@ attributes:
     - google/gemini-3-flash-preview
     - google/gemini-3.1-pro-preview
   frontier_kind: google
-  required_tools: [cortex, fs, agent_bus]
-  mcp_required: true
+  # gemini/api profile is capability_tier=inline-only — team_dispatch gets no MCP
+  # tool loop (cortex/fs writes unreliable on Gemini API). Mutations → claude-web, reviewer (gpt-5.5), or cursor-claude.
+  required_tools: []
+  mcp_required: false
   verification: []
   failure_mode:
     on_tool_unavailable: fail_closed

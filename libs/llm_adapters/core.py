@@ -282,6 +282,14 @@ def resolve_llm_adapter(provider: str | None) -> LLMAdapter | None:
             return None
 
 
-def effective_provider_for_model(parsed_provider: str | None) -> str:
-    """Default cloud provider when ModelId has no provider (legacy bare IDs)."""
-    return (parsed_provider or "anthropic").strip().lower()
+def effective_provider_for_model(
+    parsed_provider: str | None, *, model: str = ""
+) -> str:
+    """Return cloud provider for a parsed ModelId — no implicit default.
+
+    Callers must run ``model_id.resolve_wire_model_id`` before parsing when the
+    input may be a bare cloud alias (e.g. ``gpt-5.5`` → ``openai/gpt-5.5``).
+    """
+    from model_id.wire_resolve import require_cloud_provider
+
+    return require_cloud_provider(parsed_provider, model=model or "<unknown>")

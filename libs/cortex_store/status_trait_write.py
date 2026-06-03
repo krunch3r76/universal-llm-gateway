@@ -8,6 +8,7 @@ When Phase 0 trait columns exist, production writers set ``lifecycle``,
 
 from __future__ import annotations
 
+import datetime
 import sqlite3
 from dataclasses import dataclass
 
@@ -48,7 +49,7 @@ def resolve_birth_traits(
     default_band = (
         "provisional" if entity_type in provisional_birth_types else "unsubstantiated"
     )
-    lifecycle: str | None = None
+    lifecycle: str | None = "active"
     band = default_band
     adoption: str | None = "proposed" if entity_type == "decision" else None
 
@@ -84,13 +85,41 @@ def resolve_staged_entity_traits(proposed_status: str | None) -> BirthTraits:
 
 
 def transcript_birth_traits() -> BirthTraits:
-    """Transcript entities: ``content_hash`` confidence axis → band confirmed."""
+    """Transcript entities: band confirmed; live immutable records default active."""
     return BirthTraits(
         confidence_band="confirmed",
-        lifecycle=None,
+        lifecycle="active",
         adoption=None,
         legacy_status="confirmed",
     )
+
+
+def materialize_graduated_lifecycle(conn: sqlite3.Connection, entity_id: str) -> bool:
+    """Set ``lifecycle='active'`` when entity has committed assertions but NULL lifecycle.
+
+    Graduation-boundary hook (1172 T45): staged-born entities that later gain a live
+    non-staged assertion must materialize lifecycle. Idempotent; does not commit.
+    """
+    if not entity_has_trait_columns(conn):
+        return False
+    row = conn.execute(
+        "SELECT lifecycle FROM entities WHERE id = ?", (entity_id,)
+    ).fetchone()
+    if not row or row["lifecycle"] is not None:
+        return False
+    live = conn.execute(
+        "SELECT 1 FROM assertions WHERE entity_id = ? AND superseded_by IS NULL "
+        "AND (review_status IS NULL OR review_status != 'staged') LIMIT 1",
+        (entity_id,),
+    ).fetchone()
+    if not live:
+        return False
+    now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    conn.execute(
+        "UPDATE entities SET lifecycle = 'active', updated_at = ? WHERE id = ?",
+        (now, entity_id),
+    )
+    return True
 
 
 def write_entity_reaped(conn: sqlite3.Connection, entity_id: str, now_iso: str) -> None:
@@ -149,6 +178,7 @@ def redirect_status_update_to_traits(
 
 __all__ = [
     "BirthTraits",
+    "materialize_graduated_lifecycle",
     "redirect_status_update_to_traits",
     "resolve_birth_traits",
     "resolve_staged_entity_traits",

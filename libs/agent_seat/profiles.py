@@ -180,6 +180,33 @@ def derive_inline_only(profile: CapabilityProfile) -> bool:
     )
 
 
+_PROVIDER_TO_FAMILY: dict[str, str] = {
+    "anthropic": "claude",
+    "openai": "gpt",
+    "xai": "grok",
+    "google": "gemini",
+}
+
+
+def inline_only_for_model(model: str) -> bool:
+    """True iff the effective model's family is policy-restricted to inline-only.
+
+    Capability binds to the EFFECTIVE model, not the role label. A model whose
+    ``(family, "api")`` profile is inline-only — e.g. gemini, which hallucinates
+    MCP calls and is barred from write surfaces on any role — must never receive
+    a client-side tool loop, even when an explicit ``model=`` override assigns it
+    to a write-capable role (reviewer/lead). Closes the explicit-override gap
+    where ``capability_tier`` was derived only from the role's default profile.
+    """
+    from model_id import ModelId
+
+    family = _PROVIDER_TO_FAMILY.get(ModelId.parse(model).provider)
+    if family is None:
+        return False
+    profile = load_profiles().get((family, "api"))
+    return profile is not None and derive_inline_only(profile)
+
+
 def resolve_seat(
     family: str | None = None,
     platform: str | None = None,

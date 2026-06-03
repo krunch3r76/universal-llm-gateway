@@ -93,7 +93,18 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
             status_code=400,
             headers=_CORS_HEADERS,
         )
-    parsed = ModelId.parse(str(raw_model))
+    from model_id import WireModelResolutionError, resolve_wire_model_id
+
+    try:
+        wire = resolve_wire_model_id(str(raw_model), require_cloud=True)
+    except WireModelResolutionError as exc:
+        return JSONResponse(
+            {"error": str(exc)},
+            status_code=400,
+            headers=_CORS_HEADERS,
+        )
+
+    parsed = ModelId.parse(wire.wire_id)
     routing = parsed.routing_layer
 
     if routing == "openrouter":
@@ -103,14 +114,7 @@ async def handle_llm_proxy(request: Request) -> JSONResponse:
             headers=_CORS_HEADERS,
         )
 
-    if parsed.provider is None:
-        return JSONResponse(
-            {"error": "Cloud provider model_id is required (provider/model)"},
-            status_code=400,
-            headers=_CORS_HEADERS,
-        )
-
-    provider_key = effective_provider_for_model(parsed.provider)
+    provider_key = effective_provider_for_model(parsed.provider, model=wire.wire_id)
     adapter = resolve_llm_adapter(parsed.provider)
     if adapter is None:
         logger.error(

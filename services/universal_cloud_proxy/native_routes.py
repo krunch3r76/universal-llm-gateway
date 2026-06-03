@@ -117,6 +117,33 @@ async def _publish_failed(
     )
 
 
+async def _assert_catalog_model_known(
+    *,
+    event_bus: EventBus | None,
+    provider_key: str,
+    workspace_id: str,
+) -> None:
+    """Reject unknown model IDs before upstream dispatch (cached catalog only)."""
+    from .cloud_proxy import _get_catalog
+
+    catalog = _get_catalog()
+    if catalog is None or catalog.model_known(workspace_id):
+        return
+    detail = (
+        f"Model not found in cloud catalog: {workspace_id}. "
+        "Check GET /catalog or gateway /v1/models for available IDs."
+    )
+    await _publish_failed(
+        event_bus,
+        provider=provider_key,
+        model=workspace_id,
+        status_code=404,
+        error=detail,
+        adapter_type="unknown",
+    )
+    raise HTTPException(status_code=404, detail=detail)
+
+
 async def _forward_native(
     request: Request,
     *,
@@ -164,6 +191,12 @@ async def _forward_native(
 
     workspace_id = workspace_catalog_id_from_native(provider_key, raw_model)
     streaming = bool(body.get("stream", False))
+
+    await _assert_catalog_model_known(
+        event_bus=event_bus,
+        provider_key=provider_key,
+        workspace_id=workspace_id,
+    )
 
     # Inject reasoning.effort decoded from model suffix.
     # Caller-supplied reasoning.effort in the body takes precedence (caller wins).

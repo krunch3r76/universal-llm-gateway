@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
-from model_id import canonical_model_entity_id
+from model_id import (
+    WireModelResolutionError,
+    canonical_model_entity_id,
+    resolve_wire_model_id,
+)
 
 from .admission import (
     EventPublisher,
@@ -116,6 +120,16 @@ async def build_dispatch_body(
             field="model",
             reason="model is required when no role default is configured",
         )
+    try:
+        effective_model = resolve_wire_model_id(
+            effective_model, require_cloud=True
+        ).wire_id
+    except WireModelResolutionError as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="model",
+            reason=str(exc),
+        ) from exc
 
     model_entity_id = canonical_model_entity_id(effective_model)
     enforce_model(

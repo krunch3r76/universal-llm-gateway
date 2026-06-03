@@ -179,6 +179,11 @@ class SessionCloseResponse(BaseModel):
     # v1.3.1 Path 3 advisory (non-blocking): normalization refusals detected
     # in session-written assertions via the ledger. Never causes 422.
     audit_warnings: list[dict[str, Any]] | None = None
+    debrief_turn_number: int | None = None
+    debrief_status: (
+        Literal["posted", "skipped_existing", "failed", "disabled"] | None
+    ) = None
+    debrief_body: str | None = None
 
 
 class SessionHandoffUpsertRequest(BaseModel):

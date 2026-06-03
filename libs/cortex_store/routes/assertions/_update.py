@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 from pydantic import ValidationError
 
 from ...db import WRITE_LOCK, cortex_conn, decode_row, query
+from ...status_trait_write import materialize_graduated_lifecycle
 from ...models import AssertionItem, AssertionUpdate, AssertionUpdateResponse
 from ._shared import (
     _ASSERTION_COLS,
@@ -230,6 +231,10 @@ def update_assertion(
             # Q5.2=(c): flag if normalize found review-worthy form.
             if normalize_result and normalize_result.get("requires_human_review"):
                 _flag_predicate_normalize_review(conn, assertion_id, normalize_result)
+            if review_status == "committed":
+                entity_id = str(existing[0].get("entity_id") or "")
+                if entity_id:
+                    materialize_graduated_lifecycle(conn, entity_id)
             conn.commit()
 
         if predicate_form_explicitly_set:

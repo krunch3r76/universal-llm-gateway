@@ -81,6 +81,7 @@ def test_google_tooluse_fixture_yields_function_call() -> None:
     assert fc_parts, "expected a functionCall part"
     assert fc_parts[0]["functionCall"]["name"] == "get_weather"
     assert fc_parts[0]["functionCall"]["args"].get("location") == "Paris"
+    assert fc_parts[0].get("thoughtSignature"), "thoughtSignature must survive replay"
 
     adapter = GoogleAdapter(api_key="k")
     parsed = adapter.parse_frontier_response(result)

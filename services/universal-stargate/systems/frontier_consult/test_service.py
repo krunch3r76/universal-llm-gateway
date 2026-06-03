@@ -389,3 +389,25 @@ async def test_team_dispatch_collapses_to_latest_user_turn(
     )
     body = await build_dispatch_body(req)
     assert body["messages"] == [{"role": "user", "content": "latest"}]
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        # Non-multi-agent grok now gets the MCP tool loop (stale blanket
+        # provider!="xai" flatten removed).
+        ("xai/grok-4.3", True),
+        ("xai/grok-4.20-0309-reasoning", True),
+        # Multi-agent xAI still rejects client-side tools.
+        ("xai/grok-4.20-multi-agent-0309", False),
+        ("anthropic/claude-opus-4-8", True),
+        ("openai/gpt-5.5", True),
+        ("google/gemini-3.5-flash", True),
+    ],
+)
+def test_mcp_enabled_for_team_dispatch_only_flattens_multi_agent_xai(
+    model: str, expected: bool
+) -> None:
+    from .admission import mcp_enabled_for_team_dispatch
+
+    assert mcp_enabled_for_team_dispatch(model) is expected

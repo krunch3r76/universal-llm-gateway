@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from cortex_store.dispatch_ops import ops_journals
+from cortex_store.handoff_surface import apply_handoff_read_projection
 from cortex_store.models import SessionHandoffUpsertRequest
 from cortex_store.routes.boot import continuity
 from cortex_store.routes.session_handoff import upsert_session_handoff
@@ -155,3 +156,80 @@ def test_post_close_handoff_on_none_depth_session(
     )
     assert journal is not None
     assert journal["handoff_prompt"] == "Updated journal-only handoff."
+
+
+def test_entity_get_surfaces_unverified_handoff_flag(
+    session_env: dict[str, Path],
+) -> None:
+    """Detached handoff (source_file:null) is surfaced with handoff_surface flag."""
+    session_id = "cursor-2026-06-03-1201"
+    result = _close_with_handoff(
+        session_env,
+        session_id=session_id,
+        handoff="Detached prompt for surface-but-flag test.",
+    )
+    assert "error" not in result, result
+    entity = _query_one(
+        session_env["db_path"],
+        "SELECT attributes FROM entities WHERE id = ?",
+        (f"transcript:{session_id}",),
+    )
+    assert entity is not None
+    attrs = json.loads(entity["attributes"])
+    assert attrs["handoff_prompt"] == "Detached prompt for surface-but-flag test."
+    assert attrs.get("handoff_provenance", {}).get("source_file") is None
+
+    projected, hints = apply_handoff_read_projection(
+        {"id": f"transcript:{session_id}", "attributes": attrs},
+    )
+    surface = projected["attributes"]["handoff_surface"]
+    assert surface["surfaced"] is True
+    assert surface["verified"] is False
+    assert surface["flag"] == "unverified"
+    assert hints is not None
+    assert any(h.category == "handoff_unverified" for h in hints)
+
+
+def test_entity_get_verified_marker_handoff(
+    session_env: dict[str, Path],
+) -> None:
+    """File-backed section derivation surfaces verified handoff_surface."""
+    files_root = session_env["files_root"]
+    session_id = "cursor-2026-06-03-1202"
+    rel = "notes/system/sessions/verified-handoff.md"
+    body = "Next: continue the arc."
+    src = files_root / rel
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_text(
+        f"<!-- handoff:start -->\n{body}\n<!-- handoff:end -->\n",
+        encoding="utf-8",
+    )
+    jsonl = session_env["transcripts_root"] / f"{session_id}.jsonl"
+    _write_jsonl(jsonl)
+    result = ops_journals._op_session_close(
+        session_id=session_id,
+        agent="cursor",
+        transcript_jsonl_path=str(jsonl),
+        session_summary_md=_session_summary("Verified handoff surface test."),
+        summary="Verified handoff surface test — long enough summary.",
+        handoff_source_path=rel,
+        expected_handoff_prompt=body,
+    )
+    assert "error" not in result, result
+
+    entity = _query_one(
+        session_env["db_path"],
+        "SELECT attributes FROM entities WHERE id = ?",
+        (f"transcript:{session_id}",),
+    )
+    assert entity is not None
+    attrs = json.loads(entity["attributes"])
+    projected, hints = apply_handoff_read_projection(
+        {"id": f"transcript:{session_id}", "attributes": attrs},
+    )
+    surface = projected["attributes"]["handoff_surface"]
+    assert surface["verified"] is True
+    assert surface["derivation"] == "section"
+    assert surface["source_file"] == rel
+    assert "flag" not in surface
+    assert hints is None or hints == []

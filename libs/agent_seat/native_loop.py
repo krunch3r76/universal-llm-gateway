@@ -265,8 +265,11 @@ async def run_native_tool_loop(
     Raises:
         ValueError if provider has no native path or no API key configured.
     """
+    from model_id import resolve_wire_model_id
+
+    model = resolve_wire_model_id(model, require_cloud=True).wire_id
     parsed = ModelId.parse(model)
-    provider = effective_provider_for_model(parsed.provider)
+    provider = effective_provider_for_model(parsed.provider, model=model)
     path = NATIVE_PATHS.get(provider)
     if not path:
         raise ValueError(
@@ -347,6 +350,7 @@ async def _run_native_tool_loop_body(
     friction: ToolFrictionTracker,
     pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None,
 ) -> NativeLoopResult:
+    google_malformed_retried = False
     for turn_idx in range(max_turns):
         turns_used = turn_idx + 1
 
@@ -362,6 +366,38 @@ async def _run_native_tool_loop_body(
 
         result = adapter.parse_frontier_response(raw)
         tool_calls = result.get("tool_calls")
+
+        if (
+            provider == "google"
+            and result.get("finish_reason") == "MALFORMED_FUNCTION_CALL"
+            and not tool_calls
+            and not captured
+            and not google_malformed_retried
+        ):
+            google_malformed_retried = True
+            gen_cfg = dict(json_body.get("generationConfig") or {})
+            temp = gen_cfg.get("temperature", 1.0)
+            if isinstance(temp, (int, float)) and temp > 0.7:
+                gen_cfg["temperature"] = 0.7
+            json_body["generationConfig"] = gen_cfg
+            allowed: list[str] = []
+            for group in json_body.get("tools") or []:
+                if not isinstance(group, dict):
+                    continue
+                for decl in group.get("functionDeclarations") or []:
+                    if isinstance(decl, dict) and decl.get("name"):
+                        allowed.append(str(decl["name"]))
+            fn_cfg: dict[str, Any] = {"mode": "ANY"}
+            if allowed:
+                fn_cfg["allowedFunctionNames"] = allowed[:20]
+            json_body["toolConfig"] = {"functionCallingConfig": fn_cfg}
+            raw = await send_native(path, json_body)
+            if not isinstance(raw, dict):
+                raise ValueError(
+                    f"send_native returned non-dict response: {type(raw).__name__}"
+                )
+            result = adapter.parse_frontier_response(raw)
+            tool_calls = result.get("tool_calls")
 
         if not tool_calls or not req.mcp_tool_loop:
             break

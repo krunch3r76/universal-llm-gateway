@@ -25,6 +25,7 @@ from ..models import (
     SessionJournalItem,
     SessionJournalList,
 )
+from ..session_close_debrief import attempt_session_close_debrief
 from ..session_close_validation import (
     _USER_VOICE_RE,
     _audit_normalization_refusals_for_session,
@@ -652,7 +653,8 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     _idem_conn = cortex_conn()
     try:
         existing = _idem_conn.execute(
-            "SELECT id, file_path, handoff_prompt FROM session_journals "
+            "SELECT id, file_path, handoff_prompt, agent, summary, domains, "
+            "decisions, open_items FROM session_journals "
             "WHERE session_id = ?",
             (body.session_id,),
         ).fetchone()
@@ -706,6 +708,18 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=conflict_detail,
             )
+        decoded = decode_row(dict(existing), _JSON_FIELDS)
+        debrief = attempt_session_close_debrief(
+            session_id=body.session_id,
+            agent=decoded["agent"],
+            summary=decoded["summary"],
+            journal_row_id=existing["id"],
+            transcript_depth=prior_depth,
+            content_hash=None,
+            domains=decoded.get("domains"),
+            decisions=decoded.get("decisions"),
+            open_items=decoded.get("open_items"),
+        )
         return SessionCloseResponse(
             transcript_entity_id=(
                 prior_transcript_id if prior_depth != "none" else None
@@ -718,6 +732,9 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
             turn_count=0,
             byte_count=0,
             audit_warnings=None,
+            debrief_turn_number=debrief.debrief_turn_number,
+            debrief_status=debrief.debrief_status,
+            debrief_body=debrief.debrief_body,
         )
 
     # ── write transcript to disk under CORTEX_FILES_ROOT (skipped for depth=none) ──
@@ -921,6 +938,18 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         transcript_depth=body.transcript_depth,
     )
 
+    debrief = attempt_session_close_debrief(
+        session_id=body.session_id,
+        agent=body.agent,
+        summary=body.summary,
+        journal_row_id=journal_row_id,
+        transcript_depth=body.transcript_depth,
+        content_hash=content_hash,
+        domains=body.domains,
+        decisions=body.decisions,
+        open_items=body.open_items,
+    )
+
     return SessionCloseResponse(
         transcript_entity_id=transcript_entity_id,
         transcript_path=transcript_path,
@@ -931,6 +960,9 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
         turn_count=turn_count,
         byte_count=byte_count,
         audit_warnings=audit_warnings,
+        debrief_turn_number=debrief.debrief_turn_number,
+        debrief_status=debrief.debrief_status,
+        debrief_body=debrief.debrief_body,
     )
 
 

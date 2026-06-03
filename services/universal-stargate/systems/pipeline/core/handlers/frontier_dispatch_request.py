@@ -143,6 +143,13 @@ def translate_reasoning_effort(
     return {"effort": normalized}
 
 
+def normalize_frontier_wire_model(model: str) -> str:
+    """Prefix bare cloud ids (e.g. gpt-5.5) before provider routing."""
+    from model_id import resolve_wire_model_id
+
+    return resolve_wire_model_id(model, require_cloud=True).wire_id
+
+
 async def resolve_model(
     opts: dict[str, Any],
     step: StepConfig,
@@ -166,33 +173,40 @@ async def resolve_model(
          agent-seat pipelines (``agent: orion`` step-field, no
          ``pipeline_options``) need not hard-code a model.
     """
+    candidate: str | None = None
+
     runtime_model = opts.get("model")
     if isinstance(runtime_model, str):
         runtime_model = runtime_model.strip()
         if runtime_model and runtime_model != "default":
-            return runtime_model
+            candidate = runtime_model
 
-    step_model = step.get_domain_field("model")
-    if isinstance(step_model, str):
-        step_model = step_model.strip()
-        if step_model and step_model != "default":
-            return step_model
+    if candidate is None:
+        step_model = step.get_domain_field("model")
+        if isinstance(step_model, str):
+            step_model = step_model.strip()
+            if step_model and step_model != "default":
+                candidate = step_model
 
-    resolved = await step.get_target_model_id_async(
-        context._registry,
-        domain=context.pipeline.domain,
-        search_path=context.pipeline.source_search_path,
-        context=context,
-    )
-    if resolved and resolved != "default":
-        return resolved
+    if candidate is None:
+        resolved = await step.get_target_model_id_async(
+            context._registry,
+            domain=context.pipeline.domain,
+            search_path=context.pipeline.source_search_path,
+            context=context,
+        )
+        if resolved and resolved != "default":
+            candidate = resolved
 
     agent_resolution_error: str | None = None
-    if agent:
+    if candidate is None and agent:
         try:
-            return resolve_agent_model(agent)
+            candidate = resolve_agent_model(agent)
         except ValueError as exc:
             agent_resolution_error = str(exc)
+
+    if candidate is not None:
+        return normalize_frontier_wire_model(candidate)
 
     detail = (
         f"Step '{step.id}': frontier_dispatch_v1 could not resolve a "

@@ -11,6 +11,8 @@ import pytest
 from cortex_store.status_trait_backfill import (
     planned_trait_updates,
     run_hybrid_trait_backfill,
+    run_scoped_confidence_band_backfill,
+    run_scoped_lifecycle_active_backfill,
 )
 
 _MIG_PATH = (
@@ -174,3 +176,96 @@ def test_predicate_equivalence_backfill_all_types(conn: sqlite3.Connection) -> N
     ).fetchone()
     assert tx["confidence_band"] == "confirmed"
     assert tx["adoption"] == "adopted"
+
+
+def test_scoped_lifecycle_backfill_skips_staged_assertion_entity(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS assertions (
+            id INTEGER PRIMARY KEY,
+            entity_id TEXT,
+            review_status TEXT,
+            superseded_by INTEGER
+        );
+        INSERT INTO entities (id, type, name, lifecycle, confidence_band)
+        VALUES ('todo:live', 'todo', 'L', NULL, 'unsubstantiated'),
+               ('todo:staged', 'todo', 'S', NULL, 'provisional');
+        INSERT INTO assertions (id, entity_id, review_status, superseded_by)
+        VALUES (1, 'todo:staged', 'staged', NULL);
+        """
+    )
+    counts = run_scoped_lifecycle_active_backfill(conn, dry_run=False)
+    assert counts.entities_touched == 1
+    assert counts.lifecycle == 1
+    live = conn.execute(
+        "SELECT lifecycle FROM entities WHERE id = 'todo:live'"
+    ).fetchone()
+    staged = conn.execute(
+        "SELECT lifecycle FROM entities WHERE id = 'todo:staged'"
+    ).fetchone()
+    assert live["lifecycle"] == "active"
+    assert staged["lifecycle"] is None
+
+
+def test_scoped_confidence_band_backfill_uses_type_defaults(
+    conn: sqlite3.Connection,
+) -> None:
+    conn.executescript(
+        """
+        INSERT INTO entities (id, type, name, lifecycle, confidence_band)
+        VALUES ('todo:t', 'todo', 'T', 'active', NULL),
+               ('decision:d', 'decision', 'D', 'active', NULL),
+               ('transcript:x', 'transcript', 'X', NULL, NULL);
+        """
+    )
+    counts = run_scoped_confidence_band_backfill(conn, dry_run=False)
+    assert counts.entities_touched == 3
+    assert counts.confidence_band == 3
+    todo = conn.execute(
+        "SELECT confidence_band FROM entities WHERE id = 'todo:t'"
+    ).fetchone()
+    decision = conn.execute(
+        "SELECT confidence_band FROM entities WHERE id = 'decision:d'"
+    ).fetchone()
+    transcript = conn.execute(
+        "SELECT confidence_band FROM entities WHERE id = 'transcript:x'"
+    ).fetchone()
+    assert todo["confidence_band"] == "unsubstantiated"
+    assert decision["confidence_band"] == "provisional"
+    assert transcript["confidence_band"] == "confirmed"
+
+
+def test_scoped_graduated_lifecycle_backfill_sets_active_with_staged_and_committed(
+    conn: sqlite3.Connection,
+) -> None:
+    from cortex_store.status_trait_backfill import (
+        count_graduated_null_lifecycle,
+        run_scoped_graduated_lifecycle_backfill,
+    )
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS assertions (
+            id INTEGER PRIMARY KEY,
+            entity_id TEXT,
+            review_status TEXT,
+            superseded_by INTEGER
+        );
+        INSERT INTO entities (id, type, name, lifecycle, confidence_band)
+        VALUES ('todo:grad', 'todo', 'G', NULL, 'unsubstantiated');
+        INSERT INTO assertions (id, entity_id, review_status, superseded_by)
+        VALUES (1, 'todo:grad', 'staged', NULL),
+               (2, 'todo:grad', 'committed', NULL);
+        """
+    )
+    assert count_graduated_null_lifecycle(conn) == 1
+    counts = run_scoped_graduated_lifecycle_backfill(conn, dry_run=False)
+    assert counts.entities_touched == 1
+    assert counts.lifecycle == 1
+    row = conn.execute(
+        "SELECT lifecycle FROM entities WHERE id = 'todo:grad'"
+    ).fetchone()
+    assert row["lifecycle"] == "active"
+    assert count_graduated_null_lifecycle(conn) == 0

@@ -36,8 +36,19 @@ def is_chat_completions_only(model: str) -> bool:
 
 
 def mcp_enabled_for_team_dispatch(model: str) -> bool:
-    """Derive team_dispatch MCP tooling from the effective model provider."""
-    return ModelId.parse(model).provider != "xai"
+    """Derive team_dispatch MCP tooling from the effective model.
+
+    Only xAI *multi-agent* models reject client-side function tools (server-side
+    built-ins are injected via provider_options instead). Every other model —
+    including non-multi-agent grok (grok-4.3, grok-4.20-0309-reasoning) —
+    supports the in-process MCP tool loop. The legacy blanket ``provider !=
+    "xai"`` flatten over-suppressed non-multi-agent grok; it is removed. The
+    downstream tool-decision branch keeps an equivalent multi-agent guard as
+    defense in depth, and inline-only capability tiers are suppressed separately
+    via ``capability_tier``.
+    """
+    mid = ModelId.parse(model)
+    return not (mid.provider == "xai" and "multi-agent" in mid.base_id)
 
 
 @dataclass(slots=True)

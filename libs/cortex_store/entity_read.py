@@ -20,6 +20,7 @@ from .assertion_deserialize_telemetry import (
 )
 from .compaction import apply_compaction_filter
 from .db import decode_row, query
+from .handoff_surface import apply_handoff_read_projection
 from .models import (
     AssertionItem,
     CompactionProjection,
@@ -28,9 +29,9 @@ from .models import (
     RelationshipItem,
 )
 from .relationship_sql import FROM_CLAUSE, SELECT_COLUMNS
-from .status_trait_read import apply_option_c_read_projection
 from .routes.assertions import _ASSERTION_COLS
 from .routes.edges import _EDGE_COLS
+from .status_trait_read import apply_option_c_read_projection
 
 logger = get_logger("cortex-api.entity_read")
 
@@ -139,11 +140,15 @@ def get_entity_impl(
     edges = [EdgeItem(**row) for row in edge_rows]
     hints = detect_expired_unresolved([a.model_dump() for a in assertions])
     detail_row = apply_option_c_read_projection(decode_row(entity, ENTITY_JSON_FIELDS))
+    detail_row, hints = apply_handoff_read_projection(
+        detail_row,
+        existing_hints=hints or None,
+    )
     return EntityDetail(
         **detail_row,
         assertions=assertions,
         relationships=relationships,
         reasoning_edges=edges,
-        action_hints=hints or None,
+        action_hints=hints,
         compaction_projection=compaction_projection,
     ).model_dump(mode="json")

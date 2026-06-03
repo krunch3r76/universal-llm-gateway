@@ -176,6 +176,10 @@ class CatalogManager:
                     return catalog
         return None
 
+    def model_known(self, model_id: str) -> bool:
+        """Return True when ``model_id`` is present in the cached cloud catalog."""
+        return self.resolve_provider(model_id) is not None
+
     async def _fetch_provider(self, config: ProviderConfig) -> bool:
         """Fetch model list from a single provider and cache it."""
         adapter = self._adapters.get(config.provider)

@@ -60,6 +60,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:lawyer-stance",
         "agent_skill:legal-opinion-corpus-ingestion",
         "agent_skill:markdown-navigation",
+        "agent_skill:mcp-tool-loop-trace-matrix",
         "agent_skill:named-entity-verification-gate",
         "agent_skill:no-silent-inference",
         "agent_skill:pre-deploy-gate-discipline",

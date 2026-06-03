@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -34,7 +34,15 @@ from ._hydration_render import (
     _render_briefing,
     _safe_list,
 )
-from .profiles import family_anchor, get_role, load_roles, role_anchor
+from .profiles import (
+    derive_inline_only,
+    family_anchor,
+    get_profile,
+    get_role,
+    inline_only_for_model,
+    load_roles,
+    role_anchor,
+)
 from .registry import normalize_agent_slug
 
 logger = logging.getLogger(__name__)
@@ -327,6 +335,21 @@ async def hydrate_agent(
     self_reflections = _safe_list(raw.get("self_reflections"))
     skills = _safe_list(raw.get("skills"))
     agent_meta = raw["agent_meta"]
+    if normalized_agent in load_roles():
+        role_profile = get_role(normalized_agent)
+        dispatch_profile = get_profile(
+            role_profile.default_family,
+            role_profile.default_platform,
+        )
+        # Capability tier binds to the EFFECTIVE model, not just the role
+        # default: an explicit model= override (e.g. reviewer + model=gemini)
+        # that resolves to an inline-only family must still revoke the tool
+        # surface so a write-hallucinating model cannot touch shared cortex.
+        effective = model if model is not None else agent_meta.default_model
+        if derive_inline_only(dispatch_profile) or (
+            effective is not None and inline_only_for_model(effective)
+        ):
+            agent_meta = replace(agent_meta, capability_tier="inline-only")
 
     unread_threads = [
         t for t in threads if isinstance(t, dict) and t.get("unread_count", 0) > 0

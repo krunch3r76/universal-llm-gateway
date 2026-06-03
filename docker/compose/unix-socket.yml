@@ -114,7 +114,7 @@ services:
       # When unset, Stargate logs a warning and disables result_delivery.
       - AGENT_BUS_TOKEN=${AGENT_BUS_TOKEN:-}
 
-      # Remote-MCP env — required for pipeline/frontier_generate paths that set
+      # Remote-MCP env — required for pipeline/frontier_dispatch paths that set
       # remote_mcp=True (Task 7 Phase 0). When either is missing, adapter
       # build_frontier_request raises RuntimeError and the pipeline handler
       # emits pipeline.frontier.dispatch.remotemcp.misconfigured before
