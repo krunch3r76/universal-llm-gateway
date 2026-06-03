@@ -1,0 +1,49 @@
+"""Warn-only handoff audit helpers (2-B legacy detached_string path)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from .handoff_paths import normalize_handoff_source_path, read_sandboxed_source_text
+
+
+def _handoff_finding(kind: str, subject: str, detail: str) -> dict[str, Any]:
+    from .dispatch_ops._detectors._shared import _finding
+
+    return _finding(kind, subject, detail)
+
+
+def check_handoff_prompt_in_source(
+    *,
+    handoff_prompt: str | None,
+    source_path: str | None,
+    files_root: Path,
+) -> dict[str, Any] | None:
+    """Warn-only consistency check (thread 1188, 2-B) — detached_string only."""
+    if not handoff_prompt or not source_path:
+        return None
+    rel = normalize_handoff_source_path(source_path)
+    text = read_sandboxed_source_text(files_root, source_path)
+    if text is None:
+        return _handoff_finding(
+            "handoff_prompt_source_mismatch",
+            rel or str(source_path),
+            (
+                f"handoff_source_path {source_path!r} was supplied alongside a "
+                "handoff_prompt, but the file is missing/unreadable or escapes "
+                "the cortex files sandbox — the prompt could not be verified "
+                "against its claimed source."
+            ),
+        )
+    if handoff_prompt not in text:
+        return _handoff_finding(
+            "handoff_prompt_source_mismatch",
+            rel or str(source_path),
+            (
+                f"handoff_prompt is not a substring of its claimed source file "
+                f"{rel!r} — the structured prompt may have drifted from, or "
+                "been authored independently of, the authoritative .md file."
+            ),
+        )
+    return None

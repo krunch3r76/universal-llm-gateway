@@ -54,7 +54,7 @@ def register_cortex_tools(mcp: FastMCP) -> None:
                   edge_traverse     (node, hops?, edge_type?, min_strength?) — graph traversal (1-2 hops)
                   edge_retire       (edge_id, valid_until?)                  — retire an edge
                   edge_types        ()                                        — list registered edge types
-                  search            (query, limit?, superseded?, entity_type?) — FTS5 fulltext search over assertions
+                  search            (query, limit?, superseded?, entity_type?, intent?) — FTS5 hybrid search over assertions. intent="summary" (default): compact hits {id, entity_id, truncated claim, confidence, review_status, combmax_score, retrieval_source}; intent="full": assertion-detail rows with enrichment fields (superset of summary, includes review_status). Fetch detail via entity_get(intent=card) or assertions(entity_id=...).
                   analyze_impact    (entity_id, claim, confidence?)            — semantic pre-write impact analysis (C1)
                   activate          (entity_ids, depth?, max_results?, exclude_ids?, suppress_hubs?, decay_factor?) — spreading activation
                   resolve           (uri, tag?)                                — cortex:// URI resolution

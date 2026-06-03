@@ -113,6 +113,12 @@ class SessionCloseRequest(BaseModel):
         ``decision:transcript-scoped-handoff-explicit-load``). Replaces the
         prior write path through ``reflective_journal`` (retired per
         ``decision:rj-handoff-kind-retirement``, agent-bus thread 1107).
+      handoff_source_path / handoff_source_section: when ``handoff_source_path``
+        is set, the server derives ``handoff_prompt`` from HTML-comment marker
+        pairs in the file (2-A v2, agent-bus 1188). ``handoff_source_section``
+        names an optional marker label; null uses ``<!-- handoff:start/end -->``.
+      expected_handoff_prompt / expected_derived_handoff_prompt_sha256 /
+        expected_source_file_sha256: assertion / TOCTOU guards after ``dry_run``.
       assistant_label:    H3 heading label for assistant blocks in the
         assembled verbatim layer (default ``"Assistant"``).
     """
@@ -131,6 +137,10 @@ class SessionCloseRequest(BaseModel):
     prior_session_id: str | None = None
     handoff_prompt: str | None = None
     handoff_source_path: str | None = None
+    handoff_source_section: str | None = None
+    expected_handoff_prompt: str | None = None
+    expected_derived_handoff_prompt_sha256: str | None = None
+    expected_source_file_sha256: str | None = None
     assistant_label: str | None = None
 
 
@@ -184,6 +194,10 @@ class SessionHandoffUpsertRequest(BaseModel):
 
     handoff_prompt: str
     handoff_source_path: str | None = None
+    handoff_source_section: str | None = None
+    expected_handoff_prompt: str | None = None
+    expected_derived_handoff_prompt_sha256: str | None = None
+    expected_source_file_sha256: str | None = None
 
 
 class SessionHandoffUpsertResponse(BaseModel):

@@ -103,6 +103,9 @@ PARTITION: dict[str, list[str]] = {
         # Partitioned here for backfill membership; OVERRIDDEN below to its true
         # multi-agent value ['claude-cursor', 'claude-web'] (not universal).
         "agent_skill:mcp-surface-change",
+        # Partitioned here for backfill membership; OVERRIDDEN below to lead
+        # seats ['claude-web', 'claude-cursor', 'grok-direct'] (not universal).
+        "agent_skill:consensus-steelman-posture",
     ],
     "claude-cursor": [
         "agent_skill:ulg-architecture",
@@ -143,6 +146,12 @@ OVERRIDES: dict[str, list[str]] = {
         "grok-web",
         "claude-web",
         "claude-cursor",
+    ],
+    # Lead-seat posture (thread 1189) — not universal; applies to lead seats only.
+    "agent_skill:consensus-steelman-posture": [
+        "claude-web",
+        "claude-cursor",
+        "grok-direct",
     ],
 }
 

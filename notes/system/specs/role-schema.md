@@ -90,8 +90,9 @@ attributes:
   purpose: Generalist analysis, multimodal, broad-knowledge synthesis
   default_family: gemini
   default_platform: api
-  default_model: google/gemini-2.5-flash
+  default_model: google/gemini-3.5-flash
   allowed_models:
+    - google/gemini-3.5-flash
     - google/gemini-2.5-pro
     - google/gemini-2.5-flash
     - google/gemini-3-flash-preview

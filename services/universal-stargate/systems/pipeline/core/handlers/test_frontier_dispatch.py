@@ -908,7 +908,7 @@ async def test_handler_google_effort_is_lowercase(
     step = _FakeStep()
     context = _make_context(
         options={
-            "model": "google/gemini-3-flash-preview",
+            "model": "google/gemini-3.5-flash",
             "mcp": False,
             "generation_parameters": {"reasoning_effort": "low"},
         }

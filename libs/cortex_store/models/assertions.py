@@ -337,50 +337,6 @@ class AssertionList(BaseModel):
     compaction_projection: CompactionProjection | None = None
 
 
-class AssertionSearchItem(BaseModel):
-    """Assertion search result with hybrid retrieval scores."""
-
-    id: int
-    entity_id: str | None = None
-    entity_name: str | None = None
-    claim: str
-    confidence: AssertionConfidence
-    confidence_score: float | None = None
-    evidence: str | None = None
-    evidence_uris: list[str] | None = None
-    seeded_by: str | None = None
-    derivation_type: DerivationType | None = None
-    prospective_summary: str | None = None
-    events_json: str | None = None
-    superseded_by: int | None = None
-    entrenchment_score: float | None = None
-    observed_at: str | None = None
-    bm25_score: float | None = Field(None, description="Normalized BM25 score (0-1)")
-    cosine_similarity: float | None = Field(
-        None, description="Cosine similarity from vector search (0-1)"
-    )
-    combmax_score: float | None = Field(
-        None, description="CombMAX fused score: max(bm25_norm, cosine_sim)"
-    )
-    retrieval_source: str = Field(
-        "fts", description="Retrieval branch: 'fts', 'vector', or 'both'"
-    )
-    rank: float | None = Field(
-        None, description="Raw FTS5 BM25 rank (lower = better match)"
-    )
-    created_at: str
-
-
-class AssertionSearchResult(BaseModel):
-    query: str
-    items: list[AssertionSearchItem]
-    total: int
-    search_mode: str = Field(
-        "hybrid", description="'hybrid' when vector is available, 'fulltext' otherwise"
-    )
-    action_hints: list[ActionHint] | None = None
-
-
 class TouchedAssertionItem(BaseModel):
     """Assertion touched by a proposed claim in C1 impact analysis."""
 

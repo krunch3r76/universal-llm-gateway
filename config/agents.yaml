@@ -188,7 +188,7 @@ profiles:
     # participation under the gemini-api slug. See agent-identity-signoff.mdc
     # "Four-layer model" for the seat ≡ MCP-wired runtime criterion.
     provider: google
-    default_model: google/gemini-3-flash-preview
+    default_model: google/gemini-3.5-flash
     tool_surface: mcp
     delivery: auto
     include_deadlines: true
@@ -196,6 +196,7 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
+      - google/gemini-3.5-flash
       - google/gemini-2.5-pro
       - google/gemini-2.5-flash
       - google/gemini-3-flash-preview
@@ -204,7 +205,7 @@ profiles:
   gemini/cursor:
     # Cursor seat for Gemini.
     provider: google
-    default_model: google/gemini-3-flash-preview
+    default_model: google/gemini-3.5-flash
     tool_surface: mcp
     delivery: manual
     include_deadlines: true
@@ -215,6 +216,7 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
     allowed_models:
+      - google/gemini-3.5-flash
       - google/gemini-2.5-pro
       - google/gemini-2.5-flash
       - google/gemini-3-flash-preview
@@ -284,8 +286,9 @@ roles:
     description: "Generalist analysis, multimodal, broad-knowledge synthesis"
     default_family: gemini
     default_platform: api
-    default_model: google/gemini-3-flash-preview
+    default_model: google/gemini-3.5-flash
     allowed_models:
+      - google/gemini-3.5-flash
       - google/gemini-2.5-pro
       - google/gemini-2.5-flash
       - google/gemini-3-flash-preview

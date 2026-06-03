@@ -339,9 +339,15 @@ def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
     session_a = "orion-2026-05-04-0700"
     session_b = "orion-2026-05-04-0847"
 
+    handoff = "Resume from the G2 confirmed+inference policy."
     handoff_file = files_root / "notes/system/sessions/a-handoff.md"
     handoff_file.parent.mkdir(parents=True, exist_ok=True)
-    handoff_file.write_text("Next decision: G2 policy.", encoding="utf-8")
+    handoff_file.write_text(
+        "<!-- handoff:start -->\n"
+        f"{handoff}\n"
+        "<!-- handoff:end -->\n",
+        encoding="utf-8",
+    )
 
     # B closes first → back-creates a bare transcript:A via prior_session_id.
     b_result = ops_journals._op_session_close(
@@ -363,13 +369,13 @@ def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
 
     # A closes with a handoff → INSERT OR IGNORE no-op on the pre-existing
     # entity; the explicit UPDATE must carry the attribute state.
-    handoff = "Resume from the G2 confirmed+inference policy."
     a_payload = _payload(
         session_id=session_a,
         handoff_prompt=handoff,
         transcripts_root=session_env["transcripts_root"],
     )
     a_payload["handoff_source_path"] = "notes/system/sessions/a-handoff.md"
+    a_payload["expected_handoff_prompt"] = handoff
     a_result = ops_journals._op_session_close(**a_payload)
     assert "error" not in a_result, a_result
 
@@ -395,6 +401,8 @@ def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
     assert prov["write_path"] == "session_close"
     assert prov["source_file"] == "notes/system/sessions/a-handoff.md"
     assert prov["source_file_sha256"].startswith("sha256:")
+    assert prov["derivation"] == "section"
+    assert prov["derived_handoff_prompt_sha256"].startswith("sha256:")
 
 
 def test_session_close_without_handoff_is_clean_no_warnings(
@@ -806,10 +814,10 @@ def test_close_depth_invalid_value_rejected(session_env: dict[str, Path]) -> Non
     assert "error" in result
 
 
-def test_close_already_closed_echoes_prior_depth(
+def test_close_already_closed_idempotent_when_handoff_unchanged(
     session_env: dict[str, Path],
 ) -> None:
-    """Second close attempt ⟹ 422 session.already_closed with prior depth echoed."""
+    """Second close with same handoff ⟹ idempotent snapshot (2-A v2 binding #5)."""
     summary_a = "First close — depth=none, no transcript artifact written."
     first = ops_journals._op_session_close(
         session_id="web-2026-05-27-1009",
@@ -821,7 +829,7 @@ def test_close_already_closed_echoes_prior_depth(
     assert "error" not in first, first
     assert first["transcript_depth"] == "none"
 
-    summary_b = "Second close attempt — should be rejected as already closed."
+    summary_b = "Second close attempt — idempotent when handoff unchanged."
     second = ops_journals._op_session_close(
         session_id="web-2026-05-27-1009",
         agent="web",
@@ -830,10 +838,9 @@ def test_close_already_closed_echoes_prior_depth(
         summary=summary_b,
         transcript_depth="verbatim",
     )
-    assert "error" in second
-    assert second.get("reason") == "session.already_closed"
-    assert second.get("transcript_depth") == "none"
-    # No transcript entity existed for the prior depth=none close.
+    assert "error" not in second
+    assert second["journal_row_id"] == first["journal_row_id"]
+    assert second["transcript_depth"] == "none"
     assert second.get("transcript_entity_id") is None
 
 

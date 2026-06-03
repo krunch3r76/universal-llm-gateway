@@ -37,8 +37,6 @@ from .assertions import (
     AssertionCreateResponse,
     AssertionItem,
     AssertionList,
-    AssertionSearchItem,
-    AssertionSearchResult,
     AssertionUpdate,
     AssertionUpdateResponse,
     CompactionProjection,
@@ -94,6 +92,11 @@ from .journals import (
     SessionJournalItem,
     SessionJournalList,
 )
+from .search import (
+    AssertionSearchItem,
+    AssertionSearchResult,
+    AssertionSearchSummaryItem,
+)
 from .reflective import (
     ConsolidationData,
     JournalLinkCreate,
@@ -137,8 +140,6 @@ __all__ = [
     "AssertionCreateResponse",
     "AssertionItem",
     "AssertionList",
-    "AssertionSearchItem",
-    "AssertionSearchResult",
     "AssertionUpdate",
     "AssertionUpdateResponse",
     "CompactionProjection",
@@ -152,6 +153,9 @@ __all__ = [
     "PredicateFormNormalize",
     "ResolutionStatus",
     "ReviewStatus",
+    "AssertionSearchItem",
+    "AssertionSearchResult",
+    "AssertionSearchSummaryItem",
     "SupersedeRequest",
     "SupersedeResponse",
     "TouchedAssertionItem",

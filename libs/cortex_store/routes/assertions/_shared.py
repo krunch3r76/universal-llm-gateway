@@ -25,7 +25,7 @@ from universal_logging import get_logger
 from ... import embeddings as cortex_embeddings
 from ... import vector_store
 from ...db import WRITE_LOCK, cortex_conn
-from ...models import AssertionItem, PredicateFormNormalize
+from ...models import AssertionItem, AssertionSearchSummaryItem, PredicateFormNormalize
 from ...projection_guard import assert_projection_covers_required
 
 logger = get_logger("cortex-api.assertions")
@@ -56,7 +56,7 @@ def _log_search_access(items: list) -> None:
             )
             conn.commit()
     except Exception:
-        logger.debug("Batch access log insert failed for search results")
+        logger.warning("Batch access log insert failed for search results", exc_info=True)
 
 
 def _embed_assertion_background(assertion_id: int, assertion_row: dict) -> None:
@@ -125,6 +125,30 @@ assert_projection_covers_required(
     cols=_ASSERTION_COMPACT_COLS,
     model=AssertionItem,
     const_name="_ASSERTION_COMPACT_COLS",
+    source_file=__file__,
+)
+
+# Hybrid search full projection — enrichment fields included for intent=full.
+_SEARCH_COLS = (
+    "a.id, a.entity_id, a.claim, a.confidence, a.confidence_score, "
+    "a.review_status, a.evidence, a.evidence_uris, a.seeded_by, a.derivation_type, "
+    "a.prospective_summary, a.events_json, a.superseded_by, "
+    "a.entrenchment_score, a.observed_at, a.created_at"
+)
+_SEARCH_COLS_WITH_ENTITY = _SEARCH_COLS + ", e.name AS entity_name"
+
+# §search-summary: narrow column set for hybrid FTS search hits. Heavy
+# enrichment fields (prospective_summary, events_json, evidence, …) are
+# omitted at the SQL layer; agents fetch via entity_get / assertion_get.
+_SEARCH_SUMMARY_COLS = (
+    "id, entity_id, claim, confidence, review_status, superseded_by, created_at"
+)
+_SEARCH_SUMMARY_COLS_WITH_ENTITY = _SEARCH_SUMMARY_COLS + ", e.name AS entity_name"
+
+assert_projection_covers_required(
+    cols=_SEARCH_SUMMARY_COLS,
+    model=AssertionSearchSummaryItem,
+    const_name="_SEARCH_SUMMARY_COLS",
     source_file=__file__,
 )
 
@@ -249,6 +273,10 @@ def _payload_validation_exception(exc: ValidationError) -> HTTPException:
 __all__ = [
     "_ASSERTION_COLS",
     "_ASSERTION_COMPACT_COLS",
+    "_SEARCH_COLS",
+    "_SEARCH_COLS_WITH_ENTITY",
+    "_SEARCH_SUMMARY_COLS",
+    "_SEARCH_SUMMARY_COLS_WITH_ENTITY",
     "_JSON_FIELDS",
     "_SESSION_TAG_RE",
     "_VALID_CONFIDENCE",

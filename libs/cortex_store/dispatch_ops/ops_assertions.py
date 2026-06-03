@@ -82,16 +82,19 @@ def _op_search(
     limit: int | None = None,
     superseded: bool | None = None,
     entity_type: str | None = None,
+    intent: str | None = None,
     include_compaction_pointers: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if not query:
         return {"error": "query is required"}
+    resolved_intent = intent if intent in ("summary", "full") else "summary"
     return _search_assertions_impl(
         q=query,
         superseded=bool(superseded),
         entity_type=entity_type,
         limit=limit or 20,
+        intent=resolved_intent,
         include_compaction_pointers=include_compaction_pointers,
     )
 

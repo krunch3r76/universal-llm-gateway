@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, status
 from universal_logging import get_logger
 
@@ -17,9 +19,9 @@ from ..models import SessionHandoffUpsertRequest, SessionHandoffUpsertResponse
 from ..session_close_validation import build_validation_error
 from ..session_handoff import (
     WRITE_PATH_HANDOFF_UPSERT,
-    build_handoff_provenance,
     mirror_handoff_to_transcript_entity,
     require_closed_journal_row,
+    resolve_handoff_for_write,
 )
 
 logger = get_logger("cortex-api.session_handoff")
@@ -61,8 +63,37 @@ def upsert_session_handoff(
             ),
         )
 
-    handoff_prompt = body.handoff_prompt.strip()
-    if not handoff_prompt:
+    if not body.handoff_source_path and not body.handoff_prompt.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=build_validation_error(
+                reason="handoff_prompt.empty",
+                field="handoff_prompt",
+                received=body.handoff_prompt,
+                expected="non-empty handoff_prompt or handoff_source_path",
+                examples=["Continue from the phase-2 gate review."],
+                hint="Supply handoff_prompt or a marker-backed handoff_source_path.",
+                detail="handoff_prompt must be non-empty when no source path is given.",
+            ),
+        )
+
+    now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    resolution = resolve_handoff_for_write(
+        files_root=_FILES_ROOT,
+        write_path=WRITE_PATH_HANDOFF_UPSERT,
+        written_at=now,
+        handoff_source_path=body.handoff_source_path,
+        handoff_source_section=body.handoff_source_section,
+        handoff_prompt=body.handoff_prompt,
+        expected_handoff_prompt=body.expected_handoff_prompt,
+        expected_derived_handoff_prompt_sha256=(
+            body.expected_derived_handoff_prompt_sha256
+        ),
+        expected_source_file_sha256=body.expected_source_file_sha256,
+    )
+    handoff_prompt = resolution.handoff_prompt
+    provenance = resolution.provenance
+    if not handoff_prompt and not body.handoff_source_path:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=build_validation_error(
@@ -82,11 +113,6 @@ def upsert_session_handoff(
         conn.execute(
             "UPDATE session_journals SET handoff_prompt = ? WHERE id = ?",
             (handoff_prompt, journal["id"]),
-        )
-        provenance = build_handoff_provenance(
-            write_path=WRITE_PATH_HANDOFF_UPSERT,
-            source_path=body.handoff_source_path,
-            files_root=_FILES_ROOT,
         )
         mirrored = mirror_handoff_to_transcript_entity(
             conn, session_id, handoff_prompt, provenance

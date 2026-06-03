@@ -34,8 +34,8 @@ from ..session_close_validation import (
 )
 from ..session_handoff import (
     WRITE_PATH_SESSION_CLOSE,
-    build_handoff_provenance,
-    check_handoff_prompt_in_source,
+    handoff_post_close_findings,
+    resolve_handoff_for_write,
 )
 from ..status_trait_read import entity_has_trait_columns
 from ..status_trait_write import (
@@ -652,14 +652,13 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
     _idem_conn = cortex_conn()
     try:
         existing = _idem_conn.execute(
-            "SELECT id, file_path FROM session_journals WHERE session_id = ?",
+            "SELECT id, file_path, handoff_prompt FROM session_journals "
+            "WHERE session_id = ?",
             (body.session_id,),
         ).fetchone()
     finally:
         _idem_conn.close()
     if existing is not None:
-        # Echo the prior close's transcript_depth from the entity
-        # attributes (or infer 'none' when no entity exists).
         prior_transcript_id = f"transcript:{body.session_id}"
         prior_depth = "none"
         with cortex_conn() as _depth_conn:
@@ -673,31 +672,52 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                     prior_depth = prior_attrs.get("transcript_depth", "verbatim")
                 except (json.JSONDecodeError, AttributeError):
                     prior_depth = "verbatim"
-        already_detail = {
-            "reason": "session.already_closed",
-            "session_id": body.session_id,
-            "transcript_entity_id": (
+        prior_handoff = existing["handoff_prompt"]
+        handoff_retry = resolve_handoff_for_write(
+            files_root=_FILES_ROOT,
+            write_path=WRITE_PATH_SESSION_CLOSE,
+            written_at=now,
+            handoff_source_path=body.handoff_source_path,
+            handoff_source_section=body.handoff_source_section,
+            handoff_prompt=body.handoff_prompt,
+            expected_handoff_prompt=body.expected_handoff_prompt,
+            expected_derived_handoff_prompt_sha256=(
+                body.expected_derived_handoff_prompt_sha256
+            ),
+            expected_source_file_sha256=body.expected_source_file_sha256,
+        )
+        if handoff_retry.handoff_prompt != prior_handoff:
+            conflict_detail = build_validation_error(
+                reason="session.handoff_would_change",
+                field="handoff_prompt",
+                received=handoff_retry.handoff_prompt,
+                expected=prior_handoff,
+                examples=[],
+                hint=(
+                    "Already-closed sessions cannot change handoff via session_close; "
+                    "use session_handoff_upsert."
+                ),
+                detail=(
+                    f"session {body.session_id!r} is already closed; re-close would "
+                    "change stored handoff_prompt."
+                ),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=conflict_detail,
+            )
+        return SessionCloseResponse(
+            transcript_entity_id=(
                 prior_transcript_id if prior_depth != "none" else None
             ),
-            "transcript_path": existing["file_path"],
-            "journal_row_id": existing["id"],
-            "transcript_depth": prior_depth,
-            "message": (
-                f"session_close: {body.session_id} is already closed "
-                f"(journal_row_id={existing['id']}, depth={prior_depth}). "
-                "The previous close is the source of truth — do not retry; "
-                "treat this as success."
-            ),
-        }
-        _emit_rejected(
-            "session.already_closed",
+            transcript_path=existing["file_path"],
+            journal_row_id=existing["id"],
             session_id=body.session_id,
-            agent=body.agent,
-            detail=already_detail["message"],
-        )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=already_detail,
+            transcript_depth=prior_depth,
+            content_hash=None,
+            turn_count=0,
+            byte_count=0,
+            audit_warnings=None,
         )
 
     # ── write transcript to disk under CORTEX_FILES_ROOT (skipped for depth=none) ──
@@ -723,7 +743,21 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 detail=f"Transcript file write failed: {exc}",
             )
 
-    handoff_prompt = body.handoff_prompt.strip() if body.handoff_prompt else None
+    handoff_resolution = resolve_handoff_for_write(
+        files_root=_FILES_ROOT,
+        write_path=WRITE_PATH_SESSION_CLOSE,
+        written_at=now,
+        handoff_source_path=body.handoff_source_path,
+        handoff_source_section=body.handoff_source_section,
+        handoff_prompt=body.handoff_prompt,
+        expected_handoff_prompt=body.expected_handoff_prompt,
+        expected_derived_handoff_prompt_sha256=(
+            body.expected_derived_handoff_prompt_sha256
+        ),
+        expected_source_file_sha256=body.expected_source_file_sha256,
+    )
+    handoff_prompt = handoff_resolution.handoff_prompt
+    handoff_provenance = handoff_resolution.provenance
 
     name_words = body.summary.split()[:6]
     entity_name = " ".join(name_words)
@@ -755,20 +789,11 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
                 "closed_at": now,
                 "status": "confirmed",
                 "transcript_depth": body.transcript_depth,
-                **(
-                    {
-                        "handoff_prompt": handoff_prompt,
-                        "handoff_provenance": build_handoff_provenance(
-                            write_path=WRITE_PATH_SESSION_CLOSE,
-                            source_path=body.handoff_source_path,
-                            files_root=_FILES_ROOT,
-                            written_at=now,
-                        ),
-                    }
-                    if handoff_prompt
-                    else {}
-                ),
             }
+            if handoff_prompt:
+                tx_attributes["handoff_prompt"] = handoff_prompt
+            if handoff_provenance is not None:
+                tx_attributes["handoff_provenance"] = handoff_provenance
             tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 transcript_entity_id,
@@ -838,21 +863,14 @@ def close_session(body: SessionCloseRequest) -> SessionCloseResponse:
 
         conn.commit()
         findings = _audit_normalization_refusals_for_session(conn, body.session_id)
-        # (2-B) warn-only: when both handoff_source_path and handoff_prompt
-        # are supplied, flag (never block) a prompt that is not a substring
-        # of its claimed source file (thread 1188 / 2-B).
-        handoff_mismatch = check_handoff_prompt_in_source(
-            handoff_prompt=handoff_prompt,
-            source_path=body.handoff_source_path,
-            files_root=_FILES_ROOT,
-        )
-        if handoff_mismatch is not None:
-            findings = [*findings, handoff_mismatch]
-            logger.warning(
-                "session_close: %s handoff_prompt mismatch vs source %s",
-                body.session_id,
-                body.handoff_source_path,
-            )
+        findings = [
+            *findings,
+            *handoff_post_close_findings(
+                resolution=handoff_resolution,
+                handoff_source_path=body.handoff_source_path,
+                files_root=_FILES_ROOT,
+            ),
+        ]
         if heading_warning is not None:
             findings = [*findings, heading_warning]
         audit_warnings = findings if findings else None

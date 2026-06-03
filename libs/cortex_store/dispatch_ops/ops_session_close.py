@@ -15,6 +15,7 @@ from ..session_close_validation import (
     _validate_transcript_structure,
     normalize_session_summary_heading,
 )
+from ..session_handoff import handoff_dry_run_preview
 from ..transcript_assembly import (
     TranscriptPathError,
     assemble_verbatim_md,
@@ -287,6 +288,10 @@ def _op_session_close(
     prior_session_id: str | None = None,
     handoff_prompt: str | None = None,
     handoff_source_path: str | None = None,
+    handoff_source_section: str | None = None,
+    expected_handoff_prompt: str | None = None,
+    expected_derived_handoff_prompt_sha256: str | None = None,
+    expected_source_file_sha256: str | None = None,
     assistant_label: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     dry_run: bool = False,
@@ -368,7 +373,7 @@ def _op_session_close(
         structural_warnings = _validate_transcript_structure(
             composed, summary_len=len(summary), transcript_depth=transcript_depth
         )
-        return {
+        dry_payload: dict[str, Any] = {
             "dry_run": True,
             "would_succeed": True,
             "warnings": structural_warnings,
@@ -379,6 +384,28 @@ def _op_session_close(
             ),
             "transcript_depth": transcript_depth,
         }
+        if (
+            handoff_source_path
+            or handoff_prompt
+            or handoff_source_section
+            or expected_handoff_prompt
+            or expected_derived_handoff_prompt_sha256
+            or expected_source_file_sha256
+        ):
+            dry_payload.update(
+                handoff_dry_run_preview(
+                    files_root=_FILES_ROOT,
+                    handoff_source_path=handoff_source_path,
+                    handoff_source_section=handoff_source_section,
+                    handoff_prompt=handoff_prompt,
+                    expected_handoff_prompt=expected_handoff_prompt,
+                    expected_derived_handoff_prompt_sha256=(
+                        expected_derived_handoff_prompt_sha256
+                    ),
+                    expected_source_file_sha256=expected_source_file_sha256,
+                )
+            )
+        return dry_payload
 
     body: dict[str, Any] = {
         "session_id": session_id,
@@ -397,6 +424,13 @@ def _op_session_close(
         ("prior_session_id", prior_session_id),
         ("handoff_prompt", handoff_prompt),
         ("handoff_source_path", handoff_source_path),
+        ("handoff_source_section", handoff_source_section),
+        ("expected_handoff_prompt", expected_handoff_prompt),
+        (
+            "expected_derived_handoff_prompt_sha256",
+            expected_derived_handoff_prompt_sha256,
+        ),
+        ("expected_source_file_sha256", expected_source_file_sha256),
         ("assistant_label", assistant_label),
     ]:
         if val is not None:
@@ -459,6 +493,10 @@ def _op_session_handoff_upsert(
     session_id: str,
     handoff_prompt: str,
     handoff_source_path: str | None = None,
+    handoff_source_section: str | None = None,
+    expected_handoff_prompt: str | None = None,
+    expected_derived_handoff_prompt_sha256: str | None = None,
+    expected_source_file_sha256: str | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Upsert handoff_prompt on a closed session (journal row + transcript mirror)."""
@@ -469,6 +507,16 @@ def _op_session_handoff_upsert(
         }
         if handoff_source_path is not None:
             payload["handoff_source_path"] = handoff_source_path
+        if handoff_source_section is not None:
+            payload["handoff_source_section"] = handoff_source_section
+        if expected_handoff_prompt is not None:
+            payload["expected_handoff_prompt"] = expected_handoff_prompt
+        if expected_derived_handoff_prompt_sha256 is not None:
+            payload["expected_derived_handoff_prompt_sha256"] = (
+                expected_derived_handoff_prompt_sha256
+            )
+        if expected_source_file_sha256 is not None:
+            payload["expected_source_file_sha256"] = expected_source_file_sha256
         return _upsert_session_handoff_impl(payload)
     except HTTPException as exc:
         detail = exc.detail
