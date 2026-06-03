@@ -9,7 +9,6 @@ broken relative imports (e.g. package-shadow splits) fail before restart.
 
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -22,8 +21,6 @@ from ._project_paths import resolve_existing_files
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
-
-logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 _TIMEOUT = 30
@@ -94,7 +91,7 @@ def _run_compileall(files: list[str]) -> dict[str, bool | str]:
     """Run compileall on files."""
     try:
         result = subprocess.run(
-            ["python", "-m", "compileall", "-q", *files],
+            [sys.executable, "-m", "compileall", "-q", *files],
             capture_output=True,
             text=True,
             timeout=_TIMEOUT,

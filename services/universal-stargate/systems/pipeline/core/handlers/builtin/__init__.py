@@ -1,8 +1,8 @@
 """
 Builtin step handlers subpackage.
 
-Re-exports the public API of the original builtin.py so existing
-``from .builtin import X`` imports continue to work unchanged.
+Aggregates the builtin step-handler public API and triggers
+``@register_handler`` registration for the sibling handler modules.
 """
 
 from ..registry import register_handler  # noqa: E402

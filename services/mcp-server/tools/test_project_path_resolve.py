@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tools import _project_paths as paths
+from tools.project import _safe_project_path
 
 
 def test_normalize_directory_dot() -> None:
@@ -45,3 +46,14 @@ def test_multi_repo_root_unscoped(tmp_path: Path) -> None:
     (tmp_path / "other-repo").mkdir()
     assert paths.multi_repo_root_unscoped(tmp_path) is True
     assert paths.multi_repo_root_unscoped(tmp_path / "universal-llm-gateway") is False
+
+
+def test_safe_project_path_rejects_traversal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(root))
+    monkeypatch.setattr("tools.project._PROJECT_ROOT", root.resolve())
+    with pytest.raises(ValueError, match="traversal rejected"):
+        _safe_project_path("../../etc/passwd")

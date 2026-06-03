@@ -160,13 +160,12 @@ A compliant transcript contains:
 **Close sequence** (in order):
 1. Write the transcript markdown (turns + session summary)
 2. Seed outstanding assertions
-3. Create transcript entity: `cortex(tool="entity_create", arguments='{"id":
-   "transcript:web-YYYY-MM-DD-HHmm", "type": "transcript", "name": "<6-word title>",
-   "description": "<2-3 sentence summary>", "attributes": {"source_uri":
-   "notes/system/transcripts/web-YYYY-MM-DD-HHmm.md", "status": "confirmed"}}')`
-4. Write journal row: `cortex(tool="journal_write", …)` — 2-3 sentence thin index
-5. Post session-close entry to agent-activity-journal (thread 480)
-6. Report transcript ID and file path to the user"""
+3. Atomic close: `cortex(tool="session_close", arguments='{"transcript_md": "<verbatim
+   transcript markdown>", "session_summary_md": "<structural summary>",
+   "agent": "claude-web", "family": "Claude", "session_id": "claude-web-YYYY-MM-DD-HHmm",
+   ...}')` — creates transcript entity, journal row, and session edges in one call
+4. Post session-close entry to agent-activity-journal (thread 480)
+5. Report transcript ID and file path to the user"""
 
 ASSERTION_SEARCH = """\
 ## Assertion Search (FTS5)

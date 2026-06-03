@@ -27,12 +27,17 @@ class TodoAdapter(BaseCardAdapter):
 
     def status_summary(self, entity: dict[str, Any]) -> dict[str, Any] | None:
         attrs = _decode_attributes(entity.get("attributes"))
-        return {
+        summary: dict[str, Any] = {
             "workflow_state": entity.get("workflow_state"),
             "priority": attrs.get("priority"),
             "domain": attrs.get("domain"),
             "updated_at": entity.get("updated_at"),
         }
+        # Surface the closure sidecar index once the todo is closed so the card
+        # points the reader at the human-readable closure summary.
+        if entity.get("workflow_state") == "done" and attrs.get("closure_summary_uri"):
+            summary["closure_summary_uri"] = attrs["closure_summary_uri"]
+        return summary
 
 
 def _decode_attributes(raw: object) -> dict[str, Any]:

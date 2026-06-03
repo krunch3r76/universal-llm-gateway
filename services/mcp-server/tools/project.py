@@ -20,7 +20,6 @@ PROJECT_READ_ONLY (default true). Toggle via project_access in mcp.yaml.
 from __future__ import annotations
 
 import fnmatch
-import logging
 import os
 import re
 import shutil
@@ -29,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from mcp_events import record
+from universal_logging import get_logger
 
 from ._file_helpers import load_searchable_text, read_file_result
 from ._project_paths import (
@@ -55,7 +55,7 @@ from .filesystem._paths import SANDBOX_ROOT, trash_destination
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 _PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower() in {
@@ -97,7 +97,7 @@ def _safe_project_path(relative: str) -> Path:
     """Resolve *relative* inside the project root, rejecting traversal."""
     clean = relative.lstrip("/")
     resolved_root = _PROJECT_ROOT.resolve()
-    candidate = resolved_root / clean
+    candidate = (resolved_root / clean).resolve()
     try:
         candidate.relative_to(resolved_root)
     except ValueError:
@@ -159,7 +159,6 @@ def _discover_repos() -> list[Path]:
         for child in sorted(root.iterdir())
         if child.is_dir() and (child / ".git").exists()
     ]
-    return repos
     return repos
 
 

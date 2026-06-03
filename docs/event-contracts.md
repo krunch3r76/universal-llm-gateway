@@ -2086,6 +2086,9 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.sse.stream.started` | — | SSE stream opened |
 | `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
 | `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
+| `mcp.grokbuild.bearer.context.rejected` | `reason`, `path`, optional `caller_identity` | Build-dispatch bearer context admission rejected (missing or forbidden `X-Grokbuild-Dispatch-Id`) |
+| `mcp.tool.private.import.failed` | `module` | Private tool module import failed during server boot |
+| `mcp.tool.private.register.failed` | `module`, `attr` | Private tool `register_*_tools` hook failed during server boot |
 | `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
 | `mcp.tool.file.read` | `path`, `resolved`, `binary`, `auto_binary`, `chars`, `bytes`, `batched` (optional) | File read completed; `auto_binary=True` when a binary-extension file was silently routed to binary mode despite `binary=False`; `batched=True` when emitted from a `read_multi` batch operation |
 | `mcp.fs.binary.magic.match` | `path` | Magic-byte probe (`filetype.guess`, 261-byte read) identified a file as binary when its extension was absent or unrecognised by `BINARY_EXTENSIONS`; file was auto-routed to base64 |

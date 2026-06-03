@@ -9,9 +9,10 @@
 #   - 5184: existing pipeline interface IS the consumption surface
 #
 # Closure payload is delivered via pipeline_options. The single step
-# orchestrates: assert → relationships → depends_on edges → custom edges →
-# workflow_state update. Best-effort with structured per-call results;
-# partial failures are reported, not retried.
+# orchestrates: sidecar (markdown index + closure_summary_uri) → assert →
+# relationships → depends_on edges → custom edges → workflow_state update.
+# Best-effort with structured per-call results; partial failures are
+# reported, not retried.
 #
 # Invocation:
 #   pipeline(op="run", pipeline_id="todo-close",

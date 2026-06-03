@@ -376,6 +376,12 @@ def update_entity_impl(
         else:
             merged[field] = value
 
+    # The SQL write below iterates ``updates`` — reflect the merged attributes
+    # back so a partial attributes update merges into the prior blob rather than
+    # overwriting it (the merge above is otherwise dead for persistence).
+    if "attributes" in updates and isinstance(updates["attributes"], dict):
+        updates = {**updates, "attributes": merged["attributes"]}
+
     if str(prior.get("type")) == "role":
         _enforce_role_entity_lint(
             entity_id=str(merged["id"]),

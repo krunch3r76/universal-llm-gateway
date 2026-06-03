@@ -78,7 +78,7 @@ from .ops_session_close import (
     _op_session_handoff_upsert,
 )
 from .ops_subgraph import _op_render_subgraph
-from .ops_todos import _op_todo_audit, _op_todo_candidates
+from .ops_todos import _op_todo_audit, _op_todo_candidates, _op_todo_close_sidecar
 from .ops_transcript_assembly import _op_assemble_transcript
 from .workflow_hints import (
     _CORTEX_FORMAT_HINT,
@@ -138,6 +138,7 @@ _OPS: dict[str, Any] = {
     "tag_resolve": _op_tag_resolve,
     "todo_candidates": _op_todo_candidates,
     "todo_audit": _op_todo_audit,
+    "todo_close_sidecar": _op_todo_close_sidecar,
     "register_skill_substrate": _op_register_skill_substrate,
     "audit": _op_audit,
     "session_audit": _op_session_audit,

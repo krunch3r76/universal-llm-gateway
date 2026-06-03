@@ -225,6 +225,7 @@ def _discover_private_tools(
             module = importlib.import_module(mod_name)
         except Exception:
             logger.exception("Failed to import private tool module %s", mod_name)
+            record("mcp.tool.private.import.failed", module=mod_name)
             continue
 
         for attr_name, fn in inspect.getmembers(module, inspect.isfunction):
@@ -237,6 +238,11 @@ def _discover_private_tools(
                         "Failed to register private tools from %s.%s",
                         mod_name,
                         attr_name,
+                    )
+                    record(
+                        "mcp.tool.private.register.failed",
+                        module=mod_name,
+                        attr=attr_name,
                     )
 
     return registered

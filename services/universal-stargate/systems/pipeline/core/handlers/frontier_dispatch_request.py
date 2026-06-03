@@ -5,7 +5,7 @@ ceiling.  Contains:
 
 - ``_VALID_REASONING_EFFORTS`` — accepted effort vocabulary (union of
   documented provider surfaces; provider gating lives in the adapters).
-- ``_REASONING_EFFORT_BUDGET_TOKENS`` — legacy Anthropic budget-mode map.
+- ``_REASONING_EFFORT_BUDGET_TOKENS`` — budget-mode (pre-adaptive Anthropic) map.
 - ``_ANTHROPIC_ADAPTIVE_MODELS`` — Anthropic models that take adaptive
   thinking (per docs/thirdparty/claude-api/upstream/adaptive-thinking.md).
 - ``translate_reasoning_effort`` — maps ``reasoning_effort`` to provider-native
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 #   via ``req.effort`` → ``output_config.effort`` in the adapter. Per
 #   adaptive-thinking.md, manual ``{type: enabled, budget_tokens}`` is
 #   deprecated on the 4.6 family and rejected on Opus 4.7.
-# - Legacy budget-mode Anthropic models (Sonnet 3.7, Sonnet 4.5, Opus 4.5,
+# - Budget-mode (pre-adaptive Anthropic) models (Sonnet 3.7, Sonnet 4.5, Opus 4.5,
 #   etc.) take ``{"type": "enabled", "budget_tokens": N}`` with N drawn from
 #   the budget-tokens map. Extended-vocabulary efforts (none/minimal/xhigh/
 #   max) have no documented budget mapping and skip thinking on legacy.
@@ -52,7 +52,7 @@ _VALID_REASONING_EFFORTS: frozenset[str] = frozenset(
 )
 
 _REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
-    # Used only by the legacy Anthropic budget-mode branch. Adaptive-capable
+    # Used only by the budget-mode (pre-adaptive Anthropic) branch. Adaptive-capable
     # models surface effort via ``output_config.effort`` separately; this
     # map is intentionally narrow to the documented budget-mode vocabulary.
     "low": 2048,
@@ -187,19 +187,23 @@ async def resolve_model(
     if resolved and resolved != "default":
         return resolved
 
+    agent_resolution_error: str | None = None
     if agent:
         try:
             return resolve_agent_model(agent)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            agent_resolution_error = str(exc)
 
-    raise ValueError(
+    detail = (
         f"Step '{step.id}': frontier_dispatch_v1 could not resolve a "
         "model. Provide one of: pipeline_options.model "
         "(e.g. 'openai/gpt-5.4'), step.model_ref, "
         "step.model_requirements (matched via /v1/models/select), "
         "or set step.agent to an agent with a registered default_model."
     )
+    if agent_resolution_error:
+        detail = f"{detail} Agent '{agent}' resolution failed: {agent_resolution_error}"
+    raise ValueError(detail)
 
 
 def resolve_agent(opts: dict[str, Any], step: StepConfig) -> str | None:

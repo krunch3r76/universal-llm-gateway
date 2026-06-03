@@ -317,7 +317,7 @@ class AuthMiddleware:
                 _is_dispatch = caller_identity == "grok-build-dispatch"
                 if _is_dispatch and not _disp_hdr:
                     record(
-                        "mcp.grokbuild.bearer_context_rejected",
+                        "mcp.grokbuild.bearer.context.rejected",
                         reason="missing_dispatch_id_header",
                         path=path,
                     )
@@ -330,7 +330,7 @@ class AuthMiddleware:
                     return
                 if not _is_dispatch and _disp_hdr:
                     record(
-                        "mcp.grokbuild.bearer_context_rejected",
+                        "mcp.grokbuild.bearer.context.rejected",
                         reason="dispatch_id_header_not_permitted",
                         caller_identity=caller_identity,
                         path=path,

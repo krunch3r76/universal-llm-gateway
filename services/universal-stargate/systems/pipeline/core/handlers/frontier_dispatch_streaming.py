@@ -165,7 +165,7 @@ def build_in_process_sender(
                     return
                 try:
                     payload = json.loads(event.data or "{}")
-                except Exception:
+                except json.JSONDecodeError:
                     return
                 item = payload.get("item") or {}
                 if item.get("type") != "function_call":
@@ -191,7 +191,7 @@ def build_in_process_sender(
                 del state
                 try:
                     payload = json.loads(event.data or "{}")
-                except Exception:
+                except json.JSONDecodeError:
                     return
                 candidates = payload.get("candidates") or []
                 if not candidates:
@@ -225,7 +225,7 @@ def build_in_process_sender(
                 return
             try:
                 payload = json.loads(event.data or "{}")
-            except Exception:
+            except json.JSONDecodeError:
                 return
             block = payload.get("content_block") or {}
             if block.get("type") != "tool_use":

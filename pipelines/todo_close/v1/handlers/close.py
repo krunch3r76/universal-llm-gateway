@@ -4,11 +4,14 @@ Reads the closure payload from `pipeline_options` (delivered as
 `context.options`), then executes a fixed sequence of cortex-api dispatch
 calls:
 
-  1. assert       — closure summary on the todo entity
-  2. relationship_create (per `references` item)
-  3. edge_create  (per `depends_on_resolved` assertion id, edge_type=depends_on)
-  4. edge_create  (per `edges` item, escape hatch for non-depends_on)
-  5. entity_update workflow_state=done  (unless `skip_workflow_update`)
+  1. todo_close_sidecar — write notes/system/todos/{slug}-closure.md +
+                          set attributes.closure_summary_uri; returns the URI
+  2. assert       — closure summary on the todo entity (sidecar URI added to
+                    evidence_uris)
+  3. relationship_create (per `references` item)
+  4. edge_create  (per `depends_on_resolved` assertion id, edge_type=depends_on)
+  5. edge_create  (per `edges` item, escape hatch for non-depends_on)
+  6. entity_update workflow_state=done  (unless `skip_workflow_update`)
 
 Per-call results are collected into a structured response object so the
 agent learns exactly what succeeded and what failed in one call. No retries
@@ -40,6 +43,7 @@ from ._ops import (
     do_assert,
     do_edge,
     do_relationship,
+    do_sidecar,
     do_workflow_update,
     extract_id,
     missing_keys,
@@ -97,6 +101,8 @@ class TodoCloseApplyHandler(BaseHandler):
         result: dict[str, Any] = {
             "ok": True,
             "todo_id": todo_id,
+            "sidecar": None,
+            "closure_summary_uri": None,
             "assertion": None,
             "assertion_id": None,
             "relationships": [],
@@ -110,12 +116,40 @@ class TodoCloseApplyHandler(BaseHandler):
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_REQUEST_TIMEOUT
         ) as client:
+            # Sidecar first — it writes the durable markdown index, sets the
+            # closure_summary_uri attribute, and yields the URI we cite in the
+            # closure assertion's evidence_uris. Best-effort: a sidecar failure
+            # is recorded but does not abort the audit-trail writes below.
+            sidecar_resp = await do_sidecar(
+                client,
+                todo_id=todo_id,
+                summary=summary,
+                evidence=evidence,
+                reasoning_summary=reasoning_summary,
+                references=references,
+                agent=agent,
+                session_id=session_id,
+            )
+            result["sidecar"] = sidecar_resp
+            assertion_evidence_uris = list(evidence_uris or [])
+            if "error" in sidecar_resp:
+                result["ok"] = False
+                result["errors"].append(
+                    {"step": "sidecar", "error": sidecar_resp["error"]}
+                )
+            else:
+                sidecar_uri = sidecar_resp.get("closure_summary_uri")
+                if sidecar_uri:
+                    result["closure_summary_uri"] = sidecar_uri
+                    if sidecar_uri not in assertion_evidence_uris:
+                        assertion_evidence_uris.append(sidecar_uri)
+
             assertion_resp = await do_assert(
                 client,
                 todo_id=todo_id,
                 summary=summary,
                 evidence=evidence,
-                evidence_uris=evidence_uris,
+                evidence_uris=assertion_evidence_uris or None,
                 reasoning_summary=reasoning_summary,
                 agent=agent,
             )

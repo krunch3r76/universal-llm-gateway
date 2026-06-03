@@ -47,10 +47,10 @@ Assemble the transcript markdown via `tools/grok-session-to-transcript-md` \
 MCP_TOOL_SEARCH = """\
 ## MCP Catalog Discovery
 
-The advertised MCP catalog is intentionally lean — only `cortex`, `agent_bus`,
-`fs`, `dispatch`, `tool_search`, and `retrieve` are primary tools. Everything
-else (pipelines, dispatch surfaces, service control, observability, data,
-session boot, code quality) is reachable in two steps:
+The advertised MCP catalog is intentionally lean — primary tools are
+`agent_bus`, `cortex`, `cortex_boot`, `dispatch`, `frontier_dispatch`, `fs`,
+`grokbuild`, `manage`, `observability`, `pipeline`, `rag`, `retrieve`,
+`team_dispatch`, and `tool_search`. Everything else is reachable in two steps:
 
 ```
 tool_search(query="<keywords>")          # → returns dispatch_template

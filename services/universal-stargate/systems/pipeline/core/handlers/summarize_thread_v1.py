@@ -243,8 +243,8 @@ def _noop_output() -> StepOutput:
     return StepOutput(raw=json.dumps(payload), json=payload)
 
 
-def _resolve_window_size(step: object) -> int:
-    raw = step.get_domain_field("window_size", _DEFAULT_WINDOW_SIZE)  # type: ignore[attr-defined]
+def _resolve_window_size(step: StepConfig) -> int:
+    raw = step.get_domain_field("window_size", _DEFAULT_WINDOW_SIZE)
     try:
         v = int(raw)
     except (TypeError, ValueError) as exc:
@@ -256,8 +256,8 @@ def _resolve_window_size(step: object) -> int:
     return v
 
 
-def _resolve_summarize_margin(step: object) -> int:
-    raw = step.get_domain_field("summarize_margin", _DEFAULT_SUMMARIZE_MARGIN)  # type: ignore[attr-defined]
+def _resolve_summarize_margin(step: StepConfig) -> int:
+    raw = step.get_domain_field("summarize_margin", _DEFAULT_SUMMARIZE_MARGIN)
     try:
         return int(raw)
     except (TypeError, ValueError) as exc:
@@ -266,7 +266,7 @@ def _resolve_summarize_margin(step: object) -> int:
         ) from exc
 
 
-async def _load_all_assertions(step: object, anchor_id: str) -> list[dict]:
+async def _load_all_assertions(step: StepConfig, anchor_id: str) -> list[dict]:
     """Load all assertions on the anchor for idempotency + collapse set selection."""
     res = await cx_async("entity_get", {"entity_id": anchor_id})
     if "error" in res:

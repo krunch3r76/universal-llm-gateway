@@ -1,5 +1,5 @@
 <!-- frontmatter:cursor
-description: MCP tool calling convention for Cursor — CallMcpTool/user-vortex syntax, fs markdown ops (md_read/md_replace/md_append), sandbox routing (cortex/context/workspaces), response-store flagged-payload semantics. Load before invoking any MCP tool (cortex, fs, agent_bus, observability, rag, pipeline, dispatch, frontier_generate, team_generate).
+description: MCP tool calling convention for Cursor — CallMcpTool/user-vortex syntax, fs markdown ops (md_read/md_replace/md_append), sandbox routing (cortex/context/workspaces), response-store flagged-payload semantics. Load before invoking any MCP tool (cortex, fs, agent_bus, observability, rag, pipeline, dispatch, frontier_dispatch, team_dispatch).
 alwaysApply: false
 -->
 <!-- target:cursor -->

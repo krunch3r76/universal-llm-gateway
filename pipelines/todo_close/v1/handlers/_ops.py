@@ -141,6 +141,31 @@ async def do_edge(
     return await dispatch(client, "edge_create", args)
 
 
+async def do_sidecar(
+    client: Any,
+    *,
+    todo_id: str,
+    summary: str,
+    evidence: str | None,
+    reasoning_summary: str | None,
+    references: list[dict[str, Any]] | None,
+    agent: str | None,
+    session_id: str | None,
+) -> dict[str, Any]:
+    args: dict[str, Any] = {"todo_id": todo_id, "summary": summary}
+    if evidence:
+        args["evidence"] = evidence
+    if reasoning_summary:
+        args["reasoning_summary"] = reasoning_summary
+    if references:
+        args["references"] = references
+    if agent:
+        args["agent"] = agent
+    if session_id:
+        args["session_id"] = session_id
+    return await dispatch(client, "todo_close_sidecar", args)
+
+
 async def do_workflow_update(client: Any, todo_id: str) -> dict[str, Any]:
     return await dispatch(
         client,
