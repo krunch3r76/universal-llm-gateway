@@ -24,6 +24,7 @@ from ...models import (
     AssertionList,
     CompactionProjection,
 )
+from ._list_filters import append_assertion_list_filters
 from ._shared import (
     _ASSERTION_COLS,
     _ASSERTION_COMPACT_COLS,
@@ -37,6 +38,9 @@ from ._shared import (
 def _list_assertions_compact(
     *,
     entity_id: str | None,
+    entity_id_prefix: str | None,
+    claim_filter: str | None,
+    seeded_by: str | None,
     confidence: str | None,
     review_status: str | None,
     superseded: bool | None,
@@ -53,38 +57,21 @@ def _list_assertions_compact(
     """
     clauses: list[str] = []
     params: list[str | int] = []
-    needs_join = bool(entity_type or entity_type_exclude)
-
-    if entity_id:
-        clauses.append("a.entity_id = ?")
-        params.append(entity_id)
-    if confidence:
-        clauses.append("a.confidence = ?")
-        params.append(confidence)
-    if review_status:
-        clauses.append("a.review_status = ?")
-        params.append(review_status)
-    if superseded is False:
-        clauses.append("a.superseded_by IS NULL")
-    elif superseded is True:
-        clauses.append("a.superseded_by IS NOT NULL")
-    if entity_type:
-        clauses.append("e.type = ?")
-        params.append(entity_type)
-    if entity_type_exclude:
-        excluded = [t.strip() for t in entity_type_exclude.split(",") if t.strip()]
-        placeholders = ",".join("?" for _ in excluded)
-        clauses.append(f"e.type NOT IN ({placeholders})")
-        params.extend(excluded)
-    if valid_at:
-        clauses.append("(a.valid_from IS NULL OR a.valid_from <= ?)")
-        params.append(valid_at)
-        clauses.append("(a.valid_until IS NULL OR a.valid_until > ?)")
-        params.append(valid_at)
-        clauses.append("a.superseded_by IS NULL")
-    elif known_at:
-        clauses.append("a.created_at <= ?")
-        params.append(known_at)
+    needs_join = append_assertion_list_filters(
+        clauses,
+        params,
+        entity_id=entity_id,
+        entity_id_prefix=entity_id_prefix,
+        claim_filter=claim_filter,
+        seeded_by=seeded_by,
+        confidence=confidence,
+        review_status=review_status,
+        superseded=superseded,
+        entity_type=entity_type,
+        entity_type_exclude=entity_type_exclude,
+        valid_at=valid_at,
+        known_at=known_at,
+    )
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     cols = ", ".join(f"a.{c.strip()}" for c in _ASSERTION_COMPACT_COLS.split(","))
@@ -125,6 +112,26 @@ def _list_assertions_compact(
 @router.get("", response_model=AssertionList)
 def list_assertions(
     entity_id: str | None = None,
+    entity_id_prefix: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filter assertions whose entity_id starts with this prefix "
+                "(e.g. 'service:' for friction tickets on service entities)"
+            ),
+        ),
+    ] = None,
+    claim_filter: Annotated[
+        str | None,
+        Query(
+            description="Case-insensitive substring filter on claim text (LIKE)",
+            alias="filter",
+        ),
+    ] = None,
+    seeded_by: Annotated[
+        str | None,
+        Query(description="Filter to assertions seeded by this agent slug"),
+    ] = None,
     confidence: str | None = None,
     review_status: str | None = None,
     superseded: bool | None = None,
@@ -182,6 +189,9 @@ def list_assertions(
     if compact:
         return _list_assertions_compact(
             entity_id=entity_id,
+            entity_id_prefix=entity_id_prefix,
+            claim_filter=claim_filter,
+            seeded_by=seeded_by,
             confidence=confidence,
             review_status=review_status,
             superseded=superseded,
@@ -193,40 +203,21 @@ def list_assertions(
         )
     clauses: list[str] = []
     params: list[str | int] = []
-    needs_join = bool(entity_type or entity_type_exclude)
-
-    if entity_id:
-        clauses.append("a.entity_id = ?")
-        params.append(entity_id)
-    if confidence:
-        clauses.append("a.confidence = ?")
-        params.append(confidence)
-    if review_status:
-        clauses.append("a.review_status = ?")
-        params.append(review_status)
-    if superseded is False:
-        clauses.append("a.superseded_by IS NULL")
-    elif superseded is True:
-        clauses.append("a.superseded_by IS NOT NULL")
-
-    if entity_type:
-        clauses.append("e.type = ?")
-        params.append(entity_type)
-    if entity_type_exclude:
-        excluded = [t.strip() for t in entity_type_exclude.split(",") if t.strip()]
-        placeholders = ",".join("?" for _ in excluded)
-        clauses.append(f"e.type NOT IN ({placeholders})")
-        params.extend(excluded)
-
-    if valid_at:
-        clauses.append("(a.valid_from IS NULL OR a.valid_from <= ?)")
-        params.append(valid_at)
-        clauses.append("(a.valid_until IS NULL OR a.valid_until > ?)")
-        params.append(valid_at)
-        clauses.append("a.superseded_by IS NULL")
-    elif known_at:
-        clauses.append("a.created_at <= ?")
-        params.append(known_at)
+    needs_join = append_assertion_list_filters(
+        clauses,
+        params,
+        entity_id=entity_id,
+        entity_id_prefix=entity_id_prefix,
+        claim_filter=claim_filter,
+        seeded_by=seeded_by,
+        confidence=confidence,
+        review_status=review_status,
+        superseded=superseded,
+        entity_type=entity_type,
+        entity_type_exclude=entity_type_exclude,
+        valid_at=valid_at,
+        known_at=known_at,
+    )
 
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     if needs_join:

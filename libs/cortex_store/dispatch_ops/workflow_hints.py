@@ -113,7 +113,16 @@ _WORKFLOW_HINTS: dict[str, str] = {
 _FRICTION_HINT = (
     "If this failure was unexpected, log friction: "
     'cortex(tool="friction", arguments=\'{"service": "...", '
-    '"category": "tool_error", "note": "...", "agent": "..."}\')'
+    '"category": "tool_error", "note": "...", "agent": "..."}\'). '
+    "Review open tickets: frictions (cross-service) or assertions on service:{name} "
+    'with filter="tool_error"; bus queue: agent_bus list_threads tags=[type:bug].'
+)
+
+_WORKFLOW_HINTS["frictions"] = (
+    "tip: defaults to open assertions on service:* entities. "
+    "Narrow with service, category (tool_error, schema_gap, …), or seeded_by. "
+    "Per-service lookup: assertions(entity_id='service:mcp-server', filter='tool_error'). "
+    "Close via friction_close; actionable queue via agent_bus type:bug threads."
 )
 
 _CORTEX_FORMAT_HINT = (

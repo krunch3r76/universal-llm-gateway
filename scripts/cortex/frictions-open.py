@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""List open frictions and suggest resolutions (F5 friction→skill funnel).
+"""List open frictions (F5 friction→skill funnel).
 
-Queries for friction assertions that have not been superseded and have no recent agent_skill edge.
-
-Staged listing uses review_status=staged only — not the reconstruct disposition filter
-(reviewer='reconstruct-2026-06-02'; see reconstruct_provenance.py).
+Uses cortex dispatch ``frictions`` (service:* assertions, optional category).
 """
 
+from __future__ import annotations
+
 import argparse
+import json
 import sys
 
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
@@ -16,40 +16,49 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 def main() -> int:
     parser = argparse.ArgumentParser(description="List open frictions (F5)")
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--service", help="Narrow to service:mcp-server, etc.")
+    parser.add_argument(
+        "--category",
+        default="tool_error",
+        help="Friction category prefix in claim (default: tool_error)",
+    )
+    parser.add_argument("--seeded-by", dest="seeded_by", help="Filing agent slug")
     args = parser.parse_args()
+
+    body: dict[str, object] = {
+        "tool": "frictions",
+        "arguments": json.dumps(
+            {
+                "limit": args.limit,
+                **({"service": args.service} if args.service else {}),
+                **({"category": args.category} if args.category else {}),
+                **({"seeded_by": args.seeded_by} if args.seeded_by else {}),
+            }
+        ),
+    }
 
     try:
         with make_sync_client(DEFAULT_CORTEX_URL, timeout=10.0) as client:
-            # Friction assertions are seeded with entity_id="service:{name}" — filter by that
-            # prefix to avoid false positives from staged assertions that happen to contain
-            # the word "friction" in their claim text.
-            r = client.get(
-                "/assertions", params={"review_status": "staged", "limit": args.limit}
-            )
+            r = client.post("/dispatch", json=body)
             r.raise_for_status()
             data = r.json()
             items = data.get("items", [])
     except Exception as e:
-        print(f"Error querying cortex: {e}")
-        items = []
+        print(f"Error querying cortex: {e}", file=sys.stderr)
+        return 1
 
-    # Count frictions by entity_id prefix "service:" (canonical) rather than claim text scan.
-    # Note: this is still an approximation — the /assertions endpoint does not support
-    # entity_id prefix filtering, so we fetch staged assertions and filter client-side.
-    friction_items = [
-        i for i in items if str(i.get("entity_id", "")).startswith("service:")
-    ]
-    friction_count = len(friction_items)
+    print(f"Open frictions: {len(items)} (limit={args.limit})")
+    for row in items:
+        aid = row.get("id")
+        eid = row.get("entity_id", "")
+        claim = (row.get("claim") or "")[:120]
+        by = row.get("seeded_by") or "?"
+        print(f"  [{aid}] {eid} ({by}) {claim}")
     print(
-        f"Frictions-open CLI (F5) — found ~{friction_count} open frictions in staged pool (sampled {len(items)}, filtered by entity_id prefix 'service:')."
+        '\nClose: cortex(tool="friction_close", '
+        'arguments=\'{"assertion_id": ID, "resolution_kind": "agent_skill:slug"}\')'
     )
-    print(
-        'Use cortex(tool="friction_close", arguments={"assertion_id": ID, "resolution_kind": "agent_skill:slug"}) to close.'
-    )
-    print(
-        "\nSuggested resolutions: agent_skill:{slug}, workflow:{slug}, todo:{slug}, superseded, wontfix."
-    )
-    print("This closes the funnel per the spec (creates resolves edge).")
+    print("Bus queue: agent_bus list_threads with tags=[type:bug]")
     return 0
 
 

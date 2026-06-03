@@ -78,7 +78,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         attributes=build_panel_assert_attributes(...))`` on the decision entity.
         Requires ``lead_adjudication_artifact``, ``decisive_falsifier``, and ≥2
         ``execution:`` evidence_uris. ``validate_panel_assert_attributes`` is
-        helper-only (Guard 3) until session-close audit binding lands.
+        helper-only (Guard 3); session-close gate runs panel_disposition_incomplete on scoped entities.
 
         Args:
             messages: Latest user turn(s) for each panel member (compaction key

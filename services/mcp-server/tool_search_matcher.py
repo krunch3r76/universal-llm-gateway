@@ -62,6 +62,66 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
     "cortex_boot": {"boot", "session", "warmup", "start"},
     "grokbuild": {"grok", "build", "worktree", "dispatch"},
     "quality_gate": {"lint", "ruff", "test", "compile", "ci", "format"},
+    "email": {
+        "mailbox",
+        "imap",
+        "ingest",
+        "message",
+        "correspondence",
+        "review_extract",
+        "bridge",
+        "sent",
+        "create_folder",
+        "folder",
+    },
+}
+
+# Manifest overrides for overflow tools whose live schema/docstring under-specify
+# the dispatch wire shape (op + nested JSON ``arguments`` string).
+_MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
+    "email": {
+        "dispatch_template": (
+            'dispatch(tool="email", arguments=\'{"op": "review_extract", '
+            '"arguments": "{\\"message_id\\": \\"<msg-id>\\"}"}\')'
+        ),
+        "example": (
+            'dispatch(tool="email", arguments=\'{"op": "recent", '
+            '"arguments": "{\\"mailbox\\": \\"Sent\\", \\"limit\\": 20}"}\')'
+        ),
+        "ops": [
+            "list",
+            "status",
+            "get",
+            "recent",
+            "search",
+            "archive",
+            "pull",
+            "pending",
+            "ingest_one",
+            "review_extract",
+            "review_dismiss",
+            "move",
+            "create_folder",
+            "retry",
+        ],
+        "required_args_by_op": {
+            "get": ["message_id"],
+            "ingest_one": ["message_id"],
+            "review_extract": ["message_id"],
+            "review_dismiss": ["message_id"],
+            "move": ["message_ids", "folder"],
+            "create_folder": ["folder"],
+            "retry": ["message_ids"],
+            "pull": ["mode"],
+            "send": ["draft_id"],
+            "draft_new": ["to", "subject", "body"],
+            "draft_reply": ["source_message_id"],
+            "draft_forward": ["source_message_id"],
+            "draft_update": ["draft_id"],
+            "get_draft": ["draft_id"],
+            "draft_delete": ["draft_id"],
+        },
+    },
 }
 
 
@@ -135,12 +195,27 @@ def _extract_example(description: str) -> str:
 
 
 def _render_dispatch_template(name: str, schema: dict[str, Any], ops: list[str]) -> str:
+    override = _MANIFEST_OVERRIDES.get(name, {}).get("dispatch_template")
+    if override:
+        return str(override)
     props = (schema or {}).get("properties", {}) or {}
     selectors = [s for s in ("op", "tool", "action", "operation") if s in props]
-    op_token = f'"{ops[0]}"' if ops else '"<op>"'
+    sample_op = ops[0] if ops else "list"
+    op_token = f'"{sample_op}"'
     if "arguments" in props and selectors:
         sel = selectors[0]
-        return f'dispatch(tool="{name}", arguments=\'{{"{sel}": {op_token}, ...}}\')'
+        inner = (
+            '{"message_id": "<msg-id>"}'
+            if sample_op in {"get", "ingest_one", "review_extract", "review_dismiss"}
+            else '{"mailbox": "Sent", "limit": 20}'
+            if sample_op == "recent"
+            else "{}"
+        )
+        inner_escaped = inner.replace('"', '\\"')
+        return (
+            f'dispatch(tool="{name}", arguments=\'{{"{sel}": {op_token}, '
+            f'"arguments": "{inner_escaped}"}}\')'
+        )
     if selectors:
         sel = selectors[0]
         return f'dispatch(tool="{name}", arguments=\'{{"{sel}": {op_token}, ...}}\')'

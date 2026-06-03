@@ -680,12 +680,32 @@ def _build_server() -> tuple[
             profile=profile,
             tool=tool,
         )
+        _desc, _schema = overflow_metadata.get(tool, ("", {}))
+        from tools._overflow_dispatch import (  # noqa: PLC0415
+            enrich_type_error_for_nested_op,
+            preflight_nested_op_dispatch,
+        )
+
+        preflight = preflight_nested_op_dispatch(tool, parsed, _schema)
+        if preflight is not None:
+            record(
+                "mcp.tool.dispatch.shape_error",
+                tool=tool,
+                op=str(parsed.get("op") or ""),
+            )
+            return {"tool": tool, "result": preflight}
         try:
             result = fn(**parsed)
             if asyncio.iscoroutine(result):
                 result = await result
         except Exception as exc:
-            return {"tool": tool, "result": _tool_error_envelope(tool, None, exc)}
+            envelope = _tool_error_envelope(
+                tool, str(parsed.get("op") or "") or None, exc
+            )
+            hint_extra = enrich_type_error_for_nested_op(tool, parsed, exc, _schema)
+            if hint_extra is not None:
+                envelope.update(hint_extra)
+            return {"tool": tool, "result": envelope}
         record("mcp.tool.dispatch.success", tool=tool)
         if hasattr(result, "model_dump"):
             return result

@@ -175,6 +175,10 @@ def render_skills_section(
             '`fs(sandbox="cortex", op="md_list", path="agent-skills/")`; '
             "read one: `md_read` / section ops on the path below."
         ),
+        (
+            "> Skills index: `cortex://agent-skills/README.md` — "
+            "scan trigger column before loading individual skills."
+        ),
     ]
     by_class: dict[str | None, list[dict[str, Any]]] = {}
     for skill in skills:

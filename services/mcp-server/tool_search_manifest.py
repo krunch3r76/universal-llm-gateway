@@ -10,12 +10,13 @@ manifest. Async ``build_manifest`` is a test-only convenience.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from fastmcp import FastMCP
 from mcp_events import record
 from tool_search_matcher import (
+    _MANIFEST_OVERRIDES,
     _derive_keywords,
     _extract_example,
     _extract_ops_and_required_args,
@@ -25,6 +26,15 @@ from tool_search_matcher import (
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def apply_manifest_override(entry: ManifestEntry) -> ManifestEntry:
+    """Merge hand-tuned manifest fields for tools with non-obvious dispatch shape."""
+    ov = _MANIFEST_OVERRIDES.get(entry.name)
+    if not ov:
+        return entry
+    fields = {k: v for k, v in ov.items() if v}
+    return replace(entry, **fields)
 
 
 @dataclass(frozen=True)
@@ -58,14 +68,16 @@ def build_manifest_from_metadata(
             req = {
                 op: [k for k in props if k in schema_req] for op in (ops or ["default"])
             }
-        manifest[name] = ManifestEntry(
-            name=name,
-            purpose=_first_sentence(description),
-            ops=ops,
-            dispatch_template=_render_dispatch_template(name, schema, ops),
-            required_args_by_op=req,
-            example=_extract_example(description),
-            keywords=_derive_keywords(name, description),
+        manifest[name] = apply_manifest_override(
+            ManifestEntry(
+                name=name,
+                purpose=_first_sentence(description),
+                ops=ops,
+                dispatch_template=_render_dispatch_template(name, schema, ops),
+                required_args_by_op=req,
+                example=_extract_example(description),
+                keywords=_derive_keywords(name, description),
+            )
         )
     return manifest
 

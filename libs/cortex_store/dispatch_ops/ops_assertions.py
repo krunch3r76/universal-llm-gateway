@@ -60,6 +60,9 @@ def _op_age_staged(
 
 def _op_assertions(
     entity_id: str | None = None,
+    entity_id_prefix: str | None = None,
+    filter: str | None = None,
+    seeded_by: str | None = None,
     confidence: str | None = None,
     review_status: str | None = None,
     superseded: bool | None = None,
@@ -69,12 +72,44 @@ def _op_assertions(
 ) -> dict[str, Any]:
     return _list_assertions_impl(
         entity_id=entity_id,
+        entity_id_prefix=entity_id_prefix,
+        claim_filter=filter,
+        seeded_by=seeded_by,
         confidence=confidence,
         review_status=review_status,
         superseded=superseded,
         limit=limit or 50,
         include_compaction_pointers=include_compaction_pointers,
     )
+
+
+def _op_frictions(
+    service: str | None = None,
+    category: str | None = None,
+    seeded_by: str | None = None,
+    superseded: bool | None = None,
+    limit: int | None = None,
+    include_compaction_pointers: bool = False,
+    **_: object,
+) -> dict[str, Any]:
+    """List open friction assertions (service:* entities, bracketed category claims)."""
+    entity_id = f"service:{service}" if service else None
+    claim_filter = f"[{category}]" if category else None
+    result = _list_assertions_impl(
+        entity_id=entity_id,
+        entity_id_prefix=None if entity_id else "service:",
+        claim_filter=claim_filter,
+        seeded_by=seeded_by,
+        superseded=False if superseded is None else superseded,
+        limit=limit or 30,
+        include_compaction_pointers=include_compaction_pointers,
+    )
+    if not result.get("error"):
+        result["_next"] = (
+            "friction_close with resolution_kind agent_skill:slug | workflow:slug | "
+            "todo:slug | superseded | wontfix; or agent_bus list_threads tags=[type:bug]"
+        )
+    return result
 
 
 def _op_search(
@@ -236,6 +271,7 @@ __all__ = [
     "_op_age_staged",
     "_op_analyze_impact",
     "_op_assertions",
+    "_op_frictions",
     "_op_review_queue",
     "_op_search",
 ]

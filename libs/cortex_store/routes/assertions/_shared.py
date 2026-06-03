@@ -143,7 +143,8 @@ _SEARCH_COLS_WITH_ENTITY = _SEARCH_COLS + ", e.name AS entity_name"
 # enrichment fields (prospective_summary, events_json, evidence, …) are
 # omitted at the SQL layer; agents fetch via entity_get / assertion_get.
 _SEARCH_SUMMARY_COLS = (
-    "id, entity_id, claim, confidence, review_status, superseded_by, created_at"
+    "a.id, a.entity_id, a.claim, a.confidence, a.review_status, "
+    "a.superseded_by, a.created_at"
 )
 _SEARCH_SUMMARY_COLS_WITH_ENTITY = _SEARCH_SUMMARY_COLS + ", e.name AS entity_name"
 
