@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
+from ..recipients import recipient_in_clause
 from .connection import connect, now
 from .threads import _next_auto_id
 
@@ -133,17 +134,16 @@ def insert_turn(
                 raise ValueError(f"supersedes_turn {supersedes_turn} does not exist")
 
         if after_turn is not None:
-            # Mirror the broadcast semantics from get_turns: kaywan only sees
-            # 'all', AI seats see 'all' + 'team'.
-            if from_agent == "kaywan":
-                broadcast_clause = "to_agent IN (?, 'all')"
-            else:
-                broadcast_clause = "to_agent IN (?, 'all', 'team')"
+            # Mirror get_turns inbox semantics (legacy short to_agent slugs included).
+            include_team = from_agent != "kaywan"
+            inbox_clause, inbox_params = recipient_in_clause(
+                from_agent, include_team=include_team
+            )
             unread_rows = conn.execute(
                 f"SELECT id, turn_number, subject FROM turns "
-                f"WHERE thread = ? AND {broadcast_clause} "
+                f"WHERE thread = ? AND {inbox_clause} "
                 f"AND turn_number > ? AND read_at IS NULL",
-                (thread, from_agent, after_turn),
+                (thread, *inbox_params, after_turn),
             ).fetchall()
             if unread_rows:
                 raise UnreadTurnsExist([dict(r) for r in unread_rows])
@@ -217,12 +217,12 @@ def get_turns(
         params.append(thread)
     if to is not None:
         # kaywan is a human seat — only sees 'all' broadcasts, not 'team'.
-        # All AI seats see both 'all' and 'team' broadcasts.
-        if to == "kaywan":
-            clauses.append("(to_agent = ? OR to_agent = 'all')")
-        else:
-            clauses.append("(to_agent = ? OR to_agent = 'all' OR to_agent = 'team')")
-        params.append(to)
+        # Canonical seat slugs must match legacy stored to_agent values (web, cursor).
+        inbox_clause, inbox_params = recipient_in_clause(
+            to, include_team=to != "kaywan"
+        )
+        clauses.append(inbox_clause)
+        params.extend(inbox_params)
     if unread:
         clauses.append("read_at IS NULL")
     if status is not None:

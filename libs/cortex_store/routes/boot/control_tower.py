@@ -10,7 +10,7 @@ the ATTENTION signals computed server-side. The HTML client fetches this
 endpoint directly (not the legacy ``/boot-*`` fan-out).
 
 LOCALHOST-ONLY: cortex-api has no auth layer (assertion 10605). MCP uses UDS;
-browser access is via manage's HTTP listener (default 127.0.0.1:8202; override
+browser access is via manage's HTTP listener (default 0.0.0.0:8202; override
 CORTEX_API_HTTP_HOST). Restrict at the network edge if exposing beyond trusted LAN.
 Port 8200 is not cortex-api on typical hosts (often docker/cloud-proxy).
 """

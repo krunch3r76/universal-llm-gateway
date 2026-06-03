@@ -47,11 +47,17 @@ def create_thread_with_turn(
             _transition_lifecycle_state(conn, thread_id, lifecycle_state, "create")
 
         if after_turn is not None:
+            from ..recipients import recipient_in_clause
+
+            include_team = from_agent != "kaywan"
+            inbox_clause, inbox_params = recipient_in_clause(
+                from_agent, include_team=include_team
+            )
             unread_rows = conn.execute(
-                "SELECT id, turn_number, subject FROM turns "
-                "WHERE thread = ? AND to_agent IN (?, 'all') "
-                "AND turn_number > ? AND read_at IS NULL",
-                (thread_id, from_agent, after_turn),
+                f"SELECT id, turn_number, subject FROM turns "
+                f"WHERE thread = ? AND {inbox_clause} "
+                f"AND turn_number > ? AND read_at IS NULL",
+                (thread_id, *inbox_params, after_turn),
             ).fetchall()
             if unread_rows:
                 raise UnreadTurnsExist([dict(r) for r in unread_rows])

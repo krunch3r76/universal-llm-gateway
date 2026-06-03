@@ -55,15 +55,22 @@ def load_manifest(path: Path) -> dict[str, Any]:
     return data
 
 
-def load_live_nonfenced(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def _bucket_g_staged_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     conn.row_factory = sqlite3.Row
-    rows = [dict(r) for r in conn.execute(BUCKET_G_FENCED_SQL, (MARKER,)).fetchall()]
+    return [dict(r) for r in conn.execute(BUCKET_G_FENCED_SQL, (MARKER,)).fetchall()]
+
+
+def load_live_nonfenced(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [
         r
-        for r in rows
+        for r in _bucket_g_staged_rows(conn)
         if not is_fenced(str(r["entity_id"]))
         and is_non_fenced_target(str(r["entity_id"]))
     ]
+
+
+def load_live_fenced(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    return [r for r in _bucket_g_staged_rows(conn) if is_fenced(str(r["entity_id"]))]
 
 
 def bucket_manifest_ids(data: dict[str, Any]) -> dict[str, set[int]]:
@@ -103,12 +110,21 @@ def patch_keep_staged(client: Any, aid: int, review_notes: str) -> None:
     r.raise_for_status()
 
 
+def load_live_snapshot(conn: sqlite3.Connection, scope: str) -> list[dict[str, Any]]:
+    if scope == "fenced":
+        return load_live_fenced(conn)
+    if scope == "nonfenced":
+        return load_live_nonfenced(conn)
+    raise ValueError(f"unknown scope: {scope!r}")
+
+
 def run(
     *,
     db_path: Path,
     manifest_path: Path,
     live: bool,
     expect_sha256: str | None,
+    scope: str = "nonfenced",
 ) -> dict[str, Any]:
     manifest_sha = sha256_file(manifest_path)
     if expect_sha256 and manifest_sha != expect_sha256:
@@ -123,7 +139,7 @@ def run(
 
     conn = sqlite3.connect(db_path)
     staged_before = staged_marker_count(conn)
-    live_rows = load_live_nonfenced(conn)
+    live_rows = load_live_snapshot(conn, scope)
     live_ids = {int(r["id"]) for r in live_rows}
     assert_not_staged_only_filter(conn, len(live_rows))
 
@@ -176,6 +192,7 @@ def run(
     return {
         "manifest_path": str(manifest_path),
         "manifest_sha256": manifest_sha,
+        "scope": scope,
         "live": live,
         "would_apply": would_apply,
         "applied": applied if live else {k: 0 for k in BUCKETS},
@@ -204,6 +221,12 @@ def main() -> int:
     parser.add_argument(
         "--live", action="store_true", help="PATCH cortex (default dry-run)"
     )
+    parser.add_argument(
+        "--scope",
+        choices=("nonfenced", "fenced"),
+        default="nonfenced",
+        help="Live snapshot set: nonfenced (step-2 default) or fenced (step-3)",
+    )
     args = parser.parse_args()
 
     summary = run(
@@ -211,6 +234,7 @@ def main() -> int:
         manifest_path=args.manifest,
         live=args.live,
         expect_sha256=args.expect_sha256,
+        scope=args.scope,
     )
     print(json.dumps(summary, indent=2))
     return 1 if summary.get("errors") else 0

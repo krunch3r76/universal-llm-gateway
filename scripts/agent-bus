@@ -79,14 +79,16 @@ def _request(
         return resp.json()
 
 
-def _thread_unread_count(thread: str, token: str) -> int:
-    """Count all unread turns in a thread.
+def _thread_unread_count(thread: str, token: str, to: str | None = None) -> int:
+    """Count unread turns in a thread, optionally scoped to a recipient inbox.
 
     No `last` cap (F7): a thread with >200 unread previously under-sized the
     fetch window and silently dropped unread turns. The server returns every
     matching unread row when `last` is omitted.
     """
-    params = {"thread": thread, "unread": "true", "compact": "true"}
+    params: dict[str, Any] = {"thread": thread, "unread": "true", "compact": "true"}
+    if to:
+        params["to"] = to
     peek = _request("GET", f"/turns?{urlencode(params)}", token)
     return len(peek.get("turns", []))
 
@@ -113,7 +115,7 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
         # TOCTOU note (F9): a turn arriving between this peek and the phase-2
         # fetch below can skew fetch_last / has_earlier by one. Advisory only —
         # the next fetch self-corrects.
-        unread_count = _thread_unread_count(args.thread, token)
+        unread_count = _thread_unread_count(args.thread, token, to=getattr(args, "to", None))
 
         # Phase 2: fetch (context + unread + 1) turns — the +1 is a probe that
         # lets us detect whether earlier turns exist without a separate count query.
@@ -183,7 +185,9 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
             "turns_in_response": len(turns),
             # Emit unread_count on this path too so _thread_info has a stable
             # shape across both fetch paths (F8).
-            "unread_count": _thread_unread_count(args.thread, token),
+            "unread_count": _thread_unread_count(
+                args.thread, token, to=getattr(args, "to", None)
+            ),
             "has_earlier_turns": has_earlier,
         }
         if has_earlier:

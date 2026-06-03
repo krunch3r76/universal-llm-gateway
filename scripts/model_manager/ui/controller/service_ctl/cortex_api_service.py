@@ -61,9 +61,15 @@ _CORTEX_SOCKET = Path(
 _CORTEX_LOG_DIR = Path("/tmp/logs/cortex-api")
 # Browser-facing HTTP for /control-tower. Port 8200 is often cloud-proxy or
 # other docker services on this host; cortex-api itself stays on UDS for MCP.
-_CORTEX_HTTP_HOST = os.environ.get("CORTEX_API_HTTP_HOST", "127.0.0.1")
-_CORTEX_HTTP_PORT = int(os.environ.get("CORTEX_API_HTTP_PORT", "8202"))
 _CORTEX_HTTP_PID_FILE = GATEWAY_DIR / "cortex-api-http.pid"
+
+
+def _cortex_http_bind() -> tuple[str, int]:
+    """Host/port for browser /control-tower (read at call time for env + code updates)."""
+    return (
+        os.environ.get("CORTEX_API_HTTP_HOST", "0.0.0.0"),
+        int(os.environ.get("CORTEX_API_HTTP_PORT", "8202")),
+    )
 
 
 def _build_cortex_runtime_env(root: Path) -> dict[str, str]:
@@ -101,6 +107,7 @@ def _http_forwarder_cmdline(pid: int) -> str:
 
 def _http_forwarder_running() -> bool:
     """True when pid file points at our uvicorn on the control-tower port."""
+    _host, port = _cortex_http_bind()
     if not _CORTEX_HTTP_PID_FILE.exists():
         return False
     try:
@@ -110,7 +117,7 @@ def _http_forwarder_running() -> bool:
         _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
         return False
     cmd = _http_forwarder_cmdline(pid)
-    if "cortex_store.main:app" in cmd and str(_CORTEX_HTTP_PORT) in cmd:
+    if "cortex_store.main:app" in cmd and str(port) in cmd:
         return True
     _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
     return False
@@ -118,12 +125,10 @@ def _http_forwarder_running() -> bool:
 
 def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
     """Second uvicorn on TCP for browser /control-tower (MCP keeps UDS)."""
+    host, port = _cortex_http_bind()
     if _http_forwarder_running():
         pid = int(_CORTEX_HTTP_PID_FILE.read_text().strip())
-        return (
-            f"HTTP listener already on {_CORTEX_HTTP_HOST}:{_CORTEX_HTTP_PORT} "
-            f"(PID {pid})"
-        )
+        return f"HTTP listener already on {host}:{port} (PID {pid})"
     venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
     python = str(venv_python) if venv_python.exists() else "python3"
     env = build_service_env(root)
@@ -139,9 +144,9 @@ def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
             "uvicorn",
             _CORTEX_APP_MODULE,
             "--host",
-            _CORTEX_HTTP_HOST,
+            host,
             "--port",
-            str(_CORTEX_HTTP_PORT),
+            str(port),
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -152,10 +157,7 @@ def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
     )
     GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
     _CORTEX_HTTP_PID_FILE.write_text(f"{proc.pid}\n")
-    return (
-        f"HTTP on http://{_CORTEX_HTTP_HOST}:{_CORTEX_HTTP_PORT}/control-tower "
-        f"(PID {proc.pid})"
-    )
+    return f"HTTP on http://{host}:{port}/control-tower (PID {proc.pid})"
 
 
 def _stop_http_forwarder() -> None:
@@ -168,9 +170,10 @@ def _stop_http_forwarder() -> None:
         _CORTEX_HTTP_PID_FILE.unlink(missing_ok=True)
     # Best-effort: rogue manual starts may leave uvicorn on the port while the
     # pid file points at a dead bash wrapper (observed 2026-06-01).
+    _host, port = _cortex_http_bind()
     try:
         subprocess.run(
-            ["fuser", "-k", f"{_CORTEX_HTTP_PORT}/tcp"],
+            ["fuser", "-k", f"{port}/tcp"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

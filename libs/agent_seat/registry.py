@@ -11,6 +11,61 @@ from __future__ import annotations
 
 from .profiles import get_profile, load_roles
 
+# Legacy seat / persona spellings → canonical {family}-{platform} slug.
+# Shared by dispatch normalization and agent-bus recipient matching.
+_DISPATCH_ALIASES: dict[str, str] = {
+    # Legacy persona slugs → role slugs
+    "oppie": "skeptic",
+    "oppia": "skeptic",  # common misspelling
+    "forge": "artisan",
+    "cursor_forge": "artisan",
+    "orion": "gatherer",
+    "bard": "synthesizer",
+    # Legacy seat slugs → new seat slugs
+    "cursor": "claude-cursor",
+    "cursor_claude": "claude-cursor",
+    "web": "claude-web",
+    "web_claude": "claude-web",
+    "api": "claude-api",
+    "api_claude": "claude-api",
+    "cursor_orion": "gpt-cursor",
+    "cursor_grok": "grok-cursor",
+    "grok": "grok-cursor",
+    "web_grok": "grok-web",
+    "superheavy": "grok-web",
+    "cursor_gemini": "gemini-cursor",
+    "gemini": "gemini-cursor",
+    "web_gemini": "gemini-web",
+    "gemini_web": "gemini-web",
+    # New canonical seat slugs (hyphen form stored under underscore key
+    # since norm replaces hyphens with underscores above)
+    "claude_cursor": "claude-cursor",
+    "claude_api": "claude-api",
+    "claude_web": "claude-web",
+    "gpt_cursor": "gpt-cursor",
+    "gpt_api": "gpt-api",
+    "grok_cursor": "grok-cursor",
+    "grok_api": "grok-api",
+    "grok_api_multi": "grok-api-multi",
+    "grok_direct": "grok-direct",
+    "grok_build_dispatch": "grok-build-dispatch",
+    "grok_web": "grok-web",
+    "gemini_api": "gemini-api",
+    "gemini_cursor": "gemini-cursor",
+    # Role slugs pass through unchanged
+    "lead": "lead",
+    "reviewer": "reviewer",
+    "gatherer": "gatherer",
+    "synthesizer": "synthesizer",
+    "artisan": "artisan",
+    "skeptic": "skeptic",
+    "investigator": "investigator",
+}
+
+
+def _normalize_agent_key(slug: str) -> str:
+    return slug.strip().lower().replace("-", "_").replace(" ", "_")
+
 
 def normalize_agent_slug(slug: str) -> str:
     """Normalize dispatch agent slug to canonical seat or role slug.
@@ -29,56 +84,29 @@ def normalize_agent_slug(slug: str) -> str:
     """
     if not isinstance(slug, str):
         slug = str(slug)
-    norm = slug.strip().lower().replace("-", "_").replace(" ", "_")
-    aliases: dict[str, str] = {
-        # Legacy persona slugs → role slugs
-        "oppie": "skeptic",
-        "oppia": "skeptic",  # common misspelling
-        "forge": "artisan",
-        "cursor_forge": "artisan",
-        "orion": "gatherer",
-        "bard": "synthesizer",
-        # Legacy seat slugs → new seat slugs
-        "cursor": "claude-cursor",
-        "cursor_claude": "claude-cursor",
-        "web": "claude-web",
-        "web_claude": "claude-web",
-        "api": "claude-api",
-        "api_claude": "claude-api",
-        "cursor_orion": "gpt-cursor",
-        "cursor_grok": "grok-cursor",
-        "grok": "grok-cursor",
-        "web_grok": "grok-web",
-        "superheavy": "grok-web",
-        "cursor_gemini": "gemini-cursor",
-        "gemini": "gemini-cursor",
-        "web_gemini": "gemini-web",
-        "gemini_web": "gemini-web",
-        # New canonical seat slugs (hyphen form stored under underscore key
-        # since norm replaces hyphens with underscores above)
-        "claude_cursor": "claude-cursor",
-        "claude_api": "claude-api",
-        "claude_web": "claude-web",
-        "gpt_cursor": "gpt-cursor",
-        "gpt_api": "gpt-api",
-        "grok_cursor": "grok-cursor",
-        "grok_api": "grok-api",
-        "grok_api_multi": "grok-api-multi",
-        "grok_direct": "grok-direct",
-        "grok_build_dispatch": "grok-build-dispatch",
-        "grok_web": "grok-web",
-        "gemini_api": "gemini-api",
-        "gemini_cursor": "gemini-cursor",
-        # Role slugs pass through unchanged
-        "lead": "lead",
-        "reviewer": "reviewer",
-        "gatherer": "gatherer",
-        "synthesizer": "synthesizer",
-        "artisan": "artisan",
-        "skeptic": "skeptic",
-        "investigator": "investigator",
-    }
-    return aliases.get(norm, norm)
+    norm = _normalize_agent_key(slug)
+    return _DISPATCH_ALIASES.get(norm, norm)
+
+
+def expand_recipient_slugs(slug: str) -> list[str]:
+    """All ``to_agent`` values that should match inbox fetches for this seat.
+
+    Historical turns store legacy short slugs (``web``, ``cursor``) while
+    seats query with canonical ``claude-web`` / ``claude-cursor``. Agent-bus
+    recipient filters must match every alias that normalizes to the same seat.
+    """
+    canonical = normalize_agent_slug(slug)
+    values: set[str] = {canonical}
+    raw = slug.strip()
+    if raw:
+        values.add(raw)
+    values.add(canonical.replace("-", "_"))
+    for alias_norm, target in _DISPATCH_ALIASES.items():
+        if target != canonical:
+            continue
+        values.add(alias_norm)
+        values.add(alias_norm.replace("_", "-"))
+    return sorted(values)
 
 
 def resolve_agent_provider(role_or_seat: str) -> str | None:
