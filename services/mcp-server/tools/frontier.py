@@ -190,6 +190,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
           ``thread`` / ``subject`` must be absent when using this op.
+          Roles/seats whose profile has ``dispatchable=false`` (e.g. ``claude-web``,
+          ``lead``) are rejected with 422 ``web_seat_not_generate_target`` — explicit
+          ``model=`` does not bypass. Use API roles (``reviewer``, ``gatherer``, …)
+          or ``frontier_dispatch`` for peer consult; web seats use ``fs`` locally.
         - ``op="to_thread"``: admits dispatch; Stargate posts the role's
           reply to ``thread`` on its behalf after the dispatch completes
           (system-on-behalf delivery). Tracker terminal status reflects

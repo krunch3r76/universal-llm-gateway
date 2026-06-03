@@ -91,6 +91,13 @@ def _safe_run_audit(
             agent,
             exc_info=True,
         )
+        record(
+            "cortex.session.audit.degraded",
+            session_id=session_id,
+            agent=agent,
+            error=type(exc).__name__,
+            message=str(exc),
+        )
         return {
             "warning": {
                 "audit_degraded": True,

@@ -120,13 +120,16 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 CLAUDE_WEB_TOOL_SURFACE = """\
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
-On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s).
-- consult any model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → returns execution_id; poll pipeline(op="result", execution_id=…)
-- by role          → team_dispatch(op="generate", role="…", dispatch_thread_id="…", messages=[…])
-- consensus panel  → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → returns panel_executions; lead adjudication NON-offloadable
+On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s). Seat slugs (claude-web) are NOT model IDs.
+- local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(role="claude-web")
+- consult any API model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
+- by API role → team_dispatch(op="generate", role="reviewer"|"gatherer"|"synthesizer"|"artisan"|"skeptic", dispatch_thread_id="…", messages=[…]) — ¬ role="claude-web"|"lead"|"web"
+- forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") even with model= — Stargate rejects before dispatch; model= only hits an API endpoint, never a web session
+- consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
+- inbound handoff target only → team_dispatch(op="handoff", role="lead", packet_path=…, subject=…) is Cursor→web; claude-web executes handoffs, does not re-handoff to itself
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
-Note: frontier_dispatch/team_dispatch/panel_dispatch are primary on this seat (thread 1146/1167). advisor/pipeline_consult remain overflow (via dispatch). Multi-model panel: panel_dispatch only (agent_consult removed 2026-06). Source: cortex:notes/system/threads/claude-web-dispatch-decision-table.md (§2/§3/§4)."""
+Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
 GEMINI_WEB_TOOL_SURFACE = """\
 ## Gemini App Tool Surface (gemini-web — CANDIDATE seat)
@@ -189,8 +192,9 @@ natural part of how you work, not an exceptional event.
 **Pick by capability** (same axis as the boot briefing — not "always team first"):
 - Consult a **specific model** (e.g. `openai/gpt-5.5`, `xai/grok-4.3`) →
   `frontier_dispatch(op=..., model="provider/model", messages=...)`.
-- Consult a **role / seat function** (adversarial pushback, gatherer extraction,
-  durable reviewer persona) → `team_dispatch(op=..., role=..., dispatch_thread_id=..., messages=...)`.
+- Consult a **functional API role** (adversarial pushback, gatherer extraction,
+  durable reviewer persona) → `team_dispatch(op=generate|to_thread, role=reviewer|gatherer|…, dispatch_thread_id=..., messages=...)`.
+  **Not** seat slugs (`claude-web`, `lead`) — web seats have no `default_model` on `generate`.
 
 Both return `{execution_id, ...}` immediately; poll with
 `pipeline(op="result", execution_id=..., wait_seconds=60)`. Runs detached,
@@ -211,13 +215,9 @@ server-owned thread persistence — pass only the latest user turn in
 auto-assembles role briefing + continuation, and rejects contract violations
 with a structured error envelope **before** dispatch.
 
-**Output channel (`op` parameter)** — same for both tools:
-- `op="generate"` — direct mode. Content returned via `pipeline(op="result")`.
-  Use for single-shot consults where the caller acts on the reply within the session.
-- `op="to_thread"` — bus mode. Stargate posts the reply to the bus `thread`
-  on the role/model's behalf after dispatch completes; the callee does not need
-  `agent_bus.reply`. Read with `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`.
-  Use when the reply is a durable artifact for multi-agent workflows or future sessions.
+**Output channel (`op` parameter)**:
+- `team_dispatch` / `frontier_dispatch`: `op="generate"` (poll result) or `op="to_thread"` (bus delivery).
+- `team_dispatch` only: `op="handoff"` — create inbound web handoff thread (Cursor→claude-web); returns `{thread_id, push_reminder}`; no model dispatch. See `agent-skills/dispatch-workflow.md` §0a.
 
 **MCP access**: `team_dispatch` enables client-side MCP tools by default for
 non-xAI models. `frontier_dispatch` defaults to no tool loop (`mcp=False`);

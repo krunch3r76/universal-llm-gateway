@@ -44,7 +44,17 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff"]`) |
 
-**`op="handoff"` — web-seat handoff primitive** (fresh-WEB self-spawn):
+**`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
+
+Roles or seat slugs that resolve to a non-dispatchable profile (`dispatchable=false`,
+e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
+`web_seat_not_generate_target` — including when `model=` is supplied explicitly.
+Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
+`synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
+web-default roles (`lead`, `investigator`). Web Claude doing local file work should
+use `fs` directly; peer consult → `frontier_dispatch` or an API role.
+
+**`op="handoff"` — web-seat handoff primitive** (Cursor→web inbound):
 
 Creates an agent-bus thread addressed to the role's web seat (e.g. `lead` → `claude-web`)
 and returns `{thread_id, subject, to_agent, push_reminder}` synchronously — no model is
@@ -254,8 +264,8 @@ Cortex knowledge system — entities, assertions, relationships, edges, journals
 |---|---|---|
 | `entities` | type?, limit? | List entities |
 | `entity_get` | entity_id, include_edges?, edge_limit? | Get entity with assertions + relationships. Pass `include_edges=true` to also return `reasoning_edges` (active session edges). `edge_limit` defaults to 20. |
-| `entity_create` | id, type, name, description?, status?, notes?, aliases?, attributes?, source_uri?, content_hash? | Create entity (409 if exists). status: confirmed/provisional/merged/deprecated |
-| `entity_update` | entity_id, name?, description?, status?, notes?, aliases?, attributes?, source_uri?, content_hash? | Update mutable fields. null clears; omit leaves untouched. |
+| `entity_create` | id, type, name, description?, workflow_state?, notes?, aliases?, attributes?, source_uri?, content_hash? | Create entity (409 if exists). Option-C traits (`confidence_band`, `lifecycle`, `adoption`) are derived at birth — set via `entity_update` after create (422 if passed on create). |
+| `entity_update` | entity_id, name?, description?, workflow_state?, confidence_band?, lifecycle?, adoption?, notes?, aliases?, attributes?, source_uri?, content_hash? | Update mutable fields. Trait write surface: `confidence_band`, `lifecycle`, `adoption`. null clears; omit leaves untouched. |
 | `assertions` | entity_id?, confidence?, review_status?, superseded?, limit? | List assertions. review_status: committed/flagged/staged/rejected |
 | `assert` | entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id? | Direct write. confidence: confirmed/believed/suspected/hypothesized. derivation_type: quotation/compression/inference/other |
 | `assertion_update` | assertion_id, superseded_by?, valid_until?, confidence?, confidence_score?, review_status?, reviewer?, reviewed_at? | Update assertion metadata |

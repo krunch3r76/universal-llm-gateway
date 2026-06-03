@@ -177,8 +177,8 @@ def _stop_http_forwarder() -> None:
             stderr=subprocess.DEVNULL,
             timeout=5,
         )
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (OSError, subprocess.SubprocessError) as exc:
+        _logger.debug("fuser port cleanup on %s/tcp failed (best-effort): %s", port, exc)
 
 
 async def start_cortex_api(

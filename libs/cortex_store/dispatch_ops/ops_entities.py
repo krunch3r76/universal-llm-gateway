@@ -16,7 +16,13 @@ from ..trait_vocabulary import (
     CONFIDENCE_BAND_VALUES,
     LIFECYCLE_VALUES,
 )
-from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, record
+from ._shared import (
+    _ENTITY_MUTABLE,
+    _VALID_STATUS,
+    _compute_content_hash,
+    record,
+    reject_trait_writes_at_create,
+)
 
 _TRAIT_VOCAB: dict[str, frozenset[str]] = {
     "confidence_band": CONFIDENCE_BAND_VALUES,
@@ -166,8 +172,11 @@ def _op_entity_create(
     attributes: dict[str, Any] | None = None,
     source_uri: str | None = None,
     content_hash: str | None = None,
-    **_: object,
+    **extra: object,
 ) -> dict[str, Any]:
+    trait_error = reject_trait_writes_at_create(extra)
+    if trait_error is not None:
+        return trait_error
     required_fields = {"id": id, "type": type, "name": name}
     for field, val in required_fields.items():
         if not val:

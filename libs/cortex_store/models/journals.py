@@ -89,9 +89,11 @@ class SessionCloseRequest(BaseModel):
       session_id:         ``{agent}-YYYY-MM-DD-HHMM`` (UTC at session **start**;
         boot ``session_id`` or JSONL birth time for Cursor — not close time).
       agent:              agent slug (cursor / web / orion / …).
-      session_summary_md: agent-composed structural layer.  MUST start
-        with a ``## Session Summary`` heading and include at minimum a
-        Decisions list.
+      session_summary_md: agent-composed structural layer.  Non-empty; a
+        ``## Session Summary`` heading is normalized in (prepended or
+        rewritten from a near-miss) when absent — see
+        ``normalize_session_summary_heading``. A Decisions list is
+        recommended but not enforced.
       summary:            ≥20 chars synthesis used for the entity name
         and journal row.
 

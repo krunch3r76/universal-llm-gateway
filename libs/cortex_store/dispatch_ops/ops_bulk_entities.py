@@ -8,7 +8,13 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..db import cortex_conn, decode_row, query
-from ._shared import _ENTITY_MUTABLE, _VALID_STATUS, _compute_content_hash, record
+from ._shared import (
+    _ENTITY_MUTABLE,
+    _VALID_STATUS,
+    _compute_content_hash,
+    record,
+    reject_trait_writes_at_create,
+)
 
 
 def _entity_crud():
@@ -103,6 +109,12 @@ def _bulk_upsert_entity(
     entity_id = str(payload["id"])
     existing_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not existing_rows:
+        trait_error = reject_trait_writes_at_create(payload)
+        if trait_error is not None:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                trait_error["error"],
+            )
         create_entity_impl(conn, payload, commit=False)
         return {"id": entity_id, "action": "created"}
 

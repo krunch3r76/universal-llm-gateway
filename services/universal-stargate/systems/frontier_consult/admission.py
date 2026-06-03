@@ -8,7 +8,12 @@ from typing import Any
 
 import httpx
 from agent_seat import AgentMeta
-from agent_seat.profiles import get_profile, inline_only_for_model, load_roles
+from agent_seat.profiles import (
+    CapabilityProfile,
+    get_profile,
+    inline_only_for_model,
+    load_roles,
+)
 from agent_seat.registry import normalize_agent_slug
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -97,17 +102,10 @@ class FrontierEndpointError(Exception):
         }
 
 
-def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, str]:
-    """Return (to_agent_slug, family, platform) for a handoff-eligible role/seat.
-
-    Admission predicate (FOL):
-      admit(role) ⟺ profile.delivery == "manual" ∧ profile.dispatchable is False
-
-    Raises FrontierEndpointError(field="role", status_code=422) when:
-      - role/seat is unknown
-      - resolved profile is not a manual, non-dispatchable (web/handoff) seat
-        → reason code "handoff_requires_web_seat"
-    """
+def _resolve_role_or_seat_profile(
+    role: str, *, request_id: str
+) -> tuple[str, str, str, CapabilityProfile]:
+    """Return ``(to_agent_slug, family, platform, profile)`` for a role or seat slug."""
     canonical = normalize_agent_slug(role)
     roles = load_roles()
     role_profile = roles.get(canonical)
@@ -116,7 +114,6 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
         family: str = role_profile.default_family
         platform: str = role_profile.default_platform
     else:
-        # Try as a seat slug of the form {family}-{platform}
         parts = canonical.split("-", 1)
         if len(parts) != 2 or parts[0] not in {"claude", "gpt", "grok", "gemini"}:
             raise FrontierEndpointError(
@@ -138,6 +135,67 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
         )
 
     to_agent = f"{family}-{platform}"
+    return to_agent, family, platform, profile
+
+
+def enforce_team_dispatch_generate_admit(
+    role: str,
+    *,
+    request_id: str,
+    event_publisher: EventPublisher | None = None,
+) -> None:
+    """Reject ``op=generate`` / ``op=to_thread`` for non-dispatchable profiles.
+
+    Admission predicate (FOL):
+      admit_generate(role) ⟺ profile.dispatchable is True
+
+    Web/manual seats (``claude/web``, ``grok/web``, …) and roles whose default
+    platform is non-dispatchable (``lead``, ``investigator``) raise 422 with
+    code ``web_seat_not_generate_target``. Explicit ``model=`` does not bypass.
+    """
+    to_agent, _family, _platform, profile = _resolve_role_or_seat_profile(
+        role, request_id=request_id
+    )
+    if profile.dispatchable:
+        return
+    reason = (
+        f"role {role!r} resolved to {to_agent} which is not dispatchable on "
+        f"op=generate/to_thread (delivery={profile.delivery!r}, "
+        f"dispatchable=false). Web/manual seats are reachable only via "
+        f"op=handoff (inbound). If you are {to_agent}, use fs/cortex locally; "
+        f"for peer consult use an API role (reviewer, gatherer, …) or "
+        f"frontier_dispatch. Passing model= dispatches an API endpoint only — "
+        f"it does not spawn a web session."
+    )
+    if event_publisher is not None:
+        event_publisher(
+            FrontierEndpointRejected(
+                request_id=request_id, agent=role, field="role", reason=reason
+            )
+        )
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="role",
+        reason=reason,
+        status_code=422,
+        code="web_seat_not_generate_target",
+    )
+
+
+def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, str]:
+    """Return (to_agent_slug, family, platform) for a handoff-eligible role/seat.
+
+    Admission predicate (FOL):
+      admit(role) ⟺ profile.delivery == "manual" ∧ profile.dispatchable is False
+
+    Raises FrontierEndpointError(field="role", status_code=422) when:
+      - role/seat is unknown
+      - resolved profile is not a manual, non-dispatchable (web/handoff) seat
+        → reason code "handoff_requires_web_seat"
+    """
+    to_agent, family, platform, profile = _resolve_role_or_seat_profile(
+        role, request_id=request_id
+    )
 
     if not (profile.delivery == "manual" and not profile.dispatchable):
         raise FrontierEndpointError(

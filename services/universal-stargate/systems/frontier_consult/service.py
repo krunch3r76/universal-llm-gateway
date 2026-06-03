@@ -20,6 +20,7 @@ from .admission import (
     emit_rejection,
     enforce_model,
     enforce_options,
+    enforce_team_dispatch_generate_admit,
     is_chat_completions_only,
     mcp_enabled_for_frontier_dispatch,
     mcp_enabled_for_team_dispatch,
@@ -84,6 +85,11 @@ async def build_dispatch_body(
     system_assembled = req.system or ""
 
     if req.role:
+        enforce_team_dispatch_generate_admit(
+            req.role,
+            request_id=request_id,
+            event_publisher=event_publisher,
+        )
         # Soft boot: team_dispatch / frontier_dispatch dispatches use the
         # lightweight profile by default. Drops deadlines + review-queue
         # fetches; keeps a 3-reflection floor. The pipeline-handler hydration

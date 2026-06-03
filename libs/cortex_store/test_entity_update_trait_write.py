@@ -14,7 +14,10 @@ from __future__ import annotations
 import sqlite3
 
 from cortex_store.dispatch_ops._shared import _ENTITY_MUTABLE
-from cortex_store.dispatch_ops.ops_entities import _validate_trait_updates
+from cortex_store.dispatch_ops.ops_entities import (
+    _op_entity_create,
+    _validate_trait_updates,
+)
 from cortex_store.entity_crud import update_entity_impl
 
 
@@ -68,6 +71,31 @@ def _conn() -> sqlite3.Connection:
 
 def test_trait_columns_are_mutable() -> None:
     assert {"confidence_band", "lifecycle", "adoption"} <= _ENTITY_MUTABLE
+
+
+def test_entity_create_rejects_trait_writes() -> None:
+    result = _op_entity_create(
+        id="todo:x",
+        type="todo",
+        name="X",
+        confidence_band="confirmed",
+    )
+    assert "error" in result
+    assert "confidence_band" in result["error"]
+    assert "entity_update" in result["error"]
+
+
+def test_entity_create_rejects_multiple_trait_writes() -> None:
+    result = _op_entity_create(
+        id="decision:y",
+        type="decision",
+        name="Y",
+        lifecycle="deprecated",
+        adoption="adopted",
+    )
+    assert "error" in result
+    assert "adoption" in result["error"]
+    assert "lifecycle" in result["error"]
 
 
 def test_validate_trait_updates_accepts_valid() -> None:

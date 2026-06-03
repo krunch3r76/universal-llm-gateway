@@ -75,15 +75,31 @@ _ENTITY_MUTABLE = frozenset(
         "workflow_state",
         "content_hash",
         # Option-C trait write surface — explicit trait columns are settable on
-        # update (mirrors entity_create + the published MCP descriptor). The
-        # legacy ``status`` mirror remains read-only on the confidence axis
-        # (update_entity_impl ignores hand-set confidence-axis status); the
-        # explicit columns below are the intentional write path.
+        # entity_update only (NOT entity_create; birth traits come from
+        # resolve_birth_traits). The legacy ``status`` mirror remains read-only
+        # on the confidence axis (update_entity_impl ignores hand-set
+        # confidence-axis status); the explicit columns below are the
+        # intentional post-create write path.
         "confidence_band",
         "lifecycle",
         "adoption",
     }
 )
+
+_TRAIT_WRITE_KEYS = frozenset({"confidence_band", "lifecycle", "adoption"})
+
+
+def reject_trait_writes_at_create(payload: dict[str, object]) -> dict[str, Any] | None:
+    """Return an error dict when Option-C traits are supplied at create time."""
+    keys = _TRAIT_WRITE_KEYS & payload.keys()
+    if not keys:
+        return None
+    return {
+        "error": (
+            f"Option-C traits {sorted(keys)} are not settable at entity_create "
+            "(birth traits are derived from entity type; use entity_update after create)."
+        )
+    }
 
 _FRICTION_CATEGORIES = frozenset(
     {
