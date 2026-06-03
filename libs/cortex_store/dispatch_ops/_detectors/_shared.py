@@ -35,6 +35,9 @@ SEVERITY = {
     # Auditor-validatability gaps — warning severity (advisory, never critical)
     "confirmed_entity_no_assertions": "warning",
     "confirmed_attribute_no_assertion": "warning",
+    # Panel disposition (thread 1206) — session-close only; advisory
+    "panel_disposition_incomplete": "warning",
+    "panel_falsifier_phase3_metric": "info",
     "attributes_json_parse_failed": "warning",
     "case_marker_absent": "info",
     # Skill-manifest structural drift (migrations 041 + 045). project /

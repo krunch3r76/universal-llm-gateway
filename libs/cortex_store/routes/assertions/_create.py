@@ -232,8 +232,9 @@ def create_assertion(
                 "  resolution_status, fulfillment_assertion_id, quality_score, review_status,"
                 "  prospective_summary, events_json, artifact_uri, artifact_storage,"
                 "  entrenchment_score, predicate_form, "
-                "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version,"
+                "attributes"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     body.entity_id,
                     body.claim,
@@ -266,6 +267,7 @@ def create_assertion(
                     norm_dec,
                     cand_fp,
                     norm_ver,
+                    json_encode(body.attributes),
                 ),
             )
 

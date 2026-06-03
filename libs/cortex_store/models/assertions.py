@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -89,6 +89,9 @@ class AssertionCreate(BaseModel):
     # the async predicate-extract pipeline populates it later. Additive —
     # existing callers are unaffected (None default, no BC shim).
     predicate_form: str | None = None
+    # F1 (1211): per-assertion metadata JSON, primarily Menu D consensus
+    # disposition stamps (consensus-steelman-posture §3.1 — assertion SOT).
+    attributes: dict[str, Any] | None = None
 
     _validate_artifact_uri = field_validator("artifact_uri")(
         reject_cortex_dropbox_source_uri
@@ -152,6 +155,9 @@ class AssertionItem(BaseModel):
     normalization_decision: str | None = None
     candidate_set_fingerprint: str | None = None
     normalizer_version: str | None = None
+    # F1 (1211): per-assertion metadata JSON, primarily Menu D consensus
+    # disposition stamps (consensus-steelman-posture §3.1 — assertion SOT).
+    attributes: dict[str, Any] | None = None
 
 
 class AssertionUpdate(BaseModel):

@@ -199,8 +199,12 @@ def get_turns(
     last: int | None = None,
     compact: bool = False,
     mark_read: bool = False,
-    include_superseded: bool = True,
+    include_superseded: bool = False,
 ) -> list[dict[str, Any]]:
+    # include_superseded default mirrors the HTTP route's Query(False) — the route
+    # is the single source of truth for this contract (F5). Superseded turns are
+    # excluded from the normal fetch/mark-read path; mark-closed-read passes
+    # include_superseded=True explicitly to sweep them on thread close.
     select = "id, thread, turn_number, from_agent, to_agent, subject, status, supersedes_turn, created_at, read_at"
     if not compact:
         select = "*"

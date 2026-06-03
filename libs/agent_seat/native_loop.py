@@ -125,7 +125,7 @@ async def run_native_tool_loop(
         send_native: Async ``(path, json_body) -> raw_response`` callable.
             Pipeline handler injects in-process ``CloudProxyClient``; MCP
             and tests inject httpx-based callables.
-        agent: Dispatched persona slug (e.g. ``orion``). When set, nested
+        agent: Dispatched role/seat slug (e.g. ``gatherer``). When set, nested
             ``agent_bus`` post/reply calls that omit ``from`` inherit this value.
         max_turns: Upper bound on model+tool rounds. ``exhausted=True`` in
             result if hit without terminal content.

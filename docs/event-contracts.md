@@ -2116,6 +2116,10 @@ event service over the same `/tmp/universal-protocol/events.sock` socket.
 | `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
 | `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
 | `mcp.response.encoding.rejected` | `tool_name` | Tool response rejected before size check: content contained invalid UTF-8 sequences (lone surrogates) that would corrupt MCP wire transport |
+| `mcp.panel.dispatch.called` | `roles`, `families` | `panel_dispatch` MCP tool admitted a panel plan; emitted before relaying member dispatches. `roles` = comma-joined role→model map keys/values; `families` = comma-joined provider display labels from `panel_provider_families` |
+| `mcp.panel.dispatch.rejected` | `reason` | Panel admission failed before dispatch (`reason=admission` for disposition/plan rejection; relay may also emit with structured `field`/`request_id` on Stargate 4xx) |
+| `mcp.panel.dispatch.dispatched` | `execution_ids` | All panel member `team_dispatch` relays returned 2xx; `execution_ids` = comma-joined execution IDs |
+| `mcp.panel.dispatch.failed` | `error`, optional `field`, `request_id`, `status_code` | Relay transport/upstream failure or Stargate 5xx on a panel member dispatch (via shared `_relay` with `record_prefix=mcp.panel.dispatch`) |
 | ~~`mcp.frontier.generate.called`~~ | _(retired Phase 4 — `frontier_generate` tool deleted; `team_generate` tool deleted)_ | Was emitted by `frontier.py` `record()` at the start of each `frontier_generate` MCP call. Replaced by `pipeline.frontier.dispatch.started` on the pipeline surface |
 | ~~`mcp.team.generate.called`~~ | _(retired Phase 4 — `team_generate` tool deleted)_ | Was emitted by `frontier.py` `record()` at the start of each `team_generate` MCP call. Replaced by `pipeline.frontier.dispatch.started` on the pipeline surface |
 | ~~`mcp.team.generate.dispatched`~~ | _(retired Phase 4)_ | Was emitted from `_relay` when Stargate `/api/v1/team/generate` returned 2xx. Route deleted |
@@ -2173,6 +2177,7 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detector
 | `cortex.audit.gap.detected` | `kind`, `subject`, `severity`, `detail`, `audit_id` | One emission per finding. `kind` is in payload (never baked into signal name per C2). `audit_id` is a 12-char MD5 correlation key stable across runs for the same `kind:subject` pair. Auditor kinds include `attributes_json_parse_failed` (confirmed-attribute scan skipped because entity `attributes` JSON is malformed). |
 | `cortex.assertion.deserialize_skipped` | `entity_id`, `assertion_id`, `reason` | Telemetry when an assertion row fails Pydantic decode on `entity_get` / entity detail read; API still omits the row (no response-shape change). |
 | `cortex.audit.budget.exceeded` | `duration_ms`, `budget_ms`, `subject` | Emitted when a run exceeds budget (`100ms` graph-only, `2000ms` with filesystem). |
+| `cortex.session.audit.degraded` | `session_id`, `error` | Session-close graph-only audit caught a detector exception; findings suppressed (empty list) so close is not blocked. |
 | `cortex.session.audit.gaps.observed` | `session_id`, `gap_count`, `criticals` (list of `{kind, subject}`) | WARN mode (Phase 2.0): session_close completed despite findings. |
 | `cortex.session.audit.blocked` | `session_id`, `criticals` (list of `{kind, subject, detail}`) | BLOCK mode (Phase 2.1) only: critical gap with no `defer_gaps` reason caused session_close to abort. `role="coordination"`. **Not yet emitted — Phase 2.1 pending.** |
 | `cortex.render.applied` | `view`, `subject`, `path`, `bytes_written` | Phase 4 (deferred): `render_into` success. Not yet emitted. |

@@ -107,7 +107,7 @@ def _embed_assertion_background(assertion_id: int, assertion_row: dict) -> None:
 
 router = APIRouter(prefix="/assertions", tags=["assertions"])
 
-_JSON_FIELDS = frozenset({"evidence_uris"})
+_JSON_FIELDS = frozenset({"evidence_uris", "attributes"})
 
 # §boot-compact: minimal column set for boot-path consumers that render only
 # `id, claim, observed_at, entity_id, seeded_by, derivation_type` (turn-12
@@ -163,7 +163,8 @@ _ASSERTION_COLS = (
     "review_status, reviewer, reviewed_at, review_notes, "
     "resolution_status, fulfillment_assertion_id, quality_score, "
     "prospective_summary, events_json, artifact_uri, artifact_storage, "
-    "entrenchment_score, predicate_form, created_at, raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version"
+    "entrenchment_score, predicate_form, created_at, raw_predicate_form, normalization_decision, "
+    "candidate_set_fingerprint, normalizer_version, attributes"
 )
 
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}

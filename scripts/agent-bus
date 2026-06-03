@@ -79,36 +79,68 @@ def _request(
         return resp.json()
 
 
+def _thread_unread_count(thread: str, token: str) -> int:
+    """Count all unread turns in a thread.
+
+    No `last` cap (F7): a thread with >200 unread previously under-sized the
+    fetch window and silently dropped unread turns. The server returns every
+    matching unread row when `last` is omitted.
+    """
+    params = {"thread": thread, "unread": "true", "compact": "true"}
+    peek = _request("GET", f"/turns?{urlencode(params)}", token)
+    return len(peek.get("turns", []))
+
+
+def _has_earlier_turns(turns: list[dict[str, Any]], window: int) -> bool:
+    """True iff the thread has turns older than the fetched window.
+
+    A pure length>=window probe gives a false positive at the exact-N boundary
+    (F6): a thread with exactly `window` turns reports earlier turns that don't
+    exist. Turns are ordered DESC, so the oldest fetched is turns[-1]; if its
+    turn_number is 1 it is the genuine first turn and nothing precedes it.
+    """
+    if len(turns) < window or not turns:
+        return False
+    return turns[-1].get("turn_number") != 1
+
+
 def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
     context = getattr(args, "context", 0)
     indent = None if getattr(args, "compact", False) else 2
 
     if context > 0 and args.thread:
         # Phase 1: count unread turns to size the fetch window.
-        peek_params: dict[str, Any] = {
-            "thread": args.thread,
-            "last": 200,
-            "unread": "true",
-            "compact": "true",
-        }
-        peek = _request("GET", f"/turns?{urlencode(peek_params)}", token)
-        unread_count = len(peek.get("turns", []))
+        # TOCTOU note (F9): a turn arriving between this peek and the phase-2
+        # fetch below can skew fetch_last / has_earlier by one. Advisory only —
+        # the next fetch self-corrects.
+        unread_count = _thread_unread_count(args.thread, token)
 
         # Phase 2: fetch (context + unread + 1) turns — the +1 is a probe that
         # lets us detect whether earlier turns exist without a separate count query.
+        # ¬mark_read here: marking before trim would acknowledge the probe (and the
+        # newest turn, pre-fix) without ever displaying it (F1/F3). Mark-read is
+        # applied below, scoped to the surviving displayed turns.
         fetch_last = context + max(unread_count, 1) + 1
         fetch_params: dict[str, Any] = {"thread": args.thread, "last": fetch_last}
-        if args.mark_read:
-            fetch_params["mark_read"] = "true"
         if getattr(args, "compact", False):
             fetch_params["compact"] = "true"
 
         result = _request("GET", f"/turns?{urlencode(fetch_params)}", token)
         turns = result.get("turns", [])
 
-        has_earlier = len(turns) >= fetch_last
+        # Server orders turn_number DESC, so turns[-1] is the OLDEST turn (the probe)
+        # and turns[0] is the newest. Drop the oldest probe, never the newest (F1).
+        # _has_earlier_turns also guards the exact-N boundary (F6): when the oldest
+        # fetched turn is turn_number 1 it is a real turn, not a probe — keep it.
+        has_earlier = _has_earlier_turns(turns, fetch_last)
         if has_earlier:
-            turns = turns[1:]  # drop probe turn, keep context + unread window
+            turns = turns[:-1]  # drop oldest probe, keep context + unread window
+
+        if args.mark_read:
+            for t in turns:
+                if t.get("read_at") is None:
+                    read_resp = _request("PATCH", f"/turns/{t['id']}/read", token)
+                    t["read_at"] = read_resp.get("read_at")
 
         thread_info: dict[str, Any] = {
             "turns_in_response": len(turns),
@@ -134,8 +166,10 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
         params["thread"] = args.thread
     if args.to:
         params["to"] = args.to
-        if args.unread:
-            params["unread"] = "true"
+    # --unread is independent of --to: the server filters on read_at regardless
+    # of the inbox filter, so forward it whenever requested (F2).
+    if args.unread:
+        params["unread"] = "true"
     if getattr(args, "compact", False):
         params["compact"] = "true"
     if args.mark_read:
@@ -144,9 +178,12 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
 
     if args.thread:
         turns = result.get("turns", [])
-        has_earlier = len(turns) >= args.last
+        has_earlier = _has_earlier_turns(turns, args.last)
         thread_info = {
             "turns_in_response": len(turns),
+            # Emit unread_count on this path too so _thread_info has a stable
+            # shape across both fetch paths (F8).
+            "unread_count": _thread_unread_count(args.thread, token),
             "has_earlier_turns": has_earlier,
         }
         if has_earlier:

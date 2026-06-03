@@ -116,7 +116,7 @@ def get_boot_skills(
             "either `*` (universal) or this agent slug. Skills without "
             "the attribute are treated as universal — pre-backfill safe "
             "default. Pass the agent slug used by cortex_boot (e.g. "
-            "'cursor', 'web', 'orion') to get the per-agent partition."
+            "'cursor', 'web', 'grok-direct') to get the per-agent partition."
         ),
     ),
 ) -> dict[str, Any]:

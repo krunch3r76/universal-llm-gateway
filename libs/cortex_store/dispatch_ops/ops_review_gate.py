@@ -41,6 +41,9 @@ _PRE_CLOSE_GATE_KINDS = [
     # only; never critical, never blocking in WARN mode.
     "confirmed_entity_no_assertions",
     "confirmed_attribute_no_assertion",
+    "panel_disposition_incomplete",
+    # panel_falsifier_phase3_metric is cadence-scoped (§3.3 N≥20 cohort), not
+    # per-close per-entity — excluded; cadence runner still TODO.
 ]
 
 
@@ -65,7 +68,12 @@ def _run_session_audit_graph_only(
                 kinds=kinds, subjects=list(entity_ids), include_filesystem=False
             )
         return run_detectors(kinds=kinds, subject=None, include_filesystem=False)
-    except Exception:
+    except Exception as exc:
+        record(
+            "cortex.session.audit.degraded",
+            session_id=session_id,
+            error=str(exc) or type(exc).__name__,
+        )
         logger.warning(
             "session audit degraded for %s — detector error suppressed",
             session_id,

@@ -78,6 +78,7 @@ def _op_assert(
     force: bool = False,
     supersedes_id: int | None = None,
     acknowledge_audit_gaps: list[str] | None = None,
+    attributes: dict[str, Any] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {
@@ -129,6 +130,8 @@ def _op_assert(
         body["supersedes_id"] = supersedes_id
     if acknowledge_audit_gaps is not None:
         body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
+    if attributes is not None:
+        body["attributes"] = attributes
     if derivation_type is None or confidence_score is None:
         logger.warning(
             "cortex assert: missing derivation_type=%s or confidence_score=%s — "

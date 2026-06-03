@@ -50,7 +50,7 @@ MCP_TOOL_SEARCH = """\
 The advertised MCP catalog is intentionally lean — primary tools are
 `agent_bus`, `cortex`, `cortex_boot`, `dispatch`, `frontier_dispatch`, `fs`,
 `manage`, `observability`, `pipeline`, `rag`, `retrieve`,
-`team_dispatch`, and `tool_search`. Everything else is reachable in two steps:
+`panel_dispatch`, `team_dispatch`, and `tool_search`. Everything else is reachable in two steps:
 
 ```
 tool_search(query="<keywords>")          # → returns dispatch_template
@@ -120,9 +120,10 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 CLAUDE_WEB_TOOL_SURFACE = """\
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
-On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s).
+On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s).
 - consult any model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → returns execution_id; poll pipeline(op="result", execution_id=…)
 - by role          → team_dispatch(op="generate", role="…", dispatch_thread_id="…", messages=[…])
+- consensus panel  → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → returns panel_executions; lead adjudication NON-offloadable
 - strategic / multi-model / in-pipeline RAG → dispatch(tool="advisor" | "agent_consult" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
 Note: frontier_dispatch/team_dispatch are standalone primary tools here via the standalone-domain promotion (thread 1146/1167); the promotion must stay committed or a rebuild reverts it to overflow. advisor/agent_consult/pipeline_consult remain overflow (via dispatch). Source of truth: cortex:notes/system/threads/claude-web-dispatch-decision-table.md (§2/§3/§4)."""
@@ -262,9 +263,9 @@ agent bus — the next session picks it up.
 | ≥2-family panel (hard triggers) | `panel_dispatch(disposition=panel, ...)` | skeptic + reviewer (+synthesizer tiebreaker) | mixed | returns `panel_executions`; lead artifact still required |
 | One-shot, no role | `frontier_dispatch(mcp=False)` | any | inline | explicit no-role path |
 
-**Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + lead-review of panelist writes + `lead_adjudication_artifact` NON-offloadable. (3) **Audit binding (helper validation only until session-close detector lands)** — `validate_panel_assert_attributes` / `build_panel_assert_attributes` check schema; `independent family := distinct provider` is not yet audit-gate bound.
+**Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + lead-review of panelist writes + `lead_adjudication_artifact` NON-offloadable. (3) **Audit binding (landed)** — session-close gate runs `panel_disposition_incomplete` on scoped session entities; `validate_panel_assert_attributes` / `build_panel_assert_attributes` remain helper-only schema checks ahead of assert.
 
-**Post-panel assert (Menu D, SPLIT storage):** `assert` for claim + `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`); `entity_update(attributes=...)` on the decision entity for `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `lead_adjudication_artifact` (use `agent_seat.panel_dispatch.build_panel_assert_attributes`). `panel` without lead artifact ⟹ stamp `steelman-only`. **Falsifier metric** (session-close detector, not yet landed): fraction of material `panel` decisions lacking a lead adjudication artifact over N≥20. Full skill: `fs(sandbox="cortex", op="read", path="agent-skills/consensus-steelman-posture.md")`."""
+**Post-panel assert (Menu D — assertion SOT):** pass `attributes=build_panel_assert_attributes(...)` directly to `assert` alongside `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`). Per skill §3.1: `assertion.attributes` is the source of truth; `entity_update(attributes=...)` is optional as a derived read cache only — audits and session-close detectors query the non-superseded assertion, NEVER the entity blob. Required `attributes` keys: `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `lead_adjudication_artifact`, `material`. `panel` without lead artifact ⟹ stamp `steelman-only`. **Falsifier metric** (cadence §3.3 — not per-close): fraction of material `panel` decisions lacking `lead_adjudication_artifact` over N≥20; cadence runner (every-10/monthly) still TODO. Full skill: `fs(sandbox="cortex", op="read", path="agent-skills/consensus-steelman-posture.md")`."""
 
 FRONTIER_MODEL_ROUTING = """\
 ## Frontier Model Routing

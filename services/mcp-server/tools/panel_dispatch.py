@@ -16,6 +16,7 @@ from agent_seat.panel_dispatch import (
     admit_panel_plan,
     build_team_dispatch_body,
     effective_model_for_member,
+    panel_provider_families,
     panel_result_envelope,
 )
 from mcp_events import record
@@ -106,9 +107,7 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         record(
             "mcp.panel.dispatch.called",
             roles=",".join(member_models),
-            families=",".join(
-                {m.split("/")[0] for m in member_models.values() if "/" in m}
-            ),
+            families=",".join(panel_provider_families(member_models)),
         )
 
         async def _one(

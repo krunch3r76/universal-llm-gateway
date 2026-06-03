@@ -60,7 +60,6 @@ from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from tools.filesystem._fs_dispatch import dispatch_workspaces_op, sandbox_op_doc
 from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
-from tools.panel_dispatch import register_panel_dispatch_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
 from tools.grokbuild import register_grokbuild_tools
@@ -68,6 +67,7 @@ from tools.llm import register_llm_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
 from tools.model_status import register_model_status_tools
+from tools.panel_dispatch import register_panel_dispatch_tools
 from tools.pipeline import register_pipeline_tools
 from tools.pipeline_consult import register_pipeline_consult_tools
 from tools.project import register_project_tools

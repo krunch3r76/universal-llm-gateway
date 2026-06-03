@@ -44,7 +44,9 @@ def _thread_detail_sql() -> str:
         t.id, t.slug, t.status, t.summary, t.created_at, t.updated_at,
         t.bus_lifecycle_state,
         COUNT(tu.id)                                        AS turn_count,
-        SUM(CASE WHEN tu.read_at IS NULL THEN 1 ELSE 0 END) AS unread_count,
+        COALESCE(
+            SUM(CASE WHEN tu.read_at IS NULL THEN 1 ELSE 0 END), 0
+        )                                                   AS unread_count,
         (SELECT subject FROM turns
          WHERE thread = t.id ORDER BY turn_number DESC LIMIT 1) AS last_subject,
         (SELECT from_agent FROM turns

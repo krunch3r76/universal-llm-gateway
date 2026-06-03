@@ -139,11 +139,18 @@ def admit_panel_plan(
     return PanelAdmissionPlan(disposition=disposition, members=members)
 
 
+def count_execution_evidence_uris(uris: list[str] | None) -> int:
+    """Count ``execution:`` URIs on a Menu D assert (session-close gate uses this)."""
+    if not uris:
+        return 0
+    return sum(1 for u in uris if isinstance(u, str) and u.startswith("execution:"))
+
+
 def validate_panel_assert_attributes(attributes: dict[str, Any]) -> list[str]:
     """Return human-readable validation errors for a ``panel`` disposition stamp.
 
-    Helper validation only (Guard 3) — not session-close audit-gate bound until
-    the panel disposition detector lands.
+    Helper validation (Guard 3); session-close ``panel_disposition_incomplete``
+    detector reuses this — assert-time does not reject on these errors.
     """
     errors: list[str] = []
     disposition = attributes.get("consensus_disposition")
@@ -189,7 +196,16 @@ def build_panel_assert_attributes(
     member_models: dict[str, str],
     material: bool = True,
 ) -> dict[str, Any]:
-    """Menu D assert ``attributes`` block (SPLIT storage — mirror on entity optional)."""
+    """Build Menu D ``attributes`` block for ``cortex(tool="assert", attributes=...)``.
+
+    Per consensus-steelman-posture §3.1 (confirmed, thread 1206): the
+    **assertion** is the source of truth for consensus_disposition and all
+    panel metadata.  Pass the returned dict as ``attributes=`` on the assert
+    call — do NOT use ``entity_update(attributes=...)`` as the primary write.
+    Entity attributes may optionally mirror the latest state for cheap
+    ``entity_get`` reads, but they are a derived cache: session-close detectors
+    and audits query the non-superseded assertion, NEVER the entity blob.
+    """
     return {
         "consensus_disposition": "panel",
         "material": material,

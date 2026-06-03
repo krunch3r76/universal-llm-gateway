@@ -50,6 +50,10 @@ from ._detectors.markdown_render import (
     detect_marker_nesting_violation,
     detect_unregistered_document_in_markdown,
 )
+from ._detectors.panel_disposition import (
+    detect_panel_disposition_incomplete,
+    detect_panel_falsifier_phase3_metric,
+)
 from ._detectors.predicate_form import detect_unresolved_bare_token_in_predicate_form
 from ._detectors.project import detect_project_required_skills_no_relationship
 from ._detectors.relationship import detect_dangling_relationship_target
@@ -81,6 +85,9 @@ GRAPH_ONLY_KINDS = {
     # entities touched in the session. Advisory, never blocking.
     "confirmed_entity_no_assertions",
     "confirmed_attribute_no_assertion",
+    # Panel disposition completeness + Phase-3 falsifier metric (thread 1206)
+    "panel_disposition_incomplete",
+    "panel_falsifier_phase3_metric",
     # Skill-manifest structural drift — see migrations 041 + 045 (covers
     # project / plan / plan_phase / todo).
     "project_required_skills_no_relationship",
@@ -112,7 +119,11 @@ FS_TOUCHING_KINDS = {
     "landed_claim_not_on_master",
 }
 
-INFO_KINDS = {"case_marker_absent", "decision_deprecated_not_terminal"}
+INFO_KINDS = {
+    "case_marker_absent",
+    "decision_deprecated_not_terminal",
+    "panel_falsifier_phase3_metric",
+}
 
 ALL_KINDS = GRAPH_ONLY_KINDS | FS_TOUCHING_KINDS | INFO_KINDS
 
@@ -133,6 +144,8 @@ def get_all_detectors() -> dict[str, Any]:
         "prior_session_id_omitted": detect_prior_session_id_omitted,
         "confirmed_entity_no_assertions": detect_confirmed_entity_no_assertions,
         "confirmed_attribute_no_assertion": detect_confirmed_attribute_no_assertion,
+        "panel_disposition_incomplete": detect_panel_disposition_incomplete,
+        "panel_falsifier_phase3_metric": detect_panel_falsifier_phase3_metric,
         "project_required_skills_no_relationship": detect_project_required_skills_no_relationship,
         "entity_source_uri_unresolved": detect_entity_source_uri_unresolved,
         "agent_skill_not_in_canonical_sandbox": detect_agent_skill_not_in_canonical_sandbox,
@@ -172,6 +185,11 @@ def run_detectors(
                 selected.extend(list(FS_TOUCHING_KINDS))
         else:
             selected = [k for k in kinds if k in ALL_KINDS]
+        # A kind may belong to more than one taxonomy set (e.g.
+        # panel_falsifier_phase3_metric ∈ GRAPH_ONLY_KINDS ∩ INFO_KINDS), and a
+        # caller may pass duplicate kinds — dedup so each detector runs once on
+        # the non-batched path (the subjects path already dedups by audit_id).
+        selected = list(dict.fromkeys(selected))
 
         if subjects:
             # Batched multi-subject path — single DB connection, deduplicate by audit_id.
