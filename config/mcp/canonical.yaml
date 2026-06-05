@@ -2388,76 +2388,7 @@ tools:
   introduced: 2026-05-22
 
   # ─── domain: dispatch ────────────────────────────────────────────────────────
-  # Overflow routing surface + frontier/team dispatchers.
-  # On /mcp the `dispatch` domain becomes the catch-all dispatcher tool.
-
-- canonical_name: dispatch_frontier
-  domain: dispatch
-  operation: frontier
-  dispatcher_call_shape:
-    tool: dispatch
-    dispatch_key: op
-    dispatch_value: frontier
-  flat_call_shape:
-    tool: dispatch_frontier
-    substrate_qualified: user-vortex__dispatch_frontier
-  fol_descriptor: |
-    ∀ op ∈ {generate, to_thread} ∧ model ∈ FrontierModels ∧ messages ∈ list[ChatMessage]:
-      dispatch_frontier(op, model, messages) ⟹ {execution_id ∈ UUIDv4, status}.
-    op=generate → poll pipeline(op="result", execution_id=…) for content.
-    op=to_thread → Stargate posts the reply to `thread` on completion.
-    Async. Mutating (external call). See agent_skill:dispatch.
-  json_schema:
-    type: object
-    properties:
-      op: {type: string, enum: [generate, to_thread]}
-      model: {type: string}
-      messages: {type: array, items: {type: object}}
-      thread: {type: string}
-      subject: {type: string}
-      generation_options: {type: object}
-    required: [op, model, messages]
-  skill_uri: agent_skill:dispatch
-  # Off mcp_grok: frontier_dispatch MCP tool retired (2026-06-05); grok_flat_tools
-  # cannot register dispatch_frontier without frontier_dispatch → boot count mismatch.
-  seat_visibility: [mcp]
-  mandate_safety: write
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: dispatch_team
-  domain: dispatch
-  operation: team
-  dispatcher_call_shape:
-    tool: dispatch
-    dispatch_key: op
-    dispatch_value: team
-  flat_call_shape:
-    tool: dispatch_team
-    substrate_qualified: user-vortex__dispatch_team
-  fol_descriptor: |
-    ∀ op ∈ {generate, to_thread} ∧ role ∈ GenerateRoles ∧ messages ∈ list[ChatMessage]:
-      dispatch_team(op, role, messages) ⟹ {execution_id ∈ UUIDv4, status}.
-    GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic);
-    model optional (resolves from role default). op=generate → poll pipeline(op="result");
-    op=to_thread → Stargate posts the reply to `thread`. Async. Mutating (external call).
-    See agent_skill:dispatch.
-  json_schema:
-    type: object
-    properties:
-      op: {type: string, enum: [generate, to_thread]}
-      role: {type: string}
-      messages: {type: array, items: {type: object}}
-      model: {type: string}
-      thread: {type: string}
-      subject: {type: string}
-      generation_options: {type: object}
-    required: [op, role, messages]
-  skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: write
-  cache_priority: on_demand
-  introduced: 2026-05-22
+  # Overflow routing surface only. Agent consults use standalone team_dispatch.
 
 - canonical_name: dispatch_overflow
   domain: dispatch
@@ -2574,7 +2505,7 @@ tools:
       subject: {type: string}
     required: [op, role, messages, dispatch_thread_id]
   skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude]
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: '2026-05-30'

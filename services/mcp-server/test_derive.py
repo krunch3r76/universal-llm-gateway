@@ -98,7 +98,7 @@ def test_derive_claude_manifest_count() -> None:
     manifest = derive_claude_manifest(_CANONICAL_YAML)
     assert (
         len(manifest) == 14
-    )  # update if domains change. frontier_dispatch domain removed 2026-06-05.
+    )  # update if domains change. dispatch overflow-only; team_dispatch standalone.
     tool_names = [e["tool_name"] for e in manifest]
     assert len(tool_names) == len(set(tool_names)), "duplicate tool_names in manifest"
 

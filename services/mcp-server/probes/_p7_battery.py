@@ -22,9 +22,9 @@ _PROMPT_BATTERY: list[tuple[str, str, str]] = [
     ("save this observation as a cortex assertion", "cortex", ""),
     ("search cortex for entities related to dual-seat routing", "cortex", ""),
     ("read the activity journal from this session", "cortex", "[NN: agent_bus]"),
-    # dispatch (3 ops: frontier, overflow, team)
-    ("dispatch this prompt to claude-opus-4-7 for reasoning", "dispatch", ""),
-    ("run a team dispatch to all frontier models", "dispatch", "[NN: pipeline]"),
+    # dispatch (overflow op only; consults use team_dispatch primary)
+    ("dispatch an overflow tool by name", "dispatch", ""),
+    ("run a team dispatch to reviewer role", "team_dispatch", "[NN: pipeline]"),
     # fs (16 ops: read, write, append, list, delete, ...)
     ("read the file at workspaces/universal-llm-gateway/docs/VISION.md", "fs", ""),
     ("write a markdown file to the cortex sandbox", "fs", ""),

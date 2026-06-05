@@ -357,7 +357,7 @@ def render_frontier_reasoning(*, lead_posture: bool) -> str:
     return _FRONTIER_REASONING_HEADER + _FRONTIER_REASONING_CORE
 
 
-# Default export: non-lead shape (gpt-cursor, gemini-*, etc.).
+# Default export: non-lead shape (gemini-*, grok-*, subagent, etc.).
 FRONTIER_REASONING = render_frontier_reasoning(lead_posture=False)
 
 NOTES_TO_SELF = """\

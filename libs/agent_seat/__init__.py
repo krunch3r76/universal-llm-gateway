@@ -48,6 +48,7 @@ from agent_seat.profiles import (
     family_anchor,
     get_profile,
     get_role,
+    load_lead_agent_slugs,
     load_profiles,
     load_roles,
     resolve_seat,
@@ -58,7 +59,7 @@ from agent_seat.prompts import (
     assemble_system_prompt,
     build_subagent_preamble,
 )
-from agent_seat.registry import normalize_agent_slug
+from agent_seat.registry import is_lead_agent, normalize_agent_slug
 from agent_seat.tools import (
     BRAVE_SEARCH_TOOL_DEFINITION,
     TEAM_TOOL_DEFINITIONS,
@@ -89,6 +90,8 @@ __all__ = [
     "get_profile",
     "get_role",
     "hydrate_agent",
+    "is_lead_agent",
+    "load_lead_agent_slugs",
     "load_profiles",
     "load_roles",
     "normalize_agent_slug",

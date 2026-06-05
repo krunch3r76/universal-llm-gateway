@@ -1,14 +1,21 @@
 # config/agents.yaml — agent capability and role configuration
 #
-# Single source of truth for CapabilityProfile (family × platform cells)
-# and RoleProfile (functional team roles). Loaded at runtime by
-# libs/agent_seat/profiles.py via load_profiles() and load_roles().
+# Single source of truth for CapabilityProfile (family × platform cells),
+# RoleProfile (functional team roles), and lead_seats (operator lead slugs).
+# Loaded at runtime by libs/agent_seat/profiles.py.
 #
 # Profile keys: "<family>/<platform>"
 # Profile fields map 1:1 to CapabilityProfile dataclass fields.
 # Optional fields omitted here use their dataclass defaults:
 #   allowed_models: []  model_requirement: null  capability_tier: null
 #   dispatchable: true  session_limit: 3  self_reflections_limit: 5
+
+# Operator lead seats — material-decision posture (consensus-steelman rule 0).
+# Claude + GPT Cursor today. Add gemini-cursor after gemini MCP wiring verify.
+lead_seats:
+  - claude-web
+  - claude-cursor
+  - gpt-cursor
 
 profiles:
 

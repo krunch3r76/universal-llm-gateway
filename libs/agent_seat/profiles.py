@@ -1,11 +1,10 @@
 """Capability and role profile registry — single source of truth for
 (family, platform) routing data and role roster.
 
-Two tables keyed by the orthogonal axes the system operates on:
-(family, platform) cells via CapabilityProfile, and role slugs via
-RoleProfile. Data is loaded from config/agents.yaml at startup via
-load_profiles() and load_roles(). Accessor functions (get_profile,
-get_role, resolve_seat) are the primary call sites.
+Three registries loaded from config/agents.yaml:
+(family, platform) cells via CapabilityProfile, role slugs via RoleProfile,
+and operator lead seats via load_lead_agent_slugs(). Accessor functions
+(get_profile, get_role, is_lead_agent, resolve_seat) are the primary call sites.
 """
 
 from __future__ import annotations
@@ -135,6 +134,20 @@ def load_roles() -> dict[str, RoleProfile]:
             default_contract=entry.get("default_contract"),
         )
     return roles
+
+
+@functools.cache
+def load_lead_agent_slugs() -> frozenset[str]:
+    """Return operator lead seat slugs from config/agents.yaml ``lead_seats``."""
+    raw = _load_agents_yaml().get("lead_seats")
+    if not raw:
+        raise ValueError(
+            "agents.yaml: lead_seats must be a non-empty list of seat slugs"
+        )
+    slugs = frozenset(str(s).strip() for s in raw if str(s).strip())
+    if not slugs:
+        raise ValueError("agents.yaml: lead_seats resolved to an empty set")
+    return slugs
 
 
 # ── Accessor functions ───────────────────────────────────────────────────────

@@ -19,16 +19,14 @@ Block text is operator-approved (2026-05-31); the grok model string is
 from __future__ import annotations
 
 # Surface-aware Dispatch & Consult blocks (operator-approved override 2026-06-01,
-# thread 1167). team_dispatch (+ panel_dispatch) are PRIMARY/direct-call on BOTH
-# surfaces after the standalone-domain re-land (thread 1146/1167):
+# thread 1167). Lead seats (config/agents.yaml lead_seats) use the
+# claude-form block on /mcp (mcp_claude). team_dispatch (+ panel_dispatch) are
+# PRIMARY/direct-call on lead surfaces after the standalone-domain re-land:
 #
-#   - claude /mcp (mcp, mcp_claude): canonical.yaml declares standalone
-#     `team_dispatch` DOMAIN (visibility mcp/mcp_claude), so tool_name enters
-#     _PRIMARY_TOOLS in _derive.derive_claude_manifest — direct call, no dispatch
-#     step. frontier_dispatch MCP tool retired — use team_dispatch(generate, role=…,
-#     model=?) instead. (advisor/pipeline_consult remain OVERFLOW via dispatch.)
-#   - grok /mcp/grok (mcp_grok): _derive.derive_grok_manifest emits a FLAT
-#     manifest where dispatch_team is a standalone tool — direct call as well.
+#   - claude /mcp + gpt /mcp (mcp, mcp_claude): standalone `team_dispatch`
+#     DOMAIN → _PRIMARY_TOOLS — direct call; advisor/pipeline_consult overflow.
+#   - grok /mcp/grok (mcp_grok): flat catalog for grok-direct/build worker only
+#     — consult/infrastructure surface, not an operator lead seat.
 #
 # NOTE: `cache_priority` in canonical.yaml is INERT (not consumed by derivation,
 # per _derive.py). The lever that makes these primary on claude is the standalone
@@ -187,13 +185,12 @@ def render_orientation_blocks(
     Surface-aware: the Dispatch & Consult block's callable shape depends on the
     rendering seat's catalog (thread 1167, 2026-06-01 re-land):
 
-    - ``family == "grok"`` → the flat /mcp/grok manifest exposes
-      ``team_dispatch`` as a standalone tool → direct-call form.
-    - any other family (claude/gpt/gemini on the ``mcp``/``mcp_claude`` surface) →
-      the standalone-domain re-land puts ``team_dispatch`` in ``_PRIMARY_TOOLS`` →
-      direct-call form here too. ``panel_dispatch`` is primary
-      on claude-web; ``advisor``/``pipeline_consult`` remain OVERFLOW via
-      ``dispatch(tool="…")``.
+    - ``family == "grok"`` → grok-direct/build-worker flat /mcp/grok block
+      (infrastructure surface — not a lead seat).
+    - any other family on ``mcp``/``mcp_claude`` (claude, gpt leads; gemini
+      pending) → ``team_dispatch`` in ``_PRIMARY_TOOLS`` direct-call form.
+      ``panel_dispatch`` is primary on claude-web; overflow via
+      ``dispatch(tool="…")`` for advisor/pipeline_consult.
 
     Default (``family is None``) renders the claude direct-call form, matching
     the default ``(claude, cursor)`` seat.

@@ -6,8 +6,9 @@ individual tools with `fs(op="md_read", sandbox="workspaces", path="universal-ll
 
 ## team_dispatch
 
-Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`, and
-`frontier_dispatch` are **retired** (Phase 4/5) — use `team_dispatch` only.
+Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`,
+`frontier_dispatch`, `dispatch_frontier`, and `dispatch_team` are **retired**
+(Phase 4/5) — use `team_dispatch` only.
 
 For `op="generate"` and `op="to_thread"`, admission is async: returns
 `{execution_id, pipeline, status, started_at}`; poll with `pipeline(op="result")`.

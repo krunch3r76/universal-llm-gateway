@@ -9,7 +9,7 @@ and the resolve_agent_* / check_agent_* helpers used by admission gates.
 
 from __future__ import annotations
 
-from .profiles import get_profile, load_roles
+from .profiles import get_profile, load_lead_agent_slugs, load_roles
 
 # Legacy seat spellings → canonical {family}-{platform} slug.
 # Shared by dispatch normalization and agent-bus recipient matching.
@@ -56,7 +56,6 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "investigator": "investigator",
 }
 
-
 def _normalize_agent_key(slug: str) -> str:
     return slug.strip().lower().replace("-", "_").replace(" ", "_")
 
@@ -78,6 +77,11 @@ def normalize_agent_slug(slug: str) -> str:
         slug = str(slug)
     norm = _normalize_agent_key(slug)
     return _DISPATCH_ALIASES.get(norm, norm)
+
+
+def is_lead_agent(slug: str) -> bool:
+    """True when ``slug`` is an operator lead seat (``agents.yaml`` ``lead_seats``)."""
+    return normalize_agent_slug(slug) in load_lead_agent_slugs()
 
 
 def expand_recipient_slugs(slug: str) -> list[str]:

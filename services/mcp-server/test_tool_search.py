@@ -51,8 +51,7 @@ def server_state() -> dict:
 
 # Phase D promotes pipeline/rag/observability/manage to primary (13-domain catalog
 # after grokbuild demotion 2026-06-02); tool_search manifest covers overflow/demoted tools only.
-# frontier_dispatch/team_dispatch promoted to PRIMARY via standalone domains
-# (thread 1146/1167) — no longer in the overflow manifest.
+# team_dispatch promoted to PRIMARY via standalone domain (thread 1146/1167).
 _EXPECTED_DEMOTED = {
     "web_fetch",
     "boot_inspect",
@@ -87,9 +86,7 @@ def test_manifest_entries_have_required_fields(server_state: dict) -> None:
 
 
 GOLDEN_QUERIES: list[tuple[str, str]] = [
-    # Golden pairs target overflow flat tools. frontier_dispatch/team_dispatch
-    # promoted to primary (thread 1146/1167) → no longer in the overflow manifest,
-    # so their former entries are removed.
+    # Golden pairs target overflow flat tools. team_dispatch is primary — not here.
     ("restart service", "bot_supervisor"),
     ("fetch web page", "web_fetch"),
     ("raw sql query", "sql"),

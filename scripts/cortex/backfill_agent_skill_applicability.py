@@ -34,6 +34,7 @@ import argparse
 import sys
 import urllib.parse
 
+from agent_seat.profiles import load_lead_agent_slugs
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 PARTITION: dict[str, list[str]] = {
@@ -115,8 +116,8 @@ PARTITION: dict[str, list[str]] = {
         # manifest. Partitioned here for backfill membership; OVERRIDDEN below to
         # ['claude-cursor', 'claude-web'].
         "agent_skill:ulg-architecture",
-        # Partitioned here for backfill membership; OVERRIDDEN below to lead
-        # seats ['claude-web', 'claude-cursor', 'grok-direct'] (not universal).
+        # Partitioned here for backfill membership; OVERRIDDEN below to
+        # agents.yaml lead_seats (not universal).
         "agent_skill:consensus-steelman-posture",
     ],
     "claude-cursor": [
@@ -161,12 +162,8 @@ OVERRIDES: dict[str, list[str]] = {
         "claude-web",
         "claude-cursor",
     ],
-    # Lead-seat posture (thread 1189) — not universal; applies to lead seats only.
-    "agent_skill:consensus-steelman-posture": [
-        "claude-web",
-        "claude-cursor",
-        "grok-direct",
-    ],
+    # Lead-seat posture (thread 1189) — agents.yaml lead_seats; not universal.
+    "agent_skill:consensus-steelman-posture": sorted(load_lead_agent_slugs()),
 }
 
 

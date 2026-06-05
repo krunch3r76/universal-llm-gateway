@@ -19,6 +19,7 @@ import json
 import os
 from typing import Any
 
+from agent_seat.registry import is_lead_agent
 from universal_logging import get_logger
 
 from . import _operational_context_templates as templates
@@ -185,8 +186,7 @@ def render_operational_context(
     if not (family == "subagent" and platform == "subagent"):
         sections.append(
             templates.render_frontier_reasoning(
-                lead_posture=agent
-                in frozenset({"claude-web", "claude-cursor", "grok-direct"})
+                lead_posture=is_lead_agent(agent)
             )
         )
     sections.append(_render_observe_and_search(agent))

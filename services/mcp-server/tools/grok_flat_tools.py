@@ -12,7 +12,7 @@ Routing per dispatcher_call_shape.tool domain:
   pipeline          → pipeline_fn(op=dispatch_value, **params)
   rag               → rag_fn(op=dispatch_value, arguments=json.dumps(params))
   fs                → fs_fn(op=dispatch_value, **params)
-  dispatch          → special per-tool routing (overflow/frontier/team)
+  dispatch          → dispatch_overflow routing only
   tool_search       → registered separately (post-prune in main server)
   retrieve          → direct from pre_prune_tool_objects
 """
@@ -211,7 +211,7 @@ def register_grok_flat_tools(
             missing.append(tool_name)
             continue
 
-        # Special handling for dispatch_* tools (dispatch_overflow/frontier/team)
+        # dispatch_overflow only (legacy dispatch_frontier/dispatch_team removed)
         if dispatch_type == "dispatch_special":
             tool = _build_dispatch_special_tool(
                 tool_name,
@@ -252,47 +252,27 @@ def _build_dispatch_special_tool(
     dispatch_value: str,
     pre_prune_tool_objects: dict[str, Any],
 ) -> FunctionTool | None:
-    """Build dispatch_overflow / dispatch_frontier / dispatch_team tools.
+    """Build dispatch_overflow — routes to the overflow ``dispatch`` aggregator."""
 
-    dispatch_overflow → calls the 'dispatch' aggregator (tool + arguments).
-    dispatch_frontier / dispatch_team → call the named overflow tool directly.
-    """
-
-    def _get_fn(name: str) -> Callable[..., Any] | None:
-        obj = pre_prune_tool_objects.get(name)
-        return obj.fn if obj is not None else None
-
-    if dispatch_value == "overflow":
-        # dispatch_overflow(tool, arguments) → dispatch(tool=tool, arguments=arguments)
-        dispatch_fn = _get_fn("dispatch")
-        if dispatch_fn is None:
-            return None
-
-        # This tool's schema already has 'tool' and 'arguments' fields — pass through.
-        def _dispatch_overflow_impl(**params: Any) -> Any:
-            return dispatch_fn(
-                tool=params.get("tool", ""),
-                arguments=params.get("arguments", "{}"),
-            )
-
-        return _build_fn_with_schema(
-            tool_name, description, json_schema, _dispatch_overflow_impl
-        )
-
-    # dispatch_frontier → frontier_dispatch(model, prompt, system, timeout_s)
-    # dispatch_team → team_dispatch(role, body)
-    # These exist as individual tools in the overflow.
-    direct_name = f"{dispatch_value}_dispatch"  # 'frontier' → 'frontier_dispatch'
-    direct_fn = _get_fn(direct_name)
-    if direct_fn is None:
+    if dispatch_value != "overflow":
         logger.warning(
-            "grok_flat: %r not found for dispatch_%s — skipped",
-            direct_name,
+            "grok_flat: unsupported dispatch op %r for %s — skipped",
             dispatch_value,
+            tool_name,
         )
         return None
 
-    def _direct_dispatch(**params: Any) -> Any:
-        return direct_fn(**params)
+    obj = pre_prune_tool_objects.get("dispatch")
+    dispatch_fn = obj.fn if obj is not None else None
+    if dispatch_fn is None:
+        return None
 
-    return _build_fn_with_schema(tool_name, description, json_schema, _direct_dispatch)
+    def _dispatch_overflow_impl(**params: Any) -> Any:
+        return dispatch_fn(
+            tool=params.get("tool", ""),
+            arguments=params.get("arguments", "{}"),
+        )
+
+    return _build_fn_with_schema(
+        tool_name, description, json_schema, _dispatch_overflow_impl
+    )

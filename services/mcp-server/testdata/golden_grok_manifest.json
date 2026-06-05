@@ -1106,53 +1106,6 @@
   },
   {
     "cache_priority": "on_demand",
-    "canonical_name": "dispatch_team",
-    "description": "\u2200 op \u2208 {generate, to_thread} \u2227 role \u2208 GenerateRoles \u2227 messages \u2208 list[ChatMessage]:\n  dispatch_team(op, role, messages) \u27f9 {execution_id \u2208 UUIDv4, status}.\nGenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic);\nmodel optional (resolves from role default). op=generate \u2192 poll pipeline(op=\"result\");\nop=to_thread \u2192 Stargate posts the reply to `thread`. Async. Mutating (external call).\nSee agent_skill:dispatch.",
-    "domain": "dispatch",
-    "inputSchema": {
-      "properties": {
-        "generation_options": {
-          "type": "object"
-        },
-        "messages": {
-          "items": {
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "model": {
-          "type": "string"
-        },
-        "op": {
-          "enum": [
-            "generate",
-            "to_thread"
-          ],
-          "type": "string"
-        },
-        "role": {
-          "type": "string"
-        },
-        "subject": {
-          "type": "string"
-        },
-        "thread": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "role",
-        "messages"
-      ],
-      "type": "object"
-    },
-    "mandate_safety": "write",
-    "name": "dispatch_team",
-    "skill_uri": "agent_skill:dispatch"
-  },
-  {
-    "cache_priority": "on_demand",
     "canonical_name": "fs_append",
     "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 content \u2208 str:\n  fs_append(sandbox, path, content) \u27f9 file.end += content.\nMutating. \u00acidempotent (repeated appends accumulate). See agent_skill:fs.",
     "domain": "fs",
@@ -2290,6 +2243,60 @@
     "mandate_safety": "read_only",
     "name": "retrieve",
     "skill_uri": "agent_skill:retrieve"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "team_dispatch",
+    "description": "\u2200 role \u2208 GenerateRoles \u2227 messages \u2208 List[Msg] \u2227 dispatch_thread_id \u2208 ThreadKey:\n  team_dispatch(op=generate, role, messages, dispatch_thread_id) \u27f9\n    execution_id \u2208 UUIDv4 \u2227 poll pipeline(op=result, execution_id) for content.\nGenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).\n\u00ac web-consult/cursor-consult/cursor-implement/investigator (handoff-only). Async. Mutating. See agent_skill:dispatch.",
+    "domain": "team_dispatch",
+    "inputSchema": {
+      "properties": {
+        "dispatch_thread_id": {
+          "type": "string"
+        },
+        "messages": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "generate",
+            "to_thread"
+          ],
+          "type": "string"
+        },
+        "reasoning_effort": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "system": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "op",
+        "role",
+        "messages",
+        "dispatch_thread_id"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "write",
+    "name": "team_dispatch",
+    "skill_uri": "agent_skill:dispatch"
   },
   {
     "cache_priority": "always_loaded",

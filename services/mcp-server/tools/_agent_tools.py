@@ -1,6 +1,6 @@
 """Tool surface for the multi-model agent loop.
 
-Sync tool-call dispatcher used by MCP's ``frontier_dispatch``. Tool schema
+Sync tool-call dispatcher used by Stargate's native tool loop. Tool schema
 definitions are sourced from ``libs/agent_seat/tools.py`` (single source of
 truth shared with the pipeline ``frontier_dispatch_v1`` handler). Cortex ops
 relay to cortex-api ``POST /dispatch``; agent_bus uses ``.agent_bus.AGENT_BUS_OPS``.

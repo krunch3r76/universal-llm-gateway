@@ -6,7 +6,7 @@ Responses API. Clients authenticate with the Vortex bearer token; provider keys
 never leave the server.
 
 MCP tool calling is NOT injected here.  API calls use client-side tool
-resolution via ``frontier_dispatch``.
+resolution via ``team_dispatch``.
 The Connector pattern (``mcp_servers``) only passes through if the caller
 explicitly includes it in the request body.
 """

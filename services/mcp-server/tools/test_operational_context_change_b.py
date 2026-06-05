@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from agent_seat.profiles import load_lead_agent_slugs
+
 from tools._oc_surface_templates import render_frontier_reasoning
 from tools._operational_context import render_operational_context
 
@@ -16,11 +18,8 @@ def test_change_b_drops_non_negotiable_register_label() -> None:
 
 
 def test_change_b_lead_seats_get_consensus_rule_zero() -> None:
-    for agent, family, platform in (
-        ("claude-web", "claude", "web"),
-        ("claude-cursor", "claude", "cursor"),
-        ("grok-direct", "grok", "direct"),
-    ):
+    for agent in sorted(load_lead_agent_slugs()):
+        family, platform = agent.split("-", 1)
         rendered = render_operational_context(agent, family=family, platform=platform)
         assert "consensus_disposition" in rendered
         assert "0. **Material lead decisions**" in rendered
@@ -28,7 +27,11 @@ def test_change_b_lead_seats_get_consensus_rule_zero() -> None:
 
 
 def test_change_b_non_lead_seats_omit_rule_zero() -> None:
-    rendered = render_operational_context("gpt-cursor", family="gpt", platform="cursor")
-    assert "0. **Material lead decisions**" not in rendered
-    assert render_frontier_reasoning(lead_posture=False) in rendered
+    for agent, family, platform in (
+        ("grok-direct", "grok", "direct"),
+        ("gemini-cursor", "gemini", "cursor"),
+    ):
+        rendered = render_operational_context(agent, family=family, platform=platform)
+        assert "0. **Material lead decisions**" not in rendered
+        assert render_frontier_reasoning(lead_posture=False) in rendered
     assert "1. **Steelman before critique**" in rendered

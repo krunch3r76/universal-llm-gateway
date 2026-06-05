@@ -164,7 +164,7 @@ async def grokbuild(  # noqa: PLR0913 — wide MCP tool surface by design
     """Dispatch grokbuild op to the matching handler.
 
     **RETIRED harness (11588):** do not use for new multi-writer work. Prefer
-    ``cursorbuild`` (code dispatch) or ``frontier_dispatch`` (Grok consult).
+    ``cursorbuild`` (code dispatch) or ``team_dispatch`` (Grok consult).
     Overflow relay only — worker maintenance ops (worktree_*, build_status, etc.).
 
     V1 op set: ``build`` (renamed from ``dispatch``), ``models``,
@@ -344,6 +344,6 @@ def register_grokbuild_tools(mcp: FastMCP) -> None:
     Demoted off Claude/Cursor primary manifest (``mcp_claude`` removed from
     canonical.yaml). Still registered for overflow ``dispatch(tool="grokbuild")``
     and grok flat manifest (``mcp_grok``). See ``INTENTIONAL_OVERFLOW`` in
-    ``_coherence_allowlist.py``. Prefer cursorbuild / frontier_dispatch for new work.
+    ``_coherence_allowlist.py``. Prefer cursorbuild / team_dispatch for new work.
     """
     mcp.tool(title="Grok Build")(grokbuild)
