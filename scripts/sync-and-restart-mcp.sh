@@ -82,10 +82,10 @@ print('export ENABLE_CONTEXT_TOOLS=true')
 project_access = (cfg.get('project_access') or 'ro').strip().lower()
 if project_access == 'rw':
     print('export MCP_PROJECT_MOUNT_MODE=rw')
-    print('export PROJECT_READ_ONLY=false')
+    print('export MCP_PROJECT_WRITE_ENABLED=true')
 else:
     print('export MCP_PROJECT_MOUNT_MODE=ro')
-    print('export PROJECT_READ_ONLY=true')
+    print('export MCP_PROJECT_WRITE_ENABLED=false')
 tasks = (cfg.get('tasks_access') or 'ro').strip().lower()
 if tasks == 'rw':
     print('export MCP_TASKS_MOUNT_MODE=rw')

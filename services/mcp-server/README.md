@@ -32,8 +32,12 @@ Access to the mounted project directory (`PROJECT_ROOT`). Listing and search
 enumerate the real filesystem by default, so gitignored paths like `tmp/` and
 `prompts/` are included. Set **`include_untracked=False`** to restrict results
 to git-tracked files only. Direct `read_project_file` works for any on-disk path
-under the mount. Writes require `project_access: rw` and
-`PROJECT_READ_ONLY=false`.
+under the mount. Write access is controlled by `tools/_write_policy.py`
+(single source of truth). Set `project_access: rw` in `~/.gateway/mcp.yaml`
+and run `sync_restart mcp` (or `scripts/sync-and-restart-mcp.sh`) — this
+sets `MCP_PROJECT_WRITE_ENABLED=true` in the container. All `md_*` write
+ops (`md_replace`, `md_append`, `md_delete`) share the same gate as
+`fs(op="write", sandbox="workspaces", ...)`.
 
 | Tool | Purpose |
 |------|---------|
@@ -157,7 +161,8 @@ The browser Compose override (`mcp-server-browser.override.yml`) adds a custom s
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `MCP_AUTH_TOKEN` | Yes | — | Bearer token for authentication |
-| `MCP_PROJECT_DIR` | Yes | — | Host path to project root (mounted read-only) |
+| `MCP_PROJECT_DIR` | Yes | — | Host path to project root |
+| `MCP_PROJECT_WRITE_ENABLED` | No | `false` | App-level write gate for workspaces sandbox; set via `project_access: rw` in `~/.gateway/mcp.yaml` (authority: `tools/_write_policy.py`) |
 | `MCP_DATA_DIR` | No | `~/mcp-data` | Host path for files, SQLite databases |
 | `ENABLE_BROWSER_TOOLS` | No | `false` | Enable Playwright browser tools |
 | `ENABLE_CONTEXT_TOOLS` | No | `true` | Enable tasks/ context tools |
