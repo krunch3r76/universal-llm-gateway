@@ -47,3 +47,30 @@ def check_handoff_prompt_in_source(
             ),
         )
     return None
+
+
+def check_handoff_transcript_anchor(
+    *,
+    session_id: str,
+    handoff_prompt: str | None,
+    handoff_source_path: str | None = None,
+) -> dict[str, Any] | None:
+    """Warn when handoff_prompt omits the closing-session transcript anchor."""
+    if not handoff_prompt or not handoff_prompt.strip():
+        return None
+    if handoff_source_path:
+        norm = normalize_handoff_source_path(handoff_source_path) or ""
+        if session_id in norm.replace("\\", "/"):
+            return None
+    entity_ref = f"transcript:{session_id}"
+    file_ref = f"notes/system/transcripts/{session_id}"
+    if entity_ref in handoff_prompt or file_ref in handoff_prompt:
+        return None
+    return _handoff_finding(
+        "handoff_missing_transcript_anchor",
+        entity_ref,
+        (
+            f"handoff_prompt omitted closing-session anchor ({entity_ref} or "
+            f"{file_ref}.md). Next session may start without continuity."
+        ),
+    )

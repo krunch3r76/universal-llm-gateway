@@ -32,6 +32,7 @@ SEVERITY = {
     "markdown_section_drift": "warning",
     "marker_nesting_violation": "warning",
     "prior_session_id_omitted": "warning",
+    "handoff_missing_transcript_anchor": "warning",
     # Auditor-validatability gaps — warning severity (advisory, never critical)
     "confirmed_entity_no_assertions": "warning",
     "confirmed_attribute_no_assertion": "warning",

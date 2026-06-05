@@ -36,13 +36,24 @@ def _append_session_close_warnings(
     *,
     session_id: str,
     agent: str,
+    handoff_prompt: str | None = None,
+    handoff_source_path: str | None = None,
 ) -> None:
     """Attach post-close warning findings for session continuity provenance gaps."""
+    from ..handoff_audit import check_handoff_transcript_anchor
+
     findings = run_detectors(
         kinds=["prior_session_id_omitted"],
         subject=f"transcript:{session_id}",
         include_filesystem=False,
     )
+    anchor_gap = check_handoff_transcript_anchor(
+        session_id=session_id,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
+    )
+    if anchor_gap is not None:
+        findings.append(anchor_gap)
     if not findings:
         return
     warning_block = result.setdefault("_warning", {})
@@ -473,7 +484,13 @@ def _op_session_close(
 
     if audit_outcome.get("warning"):
         result["_warning"] = audit_outcome["warning"]
-    _append_session_close_warnings(result, session_id=session_id, agent=agent)
+    _append_session_close_warnings(
+        result,
+        session_id=session_id,
+        agent=agent,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
+    )
 
     transcript_path = result.get("transcript_path", "")
     abs_path = _FILES_ROOT / transcript_path if transcript_path else None

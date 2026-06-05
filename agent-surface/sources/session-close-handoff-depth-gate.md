@@ -22,5 +22,9 @@ when a handoff is requested.
 
 **422:** `handoff.requires_transcript_entity` — retry with `light` or `verbatim`.
 
+**Transcript anchor:** `handoff_prompt` must cite `transcript:{session_id}` (or
+`notes/system/transcripts/{session_id}.md`) so the next session can load closing
+context — see `session-close-handoff.md`.
+
 Kernel FOL: `agent-skills/session-close-kernel.md` § FOL pipeline · § Depth dial.
 <!-- /target:* -->

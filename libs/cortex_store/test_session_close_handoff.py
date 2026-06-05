@@ -580,6 +580,43 @@ def test_session_close_prefers_jsonl_path_when_both_supplied(
     assert "## Turn 1" in on_disk
 
 
+def test_session_close_warns_handoff_missing_transcript_anchor(
+    session_env: dict[str, Path],
+) -> None:
+    result = ops_journals._op_session_close(
+        **_payload(
+            session_id="orion-2026-05-04-0848",
+            handoff_prompt="Poll agent-bus thread 99; integrate findings.",
+            transcripts_root=session_env["transcripts_root"],
+        )
+    )
+    assert "error" not in result, result
+    findings = result.get("_warning", {}).get("post_close_findings", [])
+    assert any(f["kind"] == "handoff_missing_transcript_anchor" for f in findings)
+
+
+def test_session_close_handoff_with_transcript_anchor_no_anchor_warning(
+    session_env: dict[str, Path],
+) -> None:
+    session_id = "orion-2026-05-04-0849"
+    handoff = (
+        f"**Closing session:** transcript:{session_id}\n"
+        "**Load context:** fs(cortex, read, notes/system/transcripts/"
+        f"{session_id}.md)\n"
+        "Poll agent-bus thread 99."
+    )
+    result = ops_journals._op_session_close(
+        **_payload(
+            session_id=session_id,
+            handoff_prompt=handoff,
+            transcripts_root=session_env["transcripts_root"],
+        )
+    )
+    assert "error" not in result, result
+    findings = result.get("_warning", {}).get("post_close_findings", [])
+    assert not any(f["kind"] == "handoff_missing_transcript_anchor" for f in findings)
+
+
 def test_session_close_warns_when_prior_session_id_is_omitted(
     session_env: dict[str, Path],
 ) -> None:

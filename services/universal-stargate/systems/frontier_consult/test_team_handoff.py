@@ -134,12 +134,12 @@ def _handoff_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FastAPI:
 
 
 # ---------------------------------------------------------------------------
-# H1 — lead role admitted, thread created, all four fields present
+# H1 — web-consult role admitted, thread created, all four fields present
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_h1_lead_admitted_thread_created(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_h1_web_consult_admitted_thread_created(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-42"))
 
@@ -155,7 +155,7 @@ async def test_h1_lead_admitted_thread_created(monkeypatch: pytest.MonkeyPatch) 
     assert thread_id == "bus-thread-42"
 
 
-def test_h1a_route_lead_pointer_includes_consult_contract(
+def test_h1a_route_web_consult_pointer_includes_consult_contract(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -180,7 +180,7 @@ def test_h1a_route_lead_pointer_includes_consult_contract(
     assert _GOOD_PACKET in body_text
 
 
-def test_h1a_route_lead_push_reminder_mentions_web_push(
+def test_h1a_route_web_consult_push_reminder_mentions_web_push(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -207,7 +207,7 @@ def test_h1a_route_lead_push_reminder_mentions_web_push(
     assert body["poll_hint"]["arguments"]["from_agent"] == "claude-web"
 
 
-def test_h1_route_lead_returns_all_fields(
+def test_h1_route_web_consult_returns_all_fields(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -294,11 +294,11 @@ def test_handoff_response_backward_compatible_keys(
 
 
 # ---------------------------------------------------------------------------
-# H1b — cursor-lead / claude-cursor seat admitted (manual, non-dispatchable)
+# H1b — cursor-consult / claude-cursor seat (manual, non-dispatchable)
 # ---------------------------------------------------------------------------
 
 
-def test_h1b_cursor_lead_resolves_claude_cursor() -> None:
+def test_h1b_cursor_consult_resolves_claude_cursor() -> None:
     to_agent, _family, platform = resolve_web_handoff_seat(
         "cursor-consult", request_id="req-c1"
     )
@@ -313,6 +313,15 @@ def test_h1b_claude_cursor_seat_slug_profile_resolves() -> None:
     )
     assert to_agent == "claude-cursor"
     assert platform == "cursor"
+
+
+@pytest.mark.parametrize("role", ["lead", "cursor-lead", "implementer"])
+def test_retired_handoff_roster_slug_rejected(role: str) -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        resolve_handoff_target(role=role, request_id="req-retired")
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_role_invalid"
 
 
 @pytest.mark.parametrize("role", ["claude-web", "claude-cursor", "web", "web-claude"])
@@ -343,7 +352,7 @@ def test_handoff_seat_alias_route_rejected(
     assert resp.json()["error"]["code"] == "handoff_role_invalid"
 
 
-def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
+def test_h1b_route_cursor_consult_push_reminder_mentions_cursor(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -367,12 +376,12 @@ def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
 
 
 # ---------------------------------------------------------------------------
-# H1c — implementer role (Option A alias → claude/cursor manual seat)
+# H1c — cursor-implement role (claude/cursor manual seat, implement contract)
 # ---------------------------------------------------------------------------
 
 
-def test_h1c_implementer_resolves_claude_cursor() -> None:
-    """implementer aliases (claude, cursor): admitted handoff, resolves to claude-cursor."""
+def test_h1c_cursor_implement_resolves_claude_cursor() -> None:
+    """cursor-implement: admitted handoff, resolves to claude-cursor."""
     to_agent, _family, platform = resolve_web_handoff_seat(
         "cursor-implement", request_id="req-i1"
     )
@@ -380,7 +389,7 @@ def test_h1c_implementer_resolves_claude_cursor() -> None:
     assert platform == "cursor"
 
 
-def test_h1c_route_implementer_push_reminder_mentions_cursor(
+def test_h1c_route_cursor_implement_push_reminder_mentions_cursor(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -614,7 +623,7 @@ def _capturing_bus_transport(
     return httpx.MockTransport(handler)
 
 
-def test_hc1_lead_no_contract_defaults_consult(
+def test_hc1_web_consult_no_contract_defaults_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -639,7 +648,7 @@ def test_hc1_lead_no_contract_defaults_consult(
     assert body["resolved_handoff_seat"] == "claude-web"
 
 
-def test_hc1_lead_no_contract_tag_consult(
+def test_hc1_web_consult_no_contract_tag_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -701,21 +710,21 @@ def test_hc2b_model_field_rejected(
     assert resp.status_code == 422
 
 
-def test_hc3_implementer_defaults_implement() -> None:
+def test_hc3_cursor_implement_defaults_implement() -> None:
     """role=cursor-implement → implement (RoleProfile)."""
     contract, source = resolve_handoff_contract(role="cursor-implement", request_id="req-c3")
     assert contract == "implement"
     assert source == "role_default"
 
 
-def test_hc4b_lead_consult() -> None:
+def test_hc4b_web_consult_consult() -> None:
     """role=web-consult → consult."""
     contract, source = resolve_handoff_contract(role="web-consult", request_id="req-c4b")
     assert contract == "consult"
     assert source == "role_default"
 
 
-def test_hc5_implementer_route(
+def test_hc5_cursor_implement_route(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -740,7 +749,7 @@ def test_hc5_implementer_route(
     assert body["handoff_contract_source"] == "role_default"
 
 
-def test_hc5b_cursor_lead_consult(
+def test_hc5b_cursor_consult_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
@@ -765,7 +774,7 @@ def test_hc5b_cursor_lead_consult(
     assert body["handoff_contract_source"] == "role_default"
 
 
-def test_hc5d_implementer_resolves() -> None:
+def test_hc5d_cursor_implement_resolves() -> None:
     to_agent, _f, platform, resolved = resolve_handoff_target(
         role="cursor-implement",
         request_id="req-agree",

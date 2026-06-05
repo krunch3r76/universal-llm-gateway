@@ -35,9 +35,9 @@ Run `scripts/gen-rules --target cursor --check` and
 | `command-map` | `sources/command-map.md` | — | `docs/agent-guides/mvw-command-map.md` (`gen-rules --target command-map`) |
 | `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | — (read surface only) | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) |
 
-**Manual sync (cortex sandbox):** `sources/session-close-handoff-depth-gate.md` — paste or
-merge into `agent-skills/session-close-handoff.md` when the cortex skill drifts (kernel
-§ Depth dial already carries the FOL gate).
+**Manual sync (cortex sandbox):** `sources/session-close-handoff.md` (+ depth-gate section
+from `session-close-handoff-depth-gate.md`) — merge into `agent-skills/session-close-handoff.md`
+when the cortex skill drifts. Cursor binding: `projects/.cursor/rules/session-close.mdc` §6b.
 
 ## Design
 
