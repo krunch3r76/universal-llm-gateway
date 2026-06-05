@@ -399,7 +399,8 @@ tools:
       session_close(...) ⟹
         transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧ content_hash ∈ sha256.
     Atomic. Mutating. Idempotent by session_id (second close → 422 session.already_closed).
-    See agent_skill:cortex.
+    BEFORE close: load agent-skills/session-close-kernel.md (+ session-close-audit.md for web/API).
+    Cursor: session-close.mdc. See agent_skill:session-close.
   json_schema:
     type: object
     properties:
@@ -410,11 +411,45 @@ tools:
       session_summary_md: {type: string}
       summary: {type: string}
     required: [session_id, agent, session_summary_md, summary]
-  skill_uri: agent_skill:cortex
+  skill_uri: agent_skill:session-close
   seat_visibility: [mcp, mcp_claude, mcp_grok]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
+
+- canonical_name: cortex_session_close_preflight
+  domain: cortex
+  operation: session_close_preflight
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: session_close_preflight
+  flat_call_shape:
+    tool: cortex_session_close_preflight
+    substrate_qualified: user-vortex__cortex_session_close_preflight
+  fol_descriptor: |
+    ∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md) ≠ ∅:
+      session_close_preflight(...) ⟹
+        ok ∈ bool ∧ (ok ⟹ audit ∧ turn_count ∈ ℕ) ∧ (¬ok ⟹ reason ∈ str).
+    Read-only. ¬side-effects (in-memory assembly; no file, no DB row, no audit emit).
+    Run BEFORE session_close to learn of a bad JSONL or blocked audit-gate first.
+    See agent_skill:session-close-audit.
+  json_schema:
+    type: object
+    properties:
+      session_id: {type: string}
+      agent: {type: string}
+      transcript_jsonl_path: {type: string}
+      transcript_md: {type: string}
+      session_summary_md: {type: string}
+      summary: {type: string}
+      transcript_depth: {type: string}
+    required: [session_id, agent, session_summary_md, summary]
+  skill_uri: agent_skill:session-close-audit
+  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  mandate_safety: read_only
+  cache_priority: always_loaded
+  introduced: 2026-06-05
 
 - canonical_name: cortex_session_handoff_upsert
   domain: cortex
@@ -2651,26 +2686,28 @@ tools:
     tool: team_dispatch_handoff
     substrate_qualified: user-vortex__team_dispatch_handoff
   fol_descriptor: |-
-    ∀ role ∈ ManualHandoffRoles ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
-      team_dispatch(op=handoff, role, packet_path, subject) ⟹
-        thread_id ∈ AgentBus ∧ to_agent ∈ {claude-web, claude-cursor, grok-web, …}
+    ∀ model ∈ SyntheticManualSeats ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
+      team_dispatch(op=handoff, model, packet_path, subject, handoff_contract?) ⟹
+        thread_id ∈ AgentBus ∧ resolved_model = model ∧ to_agent = model
         ∧ result_handle.kind = agent_bus_thread ∧ ¬execution_id.
-    Manual seats only (delivery=manual, dispatchable=false).
-    handoff seat-map: lead → claude-web; cursor-lead, implementer → claude-cursor; investigator → grok-web (legacy).
-    seat slugs claude-web|claude-cursor|web-claude|cursor-claude also admitted.
+    SyntheticManualSeats = claude-web | claude-cursor | grok-web | aliases (web, cursor, …).
+    handoff_contract: consult (review/revise/expand) | implement (bound) — orthogonal to model.
+    Legacy role slugs (lead, cursor-lead, implementer) deprecated — shim only.
     API roles (reviewer, …) → 422 handoff_requires_web_seat.
     Poll via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result).
   json_schema:
     type: object
     properties:
       op: {type: string, enum: [handoff]}
+      model: {type: string}
       role: {type: string}
       packet_path: {type: string}
       subject: {type: string}
+      handoff_contract: {type: string, enum: [consult, implement]}
       pointer_body: {type: string}
       tags: {type: array, items: {type: string}}
       caller_agent: {type: string}
-    required: [op, role, packet_path, subject]
+    required: [op, packet_path, subject]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write

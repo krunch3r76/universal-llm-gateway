@@ -186,6 +186,7 @@ def _filesystem_listing(
     max_depth: int | None = None,
     *,
     skip_binary: bool = True,
+    cap: int | None = _LIST_CAP,
 ) -> tuple[list[str], list[str], bool]:
     """Return files and directories via filesystem walk.
 
@@ -193,6 +194,13 @@ def _filesystem_listing(
     untracked and empty directories remain visible. Common build/cache
     directories are always skipped. Binary files are skipped by default but
     can be included for listing operations where only file paths are returned.
+
+    ``cap`` bounds the number of enumerated entries. The ``list`` op keeps the
+    display cap (``_LIST_CAP``); ``find``/``search`` pass ``cap=None`` so the
+    walk is exhaustive. A fixed cap silently truncated the alphabetical walk
+    mid-tree, dropping later directories (e.g. ``scripts/``, which sorts after
+    ``.runtime/`` and ``libs/``) from the candidate set and producing
+    false-negative ``find``/``search`` results (friction 13196).
     """
     resolved_root = _PROJECT_ROOT.resolve()
     base = _safe_project_path(directory) if directory else resolved_root
@@ -223,7 +231,7 @@ def _filesystem_listing(
         if dir_depth > 0:
             directories.append(str(dirpath.relative_to(resolved_root)))
             total_entries += 1
-            if total_entries >= _LIST_CAP:
+            if cap is not None and total_entries >= cap:
                 return files, directories, True
         if max_depth is not None and dir_depth >= max_depth:
             dirnames.clear()
@@ -238,7 +246,7 @@ def _filesystem_listing(
             rel = str(fpath.relative_to(resolved_root))
             files.append(rel)
             total_entries += 1
-            if total_entries >= _LIST_CAP:
+            if cap is not None and total_entries >= cap:
                 return files, directories, True
 
     return files, directories, False
@@ -525,13 +533,21 @@ def register_project_tools(mcp: FastMCP) -> None:
     def find_project_files(
         pattern: str,
         directory: str = "",
-        max_depth: int = 8,
+        max_depth: int | None = None,
         max_results: int = DEFAULT_MAX_RESULTS,
     ) -> dict[str, Any]:
         """Find files by glob-style name under a scoped directory.
 
         *pattern* is matched against each file's basename and full repo-relative
         path. If it contains no ``*`` or ``?``, ``*{pattern}*`` is used.
+
+        Depth is unbounded by default (``max_depth=None``): a filename find must
+        reach matches at any depth, so it runs full-depth and is not constrained
+        by the list-oriented ``max_depth`` default that the fs tool applies to
+        ``list``. ``search`` is likewise unbounded; both rely on ``max_results``
+        to bound the result set. Deep matches under e.g.
+        scripts/model_manager/ui/ were previously dropped because the list
+        default (depth 3) was propagated to find (friction 13196).
 
         Prefer this over ``search`` when locating a file by name; ``search`` scans
         file *contents* with a regex and is expensive at the workspaces root.
@@ -567,12 +583,14 @@ def register_project_tools(mcp: FastMCP) -> None:
                     }
                 raise ValueError(f"Path is not a directory: {directory!r}")
 
-        files, _, truncated = _filesystem_listing(
+        files, _, _ = _filesystem_listing(
             directory,
             max_depth=max_depth,
             skip_binary=False,
+            cap=None,
         )
         matches: list[str] = []
+        truncated = False
         for rel_path in files:
             base = Path(rel_path).name
             if fnmatch.fnmatch(base, glob_pat) or fnmatch.fnmatch(rel_path, glob_pat):
@@ -591,6 +609,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             "path": directory,
             "mode": "directory",
             "matches": matches,
+            "match_count": len(matches),
             "truncated": truncated,
             "pattern": glob_pat,
         }
@@ -633,7 +652,6 @@ def register_project_tools(mcp: FastMCP) -> None:
             return find_project_files(
                 pattern,
                 directory,
-                max_depth=12,
                 max_results=max_results,
             )
         if (
@@ -689,7 +707,9 @@ def register_project_tools(mcp: FastMCP) -> None:
         # Enumeration layer (F2/188): skip_binary=False so converted formats
         # enter the candidate list; load_text_for_search_file filters per file.
         if include_untracked:
-            candidates, _, _ = _filesystem_listing(directory, skip_binary=False)
+            candidates, _, _ = _filesystem_listing(
+                directory, skip_binary=False, cap=None
+            )
         else:
             candidates = _git_tracked_files(directory)
 
@@ -728,6 +748,7 @@ def register_project_tools(mcp: FastMCP) -> None:
             "path": directory,
             "mode": "directory",
             "matches": matches,
+            "match_count": len(matches),
             "truncated": truncated,
             "skipped_converted": state.skipped_converted,
             "extraction_method": "+".join(sorted(state.methods))

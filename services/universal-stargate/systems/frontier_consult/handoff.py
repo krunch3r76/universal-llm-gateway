@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +20,156 @@ from .admission import FrontierEndpointError
 logger = get_logger(__name__)
 
 _POINTER_MAX_LINES = 25
+
+# Packet admission lint (incident threads 1296/1297 — non-conformant packets
+# accepted because handoff did not validate on-disk structure). Canonical
+# block contract: project .cursor/rules/architecture-handoff-protocol.mdc
+# § "The Six Required Blocks". Tags are case-sensitive canonical XML.
+_REQUIRED_PACKET_TAGS: tuple[str, ...] = (
+    "<scope>",
+    "<invariants>",
+    "<task_guidance>",
+    "<corpus>",
+    "<output_format>",
+)
+# MCP-capable manual seats must additionally carry <mcp_capabilities> — they
+# investigate via tools, not the inlined corpus alone (Block 5).
+_MCP_CAPABILITIES_TAG = "<mcp_capabilities>"
+_MCP_PACKET_SEATS: frozenset[str] = frozenset({"claude-web", "claude-cursor"})
+_PROTOCOL_HINT = (
+    "Author per project .cursor/rules/architecture-handoff-protocol.mdc "
+    "§ The Six Required Blocks (skeleton: "
+    "docs/agent-guides/skills/handoff-packet-authoring.md)."
+)
+# MCP ``fs(workspaces)`` paths are workspaces-relative; Stargate may set
+# ``PROJECT_ROOT`` to either ``/mnt/torus/projects`` or the ULG repo root.
+_ULG_REPO_DIRNAME = "universal-llm-gateway"
+
+
+def _workspaces_root() -> Path:
+    """Sandbox root for packet resolution.
+
+    ``PROJECT_ROOT`` on Stargate is often the ULG repo checkout, while callers
+    still pass MCP-style paths prefixed with ``universal-llm-gateway/``.
+    """
+    return Path(os.environ.get("PROJECT_ROOT") or "/mnt/torus/projects")
+
+
+def _path_contained_in(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _packet_path_variants(packet_path: str) -> tuple[str, ...]:
+    """Workspaces-relative and repo-relative spellings of the same packet."""
+    rel = packet_path.lstrip("/")
+    prefix = f"{_ULG_REPO_DIRNAME}/"
+    if rel.startswith(prefix):
+        return (rel, rel[len(prefix) :])
+    return (rel,)
+
+
+def _resolve_packet_file(root: Path, packet_path: str) -> Path | None:
+    """Resolve *packet_path* to an on-disk file under *root*, or None."""
+    root = root.resolve()
+    for variant in _packet_path_variants(packet_path):
+        candidate = (root / variant).resolve()
+        if not _path_contained_in(candidate, root):
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def validate_packet(
+    *,
+    request_id: str,
+    packet_path: str,
+    to_agent: str,
+    handoff_contract: str,
+    workspaces_root: Path | None = None,
+) -> None:
+    """Reject a handoff whose on-disk packet is missing or non-conformant.
+
+    Admission predicate (FOL):
+      admit(packet) ⟺ file_exists(packet)
+                      ∧ _REQUIRED_PACKET_TAGS ⊆ tags(packet)
+                      ∧ (to_agent ∈ _MCP_PACKET_SEATS ⟹ <mcp_capabilities> ∈ packet)
+                      ∧ (handoff_contract == "implement" ⟹ acceptance ∈ <task_guidance>)
+
+    Every rejection cites the missing element(s) and the canonical protocol
+    paths — never a bare 422. ``workspaces_root`` is injectable for tests.
+    """
+    root = (workspaces_root or _workspaces_root()).resolve()
+    for variant in _packet_path_variants(packet_path):
+        probe = (root / variant).resolve()
+        if not _path_contained_in(probe, root):
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=(
+                    f"packet_path {packet_path!r} resolves outside the workspaces "
+                    "sandbox; traversal rejected"
+                ),
+                status_code=422,
+                code="handoff_packet_invalid",
+            )
+
+    candidate = _resolve_packet_file(root, packet_path)
+    if candidate is None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason=(
+                f"Packet file not found at workspaces path {packet_path!r}. "
+                f"Write the six-block packet before calling handoff. {_PROTOCOL_HINT}"
+            ),
+            status_code=422,
+            code="handoff_packet_missing",
+        )
+
+    text = candidate.read_text(encoding="utf-8", errors="replace")
+
+    missing = [tag for tag in _REQUIRED_PACKET_TAGS if tag not in text]
+    if to_agent in _MCP_PACKET_SEATS and _MCP_CAPABILITIES_TAG not in text:
+        missing.append(_MCP_CAPABILITIES_TAG)
+    if missing:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="packet_path",
+            reason=(
+                f"Packet {packet_path!r} missing required block(s): "
+                f"{', '.join(missing)}. {_PROTOCOL_HINT}"
+            ),
+            status_code=422,
+            code="handoff_packet_invalid",
+        )
+
+    if handoff_contract == "implement":
+        guidance = _extract_block(text, "task_guidance")
+        haystack = guidance if guidance is not None else text
+        if "acceptance" not in haystack.lower():
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=(
+                    f"implement handoff packet {packet_path!r} has no acceptance "
+                    "criteria in <task_guidance> (expected the word 'acceptance' "
+                    f"or an <acceptance ...> tag). {_PROTOCOL_HINT}"
+                ),
+                status_code=422,
+                code="handoff_packet_missing_acceptance",
+            )
+
+
+def _extract_block(text: str, tag: str) -> str | None:
+    """Return the inner body of ``<tag>…</tag>`` (case-sensitive), or None."""
+    match = re.search(rf"<{tag}>(.*?)</{tag}>", text, flags=re.DOTALL)
+    return match.group(1) if match else None
+
 
 _POINTER_TEMPLATE = """\
 {subject}
@@ -36,7 +187,8 @@ Reply on this thread with findings. Use <need> only as last resort."""
 # the subject. Skipped when the caller overrides pointer_body.
 _CONTRACT_LINES: dict[str, str] = {
     "consult": (
-        "Contract: consult / dialectic — return findings, risks, and recommendations."
+        "Contract: consult — review, revise, expand, or dialectic; return "
+        "findings, risks, and recommendations."
     ),
     "implement": (
         "Contract: bound implementation — follow packet acceptance criteria "

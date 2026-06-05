@@ -86,6 +86,7 @@ from .workflow_hints import (
     _CORTEX_HALLUCINATED_TOOLS,
     _FRICTION_HINT,
     _WORKFLOW_HINTS,
+    attach_session_close_protocol,
     _enrich_entity_completeness,
     _parse_cortex_arguments,
 )
@@ -184,6 +185,7 @@ def execute_op(tool: str, arguments: object) -> Any:
     result = handler(**parsed)
     if not isinstance(result, dict):
         return result
+    attach_session_close_protocol(result, tool)
     if "error" in result:
         result["_hint"] = _FRICTION_HINT
         return result

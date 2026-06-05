@@ -65,9 +65,9 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
-- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push); consult OR bound implement (intent in packet — same seat)
-- to claude-cursor / cursor-lead → consult handoff; implementer → bound implement handoff (both → claude-cursor; open thread in IDE)
+- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
+- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor, handoff_contract=consult|implement, packet_path=…, subject=…) — consult = review/revise/expand; implement = bound; legacy role= lead|cursor-lead|implementer deprecated
+- claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
@@ -81,9 +81,9 @@ _DISPATCH_CONSULT_BLOCK_GROK = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
-- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push); consult OR bound implement (intent in packet — same seat)
-- to claude-cursor / cursor-lead → consult handoff; implementer → bound implement handoff (both → claude-cursor; open thread in IDE)
+- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
+- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor, handoff_contract=consult|implement, packet_path=…, subject=…) — consult = review/revise/expand; implement = bound; legacy role= lead|cursor-lead|implementer deprecated
+- claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
@@ -110,10 +110,15 @@ _CONSULT_ROUTING_GATE = """\
 ## Consult routing — read the skill before dispatching
 On any consult / review / second-opinion / handoff / dispatch outside this seat:
 read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this is only the index).
-Two traps that cost a round-trip:
-- team_dispatch(op=generate) to a manual/web seat (claude-web|lead|cursor|claude-cursor|implementer) → 422; manual seats take op=handoff only.
+Three traps that cost a round-trip:
+- team_dispatch(op=generate) with synthetic seat model (claude-web|claude-cursor) → 422; manual seats take op=handoff with model=.
 - "Want a grok answer" is not a build harness → frontier_dispatch(model="xai/grok-4.3").
-Surface axis: team_dispatch = role/function; frontier_dispatch = explicit model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
+- Wrong rules tree: the handoff protocol is NOT under `universal-llm-gateway/.cursor/rules/`. It lives at PROJECT `.cursor/rules/architecture-handoff-protocol.mdc` + `handoff-dispatchers.mdc` (no repo prefix).
+Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — implement (handoff_contract=implement) is NOT exempt:
+  fs(cortex, agent-skills/consult-routing.md)
+  fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
+  fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
+Surface axis: team_dispatch handoff = synthetic seat model (claude-web/claude-cursor); team_dispatch generate = API role; frontier_dispatch = provider model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
 
 
 def _render_server_primary_manifest_line() -> str:
@@ -130,7 +135,55 @@ def _render_server_primary_manifest_line() -> str:
     )
 
 
-def render_orientation_blocks(family: str | None = None) -> list[str]:
+_SESSION_CLOSE_WEB_BLOCK = """\
+## Session Close — MANDATORY on "close session" / "session end"
+Web seats have **no** auto-loaded `session-close.mdc`. Before `cortex(tool="session_close", ...)`:
+1. `fs(sandbox="cortex", op="md_read", path="agent-skills/session-close-kernel.md")` — canonical protocol
+2. `fs(sandbox="cortex", op="md_read", path="agent-skills/session-close-audit.md")` — run before close
+3. claude-web only: `fs(sandbox="cortex", op="md_read", path="agent-skills/web-transcript-preprocessing.md")` before assembling `transcript_md`
+4. `cortex(tool="session_close_preflight", ...)` → then `cortex(tool="session_close", ...)`
+Every `session_close` / `session_close_preflight` response carries `_protocol` with this pointer."""
+
+
+def _render_op_skill_bindings_line() -> str | None:
+    """Render per-op skill bindings recovered from the grouped Claude manifest.
+
+    The grouped manifest collapses per-op ``skill_uri`` into a domain binding;
+    ``derive_claude_manifest`` re-surfaces divergent ones under ``op_skills``.
+    This emits them machine-readably (``domain.op → skill_uri``) so web seats —
+    which have no auto-loaded ``session-close.mdc`` — get the correct per-op
+    routing (e.g. ``cortex.session_close → agent_skill:session-close``) sourced
+    from canonical.yaml, not hardcoded prose. Auto-tracks future divergences.
+    """
+    from _derive import get_claude_manifest  # noqa: PLC0415
+
+    bindings: list[str] = []
+    for entry in get_claude_manifest():
+        domain = entry["domain"]
+        for op, skill_uri in entry.get("op_skills", {}).items():
+            bindings.append(f"`{domain}.{op} → {skill_uri}`")
+    if not bindings:
+        return None
+    return (
+        "\n**Per-op skill bindings** (manifest-sourced, from `canonical.yaml`): "
+        + ", ".join(bindings)
+    )
+
+
+def _session_close_orientation_for_agent(agent: str | None) -> str | None:
+    if agent and agent.endswith("-web"):
+        block = _SESSION_CLOSE_WEB_BLOCK
+        bindings = _render_op_skill_bindings_line()
+        if bindings:
+            block = f"{block}{bindings}"
+        return f"\n{block}"
+    return None
+
+
+def render_orientation_blocks(
+    family: str | None = None,
+    agent: str | None = None,
+) -> list[str]:
     """Return the capability-axis + liveness orientation blocks as card parts.
 
     Surface-aware: the Dispatch & Consult block's callable shape depends on the
@@ -151,16 +204,23 @@ def render_orientation_blocks(family: str | None = None) -> list[str]:
     carries a leading newline so the card's ``"\\n".join(parts)`` produces a
     blank-line separator consistent with the other sections.
     """
+    session_close_block = _session_close_orientation_for_agent(agent)
     if family == "grok":
-        return [
+        blocks = [
             f"\n{_DISPATCH_CONSULT_BLOCK_GROK}",
             f"\n{_CONSULT_ROUTING_GATE}",
             f"\n{_LIVENESS_BLOCK}",
         ]
-    return [
+        if session_close_block:
+            blocks.insert(1, session_close_block)
+        return blocks
+    blocks = [
         f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
         _render_server_primary_manifest_line(),
         f"\n{_DISPATCH_CONSULT_BLOCK_CLAUDE}",
         f"\n{_CONSULT_ROUTING_GATE}",
         f"\n{_LIVENESS_BLOCK}",
     ]
+    if session_close_block:
+        blocks.insert(3, session_close_block)
+    return blocks

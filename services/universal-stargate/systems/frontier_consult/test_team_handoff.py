@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 import types
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -21,9 +22,15 @@ from pydantic import ValidationError
 from .admission import (
     FrontierEndpointError,
     resolve_handoff_contract,
+    resolve_handoff_target,
     resolve_web_handoff_seat,
 )
-from .handoff import _slug_from_subject, build_pointer_body, create_handoff_thread
+from .handoff import (
+    _slug_from_subject,
+    build_pointer_body,
+    create_handoff_thread,
+    validate_packet,
+)
 from .route import TeamHandoffBody, team_router
 
 # ---------------------------------------------------------------------------
@@ -32,6 +39,34 @@ from .route import TeamHandoffBody, team_router
 
 _GOOD_PACKET = "universal-llm-gateway/tmp/reviews/smoke-packet.md"
 _GOOD_SUBJECT = "test handoff"
+
+# Fully-conformant six-block packet (incl. <mcp_capabilities> + acceptance) so a
+# single on-disk file satisfies every happy-path route test (consult, implement,
+# web seat, cursor seat).
+_CONFORMANT_PACKET = """\
+<scope>Goal: x. Selection mode: targeted.</scope>
+<invariants>[scope] every changed line traces to task.</invariants>
+<task_guidance>## Acceptance criteria
+1. It works.</task_guidance>
+<corpus>the artifact</corpus>
+<mcp_capabilities>You have MCP. Cite tool calls.</mcp_capabilities>
+<output_format>Reply on thread.</output_format>
+"""
+
+# 1296-style improvised packet: numbered sections, missing <corpus> + <mcp_capabilities>.
+_BAD_1296_PACKET = """\
+<scope>Goal: improvised.</scope>
+<invariants>[scope] none.</invariants>
+<task_guidance>1. do the thing
+2. do the other</task_guidance>
+<output_format>Reply.</output_format>
+"""
+
+
+def _write_packet(root: Path, rel: str, text: str) -> None:
+    dest = root / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
 
 
 def _make_bus_transport(
@@ -66,14 +101,20 @@ def _patch_bus(
 
 
 @pytest.fixture()
-def _handoff_app(monkeypatch: pytest.MonkeyPatch) -> FastAPI:
+def _handoff_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FastAPI:
     """Minimal FastAPI app with team_router; get_proxy mocked via sys.modules.
 
     The route imports get_proxy inside the handler body via a local
     ``from systems.proxy.dependencies import get_proxy``. We inject a fake
     module into sys.modules so that import succeeds without requiring the
     full Stargate runtime.
+
+    A conformant packet is written under an injected ``PROJECT_ROOT`` so the
+    admission lint (``validate_packet``) passes on every happy-path route test.
     """
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+
     mock_proxy = MagicMock()
     mock_proxy.event_bus = None
 
@@ -370,19 +411,19 @@ def test_h5_default_template_cites_packet_path() -> None:
 
 
 # ---------------------------------------------------------------------------
-# H6 — extra="forbid": supplying model or messages → Pydantic 422
+# H6 — extra="forbid" + model admission
 # ---------------------------------------------------------------------------
 
 
-def test_h6_extra_field_model_rejected() -> None:
-    with pytest.raises(ValidationError):
-        TeamHandoffBody(
-            op="handoff",
-            role="lead",
-            packet_path=_GOOD_PACKET,
-            subject=_GOOD_SUBJECT,
-            model="anthropic/claude-sonnet-4-6",  # type: ignore[call-arg]
+def test_h6_provider_model_on_handoff_rejected() -> None:
+    """Provider model IDs are not synthetic manual-seat models."""
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        resolve_handoff_target(
+            model="anthropic/claude-sonnet-4-6",
+            role=None,
+            request_id="req-h6",
         )
+    assert exc_info.value.status_code == 422
 
 
 def test_h6_extra_field_messages_rejected() -> None:
@@ -565,28 +606,80 @@ def test_hc2_lead_explicit_implement(
 
 def test_hc3_implementer_defaults_implement() -> None:
     contract, source = resolve_handoff_contract(
-        "implementer", "claude-cursor", None, "req-c3"
+        legacy_role="implementer", explicit=None, request_id="req-c3"
     )
     assert contract == "implement"
     assert source == "role_default"
 
 
-def test_hc4_implementer_consult_conflict() -> None:
-    with pytest.raises(FrontierEndpointError) as exc_info:
-        resolve_handoff_contract("implementer", "claude-cursor", "consult", "req-c4")
-    err = exc_info.value
-    assert err.status_code == 422
-    assert err.code == "handoff_contract_conflict"
-    assert err.field == "handoff_contract"
-    assert "cursor-lead" in err.reason
+def test_hc4_implementer_consult_unified() -> None:
+    """Legacy implementer + explicit consult — no conflict (model-first surface)."""
+    contract, source = resolve_handoff_contract(
+        legacy_role="implementer", explicit="consult", request_id="req-c4"
+    )
+    assert contract == "consult"
+    assert source == "explicit"
 
 
-def test_hc5_cursor_lead_implement_conflict_route(
+def test_hc5_model_cursor_implement_unified(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=cursor-lead + implement → 422 handoff_contract_conflict."""
+    """model=claude-cursor + implement — same seat as consult, different contract."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "model": "claude-cursor",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+            "handoff_contract": "implement",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["resolved_model"] == "claude-cursor"
+    assert body["handoff_contract"] == "implement"
+    assert body["handoff_contract_source"] == "explicit"
+    assert "deprecation" not in body
+
+
+def test_hc5b_model_cursor_consult_review(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """model=claude-cursor, no contract → consult (review/revise/expand path)."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5b"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "model": "claude-cursor",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["resolved_model"] == "claude-cursor"
+    assert body["handoff_contract"] == "consult"
+    assert body["handoff_contract_source"] == "model_default"
+
+
+def test_hc5c_legacy_role_emits_deprecation(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5c"))
+
     client = TestClient(_handoff_app, raise_server_exceptions=False)
     resp = client.post(
         "/api/v1/team/handoff",
@@ -598,10 +691,22 @@ def test_hc5_cursor_lead_implement_conflict_route(
             "handoff_contract": "implement",
         },
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["error"]["code"] == "handoff_contract_conflict"
-    assert "implementer" in body["error"]["message"]
+    assert body["resolved_model"] == "claude-cursor"
+    assert "deprecation" in body
+
+
+def test_hc5d_resolve_handoff_target_prefers_model() -> None:
+    to_agent, _f, platform, resolved, deprecation = resolve_handoff_target(
+        model="claude-cursor",
+        role="lead",
+        request_id="req-prefer",
+    )
+    assert to_agent == "claude-cursor"
+    assert resolved == "claude-cursor"
+    assert platform == "cursor"
+    assert deprecation is None
 
 
 def test_hc6_pointer_body_implement_contract_line() -> None:
@@ -649,3 +754,161 @@ async def test_hc7_caller_tags_get_contract_appended(
     tags = captured["payload"]["tags"]
     assert "custom:tag" in tags
     assert "contract:implement" in tags
+
+
+# ---------------------------------------------------------------------------
+# PV — validate_packet admission lint (Phase 4)
+# ---------------------------------------------------------------------------
+
+_PV_REL = "universal-llm-gateway/tmp/reviews/pv-packet.md"
+
+
+def test_pv_missing_file_rejected(tmp_path: Path) -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv1",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_packet_missing"
+    assert "architecture-handoff-protocol.mdc" in err.reason
+
+
+def test_pv_conformant_consult_passes(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-pv2",
+        packet_path=_PV_REL,
+        to_agent="claude-web",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+    )
+
+
+def test_pv_prefixed_path_when_project_root_is_repo(tmp_path: Path) -> None:
+    """Stargate PROJECT_ROOT=repo; callers still pass workspaces-prefixed paths."""
+    repo_root = tmp_path / "universal-llm-gateway"
+    _write_packet(repo_root, "tmp/reviews/pv-packet.md", _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-pv2b",
+        packet_path=_PV_REL,
+        to_agent="claude-web",
+        handoff_contract="consult",
+        workspaces_root=repo_root,
+    )
+
+
+def test_pv_repo_relative_path_when_project_root_is_repo(tmp_path: Path) -> None:
+    repo_root = tmp_path / "universal-llm-gateway"
+    rel = "tmp/reviews/pv-packet.md"
+    _write_packet(repo_root, rel, _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-pv2c",
+        packet_path=rel,
+        to_agent="claude-cursor",
+        handoff_contract="implement",
+        workspaces_root=repo_root,
+    )
+
+
+def test_pv_1296_shape_rejected_missing_tags(tmp_path: Path) -> None:
+    """Missing <corpus> + <mcp_capabilities> (web seat) → 422 with cited tags."""
+    _write_packet(tmp_path, _PV_REL, _BAD_1296_PACKET)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv3",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_packet_invalid"
+    assert "<corpus>" in err.reason
+    assert "<mcp_capabilities>" in err.reason
+
+
+def test_pv_mcp_capabilities_required_for_web_seat(tmp_path: Path) -> None:
+    """All five base tags present, but <mcp_capabilities> absent → reject for web."""
+    packet = _CONFORMANT_PACKET.replace(
+        "<mcp_capabilities>You have MCP. Cite tool calls.</mcp_capabilities>\n", ""
+    )
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv4",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    assert exc_info.value.code == "handoff_packet_invalid"
+    assert "<mcp_capabilities>" in exc_info.value.reason
+
+
+def test_pv_implement_without_acceptance_rejected(tmp_path: Path) -> None:
+    packet = _CONFORMANT_PACKET.replace(
+        "## Acceptance criteria\n1. It works.", "Just do the work."
+    )
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv5",
+            packet_path=_PV_REL,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_packet_missing_acceptance"
+
+
+def test_pv_implement_with_acceptance_passes(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-pv6",
+        packet_path=_PV_REL,
+        to_agent="claude-cursor",
+        handoff_contract="implement",
+        workspaces_root=tmp_path,
+    )
+
+
+def test_pv_traversal_rejected(tmp_path: Path) -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv7",
+            packet_path="../../etc/passwd",
+            to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    assert exc_info.value.code == "handoff_packet_invalid"
+
+
+def test_pv_route_missing_packet_returns_422(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """End-to-end: handoff route returns 422 when packet_path does not exist."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-pv"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "lead",
+            "packet_path": "universal-llm-gateway/tmp/reviews/does-not-exist.md",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "handoff_packet_missing"

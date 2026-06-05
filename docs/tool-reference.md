@@ -131,7 +131,8 @@ Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
 `agent-skills/consult-routing.md`.
 
 The pointer body defaults to the standard ≤25-line pointer template (see
-`projects/.cursor/rules/handoff-dispatchers.mdc` and `tmp/reviews/_handoff-packet-template.md`)
+`projects/.cursor/rules/handoff-dispatchers.mdc` and the durable packet skeleton
+`docs/agent-guides/skills/handoff-packet-authoring.md`)
 (packet path + six-block enumeration + reply instruction). Caller may supply
 `pointer_body` override up to 25 lines. Longer overrides are rejected 422.
 

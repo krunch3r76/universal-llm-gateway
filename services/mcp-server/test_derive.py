@@ -173,6 +173,34 @@ def test_derive_claude_manifest_ops_sorted() -> None:
         )
 
 
+def test_derive_claude_manifest_op_skills_recovers_divergent_bindings() -> None:
+    """op_skills surfaces per-op skill_uri lost in domain grouping.
+
+    cortex.session_close diverges (agent_skill:session-close) from the cortex
+    domain binding (agent_skill:cortex); preflight diverges to
+    agent_skill:session-close-audit. Both must appear under op_skills; ops whose
+    binding equals the domain's must NOT (no information lost ⟹ no duplication).
+    """
+    manifest = derive_claude_manifest(_CANONICAL_YAML)
+    cortex = next(e for e in manifest if e["domain"] == "cortex")
+    op_skills = cortex.get("op_skills", {})
+
+    assert op_skills.get("session_close") == "agent_skill:session-close"
+    assert op_skills.get("session_close_preflight") == "agent_skill:session-close-audit"
+    # Non-divergent cortex ops (skill_uri == domain binding) are not duplicated.
+    assert "search" not in op_skills
+    assert op_skills["session_close"] != cortex["skill_uri"]
+    # Byte-stability: op_skills keys are sorted.
+    assert list(op_skills.keys()) == sorted(op_skills.keys())
+
+
+def test_derive_claude_manifest_op_skills_absent_when_no_divergence() -> None:
+    """Domains whose ops all share the domain binding carry no op_skills key."""
+    manifest = derive_claude_manifest(_CANONICAL_YAML)
+    fs_entry = next(e for e in manifest if e["domain"] == "fs")
+    assert "op_skills" not in fs_entry
+
+
 def test_grok_golden_unchanged_after_claude_registry_diff() -> None:
     """Regression: Claude registry diff must not perturb grok manifest bytes."""
     grok_manifest = derive_grok_manifest(_CANONICAL_YAML)

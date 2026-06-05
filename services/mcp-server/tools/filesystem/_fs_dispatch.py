@@ -175,7 +175,10 @@ def dispatch_workspaces_op(
         fn = overflow_registry.get("find_project_files")
         if fn is None:
             return {"error": "find_project_files tool not available"}
-        return fn(content, directory=path, max_depth=max_depth)
+        # max_depth is a list-oriented browse limit (default 3); a filename find
+        # must reach matches at any depth, so it is not forwarded here. find runs
+        # full-depth like search (friction 13196).
+        return fn(content, directory=path)
 
     if op == "search":
         if not content:

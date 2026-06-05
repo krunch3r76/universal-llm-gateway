@@ -83,19 +83,24 @@ def FrontierHandoffRequested(  # noqa: N802
     role: str,
     to_agent: str,
     handoff_contract: str | None = None,
+    model: str | None = None,
 ) -> Event:
     """Handoff admission — seat resolved, thread creation pending.
 
     ``handoff_contract`` is the resolved work-intent (``consult`` | ``implement``).
+    ``model`` is the canonical synthetic seat slug when ``model`` was the selector.
     """
+    payload: dict[str, str | None] = {
+        "request_id": request_id,
+        "role": role,
+        "to_agent": to_agent,
+        "handoff_contract": handoff_contract,
+    }
+    if model:
+        payload["model"] = model
     return Event(
         signal="frontier.handoff.requested",
-        payload={
-            "request_id": request_id,
-            "role": role,
-            "to_agent": to_agent,
-            "handoff_contract": handoff_contract,
-        },
+        payload=payload,
         scope="node",
     )
 

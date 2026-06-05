@@ -908,7 +908,7 @@
   {
     "cache_priority": "always_loaded",
     "canonical_name": "cortex_session_close",
-    "description": "\u2200 session_id \u2208 str \u2227 agent \u2208 str \u2227 (transcript_jsonl_path \u2228 transcript_md) \u2260 \u2205:\n  session_close(...) \u27f9\n    transcript_entity_id \u2208 Cortex \u2227 journal_row_id \u2208 \u2115 \u2227 content_hash \u2208 sha256.\nAtomic. Mutating. Idempotent by session_id (second close \u2192 422 session.already_closed).\nSee agent_skill:cortex.",
+    "description": "\u2200 session_id \u2208 str \u2227 agent \u2208 str \u2227 (transcript_jsonl_path \u2228 transcript_md) \u2260 \u2205:\n  session_close(...) \u27f9\n    transcript_entity_id \u2208 Cortex \u2227 journal_row_id \u2208 \u2115 \u2227 content_hash \u2208 sha256.\nAtomic. Mutating. Idempotent by session_id (second close \u2192 422 session.already_closed).\nBEFORE close: load agent-skills/session-close-kernel.md (+ session-close-audit.md for web/API).\nCursor: session-close.mdc. See agent_skill:session-close.",
     "domain": "cortex",
     "inputSchema": {
       "properties": {
@@ -941,7 +941,48 @@
     },
     "mandate_safety": "write",
     "name": "cortex_session_close",
-    "skill_uri": "agent_skill:cortex"
+    "skill_uri": "agent_skill:session-close"
+  },
+  {
+    "cache_priority": "always_loaded",
+    "canonical_name": "cortex_session_close_preflight",
+    "description": "\u2200 session_id \u2208 str \u2227 agent \u2208 str \u2227 (transcript_jsonl_path \u2228 transcript_md) \u2260 \u2205:\n  session_close_preflight(...) \u27f9\n    ok \u2208 bool \u2227 (ok \u27f9 audit \u2227 turn_count \u2208 \u2115) \u2227 (\u00acok \u27f9 reason \u2208 str).\nRead-only. \u00acside-effects (in-memory assembly; no file, no DB row, no audit emit).\nRun BEFORE session_close to learn of a bad JSONL or blocked audit-gate first.\nSee agent_skill:session-close-audit.",
+    "domain": "cortex",
+    "inputSchema": {
+      "properties": {
+        "agent": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "session_summary_md": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "transcript_depth": {
+          "type": "string"
+        },
+        "transcript_jsonl_path": {
+          "type": "string"
+        },
+        "transcript_md": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "agent",
+        "session_summary_md",
+        "summary"
+      ],
+      "type": "object"
+    },
+    "mandate_safety": "read_only",
+    "name": "cortex_session_close_preflight",
+    "skill_uri": "agent_skill:session-close-audit"
   },
   {
     "cache_priority": "always_loaded",
@@ -1110,7 +1151,7 @@
   {
     "cache_priority": "on_demand",
     "canonical_name": "dispatch_team",
-    "description": "\u2200 op \u2208 {generate, to_thread} \u2227 role \u2208 TeamRoles \u2227 messages \u2208 list[ChatMessage]:\n  dispatch_team(op, role, messages) \u27f9 {execution_id \u2208 UUIDv4, status}.\ngenerate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic);\nmodel optional (resolves from role default). op=generate \u2192 poll pipeline(op=\"result\");\nop=to_thread \u2192 Stargate posts the reply to `thread`. Async. Mutating (external call).\nSee agent_skill:dispatch.",
+    "description": "\u2200 op \u2208 {generate, to_thread} \u2227 role \u2208 GenerateRoles \u2227 messages \u2208 list[ChatMessage]:\n  dispatch_team(op, role, messages) \u27f9 {execution_id \u2208 UUIDv4, status}.\nGenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic);\nmodel optional (resolves from role default). op=generate \u2192 poll pipeline(op=\"result\");\nop=to_thread \u2192 Stargate posts the reply to `thread`. Async. Mutating (external call).\nSee agent_skill:dispatch.",
     "domain": "dispatch",
     "inputSchema": {
       "properties": {

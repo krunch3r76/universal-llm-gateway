@@ -184,6 +184,18 @@ def derive_claude_manifest(
       emit one DispatcherManifestEntry {domain, tool_name, ops, description, skill_uri}.
     Sorted by domain name for byte-stable output.
 
+    Per-op skill routing: grouping collapses one tool per op into one tool per
+    domain, so a per-op ``skill_uri`` that diverges from the domain's top-level
+    binding would be lost (the canonical-cortex case: ``session_close`` →
+    ``agent_skill:session-close`` discarded under ``agent_skill:cortex``). When an
+    op's ``skill_uri`` is non-empty AND differs from the group binding, it is
+    recovered under ``op_skills: {op: skill_uri}`` (sorted; key omitted when no op
+    diverges). Ops whose binding equals the domain's lose no information and are
+    NOT duplicated into ``op_skills``. ``op_skills`` is consumed only by the boot
+    briefing renderer; it does NOT enter the ``tools/list`` payload (built by
+    FastMCP from registered dispatcher Tool objects), so it cannot churn the
+    prompt cache.
+
     Floor assertion: {cortex, agent_bus, fs, dispatch} ⊆ derived_domains ∨ RuntimeError.
     Cap assertion: len(manifest) ≤ 24 ∨ raises RuntimeError at init time (D3).
     Pure function. Init-time / module-load only. ¬per-request.
@@ -206,12 +218,18 @@ def derive_claude_manifest(
                 "description": t.get("fol_descriptor", "").strip(),
                 "skill_uri": t.get("skill_uri", ""),
             }
-        domain_map[domain]["ops"].append(t["dispatcher_call_shape"]["dispatch_value"])
+        op = t["dispatcher_call_shape"]["dispatch_value"]
+        domain_map[domain]["ops"].append(op)
+        op_skill = t.get("skill_uri", "")
+        if op_skill and op_skill != domain_map[domain]["skill_uri"]:
+            domain_map[domain].setdefault("op_skills", {})[op] = op_skill
 
     manifest = list(domain_map.values())
-    # Sort ops within each domain for byte stability.
+    # Sort ops + op_skills within each domain for byte stability.
     for entry in manifest:
         entry["ops"].sort()
+        if "op_skills" in entry:
+            entry["op_skills"] = dict(sorted(entry["op_skills"].items()))
 
     # A1: floor assertion — required domains must be present.
     derived_domains = {e["domain"] for e in manifest}

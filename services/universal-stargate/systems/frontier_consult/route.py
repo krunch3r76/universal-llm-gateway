@@ -12,9 +12,9 @@ from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
-from .admission import resolve_handoff_contract, resolve_web_handoff_seat
+from .admission import resolve_handoff_contract, resolve_handoff_target
 from .events import FrontierHandoffCreated, FrontierHandoffRequested
-from .handoff import build_pointer_body, create_handoff_thread
+from .handoff import build_pointer_body, create_handoff_thread, validate_packet
 from .handoff_response import build_handoff_result, build_push_reminder
 from .service import (
     FrontierEndpointError,
@@ -262,23 +262,23 @@ async def frontier_dispatch(
 class TeamHandoffBody(BaseModel):
     """``POST /api/v1/team/handoff`` — create an agent-bus thread for a manual seat.
 
-    ``op`` must be ``"handoff"``. ``role`` must resolve to a manual,
-    non-dispatchable seat (e.g. ``lead`` → ``claude-web``, ``cursor-lead`` →
-    ``claude-cursor``, or seat slugs ``claude-web`` / ``claude-cursor``).
-    ``packet_path`` must be a workspaces-relative path to a pre-written six-block packet.
+    ``op`` must be ``"handoff"``. ``model`` is the primary target selector —
+    synthetic manual-seat IDs (``claude-web``, ``claude-cursor``, aliases
+    ``web``/``cursor``). Legacy ``role`` slugs (``lead``, ``cursor-lead``,
+    ``implementer``) are deprecated shims. ``handoff_contract`` declares intent:
+    ``consult`` (review / revise / expand / dialectic) or ``implement`` (bound).
     """
 
     model_config = {"extra": "forbid"}
 
     op: Literal["handoff"]
-    role: str
+    model: str | None = None
+    role: str | None = None
     packet_path: str
     subject: str
     pointer_body: str | None = None
     tags: list[str] | None = None
     caller_agent: str | None = None
-    # Work-intent contract — "consult" (dialectic) or "implement" (bound).
-    # Omitted ⟹ inferred from role default (see resolve_handoff_contract).
     handoff_contract: Literal["consult", "implement"] | None = None
 
 
@@ -305,21 +305,32 @@ async def team_handoff(
                 return
             event_bus.publish_from_sync(event)
 
-        to_agent, _family, platform = resolve_web_handoff_seat(
-            body.role, request_id=request_id
+        to_agent, _family, platform, resolved_model, deprecation = (
+            resolve_handoff_target(
+                model=body.model,
+                role=body.role,
+                request_id=request_id,
+            )
         )
 
         handoff_contract, contract_source = resolve_handoff_contract(
-            body.role,
-            to_agent,
-            body.handoff_contract,
-            request_id,
+            legacy_role=body.role if body.model is None else None,
+            explicit=body.handoff_contract,
+            request_id=request_id,
+        )
+
+        validate_packet(
+            request_id=request_id,
+            packet_path=body.packet_path,
+            to_agent=to_agent,
+            handoff_contract=handoff_contract,
         )
 
         _publish(
             FrontierHandoffRequested(
                 request_id=request_id,
-                role=body.role,
+                role=body.role or "",
+                model=resolved_model,
                 to_agent=to_agent,
                 handoff_contract=handoff_contract,
             )
@@ -360,10 +371,11 @@ async def team_handoff(
         )
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
 
-    return {
+    result: dict[str, Any] = {
         "thread_id": thread_id,
         "subject": body.subject,
         "to_agent": to_agent,
+        "resolved_model": resolved_model,
         "resolved_handoff_seat": to_agent,
         "handoff_contract": handoff_contract,
         "handoff_contract_source": contract_source,
@@ -372,3 +384,6 @@ async def team_handoff(
         ),
         **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
     }
+    if deprecation:
+        result["deprecation"] = deprecation
+    return result

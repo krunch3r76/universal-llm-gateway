@@ -9,12 +9,11 @@ Two tools, two contracts:
   ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
   generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
-  handoff roles: lead, cursor-lead, implementer, investigator (legacy)
-  ``investigator`` is legacy grok-web handoff only — NOT SuperGrok Heavy
-  (SuperHeavy uses operator workflow + ``agent_skill:grok-web-dispatch``).
+  handoff: ``model=claude-web|claude-cursor`` (synthetic seat) + ``handoff_contract``
+  legacy handoff role shims: lead, cursor-lead, implementer (deprecated)
 
   Op enum: "generate" (returns content via tracker), "to_thread" (reply lands
-  on ``thread``), or "handoff" (manual-seat agent-bus thread; handoff roles only).
+  on ``thread``), or "handoff" (manual-seat agent-bus thread via ``model=``).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is direct frontier
   dispatch (no role envelope). Same op enum.
 
@@ -165,7 +164,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
         op: Literal["generate", "to_thread", "handoff"],
-        role: str,
+        role: str | None = None,
         messages: list[dict[str, Any]] = [],  # noqa: B006
         dispatch_thread_id: str = "",
         model: str | None = None,
@@ -183,58 +182,50 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         tags: list[str] | None = None,
         handoff_contract: Literal["consult", "implement"] | None = None,
     ) -> dict[str, Any]:
-        """Role-aware team-seat dispatch with explicit op discrimination.
+        """Team-seat dispatch with explicit op discrimination.
 
-        ``role`` selects a functional team seat. Rosters are op-scoped
-        (regenerate via ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit
-        the two lines below):
+        **``op="handoff"``** — primary path for manual seats (``claude-web``,
+        ``claude-cursor``). Pass ``model`` (synthetic seat ID) + ``handoff_contract``:
+
+        - ``model="claude-cursor"`` + ``handoff_contract="consult"`` — review,
+          revise, expand, dialectic (open IDE thread)
+        - ``model="claude-cursor"`` + ``handoff_contract="implement"`` — bound
+          implementation (same seat, different intent)
+        - ``model="claude-web"`` + ``handoff_contract=…`` — same shape; operator
+          push to trigger web session
+
+        Legacy ``role`` slugs (``lead``, ``cursor-lead``, ``implementer``) are
+        deprecated shims — prefer ``model=``. Requires ``packet_path`` and
+        ``subject``. Returns ``{thread_id, resolved_model, to_agent, …}``.
+
+        **``op="generate"`` / ``op="to_thread"``** — API functional roles via
+        ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
 
         generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
-        handoff roles: lead, cursor-lead, implementer, investigator (legacy)
-        ``investigator`` is legacy grok-web handoff only — NOT SuperGrok Heavy.
 
-        Roles are model-agnostic: any explicit model may assume any generate
-        role. Each role carries only a default (family, platform, model) used
-        when ``model`` is omitted.
+        ``role`` is required for generate/to_thread. Each role carries a default
+        provider model used when ``model`` is omitted on those ops.
 
         Three ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
           ``thread`` / ``subject`` must be absent when using this op.
-          Roles/seats whose profile has ``dispatchable=false`` (e.g. ``claude-web``,
-          ``lead``) are rejected with 422 ``web_seat_not_generate_target`` — explicit
-          ``model=`` does not bypass. Use API roles (``reviewer``, ``gatherer``, …)
-          or ``frontier_dispatch`` for peer consult; web seats use ``fs`` locally.
+          Synthetic seat models (``claude-web``, ``claude-cursor``) are rejected
+          with 422 ``web_seat_not_generate_target``. Use API roles or
+          ``frontier_dispatch`` for one-shot model consult.
         - ``op="to_thread"``: admits dispatch; Stargate posts the role's
           reply to ``thread`` on its behalf after the dispatch completes
           (system-on-behalf delivery). Tracker terminal status reflects
           the POST outcome. ``thread`` is required. ``subject`` is
           optional (defaults to ``"{role} reply — execution {short_id}"``).
-        - ``op="handoff"``: create an agent-bus thread addressed to the role's
-          manual seat (``role`` must resolve to delivery=manual and dispatchable=false:
-          e.g. ``lead`` → claude-web, ``cursor-lead`` or ``claude-cursor`` →
-          claude-cursor). Requires ``packet_path`` (workspaces-relative
-          path to a pre-written six-block packet) and ``subject``. Returns
-          ``{thread_id, subject, to_agent, push_reminder, result_handle,
-          handoff_status, poll_hint}``. ``result_handle.kind ==
-          "agent_bus_thread"`` is authoritative for retrieval routing — do NOT
-          expect an ``execution_id`` and do NOT poll ``pipeline(op="result")``.
-          ``poll_hint`` carries ``tool`` (``wait``), ``arguments`` (object), and
-          ``arguments_json`` (string — use for MCP ``agent_bus`` calls; see
-          ``agent-skills/dispatch-shape.md``). Returns synchronously — no model is dispatched;
-          the web session starts only after the operator pushes the bus message.
-          Close your turn with the returned ``push_reminder``. ``messages``,
-          ``model``, ``thread``, and ``dispatch_thread_id`` are unused by this op.
-          ``handoff_contract`` declares work intent — ``"consult"`` (dialectic;
-          return findings/risks/recommendations) or ``"implement"`` (bound;
-          follow packet acceptance criteria + quality gates). Omitted ⟹ inferred
-          from role (``lead``/``cursor-lead``/web/cursor seats → ``consult``;
-          ``implementer`` → ``implement``). Routing is unaffected — contract only
-          shapes validation, the response echo (``handoff_contract`` +
-          ``handoff_contract_source``), the ``contract:{value}`` agent-bus tag,
-          and the pointer ``Contract:`` line. Conflicting (role, contract) pairs
-          (e.g. ``cursor-lead`` + ``implement``, ``implementer`` + ``consult``)
-          return 422 ``handoff_contract_conflict`` naming the fix.
+        - ``op="handoff"``: ``model`` (preferred) or legacy ``role`` selects the
+          manual seat. ``handoff_contract`` declares intent — ``"consult"`` or
+          ``"implement"``. Omitted ⟹ ``consult`` (or legacy ``implementer`` shim
+          default). Any seat accepts either contract. Returns
+          ``{thread_id, subject, to_agent, resolved_model, push_reminder,
+          result_handle, handoff_status, poll_hint}``. Poll via
+          ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
+          ``pipeline(op="result")``.
 
         Tool surface (no caller knob — derived from the effective model):
         - xAI multi-agent models — no client-side MCP tools.
@@ -264,12 +255,25 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         "message": "packet_path and subject are required when op='handoff'",
                     }
                 }
+            if not model and not role:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "model (e.g. 'claude-cursor', 'claude-web') or legacy "
+                            "role is required when op='handoff'"
+                        ),
+                    }
+                }
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
-                "role": role,
                 "packet_path": packet_path,
                 "subject": subject,
             }
+            if model is not None:
+                handoff_body["model"] = model
+            if role is not None:
+                handoff_body["role"] = role
             for key, val in (
                 ("pointer_body", pointer_body),
                 ("tags", tags),
@@ -278,12 +282,25 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ):
                 if val is not None:
                     handoff_body[key] = val
-            record("mcp.team.handoff.called", role=role, to_agent="")
+            record(
+                "mcp.team.handoff.called",
+                role=role or "",
+                model=model or "",
+                to_agent="",
+            )
             return await _relay(
                 endpoint="/api/v1/team/handoff",
                 body=handoff_body,
                 record_prefix="mcp.team.handoff",
             )
+
+        if not role:
+            return {
+                "error": {
+                    "code": "validation_error",
+                    "message": "role is required when op='generate' or op='to_thread'",
+                }
+            }
 
         body: dict[str, Any] = {
             "op": op,

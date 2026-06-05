@@ -11,19 +11,28 @@ per the situation.
 
 ## Checkpoints
 
-### 0. Before Dispatching a Consult (MANDATORY)
+### 0. Before any dispatch (MANDATORY)
 
-∀ prompt to **consult**, **review**, **hand off reasoning**, or get a **second opinion**
-to another seat — pause **before** the first `team_dispatch`, `frontier_dispatch`, or
-substantive `agent_bus` post/reply for consult.
+∀ **any** `team_dispatch` or `frontier_dispatch` — including `op=handoff` with
+**`handoff_contract=implement`** — and any substantive `agent_bus` post/reply
+that opens a consult: pause **before** the first call. Implement routing is
+**NOT exempt**: a bound-implementation handoff is a dispatch and must complete
+preflight exactly like a consult handoff.
 
-**Trigger**: user or task asks to consult another agent, or you are about to route
-review/architecture work off-seat.
+**Trigger**: you are about to route ANY work off-seat — consult, review,
+second opinion, hand off reasoning, **or hand off a bound implementation**.
 
-1. If `cortex_boot` ran this session: treat the briefing card **Consult routing gate**
-   as **binding** — not orientation fluff.
-2. Read the consult-routing playbook:
-   `fs(cortex, agent-skills/consult-routing.md)` (all MCP seats);
+1. If `cortex_boot` ran this session: the briefing card **Consult routing gate**
+   (`_CONSULT_ROUTING_GATE`) is **binding**, not orientation fluff. Skipping
+   `consult-routing.md` before a dispatch is a protocol violation — the same
+   severity as skipping the packet protocol reads.
+2. Complete the **mandatory preflight trio** (consult AND implement handoffs):
+   1. `fs(cortex, agent-skills/consult-routing.md)` — transport + authority map
+   2. `fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)` — md_read § The Six Required Blocks
+   3. `fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)` — § target seat
+
+   The protocol files live at **project** `.cursor/rules/` (no
+   `universal-llm-gateway/` prefix), NOT under the repo's `.cursor/rules/`.
    Cursor IDE may also load `.cursor/skills/consult-routing/SKILL.md` (stub).
 3. **Standard openers** (see consult-routing decision table):
    - **claude-web** → `team_dispatch(op=handoff, role=lead, packet_path=…)` + six-block packet

@@ -317,6 +317,7 @@ def run_cortex_boot(
         # Surface-aware dispatch block: grok → flat direct-call; claude/gpt/gemini
         # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
         family=resolved_family,
+        agent=seat_slug,
     )
 
     artifacts = _build_artifacts(

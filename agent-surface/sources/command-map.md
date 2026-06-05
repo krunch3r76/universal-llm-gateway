@@ -14,7 +14,7 @@ use only the **read/plan** column.
 | `/plan-seed` | `.cursor/commands/plan-seed.md` → spec write + `pipeline(plan-seed)` | `fs` spec + `pipeline(plan-seed)` or manual `plan:`/`todo:` entities | Out of scope (authoring) |
 | `/create-implementation-plan` | `.cursor/commands/create-implementation-plan.md` → plan deck + cortex entities | `fs` + cortex entities per `implementation-plan-workflow` skill | Plan *review* only — packet + repo read |
 | `/implement-plan` | `.cursor/commands/implement-plan.md` — Cursor/cursorbuild executes | Coordinate via `agent_bus` + dispatch; no slash emulation | Out of scope (execution) |
-| `/consult-plan` | `.cursor/commands/consult-plan.md` → `frontier_dispatch` / `team_dispatch(generate)` or `handoff` per `agent-skills/consult-routing.md` | same; six-block packet (`tmp/reviews/_handoff-packet-template.md`) | In scope — reviewer receives inlined packet |
+| `/consult-plan` | `.cursor/commands/consult-plan.md` → `frontier_dispatch` / `team_dispatch(generate)` or `handoff` per `agent-skills/consult-routing.md` | same; six-block packet (`docs/agent-guides/skills/handoff-packet-authoring.md`) | In scope — reviewer receives inlined packet |
 | `/consult-review` | `.cursor/commands/consult-review.md` → reviewer dispatch | same | In scope — primary connector job |
 | `/verify-implementation` | `.cursor/commands/verify-implementation.md` → checklist + gates | `fs` read-back + `observability` / dispatch as available | Read-only verification against named files |
 

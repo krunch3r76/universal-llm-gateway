@@ -12,6 +12,23 @@ from typing import Any
 
 from ._shared import record
 
+_SESSION_CLOSE_PROTOCOL = (
+    "Load before close: "
+    'fs(sandbox="cortex", op="md_read", path="agent-skills/session-close-kernel.md") '
+    "(web/API/subagent) or session-close.mdc (Cursor). "
+    "Web/API: also session-close-audit.md before invoking session_close. "
+    "claude-web: web-transcript-preprocessing.md before assembling transcript_md."
+)
+
+_SESSION_CLOSE_TOOLS = frozenset({"session_close", "session_close_preflight"})
+
+
+def attach_session_close_protocol(result: dict[str, Any], tool: str) -> None:
+    """Inject mandatory close-protocol pointer on session_close dispatch paths."""
+    if tool in _SESSION_CLOSE_TOOLS:
+        result["_protocol"] = _SESSION_CLOSE_PROTOCOL
+
+
 _WORKFLOW_HINTS: dict[str, str] = {
     "entity_create": (
         "next: assert (seed claims with evidence_uris) "
@@ -54,10 +71,14 @@ _WORKFLOW_HINTS: dict[str, str] = {
         "in one call — preventing the stub-only failures that journal_write allows."
     ),
     "session_close": (
-        "next: seed content assertions on relevant entities (decisions, observations); "
+        "after close: seed content assertions on relevant entities (decisions, observations); "
         "post to agent bus thread 480 with session debrief; "
         "entity_get on transcript_entity_id to confirm the full record. "
         "Review staged_assertions from review_queue (F2) — to graduate, supersede each with the missing reasoning_summary or chunk_id (carryover preserves the rest; new row is the committed version). reasoning_summary is immutable post-creation per v1.3-additions §7.5.3."
+    ),
+    "session_close_preflight": (
+        "on ok=true: proceed to session_close with same args. "
+        "on ok=false: fix per session-close-kernel.md before retrying close."
     ),
     "session_handoff_upsert": (
         "next: entity_get on transcript_entity_id (or journal row via session_id) "

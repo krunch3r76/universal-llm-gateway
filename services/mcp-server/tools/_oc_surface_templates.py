@@ -139,13 +139,13 @@ overflow relay templates only; they require bound `dispatch`.
 
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
-When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly. Model strings = provider/model (bare name 404s). Seat slugs (claude-web) are NOT model IDs.
-- local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") (422)
-- fresh context on this seat (new bus thread) → team_dispatch(op="handoff", role="lead"|"claude-web", packet_path=…, subject=…) — **self-handoff supported**; operator push, then continue on returned thread_id
-- peer manual seat → team_dispatch(op="handoff", role=…) — web→cursor: cursor-lead (consult) | implementer (bound implement); cursor→web: lead (consult or bound implement — intent in packet); poll via agent_bus(tool="wait", …) — NOT pipeline(op="result")
+When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly.
+- local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
+- manual seat handoff → team_dispatch(op="handoff", model="claude-web"|"claude-cursor", handoff_contract="consult"|"implement", packet_path=…, subject=…) — **consult** = review/revise/expand/dialectic; **implement** = bound; same model for both intents; self-handoff supported on claude-web (operator push)
 - consult any API model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
-- by API role → team_dispatch(op="generate", role="reviewer"|"gatherer"|"synthesizer"|"artisan"|"skeptic", dispatch_thread_id="…", messages=[…]) — ¬ role="claude-web"|"lead"|"web"|"claude-cursor"|"cursor-lead"|"implementer"
-- forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web"|"claude-cursor"|"cursor-lead"|"implementer") even with model= — Stargate rejects; model= hits an API endpoint, never a web session. **Distinct:** op="handoff" to lead/claude-web/claude-cursor/implementer is allowed (including self)
+- by API role → team_dispatch(op="generate", role="reviewer"|…, dispatch_thread_id="…", messages=[…])
+- forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with model= instead
+- legacy role=lead|cursor-lead|implementer on handoff → deprecated shim; prefer model= + handoff_contract
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
@@ -242,7 +242,7 @@ with a structured error envelope **before** dispatch.
 
 **Output channel (`op` parameter)**:
 - `team_dispatch` / `frontier_dispatch`: `op="generate"` (poll result) or `op="to_thread"` (bus delivery).
-- `team_dispatch` only: `op="handoff"` — create inbound web handoff thread (Cursor→claude-web); returns `{thread_id, push_reminder}`; no model dispatch. See `agent-skills/dispatch-workflow.md` §0a.
+- `team_dispatch` only: `op="handoff"` — `model=claude-web|claude-cursor` + `handoff_contract=consult|implement` (review/revise/expand vs bound implement); returns `{thread_id, resolved_model, push_reminder}`; no provider dispatch. See `agent-skills/consult-routing.md`.
 
 **MCP access**: `team_dispatch` enables client-side MCP tools by default for
 non-xAI models. `frontier_dispatch` defaults to no tool loop (`mcp=False`);

@@ -68,15 +68,18 @@ def test_claude_primary_tools_match_manifest(main_server_state: dict) -> None:
 
 
 def test_claude_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: Claude /mcp exposes exactly 13 dispatcher domains; cap ≤ 24 (D3/P10).
+    """D-T2: Claude /mcp exposes exactly 15 dispatcher domains; cap ≤ 24 (D3/P10).
 
     git_* (5) demoted off mcp_claude → overflow (thread 1179,
     decision:cursorbuild-ide-interface): 18 → 13; cortex_boot promoted → 14;
     grokbuild demoted off mcp_claude → 13 (11588, 2026-06-02).
+    agent_bus_read (read-only projection) + frontier_dispatch/team_dispatch/
+    panel_dispatch standalone domains brought the count to 15 (thread 1167);
+    the assertion was stale at 13 until this update (thread 1300, 2026-06-05).
     """
     manifest = main_server_state["manifest"]
-    assert len(manifest) == 13, (
-        f"Expected 13 Claude dispatcher domains, got {len(manifest)}: "
+    assert len(manifest) == 15, (
+        f"Expected 15 Claude dispatcher domains, got {len(manifest)}: "
         f"{sorted(e['domain'] for e in manifest)}"
     )
     assert len(manifest) <= 24, f"D3 cap violated: {len(manifest)} > 24"
@@ -100,7 +103,12 @@ def test_claude_absent_domains_accessible_via_dispatch(
 
 
 def test_claude_regression_grok_unaffected(main_server_state: dict) -> None:
-    """D-T4: wire_grok_route still builds; /mcp/grok retains 80 tools."""
+    """D-T4: wire_grok_route still builds; /mcp/grok retains 81 tools.
+
+    80 → 81: cortex_session_close_preflight added to canonical.yaml
+    (thread 1300, 2026-06-05) — was a real cortex dispatch op absent from
+    the registry; now enumerated on both surfaces with skill binding.
+    """
     from _derive import derive_grok_manifest  # noqa: PLC0415
     from grok_route import build_grok_server  # noqa: PLC0415
 
@@ -118,6 +126,6 @@ def test_claude_regression_grok_unaffected(main_server_state: dict) -> None:
         f"Grok tool count mismatch: {len(grok_tools)} registered vs "
         f"{len(grok_manifest)} in canonical.yaml"
     )
-    assert len(grok_manifest) == 80, (
-        f"Grok manifest length changed: {len(grok_manifest)} (expected 80)"
+    assert len(grok_manifest) == 81, (
+        f"Grok manifest length changed: {len(grok_manifest)} (expected 81)"
     )
