@@ -4,6 +4,7 @@ FederatedGatewayManager - event-driven state management for federated gateways.
 INVARIANT: ∀ state_key, ∃! update_path (single source of truth via events)
 INVARIANT: ∀ telemetry_receipt ⟹ timestamp_updated (freshness tracking)
 INVARIANT: ∀ catalog_change ⟹ FEDERATION_GATEWAY_CATALOG_CHANGED event published
+INVARIANT: ∀ UNREACHABLE→REACHABLE ⟹ FEDERATION_GATEWAY_REACHABILITY_RESTORED published
 
 CRITICAL: Uses @sequential decorator for lock-free sequential execution.
          Must call start() before use and stop() on shutdown.
@@ -952,6 +953,27 @@ class FederatedGatewayManager(Sequential):
 
         return gateway
 
+    def _publish_reachability_restored(
+        self,
+        gateway: FederatedGateway,
+        *,
+        offline_duration_ms: int,
+    ) -> None:
+        """Emit reachability-restored so pipeline registry re-gates dependencies."""
+        if not self._event_bus:
+            return
+        from src.scheduling.events import FederationGatewayReachabilityRestored
+
+        asyncio.create_task(
+            self._event_bus.publish_nowait(
+                FederationGatewayReachabilityRestored(
+                    gateway_id=gateway.gateway_id,
+                    offline_duration_ms=offline_duration_ms,
+                    model_count=len(gateway.available_models),
+                )
+            )
+        )
+
     def _update_telemetry_timestamps(
         self, gateway: FederatedGateway
     ) -> FederatedGateway:
@@ -973,12 +995,14 @@ class FederatedGatewayManager(Sequential):
             last_heartbeat=now,
         )
 
-        # Log state change if transitioning from unreachable to reachable
         if was_unreachable:
             offline_duration_ms = int((now - old_heartbeat) * 1000)
             logger.warning(
                 f"🔄 Gateway {gateway.gateway_id} transition: UNREACHABLE → REACHABLE "
                 f"(was offline for {offline_duration_ms}ms)"
+            )
+            self._publish_reachability_restored(
+                updated_gateway, offline_duration_ms=offline_duration_ms
             )
         return updated_gateway
 
@@ -992,12 +1016,14 @@ class FederatedGatewayManager(Sequential):
 
         updated_gateway = self._replace_gateway(gateway, last_heartbeat=now)
 
-        # Log state change if transitioning from unreachable to reachable
         if was_unreachable:
             offline_duration_ms = int((now - old_heartbeat) * 1000)
             logger.warning(
                 f"💓 Gateway {gateway.gateway_id} heartbeat restored: "
                 f"UNREACHABLE → REACHABLE (was offline for {offline_duration_ms}ms)"
+            )
+            self._publish_reachability_restored(
+                updated_gateway, offline_duration_ms=offline_duration_ms
             )
         else:
             gap_ms = int((now - old_heartbeat) * 1000)

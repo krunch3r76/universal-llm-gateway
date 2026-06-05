@@ -13,10 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-# Phase 1 default: only observable pre-reply state without a push proxy.
-# Flip to "awaiting_push" iff the operator adopts the read_at pickup contract
-# (claude-web mark_read on pointer turn) — see plan Open Q1 / Phase 4 gate.
-HandoffStatus = Literal["awaiting_first_reply", "awaiting_push"]
+# Ship C: only observable pre-reply state (no read_at-derived push proxy).
+HandoffStatus = Literal["awaiting_first_reply"]
 
 _INITIAL_HANDOFF_STATUS: HandoffStatus = "awaiting_first_reply"
 
@@ -50,6 +48,20 @@ def build_poll_hint_wait(*, thread_id: str, from_agent: str) -> dict[str, Any]:
             "from_agent": from_agent,
         },
     }
+
+
+def build_push_reminder(*, thread_id: str, to_agent: str, platform: str) -> str:
+    """Operator-facing reminder; web seats need a bus push, cursor seats need IDE attendance."""
+    if platform == "cursor":
+        return (
+            f"**Action needed — attend agent-bus in Cursor**: handoff posted to thread "
+            f"{thread_id}. Open the thread in Cursor (Multitask or /agent-bus) as "
+            f"{to_agent}; switch to Opus in the model picker when this handoff needs it."
+        )
+    return (
+        f"**Action needed — push to web claude**: handoff posted to thread "
+        f"{thread_id}. Push the agent-bus message to trigger {to_agent}'s turn."
+    )
 
 
 def build_handoff_result(*, thread_id: str, to_agent: str) -> dict[str, Any]:

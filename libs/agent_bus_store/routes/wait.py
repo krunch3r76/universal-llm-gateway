@@ -18,7 +18,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from ..auth import require_token
 from ..db import get_thread, get_thread_turns_asc, normalize_thread_id
-from ..wait_status import Completion, derive_status, is_complete, qualifying_reply
+from ..wait_status import (
+    Completion,
+    derive_status,
+    is_complete,
+    qualifying_reply,
+    build_suggested_next,
+)
 
 router = APIRouter(dependencies=[Depends(require_token)])
 
@@ -52,10 +58,19 @@ def _snapshot(
     reply = qualifying_reply(
         turns, after_turn=after_turn, from_agent=completion.get("from_agent")
     )
+    reply_turn = reply["turn_number"] if reply else None
+    suggested = build_suggested_next(
+        thread_row,
+        complete=complete,
+        completion=completion,
+        qualifying_reply_turn=reply_turn,
+        after_turn=after_turn,
+    )
     return {
         "thread_id": thread_id,
         "complete": complete,
         "status": wait_status,
+        "suggested_next": suggested,
         # push_required is never asserted under C (no observable push signal).
         # The field is retained at constant False for forward-compat with a
         # future Phase 4 server-owned ack; do NOT derive it from read_at.
@@ -65,7 +80,7 @@ def _snapshot(
         "thread_status": thread_row["status"],
         # Raw, non-authoritative observables (telemetry only — not a status).
         "pointer_read_at": pointer.get("read_at") if pointer else None,
-        "qualifying_reply_turn": reply["turn_number"] if reply else None,
+        "qualifying_reply_turn": reply_turn,
     }
 
 
@@ -103,10 +118,11 @@ async def wait_thread_route(
         comp["from_agent"] = from_agent
 
     wait_clamped = max(0.0, min(wait, MAX_WAIT_SECONDS))
-    deadline = asyncio.get_event_loop().time() + wait_clamped
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait_clamped
 
     while True:
         snap = _snapshot(thread_id, after_turn=after_turn, completion=comp)
-        if snap["complete"] or asyncio.get_event_loop().time() >= deadline:
+        if snap["complete"] or loop.time() >= deadline:
             return snap
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)

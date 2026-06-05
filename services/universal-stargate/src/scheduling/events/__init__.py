@@ -48,6 +48,7 @@ from .cloud import (
 from .federation_load import (
     FEDERATION_CATALOG_VRAM_DRIFT,
     FEDERATION_GATEWAY_CATALOG_CHANGED,
+    FEDERATION_GATEWAY_REACHABILITY_RESTORED,
     FEDERATION_LOAD_CONFIRMED,
     FEDERATION_LOAD_FAILED,
     FEDERATION_LOAD_REQUESTED,
@@ -55,6 +56,7 @@ from .federation_load import (
     FEDERATION_ORCHESTRATOR_EVICTED,
     FederationCatalogVramDrift,
     FederationGatewayCatalogChanged,
+    FederationGatewayReachabilityRestored,
     FederationGatewayResourceUpdateSignal,
     FederationLoadConfirmed,
     FederationLoadFailed,

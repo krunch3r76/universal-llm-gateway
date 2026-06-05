@@ -998,6 +998,149 @@ tools:
   cache_priority: on_demand
   introduced: 2026-05-22
 
+  # ─── domain: agent_bus_read ──────────────────────────────────────────────────
+  # Read-only projection of the agent_bus surface for the Claude/web seat only.
+  # The unified agent_bus tool mixes read+write so harnesses cannot advertise it
+  # readOnlyHint; this domain registers a separate readOnlyHint=True tool so reads
+  # auto-approve (agent-bus thread 1241). NOT exposed on mcp_grok — the grok flat
+  # manifest already carries per-op mandate_safety. Live tool: agent_bus_read.
+
+- canonical_name: agent_bus_read_threads
+  domain: agent_bus_read
+  operation: threads
+  dispatcher_call_shape:
+    tool: agent_bus_read
+    dispatch_key: tool
+    dispatch_value: threads
+  flat_call_shape:
+    tool: agent_bus_read_threads
+    substrate_qualified: user-vortex__agent_bus_read_threads
+  fol_descriptor: |
+    ∀ args ∈ ThreadsArgs: threads(args) ⟹ result ∈ List[ThreadSummary].
+    Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
+  json_schema:
+    type: object
+    properties:
+      status: {type: string}
+      tags: {type: array, items: {type: string}}
+      lifecycle_state: {type: string}
+      last: {type: integer}
+      limit: {type: integer}
+      has_unread: {type: boolean}
+  skill_uri: agent_skill:agent_bus
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: always_loaded
+  introduced: 2026-06-04
+
+- canonical_name: agent_bus_read_fetch
+  domain: agent_bus_read
+  operation: fetch
+  dispatcher_call_shape:
+    tool: agent_bus_read
+    dispatch_key: tool
+    dispatch_value: fetch
+  flat_call_shape:
+    tool: agent_bus_read_fetch
+    substrate_qualified: user-vortex__agent_bus_read_fetch
+  fol_descriptor: |
+    ∀ thread ∈ ℕ: fetch(thread) ⟹ result ∈ List[Turn].
+    Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
+  json_schema:
+    type: object
+    properties:
+      to: {type: string}
+      thread: {type: string}
+      last: {type: integer}
+      unread: {type: boolean}
+      compact: {type: boolean}
+      mark_read: {type: boolean}
+      all: {type: boolean}
+  skill_uri: agent_skill:agent_bus
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: always_loaded
+  introduced: 2026-06-04
+
+- canonical_name: agent_bus_read_fetch_unread
+  domain: agent_bus_read
+  operation: fetch_unread
+  dispatcher_call_shape:
+    tool: agent_bus_read
+    dispatch_key: tool
+    dispatch_value: fetch_unread
+  flat_call_shape:
+    tool: agent_bus_read_fetch_unread
+    substrate_qualified: user-vortex__agent_bus_read_fetch_unread
+  fol_descriptor: |
+    ∀ recipient ∨ thread: fetch_unread ⟹ result ∈ List[Turn] (no count cap).
+    Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
+  json_schema:
+    type: object
+    properties:
+      to: {type: string}
+      thread: {type: string}
+      mark_read: {type: boolean}
+      compact: {type: boolean}
+  skill_uri: agent_skill:agent_bus
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: always_loaded
+  introduced: 2026-06-04
+
+- canonical_name: agent_bus_read_get
+  domain: agent_bus_read
+  operation: get
+  dispatcher_call_shape:
+    tool: agent_bus_read
+    dispatch_key: tool
+    dispatch_value: get
+  flat_call_shape:
+    tool: agent_bus_read_get
+    substrate_qualified: user-vortex__agent_bus_read_get
+  fol_descriptor: |
+    ∀ thread ∈ ℕ ∧ turn_number ∈ ℕ: get(thread, turn_number) ⟹ Turn ∨ raises NotFound.
+    Read-only. ¬side-effects. Read-only projection of agent_bus. See agent_skill:agent_bus.
+  json_schema:
+    type: object
+    properties:
+      thread: {type: string}
+      turn_number: {type: integer}
+    required: [thread, turn_number]
+  skill_uri: agent_skill:agent_bus
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: always_loaded
+  introduced: 2026-06-04
+
+- canonical_name: agent_bus_read_wait
+  domain: agent_bus_read
+  operation: wait
+  dispatcher_call_shape:
+    tool: agent_bus_read
+    dispatch_key: tool
+    dispatch_value: wait
+  flat_call_shape:
+    tool: agent_bus_read_wait
+    substrate_qualified: user-vortex__agent_bus_read_wait
+  fol_descriptor: |
+    ∀ thread ∈ ℕ: wait(thread) ⟹ server-side short-block snapshot ∨ completion.
+    Read-only. ¬content-mutation (server-side block only). See agent_skill:agent_bus.
+  json_schema:
+    type: object
+    properties:
+      thread: {type: string}
+      after_turn: {type: integer}
+      wait_seconds: {type: number}
+      completion: {type: string}
+      from_agent: {type: string}
+    required: [thread]
+  skill_uri: agent_skill:agent_bus
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-06-04
+
   # ─── domain: fs ──────────────────────────────────────────────────────────────
   # Current dispatch: fs(sandbox="...", op="<op>", ...)  — already uses op= (D8 compliant)
 
@@ -2496,6 +2639,41 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: '2026-05-30'
+- canonical_name: team_dispatch_handoff
+  domain: team_dispatch
+  operation: handoff
+  dispatcher_call_shape:
+    tool: team_dispatch
+    dispatch_key: op
+    dispatch_value: handoff
+  flat_call_shape:
+    tool: team_dispatch_handoff
+    substrate_qualified: user-vortex__team_dispatch_handoff
+  fol_descriptor: |-
+    ∀ role ∈ ManualHandoffRoles ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
+      team_dispatch(op=handoff, role, packet_path, subject) ⟹
+        thread_id ∈ AgentBus ∧ to_agent ∈ {claude-web, claude-cursor, grok-web, …}
+        ∧ result_handle.kind = agent_bus_thread ∧ ¬execution_id.
+    Manual seats only (delivery=manual, dispatchable=false). Roles: lead → claude-web;
+    cursor-lead → claude-cursor; seat slugs claude-web|claude-cursor|web-claude|cursor-claude
+    also admitted. API roles (reviewer, …) → 422 handoff_requires_web_seat.
+    Poll via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result).
+  json_schema:
+    type: object
+    properties:
+      op: {type: string, enum: [handoff]}
+      role: {type: string}
+      packet_path: {type: string}
+      subject: {type: string}
+      pointer_body: {type: string}
+      tags: {type: array, items: {type: string}}
+      caller_agent: {type: string}
+    required: [op, role, packet_path, subject]
+  skill_uri: agent_skill:dispatch
+  seat_visibility: [mcp, mcp_claude]
+  mandate_safety: write
+  cache_priority: always_loaded
+  introduced: '2026-06-04'
 
   # ─── domain: panel_dispatch ──────────────────────────────────────────────────
   # Phase 2 consensus panel helper (thread 1206). Single-purpose tool — no op enum.

@@ -7,8 +7,9 @@ This module owns the entire pipeline subsystem initialization:
 - Creation of PipelineExecutor wired to the request executor
 - Async dispatch tracker (PipelineExecutionTracker) for /pipelines/dispatch
 - Optional PipelineHotReload watcher
-- Subscription to GATEWAY_STATE_CHANGED and FEDERATION_GATEWAY_CATALOG_CHANGED
-  so that pipelines are reloaded when catalog data arrives or changes
+- Subscription to GATEWAY_STATE_CHANGED, FEDERATION_GATEWAY_CATALOG_CHANGED,
+  and FEDERATION_GATEWAY_REACHABILITY_RESTORED so pipelines re-gate when
+  catalogs change or a federated gateway returns from UNREACHABLE
 - Emission of pipeline.registry.unavailable events for permanently-skipped
   pipelines (so operators can observe missing model dependencies)
 
@@ -127,49 +128,72 @@ def _subscribe_pipeline_reload_on_gateway_connected(proxy: StargateProxy) -> Non
     logger.debug("Subscribed to GATEWAY_STATE_CHANGED for pipeline reload")
 
 
-def _subscribe_pipeline_reload_on_catalog_change(proxy: StargateProxy) -> None:
+async def _reload_pipelines_after_federation_event(
+    proxy: StargateProxy, event: object, *, reason: str
+) -> None:
+    """Re-gate pipeline registry against the live federated model union."""
+    if proxy.pipeline_registry is None:
+        return
+
+    payload = getattr(event, "payload", None) or {}
+    gateway_id = payload.get("gateway_id", "unknown")
+    try:
+        old_count, new_count = await asyncio.to_thread(
+            proxy.pipeline_registry.reload_pipelines
+        )
+        proxy.pipeline_catalog_synced = True
+        logger.info(
+            "🔄 Pipelines re-gated after %s from %s: %d → %d pipelines",
+            reason,
+            gateway_id,
+            old_count,
+            new_count,
+        )
+        await _emit_pipeline_unavailable_events(proxy)
+    except Exception:
+        logger.exception(
+            "Pipeline reload failed after %s from %s", reason, gateway_id
+        )
+
+
+def _subscribe_pipeline_reload_on_federation_signals(proxy: StargateProxy) -> None:
     """
-    Subscribe to federation catalog changes for pipeline reload.
+    Subscribe to federation catalog and reachability signals for pipeline reload.
 
-    INVARIANT: reload_pipelines() runs off-thread to avoid blocking event loop
-    (it performs sync filesystem I/O).
+    Catalog-changed covers new/removed model IDs. Reachability-restored covers
+    UNREACHABLE→REACHABLE when the cached catalog set is unchanged (e.g. relay
+    reconnect after outage) so dependency gating still re-runs.
 
-    Args:
-        proxy: StargateProxy with federation_integration and event_bus
+    INVARIANT: reload_pipelines() runs off-thread to avoid blocking event loop.
     """
     if proxy.federation_integration is None or proxy.event_bus is None:
         return
 
-    from src.scheduling.events import FEDERATION_GATEWAY_CATALOG_CHANGED
+    from src.scheduling.events import (
+        FEDERATION_GATEWAY_CATALOG_CHANGED,
+        FEDERATION_GATEWAY_REACHABILITY_RESTORED,
+    )
 
-    async def on_catalog_changed(event) -> None:
-        """Reload pipelines when federation gateway catalog changes."""
-        if proxy.pipeline_registry is None:
-            return
+    async def on_catalog_changed(event: object) -> None:
+        await _reload_pipelines_after_federation_event(
+            proxy, event, reason="catalog change"
+        )
 
-        try:
-            # Run sync I/O off-thread to avoid blocking event loop
-            # reload_pipelines() returns (old_count, new_count) atomically
-            old_count, new_count = await asyncio.to_thread(
-                proxy.pipeline_registry.reload_pipelines
-            )
-            proxy.pipeline_catalog_synced = True
-
-            if new_count != old_count:
-                gateway_id = event.payload.get("gateway_id", "unknown")
-                logger.info(
-                    f"🔄 Pipelines reloaded after catalog change from {gateway_id}: "
-                    f"{old_count} → {new_count} pipelines"
-                )
-
-            await _emit_pipeline_unavailable_events(proxy)
-        except Exception as e:
-            logger.error(f"Failed to reload pipelines after catalog change: {e}")
+    async def on_reachability_restored(event: object) -> None:
+        await _reload_pipelines_after_federation_event(
+            proxy, event, reason="reachability restored"
+        )
 
     proxy.event_bus.subscribe_async(
         FEDERATION_GATEWAY_CATALOG_CHANGED, on_catalog_changed
     )
-    logger.info("📦 Subscribed to federation catalog changes for pipeline reload")
+    proxy.event_bus.subscribe_async(
+        FEDERATION_GATEWAY_REACHABILITY_RESTORED, on_reachability_restored
+    )
+    logger.info(
+        "📦 Subscribed to federation catalog + reachability signals "
+        "for pipeline reload"
+    )
 
 
 async def initialize_pipeline_system(proxy: StargateProxy) -> None:
@@ -253,13 +277,12 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
                 )
                 await _emit_pipeline_unavailable_events(proxy)
             _subscribe_pipeline_reload_on_gateway_connected(proxy)
-        else:
-            _subscribe_pipeline_reload_on_catalog_change(proxy)
-            # Catch up on catalog snapshots that arrived before the subscriber
-            # above was wired (Master startup race: cloud + edge gateways fire
-            # FEDERATION_GATEWAY_CATALOG_CHANGED during federated_manager setup,
-            # which precedes pipeline system init). Symmetric with the local
-            # path's `if healthy_gateway` branch.
+
+        if proxy.federation_integration is not None:
+            _subscribe_pipeline_reload_on_federation_signals(proxy)
+            # Catch up on catalog snapshots that arrived before subscribers
+            # were wired (startup race: federation fires catalog events during
+            # federated_manager setup, which precedes pipeline system init).
             if (
                 proxy.federated_manager is not None
                 and proxy.federated_manager.has_any_catalog_data()

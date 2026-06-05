@@ -1,19 +1,36 @@
-# Universal LLM Gateway — Agent Guide (grok-direct)
+# Universal LLM Gateway — Agent Guide
 
-> **⚠ CURSOR IDE — this file is NOT your guide.** Cursor auto-injects repo-root
-> `AGENTS.md`, but it is the **grok-direct (headless terminal) projection**.
-> **Read instead:** `.cursor/rules/` + `/mnt/torus/projects/.cursor/rules/` (canonical);
-> `.cursor/rules/cursor-environment_ws.mdc` (IDE briefing).
-> **Skip the sections below on:** Worktree discipline, grokbuild/grokbuild-worker,
-> Session close (`transcript_md`), git integration (`git_integrate` / `git_land`),
-> and the grok-build subagent rows in the generated subagent table.
-> In Cursor: no `git_*` MCP or git CLI (`commit-and-git-scope_ws.mdc` Invariant 2);
-> commit is optional (`Invariant 1`); session close is `.cursor/rules/session-close.mdc` (JSONL).
-> Code dispatch → **cursorbuild** or in-IDE; Grok consult → `frontier_dispatch`.
+## Seat router (read first)
 
-This repository is the **Universal LLM Gateway (ULG)** workspace: the integration hub for local and cloud LLM routing (Stargate), inference workers, MCP tooling (vortex), pipelines, RAG, cortex memory, and agent-bus coordination. Operators and agents working here share one ecosystem; conventions below apply when you boot **cold in a terminal** via the Grok CLI (`grok`) with vortex MCP wired—not when you are inside Cursor IDE.
+Repo-root `AGENTS.md` is the **cold-start router** for every agent surface. Pick one row;
+do not read the entire file unless your seat is **grok-direct**.
 
-Canonical rule sources remain `.cursor/rules/` and `/mnt/torus/projects/.cursor/rules/`. This file is the **grok-direct projection** (Phase 0 hand-authored). Deeper subtree scope: `services/AGENTS.md`, `libs/AGENTS.md`.
+| Surface | Primary guide | MVW command index |
+|---|---|---|
+| **Cursor IDE** | `.cursor/rules/` + `/mnt/torus/projects/.cursor/rules/` — start `cursor-environment_ws.mdc` | `.cursor/commands/` + `docs/agent-guides/mvw-command-map.md` |
+| **web-claude** (vortex MCP) | `agent-guides/web-agent-orientation.md` | `docs/agent-guides/mvw-command-map.md` |
+| **No-cortex** (GitHub connector, read-only reviewer) | `docs/agent-guides/no-cortex.md` | `docs/agent-guides/mvw-command-map.md` (read/plan column only) |
+| **grok-direct** (Grok CLI + terminal MCP) | Sections below | `docs/agent-guides/mvw-command-map.md` + § Workflow table |
+
+**Parity arc:** `tasks/specs/agent-workflow-parity.md` (`project:agent-workflow-parity`).
+
+---
+
+# grok-direct projection
+
+> **Cursor IDE:** skip everything below unless you are debugging grok-direct docs.
+> **Skip below:** Worktree discipline, grokbuild/grokbuild-worker, session close
+> (`transcript_md`), git integration (`git_integrate` / `git_land`), grok-build subagent
+> table. In Cursor: no `git_*` MCP or git CLI (`commit-and-git-scope_ws.mdc` Invariant 2);
+> session close is `session-close.mdc` (JSONL). Code dispatch → **cursorbuild** or in-IDE.
+
+This repository is the **Universal LLM Gateway (ULG)** workspace: integration hub for
+local/cloud LLM routing (Stargate), inference workers, MCP (vortex), pipelines, RAG,
+cortex memory, and agent-bus coordination. Conventions below apply when you boot **cold
+in a terminal** via the Grok CLI (`grok`) with vortex MCP wired.
+
+Canonical rules: `.cursor/rules/` and `/mnt/torus/projects/.cursor/rules/`. Deeper
+subtree scope: `services/AGENTS.md`, `libs/AGENTS.md`.
 
 ---
 
@@ -108,8 +125,9 @@ For large markdown files, prefer section-level access over full reads:
 | `md_replace` | Replace section body | `path`, `section`, `content` |
 | `md_append` | Append to section body | `path`, `section`, `content` |
 | `md_delete` | Delete section + body | `path`, `section` |
-| `list` | Directory listing | `path` |
-| `read` | Full file read | `path` |
+| `list` | Directory listing | `path`, optional `max_depth` (default 3) |
+| `find` | Filename/glob locate (workspaces only) | `path` (repo scope), `content` (pattern) |
+| `read` | Full file read | `path` (repo-relative refs auto-resolve) |
 | `write` | Write/overwrite file | `path`, `content` |
 
 ### Sandbox Routing

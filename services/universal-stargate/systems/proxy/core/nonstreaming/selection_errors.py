@@ -59,12 +59,12 @@ def raise_capacity_error(
     model_id: str,
     capacity_details: dict[str, Any],
 ) -> None:
-    """Raise error when model at capacity on all gateways."""
+    """Raise error when sticky model has transient capacity contention."""
     raise HTTPException(
         status_code=get_http_status(ErrorCode.STICKY_CAPACITY),
         detail=error_envelope(
             code=ErrorCode.STICKY_CAPACITY,
-            message=f"Sticky model {model_id} at capacity on all gateways",
+            message=f"Sticky model {model_id}: transient capacity contention",
             source="master",
             retryable=True,
             data=capacity_details,
@@ -246,9 +246,9 @@ def raise_insufficient_resources_error(model_id: str, reason: str) -> None:
     no idle models can free enough space → permanent hardware constraint.
     """
     raise HTTPException(
-        status_code=get_http_status(ErrorCode.RESOURCE_UNAVAILABLE),
+        status_code=get_http_status(ErrorCode.INSUFFICIENT_VRAM),
         detail=error_envelope(
-            code=ErrorCode.RESOURCE_UNAVAILABLE,
+            code=ErrorCode.INSUFFICIENT_VRAM,
             message=f"Model {model_id} cannot be served: insufficient resources",
             source="master",
             retryable=False,

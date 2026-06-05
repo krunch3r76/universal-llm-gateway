@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from universal_logging import get_logger
 
+from .....constraint_retryable import constraint_failure_is_retryable
 from .....selection_errors import (
     raise_capacity_error,
     raise_model_unavailable_error,
@@ -159,13 +160,16 @@ async def handle_selection_rejection(
             if failed & transient_constraints:
                 return True
             if failed & resource_constraints:
-                return "can_fit_with_eviction" in failed
+                return "can_fit_with_eviction" not in failed
             return False
 
         def _is_permanent_resource_failure(candidate) -> bool:
+            for failure in candidate.constraints_failed:
+                if failure.constraint == "can_fit_with_eviction":
+                    return not constraint_failure_is_retryable(failure)
             failed = {failure.constraint for failure in candidate.constraints_failed}
             return bool(failed & resource_constraints) and (
-                "can_fit_with_eviction" not in failed
+                "can_fit_with_eviction" in failed
             )
 
         has_capacity_failure = any(

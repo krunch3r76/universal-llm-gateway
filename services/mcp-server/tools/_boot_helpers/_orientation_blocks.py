@@ -42,7 +42,9 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web (422 web_seat_not_generate_target)
+- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor (422 web_seat_not_generate_target)
+- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push)
+- to claude-cursor / cursor-lead     → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
@@ -56,7 +58,9 @@ _DISPATCH_CONSULT_BLOCK_GROK = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web (422 web_seat_not_generate_target)
+- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor (422 web_seat_not_generate_target)
+- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push)
+- to claude-cursor / cursor-lead     → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
@@ -79,6 +83,41 @@ Before claiming a surface changed, ask three questions — do NOT read git for t
 | routing + model catalog | canonical.yaml baked at restart | sync_restart                     | /v1/models |
 | agent-context (you)     | rules loaded at session boot    | cortex_boot                      | this card · gen-rules --check |
 ⚠ Salience trap: "commit" is the loudest done/durable signal, so it gets grabbed as a liveness proxy under load. It is not one. Verify against the load event + probe, never the tree."""
+
+# Emitted on boot when the seat can dispatch (mcp surfaces). Gate for operator/agent
+# prompts like "consult", "get a second opinion", "review this" — pick transport
+# before calling tools. Unified path: handoff + lean packet for manual IDE/web seats;
+# frontier vs team for API one-shot. Spec: agent-bus thread 1252 / bus-dispatch-unify arc.
+_CONSULT_ROUTING_GATE = """\
+## Consult routing gate — when prompted to consult outside this seat
+Stop and classify BEFORE dispatching. Pick by **latency**, **substrate**, **operator step**, **MCP on consult**.
+
+| You need | Path | Poll / retrieve |
+|----------|------|-----------------|
+| One-shot, corpus fully inline | `frontier_dispatch(op=generate, model=…, mcp=False)` | `pipeline(op="result", …)` |
+| One-shot + live fs/cortex/RAG on API | `frontier_dispatch(…, mcp=True)` **required** — default is False | `pipeline(op="result", …)` |
+| One-shot + **role contract** | `team_dispatch(op=generate, role=reviewer|gatherer|…)` — MCP follows role's effective model (see below) | `pipeline(op="result", …)` |
+| **IDE** consult — seat MCP (not dispatch loop) | `team_dispatch(op=handoff, role=claude-cursor, packet_path=…)` | `agent_bus(wait, …)` — ¬ pipeline |
+| **Web** dialectic — seat MCP | `team_dispatch(op=handoff, role=lead|claude-web, …)` | `agent_bus(wait, …)` |
+| Implement ping | `agent_bus(post, to=claude-cursor, …)` + spec | fetch / reply |
+
+**MCP on API consult (dispatch tool loop — not handoff seats):**
+| Surface | MCP default | Caller action |
+|---------|-------------|---------------|
+| `team_dispatch(generate)` | **On** for effective model when provider is `openai/*` or `anthropic/*` | Pick role; check role default model. `mcp=False` forced for `google/*` (inline-only), `xai/*multi-agent*`, role `synthesizer` (gemini). |
+| `frontier_dispatch` | **Off** (`mcp=False`) | Pass **`mcp=True` explicitly** when consult must read repo/cortex/RAG. Same provider limits apply. |
+
+Only **openai/** and **anthropic/** models reliably get a client-side MCP tool loop on API consult.
+Gemini roles (e.g. synthesizer) and xAI multi-agent are **inline-only** — admit but no fs/cortex in-loop.
+If consult must verify live files: use `openai/gpt-5.5` or `anthropic/claude-*` with MCP on, or **handoff→claude-cursor** (native IDE MCP).
+
+**frontier vs team (API one-shot):**
+- **frontier_dispatch** — pick **model**; you own system prompt; **`mcp=True` is explicit**.
+- **team_dispatch(generate)** — pick **function**; MCP implied by role→model unless inline-only.
+
+**Handoff:** consultee seat has its own MCP (IDE/web) — not governed by dispatch `mcp=` flag.
+
+On ambiguous "consult X": need live substrate → MCP-capable API path or handoff→cursor; inline opinion only → `frontier_dispatch(mcp=False)` or synthesizer."""
 
 
 def render_orientation_blocks(family: str | None = None) -> list[str]:
@@ -107,4 +146,8 @@ def render_orientation_blocks(family: str | None = None) -> list[str]:
         if family == "grok"
         else _DISPATCH_CONSULT_BLOCK_CLAUDE
     )
-    return [f"\n{dispatch_block}", f"\n{_LIVENESS_BLOCK}"]
+    return [
+        f"\n{dispatch_block}",
+        f"\n{_CONSULT_ROUTING_GATE}",
+        f"\n{_LIVENESS_BLOCK}",
+    ]

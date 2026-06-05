@@ -45,6 +45,20 @@ Payload: {
 }
 """
 
+FEDERATION_GATEWAY_REACHABILITY_RESTORED = "federation.gateway.reachability.restored"
+"""
+Federated gateway reachability restored after outage.
+Emitted when a telemetry-driven gateway transitions UNREACHABLE → REACHABLE
+(heartbeat or RESOURCE_UPDATE / GATEWAY_SNAPSHOT freshness), even if the
+cached model catalog set is unchanged. Pipeline registry reloads on this
+signal so dependency gating re-runs against the live union catalog.
+Payload: {
+    "gateway_id": str,
+    "offline_duration_ms": int,
+    "model_count": int,
+}
+"""
+
 FEDERATION_CATALOG_VRAM_DRIFT = "federation.catalog.vram.drift"
 """
 VRAM drift detected: measured GPU VRAM diverges from catalog estimate by >5%.
@@ -111,6 +125,23 @@ def FederationGatewayCatalogChanged(
     return Event(
         signal=FEDERATION_GATEWAY_CATALOG_CHANGED,
         payload=payload,
+    )
+
+
+@event_factory
+def FederationGatewayReachabilityRestored(
+    gateway_id: str,
+    offline_duration_ms: int,
+    model_count: int,
+) -> Event:
+    """Create FEDERATION_GATEWAY_REACHABILITY_RESTORED event."""
+    return Event(
+        signal=FEDERATION_GATEWAY_REACHABILITY_RESTORED,
+        payload={
+            "gateway_id": gateway_id,
+            "offline_duration_ms": offline_duration_ms,
+            "model_count": model_count,
+        },
     )
 
 

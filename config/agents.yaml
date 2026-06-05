@@ -13,10 +13,14 @@
 profiles:
 
   claude/cursor:
+    # Manual IDE seat — team_dispatch(op="handoff", role="claude-cursor"|"cursor-lead", ...)
+    # creates an agent-bus thread for a dedicated Cursor session (e.g. Opus). Not a
+    # team_dispatch generate target (dispatchable: false), same admission as claude/web.
     provider: anthropic
     default_model: anthropic/claude-sonnet-4-6
     tool_surface: mcp
     delivery: manual
+    dispatchable: false
     include_deadlines: true
     include_review_queue: true
     confirm_and_proceed: true
@@ -267,6 +271,8 @@ profiles:
 #   Review (preferred): claude-web via agent-bus + operator push.
 #   Web handoff (automated): team_dispatch(op="handoff", role="lead"|"investigator", ...)
 #     → creates bus thread for the role's web seat; returns thread_id + push_reminder.
+#   Cursor handoff (automated): team_dispatch(op="handoff", role="claude-cursor"|"cursor-lead", ...)
+#     → bus thread for claude-cursor; operator works the thread in Cursor (Opus optional).
 #   Review / MCP writes (automated): team_dispatch role=reviewer → gpt-5.5.
 #   Analysis (no substrate writes): role=synthesizer → gemini-3.5-flash (inline-only).
 #   Reliable MCP writers: claude-web, gpt-5.5, anthropic API. Anthropic API last (cost).
@@ -277,6 +283,12 @@ roles:
     description: "Strategic advisor; senior architectural review; cross-session direction"
     default_family: claude
     default_platform: web
+    default_model: null
+
+  cursor-lead:
+    description: "Cursor→cursor consult via team_dispatch handoff — fresh packet context + operator tier (Opus); reviews, projects, exploration, architecture (not review-only)"
+    default_family: claude
+    default_platform: cursor
     default_model: null
 
   reviewer:

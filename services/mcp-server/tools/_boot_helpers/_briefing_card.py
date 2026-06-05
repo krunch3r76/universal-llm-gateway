@@ -80,7 +80,32 @@ def render_briefing_card(
 
     if transcript_continuation:
         tc = transcript_continuation
-        parts.append(f"\n## Resuming From: `{tc.get('entity_id', '?')}`")
+        entity_id = tc.get("entity_id", "?")
+        parts.append(f"\n## Resuming From: `{entity_id}`")
+        # Flag-only handoff-verification caution. The agent resuming from a
+        # detached_string / unverified handoff otherwise gets no boot-time signal
+        # that the prompt was not lead-authored-file-derived (caught this arc only
+        # by manual source-fetch). We surface the flag + derivation + the standing
+        # re-derive rule, NOT the handoff prose — prose stays suppressed per
+        # decision 8384 (handoffs are end-of-chat copy-paste artifacts, not boot
+        # auto-surfaces). The status data is on the transcript entity's
+        # `handoff_surface` attribute (libs/cortex_store/handoff_surface.py).
+        surface = tc.get("handoff_surface")
+        if (
+            isinstance(surface, dict)
+            and surface.get("surfaced")
+            and not surface.get("verified")
+        ):
+            flag = str(surface.get("flag", "unverified")).upper()
+            derivation = surface.get("derivation", "?")
+            parts.append(
+                f"> ⚠ **Handoff {flag}** (derivation={derivation}) — re-derive "
+                "from source before acting; no confirmation writes until the "
+                "handoff is reviewed or falsified. Prose intentionally not "
+                "inlined (decision 8384); pull the flagged surface via "
+                f"`cortex(tool='entity_get', arguments='{{\"entity_id\": "
+                f'"{entity_id}"}}\')`.'
+            )
         summary = tc.get("summary", tc.get("description", ""))
         if summary:
             parts.append(f"**Summary**: {summary}")

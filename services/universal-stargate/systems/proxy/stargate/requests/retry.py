@@ -11,8 +11,8 @@ Error classification helpers:
 - ``_is_all_gateways_excluded``: 503 RESOURCE_UNAVAILABLE with excluded_gateways
   data — all gateways tried and failed; clears exclusion set and retries with
   longer backoff (model may be loading), bounded by upstream_retry_timeout
-- Non-retryable: immediate re-raise (permanent resource failures where
-  ``can_fit_with_eviction`` is NOT in the failed constraint set)
+- Non-retryable: immediate re-raise (permanent insufficiency uses
+  ``INSUFFICIENT_VRAM`` with ``retryable=False`` in the envelope)
 
 Events emitted (PascalCase ``@event_factory`` signals):
 - ``RequestCompleted`` / ``RequestFailed`` — terminal lifecycle events
@@ -340,9 +340,9 @@ async def execute_with_retry(
        retried up to ``upstream_retry_timeout``, excluding the failed gateway
        (via ``_extract_failed_gateway_id``) from subsequent routing.
 
-    Non-retryable errors (including permanent resource failures where
-    ``can_fit_with_eviction`` is NOT in the failed constraint set) are
-    re-raised immediately without retry.
+    Non-retryable errors (including ``INSUFFICIENT_VRAM`` permanent resource
+    failures with ``retryable=False`` in the envelope) are re-raised immediately
+    without retry.
 
     Terminal events emitted (exactly one set per request):
       Success: ``RequestCompleted`` + ``RequestSnapshotCompleted``

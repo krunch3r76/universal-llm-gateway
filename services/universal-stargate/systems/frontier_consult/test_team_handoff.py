@@ -190,6 +190,50 @@ def test_handoff_response_backward_compatible_keys(
 
 
 # ---------------------------------------------------------------------------
+# H1b — cursor-lead / claude-cursor seat admitted (manual, non-dispatchable)
+# ---------------------------------------------------------------------------
+
+
+def test_h1b_cursor_lead_resolves_claude_cursor() -> None:
+    to_agent, _family, platform = resolve_web_handoff_seat(
+        "cursor-lead", request_id="req-c1"
+    )
+    assert to_agent == "claude-cursor"
+    assert platform == "cursor"
+
+
+def test_h1b_claude_cursor_seat_slug_admitted() -> None:
+    to_agent, _family, platform = resolve_web_handoff_seat(
+        "claude-cursor", request_id="req-c2"
+    )
+    assert to_agent == "claude-cursor"
+    assert platform == "cursor"
+
+
+def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-cursor"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-lead",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["to_agent"] == "claude-cursor"
+    assert "cursor" in body["push_reminder"].lower()
+
+
+# ---------------------------------------------------------------------------
 # H2 — dispatchable role → 422 handoff_requires_web_seat
 # ---------------------------------------------------------------------------
 

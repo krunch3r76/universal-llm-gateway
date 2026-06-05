@@ -3,7 +3,7 @@
 `agent-surface/` neutral-canonical sources.
 
 Usage:
-    scripts/gen-rules --target {cursor|grok-direct} [--check] [--dry-run]
+    scripts/gen-rules --target {cursor|grok-direct|command-map} [--check] [--dry-run]
 
 Targets:
     cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + `.cursor/rules/mcp-tool-awareness_ws.mdc`;
@@ -12,6 +12,8 @@ Targets:
     grok-direct  Splice grok-direct content for `boot-protocol`, `mcp-tool-awareness`,
                  and `subagent-model-table` sections into AGENTS.md `gen-rules:start:X`
                  marker pairs.
+    command-map  Emit `docs/agent-guides/mvw-command-map.md` from
+                 `agent-surface/sources/command-map.md` (wildcard target blocks).
 
 Flags:
     --check     Diff-gate: exit non-zero if generated output differs from committed
@@ -34,6 +36,7 @@ if str(_REPO / "libs") not in sys.path:
 from gen_rules.check import diff_against, extract_core_subagent_table  # noqa: E402
 from gen_rules.parser import parse_source  # noqa: E402
 from gen_rules.renderer import (  # noqa: E402
+    _do_not_edit,
     extract_agents_md_section,
     render_agents_md_section,
     render_cursor_mdc,
@@ -57,6 +60,10 @@ SECTIONS = {
         "cursor_variant": "agent-surface/table-variants/subagent-model-table.cursor.md",
         "grok_variant": "agent-surface/table-variants/subagent-model-table.grok.md",
         "core_mdc": ".cursor/rules/core_ws.mdc",
+    },
+    "command-map": {
+        "source": "agent-surface/sources/command-map.md",
+        "out": "docs/agent-guides/mvw-command-map.md",
     },
 }
 
@@ -186,9 +193,49 @@ def _emit_grok(root: Path, *, check: bool, dry_run: bool) -> int:
     return fail
 
 
+def _emit_command_map(root: Path, *, check: bool, dry_run: bool) -> int:
+    """Emit MVW command map for all seats (wildcard target blocks)."""
+    spec = SECTIONS["command-map"]
+    source_path = root / spec["source"]
+    out_path = root / spec["out"]
+    parsed = parse_source(source_path)
+    body = "".join(b.content for b in parsed.blocks if b.target == "*")
+    rendered = _do_not_edit(spec["source"]) + "\n" + body
+    if not rendered.endswith("\n"):
+        rendered += "\n"
+
+    if dry_run:
+        print(f"--- {out_path} ---")
+        print(rendered, end="")
+        return 0
+
+    if check:
+        current = out_path.read_text() if out_path.exists() else ""
+        d = diff_against(
+            current,
+            rendered,
+            label_expected=str(out_path),
+            label_actual="<generated>",
+        )
+        if d:
+            print(d, end="")
+            print(f"DRIFT: {out_path} out of sync with {spec['source']}", file=sys.stderr)
+            return 1
+        return 0
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(rendered)
+    print(f"wrote {out_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--target", choices=("cursor", "grok-direct"), required=True)
+    parser.add_argument(
+        "--target",
+        choices=("cursor", "grok-direct", "command-map"),
+        required=True,
+    )
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -196,8 +243,10 @@ def main(argv: list[str] | None = None) -> int:
     root = _workspace_root()
     if args.target == "cursor":
         rc = _emit_cursor(root, check=args.check, dry_run=args.dry_run)
-    else:
+    elif args.target == "grok-direct":
         rc = _emit_grok(root, check=args.check, dry_run=args.dry_run)
+    else:
+        rc = _emit_command_map(root, check=args.check, dry_run=args.dry_run)
 
     if args.check and rc == 0:
         print(f"OK gen-rules --check --target {args.target}")

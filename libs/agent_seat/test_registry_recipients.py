@@ -9,6 +9,15 @@ def test_normalize_web_to_claude_web() -> None:
     assert normalize_agent_slug("web") == "claude-web"
 
 
+def test_normalize_cursor_lead_role() -> None:
+    assert normalize_agent_slug("cursor-lead") == "cursor-lead"
+
+
+def test_normalize_cursor_claude_nickname_to_claude_cursor() -> None:
+    assert normalize_agent_slug("cursor-claude") == "claude-cursor"
+    assert normalize_agent_slug("web-claude") == "claude-web"
+
+
 def test_expand_recipient_includes_legacy_web() -> None:
     expanded = expand_recipient_slugs("claude-web")
     assert "web" in expanded

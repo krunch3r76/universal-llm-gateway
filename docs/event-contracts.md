@@ -1355,7 +1355,7 @@ should be treated as retryable/queueable.
 
 ### routing.eviction.insufficient.permanent
 
-Emitted immediately before non-retryable RESOURCE_UNAVAILABLE when routing
+Emitted immediately before non-retryable INSUFFICIENT_VRAM when routing
 determines that resources are insufficient even with eviction.
 
 | Field | Type | Description |

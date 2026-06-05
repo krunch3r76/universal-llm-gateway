@@ -188,9 +188,13 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     Admission predicate (FOL):
       admit(role) ⟺ profile.delivery == "manual" ∧ profile.dispatchable is False
 
+    Role examples: ``lead`` → ``claude-web``; ``cursor-lead`` → ``claude-cursor``.
+    Seat slugs and nicknames (``claude-web``, ``web-claude``, ``claude-cursor``,
+    ``cursor-claude``, ``web``, ``cursor``) normalize via ``agent_seat.registry``.
+
     Raises FrontierEndpointError(field="role", status_code=422) when:
       - role/seat is unknown
-      - resolved profile is not a manual, non-dispatchable (web/handoff) seat
+      - resolved profile is not a manual, non-dispatchable seat
         → reason code "handoff_requires_web_seat"
     """
     to_agent, family, platform, profile = _resolve_role_or_seat_profile(

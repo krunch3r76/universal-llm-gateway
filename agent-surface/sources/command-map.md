@@ -1,0 +1,24 @@
+<!-- target:* -->
+# MVW command map (≤10)
+
+Ratified MVW (`decision:agent-workflow-parity-mvw`). Slash commands are **Cursor
+affordances**; MCP seats use the equivalent tool calls directly. No-cortex seats
+use only the **read/plan** column.
+
+| Command | Cursor | web-claude / MCP seat | No-cortex (connector) |
+|---|---|---|---|
+| `/cortex-boot` | `.cursor/commands/cortex-boot.md` → `cortex_boot(agent=<family>-cursor)` + TIER-2 rules | `cortex_boot(agent="claude-web", …)`; `agent-guides/web-agent-orientation.md` | Static boot: `AGENTS.md` router + `docs/agent-guides/no-cortex.md` |
+| `/agent-bus` | `.cursor/commands/agent-bus.md` → `scripts/agent-bus` or `agent_bus` MCP | `agent_bus(threads/fetch/post/reply/wait, …)` + cortex sidecars | Out of scope (writes); findings via operator paste |
+| `/session-end` | `.cursor/commands/session-end.md` → `cortex(session_close, transcript_jsonl_path=…)` | `cortex(session_close, transcript_md=…)` | Out of scope |
+| `/todo` | `.cursor/commands/todo.md` → `cortex(todo_candidates)` / `entity_create(type=todo)` | same cortex ops | Read spec/todo entities only if inlined in packet |
+| `/plan-seed` | `.cursor/commands/plan-seed.md` → spec write + `pipeline(plan-seed)` | `fs` spec + `pipeline(plan-seed)` or manual `plan:`/`todo:` entities | Out of scope (authoring) |
+| `/create-implementation-plan` | `.cursor/commands/create-implementation-plan.md` → plan deck + cortex entities | `fs` + cortex entities per `implementation-plan-workflow` skill | Plan *review* only — packet + repo read |
+| `/implement-plan` | `.cursor/commands/implement-plan.md` — Cursor/cursorbuild executes | Coordinate via `agent_bus` + dispatch; no slash emulation | Out of scope (execution) |
+| `/consult-plan` | `.cursor/commands/consult-plan.md` → `team_dispatch` / `frontier_dispatch` | same MCP dispatch + handoff packet | In scope — reviewer receives inlined packet |
+| `/consult-review` | `.cursor/commands/consult-review.md` → reviewer dispatch | same | In scope — primary connector job |
+| `/verify-implementation` | `.cursor/commands/verify-implementation.md` → checklist + gates | `fs` read-back + `observability` / dispatch as available | Read-only verification against named files |
+
+**SOT:** this file. **Projection:** `docs/agent-guides/mvw-command-map.md` via
+`scripts/gen-rules --target command-map`. **Drift:** `scripts/agent-surface-check`.
+
+<!-- /target:* -->

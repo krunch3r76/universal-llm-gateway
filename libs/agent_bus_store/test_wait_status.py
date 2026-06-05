@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent_bus_store.turns_models import ThreadStatus
-from agent_bus_store.wait_status import derive_status, is_complete
+from agent_bus_store.wait_status import build_suggested_next, derive_status, is_complete
 
 
 def _turn(n, frm, read_at=None, status="open"):
@@ -17,6 +17,19 @@ def test_first_reply_from_incomplete_then_complete():
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
     turns.append(_turn(2, "claude-web"))
     assert is_complete(thread, turns, after_turn=1, completion=comp)
+
+
+def test_first_reply_from_matches_legacy_alias():
+    """thread-1248 regression: hint names canonical seat, reply posts under alias."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    comp = {"mode": "first_reply_from", "from_agent": "claude-cursor"}
+    turns = [_turn(1, "cursor")]
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    turns.append(_turn(2, "cursor"))
+    assert is_complete(thread, turns, after_turn=1, completion=comp)
+    comp_legacy = {"mode": "first_reply_from", "from_agent": "cursor"}
+    turns_canon = [_turn(1, "cursor"), _turn(2, "claude-cursor")]
+    assert is_complete(thread, turns_canon, after_turn=1, completion=comp_legacy)
 
 
 def test_thread_closed_uses_thread_status_not_turn_status():
@@ -46,6 +59,22 @@ def test_status_is_two_state_only():
     assert (
         derive_status(thread, replied, after_turn=1, completion=comp) == "complete"
     )
+
+
+def test_suggested_next_names_consult_turn_not_pointer():
+    thread = {"status": ThreadStatus.ACTIVE}
+    comp = {"mode": "first_reply_from", "from_agent": "claude-cursor"}
+    nudge = build_suggested_next(
+        thread,
+        complete=True,
+        completion=comp,
+        qualifying_reply_turn=2,
+        after_turn=1,
+    )
+    assert nudge is not None
+    assert nudge["consult_turn"] == 2
+    assert nudge["pointer_turn"] == 1
+    assert "turn 1 was the packet pointer" in nudge["message"]
 
 
 def test_no_awaiting_push_status_exists():

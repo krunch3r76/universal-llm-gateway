@@ -264,6 +264,11 @@ def run_cortex_boot(
         tc_summary = {
             "entity_id": tc["entity_id"],
             "summary": summary,
+            # Verification status of the handoff this session is resuming FROM.
+            # Surfaced as a flag-only caution on the boot card (no prose inlined,
+            # preserving decision 8384). build_handoff_surface returns None when
+            # the transcript carries no handoff_prompt.
+            "handoff_surface": tc.get("handoff_surface"),
         }
 
     unread_threads = build_unread_threads(extracted["threads"])

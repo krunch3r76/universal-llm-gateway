@@ -46,6 +46,7 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "gemini_cursor": "gemini-cursor",
     # Role slugs pass through unchanged
     "lead": "lead",
+    "cursor_lead": "cursor-lead",
     "reviewer": "reviewer",
     "gatherer": "gatherer",
     "synthesizer": "synthesizer",

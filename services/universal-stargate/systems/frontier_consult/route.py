@@ -15,7 +15,7 @@ from universal_logging import get_logger
 from .admission import resolve_web_handoff_seat
 from .events import FrontierHandoffCreated, FrontierHandoffRequested
 from .handoff import build_pointer_body, create_handoff_thread
-from .handoff_response import build_handoff_result
+from .handoff_response import build_handoff_result, build_push_reminder
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -260,11 +260,12 @@ async def frontier_dispatch(
 
 
 class TeamHandoffBody(BaseModel):
-    """``POST /api/v1/team/handoff`` — create an agent-bus thread for a web seat.
+    """``POST /api/v1/team/handoff`` — create an agent-bus thread for a manual seat.
 
     ``op`` must be ``"handoff"``. ``role`` must resolve to a manual,
-    non-dispatchable (web/handoff) seat. ``packet_path`` must be a
-    workspaces-relative path to a pre-written six-block packet.
+    non-dispatchable seat (e.g. ``lead`` → ``claude-web``, ``cursor-lead`` →
+    ``claude-cursor``, or seat slugs ``claude-web`` / ``claude-cursor``).
+    ``packet_path`` must be a workspaces-relative path to a pre-written six-block packet.
     """
 
     model_config = {"extra": "forbid"}
@@ -283,10 +284,10 @@ async def team_handoff(
     body: TeamHandoffBody,
     response: Response,
 ) -> dict[str, Any] | JSONResponse:
-    """Create a web-claude handoff thread; return thread_id synchronously.
+    """Create a manual-seat handoff thread; return thread_id synchronously.
 
-    No model dispatch — the web session starts only after the operator pushes
-    the agent-bus message. Close your turn with the returned ``push_reminder``.
+    No model dispatch. Web seats: operator pushes agent-bus. Cursor seats:
+    operator opens the thread in the IDE. Close your turn with ``push_reminder``.
     """
     request_id = uuid.uuid4().hex[:12]
 
@@ -301,7 +302,7 @@ async def team_handoff(
                 return
             event_bus.publish_from_sync(event)
 
-        to_agent, _family, _platform = resolve_web_handoff_seat(
+        to_agent, _family, platform = resolve_web_handoff_seat(
             body.role, request_id=request_id
         )
 
@@ -350,9 +351,8 @@ async def team_handoff(
         "thread_id": thread_id,
         "subject": body.subject,
         "to_agent": to_agent,
-        "push_reminder": (
-            f"**Action needed — push to web claude**: handoff posted to thread "
-            f"{thread_id}. Push the agent-bus message to trigger {to_agent}'s turn."
+        "push_reminder": build_push_reminder(
+            thread_id=thread_id, to_agent=to_agent, platform=platform
         ),
         **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
     }

@@ -27,6 +27,7 @@ class ErrorCode(StrEnum):
     GATEWAY_AT_CAPACITY = "GATEWAY_AT_CAPACITY"
     EVICTION_FAILED = "EVICTION_FAILED"
     RESOURCE_UNAVAILABLE = "RESOURCE_UNAVAILABLE"
+    INSUFFICIENT_VRAM = "INSUFFICIENT_VRAM"
     NO_FEASIBLE_GATEWAY = "NO_FEASIBLE_GATEWAY"
 
     # Connectivity errors (503, retryable with backoff)
@@ -59,6 +60,7 @@ ERROR_METADATA: dict[ErrorCode, tuple[bool, int]] = {
     ErrorCode.GATEWAY_AT_CAPACITY: (True, 503),
     ErrorCode.EVICTION_FAILED: (True, 503),
     ErrorCode.RESOURCE_UNAVAILABLE: (True, 503),
+    ErrorCode.INSUFFICIENT_VRAM: (False, 503),
     ErrorCode.NO_FEASIBLE_GATEWAY: (True, 503),
     ErrorCode.GATEWAY_DISCONNECTED: (True, 503),
     ErrorCode.EDGE_UNREACHABLE: (True, 503),

@@ -77,3 +77,80 @@ def test_wait_complete_after_qualifying_reply(tmp_path) -> None:
         assert body["status"] == "complete"
         assert body["complete"] is True
         assert body["qualifying_reply_turn"] == 2
+        nudge = body["suggested_next"]
+        assert nudge is not None
+        assert nudge["phase"] == "consult_turn_posted"
+        assert nudge["consult_turn"] == 2
+        assert nudge["pointer_turn"] == 1
+        assert any(s["action"] == "close_handoff_thread" for s in nudge["steps"])
+
+
+def test_wait_suggested_next_absent_when_thread_closed(tmp_path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-closed-test",
+                "from": "claude-cursor",
+                "to": "web",
+                "subject": "handoff",
+                "body": "brief",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "claude-web",
+                "to": "cursor",
+                "subject": "re",
+                "body": "done",
+                "after_turn": 1,
+            },
+        )
+        close = client.patch(
+            f"/threads/{thread_id}/close",
+            json={"summary": "done"},
+        )
+        assert close.status_code == 200
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from&from_agent=claude-web"
+        )
+        body = resp.json()
+        assert body["complete"] is True
+        assert body["suggested_next"] is None
+
+
+def test_wait_alias_canonical_hint_legacy_reply(tmp_path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-alias-test",
+                "from": "claude-cursor",
+                "to": "claude-cursor",
+                "subject": "handoff",
+                "body": "brief",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "claude-cursor",
+                "subject": "re",
+                "body": "findings",
+                "after_turn": 1,
+            },
+        )
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from&from_agent=claude-cursor"
+        )
+        body = resp.json()
+        assert body["complete"] is True
+        assert body["qualifying_reply_turn"] == 2

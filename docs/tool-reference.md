@@ -54,17 +54,24 @@ Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 web-default roles (`lead`, `investigator`). Web Claude doing local file work should
 use `fs` directly; peer consult → `frontier_dispatch` or an API role.
 
-**`op="handoff"` — web-seat handoff primitive** (Cursor→web inbound):
+**`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
 
-Creates an agent-bus thread addressed to the role's web seat (e.g. `lead` → `claude-web`)
+Operator shorthand **to `claude-web`** / **to `claude-cursor`** maps to this op (those seats
+admit only handoff on `team_dispatch`). **Cursor → cursor** (`cursor-lead` → `claude-cursor`)
+is for **fresh perspective and tier upgrade** in a new IDE thread (packet-booted context,
+operator picks Opus in the model picker) — reviews, ongoing `project:` exploration, architecture,
+and extension work alike. See `handoff-dispatchers.mdc` § `cursor-claude`.
+
+Creates an agent-bus thread (e.g. `lead` → `claude-web`,
+`cursor-lead` or `claude-cursor` → `claude-cursor`)
 and returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status,
 poll_hint}` synchronously — no model is dispatched and no `execution_id` is minted.
 `result_handle.kind` is `"agent_bus_thread"` (authoritative for retrieval — use
 `agent_bus`, not `pipeline(op="result")`). Initial `handoff_status` is
 `awaiting_first_reply`. `poll_hint` carries ready-to-paste `agent_bus` wait args
 (`thread`, `after_turn`, `completion`, `from_agent`) — re-call with `wait_seconds`
-until `status` is `complete`. The web session starts only after the operator
-pushes the bus message. The
+until `status` is `complete`. Web seats start after the operator pushes the bus
+message; Cursor seats start when the operator opens the thread in the IDE. The
 endpoint enforces that the role resolves to a manual, non-dispatchable seat
 (`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
 are rejected with `handoff_requires_web_seat` 422.
@@ -133,6 +140,12 @@ team_dispatch(op="handoff", role="lead",
 
 agent_bus(tool="wait", arguments='{"thread": "<thread_id>", "after_turn": 1,
   "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "claude-web"}')
+
+# Handoff mode — dedicated Cursor thread (e.g. Opus); attend in IDE — no web push
+team_dispatch(op="handoff", role="cursor-lead",
+              packet_path="universal-llm-gateway/tmp/reviews/<task>-cursor-packet.md",
+              subject="<Task> handoff — <subject>")
+# → {to_agent: "claude-cursor", push_reminder mentions Cursor / agent-bus}
 ```
 
 ### `frontier_dispatch`
@@ -336,7 +349,7 @@ Inter-agent message bus — threads, turns, read/reply coordination.
 |---|---|---|
 | `threads` | status?, to?, limit? | List threads. status: active/archived/all |
 | `fetch` | thread, last?, compact?, mark_read? | Get turns from a thread (fallback / inspection). compact=true strips markdown. For handoff completion use `wait`, not fetch loops. |
-| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until reply lands (`completion=first_reply_from` + `from_agent`) or thread closes (`completion=thread_closed`). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, ...}`. Re-call to poll — one HTTP call per invocation. |
+| `wait` | thread, after_turn?, wait_seconds?, completion?, from_agent? | **Canonical handoff retrieval** — server-side short-block until the consult posts a **bus turn** after the pointer (`completion=first_reply_from` + canonical `from_agent`; alias-aware). `wait_seconds` clamped ≤60 (0=snapshot). Returns `{complete, status, push_required, suggested_next, qualifying_reply_turn, thread_status, ...}`. When `complete=true` and `thread_status=active`, `suggested_next` is an object (`phase=consult_turn_posted`, `consult_turn`, `steps`: fetch → apply → close) — not arc completion. Re-call to poll — one HTTP call per invocation. |
 | `get` | thread, turn_number | Get one specific turn |
 | `post` | slug, to, subject, body, from_agent, tags? | Start a new thread |
 | `reply` | thread, to, subject, body, after_turn?, from_agent | Reply to a thread |
