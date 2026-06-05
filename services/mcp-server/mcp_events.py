@@ -29,6 +29,7 @@ _ENABLED = os.getenv("MCP_EVENTS_ENABLED", "true").lower() in ("true", "1", "yes
 _QUEUE_MAX = 500
 _RECONNECT_DELAY = 5.0
 _SEND_TIMEOUT = 2.0
+_FLUSH_TIMEOUT = 2.0
 
 
 class _UDSPublisher:
@@ -54,6 +55,9 @@ class _UDSPublisher:
         except queue.Full:
             try:
                 self._q.get_nowait()
+                # Balance the unfinished-task count for the dropped line so
+                # flush()'s join semantics stay accurate.
+                self._q.task_done()
             except queue.Empty:
                 pass
             try:
@@ -61,6 +65,23 @@ class _UDSPublisher:
             except queue.Full:
                 pass
             self._dropped += 1
+
+    def flush(self, timeout_s: float = _FLUSH_TIMEOUT) -> bool:
+        """Block until the queue drains or *timeout_s* elapses.
+
+        Returns True when every enqueued line has been handed to the worker
+        (queue fully drained), False on timeout. A timeout-aware analogue of
+        ``queue.Queue.join()``; relies on the worker calling ``task_done()``
+        for every dequeued line.
+        """
+        deadline = time.monotonic() + timeout_s
+        with self._q.all_tasks_done:
+            while self._q.unfinished_tasks:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                self._q.all_tasks_done.wait(remaining)
+        return True
 
     def _run(self) -> None:
         sock: socket.socket | None = None
@@ -84,9 +105,10 @@ class _UDSPublisher:
                     continue
             try:
                 line = self._q.get(timeout=1.0)
-                sock.sendall(line.encode())
             except queue.Empty:
                 continue
+            try:
+                sock.sendall(line.encode())
             except OSError:
                 try:
                     sock.close()
@@ -97,6 +119,11 @@ class _UDSPublisher:
                     )
                 sock = None
                 time.sleep(_RECONNECT_DELAY)
+            finally:
+                # Mark the dequeued line done regardless of send outcome so
+                # flush() can rely on join semantics. A failed send drops the
+                # line, preserving prior fire-and-forget behavior.
+                self._q.task_done()
 
 
 _publisher: _UDSPublisher | None = _UDSPublisher(_EVENTS_SOCK) if _ENABLED else None
@@ -126,6 +153,19 @@ def record(signal: str, **payload: Any) -> None:
         "payload": merged_payload,
     }
     _publisher.put_nowait(json.dumps(event, default=str) + "\n")
+
+
+def flush(timeout_s: float = _FLUSH_TIMEOUT) -> bool:
+    """Flush pending events before process exit.
+
+    Blocks until the publisher queue drains or *timeout_s* elapses. Returns
+    True when fully drained (or when publishing is disabled — nothing to
+    flush), False on timeout. Needed on the shutdown path where the daemon
+    publisher thread would otherwise die with lines still queued.
+    """
+    if _publisher is None:
+        return True
+    return _publisher.flush(timeout_s)
 
 
 def monotonic_now() -> float:

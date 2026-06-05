@@ -24,7 +24,7 @@ import uvicorn
 from auth_middleware import AuthMiddleware
 from edge_telemetry_middleware import EdgeTelemetryMiddleware
 from fastmcp import FastMCP
-from mcp_events import record
+from mcp_events import flush, record
 from mcp_request_middleware import McpRequestEventsMiddleware
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 from middleware.drain import (
@@ -1004,6 +1004,11 @@ def main() -> None:
         # cancelled them. A non-zero count at exit is the proxy for "drain timed out".
         timed_out = in_flight_count() > 0
         complete_drain(timed_out=timed_out)
+        # server.run() has returned, so the event loop is torn down and the
+        # daemon UDS publisher thread would die with drain.completed still
+        # queued. Block briefly until the publisher drains so the completion
+        # event (and any tail events) actually reach the event service.
+        flush()
 
 
 if __name__ == "__main__":
