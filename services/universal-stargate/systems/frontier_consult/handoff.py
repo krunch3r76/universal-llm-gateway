@@ -32,6 +32,18 @@ The packet contains all six required blocks:
 
 Reply on this thread with findings. Use <need> only as last resort."""
 
+# One-line contract annotation appended to the default pointer template after
+# the subject. Skipped when the caller overrides pointer_body.
+_CONTRACT_LINES: dict[str, str] = {
+    "consult": (
+        "Contract: consult / dialectic — return findings, risks, and recommendations."
+    ),
+    "implement": (
+        "Contract: bound implementation — follow packet acceptance criteria "
+        "and quality gates."
+    ),
+}
+
 
 def build_pointer_body(
     *,
@@ -39,18 +51,23 @@ def build_pointer_body(
     packet_path: str,
     subject: str,
     pointer_body: str | None,
+    handoff_contract: str,
 ) -> str:
     """Return the bus turn body.
 
     Uses caller override if given, else the standard handoff-dispatchers.mdc
-    pointer template. Enforces ≤ _POINTER_MAX_LINES lines on the final body
+    pointer template with a one-line ``Contract:`` annotation derived from
+    ``handoff_contract``. Enforces ≤ _POINTER_MAX_LINES lines on the final body
     regardless of which path produced it.
     """
-    body = (
-        pointer_body
-        if pointer_body is not None
-        else _POINTER_TEMPLATE.format(subject=subject, packet_path=packet_path)
-    )
+    if pointer_body is not None:
+        body = pointer_body
+    else:
+        contract_line = _CONTRACT_LINES.get(handoff_contract, "")
+        body = _POINTER_TEMPLATE.format(
+            subject=f"{subject}\n{contract_line}" if contract_line else subject,
+            packet_path=packet_path,
+        )
     lines = body.splitlines()
     if len(lines) > _POINTER_MAX_LINES:
         raise FrontierEndpointError(
@@ -80,6 +97,7 @@ async def create_handoff_thread(
     pointer_body: str,
     caller_agent: str | None,
     tags: list[str] | None,
+    handoff_contract: str,
 ) -> str:
     """POST to agent-bus /threads/with-turn; return thread_id.
 
@@ -108,14 +126,18 @@ async def create_handoff_thread(
 
     slug = _slug_from_subject(subject)
     from_agent = caller_agent or "dispatch"
-    effective_tags: list[str] = (
-        tags
-        if tags is not None
-        else [
+    contract_tag = f"contract:{handoff_contract}"
+    if tags is None:
+        effective_tags: list[str] = [
             f"agent:{to_agent}",
             "type:handoff",
+            contract_tag,
         ]
-    )
+    else:
+        # Append the contract tag to caller-supplied tags (do not replace them).
+        effective_tags = list(tags)
+        if contract_tag not in effective_tags:
+            effective_tags.append(contract_tag)
 
     payload: dict[str, Any] = {
         "slug": slug,

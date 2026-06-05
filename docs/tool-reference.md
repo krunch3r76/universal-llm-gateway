@@ -23,7 +23,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 `op` values (`team_dispatch` and `frontier_dispatch`; frontier has no `handoff`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
 - `"to_thread"` — bus mode; Stargate posts the model's reply to `thread` on its behalf after dispatch completes.
-- `"handoff"` (**team_dispatch only**) — manual-seat consult (`lead` → `claude-web`, `cursor-lead` / `implementer` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
+- `"handoff"` (**team_dispatch only**) — manual-seat consult (`lead` → `claude-web`, `cursor-lead` / `implementer` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
 
@@ -48,7 +48,8 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
 | `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to the pre-written six-block packet |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
-| `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff"]`) |
+| `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
+| `handoff_contract` | `"consult"\|"implement"\|None` | `op="handoff"` only — work intent. Omitted ⟹ inferred from role (`lead`/`cursor-lead`/web/cursor seats → `consult`; `implementer` → `implement`). Routing is unaffected. Conflicting pairs (`cursor-lead`+`implement`, `implementer`+`consult`) → 422 `handoff_contract_conflict` |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
 
@@ -71,23 +72,52 @@ handoff target without the `(legacy)` marker.
 **`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
 
 Operator shorthand **to `claude-web`** / **to `claude-cursor`** maps to this op (those seats
-admit only handoff on `team_dispatch`). **Cursor → cursor** (`cursor-lead` → `claude-cursor`)
-is for **fresh perspective and tier upgrade** in a new IDE thread (packet-booted context,
-operator picks Opus in the model picker) — reviews, ongoing `project:` exploration, architecture,
-and extension work alike. The **`implementer`** role also resolves to `claude-cursor` (handoff-only,
-generate → 422) but is **packet-bound code execution**: a bound todo/spec + acceptance criteria +
-quality gates, distinct from `cursor-lead`'s reasoning consult. See `projects/.cursor/rules/handoff-dispatchers.mdc`
-§ `cursor-claude`; consult index `agent-skills/consult-routing.md`.
+admit only handoff on `team_dispatch`). **Seat vs intent:** handoff routing resolves
+`role` → seat only (`lead`/`claude-web` → claude-web; `cursor-lead`/`implementer`/`claude-cursor`
+→ claude-cursor). Intent (consult vs bound implement) is **not** a separate routing axis.
+
+| Intent | Web | Cursor |
+|--------|-----|--------|
+| Consult / dialectic | `role=lead` (or `claude-web`) | `role=cursor-lead` (or `claude-cursor`) |
+| Bound implement (packet + acceptance criteria) | `role=lead` + implementer packet contract, or native `Pick up todo:{slug}` on web (no dispatch) | `role=implementer` — distinct from `cursor-lead` consult |
+| Explicit contract | `handoff_contract=consult\|implement` on any handoff (optional; defaults from role) | same |
+
+**Explicit `handoff_contract`** declares intent independent of role default. Final
+contract = explicit if supplied, else role default (`lead`/`cursor-lead`/web/cursor
+seats → `consult`; `implementer` → `implement`). It shapes the response echo
+(`handoff_contract` + `handoff_contract_source`), the `contract:{value}` bus tag, and
+the pointer `Contract:` line — **not** seat routing. Conflicting (role, contract) pairs
+return 422 `handoff_contract_conflict`:
+
+| role | + contract | result |
+|---|---|---|
+| `lead` / `claude-web` | `implement` | allow (web bound implement) |
+| `cursor-lead` | `implement` | reject — use `role=implementer` or `handoff_contract=consult` |
+| `implementer` | `consult` | reject — use `role=cursor-lead` or `handoff_contract=implement` |
+| `claude-cursor` | `implement` | allow (docs recommend `implementer`) |
+
+**Cursor → cursor** (`cursor-lead` → `claude-cursor`) is for **fresh perspective and tier upgrade**
+in a new IDE thread (packet-booted context, operator picks Opus in the model picker) — reviews,
+ongoing `project:` exploration, architecture, and extension work. **`implementer`** also resolves
+to `claude-cursor` (handoff-only, generate → 422) but signals **packet-bound code execution**:
+bound todo/spec + acceptance criteria + quality gates — not a reasoning consult. Web bound work
+uses **`role=lead`** with the same implementer packet contract (or todo pickup without handoff).
+See `projects/.cursor/rules/handoff-dispatchers.mdc` § `cursor-claude`; consult index
+`agent-skills/consult-routing.md`.
 
 Creates an agent-bus thread (e.g. `lead` → `claude-web`,
 `cursor-lead` or `claude-cursor` → `claude-cursor`)
-and returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status,
+and returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract,
+handoff_contract_source, push_reminder, result_handle, handoff_status,
 poll_hint}` synchronously — no model is dispatched and no `execution_id` is minted.
+(`resolved_handoff_seat` aliases `to_agent`; `handoff_contract_source` is
+`"explicit"` or `"role_default"`.)
 `result_handle.kind` is `"agent_bus_thread"` (authoritative for retrieval — use
 `agent_bus`, not `pipeline(op="result")`). Initial `handoff_status` is
-`awaiting_first_reply`. `poll_hint` carries ready-to-paste `agent_bus` wait args
-(`thread`, `after_turn`, `completion`, `from_agent`) — re-call with `wait_seconds`
-until `status` is `complete`. Web seats start after the operator pushes the bus
+`awaiting_first_reply`. `poll_hint` carries `tool` (`"wait"`), `arguments` (object,
+human-readable), and `arguments_json` (string — **use this** for MCP `agent_bus`
+calls; see `agent-skills/dispatch-shape.md`). Re-call with `wait_seconds` until
+`status` is `complete`. Web seats start after the operator pushes the bus
 message; Cursor seats start when the operator opens the thread in the IDE. The
 endpoint enforces that the role resolves to a manual, non-dispatchable seat
 (`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
@@ -113,8 +143,9 @@ the formatted push instruction per `agent-bus-push-reminder_ws.mdc`.
 
 1. `team_dispatch(op="handoff", ...)` → read `result_handle`, `handoff_status`, `poll_hint`.
 2. Surface `push_reminder` to the operator; wait for push.
-3. `agent_bus(tool="wait", ...)` using `poll_hint.arguments` (or equivalent args from
-   `result_handle`: `thread`, `after_turn`, `completion=first_reply_from`, `from_agent`).
+3. `agent_bus(tool="wait", arguments=poll_hint.arguments_json)` — or build the same
+   string from `poll_hint.arguments` / `result_handle` fields (`thread`, `after_turn`,
+   `completion=first_reply_from`, `from_agent`).
    Re-call with `wait_seconds` 0 (snapshot) or up to 60 (server-side block) until
    `complete=true` and `status=complete`.
 
@@ -161,8 +192,10 @@ team_dispatch(op="handoff", role="lead",
               subject="<Task> handoff — <subject>")
 # → {thread_id, subject, to_agent: "claude-web", push_reminder,
 #     result_handle, handoff_status: "awaiting_first_reply", poll_hint}
-# poll_hint.tool == "wait"; poll with agent_bus(tool="wait", ...) — not pipeline(result)
+# poll_hint.tool == "wait"; poll_hint.arguments_json is the MCP wire form
+agent_bus(tool="wait", arguments=poll_hint.arguments_json)  # not poll_hint.arguments (object)
 
+# Equivalent literal:
 agent_bus(tool="wait", arguments='{"thread": "<thread_id>", "after_turn": 1,
   "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "claude-web"}')
 

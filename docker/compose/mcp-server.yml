@@ -57,7 +57,7 @@ services:
       - ENABLE_CONTEXT_TOOLS=${ENABLE_CONTEXT_TOOLS:-true}
       # App-level write guards (recommended true with ro mounts)
       - TASKS_READ_ONLY=${TASKS_READ_ONLY:-true}
-      - PROJECT_READ_ONLY=${PROJECT_READ_ONLY:-true}
+      - MCP_PROJECT_WRITE_ENABLED=${MCP_PROJECT_WRITE_ENABLED:-false}
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - X_API_KEY=${X_API_KEY:-}
       - X_API_SECRET=${X_API_SECRET:-}

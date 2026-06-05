@@ -4,20 +4,20 @@ from __future__ import annotations
 
 from contextvars import ContextVar, Token
 
-_active_persona: ContextVar[str | None] = ContextVar("active_persona", default=None)
+_active_role: ContextVar[str | None] = ContextVar("active_role", default=None)
 
 
-def bind_active_persona(persona: str | None) -> Token | None:
-    """Bind the dispatched persona for nested tool calls. Returns reset token."""
-    if not persona:
+def bind_active_role(role: str | None) -> Token | None:
+    """Bind the dispatched role for nested tool calls. Returns reset token."""
+    if not role:
         return None
-    return _active_persona.set(persona)
+    return _active_role.set(role)
 
 
-def reset_active_persona(token: Token | None) -> None:
+def reset_active_role(token: Token | None) -> None:
     if token is not None:
-        _active_persona.reset(token)
+        _active_role.reset(token)
 
 
-def get_active_persona() -> str | None:
-    return _active_persona.get()
+def get_active_role() -> str | None:
+    return _active_role.get()

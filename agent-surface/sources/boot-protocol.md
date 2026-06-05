@@ -76,10 +76,10 @@ When Universal Mode activates:
 For reliable closes (post 2026-05-16 server-side refactor), resolve the
 current session's Cursor agent-transcripts JSONL path and compose the
 kilobyte-scale structural layer (`session_summary_md`), then call the
-atomic `cortex(tool="session_close", arguments={"session_id": "...",
+atomic `cortex(tool="session_close", arguments='{"session_id": "...",
 "agent": "claude-cursor", "transcript_jsonl_path": "<path>",
-"session_summary_md": "## Session Summary\n\n...", "summary": "...",
-...})`. cortex-api reads the JSONL, assembles the verbatim layer
+"session_summary_md": "## Session Summary\n\n...", "summary": "..."}')`.
+cortex-api reads the JSONL, assembles the verbatim layer
 server-side, writes the file, and performs the validated atomic DB
 commit (entity + journal + edge). The 201 response carries
 `content_hash` (`sha256:<hex>`), `turn_count`, and `byte_count` in
@@ -101,9 +101,9 @@ Authoritative protocol lives in `session-close.mdc`.
 Run this ritual at session start (same intent as Cursor's `cursor-boot_ws.mdc`;
 you call MCP tools directly—no slash-command wrapper):
 
-1. **Open todos** — `cortex(tool="entities", arguments={"workflow_state": "open"})`
-2. **Prior context** — `cortex(tool="journal_read")`
-3. **Active threads** — `agent_bus(tool="threads", arguments={"last": 10})`
+1. **Open todos** — `cortex(tool="entities", arguments='{"workflow_state": "open"}')`
+2. **Prior context** — `cortex(tool="journal_read", arguments='{}')`
+3. **Active threads** — `agent_bus(tool="threads", arguments='{"status": "active"}')`
 4. **Skill manifest** — `fs(sandbox="cortex", op="list", path="agent-skills")` then read skills relevant to the task
 
 Optional slim briefing: `cortex_boot(agent="grok-direct", family="Grok", session_id="grok-direct-YYYY-MM-DD-HHmm")`.

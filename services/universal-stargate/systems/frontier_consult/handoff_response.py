@@ -11,6 +11,7 @@ pipeline tracker. No pseudo execution_id is minted for handoff.
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 # Ship C: only observable pre-reply state (no read_at-derived push proxy).
@@ -37,16 +38,21 @@ def build_poll_hint_wait(*, thread_id: str, from_agent: str) -> dict[str, Any]:
 
     fetch is now only a fallback; the wait op is the documented retrieval path.
     ``from_agent`` is the web seat whose first reply completes the handoff.
+
+    ``arguments`` is a dict for human inspection; ``arguments_json`` is the
+    MCP wire form (``agent_bus.arguments`` must be a JSON string).
     """
+    wait_args = {
+        "thread": thread_id,
+        "after_turn": 1,
+        "wait_seconds": 60,
+        "completion": "first_reply_from",
+        "from_agent": from_agent,
+    }
     return {
         "tool": "wait",
-        "arguments": {
-            "thread": thread_id,
-            "after_turn": 1,
-            "wait_seconds": 60,
-            "completion": "first_reply_from",
-            "from_agent": from_agent,
-        },
+        "arguments": wait_args,
+        "arguments_json": json.dumps(wait_args, separators=(",", ":")),
     }
 
 

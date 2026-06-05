@@ -64,10 +64,15 @@ _CHUNK_CHARS_EBOOK_PAD = _CHUNK_TOKENS_EBOOK_PAD * _TOKEN_ESTIMATE  # 1024
 _CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".sh", ".yaml", ".toml"}
 
 _HTML_EXTENSIONS = {".html", ".htm"}
-_BOILERPLATE_SELECTORS = (
-    "nav, header, footer, aside, [role='navigation'], [aria-label*='cookie' i], "
-    "[class*='cookie' i], [id*='cookie' i], [class*='consent' i], [id*='consent' i], "
-    "[class*='banner' i], [id*='banner' i], [class*='sidebar' i], [id*='sidebar' i], "
+# Semantic landmarks — always strip (nav/footer-only pages must fail empty-doc check).
+_STRICT_BOILERPLATE_SELECTORS = "nav, header, footer, aside, [role='navigation']"
+# Class/id substring selectors — 50% text guard avoids false-positive stripping
+# when a content wrapper matches (e.g. class="parade-loop-sidebar").
+_GUARDED_BOILERPLATE_SELECTORS = (
+    "[aria-label*='cookie' i], [class*='cookie' i], [id*='cookie' i], "
+    "[class*='consent' i], [id*='consent' i], "
+    "[class*='banner' i], [id*='banner' i], "
+    "[class*='sidebar' i], [id*='sidebar' i], "
     "[class*='advert' i], [id*='advert' i], [class*='ad-' i], [id*='ad-']"
 )
 
@@ -674,11 +679,16 @@ def normalize_html_to_markdown(path: str, html: str) -> str:
 
     root = soup.select_one("main") or soup.select_one("article") or soup.body or soup
 
-    # Guard: never remove a boilerplate candidate that holds the majority of the
+    for node in root.select(_STRICT_BOILERPLATE_SELECTORS):
+        if node is root:
+            continue
+        node.decompose()
+
+    # Guard: never remove a guarded candidate that holds the majority of the
     # root text — substring class selectors like [class*='sidebar'] can false-positive
     # on content wrappers (e.g. class="parade-loop-sidebar" containing all content).
     root_text_len = len(root.get_text())
-    for node in root.select(_BOILERPLATE_SELECTORS):
+    for node in root.select(_GUARDED_BOILERPLATE_SELECTORS):
         if node is root:
             continue
         if root_text_len > 0 and len(node.get_text()) > root_text_len * 0.5:

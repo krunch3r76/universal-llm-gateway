@@ -15,6 +15,17 @@ CallMcpTool(server="user-vortex", toolName="<tool>", arguments={...})
 
 When rules or docs use shorthand like `fs(sandbox="cortex", op="read", path="...")`,
 translate to `CallMcpTool(server="user-vortex", toolName="fs", arguments={"sandbox": "cortex", "op": "read", "path": "..."})`.
+
+**Dispatch-style tools** (`cortex`, `agent_bus`, `dispatch`, `rag`): the outer
+`CallMcpTool` envelope is an object, but the inner `arguments` field MUST be a
+**JSON string**, not a nested object. See `agent-skills/dispatch-shape.md`.
+
+```
+CallMcpTool(server="user-vortex", toolName="agent_bus", arguments={
+  "tool": "fetch",
+  "arguments": "{\"thread\": \"111\", \"last\": 3, \"compact\": true}"
+})
+```
 <!-- /target:cursor -->
 <!-- target:grok-direct -->
 # MCP Tool Awareness
@@ -25,8 +36,12 @@ All MCP tools are called natively in grok-direct — no `CallMcpTool(...)` wrapp
 Shorthand forms used in rules and docs are direct call syntax:
 
 - `fs(sandbox="cortex", op="read", path="...")` — filesystem operations
-- `cortex(tool="entities", arguments={...})` — cortex operations
-- `agent_bus(tool="threads", arguments={...})` — agent bus operations
+- `cortex(tool="entities", arguments='{"type": "decision", "limit": 20}')` — cortex operations
+- `agent_bus(tool="threads", arguments='{"status": "active"}')` — agent bus operations
+
+Dispatch-style `arguments` is always a **JSON string** on the wire — never a bare
+object. After `team_dispatch(op=handoff)`, use `poll_hint.arguments_json` for MCP
+`agent_bus` calls. Full shape: `agent-skills/dispatch-shape.md`.
 
 When rules or docs reference `CallMcpTool(server="user-vortex", toolName=X,
 arguments=A)`, translate to native `X(A)` call shorthand.

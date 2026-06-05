@@ -29,11 +29,11 @@ _LA = ZoneInfo("America/Los_Angeles")
 _LAST_SESSION_SUMMARY_MAX = 300
 _LAST_SESSION_RECOVERY = "cortex(tool='journal_read', arguments='{\"limit\": 1}')"
 
-# Cap dropbox-pending inline listing to keep the briefing card compact
-# (~3-5KB target per render_briefing_card docstring). At HEAD with 254+
-# pending files an unbounded dump pushes the card to ~37KB; first-20 +
-# count tail mirrors the truncation pattern used elsewhere in this renderer.
-_DROPBOX_DISPLAY_MAX = 20
+# Cap dropbox-pending inline listing. Soft inline target for the full card
+# is ≤ ~8KB (render_briefing_card docstring); at HEAD with 250+ pending files
+# an unbounded dump pushes the card to ~37KB. First-N + count tail mirrors
+# the truncation pattern used elsewhere in this renderer.
+_DROPBOX_DISPLAY_MAX = 5
 
 
 def render_briefing_card(
@@ -69,7 +69,12 @@ def render_briefing_card(
 
     Returns (card_markdown, sections_available).
     Priority signals and indexed agent skills compose the card; other heavy
-    sections stay as counts + fetch hints in the manifest.
+    sections stay as counts + fetch hints in the manifest per
+    decision:boot-manifest-mode.
+
+    Soft inline target: ≤ ~8KB. Content that is session-stable, reference-only,
+    or recoverable on demand belongs in the manifest or a fetchable skill/doc,
+    not inline. Enforce via render-time logging when exceeded.
     """
     now = datetime.now(UTC)
     local_now = now.astimezone(_LA)
@@ -122,10 +127,10 @@ def render_briefing_card(
     if dropbox_files:
         n = len(dropbox_files)
         parts.append(f"\n## ⚠ Dropbox Pending ({n} file(s))")
-        # Cap inline listing to keep the briefing card compact (~3-5KB target
-        # per render_briefing_card docstring). At HEAD with 254+ pending files
-        # an unbounded dump pushes the card to ~37KB; first-20 + count tail
-        # mirrors the truncation pattern used elsewhere in this renderer.
+        # Cap inline listing per the ≤~8KB card target (render_briefing_card
+        # docstring). At HEAD with 250+ pending files an unbounded dump pushes
+        # the card to ~37KB; first-N + count tail mirrors the truncation
+        # pattern used elsewhere in this renderer.
         for f in dropbox_files[:_DROPBOX_DISPLAY_MAX]:
             parts.append(f"  {f}")
         if n > _DROPBOX_DISPLAY_MAX:
@@ -348,7 +353,7 @@ def render_briefing_card(
     if reflective_entries is not None:
         if reflective_entries:
             parts.append(f"\n## Reflective Journal ({reflective_total} total)")
-            for e in reflective_entries[:5]:
+            for e in reflective_entries[:3]:
                 kind = e.get("kind", "entry")
                 kind_tag = f" [{kind}]" if kind != "entry" else ""
                 register = e.get("register", "?")
@@ -356,9 +361,9 @@ def render_briefing_card(
                     e.get("entry") or "", PREVIEW_MAX_CHARS
                 )
                 parts.append(f"- *{register}*{kind_tag}: {entry_preview}")
-            if reflective_total > 5:
+            if reflective_total > 3:
                 parts.append(
-                    f"- *…{reflective_total - 5} more — "
+                    f"- *…{reflective_total - 3} more — "
                     "`cortex(tool='rj_list', arguments='{\"limit\": 20}')`*"
                 )
         else:

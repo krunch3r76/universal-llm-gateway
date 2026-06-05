@@ -82,14 +82,19 @@ def FrontierHandoffRequested(  # noqa: N802
     request_id: str,
     role: str,
     to_agent: str,
+    handoff_contract: str | None = None,
 ) -> Event:
-    """Handoff admission — seat resolved, thread creation pending."""
+    """Handoff admission — seat resolved, thread creation pending.
+
+    ``handoff_contract`` is the resolved work-intent (``consult`` | ``implement``).
+    """
     return Event(
         signal="frontier.handoff.requested",
         payload={
             "request_id": request_id,
             "role": role,
             "to_agent": to_agent,
+            "handoff_contract": handoff_contract,
         },
         scope="node",
     )

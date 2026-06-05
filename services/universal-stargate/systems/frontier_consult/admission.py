@@ -213,6 +213,71 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     return to_agent, family, platform
 
 
+# Handoff work-intent contract. Declares whether a handoff is a consult
+# (dialectic, return findings) or a bound implementation (follow packet
+# acceptance criteria). Orthogonal to seat routing — routing stays
+# resolve_web_handoff_seat(role); contract affects validation, response echo,
+# tags, and pointer text only.
+_ROLE_DEFAULT_CONTRACT: dict[str, str] = {
+    "lead": "consult",
+    "claude-web": "consult",
+    "cursor-lead": "consult",
+    "claude-cursor": "consult",
+    "implementer": "implement",
+}
+
+# (normalized_role, explicit_contract) → fix-naming reason for 422 rejection.
+# Every other combination is permitted (incl. role=lead + implement = web bound
+# implement; role=claude-cursor + implement = allow, docs recommend implementer).
+_CONTRACT_CONFLICTS: dict[tuple[str, str], str] = {
+    ("cursor-lead", "implement"): (
+        "role 'cursor-lead' is a consult seat; for bound implementation "
+        "use role='implementer' or handoff_contract='consult'"
+    ),
+    ("implementer", "consult"): (
+        "role 'implementer' is a bound-implementation seat; for consult "
+        "use role='cursor-lead' or handoff_contract='implement'"
+    ),
+}
+
+
+def resolve_handoff_contract(
+    role: str,
+    to_agent: str,
+    explicit: str | None,
+    request_id: str,
+) -> tuple[str, str]:
+    """Resolve the handoff work-intent contract.
+
+    Returns ``(contract, source)`` where ``contract ∈ {"consult", "implement"}``
+    and ``source ∈ {"explicit", "role_default"}``.
+
+    Default is inferred from the normalized role (``_ROLE_DEFAULT_CONTRACT``;
+    bare seat slugs with no role-default fall back to ``consult``). An explicit
+    contract overrides the default unless the (role, contract) pair is a known
+    conflict — those raise 422 ``handoff_contract_conflict`` with a fix-naming
+    message. ``to_agent`` is accepted for symmetry with the resolved seat but
+    routing is unaffected by the contract.
+    """
+    normalized = normalize_agent_slug(role)
+    default = _ROLE_DEFAULT_CONTRACT.get(normalized, "consult")
+
+    if explicit is None:
+        return default, "role_default"
+
+    conflict_reason = _CONTRACT_CONFLICTS.get((normalized, explicit))
+    if conflict_reason is not None:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="handoff_contract",
+            reason=conflict_reason,
+            status_code=422,
+            code="handoff_contract_conflict",
+        )
+
+    return explicit, "explicit"
+
+
 async def verify_thread_writable(
     thread: str,
     *,

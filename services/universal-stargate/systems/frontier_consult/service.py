@@ -193,6 +193,7 @@ async def build_dispatch_body(
         "generation_parameters": generation_options,
         "mcp": mcp_enabled,
         "_endpoint_request_id": request_id,
+        "output_contract": req.output_contract,
     }
     if req.role:
         pipeline_options["role"] = req.role

@@ -16,6 +16,7 @@ AGENT_GUIDES_RULE_SLUGS: dict[str, str] = {
     "advisor-timing": "agent-surface/sources/advisor-timing.md",
     "system-conduct": "agent-surface/sources/system-conduct.md",
     "agent-identity-signoff": "agent-surface/sources/agent-identity-signoff.md",
+    "md-navigation": "agent-surface/sources/md-navigation.md",
 }
 
 
@@ -64,7 +65,9 @@ def emit_agent_guides_rules(
             )
             if d:
                 print(d, end="")
-                print(f"DRIFT: {out_path} out of sync with {source_rel}", file=sys.stderr)
+                print(
+                    f"DRIFT: {out_path} out of sync with {source_rel}", file=sys.stderr
+                )
                 fail = 1
             continue
 

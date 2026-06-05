@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
-from .admission import resolve_web_handoff_seat
+from .admission import resolve_handoff_contract, resolve_web_handoff_seat
 from .events import FrontierHandoffCreated, FrontierHandoffRequested
 from .handoff import build_pointer_body, create_handoff_thread
 from .handoff_response import build_handoff_result, build_push_reminder
@@ -277,6 +277,9 @@ class TeamHandoffBody(BaseModel):
     pointer_body: str | None = None
     tags: list[str] | None = None
     caller_agent: str | None = None
+    # Work-intent contract — "consult" (dialectic) or "implement" (bound).
+    # Omitted ⟹ inferred from role default (see resolve_handoff_contract).
+    handoff_contract: Literal["consult", "implement"] | None = None
 
 
 @team_router.post("/handoff", status_code=200, response_model=None)
@@ -306,11 +309,19 @@ async def team_handoff(
             body.role, request_id=request_id
         )
 
+        handoff_contract, contract_source = resolve_handoff_contract(
+            body.role,
+            to_agent,
+            body.handoff_contract,
+            request_id,
+        )
+
         _publish(
             FrontierHandoffRequested(
                 request_id=request_id,
                 role=body.role,
                 to_agent=to_agent,
+                handoff_contract=handoff_contract,
             )
         )
 
@@ -319,6 +330,7 @@ async def team_handoff(
             packet_path=body.packet_path,
             subject=body.subject,
             pointer_body=body.pointer_body,
+            handoff_contract=handoff_contract,
         )
 
         thread_id = await create_handoff_thread(
@@ -328,6 +340,7 @@ async def team_handoff(
             pointer_body=pointer,
             caller_agent=body.caller_agent,
             tags=body.tags,
+            handoff_contract=handoff_contract,
         )
 
         _publish(
@@ -351,6 +364,9 @@ async def team_handoff(
         "thread_id": thread_id,
         "subject": body.subject,
         "to_agent": to_agent,
+        "resolved_handoff_seat": to_agent,
+        "handoff_contract": handoff_contract,
+        "handoff_contract_source": contract_source,
         "push_reminder": build_push_reminder(
             thread_id=thread_id, to_agent=to_agent, platform=platform
         ),

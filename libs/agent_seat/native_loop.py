@@ -28,7 +28,7 @@ from llm_adapters import (
 from model_id import ModelId
 from universal_logging import get_logger
 
-from agent_seat.context import bind_active_persona, reset_active_persona
+from agent_seat.context import bind_active_role, reset_active_role
 from agent_seat.tool_friction import ToolFrictionTracker
 
 logger = get_logger(__name__)
@@ -182,7 +182,7 @@ async def run_native_tool_loop(
     # iteration's append_tool_round already ran and this stays None.
     pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None = None
 
-    persona_token = bind_active_persona(agent)
+    role_token = bind_active_role(agent)
     try:
         return await _run_native_tool_loop_body(
             model=model,
@@ -205,7 +205,7 @@ async def run_native_tool_loop(
             pending_round=pending_round,
         )
     finally:
-        reset_active_persona(persona_token)
+        reset_active_role(role_token)
 
 
 async def _run_native_tool_loop_body(

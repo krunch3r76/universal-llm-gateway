@@ -43,8 +43,8 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
-- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push)
-- to claude-cursor / cursor-lead / implementer → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
+- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push); consult OR bound implement (intent in packet — same seat)
+- to claude-cursor / cursor-lead → consult handoff; implementer → bound implement handoff (both → claude-cursor; open thread in IDE)
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
@@ -59,8 +59,8 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
-- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push)
-- to claude-cursor / cursor-lead / implementer → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
+- to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push); consult OR bound implement (intent in packet — same seat)
+- to claude-cursor / cursor-lead → consult handoff; implementer → bound implement handoff (both → claude-cursor; open thread in IDE)
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
@@ -69,68 +69,28 @@ On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are 
 ⚠ "Want a grok answer" → frontier_dispatch xai/grok-4.3, never a build harness.
 Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
 
-# Co-located liveness block (2a durable home). Full substrate×load×probe table
-# kept (block ≈2KB, high-value) per the handoff; three-question redirect and
-# salience-trap line are mandatory and present.
+# Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
+# 1289): 3-question redirect + salience line kept inline; substrate table collapsed
+# to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc.
 _LIVENESS_BLOCK = """\
 ## Liveness — the running process is the source of truth (commit-decoupled)
-A change is LIVE only when LOADED into the running process at its last deploy/restart. Git commit/master is neither necessary nor sufficient. (operator: "we never need to commit to main; committing doesn't guarantee live processes are synced.")
+A change is LIVE only when LOADED into the running process at its last deploy/restart. Git commit/master is neither necessary nor sufficient.
 Before claiming a surface changed, ask three questions — do NOT read git for this:
   1. WHICH substrate?   2. Did its LOAD EVENT fire?   3. What does the LIVE PROBE say?
-| substrate               | live =                          | load event                       | probe |
-| service behavior        | running container image         | sync_restart / rebuild           | observability · boot_inspect · a real request |
-| MCP tool surface        | server's registered primary set | mcp restart + descriptor refresh | tool_search · invocation |
-| routing + model catalog | canonical.yaml baked at restart | sync_restart                     | /v1/models |
-| agent-context (you)     | rules loaded at session boot    | cortex_boot                      | this card · gen-rules --check |
+Substrates: service behavior (sync_restart/rebuild → observability probe) · MCP tool surface (mcp restart → tool_search) · routing+catalog (sync_restart → /v1/models) · agent-context (cortex_boot → this card).
 ⚠ Salience trap: "commit" is the loudest done/durable signal, so it gets grabbed as a liveness proxy under load. It is not one. Verify against the load event + probe, never the tree."""
 
-# Emitted on boot when the seat can dispatch (mcp surfaces). Gate for operator/agent
-# prompts like "consult", "get a second opinion", "review this" — pick transport
-# before calling tools. Unified path: handoff + lean packet for manual IDE/web seats;
-# frontier vs team for API one-shot. Spec: agent-bus thread 1252 / bus-dispatch-unify arc.
+# Compact index — full playbook is agent-skills/consult-routing.md (current superset,
+# verified 2026-06-04). The two highest-frequency traps are kept inline; everything
+# else defers to the skill. See F2 finding, thread 1289.
 _CONSULT_ROUTING_GATE = """\
-## Consult routing gate — when prompted to consult outside this seat
-Stop and classify BEFORE dispatching. Pick by **latency**, **substrate**, **operator step**, **MCP on consult**.
-
-**Surface axis (not MCP):** `team_dispatch` selects by **role/function** (MCP is a derived consequence of the role's effective model). `frontier_dispatch` selects by **explicit model** (`mcp=` is an explicit caller knob, default False). MCP on/off is never the selector between the two surfaces.
-
-| You need | Path | Poll / retrieve |
-|----------|------|-----------------|
-| One-shot, corpus fully inline | `frontier_dispatch(op=generate, model=…, mcp=False)` | `pipeline(op="result", …)` |
-| One-shot + live fs/cortex/RAG on API | `frontier_dispatch(…, mcp=True)` **required** — default is False | `pipeline(op="result", …)` |
-| One-shot + **role contract** | `team_dispatch(op=generate, role=reviewer|gatherer|…)` — MCP follows role's effective model (see below) | `pipeline(op="result", …)` |
-| **IDE** consult — seat MCP (not dispatch loop) | `team_dispatch(op=handoff, role=claude-cursor, packet_path=…)` | `agent_bus(wait, …)` — ¬ pipeline |
-| **Web** dialectic — seat MCP | `team_dispatch(op=handoff, role=lead|claude-web, …)` | `agent_bus(wait, …)` |
-| **Same seat, fresh bus thread** (self-handoff) | `team_dispatch(op=handoff, role=<own alias>, packet_path=…)` | push/open IDE → work new `thread_id` — ¬ `op=generate` to own seat (422) |
-| **Implement** (packet-bound, Cursor) — bound todo/spec + acceptance criteria | `team_dispatch(op=handoff, role=implementer, packet_path=…)` → claude-cursor (handoff-only; generate → 422) | `agent_bus(wait, …)` |
-| **Material decision — ≥2-family panel** (policy/invariant, hard-to-reverse, deadline/legal/financial) | `panel_dispatch(disposition=panel, messages=…, dispatch_thread_id=…)` → skeptic + reviewer; then adjudicating-caller steelman + `panel_adjudication_artifact` + assert | `pipeline(op="result", …)` per member; load `consensus-steelman-posture` §1 |
-| **Material decision — soft / competing options** | Steelman every live option in lead context first (`consensus-steelman-posture` §2); panel only when hard trigger fires | — |
-| Implement ping (thin) | `agent_bus(post, to=claude-cursor, …)` + spec | fetch / reply |
-
-**Self-handoff:** manual seats may handoff to themselves via `op=handoff` only. Deep spec: `handoff-dispatchers.mdc` § Self-handoff; `agent-skills/consult-routing.md`.
-
-**MCP on API consult (dispatch tool loop — not handoff seats):**
-| Surface | MCP default | Caller action |
-|---------|-------------|---------------|
-| `team_dispatch(generate)` | **On** when `client_side_mcp_tool_loop_admitted(model)` (denylist: inline-only + xai multi-agent) | Pick role; check role default model. |
-| `frontier_dispatch` | **Off** (`mcp=False`) | Pass **`mcp=True` explicitly** when consult must read repo/cortex/RAG. Same shared denylist clamps `mcp=True` for inline-only and xai multi-agent. |
-
-Admission (`mcp_enabled_for_team_dispatch`) is a **denylist** — not openai/anthropic-only. xAI single-agent (e.g. `xai/grok-4.3`) is admitted with MCP on; only **openai/** and **anthropic/** are verified to run a reliable in-loop tool cycle on API consult (confirm against pipeline executor before treating as ground truth).
-Gemini (inline-only family) and xAI multi-agent are admitted on team generate but get **no** client-side MCP loop on either API surface.
-If consult must verify live files: prefer `openai/gpt-5.5` or `anthropic/claude-*` with MCP on, or **handoff→claude-cursor** (native IDE MCP).
-
-**Defaults (scoped — not competing):**
-- **Material decision** (invariant change, hard-to-reverse scope, deadline/legal/financial, or close call + reversal cost) → read `agent-skills/consensus-steelman-posture.md` §1; steelman unconditionally; **`panel_dispatch`** when hard trigger fires (≥2 provider families).
-- **API one-shot / hands-off review** → `frontier_dispatch` or `team_dispatch(generate, role=reviewer)` (see `agent-skills/consult-routing.md`; deep matrix: `projects/.cursor/rules/handoff-dispatchers.mdc`, project-level above the repo).
-- **From Cursor: fresh perspective / tier / IDE substrate** → `handoff→claude-cursor` + lean packet.
-
-**frontier vs team (API one-shot):**
-- **frontier_dispatch** — pick **model**; you own system prompt; **`mcp=True` is explicit**.
-- **team_dispatch(generate)** — pick **function**; MCP implied by role→model unless inline-only.
-
-**Handoff:** consultee seat has its own MCP (IDE/web) — not governed by dispatch `mcp=` flag.
-
-On ambiguous "consult X": read `agent-skills/consult-routing.md`. Need live substrate → MCP-capable API path or handoff→cursor; inline opinion only → `frontier_dispatch(mcp=False)` or synthesizer."""
+## Consult routing — read the skill before dispatching
+On any consult / review / second-opinion / handoff / dispatch outside this seat:
+read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this is only the index).
+Two traps that cost a round-trip:
+- team_dispatch(op=generate) to a manual/web seat (claude-web|lead|cursor|claude-cursor|implementer) → 422; manual seats take op=handoff only.
+- "Want a grok answer" is not a build harness → frontier_dispatch(model="xai/grok-4.3").
+Surface axis: team_dispatch = role/function; frontier_dispatch = explicit model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
 
 
 def render_orientation_blocks(family: str | None = None) -> list[str]:

@@ -109,14 +109,29 @@ def resolve_section(text: str, section_path: str) -> Section:
             f"Multiple sections match path {section_path!r}: "
             + ", ".join(repr(s.path) for s in exact)
         )
+    # Heading-name match against the UNescaped heading text. Attempted
+    # unconditionally (not gated on absence of "/") so a caller may pass the
+    # natural heading verbatim — including one that contains a literal slash
+    # (``parse_sections`` escapes "/" as "\/" only in the path form; the
+    # ``heading`` field keeps the natural text). A "\/"-escaped leaf query
+    # collapses to the same key.
+    unesc = normalized.replace("\\/", "/")
+    heading_matches = [s for s in sections if s.heading == unesc]
+    if len(heading_matches) == 1:
+        return heading_matches[0]
+    if len(heading_matches) > 1:
+        raise SectionError(
+            f"Ambiguous heading {section_path!r}. "
+            f"Full paths: {', '.join(repr(s.path) for s in heading_matches)}"
+        )
+    # Trailing-path-suffix match — only for queries that are themselves a bare
+    # leaf (no "/"), preserving the original separator semantics for
+    # multi-segment path queries.
     if "/" not in normalized:
-        unesc = normalized.replace("\\/", "/")
         suffix_matches = [
             s
             for s in sections
-            if s.heading == unesc
-            or s.path.endswith(f"/{normalized}")
-            or s.path == normalized
+            if s.path.endswith(f"/{normalized}") or s.path == normalized
         ]
         if len(suffix_matches) == 1:
             return suffix_matches[0]

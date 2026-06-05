@@ -29,7 +29,7 @@ from transport_utils import (
     make_async_client,
 )
 
-from agent_seat.context import get_active_persona
+from agent_seat.context import get_active_role
 
 logger = logging.getLogger(__name__)
 
@@ -279,17 +279,17 @@ async def _agent_bus_request(
 
 
 def _inject_bus_from_agent(body: dict[str, Any], *, op: str) -> bool:
-    """Default ``from`` on post/reply when the dispatch loop bound active_persona."""
+    """Default ``from`` on post/reply when the dispatch loop bound active_role."""
     if body.get("from") or body.get("from_agent"):
         return False
-    persona = get_active_persona()
-    if not persona:
+    role = get_active_role()
+    if not role:
         return False
-    body["from"] = persona
+    body["from"] = role
     logger.debug(
-        "agent_seat agent_bus %s: injected from=%r from active_persona context",
+        "agent_seat agent_bus %s: injected from=%r from active_role context",
         op,
-        persona,
+        role,
     )
     return True
 

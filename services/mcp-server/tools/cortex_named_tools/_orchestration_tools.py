@@ -65,7 +65,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         views: list[str] | None = None,
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
-        (~25-35KB typical) with priority signals and a section manifest for on-demand pulls.
+        (soft target ≤ ~8KB inline) with priority signals and a section manifest for on-demand pulls.
 
         The briefing card contains: deadlines, unread bus summary, review queue
         count, last session summary, top todos, self-observations, temporal

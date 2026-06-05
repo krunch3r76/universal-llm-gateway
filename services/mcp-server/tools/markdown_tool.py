@@ -31,25 +31,20 @@ from markdown_sections import (
 from mcp_events import record
 
 from ._file_helpers import extract_text_content, is_converted_format
+from ._write_policy import project_write_denied_error, project_writes_enabled
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
 _FILES_ROOT = Path("/data/files")
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
-_PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 
-def _resolve_sandbox(sandbox: str, path: str) -> tuple[Path, bool]:
+def _resolve_sandbox(sandbox: str, path: str) -> Path:
     if sandbox == "cortex":
-        root, read_only = _FILES_ROOT.resolve(), False
+        root = _FILES_ROOT.resolve()
     elif sandbox == "workspaces":
-        root, read_only = _PROJECT_ROOT.resolve(), _PROJECT_READ_ONLY
+        root = _PROJECT_ROOT.resolve()
     else:
         raise ValueError(
             f"Unknown sandbox {sandbox!r}. Use 'cortex' (/data/files) "
@@ -63,7 +58,7 @@ def _resolve_sandbox(sandbox: str, path: str) -> tuple[Path, bool]:
         raise ValueError(
             f"Path {path!r} resolves outside {sandbox} root; traversal rejected"
         ) from None
-    return candidate, read_only
+    return candidate
 
 
 def _load_text(resolved: Path) -> tuple[str | None, str | None]:
@@ -89,6 +84,8 @@ def _mutate_document(resolved: Path, transform: Callable[[str], str]) -> str | N
             f"Cannot modify {resolved.suffix} files via section ops — "
             "converted formats are read-only (use md_list / md_read)"
         )
+    if not project_writes_enabled():
+        return project_write_denied_error()["error"]
     text, err = _load_text(resolved)
     if err:
         return err
@@ -99,7 +96,7 @@ def _mutate_document(resolved: Path, transform: Callable[[str], str]) -> str | N
     try:
         _write_file(resolved, updated)
     except OSError as e:
-        return str(e)
+        return project_write_denied_error()["error"] + f" (OS: {e})"
     return None
 
 
@@ -145,7 +142,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         if not path:
             return {"error": "'path' is required"}
         try:
-            resolved, read_only = _resolve_sandbox(sandbox, path)
+            resolved = _resolve_sandbox(sandbox, path)
         except ValueError as e:
             return {"error": str(e)}
 
@@ -200,20 +197,6 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             )
             return {"data": data, "path": path, "sandbox": sandbox}
 
-        if read_only:
-            record(
-                "mcp.tool.read.only.violation",
-                tool="markdown",
-                path=path,
-                operation=op,
-            )
-            return {
-                "error": (
-                    "tasks context is read-only (TASKS_READ_ONLY=true); "
-                    "write operations are disabled"
-                )
-            }
-
         if op == "replace_section":
             return _section_write_result(
                 resolved,
@@ -254,6 +237,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "converted formats are read-only"
                     )
                 }
+            if not project_writes_enabled():
+                return project_write_denied_error()
             if not content:
                 return {"error": "'content' (JSON) is required for from_dict"}
             try:

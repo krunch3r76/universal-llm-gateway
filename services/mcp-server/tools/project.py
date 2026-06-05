@@ -13,8 +13,9 @@ to restrict to git-tracked files. Binary assets are excluded from default
 listing, but text-oriented document formats handled by the shared file reader
 (`.pdf`, `.docx`, `.odt`, `.eml`, `.html`) can be read in text mode.
 
-Write tools (write_project_file, edit_project_file) are gated by
-PROJECT_READ_ONLY (default true). Toggle via project_access in mcp.yaml.
+Write tools (write_project_file, edit_project_file) are gated by the shared
+MCP write policy (_write_policy.project_writes_enabled). Toggle via
+project_access in mcp.yaml (rebuild MCP after change).
 """
 
 from __future__ import annotations
@@ -42,6 +43,7 @@ from ._search_helpers import (
     SearchBudgetState,
     load_text_for_search_file,
 )
+from ._write_policy import project_write_denied_error, project_writes_enabled
 from .file_editor import perform_edit
 from .filesystem._ops_search import (
     DEFAULT_MAX_RESULTS,
@@ -58,12 +60,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
-_PROJECT_READ_ONLY = os.environ.get("PROJECT_READ_ONLY", "true").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 
 _BINARY_SUFFIXES = (
     SEARCH_BINARY_SUFFIXES  # listing/write gate; search uses _search_helpers
@@ -138,15 +134,6 @@ def _looks_like_literal_filename(pattern: str) -> bool:
 def _is_binary(path: Path) -> bool:
     """Return True if the file's suffix indicates binary content."""
     return path.suffix.lower() in _BINARY_SUFFIXES
-
-
-def read_only_error() -> dict[str, str | int]:
-    return {
-        "error": (
-            "project is read-only (PROJECT_READ_ONLY=true); "
-            "set project_access: rw in ~/.gateway/mcp.yaml and rebuild MCP"
-        )
-    }
 
 
 def _discover_repos() -> list[Path]:
@@ -374,8 +361,8 @@ def register_project_tools(mcp: FastMCP) -> None:
 
         Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
         """
-        if _PROJECT_READ_ONLY:
-            return cast("dict[str, str]", read_only_error())
+        if not project_writes_enabled():
+            return cast("dict[str, str]", project_write_denied_error())
 
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
@@ -407,8 +394,8 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "copied", "from": "<source path>", "to": "<dest path>"}
         """
-        if _PROJECT_READ_ONLY:
-            return cast("dict[str, str]", read_only_error())
+        if not project_writes_enabled():
+            return cast("dict[str, str]", project_write_denied_error())
 
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
@@ -442,8 +429,8 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "trashed", "path": "<source>", "trash_path": "trash/<path>"}
         """
-        if _PROJECT_READ_ONLY:
-            return cast("dict[str, str]", read_only_error())
+        if not project_writes_enabled():
+            return cast("dict[str, str]", project_write_denied_error())
 
         src = _safe_project_path(path)
         if not src.exists():
@@ -779,8 +766,8 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "written", "path": "<relative path>"}
         """
-        if _PROJECT_READ_ONLY:
-            return read_only_error()
+        if not project_writes_enabled():
+            return project_write_denied_error()
 
         target = _safe_project_path(path)
         suffix = target.suffix.lower()
@@ -827,8 +814,8 @@ def register_project_tools(mcp: FastMCP) -> None:
             {"status": "edited: <operation>", "path": "<relative path>"}
             For replace: includes "replacements_made".
         """
-        if _PROJECT_READ_ONLY:
-            return cast("dict[str, str | int]", read_only_error())
+        if not project_writes_enabled():
+            return cast("dict[str, str | int]", project_write_denied_error())
 
         target = _safe_project_path(path)
         if not target.exists():

@@ -181,6 +181,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         packet_path: str | None = None,
         pointer_body: str | None = None,
         tags: list[str] | None = None,
+        handoff_contract: Literal["consult", "implement"] | None = None,
     ) -> dict[str, Any]:
         """Role-aware team-seat dispatch with explicit op discrimination.
 
@@ -218,12 +219,22 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           handoff_status, poll_hint}``. ``result_handle.kind ==
           "agent_bus_thread"`` is authoritative for retrieval routing — do NOT
           expect an ``execution_id`` and do NOT poll ``pipeline(op="result")``.
-          ``poll_hint`` is ready-to-paste ``agent_bus(tool="wait", ...)`` args
-          (``tool``: ``wait``, ``arguments``: thread, after_turn, wait_seconds,
-          completion, from_agent). Returns synchronously — no model is dispatched;
+          ``poll_hint`` carries ``tool`` (``wait``), ``arguments`` (object), and
+          ``arguments_json`` (string — use for MCP ``agent_bus`` calls; see
+          ``agent-skills/dispatch-shape.md``). Returns synchronously — no model is dispatched;
           the web session starts only after the operator pushes the bus message.
           Close your turn with the returned ``push_reminder``. ``messages``,
           ``model``, ``thread``, and ``dispatch_thread_id`` are unused by this op.
+          ``handoff_contract`` declares work intent — ``"consult"`` (dialectic;
+          return findings/risks/recommendations) or ``"implement"`` (bound;
+          follow packet acceptance criteria + quality gates). Omitted ⟹ inferred
+          from role (``lead``/``cursor-lead``/web/cursor seats → ``consult``;
+          ``implementer`` → ``implement``). Routing is unaffected — contract only
+          shapes validation, the response echo (``handoff_contract`` +
+          ``handoff_contract_source``), the ``contract:{value}`` agent-bus tag,
+          and the pointer ``Contract:`` line. Conflicting (role, contract) pairs
+          (e.g. ``cursor-lead`` + ``implement``, ``implementer`` + ``consult``)
+          return 422 ``handoff_contract_conflict`` naming the fix.
 
         Tool surface (no caller knob — derived from the effective model):
         - xAI multi-agent models — no client-side MCP tools.
@@ -263,6 +274,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ("pointer_body", pointer_body),
                 ("tags", tags),
                 ("caller_agent", caller_agent),
+                ("handoff_contract", handoff_contract),
             ):
                 if val is not None:
                     handoff_body[key] = val

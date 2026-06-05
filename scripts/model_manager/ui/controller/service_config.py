@@ -797,10 +797,10 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
     # project_access: ro (default) or rw
     if cfg.project_access == "rw":
         env["MCP_PROJECT_MOUNT_MODE"] = "rw"
-        env["PROJECT_READ_ONLY"] = "false"
+        env["MCP_PROJECT_WRITE_ENABLED"] = "true"
     else:
         env["MCP_PROJECT_MOUNT_MODE"] = "ro"
-        env["PROJECT_READ_ONLY"] = "true"
+        env["MCP_PROJECT_WRITE_ENABLED"] = "false"
 
     # tasks_access: off | ro (default) | rw
     if cfg.tasks_access == "off":

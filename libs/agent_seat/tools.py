@@ -137,7 +137,7 @@ _AGENT_BUS_TOOL_DEFINITION: dict[str, Any] = _fn(
     "Operations:\n"
     "  fetch   (thread, last?, compact?, mark_read?) — get turns\n"
     "  reply   (thread, to, subject, body, after_turn, from?) — reply; from\n"
-    "          defaults to the dispatched persona when omitted in tool loops\n"
+    "          defaults to the dispatched role when omitted in tool loops\n"
     "  post    (slug, to, subject, body, from?) — new thread; same default\n"
     "  threads (status?) — list threads; status: active/archived/all\n"
     "  get     (thread, turn_number) — single turn lookup\n\n"

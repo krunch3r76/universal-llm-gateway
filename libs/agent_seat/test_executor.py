@@ -212,10 +212,10 @@ async def test_execute_agent_bus_fetch_builds_path(
 
 
 @pytest.mark.asyncio
-async def test_execute_agent_bus_reply_injects_active_persona(
+async def test_execute_agent_bus_reply_injects_active_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agent_seat.context import bind_active_persona, reset_active_persona
+    from agent_seat.context import bind_active_role, reset_active_role
 
     captured: dict[str, Any] = {}
 
@@ -225,7 +225,7 @@ async def test_execute_agent_bus_reply_injects_active_persona(
 
     monkeypatch.setattr(_ex, "_agent_bus_request", fake_request)
 
-    token = bind_active_persona("gatherer")
+    token = bind_active_role("gatherer")
     try:
         await execute_tool(
             "agent_bus",
@@ -243,7 +243,7 @@ async def test_execute_agent_bus_reply_injects_active_persona(
             },
         )
     finally:
-        reset_active_persona(token)
+        reset_active_role(token)
 
     assert captured["body"] is not None
     assert captured["body"]["from"] == "gatherer"
