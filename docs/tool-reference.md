@@ -51,7 +51,8 @@ e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
 `web_seat_not_generate_target` — including when `model=` is supplied explicitly.
 Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 `synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
-web-default roles (`lead`, `investigator`). Web Claude doing local file work should
+web-default roles (`lead`, `investigator`), and Cursor handoff-only roles
+(`claude-cursor`, `cursor-lead`, `implementer`). Web Claude doing local file work should
 use `fs` directly; peer consult → `frontier_dispatch` or an API role.
 
 **`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
@@ -60,7 +61,10 @@ Operator shorthand **to `claude-web`** / **to `claude-cursor`** maps to this op 
 admit only handoff on `team_dispatch`). **Cursor → cursor** (`cursor-lead` → `claude-cursor`)
 is for **fresh perspective and tier upgrade** in a new IDE thread (packet-booted context,
 operator picks Opus in the model picker) — reviews, ongoing `project:` exploration, architecture,
-and extension work alike. See `projects/.cursor/rules/handoff-dispatchers.mdc` (workspaces sandbox) § `cursor-claude`; consult index `agent-skills/consult-routing.md`.
+and extension work alike. The **`implementer`** role also resolves to `claude-cursor` (handoff-only,
+generate → 422) but is **packet-bound code execution**: a bound todo/spec + acceptance criteria +
+quality gates, distinct from `cursor-lead`'s reasoning consult. See `.cursor/rules/handoff-dispatchers.mdc`
+§ `cursor-claude`; consult index `agent-skills/consult-routing.md`.
 
 Creates an agent-bus thread (e.g. `lead` → `claude-web`,
 `cursor-lead` or `claude-cursor` → `claude-cursor`)
@@ -80,11 +84,11 @@ are rejected with `handoff_requires_web_seat` 422.
 **itself** (`lead`/`claude-web`, `cursor-lead`/`claude-cursor`) to open a new
 agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
-Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
+Authority: `.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
 `agent-skills/consult-routing.md`.
 
 The pointer body defaults to the standard ≤25-line pointer template (see
-`projects/.cursor/rules/handoff-dispatchers.mdc` and `tmp/reviews/_handoff-packet-template.md`)
+`.cursor/rules/handoff-dispatchers.mdc` and `tmp/reviews/_handoff-packet-template.md`)
 (packet path + six-block enumeration + reply instruction). Caller may supply
 `pointer_body` override up to 25 lines. Longer overrides are rejected 422.
 

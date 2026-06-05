@@ -106,12 +106,16 @@ PARTITION: dict[str, list[str]] = {
         # Partitioned here for backfill membership; OVERRIDDEN below to its true
         # multi-agent value ['claude-cursor', 'claude-web'] (not universal).
         "agent_skill:mcp-surface-change",
+        # Moved from the claude-cursor bucket (thread 1264): web-lead ULG work has
+        # no IDE *_ws.mdc backstop, so claude-web needs ulg-architecture in its
+        # manifest. Partitioned here for backfill membership; OVERRIDDEN below to
+        # ['claude-cursor', 'claude-web'].
+        "agent_skill:ulg-architecture",
         # Partitioned here for backfill membership; OVERRIDDEN below to lead
         # seats ['claude-web', 'claude-cursor', 'grok-direct'] (not universal).
         "agent_skill:consensus-steelman-posture",
     ],
     "claude-cursor": [
-        "agent_skill:ulg-architecture",
         # Reconciled 2026-05-29 (direct-verify caught it): cursor-workspace skill
         # (.cursor/skills/); live applicable_agents=['claude-cursor'], not universal.
         "agent_skill:delegate-to-grok",
@@ -137,6 +141,9 @@ RETIRED_BOOT_SKILLS: tuple[str, ...] = (
 OVERRIDES: dict[str, list[str]] = {
     # Reconciled 2026-05-29 (direct-verify): cursor+web, not universal; matches live attr.
     "agent_skill:mcp-surface-change": ["claude-cursor", "claude-web"],
+    # Thread 1264: web-lead ULG orientation backstop — add claude-web alongside the
+    # existing cursor partition (no IDE *_ws.mdc auto-load on the web seat).
+    "agent_skill:ulg-architecture": ["claude-cursor", "claude-web"],
     "agent_skill:agent-build": [
         "claude-web",
         "claude-cursor",

@@ -234,6 +234,43 @@ def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
 
 
 # ---------------------------------------------------------------------------
+# H1c — implementer role (Option A alias → claude/cursor manual seat)
+# ---------------------------------------------------------------------------
+
+
+def test_h1c_implementer_resolves_claude_cursor() -> None:
+    """implementer aliases (claude, cursor): admitted handoff, resolves to claude-cursor."""
+    to_agent, _family, platform = resolve_web_handoff_seat(
+        "implementer", request_id="req-i1"
+    )
+    assert to_agent == "claude-cursor"
+    assert platform == "cursor"
+
+
+def test_h1c_route_implementer_push_reminder_mentions_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-impl"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "implementer",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["to_agent"] == "claude-cursor"
+    assert "cursor" in body["push_reminder"].lower()
+
+
+# ---------------------------------------------------------------------------
 # H2 — dispatchable role → 422 handoff_requires_web_seat
 # ---------------------------------------------------------------------------
 

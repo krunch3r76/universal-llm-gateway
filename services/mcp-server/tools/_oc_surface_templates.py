@@ -118,15 +118,23 @@ tools (xAI multi-agent rejects them; standard API path has no vortex). This plat
 (grok.com) has the full vortex MCP catalog available — use it."""
 
 CLAUDE_WEB_TOOL_SURFACE = """\
+## ULG architecture orientation (claude-web — skill-first)
+Before findings / spec / orchestration on any universal-llm-gateway task, read BOTH:
+`fs(sandbox="cortex", op="read", path="agent-skills/architecture-invariants.md")` and
+`fs(sandbox="cortex", op="read", path="agent-skills/ulg-architecture.md")`. You have NO
+IDE `*_ws.mdc` auto-load backstop — `ulg-architecture` is in your manifest (partition
+`["claude-cursor","claude-web"]`) but the `fs` read is load-bearing, not optional.
+Discovery order: todo `required_skills` → ULG pair → boot manifest → `cortex://agent-skills/README.md` → repo skills TOC.
+
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
 On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s). Seat slugs (claude-web) are NOT model IDs.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") (422)
 - fresh context on this seat (new bus thread) → team_dispatch(op="handoff", role="lead"|"claude-web", packet_path=…, subject=…) — **self-handoff supported**; operator push, then continue on returned thread_id
-- peer manual seat → team_dispatch(op="handoff", role=…) — e.g. web→cursor (cursor-lead), cursor→web (lead); poll as dispatcher via result_handle → agent_bus(tool="wait", …) — NOT pipeline(op="result")
+- peer manual seat → team_dispatch(op="handoff", role=…) — e.g. web→cursor (cursor-lead | implementer for packet-bound code execution), cursor→web (lead); poll as dispatcher via result_handle → agent_bus(tool="wait", …) — NOT pipeline(op="result")
 - consult any API model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
-- by API role → team_dispatch(op="generate", role="reviewer"|"gatherer"|"synthesizer"|"artisan"|"skeptic", dispatch_thread_id="…", messages=[…]) — ¬ role="claude-web"|"lead"|"web"
-- forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") even with model= — Stargate rejects; model= hits an API endpoint, never a web session. **Distinct:** op="handoff" to lead/claude-web is allowed (including self)
+- by API role → team_dispatch(op="generate", role="reviewer"|"gatherer"|"synthesizer"|"artisan"|"skeptic", dispatch_thread_id="…", messages=[…]) — ¬ role="claude-web"|"lead"|"web"|"claude-cursor"|"cursor-lead"|"implementer"
+- forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web"|"claude-cursor"|"cursor-lead"|"implementer") even with model= — Stargate rejects; model= hits an API endpoint, never a web session. **Distinct:** op="handoff" to lead/claude-web/claude-cursor/implementer is allowed (including self)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)

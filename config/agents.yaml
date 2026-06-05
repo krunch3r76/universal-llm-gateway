@@ -291,6 +291,19 @@ roles:
     default_platform: cursor
     default_model: null
 
+  implementer:
+    # Packet-bound code execution in a dedicated Cursor session. Option A alias:
+    # resolves to the manual (claude, cursor) profile (delivery=manual,
+    # dispatchable=false), so it is handoff-only — op=generate → 422
+    # web_seat_not_generate_target automatically, no admission code change.
+    # Distinct from cursor-lead (fresh-Opus consult/architecture): implementer
+    # carries a bound todo/spec + acceptance criteria + quality gates (Phase 3
+    # packet contract), not a reasoning consult.
+    description: "Packet-bound Cursor code execution (handoff-only) — implements a bound todo/spec with acceptance criteria and quality gates; distinct from cursor-lead consult"
+    default_family: claude
+    default_platform: cursor
+    default_model: null
+
   reviewer:
     description: "Review and audit with reliable MCP writes. Preferred: claude-web via agent-bus. Automated team_dispatch: gpt-5.5. Anthropic API last resort (cost)."
     default_family: gpt

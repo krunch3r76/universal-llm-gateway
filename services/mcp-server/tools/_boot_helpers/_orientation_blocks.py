@@ -42,9 +42,9 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor (422 web_seat_not_generate_target)
+- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
 - to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push)
-- to claude-cursor / cursor-lead     → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
+- to claude-cursor / cursor-lead / implementer → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
@@ -58,9 +58,9 @@ _DISPATCH_CONSULT_BLOCK_GROK = """\
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor (422 web_seat_not_generate_target)
+- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
 - to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push)
-- to claude-cursor / cursor-lead     → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
+- to claude-cursor / cursor-lead / implementer → team_dispatch (op=handoff, role=…) → claude-cursor (open thread in IDE)
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
@@ -102,7 +102,8 @@ Stop and classify BEFORE dispatching. Pick by **latency**, **substrate**, **oper
 | **IDE** consult — seat MCP (not dispatch loop) | `team_dispatch(op=handoff, role=claude-cursor, packet_path=…)` | `agent_bus(wait, …)` — ¬ pipeline |
 | **Web** dialectic — seat MCP | `team_dispatch(op=handoff, role=lead|claude-web, …)` | `agent_bus(wait, …)` |
 | **Same seat, fresh bus thread** (self-handoff) | `team_dispatch(op=handoff, role=<own alias>, packet_path=…)` | push/open IDE → work new `thread_id` — ¬ `op=generate` to own seat (422) |
-| Implement ping | `agent_bus(post, to=claude-cursor, …)` + spec | fetch / reply |
+| **Implement** (packet-bound, Cursor) — bound todo/spec + acceptance criteria | `team_dispatch(op=handoff, role=implementer, packet_path=…)` → claude-cursor (handoff-only; generate → 422) | `agent_bus(wait, …)` |
+| Implement ping (thin) | `agent_bus(post, to=claude-cursor, …)` + spec | fetch / reply |
 
 **Self-handoff:** manual seats may handoff to themselves via `op=handoff` only. Deep spec: `handoff-dispatchers.mdc` § Self-handoff; `agent-skills/consult-routing.md`.
 
@@ -117,7 +118,7 @@ Gemini (inline-only family) and xAI multi-agent are admitted on team generate bu
 If consult must verify live files: prefer `openai/gpt-5.5` or `anthropic/claude-*` with MCP on, or **handoff→claude-cursor** (native IDE MCP).
 
 **Defaults (scoped — not competing):**
-- **API one-shot / hands-off** → `frontier_dispatch` or `team_dispatch(generate)` (see `agent-skills/consult-routing.md`; deep matrix: `projects/.cursor/rules/handoff-dispatchers.mdc` on workspaces sandbox).
+- **API one-shot / hands-off** → `frontier_dispatch` or `team_dispatch(generate)` (see `agent-skills/consult-routing.md`; deep matrix: `.cursor/rules/handoff-dispatchers.mdc` on workspaces sandbox).
 - **From Cursor: fresh perspective / tier / IDE substrate** → `handoff→claude-cursor` + lean packet.
 
 **frontier vs team (API one-shot):**
