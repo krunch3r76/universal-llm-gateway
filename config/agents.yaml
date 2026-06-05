@@ -201,7 +201,7 @@ profiles:
     provider: google
     default_model: google/gemini-3.5-flash
     tool_surface: mcp
-    capability_tier: inline-only
+    # capability_tier: inline-only
     delivery: auto
     include_deadlines: true
     include_review_queue: true
