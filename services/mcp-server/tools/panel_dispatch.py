@@ -1,9 +1,11 @@
 """MCP tool — consensus panel helper (Phase 2, thread 1206).
 
 Runs the default ≥2-provider panel (skeptic + reviewer; optional synthesizer
-tiebreaker) via ``team_dispatch`` admission, returning execution IDs and family
-labels for Menu D asserts. Invoke when ``consensus_disposition=panel``; lead
-adjudication and cortex assert remain NON-offloadable (Guard 2).
+tiebreaker) via ``team_dispatch(op=generate)`` admission only — no ``to_thread`` or
+``handoff`` fan-out (Guard 2: lead adjudication precedes bus delivery). Returns
+execution IDs and family labels for Menu D asserts. Invoke when
+``consensus_disposition=panel``; adjudication and cortex assert remain
+NON-offloadable.
 """
 
 from __future__ import annotations
@@ -57,6 +59,11 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         wait_seconds: int = 60,
         caller_agent: str | None = None,
         system: str = "",
+        reasoning_effort: str | None = None,
+        generation_options: dict[str, Any] | None = None,
+        max_tool_turns: int | None = None,
+        transcript_id: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         """Run the consensus-steelman panel member dispatches (Phase 2 helper).
 
@@ -96,6 +103,12 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             wait_seconds: Per-member poll wait (capped by pipeline tool).
             caller_agent: Provenance slug for Stargate execution records.
             system: Optional extra system prefix for all panel members.
+            reasoning_effort: Passed through to each ``team_dispatch`` member
+                (same semantics as ``team_dispatch(op=generate)``).
+            generation_options: Provider generation pass-through per member.
+            max_tool_turns: Tool-loop cap per member.
+            transcript_id: Provenance-only session id per member dispatch.
+            timeout_seconds: Pipeline wall-clock cap per member.
         """
         admitted = admit_panel_plan(
             disposition=disposition,
@@ -131,6 +144,11 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
                     dispatch_thread_id=dispatch_thread_id,
                     caller_agent=caller_agent,
                     system=system,
+                    reasoning_effort=reasoning_effort,
+                    generation_options=generation_options,
+                    max_tool_turns=max_tool_turns,
+                    transcript_id=transcript_id,
+                    timeout_seconds=timeout_seconds,
                 ),
             )
             for spec in plan.members

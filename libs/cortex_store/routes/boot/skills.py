@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 from ...confidence_field import lifecycle_not_value_sql_predicate
 from ...db import cortex_conn
 from ...db import query as db_query
+from ._skill_trigger import skill_trigger_text
 
 _DEPRECATED_EXCLUDE = lifecycle_not_value_sql_predicate("deprecated")
 
@@ -21,7 +22,7 @@ router = APIRouter(tags=["boot"])
 # without the attribute are treated as `["*"]` via COALESCE so the default
 # behaviour pre-backfill is "show to everyone" — no silent narrowing.
 _BOOT_SKILLS_SQL = f"""
-    SELECT id, name, description,
+    SELECT id, name, description, source_uri,
            json_extract(attributes, '$.skill_binding') AS skill_binding_json
     FROM entities
     WHERE type = 'agent_skill'
@@ -50,17 +51,6 @@ _UNPARTITIONED_COUNT_SQL = f"""
       AND {_DEPRECATED_EXCLUDE}
       AND json_extract(attributes, '$.applicable_agents') IS NULL
 """
-
-
-def _first_sentence(text: str | None) -> str:
-    """Return the first sentence of `text`, stripped of trailing whitespace.
-
-    Boot card renders skills as slug + trigger index. Full SKILL.md is loaded
-    on demand via fs md_* on agent-skills/<slug>.md (¬inlined at boot).
-    """
-    if not text:
-        return ""
-    return text.split(". ", 1)[0].rstrip(".").strip()
 
 
 def _parse_skill_binding(
@@ -97,7 +87,7 @@ def _boot_skill_row(row: dict[str, Any]) -> dict[str, Any]:
         "id": row["id"],
         "entity_id": row["id"],
         "name": row["name"],
-        "description_first_sentence": _first_sentence(row["description"]),
+        "description_first_sentence": skill_trigger_text(row),
         "skill_class": skill_class,
         "binding_kind": _derive_binding_kind(skill_class, tool_binding),
     }
@@ -123,10 +113,10 @@ def get_boot_skills(
     """Compact agent_skill projection for boot briefings.
 
     Replaces the wider `/entities?type=agent_skill` fetch on the boot path.
-    Each row ships id/entity_id, name, description_first_sentence, and when
+    Each row ships id/entity_id, name, description_first_sentence (projected
+    from on-disk frontmatter / **Trigger:** when source_uri resolves), and when
     present the skill_binding axes (skill_class, tool_binding, binding_kind).
-    Full SKILL.md for each row is loaded server-side into the briefing card
-    (not returned on this API — keeps the projection compact).
+    Full SKILL.md bodies are loaded on demand via fs md_* (manifest-only card).
     """
     params: list[Any] = ["deprecated", "deprecated"]
     if for_agent:

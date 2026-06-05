@@ -152,6 +152,7 @@ _CLASS_HEADERS: dict[str, str] = {
 
 
 def _append_skill_index(lines: list[str], bucket: list[dict[str, Any]]) -> None:
+    """Emit slug + trigger + md_read hint per skill (manifest-only — no TOC bodies)."""
     for skill in sorted(bucket, key=skill_slug):
         slug = skill_slug(skill)
         rel = skill_relpath(skill)

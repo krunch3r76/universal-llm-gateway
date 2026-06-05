@@ -12,6 +12,7 @@ from agent_seat.panel_dispatch import (
     panel_provider_families,
     resolve_panel_members,
     validate_panel_assert_attributes,
+    verify_panel_role_model_resolution,
 )
 
 
@@ -65,8 +66,8 @@ def test_build_team_dispatch_body_shape() -> None:
     assert body["caller_agent"] == "claude-cursor"
 
 
-def test_build_team_dispatch_body_resolves_role_default_model() -> None:
-    """Skeptic roster entry has model=None; wire body must still carry explicit model."""
+def test_build_team_dispatch_body_omits_model_when_role_default() -> None:
+    """Skeptic roster entry has model=None; omit model like team_dispatch generate."""
     spec = PanelMemberSpec(role="skeptic", model=None)
     body = build_team_dispatch_body(
         spec=spec,
@@ -74,8 +75,27 @@ def test_build_team_dispatch_body_resolves_role_default_model() -> None:
         dispatch_thread_id="cursor-2026-06-02-panel",
     )
     assert body["role"] == "skeptic"
-    assert body["model"] == effective_model_for_member(spec)
-    assert str(body["model"]).startswith("xai/")
+    assert "model" not in body
+    assert effective_model_for_member(spec).startswith("xai/")
+
+
+def test_build_team_dispatch_body_passes_generate_options() -> None:
+    spec = PanelMemberSpec(role="reviewer", model="openai/gpt-5.5")
+    body = build_team_dispatch_body(
+        spec=spec,
+        messages=[{"role": "user", "content": "test"}],
+        dispatch_thread_id="cursor-2026-06-02-panel",
+        reasoning_effort="high",
+        generation_options={"temperature": 0.2},
+        max_tool_turns=12,
+        transcript_id="cursor-2026-06-05-1200",
+        timeout_seconds=120,
+    )
+    assert body["reasoning_effort"] == "high"
+    assert body["generation_options"] == {"temperature": 0.2}
+    assert body["max_tool_turns"] == 12
+    assert body["transcript_id"] == "cursor-2026-06-05-1200"
+    assert body["timeout_seconds"] == 120
 
 
 def test_validate_panel_assert_requires_artifact_and_falsifier() -> None:
@@ -126,3 +146,8 @@ def test_effective_model_uses_role_default_when_omitted() -> None:
     spec = PanelMemberSpec(role="skeptic", model=None)
     model = effective_model_for_member(spec)
     assert model.startswith("xai/")
+
+
+def test_verify_panel_role_model_resolution_passes_default_roster() -> None:
+    errors = verify_panel_role_model_resolution()
+    assert errors == [], f"panel role resolution drift: {errors}"

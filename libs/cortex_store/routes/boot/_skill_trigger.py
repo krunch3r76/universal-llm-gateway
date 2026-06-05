@@ -1,0 +1,74 @@
+"""Resolve boot-card skill trigger text from on-disk SKILL.md (single source)."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from ...dispatch_ops._shared import _FILES_ROOT
+
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---", re.DOTALL)
+_TRIGGER_LINE_RE = re.compile(r"^\*\*Trigger:\*\*\s*(.+)$", re.MULTILINE)
+
+
+def first_sentence(text: str | None) -> str:
+    """First sentence of `text` for manifest trigger display."""
+    if not text:
+        return ""
+    return text.split(". ", 1)[0].rstrip(".").strip()
+
+
+def _parse_frontmatter_description(text: str) -> str | None:
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return None
+    block = match.group(1)
+    for line in block.splitlines():
+        if line.startswith("description:"):
+            raw = line.split(":", 1)[1].strip()
+            if raw.startswith(">-") or raw.startswith("|"):
+                return None
+            if (raw.startswith('"') and raw.endswith('"')) or (
+                raw.startswith("'") and raw.endswith("'")
+            ):
+                raw = raw[1:-1]
+            return raw.strip() or None
+    return None
+
+
+def _parse_trigger_line(text: str) -> str | None:
+    match = _TRIGGER_LINE_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip() or None
+
+
+def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
+    if source_uri:
+        raw = source_uri.removeprefix("cortex://")
+        candidate = Path(source_uri) if Path(source_uri).is_absolute() else _FILES_ROOT / raw
+        if candidate.is_file():
+            return candidate
+    fallback = _FILES_ROOT / "agent-skills" / f"{slug}.md"
+    return fallback if fallback.is_file() else None
+
+
+def skill_trigger_text(row: dict[str, Any]) -> str:
+    """Project manifest trigger from file frontmatter / Trigger line, else entity description."""
+    entity_id = str(row.get("id") or "")
+    slug = str(row.get("name") or "").strip() or entity_id.removeprefix("agent_skill:")
+    path = _resolve_skill_file(row.get("source_uri"), slug)
+    if path is not None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        else:
+            for candidate in (
+                _parse_frontmatter_description(text),
+                _parse_trigger_line(text),
+            ):
+                if candidate:
+                    return first_sentence(candidate)
+    return first_sentence(row.get("description"))

@@ -264,11 +264,27 @@ material gate fires — not only on explicit operator request. Read
 
 | Arg | Type | Description |
 |---|---|---|
-| `messages` | `list[dict]` | Latest user turn(s) per member |
+| `messages` | `list[dict]` | Latest user turn(s) per member — same compaction contract as `team_dispatch` |
 | `dispatch_thread_id` | `str` | Server-owned compaction key (required) |
 | `disposition` | `"panel"` | Must be `panel` |
 | `include_synthesizer` | `bool` | Optional gemini tiebreaker |
 | `poll` | `bool` | Block-poll each `execution_id` when true |
+| `wait_seconds` | `int` | Per-member poll wait when `poll=true` (capped at 60) |
+| `caller_agent` | `str\|None` | Dispatch provenance (forwarded to each member) |
+| `system` | `str\|None` | Extra caller-supplied system text for all members |
+| `reasoning_effort` | `str\|None` | Uniform pass-through to each `team_dispatch(op=generate)` member |
+| `generation_options` | `dict\|None` | Uniform provider pass-through; use only cross-provider-safe keys |
+| `max_tool_turns` | `int\|None` | Tool-loop cap per member |
+| `transcript_id` | `str\|None` | Provenance-only session id per member (not forwarded to models) |
+| `timeout_seconds` | `int\|None` | Pipeline wall-clock cap per member |
+
+**Wire shape:** each member relay is a `team_dispatch(op=generate)` body. `model` is
+omitted for role-default members (`skeptic`, `synthesizer`); `reviewer` carries an
+explicit override. Auditability is via the returned `member_models` / `panel_families`
+envelope and Menu D assert stamp — not wire-pinned models.
+
+**Generate-only by design:** no `op=to_thread` or `op=handoff` fan-out — member outputs
+must be polled and lead-adjudicated (Guard 2) before any bus delivery or conclusion.
 
 `extra_members` is a **library-only** hook on `agent_seat.panel_dispatch.resolve_panel_members`;
 the MCP `panel_dispatch` tool intentionally does not expose it — the MCP surface stays a

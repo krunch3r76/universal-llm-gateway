@@ -1,8 +1,10 @@
 """Consensus panel dispatch helpers — role specs, provider families, stamp validation.
 
-Phase 2 (thread 1206): orchestrates ``team_dispatch`` panel members (skeptic +
-reviewer, optional synthesizer tiebreaker) and builds Menu D assert attributes.
-HTTP relay lives in ``services/mcp-server/tools/panel_dispatch.py``.
+Phase 2 (thread 1206): orchestrates ``team_dispatch(op=generate)`` panel members
+(skeptic + reviewer, optional synthesizer tiebreaker) and builds Menu D assert
+attributes. Generate-only by design — no ``to_thread``/``handoff`` fan-out (Guard 2:
+lead adjudication precedes any bus delivery). HTTP relay lives in
+``services/mcp-server/tools/panel_dispatch.py``.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from typing import Any
 
 from model_id import ModelId
 
+from agent_seat.profiles import get_profile, get_role
 from agent_seat.registry import resolve_agent_model
 
 # Guard 3: independent family := distinct provider (display labels for asserts).
@@ -92,6 +95,56 @@ def effective_model_for_member(spec: PanelMemberSpec) -> str:
     return resolve_agent_model(spec.role)
 
 
+def verify_panel_role_model_resolution(
+    roles: tuple[str, ...] = ("skeptic", "reviewer", TIEBREAKER_ROLE),
+) -> list[str]:
+    """Guard: MCP-side ``resolve_agent_model`` must match yaml role/platform SOT.
+
+    Stargate admits ``op=generate`` with ``model`` omitted using the role's
+    ``(default_family, default_platform)`` profile; ``member_models`` and Guard 3
+    ``panel_families`` are computed MCP-side from ``effective_model_for_member``.
+    Divergence would stamp the wrong provider families on Menu D asserts.
+    """
+    errors: list[str] = []
+    for role in roles:
+        try:
+            rp = get_role(role)
+        except KeyError:
+            errors.append(f"unknown panel role {role!r}")
+            continue
+        try:
+            profile = get_profile(rp.default_family, rp.default_platform)
+        except KeyError:
+            errors.append(
+                f"{role}: no profile for ({rp.default_family}, {rp.default_platform})"
+            )
+            continue
+        resolved = resolve_agent_model(role)
+        role_default = rp.default_model or profile.default_model
+        if role_default and resolved != role_default:
+            errors.append(
+                f"{role}: resolve_agent_model={resolved!r} != role default {role_default!r}"
+            )
+        if profile.default_model and role_default != profile.default_model:
+            errors.append(
+                f"{role}: role default {role_default!r} != platform profile "
+                f"{profile.default_model!r}"
+            )
+        if ModelId.parse(resolved).provider != profile.provider:
+            errors.append(
+                f"{role}: provider mismatch resolved={resolved!r} profile={profile.provider!r}"
+            )
+    for spec in resolve_panel_members(include_synthesizer=True):
+        if not spec.model:
+            continue
+        rp = get_role(spec.role)
+        if rp.allowed_models and spec.model not in rp.allowed_models:
+            errors.append(
+                f"{spec.role}: panel override {spec.model!r} not in allowed_models"
+            )
+    return errors
+
+
 def provider_family_label(model: str) -> str:
     """Display family label from effective model (Guard 3 — distinct provider)."""
     provider = ModelId.parse(model).provider
@@ -117,18 +170,32 @@ def build_team_dispatch_body(
     dispatch_thread_id: str,
     caller_agent: str | None = None,
     system: str = "",
+    reasoning_effort: str | None = None,
+    generation_options: dict[str, Any] | None = None,
+    max_tool_turns: int | None = None,
+    transcript_id: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     """``team_dispatch(op=generate)`` body for one panel member."""
     body: dict[str, Any] = {
         "op": "generate",
         "role": spec.role,
-        "model": effective_model_for_member(spec),
         "messages": messages,
         "dispatch_thread_id": dispatch_thread_id,
         "system": system,
     }
-    if caller_agent is not None:
-        body["caller_agent"] = caller_agent
+    if spec.model is not None:
+        body["model"] = spec.model
+    for key, val in (
+        ("caller_agent", caller_agent),
+        ("reasoning_effort", reasoning_effort),
+        ("generation_options", generation_options),
+        ("max_tool_turns", max_tool_turns),
+        ("transcript_id", transcript_id),
+        ("timeout_seconds", timeout_seconds),
+    ):
+        if val is not None:
+            body[key] = val
     return body
 
 

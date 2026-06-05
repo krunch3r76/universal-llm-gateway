@@ -2718,14 +2718,15 @@ tools:
   introduced: '2026-06-04'
 
   # ─── domain: panel_dispatch ──────────────────────────────────────────────────
-  # Phase 2 consensus panel helper (thread 1206). Single-purpose tool — no op enum.
+  # Phase 2 consensus panel helper (thread 1206). Single-purpose tool — generate-only
+  # fan-out via team_dispatch(op=generate); discriminator is disposition, not op.
 
 - canonical_name: panel_dispatch
   domain: panel_dispatch
   operation: panel
   dispatcher_call_shape:
     tool: panel_dispatch
-    dispatch_key: op
+    dispatch_key: disposition
     dispatch_value: panel
   flat_call_shape:
     tool: panel_dispatch
@@ -2748,6 +2749,11 @@ tools:
       wait_seconds: {type: integer}
       caller_agent: {type: string}
       system: {type: string}
+      reasoning_effort: {type: string}
+      generation_options: {type: object}
+      max_tool_turns: {type: integer}
+      transcript_id: {type: string}
+      timeout_seconds: {type: integer}
     required: [messages, dispatch_thread_id]
   skill_uri: agent_skill:consensus-steelman-posture
   seat_visibility: [mcp, mcp_claude]
