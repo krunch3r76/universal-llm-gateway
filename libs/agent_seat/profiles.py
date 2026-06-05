@@ -71,6 +71,9 @@ class RoleProfile:
     default_model: str | None  # None ⟹ operator picks (web roles)
     allowed_models: tuple[str, ...] = field(default_factory=tuple)
     allowed_options: tuple[str, ...] | None = None  # None ⟹ no restriction
+    # Handoff work-intent default when the role is the selector and
+    # ``handoff_contract`` is omitted. None ⟹ resolves to ``consult``.
+    default_contract: Literal["consult", "implement"] | None = None
 
 
 def _load_agents_yaml() -> dict[str, Any]:
@@ -129,6 +132,7 @@ def load_roles() -> dict[str, RoleProfile]:
             allowed_options=(
                 tuple(allowed_opts_raw) if allowed_opts_raw is not None else None
             ),
+            default_contract=entry.get("default_contract"),
         )
     return roles
 

@@ -262,11 +262,16 @@ async def frontier_dispatch(
 class TeamHandoffBody(BaseModel):
     """``POST /api/v1/team/handoff`` — create an agent-bus thread for a manual seat.
 
-    ``op`` must be ``"handoff"``. ``model`` is the primary target selector —
-    synthetic manual-seat IDs (``claude-web``, ``claude-cursor``, aliases
-    ``web``/``cursor``). Legacy ``role`` slugs (``lead``, ``cursor-lead``,
-    ``implementer``) are deprecated shims. ``handoff_contract`` declares intent:
-    ``consult`` (review / revise / expand / dialectic) or ``implement`` (bound).
+    ``model`` and ``role`` are co-equal first-class target selectors:
+      - ``model`` — synthetic manual-seat ID (``claude-web``, ``claude-cursor``,
+        aliases ``web``/``cursor``).
+      - ``role`` — functional roster slug (``lead``, ``cursor-lead``,
+        ``implementer``) resolved via ``RoleProfile``.
+    At least one is required; supplying both is permitted only when they resolve
+    to the same seat (else 422 ``handoff_seat_role_conflict``). ``role`` may carry
+    a ``default_contract`` (e.g. ``implementer`` → implement). ``handoff_contract``
+    declares intent explicitly: ``consult`` (review / revise / expand / dialectic)
+    or ``implement`` (bound).
     """
 
     model_config = {"extra": "forbid"}
@@ -305,16 +310,14 @@ async def team_handoff(
                 return
             event_bus.publish_from_sync(event)
 
-        to_agent, _family, platform, resolved_model, deprecation = (
-            resolve_handoff_target(
-                model=body.model,
-                role=body.role,
-                request_id=request_id,
-            )
+        to_agent, _family, platform, resolved_model = resolve_handoff_target(
+            model=body.model,
+            role=body.role,
+            request_id=request_id,
         )
 
         handoff_contract, contract_source = resolve_handoff_contract(
-            legacy_role=body.role if body.model is None else None,
+            role=body.role,
             explicit=body.handoff_contract,
             request_id=request_id,
         )
@@ -384,6 +387,4 @@ async def team_handoff(
         ),
         **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
     }
-    if deprecation:
-        result["deprecation"] = deprecation
     return result

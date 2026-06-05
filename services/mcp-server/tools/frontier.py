@@ -9,11 +9,13 @@ Two tools, two contracts:
   ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
   generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
-  handoff: ``model=claude-web|claude-cursor`` (synthetic seat) + ``handoff_contract``
-  legacy handoff role shims: lead, cursor-lead, implementer (deprecated)
+  handoff selectors (co-equal): ``model=claude-web|claude-cursor`` (synthetic
+  seat) and/or ``role=lead|cursor-lead|implementer`` (roster slug) + optional
+  ``handoff_contract``.
 
   Op enum: "generate" (returns content via tracker), "to_thread" (reply lands
-  on ``thread``), or "handoff" (manual-seat agent-bus thread via ``model=``).
+  on ``thread``), or "handoff" (manual-seat agent-bus thread via ``model=`` /
+  ``role=``).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is direct frontier
   dispatch (no role envelope). Same op enum.
 
@@ -184,18 +186,23 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
-        **``op="handoff"``** — primary path for manual seats (``claude-web``,
-        ``claude-cursor``). Pass ``model`` (synthetic seat ID) + ``handoff_contract``:
+        **``op="handoff"``** — manual seats (``claude-web``, ``claude-cursor``).
+        ``model`` (synthetic seat ID) and ``role`` (roster slug) are co-equal
+        first-class selectors; pass either (or both, when they agree) +
+        optional ``handoff_contract``:
 
         - ``model="claude-cursor"`` + ``handoff_contract="consult"`` — review,
           revise, expand, dialectic (open IDE thread)
         - ``model="claude-cursor"`` + ``handoff_contract="implement"`` — bound
           implementation (same seat, different intent)
+        - ``role="implementer"`` — roster slug → claude-cursor; carries
+          ``default_contract=implement`` (no explicit ``handoff_contract`` needed)
         - ``model="claude-web"`` + ``handoff_contract=…`` — same shape; operator
           push to trigger web session
 
-        Legacy ``role`` slugs (``lead``, ``cursor-lead``, ``implementer``) are
-        deprecated shims — prefer ``model=``. Requires ``packet_path`` and
+        Supplying both ``model`` and ``role`` is allowed only when they resolve
+        to the same seat; a mismatch is rejected with 422
+        ``handoff_seat_role_conflict``. Requires ``packet_path`` and
         ``subject``. Returns ``{thread_id, resolved_model, to_agent, …}``.
 
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
@@ -218,10 +225,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           (system-on-behalf delivery). Tracker terminal status reflects
           the POST outcome. ``thread`` is required. ``subject`` is
           optional (defaults to ``"{role} reply — execution {short_id}"``).
-        - ``op="handoff"``: ``model`` (preferred) or legacy ``role`` selects the
-          manual seat. ``handoff_contract`` declares intent — ``"consult"`` or
-          ``"implement"``. Omitted ⟹ ``consult`` (or legacy ``implementer`` shim
-          default). Any seat accepts either contract. Returns
+        - ``op="handoff"``: ``model`` and/or ``role`` (co-equal) select the
+          manual seat; both must agree else 422 ``handoff_seat_role_conflict``.
+          ``handoff_contract`` declares intent — ``"consult"`` or
+          ``"implement"``. Omitted ⟹ the role's ``default_contract`` (e.g.
+          ``implementer`` → implement) else ``consult``. Any seat accepts either
+          contract. Returns
           ``{thread_id, subject, to_agent, resolved_model, push_reminder,
           result_handle, handoff_status, poll_hint}``. Poll via
           ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
@@ -260,8 +269,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "model (e.g. 'claude-cursor', 'claude-web') or legacy "
-                            "role is required when op='handoff'"
+                            "model (e.g. 'claude-cursor', 'claude-web') or role "
+                            "(e.g. 'lead', 'implementer') is required when "
+                            "op='handoff'"
                         ),
                     }
                 }

@@ -213,61 +213,63 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     return to_agent, family, platform
 
 
-# Legacy functional role slugs → synthetic manual-seat model IDs (handoff shim).
-_LEGACY_HANDOFF_ROLE_TO_MODEL: dict[str, str] = {
-    "lead": "claude-web",
-    "cursor-lead": "claude-cursor",
-    "implementer": "claude-cursor",
-    "investigator": "grok-web",
-}
-
-# Default contract when ``handoff_contract`` omitted and caller used a legacy role.
-_LEGACY_ROLE_DEFAULT_CONTRACT: dict[str, str] = {
-    "implementer": "implement",
-}
-
-
 def resolve_handoff_target(
     *,
     model: str | None,
     role: str | None,
     request_id: str,
-) -> tuple[str, str, str, str, str | None]:
-    """Resolve a handoff target seat from ``model`` (preferred) or legacy ``role``.
+) -> tuple[str, str, str, str]:
+    """Resolve a handoff target seat from ``model`` and/or ``role``.
 
-    Returns ``(to_agent, family, platform, resolved_model, deprecation)``.
-    ``resolved_model`` is the canonical synthetic seat slug (e.g. ``claude-cursor``).
-    ``deprecation`` is set when a legacy ``role`` slug was used instead of ``model``.
+    ``model`` (synthetic manual-seat slug, e.g. ``claude-cursor``) and ``role``
+    (functional roster slug, e.g. ``lead``, ``implementer``) are co-equal
+    first-class selectors. Both route through ``resolve_web_handoff_seat`` —
+    role slugs already resolve via ``RoleProfile``.
+
+    Returns ``(to_agent, family, platform, resolved_model)`` where
+    ``resolved_model`` is the canonical synthetic seat slug.
+
+    When **both** are supplied, each is resolved independently and the
+    normalized seats MUST agree, else 422 ``handoff_seat_role_conflict``.
     """
+    if model and role:
+        model_agent, family, platform = resolve_web_handoff_seat(
+            model, request_id=request_id
+        )
+        role_agent, _rf, _rp = resolve_web_handoff_seat(role, request_id=request_id)
+        if model_agent != role_agent:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="role",
+                reason=(
+                    f"model={model!r} resolves to seat {model_agent!r} but "
+                    f"role={role!r} resolves to seat {role_agent!r}; the two "
+                    f"selectors must agree on the target seat"
+                ),
+                status_code=422,
+                code="handoff_seat_role_conflict",
+            )
+        return model_agent, family, platform, model_agent
+
     if model:
         to_agent, family, platform = resolve_web_handoff_seat(
             model, request_id=request_id
         )
-        return to_agent, family, platform, to_agent, None
+        return to_agent, family, platform, to_agent
 
     if role:
-        canonical = normalize_agent_slug(role)
-        shim = _LEGACY_HANDOFF_ROLE_TO_MODEL.get(canonical)
-        target = shim or role
-        deprecation: str | None = None
-        if shim is not None:
-            deprecation = (
-                f"role={role!r} is deprecated for handoff; use "
-                f"model={shim!r} with handoff_contract="
-                f"'consult' (review/revise/expand) or 'implement'"
-            )
         to_agent, family, platform = resolve_web_handoff_seat(
-            target, request_id=request_id
+            role, request_id=request_id
         )
-        resolved_model = to_agent
-        return to_agent, family, platform, resolved_model, deprecation
+        return to_agent, family, platform, to_agent
 
     raise FrontierEndpointError(
         request_id=request_id,
         field="model",
         reason=(
             "op=handoff requires model (synthetic seat, e.g. 'claude-cursor', "
-            "'claude-web') or legacy role"
+            "'claude-web') or role (functional roster slug, e.g. 'lead', "
+            "'implementer')"
         ),
         status_code=422,
         code="handoff_target_required",
@@ -276,23 +278,25 @@ def resolve_handoff_target(
 
 def resolve_handoff_contract(
     *,
-    legacy_role: str | None,
+    role: str | None,
     explicit: str | None,
     request_id: str,
 ) -> tuple[str, str]:
     """Resolve handoff work-intent: consult (review/revise/expand) or implement.
 
-    Seat routing is orthogonal — any manual seat accepts either contract when
-    ``model`` is the primary selector. Legacy ``role=implementer`` still defaults
-    to ``implement`` when ``handoff_contract`` is omitted.
+    Resolution order: explicit > ``RoleProfile.default_contract`` (when ``role``
+    is present) > ``consult``. Seat routing is orthogonal — any manual seat
+    accepts either contract; the role's ``default_contract`` only fills the gap
+    when ``handoff_contract`` is omitted (e.g. ``role=implementer`` → implement).
     """
     if explicit is not None:
         return explicit, "explicit"
 
-    if legacy_role is not None:
-        normalized = normalize_agent_slug(legacy_role)
-        legacy_default = _LEGACY_ROLE_DEFAULT_CONTRACT.get(normalized, "consult")
-        return legacy_default, "role_default"
+    if role is not None:
+        canonical = normalize_agent_slug(role)
+        role_profile = load_roles().get(canonical)
+        if role_profile is not None and role_profile.default_contract is not None:
+            return role_profile.default_contract, "role_default"
 
     return "consult", "model_default"
 

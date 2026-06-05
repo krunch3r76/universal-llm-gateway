@@ -66,7 +66,7 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor, handoff_contract=consult|implement, packet_path=…, subject=…) — consult = review/revise/expand; implement = bound; legacy role= lead|cursor-lead|implementer deprecated
+- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor and/or role=lead|cursor-lead|implementer, handoff_contract=consult|implement, packet_path=…, subject=…) — model+role co-equal selectors (mismatch → 422 handoff_seat_role_conflict); consult = review/revise/expand; implement = bound; handoff_contract omitted ⟹ role default_contract (implementer → implement) else consult
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
@@ -82,7 +82,7 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor, handoff_contract=consult|implement, packet_path=…, subject=…) — consult = review/revise/expand; implement = bound; legacy role= lead|cursor-lead|implementer deprecated
+- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor and/or role=lead|cursor-lead|implementer, handoff_contract=consult|implement, packet_path=…, subject=…) — model+role co-equal selectors (mismatch → 422 handoff_seat_role_conflict); consult = review/revise/expand; implement = bound; handoff_contract omitted ⟹ role default_contract (implementer → implement) else consult
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]

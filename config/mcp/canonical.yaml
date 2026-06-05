@@ -2686,13 +2686,16 @@ tools:
     tool: team_dispatch_handoff
     substrate_qualified: user-vortex__team_dispatch_handoff
   fol_descriptor: |-
-    ∀ model ∈ SyntheticManualSeats ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
-      team_dispatch(op=handoff, model, packet_path, subject, handoff_contract?) ⟹
-        thread_id ∈ AgentBus ∧ resolved_model = model ∧ to_agent = model
+    ∀ (model ∨ role) ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
+      team_dispatch(op=handoff, model?, role?, packet_path, subject, handoff_contract?) ⟹
+        thread_id ∈ AgentBus ∧ resolved_model = seat ∧ to_agent = seat
         ∧ result_handle.kind = agent_bus_thread ∧ ¬execution_id.
+    model ∧ role are co-equal first-class selectors; ≥1 required.
     SyntheticManualSeats = claude-web | claude-cursor | grok-web | aliases (web, cursor, …).
-    handoff_contract: consult (review/revise/expand) | implement (bound) — orthogonal to model.
-    Legacy role slugs (lead, cursor-lead, implementer) deprecated — shim only.
+    RoleSlugs = lead → claude-web | cursor-lead, implementer → claude-cursor.
+    (model ∧ role ∧ seat(model) ≠ seat(role)) ⟹ 422 handoff_seat_role_conflict.
+    handoff_contract: consult (review/revise/expand) | implement (bound) — orthogonal to seat.
+    handoff_contract omitted ⟹ RoleProfile.default_contract (implementer → implement) else consult.
     API roles (reviewer, …) → 422 handoff_requires_web_seat.
     Poll via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result).
   json_schema:

@@ -303,6 +303,7 @@ roles:
     default_family: claude
     default_platform: cursor
     default_model: null
+    default_contract: implement
 
   reviewer:
     description: "Review and audit with reliable MCP writes. Preferred: claude-web via agent-bus. Automated team_dispatch: gpt-5.5. Anthropic API last resort (cost)."

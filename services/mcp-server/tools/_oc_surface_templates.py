@@ -141,11 +141,11 @@ overflow relay templates only; they require bound `dispatch`.
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
 When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
-- manual seat handoff → team_dispatch(op="handoff", model="claude-web"|"claude-cursor", handoff_contract="consult"|"implement", packet_path=…, subject=…) — **consult** = review/revise/expand/dialectic; **implement** = bound; same model for both intents; self-handoff supported on claude-web (operator push)
+- manual seat handoff → team_dispatch(op="handoff", model="claude-web"|"claude-cursor" and/or role="lead"|"cursor-lead"|"implementer", handoff_contract="consult"|"implement", packet_path=…, subject=…) — model+role co-equal selectors (mismatch → 422 handoff_seat_role_conflict); **consult** = review/revise/expand/dialectic; **implement** = bound; same seat for both intents; self-handoff supported on claude-web (operator push)
 - consult any API model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
 - by API role → team_dispatch(op="generate", role="reviewer"|…, dispatch_thread_id="…", messages=[…])
 - forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with model= instead
-- legacy role=lead|cursor-lead|implementer on handoff → deprecated shim; prefer model= + handoff_contract
+- role=lead|cursor-lead|implementer on handoff → first-class selector (co-equal with model=); carries default_contract (implementer → implement)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
