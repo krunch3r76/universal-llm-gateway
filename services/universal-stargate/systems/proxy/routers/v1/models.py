@@ -16,6 +16,7 @@ from systems.routing.selection.catalog import (
     get_all_available_models,
     get_local_model_ids,
     get_model_context_metadata,
+    get_model_dispatch_metadata,
     get_model_source_map,
     get_model_status_map,
 )
@@ -56,6 +57,7 @@ def _build_models_response(
     model_ids: list[str],
     pipeline_ids: list[str],
     context_metadata: dict[str, dict[str, int]] | None = None,
+    dispatch_metadata: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Build OpenAI-compatible models list response.
 
@@ -81,6 +83,10 @@ def _build_models_response(
             meta = context_metadata.get(model_id)
             if meta:
                 entry.update(meta)
+        if dispatch_metadata:
+            dispatch = dispatch_metadata.get(model_id)
+            if dispatch:
+                entry["dispatch"] = dispatch
         data.append(entry)
 
     for pipeline_id in sorted(pipeline_ids):
@@ -101,6 +107,7 @@ def _build_models_response(
 def _build_model_entry(
     model_id: str,
     context_metadata: dict[str, dict[str, int]] | None = None,
+    dispatch_metadata: dict[str, dict] | None = None,
 ) -> dict[str, Any]:
     """Build one OpenAI-compatible model object."""
     now = int(time.time())
@@ -116,6 +123,10 @@ def _build_model_entry(
         meta = context_metadata.get(model_id)
         if meta:
             entry.update(meta)
+    if dispatch_metadata:
+        dispatch = dispatch_metadata.get(model_id)
+        if dispatch:
+            entry["dispatch"] = dispatch
     return entry
 
 
@@ -218,12 +229,20 @@ async def list_models(
             proxy.federated_manager,
         )
 
+    dispatch_metadata = get_model_dispatch_metadata(
+        proxy.gateway_manager,
+        proxy.federated_manager,
+    )
+
     # Apply type filter
     models_to_include = model_ids if type != "pipeline" else []
     pipelines_to_include = pipeline_ids if type != "model" else []
 
     response = _build_models_response(
-        models_to_include, pipelines_to_include, context_metadata
+        models_to_include,
+        pipelines_to_include,
+        context_metadata,
+        dispatch_metadata,
     )
 
     if include_sources:
@@ -287,7 +306,12 @@ async def get_model(
             proxy.federated_manager,
         )
 
-    entry = _build_model_entry(model_id, context_metadata)
+    dispatch_metadata = get_model_dispatch_metadata(
+        proxy.gateway_manager,
+        proxy.federated_manager,
+    )
+
+    entry = _build_model_entry(model_id, context_metadata, dispatch_metadata)
     entry["activated"] = model_id in activated_models
     entry["available"] = model_id in all_models
 

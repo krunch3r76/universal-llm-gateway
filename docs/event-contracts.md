@@ -1517,11 +1517,19 @@ assignment to move from the original saturated gateway to an alternate gateway.
 | `cloud.proxy.request.failed` | `provider`, `model`, `status_code`, `error`, `adapter_type` |
 | `cloud.proxy.request.translation.failed` | `provider`, `model`, `error`, `direction`, `adapter_type` |
 | `cloud.proxy.mcp.configured` | `provider`, `mcp_server_url` |
+| `cloud.proxy.dispatch.catalogmiss` | `provider`, `model_id`, `reason` |
 | `debug.cloud.params.stripped` | `provider`, `model`, `stripped` (list[str]), `surface` (`chat_completions` \| `responses` \| `responses_stream`) |
 
 **INVARIANT**: `cloud.proxy.request.translation.failed` is emitted for adapter
 conversion failures (`request`, `response`, `stream_chunk`) and is distinct from
 provider HTTP failures.
+
+**Note**: `cloud.proxy.dispatch.catalogmiss` fires at catalog-fetch time when
+`capability_dispatch.resolve` raises `CatalogMissError` for a catalog model
+(provider outside the dispatch surface map). The catalog entry is then served
+WITHOUT a `dispatch` facet rather than with an invented default; the event makes
+that omission observable. It does not fire for the in-surface unknown-claude
+ceiling fallback, which resolves normally.
 
 **Note**: `debug.cloud.params.stripped` fires only when the OpenAI-compatible
 adapter drops params (`temperature`, `top_p`, `presence_penalty`,
@@ -1807,7 +1815,7 @@ Pipeline events are persisted to the Event Service and can be queried with
 | `frontier.endpoint.requested` | `request_id` | `agent` (nullable), `model` (nullable) | endpoint admission request observed before persona enforcement and dispatch forwarding. Distinguish team-vs-raw by `agent IS NOT NULL`; the historical caller-facing `boot` and `tools` fields are removed. (node-scoped) |
 | `frontier.endpoint.persona.resolved` | `request_id`, `agent`, `allowed_models_count` | `frontier_kind`, `default_model`, `allowed_options_count` | persona contract resolved from hydrated `ai_agent:{slug}` metadata (node-scoped). `tools_count` retired per todo:retire-tools-allowlist-as-caller-concern |
 | `frontier.endpoint.option.rejected` | `request_id`, `field`, `reason` | `agent` (nullable) | endpoint rejected request before dispatch admission; `field` ∈ {`model`, `tools`, `generation_options`} — covers persona violations (disallowed model/tools/options) and structural surface mismatches (Chat-Completions-only model on Responses API path) (node-scoped) |
-| `frontier.handoff.requested` | `request_id`, `role`, `to_agent` | `handoff_contract` (`consult` \| `implement`, nullable) — resolved work-intent after admission; seat routing unchanged (`to_agent` from role). Omitted/null on legacy callers before contract axis (2026-06). | handoff admission — seat resolved from role, agent-bus thread creation pending (node-scoped) |
+| `frontier.handoff.requested` | `request_id`, `role`, `to_agent` | `handoff_contract` (`consult` \| `implement`) — derived from role at admission (`cursor-implement` → implement; `*-consult` → consult). | handoff admission — seat resolved from role, agent-bus thread creation pending (node-scoped) |
 | `frontier.handoff.created` | `request_id`, `to_agent`, `thread_id` | - | handoff thread created on agent-bus (node-scoped) |
 | `pipeline.frontier.dispatch.hydrated` | `agent`, `execution_id`, `briefing_bytes`, `section_counts`, `continuation_id` | `frontier_dispatch_v1` team-seat step loaded dispatched-agent Cortex boot; omitted in persona-free mode (node-scoped) |
 | `pipeline.frontier.dispatch.tool.requested` | `agent` (nullable), `execution_id`, `tool_name`, `provider`, `tool_call_id` (nullable) | fired when the model begins generating a `tool_use` block in the streaming response (`content_block_start`), before tool execution; `tool_call_id` correlates with subsequent `.tool.called`/`.tool.failed` events — Anthropic: `content_block.id`; OpenAI/xAI: `item.id` or `item.call_id`; Google: `null` (no native id); emitted by `frontier_dispatch` handler `on_event` callback (node-scoped) |

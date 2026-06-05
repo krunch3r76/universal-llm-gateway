@@ -13,7 +13,7 @@
 profiles:
 
   claude/cursor:
-    # Manual IDE seat — team_dispatch(op="handoff", role="claude-cursor"|"cursor-lead", ...)
+    # Manual IDE seat — team_dispatch(op="handoff", role="cursor-consult"|"cursor-implement", ...)
     # creates an agent-bus thread for a dedicated Cursor session (e.g. Opus). Not a
     # team_dispatch generate target (dispatchable: false), same admission as claude/web.
     provider: anthropic
@@ -267,39 +267,33 @@ profiles:
       - session-close-pointer-subagent
 
 
-# Role dispatch policy:
-#   Review (preferred): claude-web via agent-bus + operator push.
-#   Web handoff (automated): team_dispatch(op="handoff", role="lead"|"investigator", ...)
-#     → creates bus thread for the role's web seat; returns thread_id + push_reminder.
-#   Cursor handoff (automated): team_dispatch(op="handoff", role="claude-cursor"|"cursor-lead", ...)
-#     → bus thread for claude-cursor; operator works the thread in Cursor (Opus optional).
+# Role dispatch policy (handoff roster: {platform}-{contract}):
+#   Web consult: team_dispatch(op="handoff", role="web-consult") → claude-web + operator push.
+#   Cursor consult: team_dispatch(op="handoff", role="cursor-consult") → claude-cursor IDE.
+#   Bound implement: team_dispatch(op="handoff", role="cursor-implement") →
+#     claude-cursor from any dispatching seat; packet + acceptance criteria required.
 #   Review / MCP writes (automated): team_dispatch role=reviewer → gpt-5.5.
 #   Analysis (no substrate writes): role=synthesizer → gemini-3.5-flash (inline-only).
 #   Reliable MCP writers: claude-web, gpt-5.5, anthropic API. Anthropic API last (cost).
 
 roles:
 
-  lead:
-    description: "Strategic advisor; senior architectural review; cross-session direction"
+  web-consult:
+    description: "Web consult handoff — review, dialectic, architecture on claude-web; operator pushes agent-bus"
     default_family: claude
     default_platform: web
     default_model: null
+    default_contract: consult
 
-  cursor-lead:
-    description: "Cursor→cursor consult via team_dispatch handoff — fresh packet context + operator tier (Opus); reviews, projects, exploration, architecture (not review-only)"
+  cursor-consult:
+    description: "Cursor consult handoff — fresh packet context + operator tier (Opus); reviews, projects, exploration, architecture"
     default_family: claude
     default_platform: cursor
     default_model: null
+    default_contract: consult
 
-  implementer:
-    # Packet-bound code execution in a dedicated Cursor session. Option A alias:
-    # resolves to the manual (claude, cursor) profile (delivery=manual,
-    # dispatchable=false), so it is handoff-only — op=generate → 422
-    # web_seat_not_generate_target automatically, no admission code change.
-    # Distinct from cursor-lead (fresh-Opus consult/architecture): implementer
-    # carries a bound todo/spec + acceptance criteria + quality gates (Phase 3
-    # packet contract), not a reasoning consult.
-    description: "Packet-bound Cursor code execution (handoff-only) — implements a bound todo/spec with acceptance criteria and quality gates; distinct from cursor-lead consult"
+  cursor-implement:
+    description: "Cursor bound-implement handoff — packet-bound code execution with acceptance criteria and quality gates; distinct from cursor-consult"
     default_family: claude
     default_platform: cursor
     default_model: null

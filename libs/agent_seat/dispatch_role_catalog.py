@@ -71,7 +71,7 @@ def generate_comma_clause() -> str:
 
 def handoff_comma_clause() -> str:
     """Comma-joined handoff roster with legacy suffixes, e.g.
-    ``lead, cursor-lead, implementer, investigator (legacy)``."""
+    ``web-consult, cursor-consult, cursor-implement, investigator (legacy)``."""
     return ", ".join(
         f"{r} (legacy)" if is_legacy_role(r) else r for r in handoff_roles()
     )
@@ -79,7 +79,7 @@ def handoff_comma_clause() -> str:
 
 def handoff_seat_map_clause() -> str:
     """Seat-grouped handoff map, e.g.
-    ``lead → claude-web; cursor-lead, implementer → claude-cursor; investigator → grok-web (legacy)``.
+    ``web-consult → claude-web; cursor-consult, cursor-implement → claude-cursor; investigator → grok-web (legacy)``.
 
     Roles are grouped by resolved seat (first-seen order); a group is marked
     ``(legacy)`` when every role in it is legacy.

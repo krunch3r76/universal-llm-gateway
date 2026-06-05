@@ -412,6 +412,36 @@ def get_model_context_metadata(
     return metadata
 
 
+def get_model_dispatch_metadata(
+    gateway_manager: SingleGatewayManager | None,
+    federated_manager: FederatedGatewayManager | None,
+) -> dict[str, dict]:
+    """Collect per-model dispatch facets for the /v1/models projection.
+
+    Returns a dict keyed by model_id string -> the ``dispatch`` wire facet
+    (mirror of libs ``CapabilityDispatch``), read from the per-model
+    ``model_resources`` carrier. Federated only this build: cloud dispatch rides
+    ``FederatedGateway.model_resources[mid]["dispatch"]`` (seeded by the
+    cloud-proxy catalog poller). Local rows carry no dispatch facet today
+    (tracked local-parity follow-up); the reader is source-shaped so populating
+    local ``model_resources["dispatch"]`` later needs no projection change.
+
+    ``gateway_manager`` is accepted for call-site parity with
+    ``get_model_context_metadata`` and the future local source.
+    """
+    _ = gateway_manager  # local dispatch not wired this build (source-agnostic Q4)
+    metadata: dict[str, dict] = {}
+
+    if federated_manager:
+        for fed_gw in federated_manager.get_healthy_gateways():
+            for mid, res in fed_gw.model_resources.items():
+                dispatch = res.get("dispatch")
+                if isinstance(dispatch, dict):
+                    metadata.setdefault(str(mid), dispatch)
+
+    return metadata
+
+
 def get_model_source_map(
     local_stargate_id: str,
     gateway_manager: SingleGatewayManager | None,

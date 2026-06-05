@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+from llm_adapters.capability_dispatch import CatalogMissError, resolve, to_wire_dict
 
 from .adapters.base import ProviderAdapter
 from .config import ProviderConfig
@@ -45,14 +46,18 @@ class CatalogModel:
     completion_cost_per_m: float = 0.0
     context_length: int = 0
     name: str = ""
+    dispatch: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Stargate-facing shape (backward compatible)."""
-        return {
+        entry: dict[str, Any] = {
             "id": self.id,
             "provider": self.provider,
             "max_concurrent": self.max_concurrent,
         }
+        if self.dispatch is not None:
+            entry["dispatch"] = self.dispatch
+        return entry
 
     def to_pricing_dict(self) -> dict[str, Any]:
         """Full shape including pricing for cost-aware routing."""
@@ -95,11 +100,14 @@ class CatalogManager:
         | None = None,
         on_provider_catalog_refresh_failed: Callable[[str, str], Awaitable[None]]
         | None = None,
+        on_dispatch_catalog_miss: Callable[[str, str, str], Awaitable[None]]
+        | None = None,
     ) -> None:
         self._providers = providers
         self._adapters = adapters
         self._on_provider_catalog_refreshed = on_provider_catalog_refreshed
         self._on_provider_catalog_refresh_failed = on_provider_catalog_refresh_failed
+        self._on_dispatch_catalog_miss = on_dispatch_catalog_miss
         self._catalogs: dict[str, ProviderCatalog] = {}
         self._refresh_task: asyncio.Task[None] | None = None
 
@@ -213,6 +221,14 @@ class CatalogManager:
                     continue
 
             pricing = entry.get("pricing") or {}
+            try:
+                dispatch = to_wire_dict(resolve(mid))
+            except CatalogMissError as exc:
+                dispatch = None
+                if self._on_dispatch_catalog_miss is not None:
+                    await self._on_dispatch_catalog_miss(
+                        config.provider, mid, exc.miss_reason
+                    )
             base_model = CatalogModel(
                 id=mid,
                 provider=config.provider,
@@ -223,6 +239,7 @@ class CatalogManager:
                     entry.get("context_length", entry.get("max_context_tokens", 0)) or 0
                 ),
                 name=str(entry.get("name", entry.get("display_name", mid))),
+                dispatch=dispatch,
             )
             models.append(base_model)
 

@@ -175,17 +175,24 @@ class CloudProxyCatalogPoller:
         current_ids: set[str] = set()
         for provider, entries in by_provider.items():
             model_ids: list[ModelId] = []
+            dispatch_by_mid: dict[ModelId, dict[str, Any]] = {}
             max_concurrent = 12
             for entry in entries:
                 mid_str = entry.get("id", "")
                 if mid_str and "/" in mid_str:
-                    model_ids.append(ModelId.parse(mid_str))
+                    mid = ModelId.parse(mid_str)
+                    model_ids.append(mid)
                     max_concurrent = entry.get("max_concurrent", max_concurrent)
+                    entry_dispatch = entry.get("dispatch")
+                    if isinstance(entry_dispatch, dict):
+                        dispatch_by_mid[mid] = entry_dispatch
 
             if not model_ids:
                 continue
 
-            gateway = self._build_virtual_gateway(provider, model_ids, max_concurrent)
+            gateway = self._build_virtual_gateway(
+                provider, model_ids, max_concurrent, dispatch_by_mid
+            )
             await self._gateway_manager.register_cloud_gateway(gateway)
             current_ids.add(gateway.gateway_id)
 
@@ -213,14 +220,20 @@ class CloudProxyCatalogPoller:
         provider: str,
         model_ids: list[ModelId],
         max_concurrent: int,
+        dispatch_by_mid: dict[ModelId, dict[str, Any]] | None = None,
     ) -> FederatedGateway:
         """Create a FederatedGateway representing a cloud provider via proxy."""
         gateway_id = f"cloud-{provider}"
         models_frozenset = frozenset(model_ids)
 
-        model_resources: dict[ModelId, dict[str, int | str]] = {
-            mid: {"max_concurrent_requests": max_concurrent} for mid in model_ids
-        }
+        dispatch_by_mid = dispatch_by_mid or {}
+        model_resources: dict[ModelId, dict[str, Any]] = {}
+        for mid in model_ids:
+            res: dict[str, Any] = {"max_concurrent_requests": max_concurrent}
+            dispatch = dispatch_by_mid.get(mid)
+            if dispatch is not None:
+                res["dispatch"] = dispatch
+            model_resources[mid] = res
 
         return FederatedGateway(
             gateway_id=gateway_id,

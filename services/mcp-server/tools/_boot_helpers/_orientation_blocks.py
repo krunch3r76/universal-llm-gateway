@@ -51,7 +51,7 @@ Three layers — do not conflate:
 **Invariant**: server-primary ≠ initial callable set. The connector loads tools in two shapes:
   - **Pre-bound** — tool is in the initial callable set → call directly.
   - **Deferred** — tool absent initially but loadable via `tool_search` → one load hop, then direct call. This is a VALID connector-bound shape; session 0856 observed N=0 pre-bound with all 15 server-primary tools deferred behind `tool_search` (every loaded tool reached a healthy server).
-Probe guidance: "absent from initial set" ≠ "connector dropped it". Before filing `tool_absent` friction, run a `tool_search` load hop, then correlate with events — a `mcp.request.started` for that `tool_name` proves the server was reached. Only a genuinely unreachable tool (no load via `tool_search`, no `started` event) is connector omission; then hand off to `team_dispatch(op=handoff, role=claude-cursor|cursor-lead, …)` — do not loop `tool_search`.
+Probe guidance: "absent from initial set" ≠ "connector dropped it". Before filing `tool_absent` friction, run a `tool_search` load hop, then correlate with events — a `mcp.request.started` for that `tool_name` proves the server was reached. Only a genuinely unreachable tool (no load via `tool_search`, no `started` event) is connector omission; then hand off to `team_dispatch(op=handoff, role=cursor-consult, …)` — do not loop `tool_search`.
 
 **Overflow / deferred load via `tool_search`**:
 ```
@@ -66,7 +66,7 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor and/or role=lead|cursor-lead|implementer, handoff_contract=consult|implement, packet_path=…, subject=…) — model+role co-equal selectors (mismatch → 422 handoff_seat_role_conflict); consult = review/revise/expand; implement = bound; handoff_contract omitted ⟹ role default_contract (implementer → implement) else consult
+- manual seat handoff → team_dispatch (op=handoff, role=web-consult|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
@@ -82,7 +82,7 @@ To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, model=claude-web|claude-cursor and/or role=lead|cursor-lead|implementer, handoff_contract=consult|implement, packet_path=…, subject=…) — model+role co-equal selectors (mismatch → 422 handoff_seat_role_conflict); consult = review/revise/expand; implement = bound; handoff_contract omitted ⟹ role default_contract (implementer → implement) else consult
+- manual seat handoff → team_dispatch (op=handoff, role=web-consult|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
 - stronger-model strategic advice   → advisor (problem)                       [overflow]
@@ -111,14 +111,14 @@ _CONSULT_ROUTING_GATE = """\
 On any consult / review / second-opinion / handoff / dispatch outside this seat:
 read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this is only the index).
 Three traps that cost a round-trip:
-- team_dispatch(op=generate) with synthetic seat model (claude-web|claude-cursor) → 422; manual seats take op=handoff with model=.
+- team_dispatch(op=generate) with synthetic seat model (claude-web|claude-cursor) → 422; manual seats take op=handoff with role=.
 - "Want a grok answer" is not a build harness → frontier_dispatch(model="xai/grok-4.3").
 - Wrong rules tree: the handoff protocol is NOT under `universal-llm-gateway/.cursor/rules/`. It lives at PROJECT `.cursor/rules/architecture-handoff-protocol.mdc` + `handoff-dispatchers.mdc` (no repo prefix).
-Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — implement (handoff_contract=implement) is NOT exempt:
+Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — implement (role=cursor-implement) is NOT exempt:
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Surface axis: team_dispatch handoff = synthetic seat model (claude-web/claude-cursor); team_dispatch generate = API role; frontier_dispatch = provider model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
+Surface axis: team_dispatch handoff = role (web-consult/cursor-consult/cursor-implement); team_dispatch generate = API role; frontier_dispatch = provider model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
 
 
 def _render_server_primary_manifest_line() -> str:

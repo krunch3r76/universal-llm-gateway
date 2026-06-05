@@ -24,6 +24,7 @@ from .registry import (
     resolve,
     xai_supports_reasoning_effort,
 )
+from .serialization import to_wire_dict
 from .types import (
     CapabilityDispatch,
     CapabilityMaxOutput,
@@ -59,6 +60,8 @@ __all__ = [
     "default_reasoning_effort",
     "xai_supports_reasoning_effort",
     "openai_supports_reasoning_effort",
+    # serialization
+    "to_wire_dict",
     # wrappers
     "ModelWrapper",
     "AnthropicWrapper",

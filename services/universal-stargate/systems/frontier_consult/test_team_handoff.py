@@ -155,6 +155,58 @@ async def test_h1_lead_admitted_thread_created(monkeypatch: pytest.MonkeyPatch) 
     assert thread_id == "bus-thread-42"
 
 
+def test_h1a_route_lead_pointer_includes_consult_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """role=web-consult posts pointer with Contract: consult line to agent-bus."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    captured: dict[str, Any] = {}
+    _patch_bus(monkeypatch, _capturing_bus_transport(captured, thread_id="bus-ptr"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body_text = captured["payload"]["body"]
+    assert "Contract: consult" in body_text
+    assert _GOOD_PACKET in body_text
+
+
+def test_h1a_route_lead_push_reminder_mentions_web_push(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """role=web-consult → claude-web; push_reminder tells operator to push bus message."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-web"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["to_agent"] == "claude-web"
+    assert body["handoff_contract"] == "consult"
+    assert "push" in body["push_reminder"].lower()
+    assert "web claude" in body["push_reminder"].lower()
+    assert body["poll_hint"]["arguments"]["from_agent"] == "claude-web"
+
+
 def test_h1_route_lead_returns_all_fields(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
@@ -167,7 +219,7 @@ def test_h1_route_lead_returns_all_fields(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -194,7 +246,7 @@ def test_handoff_response_includes_result_handle(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -232,7 +284,7 @@ def test_handoff_response_backward_compatible_keys(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -248,18 +300,47 @@ def test_handoff_response_backward_compatible_keys(
 
 def test_h1b_cursor_lead_resolves_claude_cursor() -> None:
     to_agent, _family, platform = resolve_web_handoff_seat(
-        "cursor-lead", request_id="req-c1"
+        "cursor-consult", request_id="req-c1"
     )
     assert to_agent == "claude-cursor"
     assert platform == "cursor"
 
 
-def test_h1b_claude_cursor_seat_slug_admitted() -> None:
+def test_h1b_claude_cursor_seat_slug_profile_resolves() -> None:
+    """Seat slug resolves at profile layer; handoff route rejects it (roster only)."""
     to_agent, _family, platform = resolve_web_handoff_seat(
         "claude-cursor", request_id="req-c2"
     )
     assert to_agent == "claude-cursor"
     assert platform == "cursor"
+
+
+@pytest.mark.parametrize("role", ["claude-web", "claude-cursor", "web", "web-claude"])
+def test_handoff_seat_alias_role_rejected(role: str) -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        resolve_handoff_target(role=role, request_id="req-alias")
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_role_invalid"
+
+
+def test_handoff_seat_alias_route_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "claude-web",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "handoff_role_invalid"
 
 
 def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
@@ -274,7 +355,7 @@ def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "cursor-lead",
+            "role": "cursor-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -293,7 +374,7 @@ def test_h1b_route_cursor_lead_push_reminder_mentions_cursor(
 def test_h1c_implementer_resolves_claude_cursor() -> None:
     """implementer aliases (claude, cursor): admitted handoff, resolves to claude-cursor."""
     to_agent, _family, platform = resolve_web_handoff_seat(
-        "implementer", request_id="req-i1"
+        "cursor-implement", request_id="req-i1"
     )
     assert to_agent == "claude-cursor"
     assert platform == "cursor"
@@ -311,7 +392,7 @@ def test_h1c_route_implementer_push_reminder_mentions_cursor(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "implementer",
+            "role": "cursor-implement",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -415,22 +496,23 @@ def test_h5_default_template_cites_packet_path() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_h6_provider_model_on_handoff_rejected() -> None:
-    """Provider model IDs are not synthetic manual-seat models."""
+def test_h6_provider_model_role_on_handoff_rejected() -> None:
+    """Provider model IDs are not handoff roster roles."""
     with pytest.raises(FrontierEndpointError) as exc_info:
         resolve_handoff_target(
-            model="anthropic/claude-sonnet-4-6",
-            role=None,
+            role="anthropic/claude-sonnet-4-6",
             request_id="req-h6",
         )
-    assert exc_info.value.status_code == 422
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_role_invalid"
 
 
 def test_h6_extra_field_messages_rejected() -> None:
     with pytest.raises(ValidationError):
         TeamHandoffBody(
             op="handoff",
-            role="lead",
+            role="web-consult",
             packet_path=_GOOD_PACKET,
             subject=_GOOD_SUBJECT,
             messages=[{"role": "user", "content": "x"}],  # type: ignore[call-arg]
@@ -514,7 +596,7 @@ def test_slug_from_subject_long_truncated() -> None:
 
 
 # ---------------------------------------------------------------------------
-# HC — handoff_contract (Option 2): defaults, explicit, conflicts, echo, tags
+# HC — role-derived contract (no request-side handoff_contract or model)
 # ---------------------------------------------------------------------------
 
 
@@ -536,8 +618,7 @@ def test_hc1_lead_no_contract_defaults_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=lead, no contract → consult; lead has no default_contract so the
-    source falls through to model_default. Seat=claude-web."""
+    """role=web-consult → consult/role_default. Seat=claude-web."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c1"))
 
@@ -546,7 +627,7 @@ def test_hc1_lead_no_contract_defaults_consult(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -554,7 +635,7 @@ def test_hc1_lead_no_contract_defaults_consult(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["handoff_contract"] == "consult"
-    assert body["handoff_contract_source"] == "model_default"
+    assert body["handoff_contract_source"] == "role_default"
     assert body["resolved_handoff_seat"] == "claude-web"
 
 
@@ -572,7 +653,7 @@ def test_hc1_lead_no_contract_tag_consult(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -580,63 +661,65 @@ def test_hc1_lead_no_contract_tag_consult(
     assert "contract:consult" in captured["payload"]["tags"]
 
 
-def test_hc2_lead_explicit_implement(
+def test_hc2_handoff_contract_field_rejected(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """role=lead + handoff_contract=implement → implement/explicit (web bound)."""
+    """Request-side handoff_contract is forbidden (extra=forbid)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
-    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c2"))
-
     client = TestClient(_handoff_app, raise_server_exceptions=False)
     resp = client.post(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
             "handoff_contract": "implement",
         },
     )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["handoff_contract"] == "implement"
-    assert body["handoff_contract_source"] == "explicit"
+    assert resp.status_code == 422
+
+
+def test_hc2b_model_field_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """Request-side model is forbidden on handoff (extra=forbid)."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "model": "claude-cursor",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
 
 
 def test_hc3_implementer_defaults_implement() -> None:
-    """role=implementer with no explicit contract → implement (RoleProfile)."""
-    contract, source = resolve_handoff_contract(
-        role="implementer", explicit=None, request_id="req-c3"
-    )
+    """role=cursor-implement → implement (RoleProfile)."""
+    contract, source = resolve_handoff_contract(role="cursor-implement", request_id="req-c3")
     assert contract == "implement"
     assert source == "role_default"
 
 
-def test_hc4_implementer_consult_explicit() -> None:
-    """role=implementer + explicit consult — explicit wins over default_contract."""
-    contract, source = resolve_handoff_contract(
-        role="implementer", explicit="consult", request_id="req-c4"
-    )
+def test_hc4b_lead_consult() -> None:
+    """role=web-consult → consult."""
+    contract, source = resolve_handoff_contract(role="web-consult", request_id="req-c4b")
     assert contract == "consult"
-    assert source == "explicit"
+    assert source == "role_default"
 
 
-def test_hc4b_lead_no_default_contract_consult() -> None:
-    """role=lead carries no default_contract → falls through to consult."""
-    contract, source = resolve_handoff_contract(
-        role="lead", explicit=None, request_id="req-c4b"
-    )
-    assert contract == "consult"
-    assert source == "model_default"
-
-
-def test_hc5_model_cursor_implement_unified(
+def test_hc5_implementer_route(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """model=claude-cursor + implement — same seat as consult, different contract."""
+    """role=cursor-implement → claude-cursor + implement."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5"))
 
@@ -645,110 +728,7 @@ def test_hc5_model_cursor_implement_unified(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "model": "claude-cursor",
-            "packet_path": _GOOD_PACKET,
-            "subject": _GOOD_SUBJECT,
-            "handoff_contract": "implement",
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["resolved_model"] == "claude-cursor"
-    assert body["handoff_contract"] == "implement"
-    assert body["handoff_contract_source"] == "explicit"
-    assert "deprecation" not in body
-
-
-def test_hc5b_model_cursor_consult_review(
-    monkeypatch: pytest.MonkeyPatch,
-    _handoff_app: FastAPI,
-) -> None:
-    """model=claude-cursor, no contract → consult (review/revise/expand path)."""
-    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
-    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5b"))
-
-    client = TestClient(_handoff_app, raise_server_exceptions=False)
-    resp = client.post(
-        "/api/v1/team/handoff",
-        json={
-            "op": "handoff",
-            "model": "claude-cursor",
-            "packet_path": _GOOD_PACKET,
-            "subject": _GOOD_SUBJECT,
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["resolved_model"] == "claude-cursor"
-    assert body["handoff_contract"] == "consult"
-    assert body["handoff_contract_source"] == "model_default"
-
-
-def test_hc5c_role_only_no_deprecation(
-    monkeypatch: pytest.MonkeyPatch,
-    _handoff_app: FastAPI,
-) -> None:
-    """role=cursor-lead handoff resolves cleanly — no deprecation key (F4)."""
-    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
-    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5c"))
-
-    client = TestClient(_handoff_app, raise_server_exceptions=False)
-    resp = client.post(
-        "/api/v1/team/handoff",
-        json={
-            "op": "handoff",
-            "role": "cursor-lead",
-            "packet_path": _GOOD_PACKET,
-            "subject": _GOOD_SUBJECT,
-            "handoff_contract": "implement",
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["resolved_model"] == "claude-cursor"
-    assert "deprecation" not in body
-
-
-def test_hc5d_both_selectors_agree_resolves() -> None:
-    """model + role resolving to the same seat → 200, no deprecation key."""
-    to_agent, _f, platform, resolved = resolve_handoff_target(
-        model="claude-cursor",
-        role="implementer",
-        request_id="req-agree",
-    )
-    assert to_agent == "claude-cursor"
-    assert resolved == "claude-cursor"
-    assert platform == "cursor"
-
-
-def test_hc5e_both_selectors_disagree_conflict() -> None:
-    """model + role resolving to different seats → 422 handoff_seat_role_conflict."""
-    with pytest.raises(FrontierEndpointError) as exc_info:
-        resolve_handoff_target(
-            model="claude-web",
-            role="implementer",
-            request_id="req-conflict",
-        )
-    err = exc_info.value
-    assert err.status_code == 422
-    assert err.code == "handoff_seat_role_conflict"
-
-
-def test_hc5f_model_and_role_implement_via_role_default(
-    monkeypatch: pytest.MonkeyPatch,
-    _handoff_app: FastAPI,
-) -> None:
-    """model=claude-cursor + role=implementer, no contract → implement (F2)."""
-    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
-    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5f"))
-
-    client = TestClient(_handoff_app, raise_server_exceptions=False)
-    resp = client.post(
-        "/api/v1/team/handoff",
-        json={
-            "op": "handoff",
-            "model": "claude-cursor",
-            "role": "implementer",
+            "role": "cursor-implement",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
@@ -760,27 +740,39 @@ def test_hc5f_model_and_role_implement_via_role_default(
     assert body["handoff_contract_source"] == "role_default"
 
 
-def test_hc5g_route_seat_role_conflict_returns_422(
+def test_hc5b_cursor_lead_consult(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """End-to-end: disagreeing model + role → 422 handoff_seat_role_conflict."""
+    """role=cursor-consult → consult."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
-    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5g"))
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-c5b"))
 
     client = TestClient(_handoff_app, raise_server_exceptions=False)
     resp = client.post(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "model": "claude-web",
-            "role": "implementer",
+            "role": "cursor-consult",
             "packet_path": _GOOD_PACKET,
             "subject": _GOOD_SUBJECT,
         },
     )
-    assert resp.status_code == 422
-    assert resp.json()["error"]["code"] == "handoff_seat_role_conflict"
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["resolved_model"] == "claude-cursor"
+    assert body["handoff_contract"] == "consult"
+    assert body["handoff_contract_source"] == "role_default"
+
+
+def test_hc5d_implementer_resolves() -> None:
+    to_agent, _f, platform, resolved = resolve_handoff_target(
+        role="cursor-implement",
+        request_id="req-agree",
+    )
+    assert to_agent == "claude-cursor"
+    assert resolved == "claude-cursor"
+    assert platform == "cursor"
 
 
 def test_hc6_pointer_body_implement_contract_line() -> None:
@@ -856,6 +848,21 @@ def test_pv_conformant_consult_passes(tmp_path: Path) -> None:
     _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
     validate_packet(
         request_id="req-pv2",
+        packet_path=_PV_REL,
+        to_agent="claude-web",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+    )
+
+
+def test_pv_consult_without_acceptance_passes(tmp_path: Path) -> None:
+    """Consult (role=web-consult) does not require acceptance criteria in task_guidance."""
+    consult_packet = _CONFORMANT_PACKET.replace(
+        "## Acceptance criteria\n1. It works.", "Review questions and risks."
+    )
+    _write_packet(tmp_path, _PV_REL, consult_packet)
+    validate_packet(
+        request_id="req-pv2a",
         packet_path=_PV_REL,
         to_agent="claude-web",
         handoff_contract="consult",
@@ -979,7 +986,7 @@ def test_pv_route_missing_packet_returns_422(
         "/api/v1/team/handoff",
         json={
             "op": "handoff",
-            "role": "lead",
+            "role": "web-consult",
             "packet_path": "universal-llm-gateway/tmp/reviews/does-not-exist.md",
             "subject": _GOOD_SUBJECT,
         },

@@ -146,7 +146,7 @@ def enforce_team_dispatch_generate_admit(
       admit_generate(role) ⟺ profile.dispatchable is True
 
     Web/manual seats (``claude/web``, ``grok/web``, …) and roles whose default
-    platform is non-dispatchable (``lead``, ``investigator``) raise 422 with
+    platform is non-dispatchable (``web-consult``, ``investigator``) raise 422 with
     code ``web_seat_not_generate_target``. Explicit ``model=`` does not bypass.
     """
     to_agent, _family, _platform, profile = _resolve_role_or_seat_profile(
@@ -184,7 +184,7 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     Admission predicate (FOL):
       admit(role) ⟺ profile.delivery == "manual" ∧ profile.dispatchable is False
 
-    Role examples: ``lead`` → ``claude-web``; ``cursor-lead`` → ``claude-cursor``.
+    Role examples: ``web-consult`` → ``claude-web``; ``cursor-consult`` → ``claude-cursor``.
     Seat slugs and nicknames (``claude-web``, ``web-claude``, ``claude-cursor``,
     ``cursor-claude``, ``web``, ``cursor``) normalize via ``agent_seat.registry``.
 
@@ -213,92 +213,56 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     return to_agent, family, platform
 
 
+_HANDOFF_ROSTER: frozenset[str] = frozenset(
+    {"web-consult", "cursor-consult", "cursor-implement"}
+)
+
+
 def resolve_handoff_target(
     *,
-    model: str | None,
-    role: str | None,
+    role: str,
     request_id: str,
 ) -> tuple[str, str, str, str]:
-    """Resolve a handoff target seat from ``model`` and/or ``role``.
+    """Resolve a handoff target seat from ``role``.
 
-    ``model`` (synthetic manual-seat slug, e.g. ``claude-cursor``) and ``role``
-    (functional roster slug, e.g. ``lead``, ``implementer``) are co-equal
-    first-class selectors. Both route through ``resolve_web_handoff_seat`` —
-    role slugs already resolve via ``RoleProfile``.
+    Only handoff roster slugs (``web-consult``, ``cursor-consult``, ``cursor-implement``) are
+    admitted — seat aliases (``claude-web``, ``web``, …) are rejected.
 
     Returns ``(to_agent, family, platform, resolved_model)`` where
     ``resolved_model`` is the canonical synthetic seat slug.
-
-    When **both** are supplied, each is resolved independently and the
-    normalized seats MUST agree, else 422 ``handoff_seat_role_conflict``.
     """
-    if model and role:
-        model_agent, family, platform = resolve_web_handoff_seat(
-            model, request_id=request_id
+    canonical = normalize_agent_slug(role)
+    if canonical not in _HANDOFF_ROSTER:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="role",
+            reason=(
+                f"handoff role {role!r} is not a roster slug; use web-consult "
+                f"(→ claude-web), cursor-consult (→ claude-cursor), or "
+                f"cursor-implement (bound implement → claude-cursor)"
+            ),
+            status_code=422,
+            code="handoff_role_invalid",
         )
-        role_agent, _rf, _rp = resolve_web_handoff_seat(role, request_id=request_id)
-        if model_agent != role_agent:
-            raise FrontierEndpointError(
-                request_id=request_id,
-                field="role",
-                reason=(
-                    f"model={model!r} resolves to seat {model_agent!r} but "
-                    f"role={role!r} resolves to seat {role_agent!r}; the two "
-                    f"selectors must agree on the target seat"
-                ),
-                status_code=422,
-                code="handoff_seat_role_conflict",
-            )
-        return model_agent, family, platform, model_agent
-
-    if model:
-        to_agent, family, platform = resolve_web_handoff_seat(
-            model, request_id=request_id
-        )
-        return to_agent, family, platform, to_agent
-
-    if role:
-        to_agent, family, platform = resolve_web_handoff_seat(
-            role, request_id=request_id
-        )
-        return to_agent, family, platform, to_agent
-
-    raise FrontierEndpointError(
-        request_id=request_id,
-        field="model",
-        reason=(
-            "op=handoff requires model (synthetic seat, e.g. 'claude-cursor', "
-            "'claude-web') or role (functional roster slug, e.g. 'lead', "
-            "'implementer')"
-        ),
-        status_code=422,
-        code="handoff_target_required",
-    )
+    to_agent, family, platform = resolve_web_handoff_seat(role, request_id=request_id)
+    return to_agent, family, platform, to_agent
 
 
 def resolve_handoff_contract(
     *,
-    role: str | None,
-    explicit: str | None,
+    role: str,
     request_id: str,
 ) -> tuple[str, str]:
-    """Resolve handoff work-intent: consult (review/revise/expand) or implement.
+    """Resolve handoff work-intent from ``role`` only.
 
-    Resolution order: explicit > ``RoleProfile.default_contract`` (when ``role``
-    is present) > ``consult``. Seat routing is orthogonal — any manual seat
-    accepts either contract; the role's ``default_contract`` only fills the gap
-    when ``handoff_contract`` is omitted (e.g. ``role=implementer`` → implement).
+    ``cursor-implement`` → ``implement``; consult roles → ``consult``.
     """
-    if explicit is not None:
-        return explicit, "explicit"
-
-    if role is not None:
-        canonical = normalize_agent_slug(role)
-        role_profile = load_roles().get(canonical)
-        if role_profile is not None and role_profile.default_contract is not None:
-            return role_profile.default_contract, "role_default"
-
-    return "consult", "model_default"
+    _ = request_id
+    canonical = normalize_agent_slug(role)
+    role_profile = load_roles().get(canonical)
+    if role_profile is not None and role_profile.default_contract is not None:
+        return role_profile.default_contract, "role_default"
+    return "consult", "role_default"
 
 
 async def verify_thread_writable(

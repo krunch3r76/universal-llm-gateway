@@ -9,8 +9,8 @@ def test_normalize_web_to_claude_web() -> None:
     assert normalize_agent_slug("web") == "claude-web"
 
 
-def test_normalize_cursor_lead_role() -> None:
-    assert normalize_agent_slug("cursor-lead") == "cursor-lead"
+def test_normalize_cursor_consult_role() -> None:
+    assert normalize_agent_slug("cursor-consult") == "cursor-consult"
 
 
 def test_normalize_cursor_claude_nickname_to_claude_cursor() -> None:

@@ -44,9 +44,10 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "grok_web": "grok-web",
     "gemini_api": "gemini-api",
     "gemini_cursor": "gemini-cursor",
-    # Role slugs pass through unchanged
-    "lead": "lead",
-    "cursor_lead": "cursor-lead",
+    # Handoff roster + API functional roles
+    "web_consult": "web-consult",
+    "cursor_consult": "cursor-consult",
+    "cursor_implement": "cursor-implement",
     "reviewer": "reviewer",
     "gatherer": "gatherer",
     "synthesizer": "synthesizer",

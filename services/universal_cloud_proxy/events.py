@@ -54,6 +54,26 @@ def CloudProxyCatalogRefreshFailed(  # noqa: N802
 
 
 @event_factory
+def CloudProxyDispatchCatalogMiss(  # noqa: N802
+    *,
+    provider: str,
+    model_id: str,
+    reason: str,
+) -> Event:
+    """Emit when a cloud catalog model has no resolvable dispatch facet.
+
+    Fires when ``capability_dispatch.resolve`` raises ``CatalogMissError`` for a
+    catalog model (provider outside the dispatch surface map). The catalog entry
+    is then served WITHOUT a ``dispatch`` facet rather than with an invented
+    default — this event makes the omission observable.
+    """
+    return Event(
+        signal="cloud.proxy.dispatch.catalogmiss",
+        payload={"provider": provider, "model_id": model_id, "reason": reason},
+    )
+
+
+@event_factory
 def CloudProxyRequestForwarded(  # noqa: N802
     *,
     provider: str,

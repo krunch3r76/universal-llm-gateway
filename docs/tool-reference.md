@@ -17,13 +17,13 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. **Manual-seat handoff** (`op=handoff` only): `lead`, `cursor-lead`, `implementer`, seat slugs `claude-web` / `claude-cursor` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. **Manual-seat handoff** (`op=handoff` only): `web-consult`, `cursor-consult`, `cursor-implement` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 | `frontier_dispatch` | Raw provider-native call, no role | `op`, `model`, `messages` | no |
 
 `op` values (`team_dispatch` and `frontier_dispatch`; frontier has no `handoff`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
 - `"to_thread"` — bus mode; Stargate posts the model's reply to `thread` on its behalf after dispatch completes.
-- `"handoff"` (**team_dispatch only**) — manual-seat consult (`lead` → `claude-web`, `cursor-lead` / `implementer` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
+- `"handoff"` (**team_dispatch only**) — manual-seat consult (`web-consult` → `claude-web`, `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
 
@@ -36,7 +36,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `lead`, `cursor-lead`, `implementer`, `claude-web`, `claude-cursor` (and nicknames `web-claude`, `cursor-claude`) | Role slug or manual-seat alias |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`) |
 | `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread. Unused by `op="handoff"`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
@@ -49,7 +49,6 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to the pre-written six-block packet |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `handoff_contract` | `"consult"\|"implement"\|None` | `op="handoff"` only — work intent. Omitted ⟹ inferred from role (`lead`/`cursor-lead`/web/cursor seats → `consult`; `implementer` → `implement`). Routing is unaffected. Conflicting pairs (`cursor-lead`+`implement`, `implementer`+`consult`) → 422 `handoff_contract_conflict` |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
 
@@ -58,60 +57,45 @@ e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
 `web_seat_not_generate_target` — including when `model=` is supplied explicitly.
 Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 `synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
-web-default roles (`lead`, `investigator` (legacy)), and Cursor handoff-only roles
-(`claude-cursor`, `cursor-lead`, `implementer`). Web Claude doing local file work should
+web-default roles (`web-consult`, `investigator` (legacy)), and Cursor handoff-only roles
+(`cursor-consult`, `cursor-implement`). Web Claude doing local file work should
 use `fs` directly; peer consult → `frontier_dispatch` or an API role.
 
 **`investigator` is legacy** (`role=investigator` → `grok-web`): a deep manual
 grok-web research handoff, NOT the SuperGrok Heavy dispatch path. SuperHeavy uses
 its own operator-driven workflow (`agent_skill:grok-web-dispatch` + connector
 canary), not `team_dispatch(op=handoff, role=investigator)`. Do not list
-`investigator` alongside `lead` / `cursor-lead` / `implementer` as a recommended
+`investigator` alongside `web-consult` / `cursor-consult` / `cursor-implement` as a recommended
 handoff target without the `(legacy)` marker.
 
 **`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
 
-Operator shorthand **to `claude-web`** / **to `claude-cursor`** maps to this op (those seats
-admit only handoff on `team_dispatch`). **Seat vs intent:** handoff routing resolves
-`role` → seat only (`lead`/`claude-web` → claude-web; `cursor-lead`/`implementer`/`claude-cursor`
-→ claude-cursor). Intent (consult vs bound implement) is **not** a separate routing axis.
+Pick a **functional role**; seat and contract resolve together. Manual seats admit
+only handoff on `team_dispatch` (not `generate`).
 
-| Intent | Web | Cursor |
-|--------|-----|--------|
-| Consult / dialectic | `role=lead` (or `claude-web`) | `role=cursor-lead` (or `claude-cursor`) |
-| Bound implement (packet + acceptance criteria) | `role=lead` + implementer packet contract, or native `Pick up todo:{slug}` on web (no dispatch) | `role=implementer` — distinct from `cursor-lead` consult |
-| Explicit contract | `handoff_contract=consult\|implement` on any handoff (optional; defaults from role) | same |
+| Intent | Role | Seat | Operator |
+|--------|------|------|----------|
+| Web consult / dialectic | `web-consult` | `claude-web` | push bus message |
+| Cursor consult / architecture | `cursor-consult` | `claude-cursor` | open IDE thread |
+| **Bound implement** (from any seat) | `cursor-implement` | `claude-cursor` | open IDE thread |
 
-**Explicit `handoff_contract`** declares intent independent of role default. Final
-contract = explicit if supplied, else role default (`lead`/`cursor-lead`/web/cursor
-seats → `consult`; `implementer` → `implement`). It shapes the response echo
-(`handoff_contract` + `handoff_contract_source`), the `contract:{value}` bus tag, and
-the pointer `Contract:` line — **not** seat routing. Conflicting (role, contract) pairs
-return 422 `handoff_contract_conflict`:
+**Bound implement is unified on Cursor:** `team_dispatch(op=handoff, role=cursor-implement, …)`
+from any seat — always targets `claude-cursor` (`handoff_contract=implement` in the
+response, derived from role). Distinct from `cursor-consult` (reasoning consult). Packet
+must include acceptance criteria in `<task_guidance>`. `model` and `handoff_contract`
+are not accepted on the handoff request. Web-native bound work without cross-seat
+handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
 
-| role | + contract | result |
-|---|---|---|
-| `lead` / `claude-web` | `implement` | allow (web bound implement) |
-| `cursor-lead` | `implement` | reject — use `role=implementer` or `handoff_contract=consult` |
-| `implementer` | `consult` | reject — use `role=cursor-lead` or `handoff_contract=implement` |
-| `claude-cursor` | `implement` | allow (docs recommend `implementer`) |
+See `projects/.cursor/rules/handoff-dispatchers.mdc` (§ web-claude for `role=web-consult`, §
+`cursor-claude` for `role=cursor-consult`); consult index `agent-skills/consult-routing.md`.
 
-**Cursor → cursor** (`cursor-lead` → `claude-cursor`) is for **fresh perspective and tier upgrade**
-in a new IDE thread (packet-booted context, operator picks Opus in the model picker) — reviews,
-ongoing `project:` exploration, architecture, and extension work. **`implementer`** also resolves
-to `claude-cursor` (handoff-only, generate → 422) but signals **packet-bound code execution**:
-bound todo/spec + acceptance criteria + quality gates — not a reasoning consult. Web bound work
-uses **`role=lead`** with the same implementer packet contract (or todo pickup without handoff).
-See `projects/.cursor/rules/handoff-dispatchers.mdc` § `cursor-claude`; consult index
-`agent-skills/consult-routing.md`.
-
-Creates an agent-bus thread (e.g. `lead` → `claude-web`,
-`cursor-lead` or `claude-cursor` → `claude-cursor`)
+Creates an agent-bus thread (e.g. `web-consult` → `claude-web`,
+`cursor-consult` / `cursor-implement` → `claude-cursor`)
 and returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract,
 handoff_contract_source, push_reminder, result_handle, handoff_status,
 poll_hint}` synchronously — no model is dispatched and no `execution_id` is minted.
-(`resolved_handoff_seat` aliases `to_agent`; `handoff_contract_source` is
-`"explicit"` or `"role_default"`.)
+(`resolved_handoff_seat` aliases `to_agent`; `handoff_contract_source` is always
+`"role_default"`.)
 `result_handle.kind` is `"agent_bus_thread"` (authoritative for retrieval — use
 `agent_bus`, not `pipeline(op="result")`). Initial `handoff_status` is
 `awaiting_first_reply`. `poll_hint` carries `tool` (`"wait"`), `arguments` (object,
@@ -123,9 +107,9 @@ endpoint enforces that the role resolves to a manual, non-dispatchable seat
 (`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
 are rejected with `handoff_requires_web_seat` 422.
 
-**Self-handoff:** a manual seat may call `op="handoff"` with `role` resolving to
-**itself** (`lead`/`claude-web`, `cursor-lead`/`claude-cursor`) to open a new
-agent-bus thread with packet-booted context. This is **supported** — distinct
+**Self-handoff:** a manual seat may call `op="handoff"` with the matching roster
+role (`claude-web` → `role=web-consult`; `claude-cursor` → `role=cursor-consult`) to open
+a new agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
 Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
 `agent-skills/consult-routing.md`.
@@ -188,7 +172,7 @@ team_dispatch(
 )
 
 # Handoff mode — fresh-WEB dispatch to claude-web; operator push required
-team_dispatch(op="handoff", role="lead",
+team_dispatch(op="handoff", role="web-consult",
               packet_path="universal-llm-gateway/tmp/reviews/<task>-claude-web-packet.md",
               subject="<Task> handoff — <subject>")
 # → {thread_id, subject, to_agent: "claude-web", push_reminder,
@@ -201,10 +185,16 @@ agent_bus(tool="wait", arguments='{"thread": "<thread_id>", "after_turn": 1,
   "wait_seconds": 60, "completion": "first_reply_from", "from_agent": "claude-web"}')
 
 # Handoff mode — dedicated Cursor thread (e.g. Opus); attend in IDE — no web push
-team_dispatch(op="handoff", role="cursor-lead",
+team_dispatch(op="handoff", role="cursor-consult",
               packet_path="universal-llm-gateway/tmp/reviews/<task>-cursor-packet.md",
               subject="<Task> handoff — <subject>")
 # → {to_agent: "claude-cursor", push_reminder mentions Cursor / agent-bus}
+
+# Bound implement — unified path (any dispatching seat → claude-cursor)
+team_dispatch(op="handoff", role="cursor-implement",
+              packet_path="universal-llm-gateway/tmp/prompts/<task>-implement-packet.md",
+              subject="Implement <task>")
+# → {to_agent: "claude-cursor", handoff_contract: "implement", push_reminder mentions Cursor}
 ```
 
 ### `frontier_dispatch`

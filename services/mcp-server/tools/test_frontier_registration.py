@@ -150,7 +150,7 @@ def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
         asyncio.run(
             team_dispatch_fn(
                 op="handoff",
-                role="lead",
+                role="web-consult",
                 packet_path="universal-llm-gateway/tmp/test-packet.md",
                 subject="Test handoff subject",
             )
@@ -163,7 +163,7 @@ def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
 
     body = call["body"]
     assert body["op"] == "handoff"
-    assert body["role"] == "lead"
+    assert body["role"] == "web-consult"
     assert body["packet_path"] == "universal-llm-gateway/tmp/test-packet.md"
     assert body["subject"] == "Test handoff subject"
     # generate/to_thread-only fields must be absent from the handoff body

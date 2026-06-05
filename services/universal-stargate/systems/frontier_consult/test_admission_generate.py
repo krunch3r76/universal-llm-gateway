@@ -28,7 +28,7 @@ def test_g1_claude_web_seat_rejected() -> None:
 
 def test_g2_lead_role_rejected() -> None:
     with pytest.raises(FrontierEndpointError) as exc_info:
-        enforce_team_dispatch_generate_admit("lead", request_id="req-g2")
+        enforce_team_dispatch_generate_admit("web-consult", request_id="req-g2")
     err = exc_info.value
     assert err.code == "web_seat_not_generate_target"
     assert "claude-web" in err.reason
@@ -41,7 +41,7 @@ def test_g3_reviewer_role_admitted() -> None:
 def test_cursor_lead_role_rejected_on_generate() -> None:
     """cursor-lead resolves to claude-cursor (manual, non-dispatchable) → 422."""
     with pytest.raises(FrontierEndpointError) as exc_info:
-        enforce_team_dispatch_generate_admit("cursor-lead", request_id="req-cl")
+        enforce_team_dispatch_generate_admit("cursor-consult", request_id="req-cl")
     err = exc_info.value
     assert err.status_code == 422
     assert err.code == "web_seat_not_generate_target"
@@ -52,7 +52,7 @@ def test_cursor_lead_role_rejected_on_generate() -> None:
 def test_implementer_role_rejected_on_generate() -> None:
     """implementer resolves to claude-cursor (handoff-only) → 422 on generate."""
     with pytest.raises(FrontierEndpointError) as exc_info:
-        enforce_team_dispatch_generate_admit("implementer", request_id="req-impl")
+        enforce_team_dispatch_generate_admit("cursor-implement", request_id="req-impl")
     err = exc_info.value
     assert err.status_code == 422
     assert err.code == "web_seat_not_generate_target"

@@ -262,29 +262,20 @@ async def frontier_dispatch(
 class TeamHandoffBody(BaseModel):
     """``POST /api/v1/team/handoff`` — create an agent-bus thread for a manual seat.
 
-    ``model`` and ``role`` are co-equal first-class target selectors:
-      - ``model`` — synthetic manual-seat ID (``claude-web``, ``claude-cursor``,
-        aliases ``web``/``cursor``).
-      - ``role`` — functional roster slug (``lead``, ``cursor-lead``,
-        ``implementer``) resolved via ``RoleProfile``.
-    At least one is required; supplying both is permitted only when they resolve
-    to the same seat (else 422 ``handoff_seat_role_conflict``). ``role`` may carry
-    a ``default_contract`` (e.g. ``implementer`` → implement). ``handoff_contract``
-    declares intent explicitly: ``consult`` (review / revise / expand / dialectic)
-    or ``implement`` (bound).
+    ``role`` — handoff roster slug (``web-consult``, ``cursor-consult``,
+    ``cursor-implement``) resolved via ``RoleProfile``. Contract is derived from
+    the role ({platform}-{contract} naming).
     """
 
     model_config = {"extra": "forbid"}
 
     op: Literal["handoff"]
-    model: str | None = None
-    role: str | None = None
+    role: str
     packet_path: str
     subject: str
     pointer_body: str | None = None
     tags: list[str] | None = None
     caller_agent: str | None = None
-    handoff_contract: Literal["consult", "implement"] | None = None
 
 
 @team_router.post("/handoff", status_code=200, response_model=None)
@@ -311,14 +302,12 @@ async def team_handoff(
             event_bus.publish_from_sync(event)
 
         to_agent, _family, platform, resolved_model = resolve_handoff_target(
-            model=body.model,
             role=body.role,
             request_id=request_id,
         )
 
         handoff_contract, contract_source = resolve_handoff_contract(
             role=body.role,
-            explicit=body.handoff_contract,
             request_id=request_id,
         )
 

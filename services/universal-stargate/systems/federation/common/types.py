@@ -118,8 +118,10 @@ class FederatedGateway:
 
     # Model resource requirements (PHASE 2 FIX: for Master routing decisions)
     # Maps ModelId -> {vram_usage: int, ram_usage: int, input_schema: str}
-    # Populated from telemetry "model_resources" field
-    model_resources: dict[ModelId, dict[str, int | str]] = field(default_factory=dict)
+    # Populated from telemetry "model_resources" field; values carry per-model
+    # routing data (max_concurrent_requests, context_length) and the optional
+    # cloud "dispatch" facet (mirror of libs CapabilityDispatch).
+    model_resources: dict[ModelId, dict[str, Any]] = field(default_factory=dict)
 
     # Activation rules from Edge catalog (for Master-side filtering if needed)
     activated_contexts: dict[str, dict[str, list[int]]] = field(default_factory=dict)

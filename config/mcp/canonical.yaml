@@ -2622,7 +2622,7 @@ tools:
       team_dispatch(op=generate, role, messages, dispatch_thread_id) ⟹
         execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
-    ¬ lead/investigator/cursor-lead/implementer (handoff-only). Async. Mutating. See agent_skill:dispatch.
+    ¬ web-consult/cursor-consult/cursor-implement/investigator (handoff-only). Async. Mutating. See agent_skill:dispatch.
   json_schema:
     type: object
     properties:
@@ -2686,31 +2686,28 @@ tools:
     tool: team_dispatch_handoff
     substrate_qualified: user-vortex__team_dispatch_handoff
   fol_descriptor: |-
-    ∀ (model ∨ role) ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
-      team_dispatch(op=handoff, model?, role?, packet_path, subject, handoff_contract?) ⟹
-        thread_id ∈ AgentBus ∧ resolved_model = seat ∧ to_agent = seat
-        ∧ result_handle.kind = agent_bus_thread ∧ ¬execution_id.
-    model ∧ role are co-equal first-class selectors; ≥1 required.
-    SyntheticManualSeats = claude-web | claude-cursor | grok-web | aliases (web, cursor, …).
-    RoleSlugs = lead → claude-web | cursor-lead, implementer → claude-cursor.
-    (model ∧ role ∧ seat(model) ≠ seat(role)) ⟹ 422 handoff_seat_role_conflict.
-    handoff_contract: consult (review/revise/expand) | implement (bound) — orthogonal to seat.
-    handoff_contract omitted ⟹ RoleProfile.default_contract (implementer → implement) else consult.
+    ∀ role ∈ HandoffRole ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
+      team_dispatch(op=handoff, role, packet_path, subject) ⟹
+        thread_id ∈ AgentBus ∧ resolved_model = seat(role) ∧ to_agent = seat(role)
+        ∧ handoff_contract = contract(role) ∧ result_handle.kind = agent_bus_thread
+        ∧ ¬execution_id.
+    HandoffRole = web-consult | cursor-consult | cursor-implement.
+    web-consult → claude-web | cursor-consult → claude-cursor | cursor-implement → claude-cursor (implement contract).
+    ¬model on handoff. ¬handoff_contract on request (derived from role).
+    seat aliases (claude-web, web, …) → 422 handoff_role_invalid; use roster slug.
     API roles (reviewer, …) → 422 handoff_requires_web_seat.
     Poll via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result).
   json_schema:
     type: object
     properties:
       op: {type: string, enum: [handoff]}
-      model: {type: string}
-      role: {type: string}
+      role: {type: string, enum: [web-consult, cursor-consult, cursor-implement]}
       packet_path: {type: string}
       subject: {type: string}
-      handoff_contract: {type: string, enum: [consult, implement]}
       pointer_body: {type: string}
       tags: {type: array, items: {type: string}}
       caller_agent: {type: string}
-    required: [op, packet_path, subject]
+    required: [op, role, packet_path, subject]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write

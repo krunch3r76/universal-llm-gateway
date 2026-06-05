@@ -9,13 +9,10 @@ Two tools, two contracts:
   ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
   generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
-  handoff selectors (co-equal): ``model=claude-web|claude-cursor`` (synthetic
-  seat) and/or ``role=lead|cursor-lead|implementer`` (roster slug) + optional
-  ``handoff_contract``.
+  handoff roles: web-consult, cursor-consult, cursor-implement, investigator (legacy)
 
   Op enum: "generate" (returns content via tracker), "to_thread" (reply lands
-  on ``thread``), or "handoff" (manual-seat agent-bus thread via ``model=`` /
-  ``role=``).
+  on ``thread``), or "handoff" (manual-seat agent-bus thread via ``role=``).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is direct frontier
   dispatch (no role envelope). Same op enum.
 
@@ -182,28 +179,18 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         packet_path: str | None = None,
         pointer_body: str | None = None,
         tags: list[str] | None = None,
-        handoff_contract: Literal["consult", "implement"] | None = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
-        **``op="handoff"``** — manual seats (``claude-web``, ``claude-cursor``).
-        ``model`` (synthetic seat ID) and ``role`` (roster slug) are co-equal
-        first-class selectors; pass either (or both, when they agree) +
-        optional ``handoff_contract``:
+        **``op="handoff"``** — manual seats via ``{platform}-{contract}`` roster:
 
-        - ``model="claude-cursor"`` + ``handoff_contract="consult"`` — review,
-          revise, expand, dialectic (open IDE thread)
-        - ``model="claude-cursor"`` + ``handoff_contract="implement"`` — bound
-          implementation (same seat, different intent)
-        - ``role="implementer"`` — roster slug → claude-cursor; carries
-          ``default_contract=implement`` (no explicit ``handoff_contract`` needed)
-        - ``model="claude-web"`` + ``handoff_contract=…`` — same shape; operator
-          push to trigger web session
+        - ``role="web-consult"`` → ``claude-web``; operator pushes bus message
+        - ``role="cursor-consult"`` → ``claude-cursor``; open IDE thread
+        - ``role="cursor-implement"`` → ``claude-cursor`` bound implement
+        Seat aliases (``claude-web``, ``web``, …) → 422 ``handoff_role_invalid``
 
-        Supplying both ``model`` and ``role`` is allowed only when they resolve
-        to the same seat; a mismatch is rejected with 422
-        ``handoff_seat_role_conflict``. Requires ``packet_path`` and
-        ``subject``. Returns ``{thread_id, resolved_model, to_agent, …}``.
+        Requires ``role``, ``packet_path``, and ``subject``. Returns
+        ``{thread_id, resolved_model, to_agent, …}``.
 
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
@@ -225,12 +212,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           (system-on-behalf delivery). Tracker terminal status reflects
           the POST outcome. ``thread`` is required. ``subject`` is
           optional (defaults to ``"{role} reply — execution {short_id}"``).
-        - ``op="handoff"``: ``model`` and/or ``role`` (co-equal) select the
-          manual seat; both must agree else 422 ``handoff_seat_role_conflict``.
-          ``handoff_contract`` declares intent — ``"consult"`` or
-          ``"implement"``. Omitted ⟹ the role's ``default_contract`` (e.g.
-          ``implementer`` → implement) else ``consult``. Any seat accepts either
-          contract. Returns
+        - ``op="handoff"``: ``role`` selects seat + contract (slug encodes both).
+          Returns
           ``{thread_id, subject, to_agent, resolved_model, push_reminder,
           result_handle, handoff_status, poll_hint}``. Poll via
           ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
@@ -264,38 +247,43 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         "message": "packet_path and subject are required when op='handoff'",
                     }
                 }
-            if not model and not role:
+            if not role:
                 return {
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "model (e.g. 'claude-cursor', 'claude-web') or role "
-                            "(e.g. 'lead', 'implementer') is required when "
-                            "op='handoff'"
+                            "role (web-consult, cursor-consult, cursor-implement) "
+                            "is required when op='handoff'"
+                        ),
+                    }
+                }
+            if model is not None:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "model is not accepted when op='handoff'; use role="
+                            "'web-consult', 'cursor-consult', or 'cursor-implement'"
                         ),
                     }
                 }
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
+                "role": role,
                 "packet_path": packet_path,
                 "subject": subject,
             }
-            if model is not None:
-                handoff_body["model"] = model
-            if role is not None:
-                handoff_body["role"] = role
             for key, val in (
                 ("pointer_body", pointer_body),
                 ("tags", tags),
                 ("caller_agent", caller_agent),
-                ("handoff_contract", handoff_contract),
             ):
                 if val is not None:
                     handoff_body[key] = val
             record(
                 "mcp.team.handoff.called",
-                role=role or "",
-                model=model or "",
+                role=role,
+                model="",
                 to_agent="",
             )
             return await _relay(

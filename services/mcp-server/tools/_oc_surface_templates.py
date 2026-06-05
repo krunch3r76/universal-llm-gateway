@@ -141,11 +141,11 @@ overflow relay templates only; they require bound `dispatch`.
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
 When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
-- manual seat handoff → team_dispatch(op="handoff", model="claude-web"|"claude-cursor" and/or role="lead"|"cursor-lead"|"implementer", handoff_contract="consult"|"implement", packet_path=…, subject=…) — model+role co-equal selectors (mismatch → 422 handoff_seat_role_conflict); **consult** = review/revise/expand/dialectic; **implement** = bound; same seat for both intents; self-handoff supported on claude-web (operator push)
+- manual seat handoff → team_dispatch(op="handoff", role="web-consult"|"cursor-consult"|"cursor-implement", packet_path=…, subject=…) — {platform}-{contract} roster; self-handoff on claude-web uses role=web-consult (operator push)
 - consult any API model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
 - by API role → team_dispatch(op="generate", role="reviewer"|…, dispatch_thread_id="…", messages=[…])
-- forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with model= instead
-- role=lead|cursor-lead|implementer on handoff → first-class selector (co-equal with model=); carries default_contract (implementer → implement)
+- forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with role= instead
+- handoff roles: web-consult, cursor-consult, cursor-implement (only these three)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
@@ -214,7 +214,7 @@ natural part of how you work, not an exceptional event.
   `frontier_dispatch(op=..., model="provider/model", messages=...)`.
 - Consult a **functional API role** (adversarial pushback, gatherer extraction,
   durable reviewer persona) → `team_dispatch(op=generate|to_thread, role=reviewer|gatherer|…, dispatch_thread_id=..., messages=...)`.
-  **Not** seat slugs (`claude-web`, `lead`) — web seats have no `default_model` on `generate`.
+  **Not** seat slugs (`claude-web`) — web seats have no `default_model` on `generate`.
 
 Both return `{execution_id, ...}` immediately; poll with
 `pipeline(op="result", execution_id=..., wait_seconds=60)`. Runs detached,
@@ -242,7 +242,7 @@ with a structured error envelope **before** dispatch.
 
 **Output channel (`op` parameter)**:
 - `team_dispatch` / `frontier_dispatch`: `op="generate"` (poll result) or `op="to_thread"` (bus delivery).
-- `team_dispatch` only: `op="handoff"` — `model=claude-web|claude-cursor` + `handoff_contract=consult|implement` (review/revise/expand vs bound implement); returns `{thread_id, resolved_model, push_reminder}`; no provider dispatch. See `agent-skills/consult-routing.md`.
+- `team_dispatch` only: `op="handoff"` — `role=web-consult|cursor-consult|cursor-implement`; returns `{thread_id, resolved_model, push_reminder}`; no provider dispatch. See `agent-skills/consult-routing.md`.
 
 **MCP access**: `team_dispatch` enables client-side MCP tools by default for
 non-xAI models. `frontier_dispatch` defaults to no tool loop (`mcp=False`);
@@ -281,14 +281,14 @@ agent bus — the next session picks it up.
 
 | Situation | Transport | Role / target | Tier | Notes |
 |---|---|---|---|---|
-| Lead dialectic + adjudication | agent-bus + operator push | `claude-web` (lead) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
+| Lead dialectic + adjudication | agent-bus + operator push | `claude-web` (`web-consult`) | full MCP, reliable writes | NON-offloadable synthesis (Guard 2) |
 | Automated review, closes w/o push | `team_dispatch(op=generate, role=reviewer)` | gpt-5.5 | full MCP | reviewer family MUST be gpt/claude — never gemini (Guard 1) |
 | Adversarial panel member | `team_dispatch` or `panel_dispatch` | `role=skeptic` | inline (non-multi-agent grok may get MCP) | must cite a decisive falsifier |
 | Analysis / RAG, NO writes | `team_dispatch(role=synthesizer)` | gemini | inline-only (enforced) | lead-adjudicated input only |
 | ≥2-family panel (hard triggers) | `panel_dispatch(disposition=panel, ...)` | skeptic + reviewer (+synthesizer tiebreaker) | mixed | returns `panel_executions`; lead artifact still required |
 | One-shot, no role | `frontier_dispatch(mcp=False)` | any | inline | explicit no-role path |
 
-**Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + adjudicating-caller review of panelist writes + `panel_adjudication_artifact` NON-offloadable. The **adjudicating caller** (any seat invoking the panel) is distinct from the `lead` dispatch role (`role=lead` → claude-web). (3) **Audit binding (landed)** — session-close gate runs `panel_disposition_incomplete` on scoped session entities; `validate_panel_assert_attributes` / `build_panel_assert_attributes` remain helper-only schema checks ahead of assert.
+**Three guards (thread 1206 panel):** (1) capability binds to **effective model** — gemini inline-only on any role; Stargate sets `mcp=False` at admission + hydration suppresses the tool loop (¬ admission reject for explicit `model=`). (2) **Offload boundary** — legwork offloadable; steelman + falsifier adjudication + adjudicating-caller review of panelist writes + `panel_adjudication_artifact` NON-offloadable. The **adjudicating caller** (any seat invoking the panel) is distinct from the `web-consult` handoff role. (3) **Audit binding (landed)** — session-close gate runs `panel_disposition_incomplete` on scoped session entities; `validate_panel_assert_attributes` / `build_panel_assert_attributes` remain helper-only schema checks ahead of assert.
 
 **Post-panel assert (Menu D — assertion SOT):** pass `attributes=build_panel_assert_attributes(...)` directly to `assert` alongside `evidence_uris` (`agent-bus:T`, ≥2 `execution:E`). Per skill §3.1: `assertion.attributes` is the source of truth; `entity_update(attributes=...)` is optional as a derived read cache only — audits and session-close detectors query the non-superseded assertion, NEVER the entity blob. Required `attributes` keys: `consensus_disposition`, `panel_families`, `panel_executions`, `decisive_falsifier`, `panel_adjudication_artifact`, `material`. `panel` without an adjudication artifact ⟹ stamp `steelman-only`. (`lead_adjudication_artifact` is accepted as a deprecated read alias.) **Falsifier metric** (cadence §3.3 — not per-close): fraction of material `panel` decisions lacking `panel_adjudication_artifact` over N≥20; cadence runner (every-10/monthly) still TODO. Full skill: `fs(sandbox="cortex", op="read", path="agent-skills/consensus-steelman-posture.md")`."""
 

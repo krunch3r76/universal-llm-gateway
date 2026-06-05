@@ -50,6 +50,7 @@ from .events import (
     CloudProxyBrowserUiUnavailable,
     CloudProxyCatalogRefreshed,
     CloudProxyCatalogRefreshFailed,
+    CloudProxyDispatchCatalogMiss,
     CloudProxyLocalCatalogRefreshed,
     CloudProxyLocalCatalogUnavailable,
     CloudProxyMcpConfigured,
@@ -144,11 +145,21 @@ async def _lifespan(_application: Any):  # FastAPI lifespan signature.
             CloudProxyCatalogRefreshFailed(provider=provider, error=error[:300])
         )
 
+    async def _emit_dispatch_catalog_miss(
+        provider: str, model_id: str, reason: str
+    ) -> None:
+        await event_bus.publish(
+            CloudProxyDispatchCatalogMiss(
+                provider=provider, model_id=model_id, reason=reason[:300]
+            )
+        )
+
     catalog = CatalogManager(
         config.providers,
         adapters,
         on_provider_catalog_refreshed=_emit_catalog_refreshed,
         on_provider_catalog_refresh_failed=_emit_catalog_refresh_failed,
+        on_dispatch_catalog_miss=_emit_dispatch_catalog_miss,
     )
     await catalog.startup()
 

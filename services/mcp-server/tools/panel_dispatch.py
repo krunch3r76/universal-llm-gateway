@@ -80,8 +80,9 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         ``panel_adjudication_artifact`` are authored by the **adjudicating
         caller** (the seat that invoked this helper) after it returns. This
         "adjudicating lead" is the caller's adjudication role for THIS panel — it
-        is distinct from the ``lead`` dispatch role (``team_dispatch(op=handoff,
-        role=lead)`` → claude-web). The adjudicating caller may be any seat.
+        is distinct from the ``web-consult`` handoff role (``team_dispatch(
+        op=handoff, role=web-consult)`` → claude-web). The adjudicating caller
+        may be any seat.
 
         **Assert template (Menu D, assertion SOT):** pass
         ``attributes=build_panel_assert_attributes(...)`` directly to

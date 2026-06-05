@@ -71,8 +71,8 @@ class RoleProfile:
     default_model: str | None  # None ⟹ operator picks (web roles)
     allowed_models: tuple[str, ...] = field(default_factory=tuple)
     allowed_options: tuple[str, ...] | None = None  # None ⟹ no restriction
-    # Handoff work-intent default when the role is the selector and
-    # ``handoff_contract`` is omitted. None ⟹ resolves to ``consult``.
+    # Handoff work-intent when ``role`` is the handoff selector.
+    # None ⟹ resolves to ``consult``.
     default_contract: Literal["consult", "implement"] | None = None
 
 
