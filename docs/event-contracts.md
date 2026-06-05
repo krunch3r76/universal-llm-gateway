@@ -2,6 +2,15 @@
 
 **Purpose**: Define the structure, relationships, and guarantees for all Stargate events.
 
+## G2 anti-drift CI fast-follow (2026-06-05, thread 1310)
+
+**Event-contracts audit**: not needed — no new `@event_factory` introduced.
+The Lane B.3 tool-loop fidelity probe consumes existing signals
+(`pipeline.frontier.dispatch.tool.called`, `pipeline.frontier.dispatch.tool.failed`,
+`pipeline.frontier.dispatch.tool.requested`) defined in
+`services/universal-stargate/systems/pipeline/core/events/dispatch/frontier_tools.py`
+and emits a probe-report artifact (JSON), not new bus vocabulary.
+
 ## V1 (2026-05-19)
 
 * Renamed: tool surface `grok_build` → `grokbuild`; module files `_grok_build_*` → `_grokbuild_*`; sidecar dir `/tmp/logs/grok-build` → `/tmp/logs/grokbuild`.

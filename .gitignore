@@ -126,6 +126,7 @@ README_REVISED.md
 !/AGENTS.md
 !/services/AGENTS.md
 !/libs/AGENTS.md
+!/libs/llm_adapters/capability_dispatch/MODEL_ADD_CHECKLIST.md
 !/README.md
 !/CONTRIBUTING.md
 !/examples/adding-model-workflow-cpu.md

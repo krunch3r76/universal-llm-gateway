@@ -13,6 +13,10 @@ carry surface-uniform floor/default. Reasoning dispatch is family-scoped
 
 G13: a provider-uninferable model is a structural ``CatalogMissError`` — never a
 silent default. The in-surface unknown-claude ceiling is NOT a catalog-miss.
+
+Adding a model: follow the gate checklist at
+``libs/llm_adapters/capability_dispatch/MODEL_ADD_CHECKLIST.md`` (Lane A offline
+tests + Lane B live probes required before merge).
 """
 
 from __future__ import annotations
