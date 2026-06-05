@@ -318,7 +318,7 @@ The legal-doc analog of the consensus pipeline's cross-model verification. Once 
 
 ### 5.1 Verifier protocol
 
-1. **Verifier model picks up a synthesis-entity assertion tree.** Dispatch via `team_dispatch(role=reviewer, model=<verifier_model_id>)` or `frontier_dispatch(model=<verifier_model_id>)` with the synthesis-entity id and the assertion ids as context.
+1. **Verifier model picks up a synthesis-entity assertion tree.** Dispatch via `team_dispatch(op=generate, role=reviewer, dispatch_thread_id=…, model=<verifier_model_id>)` with the synthesis-entity id and the assertion ids as context.
 
 2. **For each claim assertion in the tree, the verifier:**
    - Reads each `evidence_uri` via `resolve(uri, tag?)`, pulling entity + chunk + verbatim text.

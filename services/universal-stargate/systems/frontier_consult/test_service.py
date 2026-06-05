@@ -274,7 +274,7 @@ def test_mcp_enabled_for_frontier_dispatch_inline_only_clamp(
 
 @pytest.mark.asyncio
 async def test_persona_free_gemini_mcp_true_clamped_false() -> None:
-    """Inline-only gemini: frontier_dispatch clamps mcp=True to False at admission."""
+    """Inline-only gemini: persona-free frontier HTTP clamps mcp=True to False at admission."""
     req = FrontierGenerateRequest(
         messages=[{"role": "user", "content": "x"}],
         model="google/gemini-3.5-flash",

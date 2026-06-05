@@ -37,14 +37,16 @@ YAML shape::
 
 Caller::
 
-    # Public surface (preferred):
+    # Agent surface (MCP — preferred):
     team_dispatch(op="generate", role="gatherer", model="openai/gpt-5.4",
                   dispatch_thread_id="cursor-2026-06-02-example",
                   messages=[{"role": "user", "content": "..."}])
-    frontier_dispatch(op="generate", model="openai/gpt-5.4",
-                      messages=[{"role": "user", "content": "..."}])
 
-    # Raw escape hatch (advanced — bypasses role admission):
+    # Internal HTTP (pipeline composition / Stargate callers):
+    POST /api/v1/frontier/dispatch  # persona-free
+    POST /api/v1/team/dispatch      # role-envelope
+
+    # Raw escape hatch (advanced — bypasses canonical admission):
     pipeline(op="async", pipeline_id="frontier-dispatch",
              pipeline_options={"model": "openai/gpt-5.4", "role": "gatherer"},
              messages=[{"role": "user", "content": "..."}])

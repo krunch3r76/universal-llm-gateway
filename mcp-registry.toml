@@ -35,7 +35,7 @@ applicable_agents = ["*"]
 description = """
 Primary universal vortex MCP server. Primary Claude/Cursor catalog: cortex, cortex_boot, \
 boot_inspect, fs, agent_bus, observability, rag, pipeline, dispatch, \
-frontier_dispatch, team_dispatch, manage, sql, retrieve, \
+team_dispatch, manage, sql, retrieve, \
 quality_gate, web_fetch, web_search, email, model_status, bot_supervisor, \
 claudeburst. grokbuild is RETIRED (11588) — overflow relay only via tool_search. \
 Full vortex surface available to both Cursor and grok-direct \

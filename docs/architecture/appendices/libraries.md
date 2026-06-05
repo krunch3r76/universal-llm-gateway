@@ -17,8 +17,8 @@ Used by the `agent_bus` service.
 ## `libs/agent_seat`
 
 Agent-seat primitives: tool definitions, tool hydration, system-prompt assembly,
-and the native tool loop. Shared between the MCP server's `frontier_dispatch`
-tool and Stargate pipeline handlers that drive multi-turn frontier dispatch.
+and the native tool loop. Shared between the MCP server's `team_dispatch` relay
+and Stargate pipeline handlers that drive multi-turn frontier dispatch.
 Works with `libs/llm_adapters` for provider-native request/response translation.
 
 ---
@@ -59,7 +59,7 @@ Service. Used by the `event_service` systemd service.
 
 Caller-agnostic observability helpers for frontier dispatch responses. Shared
 between Stargate's `frontier_dispatch_v1` pipeline handler and the MCP
-server's `frontier_dispatch` tool. Centralises usage / token / latency event
+server's `team_dispatch` relay. Centralises usage / token / latency event
 emission so callers don't duplicate it.
 
 ---

@@ -23,7 +23,7 @@ from .events import FrontierEndpointRejected
 EventPublisher = Callable[[Any], None]
 
 # Models that only support the Chat Completions API and are unavailable on the
-# OpenAI Responses API path used by frontier_dispatch. Callers must use
+# OpenAI Responses API path used by frontier-dispatch pipeline steps. Callers must use
 # llm_generate (which routes through /v1/chat/completions) for these models.
 # ∀ new Chat-Completions-only OpenAI models: add to this set AND update
 # llm_generate docstring in services/mcp-server/tools/llm.py.
@@ -56,7 +56,7 @@ def _mcp_base_admitted(model: str) -> bool:
 
 
 def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bool:
-    """Persona-free ``frontier_dispatch``: honor ``req.mcp`` unless inline-only.
+    """Persona-free ``POST /api/v1/frontier/dispatch``: honor ``req.mcp`` unless inline-only.
 
     Default ``mcp=False`` when omitted (one-shot). Inline-only families (e.g.
     gemini) clamp to ``False`` even when the caller passes ``mcp=True`` — the
@@ -159,9 +159,9 @@ def enforce_team_dispatch_generate_admit(
         f"op=generate/to_thread (delivery={profile.delivery!r}, "
         f"dispatchable=false). Web/manual seats are reachable only via "
         f"op=handoff (inbound). If you are {to_agent}, use fs/cortex locally; "
-        f"for peer consult use an API role (reviewer, gatherer, …) or "
-        f"frontier_dispatch. Passing model= dispatches an API endpoint only — "
-        f"it does not spawn a web session."
+        f"for peer consult use `team_dispatch(op=generate, role=reviewer, "
+        f"dispatch_thread_id=…)` or another API role. Passing model= dispatches "
+        f"an API endpoint only — it does not spawn a web session."
     )
     if event_publisher is not None:
         event_publisher(

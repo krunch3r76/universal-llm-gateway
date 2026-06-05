@@ -123,7 +123,7 @@ def build_frontier_request(
     # For xAI agent dispatches, inject the server-side built-in tool set as the
     # default. Two conditions suppress injection:
     #   (a) mcp=False — unified "no tools" signal; respected for xAI personas.
-    #   (b) Caller supplied an explicit ``tools`` list via frontier_dispatch
+    #   (b) Caller supplied an explicit ``tools`` list via /api/v1/frontier/dispatch
     #       (isinstance(opt_tools, list)); their intent overrides the default.
     # Caller-supplied ``generation_parameters.provider_options.xai.tools``
     # (including ``[]`` to suppress) always wins via the ``if "tools" not in``

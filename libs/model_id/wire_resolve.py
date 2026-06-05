@@ -1,6 +1,7 @@
 """Resolve bare cloud model IDs to provider-prefixed wire form.
 
-Single source of truth for team_dispatch, frontier_dispatch, and any path
+Single source of truth for MCP ``team_dispatch``, Stargate frontier/team HTTP
+dispatch, and any path
 that routes through ``ModelId`` + ``effective_provider_for_model``. Bare IDs
 like ``gpt-5.5`` must not fall through to a default provider (historically
 Anthropic) — they are either prefixed here or rejected pre-dispatch.

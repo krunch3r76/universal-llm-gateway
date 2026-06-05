@@ -8,7 +8,7 @@ via the adapter's ``append_tool_round``.
 
 Key design: the HTTP transport is injected via ``send_native`` so the same
 loop serves both in-process (Stargate pipeline handler) and HTTP-hop (MCP
-frontier_dispatch, tests) callers. The provider-native path string is
+team_dispatch relay, tests) callers. The provider-native path string is
 resolved via ``NATIVE_PATHS`` and passed to ``send_native``; the caller
 decides what URL that path maps to.
 """
@@ -104,7 +104,10 @@ class NativeLoopResult:
         return len(self.tool_calls)
 
 
-from agent_seat.native_loop_tools import execute_tool_calls as _execute_tool_calls
+from agent_seat.native_loop_tools import (
+    accumulate_usage as _accumulate_usage,
+    execute_tool_calls as _execute_tool_calls,
+)
 
 
 async def run_native_tool_loop(
@@ -230,6 +233,7 @@ async def _run_native_tool_loop_body(
     pending_round: tuple[dict[str, Any], list[dict[str, Any]]] | None,
 ) -> NativeLoopResult:
     google_malformed_retried = False
+    usage_acc: dict[str, Any] = {}
     for turn_idx in range(max_turns):
         turns_used = turn_idx + 1
 
@@ -244,6 +248,9 @@ async def _run_native_tool_loop_body(
             )
 
         result = adapter.parse_frontier_response(raw)
+        _accumulate_usage(
+            usage_acc, result.get("usage") if isinstance(result, dict) else None
+        )
         tool_calls = result.get("tool_calls")
 
         if (
@@ -276,6 +283,9 @@ async def _run_native_tool_loop_body(
                     f"send_native returned non-dict response: {type(raw).__name__}"
                 )
             result = adapter.parse_frontier_response(raw)
+            _accumulate_usage(
+                usage_acc, result.get("usage") if isinstance(result, dict) else None
+            )
             tool_calls = result.get("tool_calls")
 
         if not tool_calls or not req.mcp_tool_loop:
@@ -343,6 +353,12 @@ async def _run_native_tool_loop_body(
                 synth_raw = await send_native(path, json_body)
                 if isinstance(synth_raw, dict):
                     synth_result = adapter.parse_frontier_response(synth_raw)
+                    _accumulate_usage(
+                        usage_acc,
+                        synth_result.get("usage")
+                        if isinstance(synth_result, dict)
+                        else None,
+                    )
                     synth_content = (
                         synth_result.get("content", "")
                         if isinstance(synth_result, dict)
@@ -391,7 +407,7 @@ async def _run_native_tool_loop_body(
         turns_used=turns_used,
         exhausted=exhausted,
         cancelled=cancelled,
-        usage=(result.get("usage") or {}) if isinstance(result, dict) else {},
+        usage=usage_acc,
         finish_reason=(
             result.get("finish_reason") if isinstance(result, dict) else None
         ),

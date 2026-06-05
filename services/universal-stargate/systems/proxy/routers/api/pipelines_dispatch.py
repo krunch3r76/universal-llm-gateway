@@ -61,10 +61,12 @@ _TEAM_GENERATE_HINT = (
     "path."
 )
 _FRONTIER_GENERATE_HINT = (
-    "raw native-frontier calls are best dispatched via `frontier_dispatch` — "
-    "it is the public persona-free door with structured admission and "
-    'consistent observability. The raw `pipeline(pipeline_id="frontier-dispatch")` '
-    "path skips the canonical admission gate."
+    "persona-free dispatches: agents use `team_dispatch(op=generate, "
+    "role=synthesizer, dispatch_thread_id=…)`; pipeline authors use "
+    "`POST /api/v1/frontier/dispatch` or "
+    '`pipeline(pipeline_id="frontier-dispatch")` with structured admission. '
+    "Bare `pipeline(pipeline_id=\"frontier-dispatch\")` without "
+    "`_endpoint_request_id` skips the canonical admission gate."
 )
 
 
@@ -73,8 +75,9 @@ def _canonical_dispatch_hint_for(dispatch: DispatchRequest) -> str | None:
 
     Triggers iff the dispatch targets ``frontier-dispatch`` AND lacks the
     ``_endpoint_request_id`` marker that canonical dispatch routes inject.
-    The hint branches on role presence: with ``role`` recommend
-    ``team_dispatch``; without ``role`` recommend ``frontier_dispatch``.
+    The hint branches on role presence: with ``role`` recommend MCP
+    ``team_dispatch``; without ``role`` recommend ``team_dispatch`` with
+    ``role=synthesizer`` or internal ``/api/v1/frontier/dispatch``.
     """
     if dispatch.model != _FRONTIER_DISPATCH_PIPELINE_ID:
         return None
@@ -134,7 +137,7 @@ class DispatchRequest(BaseModel):
 
     For ``op="to_thread"``, ``from_agent`` is the identity Stargate posts as
     when delivering the model's reply to ``target_thread`` (role name for
-    team_dispatch, ``frontier:{model_short}`` for frontier_dispatch).
+    team_dispatch, ``frontier:{model_short}`` for ``/api/v1/frontier/dispatch``).
     """
 
     model_config = {"extra": "allow"}

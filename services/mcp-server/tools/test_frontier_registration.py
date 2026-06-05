@@ -1,7 +1,7 @@
 """Phase 5 M3: MCP tool registration test — dispatch-surface-split.
 
-Verifies that register_frontier_tools() registers exactly team_dispatch and
-frontier_dispatch, with no legacy team_generate or frontier_generate tools.
+Verifies that register_frontier_tools() registers exactly team_dispatch,
+with no legacy team_generate, frontier_generate, or frontier_dispatch tools.
 """
 
 from __future__ import annotations
@@ -36,15 +36,12 @@ class _ToolNameRecorder:
         return decorator
 
 
-def test_m3_only_dispatch_tools_registered() -> None:
+def test_m3_only_team_dispatch_registered() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)  # type: ignore[arg-type]
 
-    assert "team_dispatch" in recorder.registered, (
-        "team_dispatch not registered — Phase 1 tool registration missing"
-    )
-    assert "frontier_dispatch" in recorder.registered, (
-        "frontier_dispatch not registered — Phase 1 tool registration missing"
+    assert recorder.registered == ["team_dispatch"], (
+        f"expected only team_dispatch, got {recorder.registered}"
     )
     assert "team_generate" not in recorder.registered, (
         "team_generate still registered — Phase 4 deletion incomplete"
@@ -52,10 +49,13 @@ def test_m3_only_dispatch_tools_registered() -> None:
     assert "frontier_generate" not in recorder.registered, (
         "frontier_generate still registered — Phase 4 deletion incomplete"
     )
+    assert "frontier_dispatch" not in recorder.registered, (
+        "frontier_dispatch still registered — MCP tool retired; use team_dispatch"
+    )
 
 
-def test_m3_exactly_two_tools_registered() -> None:
-    """Only the two dispatch tools; no other frontier-generate variants."""
+def test_m3_no_generate_variants_registered() -> None:
+    """Only team_dispatch; no other frontier-generate variants."""
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
 

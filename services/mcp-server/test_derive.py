@@ -97,8 +97,8 @@ def test_derive_claude_manifest_count() -> None:
     """D1: derived Claude manifest returns exactly one entry per domain."""
     manifest = derive_claude_manifest(_CANONICAL_YAML)
     assert (
-        len(manifest) == 15
-    )  # update if domains change. agent_bus_read added (read-only projection) 2026-06-04.
+        len(manifest) == 14
+    )  # update if domains change. frontier_dispatch domain removed 2026-06-05.
     tool_names = [e["tool_name"] for e in manifest]
     assert len(tool_names) == len(set(tool_names)), "duplicate tool_names in manifest"
 

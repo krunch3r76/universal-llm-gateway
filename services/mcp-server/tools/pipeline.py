@@ -454,7 +454,7 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
           bus_subject[, bus_brief_summary, bus_lifecycle]}`` — posts a
           pointer envelope at completion; receive then call ``op="result"``).
           For role-based or direct frontier consults, prefer
-          ``team_dispatch`` / ``frontier_dispatch`` (the handler returns a
+          ``team_dispatch`` (the handler returns a
           redirect hint when called with ``pipeline_id="frontier-dispatch"``).
 
         - ``"result"`` — fetch or short-block on async-dispatched pipeline

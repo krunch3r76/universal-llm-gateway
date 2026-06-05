@@ -18,7 +18,7 @@ _LA = ZoneInfo("America/Los_Angeles")
 # (no cursor-specific knobs).
 #
 # ``default`` — full briefing for full-context dispatches
-# ``light``   — lightweight briefing for team_dispatch / frontier_dispatch(agent=...)
+# ``light``   — lightweight briefing for team_dispatch and role-envelope HTTP dispatches
 #               soft boot. Drops deadlines + review-queue fetches (latency win
 #               beyond token reduction — the include_* gates in hydrate_agent
 #               short-circuit the fetches entirely, not just rendering).

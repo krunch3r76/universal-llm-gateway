@@ -292,6 +292,7 @@ class AnthropicAdapter:
             "provider": "anthropic",
             "usage": usage,
             "thinking": thinking,
+            "finish_reason": response_data.get("stop_reason"),
             "tool_calls": tool_calls or None,
             "server_tool_calls": server_tool_calls or None,
             "response_id": response_data.get("id"),
@@ -311,14 +312,16 @@ class AnthropicAdapter:
                 "content": raw_response.get("content", []),
             }
         )
-        result_blocks = [
-            {
+        result_blocks: list[dict[str, Any]] = []
+        for tr in tool_results:
+            block: dict[str, Any] = {
                 "type": "tool_result",
                 "tool_use_id": tr["id"],
                 "content": tr["content"],
             }
-            for tr in tool_results
-        ]
+            if tr.get("ok") is False:
+                block["is_error"] = True
+            result_blocks.append(block)
         body["messages"].append({"role": "user", "content": result_blocks})
 
     def strip_tools(self, body: dict[str, Any]) -> None:

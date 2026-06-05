@@ -274,6 +274,13 @@ class ResponsesAPIAdapter:
                     "tokens": 0,
                 }  # summary for visibility
 
+        status = response_data.get("status")
+        if status == "incomplete":
+            incomplete_details = response_data.get("incomplete_details") or {}
+            finish_reason = incomplete_details.get("reason") or status
+        else:
+            finish_reason = status
+
         return {
             "content": "".join(content_parts),
             "model": str(response_data.get("model", "")),
@@ -281,6 +288,7 @@ class ResponsesAPIAdapter:
             "usage": usage,
             "thinking": thinking,
             "reasoning": reasoning,
+            "finish_reason": finish_reason,
             "tool_calls": tool_calls or None,
             "server_tool_calls": server_tool_calls or None,
             "response_id": response_data.get("id"),
@@ -293,9 +301,30 @@ class ResponsesAPIAdapter:
         raw_response: dict[str, Any],
         tool_results: list[dict[str, Any]],
     ) -> None:
-        """Append function_call + function_call_output items for the next Responses API turn."""
+        """Append prior output + function_call_output items for the next Responses API turn.
+
+        Because ``store: False`` is always set (stateless), the server has no
+        memory of prior turns — each request must carry the full conversation
+        history in ``input``.  Replaying only ``function_call`` items (the
+        prior behaviour) dropped same-turn assistant ``message`` text and
+        ``reasoning`` blocks, permanently losing framing/caveats and the
+        model's hidden reasoning state.
+
+        Replay order (CP-002 fix):
+        1. ``message`` and ``function_call`` items — always replayed.
+        2. ``reasoning`` items — ONLY when ``encrypted_content`` is non-empty.
+           A bare reasoning item (``include: ["reasoning.encrypted_content"]``
+           was not requested) is rejected on the stateless continuation path
+           and must be skipped.
+        3. ``function_call_output`` items (tool results) — appended last.
+        """
         for item in raw_response.get("output", []):
-            if isinstance(item, dict) and item.get("type") == "function_call":
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type")
+            if item_type in ("message", "function_call"):
+                body["input"].append(item)
+            elif item_type == "reasoning" and item.get("encrypted_content"):
                 body["input"].append(item)
         for tr in tool_results:
             body["input"].append(

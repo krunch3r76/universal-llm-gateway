@@ -4,10 +4,10 @@ Detailed API docs for all primary MCP tools. Browse sections with
 `fs(op="md_list", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md")` and read
 individual tools with `fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="<tool_name>")`.
 
-## team_dispatch and frontier_dispatch
+## team_dispatch
 
-Two native-frontier MCP tools. `frontier_generate` and `team_generate` are **retired**
-(Phase 4) — use these only.
+Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`, and
+`frontier_dispatch` are **retired** (Phase 4/5) — use `team_dispatch` only.
 
 For `op="generate"` and `op="to_thread"`, admission is async: returns
 `{execution_id, pipeline, status, started_at}`; poll with `pipeline(op="result")`.
@@ -17,10 +17,9 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. **Manual-seat handoff** (`op=handoff` only): `web-consult`, `cursor-consult`, `cursor-implement` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
-| `frontier_dispatch` | Raw provider-native call, no role | `op`, `model`, `messages` | no |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `cursor-consult`, `cursor-implement` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 
-`op` values (`team_dispatch` and `frontier_dispatch`; frontier has no `handoff`):
+`op` values (`team_dispatch`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
 - `"to_thread"` — bus mode; Stargate posts the model's reply to `thread` on its behalf after dispatch completes.
 - `"handoff"` (**team_dispatch only**) — manual-seat consult (`web-consult` → `claude-web`, `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
@@ -59,7 +58,7 @@ Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 `synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
 web-default roles (`web-consult`, `investigator` (legacy)), and Cursor handoff-only roles
 (`cursor-consult`, `cursor-implement`). Web Claude doing local file work should
-use `fs` directly; peer consult → `frontier_dispatch` or an API role.
+use `fs` directly; peer consult → `team_dispatch(op=generate, role=…)` with optional `model=`.
 
 **`investigator` is legacy** (`role=investigator` → `grok-web`): a deep manual
 grok-web research handoff, NOT the SuperGrok Heavy dispatch path. SuperHeavy uses
@@ -197,50 +196,22 @@ team_dispatch(op="handoff", role="cursor-implement",
 # → {to_agent: "claude-cursor", handoff_contract: "implement", push_reminder mentions Cursor}
 ```
 
-### `frontier_dispatch`
+Chat-Completions-only OpenAI search models (`openai/*-search-api`) are rejected
+on dispatch. Use `llm_generate` for those.
 
-Use for raw persona-free provider-native calls. Caller supplies the model and any
-system prompt.
-
-| Arg | Type | Description |
-|---|---|---|
-| `op` | `"generate"\|"to_thread"` | Output channel |
-| `messages` | `list[dict]` | Conversation messages |
-| `model` | `str` | Required provider-qualified model ID, e.g. `openai/gpt-5.4` |
-| `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
-| `subject` | `str\|None` | Bus reply subject (bus mode only) |
-| `system` | `str\|None` | Caller-supplied system prompt |
-| `reasoning_effort` | `str\|None` | Provider-native reasoning effort. Accepted values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Provider support varies (see `docs/thirdparty/{provider}/upstream` for the documented surface). Unsupported values for the chosen model are dropped at the adapter layer with an INFO log. |
-| `generation_options` | `dict\|None` | Pass-through provider generation parameters |
-| `max_tool_turns` | `int\|None` | Tool-loop turn cap |
-| `transcript_id` | `str\|None` | Optional continuation identifier |
-| `caller_agent` | `str\|None` | Dispatch provenance |
-| `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
-
-Examples:
+**Provider-specific consult without handoff** — pick an API role and optional
+`model=` override (must be in the role's `allowed_models`):
 
 ```python
-# Direct mode
-frontier_dispatch(
-    op="generate",
-    model="openai/gpt-5.4",
-    messages=[{"role": "user", "content": "Summarize..."}],
-    system="You are a concise summarizer.",
-    reasoning_effort="high",
-)
+# GPT review (default reviewer model)
+team_dispatch(op="generate", role="reviewer", dispatch_thread_id="arc-123",
+              messages=[{"role": "user", "content": "Review this spec…"}])
 
-# Bus mode — raw model posts reply to thread 456
-frontier_dispatch(
-    op="to_thread",
-    model="openai/gpt-5.4",
-    thread="456",
-    subject="Summary",
-    messages=[{"role": "user", "content": "Summarize..."}],
-)
+# Grok consult
+team_dispatch(op="generate", role="artisan", model="xai/grok-4.3",
+              dispatch_thread_id="arc-123",
+              messages=[{"role": "user", "content": "Adversarial read…"}])
 ```
-
-Chat-Completions-only OpenAI search models (`openai/*-search-api`) are rejected
-on both dispatch tools. Use `llm_generate` for those.
 
 ## panel_dispatch
 

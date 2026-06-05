@@ -19,8 +19,8 @@ class RemoteMcpUnsupportedError(PipelineError):
     """Raised by ``frontier_dispatch_v1`` when the requested ``remote_mcp``
     value is incompatible with the resolved provider's current capability.
 
-    Enforcement lives in the step handler so direct pipeline dispatches (not
-    just MCP ``frontier_dispatch``) are validated. Capability matrix
+    Enforcement lives in the step handler so direct ``pipeline_id="frontier-dispatch"``
+    dispatches (not only MCP ``team_dispatch`` relay) are validated. Capability matrix
     (∀ provider ∉ the handler's remote-MCP allowlist: ``remote_mcp=True`` is
     rejected; ∀ provider: ``remote_mcp=False`` is accepted):
 
@@ -71,9 +71,7 @@ class UnknownPipelineOptionsError(PipelineError):
     ``generation_parameters.reasoning_effort``). That class of bug burned
     hours of agent debugging when reasoning levers appeared to be ignored.
     Hard-rejecting unknown keys at admission catches the typo upstream and
-    points the caller at the right key or the right tool
-    (``team_dispatch`` for role-based consults; ``frontier_dispatch`` for
-    direct frontier dispatch).
+    points the caller at the right key or the right MCP tool (``team_dispatch``).
     """
 
     step_name: str
@@ -87,10 +85,9 @@ class UnknownPipelineOptionsError(PipelineError):
             f"[Step '{self.step_name}']{who} unknown pipeline_options "
             f"keys: {self.unknown_keys}. Accepted: {self.accepted_keys}. "
             "For team role consults (skeptic/gatherer/synthesizer/reviewer/artisan "
-            "or cursor-* seats) prefer `team_dispatch` — it validates options "
+            "or cursor-* seats) use `team_dispatch` — it validates options "
             "against the role contract from Cortex. xAI multi-agent roles get "
-            "mcp=False auto-derived. For raw role-free dispatches "
-            "prefer `frontier_dispatch`."
+            "mcp=False auto-derived. Inline-only passes: `role=synthesizer`."
         )
 
     def to_dict(self) -> dict:

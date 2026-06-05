@@ -93,18 +93,18 @@ TeamDispatchBody = Annotated[
 
 
 class FrontierDispatchGenerateBody(_DispatchCommon):
-    """``frontier_dispatch`` with ``op="generate"`` — persona-free, result inline."""
+    """``POST /api/v1/frontier/dispatch`` with ``op="generate"`` — persona-free."""
 
     op: Literal["generate"]
     model: str
-    # ``mcp`` knob is exposed only on the persona-free surface. Default is
-    # False — the canonical use of frontier_dispatch is one-shot inline-substrate
-    # reasoning. Pass True to enable the MCP tool loop.
+    # ``mcp`` knob is exposed only on the persona-free HTTP surface. Default is
+    # False — canonical persona-free use is one-shot inline-substrate reasoning.
+    # Pass True to enable the MCP tool loop. Agents: prefer MCP ``team_dispatch``.
     mcp: bool = False
 
 
 class FrontierDispatchToThreadBody(_DispatchCommon):
-    """``frontier_dispatch`` with ``op="to_thread"`` — persona-free, result on thread."""  # noqa: E501
+    """``POST /api/v1/frontier/dispatch`` with ``op="to_thread"`` — persona-free."""
 
     op: Literal["to_thread"]
     model: str
@@ -232,7 +232,8 @@ async def team_dispatch(
     - ``op="to_thread"``: admits dispatch; the agent's reply lands on
       ``thread``; tracker terminal status reflects observed reply (Phase 2).
 
-    Use ``frontier_dispatch`` for raw engine calls without a persona.
+    Agents use MCP ``team_dispatch`` for all consult surfaces. This HTTP route
+    is for Stargate-internal and pipeline-composition callers.
     """
     req = FrontierGenerateRequest(**_normalize_op_body(body))
     return await _dispatch(req, response)
@@ -243,14 +244,16 @@ async def frontier_dispatch(
     body: FrontierDispatchBody,
     response: Response,
 ) -> dict[str, Any] | JSONResponse:
-    """Persona-free dispatch with explicit op discrimination.
+    """Persona-free HTTP dispatch (internal / pipeline composition).
 
     Two ops:
     - ``op="generate"``: returns admission record; poll
       ``pipeline(op="result", execution_id=…)`` for content.
     - ``op="to_thread"``: admits dispatch; model's reply lands on ``thread``.
 
-    Use ``team_dispatch`` for role-envelope dispatch with team-seat assignment.
+    Agents: use MCP ``team_dispatch`` (``role=synthesizer`` for inline-only,
+    API roles for tool-loop consults). ``POST /api/v1/team/dispatch`` is the
+    role-envelope HTTP twin of MCP ``team_dispatch``.
     """
     req = FrontierGenerateRequest(**_normalize_op_body(body))
     return await _dispatch(req, response)

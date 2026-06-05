@@ -234,9 +234,9 @@ async def _capacity_snapshot(
 async def _provider_health(params: dict[str, Any], store: EventStore) -> dict[str, Any]:
     """Aggregate frontier dispatch health per provider across MCP + pipeline surfaces.
 
-    Reads both the legacy ``mcp.frontier.*`` family (still emitted by
-    ``_frontier_core.execute_frontier`` for direct MCP ``frontier_dispatch``
-    callers) and the hoisted ``pipeline.frontier.dispatch.*`` family emitted
+    Reads both the legacy ``mcp.frontier.*`` family (historical MCP surface,
+    pre-``team_dispatch`` unification) and the hoisted
+    ``pipeline.frontier.dispatch.*`` family emitted
     by ``frontier_dispatch_v1``. Bucket shape is provider-symmetric so
     Phase 2+ collapse of the MCP surface onto the pipeline leaves the
     response envelope unchanged.

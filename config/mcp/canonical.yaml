@@ -39,7 +39,6 @@ domains:
 - dispatch
 - retrieve
 - tool_search
-- frontier_dispatch
 - team_dispatch
 - panel_dispatch
 
@@ -1809,7 +1808,7 @@ tools:
 
   # ─── domain: grokbuild (RETIRED harness — overflow relay only) ───────────────
   # Off mcp_claude (11588). Worker maintenance: dispatch(tool="grokbuild", ...).
-  # New work: cursorbuild (code) / frontier_dispatch (Grok consult).
+  # New work: cursorbuild (code) / team_dispatch role=artisan|skeptic (Grok consult).
 
 - canonical_name: grokbuild_build
   domain: grokbuild
@@ -2419,7 +2418,9 @@ tools:
       generation_options: {type: object}
     required: [op, model, messages]
   skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_grok]
+  # Off mcp_grok: frontier_dispatch MCP tool retired (2026-06-05); grok_flat_tools
+  # cannot register dispatch_frontier without frontier_dispatch → boot count mismatch.
+  seat_visibility: [mcp]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2543,70 +2544,6 @@ tools:
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
-- canonical_name: frontier_dispatch
-  domain: frontier_dispatch
-  operation: generate
-  dispatcher_call_shape:
-    tool: frontier_dispatch
-    dispatch_key: op
-    dispatch_value: generate
-  flat_call_shape:
-    tool: frontier_dispatch
-    substrate_qualified: user-vortex__frontier_dispatch
-  fol_descriptor: |-
-    ∀ model ∈ FrontierModels ∧ messages ∈ List[Msg]:
-      frontier_dispatch(op=generate, model, messages) ⟹
-        execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content.
-    Direct native-frontier dispatch (no role envelope). Async. Mutating. See agent_skill:dispatch.
-  json_schema:
-    type: object
-    properties:
-      op: {type: string, enum: [generate, to_thread]}
-      model: {type: string}
-      messages: {type: array, items: {type: object}}
-      system: {type: string}
-      mcp: {type: boolean}
-      reasoning_effort: {type: string}
-      thread: {type: string}
-      subject: {type: string}
-    required: [op, model, messages]
-  skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude]
-  mandate_safety: write
-  cache_priority: always_loaded
-  introduced: '2026-05-30'
-- canonical_name: frontier_dispatch_to_thread
-  domain: frontier_dispatch
-  operation: to_thread
-  dispatcher_call_shape:
-    tool: frontier_dispatch
-    dispatch_key: op
-    dispatch_value: to_thread
-  flat_call_shape:
-    tool: frontier_dispatch_to_thread
-    substrate_qualified: user-vortex__frontier_dispatch_to_thread
-  fol_descriptor: |-
-    ∀ model ∈ FrontierModels ∧ thread ∈ ThreadID:
-      frontier_dispatch(op=to_thread, model, messages, thread) ⟹
-        Stargate posts the model reply on its behalf to thread (works with mcp=False).
-    Async. Mutating. See agent_skill:dispatch.
-  json_schema:
-    type: object
-    properties:
-      op: {type: string, enum: [generate, to_thread]}
-      model: {type: string}
-      messages: {type: array, items: {type: object}}
-      system: {type: string}
-      mcp: {type: boolean}
-      reasoning_effort: {type: string}
-      thread: {type: string}
-      subject: {type: string}
-    required: [op, model, messages, thread]
-  skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude]
-  mandate_safety: write
-  cache_priority: always_loaded
-  introduced: '2026-05-30'
 - canonical_name: team_dispatch
   domain: team_dispatch
   operation: generate

@@ -3,7 +3,7 @@
 Covers:
 - M1: /api/v1/team/generate route is absent (deleted in Phase 4)
 - M2: /api/v1/frontier/generate route is absent (deleted in Phase 4)
-- M3: MCP server registers only team_dispatch + frontier_dispatch (not *_generate)
+- M3: MCP server registers only team_dispatch (not *_generate or frontier_dispatch)
 
 M4 (legacy_field_use telemetry) is NOT applicable: Phase 4 deleted the routes
 outright (returning 404) rather than implementing a 422-with-redirect migration
@@ -104,11 +104,11 @@ def test_m2_frontier_generate_returns_404() -> None:
 
 
 # ---------------------------------------------------------------------------
-# M3 — MCP server registers only team_dispatch + frontier_dispatch
+# M3 — MCP server registers only team_dispatch
 # ---------------------------------------------------------------------------
 # M3 lives in services/mcp-server/tools/test_frontier_registration.py because
 # register_frontier_tools is in a separate service package.  See that file.
 #
 # Summary: _ToolNameRecorder (duck-typed FastMCP) records names registered by
-# register_frontier_tools(); asserts team_dispatch + frontier_dispatch present,
-# team_generate + frontier_generate absent.
+# register_frontier_tools(); asserts team_dispatch only; frontier_dispatch and
+# *_generate variants absent.

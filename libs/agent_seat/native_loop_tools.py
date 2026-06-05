@@ -17,6 +17,31 @@ from agent_seat.tool_friction import ToolFrictionTracker
 logger = get_logger(__name__)
 
 
+def accumulate_usage(acc: dict[str, Any], turn_usage: dict[str, Any] | None) -> None:
+    """Accumulate per-turn usage into *acc* in-place.
+
+    input_tokens / output_tokens: summed; missing values treated as 0.
+    cached_tokens / reasoning_tokens: ``None`` semantics preserved — the
+    field stays absent (``None`` when read via ``get``) until at least one
+    turn reports a numeric value; once any turn does, it becomes the
+    running sum.  This matches the Anthropic convention where
+    ``reasoning_tokens=None`` means "not reported by this provider, not
+    zero" (``anthropic/adapter.py`` usage comment).
+    """
+    if not turn_usage:
+        return
+    acc["input_tokens"] = acc.get("input_tokens", 0) + int(
+        turn_usage.get("input_tokens") or 0
+    )
+    acc["output_tokens"] = acc.get("output_tokens", 0) + int(
+        turn_usage.get("output_tokens") or 0
+    )
+    for field in ("cached_tokens", "reasoning_tokens"):
+        val = turn_usage.get(field)
+        if val is not None:
+            acc[field] = (acc.get(field) or 0) + int(val)
+
+
 def normalize_tool_call(raw: Any) -> tuple[str, dict[str, Any], str]:
     """Return (name, args, call_id) from provider-native tool-call shapes."""
     if not isinstance(raw, dict):
@@ -127,6 +152,7 @@ async def execute_tool_calls(
             "id": call_id,
             "name": name,
             "content": result_str,
+            "ok": ok,
         }
         return adapter_result, tc
 

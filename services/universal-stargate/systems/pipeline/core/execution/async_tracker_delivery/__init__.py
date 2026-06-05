@@ -11,8 +11,8 @@ Two delivery paths gated on ``record.op``:
 **Bus-mode path** (``record.op == "to_thread"``):
   Stargate posts ``record.result.content`` to ``record.target_thread`` on
   behalf of the dispatched role/model. ``from_agent`` is supplied at
-  admission (role for team_dispatch, model identifier for
-  frontier_dispatch); ``to_agent`` is resolved from ``record.caller_agent``
+  admission (role for team_dispatch, model identifier for persona-free
+  frontier HTTP); ``to_agent`` is resolved from ``record.caller_agent``
   with a thread last-turn-from fallback. Long content (> ~1.5 KB)
   passes ``allow_long_body=true`` so the agent-bus briefing-rule warning
   is suppressed. Content above the bus 8 000-char hard limit fails with

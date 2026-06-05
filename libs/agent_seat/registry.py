@@ -65,7 +65,7 @@ def normalize_agent_slug(slug: str) -> str:
     """Normalize dispatch agent slug to canonical seat or role slug.
 
     Used by the frontier dispatch pipeline to handle case/spelling variants
-    in team_dispatch(role=...) and frontier_dispatch(agent=...) calls.
+    in team_dispatch(role=...) calls.
 
     Handles:
     - Case variations

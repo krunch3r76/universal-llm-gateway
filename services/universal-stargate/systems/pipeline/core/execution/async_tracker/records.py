@@ -87,7 +87,7 @@ class PipelineExecutionRecord:
     # notes/system/decisions/dispatch-to-thread-delivery-architecture-2026-05-22.md.
     thread_reply_observed_at: str | None = None
     # Identity to post as for op="to_thread". Populated at admission from the
-    # role (team_dispatch) or model identifier (frontier_dispatch). Reply
+    # role (team_dispatch) or model identifier (persona-free frontier HTTP). Reply
     # turns are posted from this agent to record.caller_agent (or a thread
     # fallback) by the delivery handler.
     from_agent: str | None = None

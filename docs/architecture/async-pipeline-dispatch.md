@@ -319,8 +319,8 @@ Pipeline caller shape:
 `pipeline_options.model` is required; `role` is optional; everything else has
 sensible defaults.
 
-MCP callers typically reach this via `team_dispatch` for role consults or
-`frontier_dispatch` for raw persona-free calls:
+MCP callers reach this via `team_dispatch` only (`op=generate|to_thread` with
+`role=`, or `op=handoff` for manual seats):
 
 ```python
 team_dispatch(
@@ -418,7 +418,7 @@ The tool-resolution loop is the single source of truth for both transports:
 | Caller | Transport | Where |
 |---|---|---|
 | Stargate pipeline (`frontier_dispatch_v1`) | In-process `CloudProxyClient` | `systems/pipeline/core/handlers/frontier_dispatch.py` |
-| MCP `team_dispatch` / `frontier_dispatch` | HTTP → Stargate frontier dispatch routes (async dispatch envelope) | `services/mcp-server/tools/frontier.py` |
+| MCP `team_dispatch` | HTTP → Stargate team/frontier dispatch routes (async dispatch envelope) | `services/mcp-server/tools/frontier.py` |
 
 Both callers depend on `libs/agent_seat/native_loop.run_native_tool_loop`
 (loop), `libs/llm_adapters/*` (provider request/response translation), and

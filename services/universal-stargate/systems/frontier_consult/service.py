@@ -90,7 +90,7 @@ async def build_dispatch_body(
             request_id=request_id,
             event_publisher=event_publisher,
         )
-        # Soft boot: team_dispatch / frontier_dispatch dispatches use the
+        # Soft boot: team_dispatch and persona-free frontier HTTP dispatches use the
         # lightweight profile by default. Drops deadlines + review-queue
         # fetches; keeps a 3-reflection floor. The pipeline-handler hydration
         # in resolve_dispatch_tool_set must mirror this profile to avoid the
@@ -155,7 +155,7 @@ async def build_dispatch_body(
             reason=(
                 f"{effective_model!r} is a Chat Completions-only model — "
                 "it is unavailable on the OpenAI Responses API that "
-                "team_dispatch / frontier_dispatch use. "
+                "team_dispatch and frontier-dispatch pipeline steps use. "
                 f"Use llm_generate(model={effective_model!r}, messages=...) instead "
                 "(note: llm_generate has a narrower surface — no role, tools, "
                 "or transcript_id)."

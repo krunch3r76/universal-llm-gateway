@@ -557,7 +557,7 @@ async def test_handler_persona_free_defaults_use_full_mcp_catalog(
     """Persona-free dispatch (no agent) gets the full live MCP catalog.
 
     Closes the BOE-19-P-vintage divergence (assertion 7974, 2026-05-01) where
-    ``frontier_dispatch`` (no agent) exposed only the curated read-only tier
+    persona-free frontier HTTP (no agent) exposed only the curated read-only tier
     while ``team_dispatch`` (with agent) exposed the full catalog. The
     dispatch path no longer determines the tool surface.
     """
@@ -645,7 +645,7 @@ async def test_handler_rejects_raw_agent_plus_endpoint_tools(
         }
     )
 
-    with pytest.raises(ValueError, match="only supported via frontier_dispatch"):
+    with pytest.raises(ValueError, match="only supported via POST /api/v1/frontier/dispatch"):
         await handler.execute(step, context)
 
 
@@ -1547,7 +1547,7 @@ async def test_skeptic_explicit_tools_via_frontier_dispatch_suppresses_injection
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Explicit pipeline_options.tools via frontier_dispatch bypasses injection.
+    """Explicit pipeline_options.tools via /api/v1/frontier/dispatch bypasses injection.
 
     When a caller passes tools=[] to force persona-only mode (via
     _endpoint_request_id), the xAI server-side built-in injection must not fire.

@@ -19,18 +19,16 @@ Block text is operator-approved (2026-05-31); the grok model string is
 from __future__ import annotations
 
 # Surface-aware Dispatch & Consult blocks (operator-approved override 2026-06-01,
-# thread 1167). frontier_dispatch/team_dispatch are PRIMARY/direct-call on BOTH
+# thread 1167). team_dispatch (+ panel_dispatch) are PRIMARY/direct-call on BOTH
 # surfaces after the standalone-domain re-land (thread 1146/1167):
 #
-#   - claude /mcp (mcp, mcp_claude): canonical.yaml now declares standalone
-#     `frontier_dispatch`/`team_dispatch` DOMAINS (visibility mcp/mcp_claude), so
-#     their tool_name enters _PRIMARY_TOOLS in _derive.derive_claude_manifest —
-#     direct call, no dispatch step. (advisor/pipeline_consult are NOT promoted
-#     → still OVERFLOW via dispatch(tool="…"). agent_consult removed 2026-06.)
+#   - claude /mcp (mcp, mcp_claude): canonical.yaml declares standalone
+#     `team_dispatch` DOMAIN (visibility mcp/mcp_claude), so tool_name enters
+#     _PRIMARY_TOOLS in _derive.derive_claude_manifest — direct call, no dispatch
+#     step. frontier_dispatch MCP tool retired — use team_dispatch(generate, role=…,
+#     model=?) instead. (advisor/pipeline_consult remain OVERFLOW via dispatch.)
 #   - grok /mcp/grok (mcp_grok): _derive.derive_grok_manifest emits a FLAT
-#     manifest where dispatch_frontier/dispatch_team are standalone tools — direct
-#     call as well. The grok-serving dispatch_* entries no longer carry mcp_claude
-#     (stripped in the re-land) so grok stays flat.
+#     manifest where dispatch_team is a standalone tool — direct call as well.
 #
 # NOTE: `cache_priority` in canonical.yaml is INERT (not consumed by derivation,
 # per _derive.py). The lever that makes these primary on claude is the standalone
@@ -63,8 +61,8 @@ tool_search(query="<keywords>")          # surfaces overflow AND deferred primar
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
-When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model (bare name = 404).
-- consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
+When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model on optional model= override (bare name = 404).
+- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id; poll pipeline(op="result", execution_id=…)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
 - manual seat handoff → team_dispatch (op=handoff, role=web-consult|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
@@ -73,14 +71,14 @@ When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are ser
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
 - close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
 - run a named pipeline              → pipeline (op=run|async)
-⚠ A build harness is not a model picker. "Want a grok answer" → frontier_dispatch model="xai/grok-4.3", never a build harness.
+⚠ A build harness is not a model picker. "Want a grok answer" → team_dispatch(op=generate, role=artisan, model="xai/grok-4.3", …), never a build harness.
 Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
 
 _DISPATCH_CONSULT_BLOCK_GROK = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
-On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
-- consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)
+On THIS surface (/mcp/grok, flat catalog) team_dispatch is PRIMARY — call directly, no dispatch step. Model strings = provider/model on optional model= (bare name = 404).
+- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
 - manual seat handoff → team_dispatch (op=handoff, role=web-consult|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
@@ -89,7 +87,7 @@ On THIS surface (/mcp/grok, flat catalog) frontier_dispatch + team_dispatch are 
 - RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
 - close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
 - run a named pipeline              → pipeline (op=run|async)
-⚠ "Want a grok answer" → frontier_dispatch xai/grok-4.3, never a build harness.
+⚠ "Want a grok answer" → team_dispatch role=artisan model=xai/grok-4.3, never a build harness.
 Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
@@ -112,13 +110,13 @@ On any consult / review / second-opinion / handoff / dispatch outside this seat:
 read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook; this is only the index).
 Three traps that cost a round-trip:
 - team_dispatch(op=generate) with synthetic seat model (claude-web|claude-cursor) → 422; manual seats take op=handoff with role=.
-- "Want a grok answer" is not a build harness → frontier_dispatch(model="xai/grok-4.3").
+- "Want a grok answer" is not a build harness → team_dispatch(role=artisan, model="xai/grok-4.3").
 - Wrong rules tree: the handoff protocol is NOT under `universal-llm-gateway/.cursor/rules/`. It lives at PROJECT `.cursor/rules/architecture-handoff-protocol.mdc` + `handoff-dispatchers.mdc` (no repo prefix).
 Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — implement (role=cursor-implement) is NOT exempt:
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Surface axis: team_dispatch handoff = role (web-consult/cursor-consult/cursor-implement); team_dispatch generate = API role; frontier_dispatch = provider model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
+Surface axis: team_dispatch handoff = role (web-consult/cursor-consult/cursor-implement); team_dispatch generate = API role + optional model= override within allowed_models."""
 
 
 def _render_server_primary_manifest_line() -> str:
@@ -190,10 +188,10 @@ def render_orientation_blocks(
     rendering seat's catalog (thread 1167, 2026-06-01 re-land):
 
     - ``family == "grok"`` → the flat /mcp/grok manifest exposes
-      ``frontier_dispatch``/``team_dispatch`` as standalone tools → direct-call form.
+      ``team_dispatch`` as a standalone tool → direct-call form.
     - any other family (claude/gpt/gemini on the ``mcp``/``mcp_claude`` surface) →
-      the standalone-domain re-land puts ``frontier_dispatch``/``team_dispatch`` in
-      ``_PRIMARY_TOOLS`` → direct-call form here too. ``panel_dispatch`` is primary
+      the standalone-domain re-land puts ``team_dispatch`` in ``_PRIMARY_TOOLS`` →
+      direct-call form here too. ``panel_dispatch`` is primary
       on claude-web; ``advisor``/``pipeline_consult`` remain OVERFLOW via
       ``dispatch(tool="…")``.
 

@@ -1082,50 +1082,6 @@
     "skill_uri": "agent_skill:cortex"
   },
   {
-    "cache_priority": "on_demand",
-    "canonical_name": "dispatch_frontier",
-    "description": "\u2200 op \u2208 {generate, to_thread} \u2227 model \u2208 FrontierModels \u2227 messages \u2208 list[ChatMessage]:\n  dispatch_frontier(op, model, messages) \u27f9 {execution_id \u2208 UUIDv4, status}.\nop=generate \u2192 poll pipeline(op=\"result\", execution_id=\u2026) for content.\nop=to_thread \u2192 Stargate posts the reply to `thread` on completion.\nAsync. Mutating (external call). See agent_skill:dispatch.",
-    "domain": "dispatch",
-    "inputSchema": {
-      "properties": {
-        "generation_options": {
-          "type": "object"
-        },
-        "messages": {
-          "items": {
-            "type": "object"
-          },
-          "type": "array"
-        },
-        "model": {
-          "type": "string"
-        },
-        "op": {
-          "enum": [
-            "generate",
-            "to_thread"
-          ],
-          "type": "string"
-        },
-        "subject": {
-          "type": "string"
-        },
-        "thread": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "op",
-        "model",
-        "messages"
-      ],
-      "type": "object"
-    },
-    "mandate_safety": "write",
-    "name": "dispatch_frontier",
-    "skill_uri": "agent_skill:dispatch"
-  },
-  {
     "cache_priority": "always_loaded",
     "canonical_name": "dispatch_overflow",
     "description": "\u2200 tool \u2208 OverflowRegistry \u2227 arguments \u2208 JSONStr:\n  dispatch_overflow(tool, arguments) \u27f9 result \u2208 Any.\nGeneral overflow routing. \u2200 t \u2209 PrimaryTools: reachable via dispatch.\nSee agent_skill:dispatch.",

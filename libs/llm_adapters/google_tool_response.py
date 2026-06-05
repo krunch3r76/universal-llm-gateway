@@ -1,9 +1,10 @@
-"""Structured Gemini functionResponse payloads — bounded, typed envelopes.
+"""Structured Gemini functionResponse payloads — typed envelopes.
 
 Gemini expects ``functionResponse.response`` as a JSON object. The native tool
 loop passes tool results as JSON strings; this module parses them once and
-emits a compact ``{ok, status, summary, data, error}`` shape instead of
-double-encoding a string under ``result``.
+emits a ``{ok, status, summary, data, error}`` shape instead of double-encoding
+a string under ``result``. ``data`` carries the full tool result (content parity
+with anthropic/openai adapters); only ``summary`` and ``error`` are bounded.
 """
 
 from __future__ import annotations
@@ -12,27 +13,13 @@ import json
 from typing import Any
 
 _MAX_SUMMARY_CHARS = 500
-_MAX_DATA_CHARS = 8000
 _MAX_ERROR_CHARS = 2000
-_MAX_STRING_FIELD_CHARS = 2000
 
 
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
-
-
-def _bound_value(value: Any, *, depth: int = 0) -> Any:
-    if depth > 4:
-        return "[truncated: max depth]"
-    if isinstance(value, str):
-        return _truncate(value, _MAX_STRING_FIELD_CHARS)
-    if isinstance(value, dict):
-        return {str(k): _bound_value(v, depth=depth + 1) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_bound_value(item, depth=depth + 1) for item in value[:50]]
-    return value
 
 
 def _infer_ok(parsed: dict[str, Any]) -> bool:
@@ -77,12 +64,11 @@ def build_function_response_payload(content: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw) if raw else {}
     except json.JSONDecodeError:
-        text = _truncate(raw, _MAX_DATA_CHARS)
         return {
             "ok": True,
             "status": "success",
-            "summary": _truncate(text, _MAX_SUMMARY_CHARS),
-            "data": {"text": text},
+            "summary": _truncate(raw, _MAX_SUMMARY_CHARS),
+            "data": {"text": raw},
             "error": None,
         }
 
@@ -91,7 +77,7 @@ def build_function_response_payload(content: str) -> dict[str, Any]:
             "ok": True,
             "status": "success",
             "summary": _truncate(str(parsed), _MAX_SUMMARY_CHARS),
-            "data": {"value": _bound_value(parsed)},
+            "data": {"value": parsed},
             "error": None,
         }
 
@@ -102,15 +88,11 @@ def build_function_response_payload(content: str) -> dict[str, Any]:
         if isinstance(status_raw, str) and status_raw
         else ("success" if ok else "error")
     )
-    bounded = _bound_value(parsed)
-    data_json = json.dumps(bounded, ensure_ascii=False, default=str)
-    if len(data_json) > _MAX_DATA_CHARS:
-        bounded = {"truncated": True, "preview": _truncate(data_json, _MAX_DATA_CHARS)}
 
     return {
         "ok": ok,
         "status": status,
         "summary": _extract_summary(parsed),
-        "data": bounded,
+        "data": parsed,
         "error": _extract_error(parsed) if not ok else None,
     }

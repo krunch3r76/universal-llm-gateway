@@ -1,7 +1,7 @@
 """Tool-call schemas for agent-seat tool loops.
 
-OpenAI function-calling definitions shared between the MCP ``frontier_dispatch``
-path and the pipeline ``frontier_dispatch_v1`` handler. Both surfaces use the
+OpenAI function-calling definitions shared between the MCP ``team_dispatch``
+relay and the pipeline ``frontier_dispatch_v1`` handler. Both surfaces use the
 same OpenAI-shape tool schema — providers that speak native Anthropic / xAI /
 Google formats are translated by upstream adapters (MCP's ``llm_adapters``;
 Stargate's cloud-proxy).

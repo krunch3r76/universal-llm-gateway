@@ -35,6 +35,26 @@ def test_build_function_response_plain_text_fallback() -> None:
     assert payload["data"] == {"text": "hello world"}
 
 
+def test_build_function_response_preserves_large_fs_read_content() -> None:
+    prefix = "x" * 8500
+    sentinel = "SENTINEL_AT_CHAR_8500"
+    suffix = "y" * 500
+    content = prefix + sentinel + suffix
+    assert len(content) > 9000
+
+    payload = build_function_response_payload(
+        json.dumps({"content": content, "path": "/tmp/spec.md"})
+    )
+
+    data = payload["data"]
+    assert isinstance(data, dict)
+    assert data["content"] == content
+    assert len(data["content"]) == len(content)
+    assert sentinel in data["content"]
+    assert data["path"] == "/tmp/spec.md"
+    assert "truncated" not in data
+
+
 def test_normalize_gemini_parts_drops_empty_text() -> None:
     parts = [{"text": ""}, {"functionCall": {"name": "fs", "args": {}}}]
     normalized = normalize_gemini_parts(parts)

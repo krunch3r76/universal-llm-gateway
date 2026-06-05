@@ -13,7 +13,7 @@ per the situation.
 
 ### 0. Before any dispatch (MANDATORY)
 
-∀ **any** `team_dispatch` or `frontier_dispatch` — including `op=handoff` with
+∀ **any** `team_dispatch` — including `op=handoff` with
 **`role=cursor-implement`** (bound implement handoff) — and any substantive `agent_bus` post/reply
 that opens a consult: pause **before** the first call. Implement routing is
 **NOT exempt**: a bound-implementation handoff is a dispatch and must complete
@@ -37,7 +37,7 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
 3. **Standard openers** (see consult-routing decision table):
    - **claude-web** → `team_dispatch(op=handoff, role=web-consult, packet_path=…)` + six-block packet
    - **claude-cursor** (fresh tier / IDE) → `team_dispatch(op=handoff, role=cursor-consult, …)`
-   - **hands-off API** → `frontier_dispatch` or `team_dispatch(generate, role=reviewer)`
+   - **hands-off API** → `team_dispatch(generate, role=reviewer)`
    - **thin implement ping** → `agent_bus(post, …)` — **not** handoff
 4. **`agent_bus(reply)`** on an existing thread = **iteration/follow-up only** — not the
    standard opener for a substantive review consult. Thread continuity does not override
@@ -125,7 +125,7 @@ bouncing between two incompatible approaches.
 | Unknown territory requiring exploration | Subagent (per subagent-strategy) |
 | Fresh perspective, tier upgrade (Opus), or escape executor framing — **from Cursor** | `team_dispatch(op="handoff", role="cursor-consult", …)` per `handoff-dispatchers.mdc` § `cursor-claude` — applies to reviews, projects, and exploration alike |
 | Consult **claude-web** (review, dialectic, architecture) | `team_dispatch(op=handoff, role=web-consult, packet_path=…)` — poll `agent_bus(wait)` |
-| Hands-off synchronous review (no operator push) | `frontier_dispatch(mcp=True)` or `team_dispatch(generate, role=reviewer)` — poll `pipeline(result)` |
+| Hands-off synchronous review (no operator push) | `team_dispatch(generate, role=reviewer)` — poll `pipeline(result)` |
 
 ## Anti-Patterns
 

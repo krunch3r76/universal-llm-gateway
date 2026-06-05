@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 # Suppression / override: pass ``generation_parameters.provider_options.xai.tools``
 # explicitly (including ``[]`` to suppress all server-side tools).  ``mcp=False``
 # also suppresses injection — it is the unified "no tools" signal for xAI personas.
-# Explicit ``pipeline_options.tools`` via frontier_dispatch also prevents injection.
+# Explicit ``pipeline_options.tools`` via /api/v1/frontier/dispatch also prevents injection.
 XAI_BUILTIN_TOOLS: list[dict[str, Any]] = [
     {"type": "web_search"},
     {"type": "x_search"},
@@ -102,7 +102,7 @@ async def resolve_dispatch_tool_set(
     """Resolve (tools, system, hydration_meta) for the three dispatch modes.
 
     Three cases:
-    - Endpoint-supplied: ``opt_tools`` is a ``list`` (from ``frontier_dispatch``).
+    - Endpoint-supplied: ``opt_tools`` is a ``list`` (from ``/api/v1/frontier/dispatch``).
       Soft invariant violation per Kaywan 2026-05-01 (Cortex assertion 7974):
       tools are not a caller concern; the catalog is universal. Honored for
       compatibility but emits ``pipeline.frontier.dispatch.tool.list.supplied``.
@@ -112,7 +112,7 @@ async def resolve_dispatch_tool_set(
       catalog.
     - Persona-free: no agent — full live MCP catalog when ``mcp_enabled``,
       same surface as persona-bound generic-provider dispatch. The dispatch
-      path (``frontier_dispatch`` vs ``team_dispatch``) no longer determines
+      path (frontier HTTP vs team HTTP / MCP ``team_dispatch``) no longer determines
       the tool surface; ``mcp=False`` or ``remote_mcp`` is the suppression
       signal.
     """
@@ -132,7 +132,7 @@ async def resolve_dispatch_tool_set(
     )
 
     if isinstance(opt_tools, list):
-        # Case 1: endpoint-supplied tool list (frontier_dispatch with explicit tools).
+        # Case 1: endpoint-supplied tool list (frontier HTTP with explicit tools).
         # Soft invariant: the dispatch infrastructure exposes the full MCP catalog
         # by default when ``mcp=True``. Callers that pass an explicit ``tools`` list
         # are pinning a narrower set than the system would otherwise provide; this
@@ -141,7 +141,8 @@ async def resolve_dispatch_tool_set(
         if agent and not endpoint_request_id:
             raise ValueError(
                 "pipeline_options.tools with pipeline_options.agent is only "
-                "supported via frontier_dispatch; raw pipeline dispatch cannot "
+                "supported via POST /api/v1/frontier/dispatch; raw "
+                "pipeline(pipeline_id=\"frontier-dispatch\") cannot "
                 "validate persona tool policy"
             )
         resolved_names = [str(name) for name in opt_tools if isinstance(name, str)]
@@ -192,7 +193,7 @@ async def resolve_dispatch_tool_set(
         # Profile selection: virtual-model agent-seat pipelines may opt into
         # the heavier "default" briefing (deadlines + review queue + 3 sessions
         # + 5 self-reflections) via step.boot_profile. team_dispatch /
-        # frontier_dispatch admission paths leave this at "light" — the
+        # team/frontier HTTP admission paths leave this at "light" — the
         # comment block above on double-hydration explains why.
         bundle = await hydrate_agent(agent, profile=boot_profile, model=model)
         publish(
@@ -255,8 +256,8 @@ async def resolve_dispatch_tool_set(
 
     # Case 3: persona-free dispatch — full live MCP catalog when mcp_enabled.
     # Aligned with Case 2's generic-provider branch so the dispatch path
-    # (frontier_dispatch vs team_dispatch) no longer determines the tool
-    # surface — closes the BOE-19-P-vintage divergence where frontier_dispatch
+    # (frontier HTTP vs team/MCP) no longer determines the tool
+    # surface — closes the BOE-19-P-vintage divergence where persona-free HTTP
     # exposed only ("cortex", "rag") while team_dispatch exposed the full
     # catalog. ``mcp=False`` or ``remote_mcp`` remains the suppression signal.
     if not mcp_enabled or remote_mcp:

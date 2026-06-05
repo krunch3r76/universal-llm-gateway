@@ -82,8 +82,8 @@ def PipelineFrontierDispatchStarted(  # noqa: N802
         boot_level: Internal observability vocabulary derived from agent
             presence at dispatch: ``team`` (persona dispatch) or ``none``
             (persona-free). NOT a caller-supplied parameter; the public MCP
-            surface is ``team_dispatch`` (persona) plus ``frontier_dispatch``
-            (raw) with no ``boot`` field.
+            surface is ``team_dispatch`` only (``role=`` selects persona vs
+            inline-only ``synthesizer``).
         remote_mcp: True iff adapter-level remote MCP injection is active
         op: Dispatch op (``generate`` | ``to_thread`` | empty for legacy)
     """

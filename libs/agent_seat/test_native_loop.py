@@ -15,6 +15,7 @@ import pytest
 from llm_adapters import FrontierRequest
 
 from agent_seat import native_loop as _nl_mod
+from agent_seat import native_loop_tools as _nl_tools_mod
 from agent_seat.native_loop import run_native_tool_loop
 
 
@@ -85,7 +86,7 @@ async def test_native_loop_executes_tools_and_appends_round(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"ok": True, "echo": args})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     events: list[tuple[str, dict[str, Any]]] = []
 
@@ -128,7 +129,7 @@ async def test_native_loop_exhaustion(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     send = _FakeSend(
         [_anthropic_tool_use("cortex", {"tool": "entities"}, f"t{i}") for i in range(5)]
@@ -165,7 +166,7 @@ async def test_native_loop_stops_on_repeated_section_miss(
         assert args["op"] == "md_read"
         return json.dumps({"error": "Section not found: Missing Section"})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     send = _FakeSend(
         [
@@ -227,7 +228,7 @@ async def test_native_loop_cancellation(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     cancel_now = {"flag": False}
 
@@ -276,7 +277,7 @@ async def test_native_loop_unknown_provider_raises() -> None:
         model="unknownvendor/some-model",
         max_tokens=100,
     )
-    with pytest.raises(ValueError, match="No native path"):
+    with pytest.raises(ValueError):
         await run_native_tool_loop(
             model="unknownvendor/some-model",
             req=req,
@@ -295,7 +296,7 @@ async def test_native_loop_malformed_tool_args(
         captured.append((name, args))
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     openai_malformed = {
         "id": "resp_1",
@@ -383,7 +384,7 @@ async def test_synthesis_round_fires_after_friction_exhaustion(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"error": "Section not found: Missing Section"})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     # Two repeated misses trip friction.should_stop. Then the synth round
     # is fired with NO tools available — the model produces final text.
@@ -445,7 +446,7 @@ async def test_synthesis_round_fires_after_max_turns_exhaustion(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     # Three turns of fresh tool calls (distinct args avoid friction halt),
     # then the synth round produces final text.
@@ -501,7 +502,7 @@ async def test_synthesis_round_empty_content_keeps_exhausted_empty(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"error": "Section not found: Missing Section"})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     empty_terminal = {
         "id": "msg_synth",
@@ -559,7 +560,7 @@ async def test_synthesis_round_skipped_when_adapter_lacks_hooks(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"error": "Section not found: Missing Section"})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     # Patch the adapter resolver to return an object missing strip_tools.
     real_resolve = _nl_mod.resolve_llm_adapter
@@ -628,7 +629,7 @@ async def test_synthesis_round_does_not_fire_on_clean_termination(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"ok": True})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     send = _FakeSend(
         [
@@ -674,7 +675,7 @@ async def test_synthesis_round_swallows_send_native_failure(
     async def fake_execute(name: str, args: dict[str, Any]) -> str:
         return json.dumps({"error": "Section not found: Missing Section"})
 
-    monkeypatch.setattr(_nl_mod, "execute_tool", fake_execute)
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
 
     class _RaisingSend:
         def __init__(self, tool_responses: list[dict[str, Any]]) -> None:
@@ -720,6 +721,134 @@ async def test_synthesis_round_swallows_send_native_failure(
     assert result.content == ""
     # Two tool turns + one failed synth attempt.
     assert len(send.calls) == 3
+
+
+# ---------------------------------------------------------------------------
+# CP-001 — usage accumulation across all provider turns
+# ---------------------------------------------------------------------------
+
+
+def test_accumulate_usage_sums_basic_tokens() -> None:
+    """accumulate_usage sums input/output across multiple turns."""
+    from agent_seat.native_loop_tools import accumulate_usage
+
+    acc: dict = {}
+    accumulate_usage(acc, {"input_tokens": 10, "output_tokens": 5})
+    accumulate_usage(acc, {"input_tokens": 20, "output_tokens": 8})
+    accumulate_usage(acc, {"input_tokens": 15, "output_tokens": 3})
+    assert acc["input_tokens"] == 45
+    assert acc["output_tokens"] == 16
+
+
+def test_accumulate_usage_none_semantics_preserved() -> None:
+    """cached_tokens / reasoning_tokens stay absent until a turn reports them."""
+    from agent_seat.native_loop_tools import accumulate_usage
+
+    acc: dict = {}
+    # First two turns: no cached/reasoning values
+    accumulate_usage(
+        acc,
+        {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "reasoning_tokens": None,
+            "cached_tokens": None,
+        },
+    )
+    accumulate_usage(acc, {"input_tokens": 20, "output_tokens": 8})
+    assert "cached_tokens" not in acc or acc.get("cached_tokens") is None
+    assert "reasoning_tokens" not in acc or acc.get("reasoning_tokens") is None
+
+    # Third turn reports reasoning_tokens — now it becomes a number
+    accumulate_usage(
+        acc, {"input_tokens": 5, "output_tokens": 2, "reasoning_tokens": 100}
+    )
+    assert acc["reasoning_tokens"] == 100
+
+    # Fourth turn also reports it — becomes a sum
+    accumulate_usage(
+        acc, {"input_tokens": 5, "output_tokens": 2, "reasoning_tokens": 50}
+    )
+    assert acc["reasoning_tokens"] == 150
+
+
+def test_accumulate_usage_none_input_is_noop() -> None:
+    """None / empty turn_usage is a no-op."""
+    from agent_seat.native_loop_tools import accumulate_usage
+
+    acc: dict = {"input_tokens": 10, "output_tokens": 5}
+    accumulate_usage(acc, None)
+    accumulate_usage(acc, {})
+    assert acc["input_tokens"] == 10
+    assert acc["output_tokens"] == 5
+
+
+@pytest.mark.asyncio
+async def test_native_loop_usage_accumulated_across_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NativeLoopResult.usage reflects the SUM of all provider turns, not just the last."""
+
+    async def fake_execute(name: str, args: dict[str, Any]) -> str:
+        return json.dumps({"ok": True})
+
+    monkeypatch.setattr(_nl_tools_mod, "execute_tool", fake_execute)
+
+    def _anthropic_tool_use_with_usage(
+        call_id: str, in_tok: int, out_tok: int
+    ) -> dict[str, Any]:
+        return {
+            "id": "msg_x",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-6",
+            "content": [
+                {"type": "tool_use", "id": call_id, "name": "cortex", "input": {"x": 1}}
+            ],
+            "usage": {"input_tokens": in_tok, "output_tokens": out_tok},
+            "stop_reason": "tool_use",
+        }
+
+    # 3 tool turns (each with distinct usage), then terminal
+    send = _FakeSend(
+        [
+            _anthropic_tool_use_with_usage("t1", 10, 5),
+            _anthropic_tool_use_with_usage("t2", 20, 8),
+            _anthropic_tool_use_with_usage("t3", 15, 3),
+            {
+                "id": "msg_final",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-sonnet-4-6",
+                "content": [{"type": "text", "text": "done"}],
+                "usage": {"input_tokens": 30, "output_tokens": 12},
+                "stop_reason": "end_turn",
+            },
+        ]
+    )
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "do stuff"}],
+        model="claude-sonnet-4-6",
+        max_tokens=100,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "cortex", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+    result = await run_native_tool_loop(
+        model="anthropic/claude-sonnet-4-6",
+        req=req,
+        send_native=send,
+        max_turns=10,
+    )
+    assert result.content == "done"
+    assert result.usage["input_tokens"] == 10 + 20 + 15 + 30
+    assert result.usage["output_tokens"] == 5 + 8 + 3 + 12
+    # Anthropic never reports reasoning_tokens — should not be present or None
+    assert result.usage.get("reasoning_tokens") is None
 
 
 def test_all_frontier_adapters_implement_synthesis_hooks() -> None:

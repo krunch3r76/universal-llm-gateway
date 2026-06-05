@@ -254,7 +254,7 @@ async def hydrate_agent(
 
     ``profile`` selects fetch + render shape from ``_PROFILES``:
     - ``"default"`` — full context (deadlines, review queue, 5 reflections, 3 sessions)
-    - ``"light"``   — soft boot for team_dispatch / frontier_dispatch(agent=...)
+    - ``"light"``   — soft boot for team_dispatch and role-envelope HTTP dispatches
                       (drops deadlines + review queue, 3 reflections floor, 1 session)
     Truthiness gates in ``_render_briefing`` collapse empty sections naturally;
     no separate render-shape flag needed.

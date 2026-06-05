@@ -40,7 +40,7 @@ def FrontierEndpointPersonaResolved(  # noqa: N802
     allowed_models_count: int,
     allowed_options_count: int | None,
 ) -> Event:
-    """Persona resolution at /team/dispatch and frontier_dispatch endpoints.
+    """Persona resolution at /team/dispatch and /frontier/dispatch HTTP endpoints.
 
     tools_count retired per todo:retire-tools-allowlist-as-caller-concern.
     """

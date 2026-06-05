@@ -108,7 +108,7 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "sqlite_execute",
         "sqlite_list_databases",
         "sqlite_schema",
-        # panel_dispatch / frontier_dispatch / team_dispatch are canonicalized
+        # panel_dispatch / team_dispatch are canonicalized
         # (standalone domains in canonical.yaml) — do not add here
         # MCP server heartbeat — infra-internal, not a domain tool
         "health",

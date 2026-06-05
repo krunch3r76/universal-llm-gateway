@@ -265,7 +265,7 @@ def resolve_messages(
 
     - Mode 3 (single-prompt): wraps ``user_prompt`` in a single
       ``[{"role": "user", "content": ...}]``. Matches the historical
-      behaviour used by ``team_dispatch`` / ``frontier_dispatch`` admission
+      behaviour used by ``team_dispatch`` and ``/api/v1/frontier/dispatch`` admission
       and by all consult-style pipelines that bind one prompt per step.
 
     The opt-in form is intended for synchronous virtual-model pipelines
@@ -312,8 +312,8 @@ def resolve_system_prompt(step: StepConfig, context: PipelineContext) -> str:
 
     Precedence: ``pipeline_options.system`` > ``step.system_prompt`` >
     first system message in ``context.messages``. ``pipeline_options.system``
-    carries the caller-supplied prompt for both ``team_dispatch`` and
-    ``frontier_dispatch`` MCP dispatches; for persona dispatches the Stargate
+    carries the caller-supplied prompt for MCP ``team_dispatch`` and internal
+    frontier HTTP dispatches; for persona dispatches the Stargate
     endpoint also auto-assembles birth + briefing + continuation upstream.
     """
     opt_system = context.options.get("system")
