@@ -207,6 +207,21 @@ def inline_only_for_model(model: str) -> bool:
     return profile is not None and derive_inline_only(profile)
 
 
+def client_side_mcp_tool_loop_admitted(model: str) -> bool:
+    """True iff dispatch admission may enable a client-side MCP function-tool loop.
+
+    Shared by ``mcp_enabled_for_team_dispatch`` and ``mcp_enabled_for_frontier_dispatch``
+    (via ``_mcp_base_admitted``). False for inline-only families (gemini) and for
+    xAI multi-agent models (API rejects client-side function tools; server builtins only).
+    """
+    if inline_only_for_model(model):
+        return False
+    from model_id import ModelId
+
+    mid = ModelId.parse(model)
+    return not (mid.provider == "xai" and "multi-agent" in mid.base_id)
+
+
 def resolve_seat(
     family: str | None = None,
     platform: str | None = None,

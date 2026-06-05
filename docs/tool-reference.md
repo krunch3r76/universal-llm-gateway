@@ -60,7 +60,7 @@ Operator shorthand **to `claude-web`** / **to `claude-cursor`** maps to this op 
 admit only handoff on `team_dispatch`). **Cursor → cursor** (`cursor-lead` → `claude-cursor`)
 is for **fresh perspective and tier upgrade** in a new IDE thread (packet-booted context,
 operator picks Opus in the model picker) — reviews, ongoing `project:` exploration, architecture,
-and extension work alike. See `handoff-dispatchers.mdc` § `cursor-claude`.
+and extension work alike. See `projects/.cursor/rules/handoff-dispatchers.mdc` (workspaces sandbox) § `cursor-claude`; consult index `agent-skills/consult-routing.md`.
 
 Creates an agent-bus thread (e.g. `lead` → `claude-web`,
 `cursor-lead` or `claude-cursor` → `claude-cursor`)
@@ -76,7 +76,15 @@ endpoint enforces that the role resolves to a manual, non-dispatchable seat
 (`delivery=manual, dispatchable=false`); dispatchable roles (reviewer, gatherer, etc.)
 are rejected with `handoff_requires_web_seat` 422.
 
-The pointer body defaults to the standard ≤25-line handoff-dispatchers.mdc template
+**Self-handoff:** a manual seat may call `op="handoff"` with `role` resolving to
+**itself** (`lead`/`claude-web`, `cursor-lead`/`claude-cursor`) to open a new
+agent-bus thread with packet-booted context. This is **supported** — distinct
+from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
+Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
+`agent-skills/consult-routing.md`.
+
+The pointer body defaults to the standard ≤25-line pointer template (see
+`projects/.cursor/rules/handoff-dispatchers.mdc` and `tmp/reviews/_handoff-packet-template.md`)
 (packet path + six-block enumeration + reply instruction). Caller may supply
 `pointer_body` override up to 25 lines. Longer overrides are rejected 422.
 

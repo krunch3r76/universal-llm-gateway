@@ -10,8 +10,8 @@ import httpx
 from agent_seat import AgentMeta
 from agent_seat.profiles import (
     CapabilityProfile,
+    client_side_mcp_tool_loop_admitted,
     get_profile,
-    inline_only_for_model,
     load_roles,
 )
 from agent_seat.registry import normalize_agent_slug
@@ -52,7 +52,7 @@ def _mcp_base_admitted(model: str) -> bool:
     family is clamped on *every* surface — not just the one that remembered to
     re-check. Returns ``False`` to force ``mcp=False``.
     """
-    return not inline_only_for_model(model)
+    return client_side_mcp_tool_loop_admitted(model)
 
 
 def mcp_enabled_for_frontier_dispatch(model: str, caller_mcp: bool | None) -> bool:
@@ -77,13 +77,9 @@ def mcp_enabled_for_team_dispatch(model: str) -> bool:
     also sets ``inline_only`` and the pipeline suppresses the client-side tool
     loop — ¬ strict admission reject.
 
-    Only xAI *multi-agent* models additionally reject client-side function tools
-    (server-side built-ins are injected via provider_options instead).
+    Multi-agent and inline-only clamps: ``client_side_mcp_tool_loop_admitted``.
     """
-    if not _mcp_base_admitted(model):
-        return False
-    mid = ModelId.parse(model)
-    return not (mid.provider == "xai" and "multi-agent" in mid.base_id)
+    return _mcp_base_admitted(model)
 
 
 @dataclass(slots=True)

@@ -257,6 +257,8 @@ async def test_persona_free_mcp_true_propagates() -> None:
         ("google/gemini-3.5-flash", True, False),
         ("google/gemini-3.5-flash", None, False),
         ("google/gemini-2.5-pro", True, False),
+        ("xai/grok-4.20-multi-agent-0309", True, False),
+        ("xai/grok-4.20-multi-agent-0309", None, False),
         ("openai/gpt-5.4-mini", True, True),
         ("openai/gpt-5.4-mini", None, False),
         ("openai/gpt-5.4-mini", False, False),
@@ -438,7 +440,7 @@ async def test_team_dispatch_collapses_to_latest_user_turn(
         ("google/gemini-2.5-pro", False),
     ],
 )
-def test_mcp_enabled_for_team_dispatch_only_flattens_multi_agent_xai(
+def test_mcp_enabled_for_team_dispatch_shared_client_loop_clamp(
     model: str, expected: bool
 ) -> None:
     from .admission import mcp_enabled_for_team_dispatch

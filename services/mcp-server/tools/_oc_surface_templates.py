@@ -121,12 +121,13 @@ CLAUDE_WEB_TOOL_SURFACE = """\
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
 On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s). Seat slugs (claude-web) are NOT model IDs.
-- local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(role="claude-web")
+- local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") (422)
+- fresh context on this seat (new bus thread) → team_dispatch(op="handoff", role="lead"|"claude-web", packet_path=…, subject=…) — **self-handoff supported**; operator push, then continue on returned thread_id
+- peer manual seat → team_dispatch(op="handoff", role=…) — e.g. web→cursor (cursor-lead), cursor→web (lead); poll as dispatcher via result_handle → agent_bus(tool="wait", …) — NOT pipeline(op="result")
 - consult any API model → frontier_dispatch(op="generate", model="openai/gpt-5.5", messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
 - by API role → team_dispatch(op="generate", role="reviewer"|"gatherer"|"synthesizer"|"artisan"|"skeptic", dispatch_thread_id="…", messages=[…]) — ¬ role="claude-web"|"lead"|"web"
-- forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") even with model= — Stargate rejects before dispatch; model= only hits an API endpoint, never a web session
+- forbidden (422 web_seat_not_generate_target) → team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") even with model= — Stargate rejects; model= hits an API endpoint, never a web session. **Distinct:** op="handoff" to lead/claude-web is allowed (including self)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
-- inbound handoff target only → team_dispatch(op="handoff", role="lead", packet_path=…, subject=…) is Cursor→web; claude-web executes handoffs, does not re-handoff to itself. Dispatcher retrieves the reply via the returned result_handle → agent_bus(tool="wait", thread=…, completion="first_reply_from", from_agent="claude-web") — NOT pipeline(op="result") (handoff has no execution_id)
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
 Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""

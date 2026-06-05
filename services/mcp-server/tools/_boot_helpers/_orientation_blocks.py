@@ -92,6 +92,8 @@ _CONSULT_ROUTING_GATE = """\
 ## Consult routing gate — when prompted to consult outside this seat
 Stop and classify BEFORE dispatching. Pick by **latency**, **substrate**, **operator step**, **MCP on consult**.
 
+**Surface axis (not MCP):** `team_dispatch` selects by **role/function** (MCP is a derived consequence of the role's effective model). `frontier_dispatch` selects by **explicit model** (`mcp=` is an explicit caller knob, default False). MCP on/off is never the selector between the two surfaces.
+
 | You need | Path | Poll / retrieve |
 |----------|------|-----------------|
 | One-shot, corpus fully inline | `frontier_dispatch(op=generate, model=…, mcp=False)` | `pipeline(op="result", …)` |
@@ -99,17 +101,24 @@ Stop and classify BEFORE dispatching. Pick by **latency**, **substrate**, **oper
 | One-shot + **role contract** | `team_dispatch(op=generate, role=reviewer|gatherer|…)` — MCP follows role's effective model (see below) | `pipeline(op="result", …)` |
 | **IDE** consult — seat MCP (not dispatch loop) | `team_dispatch(op=handoff, role=claude-cursor, packet_path=…)` | `agent_bus(wait, …)` — ¬ pipeline |
 | **Web** dialectic — seat MCP | `team_dispatch(op=handoff, role=lead|claude-web, …)` | `agent_bus(wait, …)` |
+| **Same seat, fresh bus thread** (self-handoff) | `team_dispatch(op=handoff, role=<own alias>, packet_path=…)` | push/open IDE → work new `thread_id` — ¬ `op=generate` to own seat (422) |
 | Implement ping | `agent_bus(post, to=claude-cursor, …)` + spec | fetch / reply |
+
+**Self-handoff:** manual seats may handoff to themselves via `op=handoff` only. Deep spec: `handoff-dispatchers.mdc` § Self-handoff; `agent-skills/consult-routing.md`.
 
 **MCP on API consult (dispatch tool loop — not handoff seats):**
 | Surface | MCP default | Caller action |
 |---------|-------------|---------------|
-| `team_dispatch(generate)` | **On** for effective model when provider is `openai/*` or `anthropic/*` | Pick role; check role default model. `mcp=False` forced for `google/*` (inline-only), `xai/*multi-agent*`, role `synthesizer` (gemini). |
-| `frontier_dispatch` | **Off** (`mcp=False`) | Pass **`mcp=True` explicitly** when consult must read repo/cortex/RAG. Same provider limits apply. |
+| `team_dispatch(generate)` | **On** when `client_side_mcp_tool_loop_admitted(model)` (denylist: inline-only + xai multi-agent) | Pick role; check role default model. |
+| `frontier_dispatch` | **Off** (`mcp=False`) | Pass **`mcp=True` explicitly** when consult must read repo/cortex/RAG. Same shared denylist clamps `mcp=True` for inline-only and xai multi-agent. |
 
-Only **openai/** and **anthropic/** models reliably get a client-side MCP tool loop on API consult.
-Gemini roles (e.g. synthesizer) and xAI multi-agent are **inline-only** — admit but no fs/cortex in-loop.
-If consult must verify live files: use `openai/gpt-5.5` or `anthropic/claude-*` with MCP on, or **handoff→claude-cursor** (native IDE MCP).
+Admission (`mcp_enabled_for_team_dispatch`) is a **denylist** — not openai/anthropic-only. xAI single-agent (e.g. `xai/grok-4.3`) is admitted with MCP on; only **openai/** and **anthropic/** are verified to run a reliable in-loop tool cycle on API consult (confirm against pipeline executor before treating as ground truth).
+Gemini (inline-only family) and xAI multi-agent are admitted on team generate but get **no** client-side MCP loop on either API surface.
+If consult must verify live files: prefer `openai/gpt-5.5` or `anthropic/claude-*` with MCP on, or **handoff→claude-cursor** (native IDE MCP).
+
+**Defaults (scoped — not competing):**
+- **API one-shot / hands-off** → `frontier_dispatch` or `team_dispatch(generate)` (see `agent-skills/consult-routing.md`; deep matrix: `projects/.cursor/rules/handoff-dispatchers.mdc` on workspaces sandbox).
+- **From Cursor: fresh perspective / tier / IDE substrate** → `handoff→claude-cursor` + lean packet.
 
 **frontier vs team (API one-shot):**
 - **frontier_dispatch** — pick **model**; you own system prompt; **`mcp=True` is explicit**.
@@ -117,7 +126,7 @@ If consult must verify live files: use `openai/gpt-5.5` or `anthropic/claude-*` 
 
 **Handoff:** consultee seat has its own MCP (IDE/web) — not governed by dispatch `mcp=` flag.
 
-On ambiguous "consult X": need live substrate → MCP-capable API path or handoff→cursor; inline opinion only → `frontier_dispatch(mcp=False)` or synthesizer."""
+On ambiguous "consult X": read `agent-skills/consult-routing.md`. Need live substrate → MCP-capable API path or handoff→cursor; inline opinion only → `frontier_dispatch(mcp=False)` or synthesizer."""
 
 
 def render_orientation_blocks(family: str | None = None) -> list[str]:

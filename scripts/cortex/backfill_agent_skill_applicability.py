@@ -100,6 +100,7 @@ PARTITION: dict[str, list[str]] = {
         "agent_skill:agent-build",
         "agent_skill:evidence-review-discipline",
         "agent_skill:dispatch-workflow",
+        "agent_skill:consult-routing",
         "agent_skill:modularize-discipline",
         "agent_skill:provenance-granularity",
         # Partitioned here for backfill membership; OVERRIDDEN below to its true
