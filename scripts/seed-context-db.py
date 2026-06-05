@@ -219,7 +219,7 @@ MCP_TOOLS = [
         "parameters": '{"slug": "string", "title": "string", "summary": "string", "domain": "string", "status": "string", "files": "list, optional", "content": "string"}',
         "when_to_use": "Recording investigation findings, architectural decisions",
         "when_not_to_use": "Quick notes (use write_context_file)",
-        "gotchas": "Requires TASKS_READ_ONLY=false; slug must be unique",
+        "gotchas": "slug must be unique",
         "sandbox": "n/a",
     },
     {

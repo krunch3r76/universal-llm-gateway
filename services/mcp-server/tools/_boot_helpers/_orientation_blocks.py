@@ -36,11 +36,34 @@ from __future__ import annotations
 # per _derive.py). The lever that makes these primary on claude is the standalone
 # DOMAIN, and it MUST stay committed — an uncommitted change reverts on rebuild
 # (the Part-1 regression, 11528/11549). Source of truth: decision-table §2/§3/§4.
+#
+# Binding caveat (thread 1292 / todo:mcp-web-ops-primary-surface): server-primary
+# (_PRIMARY_TOOLS / tools/list) ≠ connector-bound callable set on claude-web.
+# Dispatch shapes below apply only to tools bound THIS session — probe first.
+
+_MCP_BINDING_LIVENESS_BLOCK = """\
+## MCP binding — connector-bound callable set (live probe required)
+Three layers — do not conflate:
+  1. **Server primary** — `_PRIMARY_TOOLS` / `tools/list` (manifest line follows this block)
+  2. **Overflow** — demoted tools; reachable only via `dispatch(tool=…)` when `dispatch` is bound
+  3. **Connector-bound** — what claude.ai loads into your callable set THIS session
+
+**Invariant**: server-primary ≠ initial callable set. The connector loads tools in two shapes:
+  - **Pre-bound** — tool is in the initial callable set → call directly.
+  - **Deferred** — tool absent initially but loadable via `tool_search` → one load hop, then direct call. This is a VALID connector-bound shape; session 0856 observed N=0 pre-bound with all 15 server-primary tools deferred behind `tool_search` (every loaded tool reached a healthy server).
+Probe guidance: "absent from initial set" ≠ "connector dropped it". Before filing `tool_absent` friction, run a `tool_search` load hop, then correlate with events — a `mcp.request.started` for that `tool_name` proves the server was reached. Only a genuinely unreachable tool (no load via `tool_search`, no `started` event) is connector omission; then hand off to `team_dispatch(op=handoff, role=claude-cursor|cursor-lead, …)` — do not loop `tool_search`.
+
+**Overflow / deferred load via `tool_search`**:
+```
+tool_search(query="<keywords>")          # surfaces overflow AND deferred primary tools
+```
+  - A deferred SERVER-PRIMARY tool loaded this way becomes a direct callable — call it by name, NOT via `dispatch(tool=primary_name)` (dispatch rejects primary names).
+  - A true OVERFLOW tool is reached via `dispatch(tool="<name>", arguments='…')` (only when `dispatch` is itself bound)."""
 
 _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
-On THIS surface (Anthropic /mcp) frontier_dispatch + team_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name = 404).
+When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model (bare name = 404).
 - consult any model, one-shot       → frontier_dispatch (op=generate, model="provider/model": openai/gpt-5.5, xai/grok-4.3, anthropic/claude-opus-4-8)  → returns execution_id; poll pipeline(op="result", execution_id=…)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ role=claude-web|lead|web|claude-cursor|cursor-lead|cursor|implementer (422 web_seat_not_generate_target)
 - to claude-web / lead / web-claude  → team_dispatch (op=handoff, role=…) → claude-web (operator push); consult OR bound implement (intent in packet — same seat)
@@ -77,7 +100,7 @@ _LIVENESS_BLOCK = """\
 A change is LIVE only when LOADED into the running process at its last deploy/restart. Git commit/master is neither necessary nor sufficient.
 Before claiming a surface changed, ask three questions — do NOT read git for this:
   1. WHICH substrate?   2. Did its LOAD EVENT fire?   3. What does the LIVE PROBE say?
-Substrates: service behavior (sync_restart/rebuild → observability probe) · MCP tool surface (mcp restart → tool_search) · routing+catalog (sync_restart → /v1/models) · agent-context (cortex_boot → this card).
+Substrates: service behavior (sync_restart/rebuild → observability probe) · MCP tool surface (mcp restart → boot manifest + binding probe, ¬ tool_search alone) · routing+catalog (sync_restart → /v1/models) · agent-context (cortex_boot → this card).
 ⚠ Salience trap: "commit" is the loudest done/durable signal, so it gets grabbed as a liveness proxy under load. It is not one. Verify against the load event + probe, never the tree."""
 
 # Compact index — full playbook is agent-skills/consult-routing.md (current superset,
@@ -91,6 +114,20 @@ Two traps that cost a round-trip:
 - team_dispatch(op=generate) to a manual/web seat (claude-web|lead|cursor|claude-cursor|implementer) → 422; manual seats take op=handoff only.
 - "Want a grok answer" is not a build harness → frontier_dispatch(model="xai/grok-4.3").
 Surface axis: team_dispatch = role/function; frontier_dispatch = explicit model (mcp= default False). MCP on/off is never the team-vs-frontier selector."""
+
+
+def _render_server_primary_manifest_line() -> str:
+    """Inject live ``tools/list`` primary names from derivation (layer 1 truth)."""
+    from _derive import get_claude_manifest  # noqa: PLC0415
+
+    manifest = get_claude_manifest()
+    names = sorted(e["tool_name"] for e in manifest)
+    joined = ", ".join(names)
+    return (
+        f"\n## MCP server primary (`tools/list`, N={len(names)})\n"
+        f"Assembly advertises: `{joined}`.\n"
+        f"¬ identical to connector-bound callables — see MCP binding block above."
+    )
 
 
 def render_orientation_blocks(family: str | None = None) -> list[str]:
@@ -114,13 +151,16 @@ def render_orientation_blocks(family: str | None = None) -> list[str]:
     carries a leading newline so the card's ``"\\n".join(parts)`` produces a
     blank-line separator consistent with the other sections.
     """
-    dispatch_block = (
-        _DISPATCH_CONSULT_BLOCK_GROK
-        if family == "grok"
-        else _DISPATCH_CONSULT_BLOCK_CLAUDE
-    )
+    if family == "grok":
+        return [
+            f"\n{_DISPATCH_CONSULT_BLOCK_GROK}",
+            f"\n{_CONSULT_ROUTING_GATE}",
+            f"\n{_LIVENESS_BLOCK}",
+        ]
     return [
-        f"\n{dispatch_block}",
+        f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
+        _render_server_primary_manifest_line(),
+        f"\n{_DISPATCH_CONSULT_BLOCK_CLAUDE}",
         f"\n{_CONSULT_ROUTING_GATE}",
         f"\n{_LIVENESS_BLOCK}",
     ]

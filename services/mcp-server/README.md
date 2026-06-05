@@ -32,12 +32,9 @@ Access to the mounted project directory (`PROJECT_ROOT`). Listing and search
 enumerate the real filesystem by default, so gitignored paths like `tmp/` and
 `prompts/` are included. Set **`include_untracked=False`** to restrict results
 to git-tracked files only. Direct `read_project_file` works for any on-disk path
-under the mount. Write access is controlled by `tools/_write_policy.py`
-(single source of truth). Set `project_access: rw` in `~/.gateway/mcp.yaml`
-and run `sync_restart mcp` (or `scripts/sync-and-restart-mcp.sh`) — this
-sets `MCP_PROJECT_WRITE_ENABLED=true` in the container. All `md_*` write
-ops (`md_replace`, `md_append`, `md_delete`) share the same gate as
-`fs(op="write", sandbox="workspaces", ...)`.
+under the mount. Writes are unconditional — the project directory is mounted
+read/write. All `md_*` write ops (`md_replace`, `md_append`, `md_delete`)
+and `fs(op="write", sandbox="workspaces", ...)` operate without a gate.
 
 | Tool | Purpose |
 |------|---------|
@@ -98,7 +95,7 @@ Structured access to the project's `tasks/` directory (journal, discoveries, les
 | `edit_context_file` | Atomic prepend/append/insert/replace on `tasks/` files |
 | `delete_context_file` | Delete a file from `tasks/` |
 
-Configurable: read-only or read-write via `TASKS_READ_ONLY` / mount mode. Disabled entirely with `ENABLE_CONTEXT_TOOLS=false`.
+Read/write by default. Disabled entirely with `ENABLE_CONTEXT_TOOLS=false`.
 
 ### SQLite (`tools/sqlite.py`)
 
@@ -162,11 +159,9 @@ The browser Compose override (`mcp-server-browser.override.yml`) adds a custom s
 |----------|----------|---------|---------|
 | `MCP_AUTH_TOKEN` | Yes | — | Bearer token for authentication |
 | `MCP_PROJECT_DIR` | Yes | — | Host path to project root |
-| `MCP_PROJECT_WRITE_ENABLED` | No | `false` | App-level write gate for workspaces sandbox; set via `project_access: rw` in `~/.gateway/mcp.yaml` (authority: `tools/_write_policy.py`) |
 | `MCP_DATA_DIR` | No | `~/mcp-data` | Host path for files, SQLite databases |
 | `ENABLE_BROWSER_TOOLS` | No | `false` | Enable Playwright browser tools |
 | `ENABLE_CONTEXT_TOOLS` | No | `true` | Enable tasks/ context tools |
-| `TASKS_READ_ONLY` | No | `true` | App-level write guard for context tools |
 | `MCP_TASKS_MOUNT_MODE` | No | `ro` | Docker mount mode for tasks volume |
 | `BRAVE_SEARCH_API_KEY` | No | — | Brave Search API key for `web_search` |
 | `STARGATE_URL` | No | `http://host.docker.internal:9999` | Stargate URL for RAG pipeline calls |

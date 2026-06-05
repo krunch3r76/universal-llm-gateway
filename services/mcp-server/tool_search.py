@@ -81,20 +81,25 @@ def register_tool_search_tool(
 
     @mcp.tool(title="Tool Search (Discovery)")
     def tool_search(query: str, limit: int = 5) -> dict[str, Any]:
-        """Search for MCP tools not in your primary catalog.
+        """Search the overflow tool catalog (tools pruned from ``tools/list``).
 
-        Primary (in ``tools/list``): agent_bus, cortex, dispatch, fs, grokbuild,
-        manage, observability, pipeline, rag, retrieve, tool_search. Overflow
-        examples — session boot (cortex_boot, boot_inspect), data (sql,
-        web_fetch, web_search), codegen (quality_gate), frontier/team dispatch
-        surfaces, pipeline_consult, and ``tools.local`` domains (email →
-        email-bridge) when installed — use this search, then ``dispatch(...)``.
+        Server-primary tools (boot manifest line) are advertised via
+        ``tools/list``. They may be **pre-bound** (direct callable) or
+        **deferred** (one connector load hop, then call by name) — see the boot
+        binding block. Absent from the initial callable set ≠ connector dropped
+        the tool.
 
-        Pass keywords matching what you want to do; results include ready-to-paste
-        dispatch calls. Examples:
-          tool_search(query="cortex boot")
+        This endpoint indexes **overflow only**: sql, web_fetch, advisor,
+        boot_inspect, quality_gate, pipeline_consult, git_*, grokbuild, and
+        ``tools.local`` when installed. Results include ``dispatch_template`` —
+        invoke via ``dispatch(tool="<name>", arguments='…')`` when ``dispatch``
+        is bound. Do NOT route server-primary names through ``dispatch``; it
+        rejects them.
+
+        Pass keywords; default limit=5. Examples:
           tool_search(query="email mailbox")
           tool_search(query="raw sql")
+          tool_search(query="query events")
         """
         record("mcp.tool.search.called", query=query, limit=limit)
         if not query or not query.strip():

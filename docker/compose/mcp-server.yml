@@ -26,10 +26,10 @@ services:
       # Mount entire letsencrypt dir so relative symlinks in live/ resolve correctly
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - ${MCP_DATA_DIR:-${HOME}/mcp-data}/files:/data/files:rw
-      # project mount: "ro" (default) or "rw" — toggled via project_access in mcp.yaml
-      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:${MCP_PROJECT_MOUNT_MODE:-ro}
-      # tasks mount: separate dir, independent access mode
-      - ${MCP_TASKS_DIR:?MCP_TASKS_DIR required}:/data/tasks:${MCP_TASKS_MOUNT_MODE:-ro}
+      # project mount: read/write by default
+      - ${MCP_PROJECT_DIR:?MCP_PROJECT_DIR required}:/data/project:${MCP_PROJECT_MOUNT_MODE:-rw}
+      # tasks mount: separate dir, read/write by default
+      - ${MCP_TASKS_DIR:?MCP_TASKS_DIR required}:/data/tasks:${MCP_TASKS_MOUNT_MODE:-rw}
       - /tmp/universal-protocol:/tmp/universal-protocol
       # Optional: Firefox profile for authenticated browser sessions.
       # Set firefox_profile_dir in ~/.gateway/mcp.yaml (host-managed) to enable
@@ -55,9 +55,6 @@ services:
       - ENABLE_BROWSER_TOOLS=${ENABLE_BROWSER_TOOLS:-false}
       # Disable all tasks/ context tools with ENABLE_CONTEXT_TOOLS=false
       - ENABLE_CONTEXT_TOOLS=${ENABLE_CONTEXT_TOOLS:-true}
-      # App-level write guards (recommended true with ro mounts)
-      - TASKS_READ_ONLY=${TASKS_READ_ONLY:-true}
-      - MCP_PROJECT_WRITE_ENABLED=${MCP_PROJECT_WRITE_ENABLED:-false}
       - BRAVE_SEARCH_API_KEY=${BRAVE_SEARCH_API_KEY:-}
       - X_API_KEY=${X_API_KEY:-}
       - X_API_SECRET=${X_API_SECRET:-}

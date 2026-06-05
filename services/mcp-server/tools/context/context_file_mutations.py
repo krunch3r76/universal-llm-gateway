@@ -1,8 +1,7 @@
 """Context file mutation MCP tools: write, edit, move, delete under tasks/.
 
 Includes the editable suffix policy (EDITABLE_SUFFIXES) for in-place edits.
-All write paths enforce TASKS_READ_ONLY via tasks_path_policy and record
-violations. Edit delegates to ..file_editor.perform_edit.
+Edit delegates to ..file_editor.perform_edit.
 """
 
 from __future__ import annotations
@@ -15,9 +14,6 @@ from universal_logging import get_logger
 
 from ..file_editor import perform_edit
 from .tasks_path_policy import (
-    TASKS_READ_ONLY,
-    read_only_error,
-    record_read_only_violation,
     safe_tasks_path,
 )
 
@@ -69,10 +65,6 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "written", "path": "<relative path>"}
         """
-        if TASKS_READ_ONLY:
-            record_read_only_violation(tool="write_context_file", path=path)
-            return read_only_error()
-
         try:
             target = safe_tasks_path(path)
         except ValueError as exc:
@@ -124,16 +116,6 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
             For replace: includes "replacements_made".
             On error: {"error": "..."}
         """
-        if TASKS_READ_ONLY:
-            record_read_only_violation(
-                tool="edit_context_file", path=path, operation=operation
-            )
-            # The cast here indicates a potential type mismatch or overly broad type.
-            # read_only_error() returns dict[str, str], which is compatible with
-            # dict[str, str | int], so the cast might be unnecessary or indicate
-            # a deeper type issue if 'int' is truly not expected in error returns.
-            return read_only_error()  # Type checker should handle this implicitly.
-
         try:
             target_path = safe_tasks_path(path)
         except ValueError as exc:
@@ -210,12 +192,6 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Move Context File")
     def move_context_file(path: str, target: str) -> dict[str, str]:
         """Move or rename a file in the tasks/ workspace context."""
-        if TASKS_READ_ONLY:
-            record_read_only_violation(
-                tool="move_context_file", path=path, operation="move"
-            )
-            return read_only_error()
-
         try:
             src = safe_tasks_path(path)
             dst = safe_tasks_path(target)
@@ -237,7 +213,6 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
         """Delete a file from the tasks/ workspace context.
 
         Only individual files may be deleted — directories are rejected.
-        Respects TASKS_READ_ONLY: returns an error dict if set.
 
         Args:
             path: Relative file path within tasks/ (e.g. "discoveries/stale-note.md").
@@ -246,10 +221,6 @@ def register_context_file_mutation_tools(mcp: FastMCP) -> None:
             {"status": "deleted", "path": "<relative path>"}
             On error: {"error": "..."}
         """
-        if TASKS_READ_ONLY:
-            record_read_only_violation(tool="delete_context_file", path=path)
-            return read_only_error()
-
         try:
             target = safe_tasks_path(path)
         except ValueError as exc:

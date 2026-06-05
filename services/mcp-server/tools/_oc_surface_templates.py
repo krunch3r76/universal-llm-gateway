@@ -47,34 +47,39 @@ Assemble the transcript markdown via `tools/grok-session-to-transcript-md` \
 MCP_TOOL_SEARCH = """\
 ## MCP Catalog Discovery
 
-The advertised MCP catalog is intentionally lean — primary tools are
-`agent_bus`, `cortex`, `cortex_boot`, `dispatch`, `frontier_dispatch`, `fs`,
-`manage`, `observability`, `pipeline`, `rag`, `retrieve`,
-`panel_dispatch`, `team_dispatch`, and `tool_search`. Everything else is reachable in two steps:
+**Server primary vs connector-bound**: `_PRIMARY_TOOLS` (see boot manifest line) is
+what `tools/list` advertises. Initial callable set may be **pre-bound** (call
+directly) or **deferred** (one load hop, then call by name) — see the boot
+binding block. Absent from the initial set ≠ connector dropped the tool.
+
+**Overflow** tools (not in `_PRIMARY_TOOLS`) are reachable in two steps when
+`dispatch` is bound:
 
 ```
-tool_search(query="<keywords>")          # → returns dispatch_template
-dispatch(tool="<name>", arguments='...') # → invokes the tool
+tool_search(query="<keywords>")          # overflow catalog → dispatch_template
+dispatch(tool="<name>", arguments='...') # invokes the overflow tool
 ```
 
-Examples:
+Server-primary tools (fs, manage, team_dispatch, …) are **not** in this
+overflow catalog — load them as direct callables by name after a deferred-load
+hop; do not route primary names through `dispatch` (it rejects them).
+
+Examples (overflow; require bound `dispatch`):
 ```
-tool_search(query="restart service")     # → dispatch(tool="manage", ...)
-tool_search(query="poll pipeline")       # → dispatch(tool="pipeline", op="result", ...)
 tool_search(query="raw sql")             # → dispatch(tool="sql", ...)
-tool_search(query="query events")        # → dispatch(tool="observability", ...)
+tool_search(query="boot inspect")        # → dispatch(tool="boot_inspect", ...)
 tool_search(query="fetch web page")      # → dispatch(tool="web_fetch", ...)
+tool_search(query="email mailbox")       # → dispatch(tool="email", ...)
 ```
 
 Search responses include `name`, `purpose`, `ops`, `dispatch_template`, and
-`required_args_by_op`. Hold the returned `dispatch_template` in working memory
-and call `dispatch` directly — do not re-search unless the result was clearly
-wrong (the response includes a `_next` hint that steers away from search loops).
+`required_args_by_op`. Hold the returned `dispatch_template` and call `dispatch`
+directly — do not re-search unless clearly wrong (`_next` hint steers away from
+search loops). If `dispatch` is not in your callable set, overflow templates are
+not invokable — log friction and hand off to Cursor.
 
-Catalog membership decisions live in `services/mcp-server/server.py`
-(`_PRIMARY_TOOLS`); the demoted set is auto-derived. Promotion to primary is
-warranted only when descriptor_bytes × 50 turns × N sessions justifies the cost
-— see `tasks/discoveries/mcp-tool-definition-context-churn.md` for the rubric.
+Catalog membership: `services/mcp-server/server.py` (`_PRIMARY_TOOLS`); demoted
+set is auto-derived. See `tasks/discoveries/mcp-tool-definition-context-churn.md`.
 
 `git_*` tools (`git_status`, `git_diff`, `git_commit`, `git_integrate`,
 `git_land`) are intentionally NOT in the Claude primary catalog and are
@@ -126,9 +131,15 @@ IDE `*_ws.mdc` auto-load backstop — `ulg-architecture` is in your manifest (pa
 `["claude-cursor","claude-web"]`) but the `fs` read is load-bearing, not optional.
 Discovery order: todo `required_skills` → ULG pair → boot manifest → `cortex://agent-skills/README.md` → repo skills TOC.
 
+## MCP binding (claude-web — read before dispatch)
+Server-primary tools are listed at boot (`tools/list` manifest line). Your
+connector-bound callable set may differ — probe with a direct call; do not trust
+prior-session assertions or this doc over a live attempt. `tool_search` returns
+overflow relay templates only; they require bound `dispatch`.
+
 ## Dispatch & Consult (claude-web /mcp seat)
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
-On this seat (Anthropic /mcp) frontier_dispatch + team_dispatch + panel_dispatch are PRIMARY — call directly, no dispatch step. Model strings = provider/model (bare name 404s). Seat slugs (claude-web) are NOT model IDs.
+When connector-bound: frontier_dispatch + team_dispatch + panel_dispatch are server-primary — call directly. Model strings = provider/model (bare name 404s). Seat slugs (claude-web) are NOT model IDs.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", role="claude-web"|"lead"|"web") (422)
 - fresh context on this seat (new bus thread) → team_dispatch(op="handoff", role="lead"|"claude-web", packet_path=…, subject=…) — **self-handoff supported**; operator push, then continue on returned thread_id
 - peer manual seat → team_dispatch(op="handoff", role=…) — web→cursor: cursor-lead (consult) | implementer (bound implement); cursor→web: lead (consult or bound implement — intent in packet); poll via agent_bus(tool="wait", …) — NOT pipeline(op="result")

@@ -78,21 +78,10 @@ print(
     'export REFRESH_CURSOR_DESCRIPTORS_AFTER_REBUILD='
     + shlex.quote('true' if parse_bool(cfg.get('refresh_cursor_descriptors_after_rebuild', False)) else 'false')
 )
-print('export ENABLE_CONTEXT_TOOLS=true')
-project_access = (cfg.get('project_access') or 'ro').strip().lower()
-if project_access == 'rw':
-    print('export MCP_PROJECT_MOUNT_MODE=rw')
-    print('export MCP_PROJECT_WRITE_ENABLED=true')
-else:
-    print('export MCP_PROJECT_MOUNT_MODE=ro')
-    print('export MCP_PROJECT_WRITE_ENABLED=false')
-tasks = (cfg.get('tasks_access') or 'ro').strip().lower()
-if tasks == 'rw':
-    print('export MCP_TASKS_MOUNT_MODE=rw')
-    print('export TASKS_READ_ONLY=false')
-else:
-    print('export MCP_TASKS_MOUNT_MODE=ro')
-    print('export TASKS_READ_ONLY=true')
+print('export ENABLE_CONTEXT_TOOLS=' + shlex.quote('false' if cfg.get('enable_context_tools') is False else 'true'))
+# Full read/write by default; mounts are rw and writes are unconditional.
+print('export MCP_PROJECT_MOUNT_MODE=rw')
+print('export MCP_TASKS_MOUNT_MODE=rw')
 brave = (cfg.get('BRAVE_SEARCH_API_KEY') or cfg.get('brave_search_api_key') or '').strip()
 if brave:
     print('export BRAVE_SEARCH_API_KEY=' + shlex.quote(brave))

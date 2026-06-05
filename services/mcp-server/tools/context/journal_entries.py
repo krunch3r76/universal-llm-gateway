@@ -1,7 +1,7 @@
 """Journal entry MCP tools: list, read, and write entries under tasks/journal/.
 
-Backed by journal/index.yaml and journal/*.md files. Enforces TASKS_READ_ONLY policy
-via the tasks_path_policy helpers. All mutations record telemetry via mcp_events.
+Backed by journal/index.yaml and journal/*.md files. All mutations record
+telemetry via mcp_events.
 """
 
 from __future__ import annotations
@@ -14,10 +14,7 @@ from mcp_events import record
 from universal_logging import get_logger
 
 from .tasks_path_policy import (
-    TASKS_READ_ONLY,
     TASKS_ROOT,
-    read_only_error,
-    record_read_only_violation,
     safe_tasks_path,
 )
 
@@ -136,11 +133,6 @@ def register_journal_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "created", "path": "<journal entry path>"}
         """
-        # Consider refactoring the read-only check into a decorator or helper.
-        if TASKS_READ_ONLY:
-            record_read_only_violation(tool="write_journal_entry")
-            return read_only_error()
-
         entry_path = safe_tasks_path(f"journal/{slug}.md")
         if entry_path.exists():
             return {"error": f"Journal entry already exists: {slug}"}

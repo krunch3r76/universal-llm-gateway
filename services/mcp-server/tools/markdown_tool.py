@@ -31,7 +31,6 @@ from markdown_sections import (
 from mcp_events import record
 
 from ._file_helpers import extract_text_content, is_converted_format
-from ._write_policy import project_write_denied_error, project_writes_enabled
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -84,8 +83,6 @@ def _mutate_document(resolved: Path, transform: Callable[[str], str]) -> str | N
             f"Cannot modify {resolved.suffix} files via section ops — "
             "converted formats are read-only (use md_list / md_read)"
         )
-    if not project_writes_enabled():
-        return project_write_denied_error()["error"]
     text, err = _load_text(resolved)
     if err:
         return err
@@ -96,7 +93,7 @@ def _mutate_document(resolved: Path, transform: Callable[[str], str]) -> str | N
     try:
         _write_file(resolved, updated)
     except OSError as e:
-        return project_write_denied_error()["error"] + f" (OS: {e})"
+        return f"Failed to write {resolved}: {e}"
     return None
 
 
@@ -237,8 +234,6 @@ def register_markdown_tools(mcp: FastMCP) -> None:
                         "converted formats are read-only"
                     )
                 }
-            if not project_writes_enabled():
-                return project_write_denied_error()
             if not content:
                 return {"error": "'content' (JSON) is required for from_dict"}
             try:

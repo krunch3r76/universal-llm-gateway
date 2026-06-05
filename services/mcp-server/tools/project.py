@@ -13,9 +13,8 @@ to restrict to git-tracked files. Binary assets are excluded from default
 listing, but text-oriented document formats handled by the shared file reader
 (`.pdf`, `.docx`, `.odt`, `.eml`, `.html`) can be read in text mode.
 
-Write tools (write_project_file, edit_project_file) are gated by the shared
-MCP write policy (_write_policy.project_writes_enabled). Toggle via
-project_access in mcp.yaml (rebuild MCP after change).
+Write tools (write_project_file, edit_project_file) operate unconditionally;
+the workspaces sandbox is mounted read/write.
 """
 
 from __future__ import annotations
@@ -43,7 +42,6 @@ from ._search_helpers import (
     SearchBudgetState,
     load_text_for_search_file,
 )
-from ._write_policy import project_write_denied_error, project_writes_enabled
 from .file_editor import perform_edit
 from .filesystem._ops_search import (
     DEFAULT_MAX_RESULTS,
@@ -357,13 +355,7 @@ def register_project_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Move Project File")
     def move_project_file(path: str, target: str) -> dict[str, str]:
-        """Move or rename a file in the project directory.
-
-        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
-        """
-        if not project_writes_enabled():
-            return cast("dict[str, str]", project_write_denied_error())
-
+        """Move or rename a file in the project directory."""
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
         if not src.exists():
@@ -383,7 +375,6 @@ def register_project_tools(mcp: FastMCP) -> None:
     def copy_project_file(path: str, target: str) -> dict[str, str]:
         """Copy a file in the project directory.
 
-        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
         Creates intermediate directories at the destination automatically.
         Overwrites the destination if it already exists.
 
@@ -394,9 +385,6 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "copied", "from": "<source path>", "to": "<dest path>"}
         """
-        if not project_writes_enabled():
-            return cast("dict[str, str]", project_write_denied_error())
-
         src = _safe_project_path(path)
         dst = _safe_project_path(target)
         if not src.exists():
@@ -420,8 +408,6 @@ def register_project_tools(mcp: FastMCP) -> None:
         sandbox deletes — /data/files/trash/<path>. Restore via:
           fs(sandbox='cortex', op='move', path='trash/<path>', target='<path>')
 
-        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
-
         Args:
             path: Relative path including repo prefix,
                 e.g. "universal-llm-gateway/tmp/old-plan.md".
@@ -429,9 +415,6 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "trashed", "path": "<source>", "trash_path": "trash/<path>"}
         """
-        if not project_writes_enabled():
-            return cast("dict[str, str]", project_write_denied_error())
-
         src = _safe_project_path(path)
         if not src.exists():
             return {"error": f"File not found: {path!r}"}
@@ -756,7 +739,6 @@ def register_project_tools(mcp: FastMCP) -> None:
     def write_project_file(path: str, content: str) -> dict[str, str]:
         """Write or create a file in the project directory.
 
-        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
         Creates parent directories as needed. Only text file types are writable.
 
         Args:
@@ -766,9 +748,6 @@ def register_project_tools(mcp: FastMCP) -> None:
         Returns:
             {"status": "written", "path": "<relative path>"}
         """
-        if not project_writes_enabled():
-            return project_write_denied_error()
-
         target = _safe_project_path(path)
         suffix = target.suffix.lower()
         if suffix and suffix not in _WRITABLE_SUFFIXES:
@@ -794,8 +773,6 @@ def register_project_tools(mcp: FastMCP) -> None:
     ) -> dict[str, str | int]:
         """Edit an existing file in the project directory.
 
-        Requires project_access: rw in ~/.gateway/mcp.yaml (rebuild MCP after change).
-
         Operations:
           - "prepend": insert content at the beginning of the file
           - "append": insert content at the end of the file
@@ -814,9 +791,6 @@ def register_project_tools(mcp: FastMCP) -> None:
             {"status": "edited: <operation>", "path": "<relative path>"}
             For replace: includes "replacements_made".
         """
-        if not project_writes_enabled():
-            return cast("dict[str, str | int]", project_write_denied_error())
-
         target = _safe_project_path(path)
         if not target.exists():
             return cast("dict[str, str | int]", {"error": f"File not found: {path!r}"})

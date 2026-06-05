@@ -207,8 +207,7 @@ class McpConfig:
     tls_cert_dir: str = _MCP_DEFAULT_TLS_CERT_DIR
     brave_search_api_key: str = ""
     firefox_profile_dir: str = ""
-    project_access: str = "ro"  # "ro" | "rw"
-    tasks_access: str = "ro"  # "ro" | "rw" | "off"
+    enable_context_tools: bool = True  # expose tasks/ context tools at all
     bridge_token: str = ""
     agent_bus_token: str = ""
     anthropic_api_key: str = ""
@@ -264,17 +263,10 @@ BRAVE_SEARCH_API_KEY: ""
 # a specific profile other than the default.
 # firefox_profile_dir: ~/.mozilla/firefox/xxxxxxxx.default-release
 
-# project access control (default: ro — read-only project access for Claude)
-#   ro  = Claude can read project files (code, configs, docs)
-#   rw  = Claude can also write/edit project files
-# Toggle to rw, rebuild MCP, and toggle back when done.
-# project_access: ro
-
-# tasks/ access control (default: ro — read-only access for Claude)
-#   ro  = Claude can read tasks/ context (todos, journal, discoveries)
-#   rw  = Claude can also write journal entries and context files
-#   off = tasks/ tools not exposed to Claude at all
-# tasks_access: ro
+# tasks/ context tools (todos, journal, discoveries) — exposed by default.
+# Set to false to not register the tasks/ context tools at all.
+# Project and tasks mounts are always read/write; writes are unconditional.
+# enable_context_tools: true
 
 # Browser automation tools (Playwright Firefox) — disabled by default.
 # Enabling this also applies a narrow seccomp relaxation (unshare/clone3/setns)
@@ -625,8 +617,10 @@ def load_mcp_config() -> McpConfig | None:
         firefox_profile_dir=_resolve_firefox_profile(
             _get_stripped_str("firefox_profile_dir")
         ),
-        project_access=(_get_stripped_str("project_access") or "ro").lower(),
-        tasks_access=(_get_stripped_str("tasks_access") or "ro").lower(),
+        enable_context_tools=_parse_bool(
+            raw.get("enable_context_tools", True),
+            default=True,
+        ),
         enable_browser_tools=_parse_bool(
             raw.get("enable_browser_tools", False),
             default=False,
@@ -794,27 +788,10 @@ def build_mcp_env(workspace_root: Path) -> dict[str, str]:
     if cfg.firefox_profile_dir:
         env["FIREFOX_PROFILE_DIR"] = cfg.firefox_profile_dir
     env["ENABLE_BROWSER_TOOLS"] = "true" if cfg.enable_browser_tools else "false"
-    # project_access: ro (default) or rw
-    if cfg.project_access == "rw":
-        env["MCP_PROJECT_MOUNT_MODE"] = "rw"
-        env["MCP_PROJECT_WRITE_ENABLED"] = "true"
-    else:
-        env["MCP_PROJECT_MOUNT_MODE"] = "ro"
-        env["MCP_PROJECT_WRITE_ENABLED"] = "false"
-
-    # tasks_access: off | ro (default) | rw
-    if cfg.tasks_access == "off":
-        env["ENABLE_CONTEXT_TOOLS"] = "false"
-        env["MCP_TASKS_MOUNT_MODE"] = "off"
-        env["TASKS_READ_ONLY"] = "true"
-    elif cfg.tasks_access == "rw":
-        env["ENABLE_CONTEXT_TOOLS"] = "true"
-        env["MCP_TASKS_MOUNT_MODE"] = "rw"
-        env["TASKS_READ_ONLY"] = "false"
-    else:
-        env["ENABLE_CONTEXT_TOOLS"] = "true"
-        env["MCP_TASKS_MOUNT_MODE"] = "ro"
-        env["TASKS_READ_ONLY"] = "true"
+    # Full read/write by default; mounts are rw and writes are unconditional.
+    env["MCP_PROJECT_MOUNT_MODE"] = "rw"
+    env["MCP_TASKS_MOUNT_MODE"] = "rw"
+    env["ENABLE_CONTEXT_TOOLS"] = "true" if cfg.enable_context_tools else "false"
 
     raw: dict[str, Any] = {}
     if _MCP_CONFIG_PATH.exists():
