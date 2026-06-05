@@ -3,7 +3,7 @@
 `agent-surface/` neutral-canonical sources.
 
 Usage:
-    scripts/gen-rules --target {cursor|grok-direct|command-map} [--check] [--dry-run]
+    scripts/gen-rules --target {cursor|grok-direct|command-map|agent-guides-rules} [--check] [--dry-run]
 
 Targets:
     cursor       Emit `.cursor/rules/cursor-boot_ws.mdc` + `.cursor/rules/mcp-tool-awareness_ws.mdc`;
@@ -14,6 +14,8 @@ Targets:
                  marker pairs.
     command-map  Emit `docs/agent-guides/mvw-command-map.md` from
                  `agent-surface/sources/command-map.md` (wildcard target blocks).
+    agent-guides-rules  Emit `docs/agent-guides/rules/*.md` from the MVW conduct manifest
+                 in `libs/gen_rules/agent_guides.py` (wildcard `target:*` blocks).
 
 Flags:
     --check     Diff-gate: exit non-zero if generated output differs from committed
@@ -33,6 +35,7 @@ _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
+from gen_rules.agent_guides import emit_agent_guides_rules  # noqa: E402
 from gen_rules.check import diff_against, extract_core_subagent_table  # noqa: E402
 from gen_rules.parser import parse_source  # noqa: E402
 from gen_rules.renderer import (  # noqa: E402
@@ -233,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--target",
-        choices=("cursor", "grok-direct", "command-map"),
+        choices=("cursor", "grok-direct", "command-map", "agent-guides-rules"),
         required=True,
     )
     parser.add_argument("--check", action="store_true")
@@ -245,8 +248,10 @@ def main(argv: list[str] | None = None) -> int:
         rc = _emit_cursor(root, check=args.check, dry_run=args.dry_run)
     elif args.target == "grok-direct":
         rc = _emit_grok(root, check=args.check, dry_run=args.dry_run)
-    else:
+    elif args.target == "command-map":
         rc = _emit_command_map(root, check=args.check, dry_run=args.dry_run)
+    else:
+        rc = emit_agent_guides_rules(root, check=args.check, dry_run=args.dry_run)
 
     if args.check and rc == 0:
         print(f"OK gen-rules --check --target {args.target}")

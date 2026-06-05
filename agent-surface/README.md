@@ -1,6 +1,10 @@
 # `agent-surface/` — Neutral-canonical sources for cross-target rule projection
 
-This tree is the source of truth for rules that project to multiple agent targets:
+**Unified read surface (all agents):** generated markdown under
+`docs/agent-guides/rules/` — primary path for **web-claude** and repo-only readers.
+SuperGrok / GitHub connector is optional; unification does not depend on that seat.
+
+This tree is the **authoring** source of truth for rules that project to multiple agent targets:
 
 - `sources/<name>.md` — section-tagged source files (markers: `<!-- target:cursor -->`,
   `<!-- target:grok-direct -->`, `<!-- target:* -->`).
@@ -29,6 +33,7 @@ Run `scripts/gen-rules --target cursor --check` and
 | `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `.cursor/rules/mcp-tool-awareness_ws.mdc` | `<!-- gen-rules:start:mcp-tool-awareness -->` |
 | `subagent-model-table` | `table-variants/subagent-model-table.{cursor,grok}.md` | drift-check only | `<!-- gen-rules:start:subagent-model-table -->` |
 | `command-map` | `sources/command-map.md` | — | `docs/agent-guides/mvw-command-map.md` (`gen-rules --target command-map`) |
+| `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | — (read surface only) | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) |
 
 **Manual sync (cortex sandbox):** `sources/session-close-handoff-depth-gate.md` — paste or
 merge into `agent-skills/session-close-handoff.md` when the cortex skill drifts (kernel

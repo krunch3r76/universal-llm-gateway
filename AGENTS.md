@@ -8,7 +8,7 @@ do not read the entire file unless your seat is **grok-direct**.
 | Surface | Primary guide | MVW command index |
 |---|---|---|
 | **Cursor IDE** | `.cursor/rules/` + `/mnt/torus/projects/.cursor/rules/` — start `cursor-environment_ws.mdc` | `.cursor/commands/` + `docs/agent-guides/mvw-command-map.md` |
-| **web-claude** (vortex MCP) | `agent-guides/web-agent-orientation.md` | `docs/agent-guides/mvw-command-map.md` |
+| **web-claude** (vortex MCP) | `docs/agent-guides/README.md` → `rules/` (unified); `agent-guides/web-agent-orientation.md` | `docs/agent-guides/mvw-command-map.md` |
 | **No-cortex** (GitHub connector, read-only reviewer) | `docs/agent-guides/no-cortex.md` | `docs/agent-guides/mvw-command-map.md` (read/plan column only) |
 | **grok-direct** (Grok CLI + terminal MCP) | Sections below | `docs/agent-guides/mvw-command-map.md` + § Workflow table |
 

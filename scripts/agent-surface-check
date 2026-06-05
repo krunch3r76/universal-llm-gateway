@@ -24,6 +24,7 @@ cd "$(git rev-parse --show-toplevel)"
 scripts/gen-rules --target cursor --check
 scripts/gen-rules --target grok-direct --check
 scripts/gen-rules --target command-map --check
+scripts/gen-rules --target agent-guides-rules --check
 scripts/gen-agents-md --check
 "${HOME}/.venvs/universal/bin/python3" scripts/registry-check
 "${HOME}/.venvs/universal/bin/python3" scripts/check-workflow-doc-drift.py
