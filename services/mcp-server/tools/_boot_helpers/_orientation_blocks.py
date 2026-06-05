@@ -103,6 +103,8 @@ Stop and classify BEFORE dispatching. Pick by **latency**, **substrate**, **oper
 | **Web** dialectic — seat MCP | `team_dispatch(op=handoff, role=lead|claude-web, …)` | `agent_bus(wait, …)` |
 | **Same seat, fresh bus thread** (self-handoff) | `team_dispatch(op=handoff, role=<own alias>, packet_path=…)` | push/open IDE → work new `thread_id` — ¬ `op=generate` to own seat (422) |
 | **Implement** (packet-bound, Cursor) — bound todo/spec + acceptance criteria | `team_dispatch(op=handoff, role=implementer, packet_path=…)` → claude-cursor (handoff-only; generate → 422) | `agent_bus(wait, …)` |
+| **Material decision — ≥2-family panel** (policy/invariant, hard-to-reverse, deadline/legal/financial) | `panel_dispatch(disposition=panel, messages=…, dispatch_thread_id=…)` → skeptic + reviewer; then adjudicating-caller steelman + `panel_adjudication_artifact` + assert | `pipeline(op="result", …)` per member; load `consensus-steelman-posture` §1 |
+| **Material decision — soft / competing options** | Steelman every live option in lead context first (`consensus-steelman-posture` §2); panel only when hard trigger fires | — |
 | Implement ping (thin) | `agent_bus(post, to=claude-cursor, …)` + spec | fetch / reply |
 
 **Self-handoff:** manual seats may handoff to themselves via `op=handoff` only. Deep spec: `handoff-dispatchers.mdc` § Self-handoff; `agent-skills/consult-routing.md`.
@@ -118,7 +120,8 @@ Gemini (inline-only family) and xAI multi-agent are admitted on team generate bu
 If consult must verify live files: prefer `openai/gpt-5.5` or `anthropic/claude-*` with MCP on, or **handoff→claude-cursor** (native IDE MCP).
 
 **Defaults (scoped — not competing):**
-- **API one-shot / hands-off** → `frontier_dispatch` or `team_dispatch(generate)` (see `agent-skills/consult-routing.md`; deep matrix: `.cursor/rules/handoff-dispatchers.mdc` on workspaces sandbox).
+- **Material decision** (invariant change, hard-to-reverse scope, deadline/legal/financial, or close call + reversal cost) → read `agent-skills/consensus-steelman-posture.md` §1; steelman unconditionally; **`panel_dispatch`** when hard trigger fires (≥2 provider families).
+- **API one-shot / hands-off review** → `frontier_dispatch` or `team_dispatch(generate, role=reviewer)` (see `agent-skills/consult-routing.md`; deep matrix: `projects/.cursor/rules/handoff-dispatchers.mdc`, project-level above the repo).
 - **From Cursor: fresh perspective / tier / IDE substrate** → `handoff→claude-cursor` + lean packet.
 
 **frontier vs team (API one-shot):**

@@ -1,0 +1,102 @@
+"""Op-scoped dispatch-role catalog — single SOT derived from config/agents.yaml.
+
+Resolves each role's default ``(family, platform)`` to its ``CapabilityProfile``
+and partitions the roster by dispatch op:
+
+- ``generate_roles()`` — roles whose resolved profile is ``dispatchable`` (valid
+  for ``team_dispatch(op="generate"|"to_thread")``).
+- ``handoff_roles()`` — roles whose resolved profile is ``delivery="manual"`` and
+  ``¬dispatchable`` (valid for ``team_dispatch(op="handoff")`` only).
+
+The render helpers produce the exact agent-facing clause strings embedded in
+``config/mcp/canonical.yaml`` and the ``services/mcp-server/tools/frontier.py``
+dispatch docstrings. ``scripts/gen-mcp-dispatch-role-docs`` regenerates those
+clauses from here so docs stay in lockstep with the role roster.
+"""
+
+from __future__ import annotations
+
+from .profiles import CapabilityProfile, get_profile, load_roles
+
+# Roles documented as legacy in agent-facing docs (operator decision, thread 1268
+# op-4): ``investigator`` is the legacy grok-web deep-research handoff — NOT the
+# SuperGrok Heavy dispatch path (that uses the operator workflow + grok-web-dispatch
+# skill / connector canary). Legacy roles render with a "(legacy)" suffix.
+_LEGACY_ROLES: frozenset[str] = frozenset({"investigator"})
+
+
+def is_legacy_role(role: str) -> bool:
+    """True iff the role is documented as legacy (suffixed "(legacy)" in docs)."""
+    return role in _LEGACY_ROLES
+
+
+def _resolved_profile(role: str) -> CapabilityProfile:
+    rp = load_roles()[role]
+    return get_profile(rp.default_family, rp.default_platform)
+
+
+def generate_roles() -> list[str]:
+    """Roles valid on ``op=generate``/``to_thread`` (resolved profile dispatchable)."""
+    return [r for r in load_roles() if _resolved_profile(r).dispatchable]
+
+
+def handoff_roles() -> list[str]:
+    """Roles valid on ``op=handoff`` only (manual, non-dispatchable seat)."""
+    out: list[str] = []
+    for role in load_roles():
+        profile = _resolved_profile(role)
+        if profile.delivery == "manual" and not profile.dispatchable:
+            out.append(role)
+    return out
+
+
+def handoff_role_seat(role: str) -> str:
+    """Resolved ``{family}-{platform}`` seat slug for a handoff role."""
+    rp = load_roles()[role]
+    return f"{rp.default_family}-{rp.default_platform}"
+
+
+# ── Render helpers (canonical agent-facing clause strings) ────────────────────
+
+
+def generate_slash_clause() -> str:
+    """Slash-joined generate roster, e.g. ``reviewer/gatherer/synthesizer/...``."""
+    return "/".join(generate_roles())
+
+
+def generate_comma_clause() -> str:
+    """Comma-joined generate roster, e.g. ``reviewer, gatherer, synthesizer, ...``."""
+    return ", ".join(generate_roles())
+
+
+def handoff_comma_clause() -> str:
+    """Comma-joined handoff roster with legacy suffixes, e.g.
+    ``lead, cursor-lead, implementer, investigator (legacy)``."""
+    return ", ".join(
+        f"{r} (legacy)" if is_legacy_role(r) else r for r in handoff_roles()
+    )
+
+
+def handoff_seat_map_clause() -> str:
+    """Seat-grouped handoff map, e.g.
+    ``lead → claude-web; cursor-lead, implementer → claude-cursor; investigator → grok-web (legacy)``.
+
+    Roles are grouped by resolved seat (first-seen order); a group is marked
+    ``(legacy)`` when every role in it is legacy.
+    """
+    groups: list[tuple[str, list[str]]] = []
+    seat_index: dict[str, int] = {}
+    for role in handoff_roles():
+        seat = handoff_role_seat(role)
+        if seat not in seat_index:
+            seat_index[seat] = len(groups)
+            groups.append((seat, []))
+        groups[seat_index[seat]][1].append(role)
+
+    parts: list[str] = []
+    for seat, roles in groups:
+        clause = f"{', '.join(roles)} → {seat}"
+        if all(is_legacy_role(r) for r in roles):
+            clause += " (legacy)"
+        parts.append(clause)
+    return "; ".join(parts)

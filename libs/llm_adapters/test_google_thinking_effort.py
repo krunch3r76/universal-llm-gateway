@@ -18,6 +18,7 @@ def _build(model: str, effort: str | None) -> dict:
     req = FrontierRequest(
         messages=[{"role": "user", "content": "hi"}],
         model=model,
+        max_tokens=65536,
         thinking={"effort": effort} if effort else None,
     )
     _, _, body = adapter.build_frontier_request(req)

@@ -14,7 +14,12 @@ Examples:
 """
 
 from .entity import canonical_model_entity_id, canonical_model_slug
-from .model_id import ModelId, get_compute_type, parse_model_id
+from .model_id import (
+    ModelId,
+    get_compute_type,
+    infer_cloud_provider_from_bare,
+    parse_model_id,
+)
 from .validation import validate_model_id, validate_model_id_strict
 from .wire_resolve import (
     KNOWN_CLOUD_PROVIDERS,
@@ -28,6 +33,7 @@ __all__ = [
     "ModelId",
     "parse_model_id",
     "get_compute_type",
+    "infer_cloud_provider_from_bare",
     "canonical_model_slug",
     "canonical_model_entity_id",
     "validate_model_id",

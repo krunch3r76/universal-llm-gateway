@@ -13,11 +13,8 @@ import logging
 import os
 
 import httpx
+from llm_adapters.capability_dispatch import resolve_dispatch
 from mcp_events import monotonic_now, record
-from provider_model_limits import (
-    anthropic_max_output_tokens,
-    clamp_anthropic_max_tokens,
-)
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -92,12 +89,19 @@ async def handle_relay(request: Request) -> JSONResponse:
 
     system = body.get("system", "")
     user_msg = body.get("user_msg", "")
+    # WB relay is an out-of-claim independent resolver (A8): resolve the fixed
+    # default model through the NEW libs registry. None/<1 → registry default
+    # (the per-model ceiling); >=1 → clamp to ceiling. Reproduces the WB golden.
     max_tokens_raw = body.get("max_tokens")
-    model_max_tokens = anthropic_max_output_tokens(_DEFAULT_MODEL)
-    if isinstance(max_tokens_raw, int) and max_tokens_raw >= 1:
-        max_tokens = clamp_anthropic_max_tokens(_DEFAULT_MODEL, max_tokens_raw)
-    else:
-        max_tokens = model_max_tokens
+    max_output = resolve_dispatch(
+        _DEFAULT_MODEL,
+        requested_max_output=(
+            max_tokens_raw
+            if isinstance(max_tokens_raw, int) and max_tokens_raw >= 1
+            else None
+        ),
+    ).max_output
+    max_tokens = max_output.resolved
 
     if not user_msg or not isinstance(user_msg, str):
         return JSONResponse(
@@ -130,7 +134,7 @@ async def handle_relay(request: Request) -> JSONResponse:
         "mcp.workbench.relay.called",
         model=_DEFAULT_MODEL,
         max_tokens=max_tokens,
-        model_max_tokens=model_max_tokens,
+        model_max_tokens=max_output.ceiling,
         user_msg_len=len(user_msg),
     )
 

@@ -16,6 +16,7 @@ from typing import Any
 
 from agent_seat.panel_dispatch import (
     count_execution_evidence_uris,
+    read_adjudication_artifact,
     validate_panel_assert_attributes,
 )
 
@@ -136,7 +137,7 @@ def detect_panel_falsifier_phase3_metric(
         return []
     missing = 0
     for _eid, attrs, _uris in cohort:
-        artifact = attrs.get("lead_adjudication_artifact")
+        artifact = read_adjudication_artifact(attrs)
         if not artifact or not str(artifact).strip():
             missing += 1
     if missing == 0:
@@ -144,7 +145,7 @@ def detect_panel_falsifier_phase3_metric(
     fraction = missing / n
     detail = (
         f"Phase-3 falsifier metric (assertion 12858): {missing}/{n} material panel "
-        f"decisions lack lead_adjudication_artifact (fraction={fraction:.3f}). "
+        f"decisions lack panel_adjudication_artifact (fraction={fraction:.3f}). "
         "Decisive falsifier for panel-by-omission closure."
     )
     return [

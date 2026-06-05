@@ -4,9 +4,11 @@ Builds the merged generation-parameter dict (step defaults < caller
 ``generation_parameters``), applies the model-default ``reasoning_effort``,
 translates ``reasoning_effort`` to a provider-native ``thinking`` config,
 injects the xAI server-side built-in tool set for xAI agent dispatch,
-optionally appends the runtime-context block to the system prompt, and
-assembles the :class:`~llm_adapters.FrontierRequest`. Preserves the monolith's
-merge precedence and injection guards exactly.
+optionally appends the runtime-context block to the system prompt, resolves the
+per-model ``max_output`` + reasoning at the SINGLE ``CapabilityDispatch``
+boundary (G7), and assembles the :class:`~llm_adapters.FrontierRequest`. This is
+the sole frontier-stack site that resolves ``max_output`` — adapters downstream
+are pure consumers of the resolved ``req.max_tokens``.
 """
 
 from __future__ import annotations
@@ -15,8 +17,25 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from llm_adapters import FrontierRequest
+from llm_adapters.capability_dispatch import (
+    CATALOG_MISS_EVENT,
+    KNOB_REJECTED_EVENT,
+    RESOLVED_EVENT,
+    CatalogMissError,
+    ProtocolError,
+    resolve_dispatch,
+)
 from model_id import ModelId
 
+from ...events.dispatch import (
+    PipelineFrontierCapabilityCatalogMiss,
+    PipelineFrontierCapabilityKnobRejected,
+    PipelineFrontierCapabilityResolved,
+)
+from ...execution.errors import (
+    CapabilityCatalogMissError,
+    CapabilityKnobRejectedError,
+)
 from ..frontier_dispatch_admission import (
     build_runtime_context_block,
     prepend_dispatch_context,
@@ -61,7 +80,9 @@ def build_frontier_request(
     ``generation_parameters``; explicit caller ``reasoning_effort`` and
     ``thinking`` always win over the model defaults and the effort→thinking
     translation. The xAI built-in injection and the runtime-context block honor
-    the same guards as the monolith.
+    the same guards as the monolith. ``max_tokens`` is resolved at the single
+    ``CapabilityDispatch`` boundary (:func:`_resolve_dispatch_boundary`) — the
+    adapter receives a concrete resolved int and never re-defaults.
     """
     step_params, _ = handler._build_generation_params(step, resolved_config={})
     system = prepend_dispatch_context(admission.system)
@@ -130,18 +151,40 @@ def build_frontier_request(
             max_turns=admission.max_turns,
         )
 
+    # ── Single max-output + reasoning resolution boundary (G7) ──────────────
+    # The ONE frontier-stack site that resolves per-model max_output. Pass the
+    # FULL admission id (cloud ``ModelId.normalized`` == ``provider/model``, the
+    # registry key) BEFORE ``api_model_id`` strips the provider for the adapter.
+    # The boundary reproduces the OLD per-stack resolution (cross-knob budget
+    # bump → default → floor-bump → ceiling-clamp) exactly (G8 parity); the
+    # adapters consume the resolved ``req.max_tokens`` verbatim.
     thinking = gen_params.get("thinking")
+    thinking_dict = thinking if isinstance(thinking, dict) else None
+    effort_final = gen_params.get("reasoning_effort")
+    effort_for_dispatch = (
+        effort_final if isinstance(effort_final, str) and effort_final else None
+    )
+    requested_max = gen_params.get("max_tokens")
+    requested_max = requested_max if isinstance(requested_max, int) else None
+    resolution = _resolve_dispatch_boundary(
+        admission=admission,
+        context=context,
+        requested_max=requested_max,
+        thinking=thinking_dict,
+        reasoning_effort=effort_for_dispatch,
+    )
+
     wire_messages = resolve_messages(step, context, user_prompt=admission.user_prompt)
     req = FrontierRequest(
         messages=wire_messages,
         model=ModelId.parse(admission.model).api_model_id,
         system=system or "",
-        max_tokens=gen_params.get("max_tokens"),
+        max_tokens=resolution.max_output.resolved,
         temperature=gen_params.get("temperature"),
         top_p=gen_params.get("top_p"),
         seed=gen_params.get("seed"),
         stop_sequences=gen_params.get("stop"),
-        thinking=thinking if isinstance(thinking, dict) else None,
+        thinking=thinking_dict,
         effort=gen_params.get("reasoning_effort"),
         tools=admission.tools or None,
         tool_choice=gen_params.get("tool_choice"),
@@ -151,3 +194,87 @@ def build_frontier_request(
         remote_mcp=admission.remote_mcp,
     )
     return FrontierRequestBundle(req=req, system=system)
+
+
+def _resolve_dispatch_boundary(
+    *,
+    admission: AdmissionResult,
+    context: PipelineContext,
+    requested_max: int | None,
+    thinking: dict[str, Any] | None,
+    reasoning_effort: str | None,
+) -> Any:
+    """Resolve the per-model dispatch and emit the G2 observability event.
+
+    Wraps the single ``resolve_dispatch`` boundary call with the two structural
+    failure mappings the frontier handler owns:
+
+    - **G9 live-flip** — ``ProtocolError`` (an unsupported declared knob) emits
+      one ``capability_dispatch.knob_rejected`` event per ``KnobViolation`` and
+      is re-raised as :class:`CapabilityKnobRejectedError` (4xx envelope).
+    - **G13 fail-fast** — ``CatalogMissError`` (provider-uninferable model)
+      emits ``capability_dispatch.catalog_miss`` and is re-raised as
+      :class:`CapabilityCatalogMissError`.
+
+    On success it emits ``capability_dispatch.resolved`` from
+    ``resolution.resolved_event_fields()`` (G2 pinned) and returns the
+    :class:`~llm_adapters.capability_dispatch.DispatchResolution`.
+    """
+    try:
+        resolution = resolve_dispatch(
+            admission.model,
+            requested_max_output=requested_max,
+            thinking=thinking,
+            reasoning_effort=reasoning_effort,
+        )
+    except ProtocolError as exc:
+        for violation in exc.violations:
+            admission.publish(
+                PipelineFrontierCapabilityKnobRejected(
+                    execution_id=context.execution_id,
+                    event_name=KNOB_REJECTED_EVENT,
+                    model=admission.model,
+                    model_entity_id=admission.model_entity_id,
+                    provider=admission.provider,
+                    knob=violation.knob,
+                    reject_code=violation.reject_code,
+                    reason=violation.message,
+                )
+            )
+        raise CapabilityKnobRejectedError(
+            model=admission.model,
+            provider=admission.provider,
+            violations=[
+                {"knob": v.knob, "reject_code": v.reject_code, "message": v.message}
+                for v in exc.violations
+            ],
+        ) from exc
+    except CatalogMissError as exc:
+        admission.publish(
+            PipelineFrontierCapabilityCatalogMiss(
+                execution_id=context.execution_id,
+                event_name=CATALOG_MISS_EVENT,
+                model=admission.model,
+                model_entity_id=admission.model_entity_id,
+                miss_key=exc.miss_key,
+                miss_reason=exc.miss_reason,
+            )
+        )
+        raise CapabilityCatalogMissError(
+            model=admission.model,
+            miss_key=exc.miss_key,
+            miss_reason=exc.miss_reason,
+        ) from exc
+
+    admission.publish(
+        PipelineFrontierCapabilityResolved(
+            execution_id=context.execution_id,
+            event_name=RESOLVED_EVENT,
+            model=admission.model,
+            model_entity_id=admission.model_entity_id,
+            provider=admission.provider,
+            api_surface=resolution.api_surface,
+            resolved_fields=resolution.resolved_event_fields(),
+        )
+    )
+    return resolution

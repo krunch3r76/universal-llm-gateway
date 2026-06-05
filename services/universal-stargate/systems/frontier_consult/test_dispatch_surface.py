@@ -289,38 +289,10 @@ async def test_d3_open_thread_passes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------------------------------------------------------------------
-# GAPS — integration tests requiring live services
+# Phase 5 live gaps — see test_dispatch_surface_integration.py
 # ---------------------------------------------------------------------------
 #
-# S4 — Bus-mode happy path (op="to_thread" end-to-end, on-behalf delivery):
-#   Requires: running agent-bus + model dispatch.
-#   Manual: POST /api/v1/team/dispatch {op="to_thread", role="gatherer",
-#   thread=<open_thread_id>, messages=[...]}; poll /api/v1/pipelines/result
-#   until status="completed"; verify thread has a Stargate-posted turn whose
-#   body matches result.content and whose from=<role>; verify
-#   thread_reply_observed_at is populated.
-#
-# D1 — Bus-mode terminal status reflects on-behalf POST mid-flight:
-#   Requires: tracker introspection surface not currently exposed.
-#   Manual: POST to_thread; poll /api/v1/pipelines/result immediately (should
-#   see status="running"); after model completes, re-poll (should see
-#   status="completed" with thread_reply_observed_at populated).
-#
-# D2 — Bus-mode POST failure demotes status to failed:
-#   Manual: dispatch to_thread against an unreachable agent-bus; assert
-#   terminal status="failed", error.code starts with "post_".
-#   Note: the prior contract (D2 = "test agent that never posts") is no
-#   longer achievable as a failure mode — system-on-behalf delivery posts
-#   record.result.content deterministically regardless of model tool use.
-#
-# D5 — Cancel mid-flight is non-transactional:
-#   Requires: slow-reply agent fixture + cancel endpoint.
-#   Manual: dispatch to_thread; POST /api/v1/pipelines/<exec_id>/cancel after 1s;
-#   assert terminal status="cancelled", cancellation_observed_at populated.
-#
-# E1 — Transcript regression (yesterday's failure mode structurally impossible):
-#   Requires: live dispatch.  Unit-testable slice covered by D6 (output_short
-#   suppressed) and D3/D4 (no spurious envelope); remaining assertions are live.
-#   Manual: dispatch op="to_thread" with role="gatherer"; verify final poll result
-#   has no "output_short" hint; verify thread has exactly one stargate-posted
-#   reply turn (no metadata envelope).
+# S4, D1, D5, E1: opt-in with ULG_DISPATCH_INTEGRATION=1 (stubs document contract).
+# D2: covered by test_async_tracker_delivery.test_on_behalf_post_demotes_record_on_post_failure
+# D6/D7: test_output_short_gating.py
+# D3/D4: this module (verify_thread_writable)

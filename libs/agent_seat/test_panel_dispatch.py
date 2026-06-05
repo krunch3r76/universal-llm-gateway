@@ -85,18 +85,32 @@ def test_validate_panel_assert_requires_artifact_and_falsifier() -> None:
             "panel_families": ["Grok", "GPT"],
             "panel_executions": {"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
             "decisive_falsifier": "",
-            "lead_adjudication_artifact": "",
+            "panel_adjudication_artifact": "",
         }
     )
-    assert any("lead_adjudication_artifact" in e for e in errors)
+    assert any("panel_adjudication_artifact" in e for e in errors)
     assert any("decisive_falsifier" in e for e in errors)
+
+
+def test_validate_panel_assert_accepts_deprecated_alias() -> None:
+    """`lead_adjudication_artifact` (deprecated alias) still satisfies Guard 2."""
+    errors = validate_panel_assert_attributes(
+        {
+            "consensus_disposition": "panel",
+            "panel_families": ["Grok", "GPT"],
+            "panel_executions": {"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
+            "decisive_falsifier": "falsifier text",
+            "lead_adjudication_artifact": "cortex:notes/system/threads/1206-lead.md",
+        }
+    )
+    assert not any("adjudication_artifact" in e for e in errors)
 
 
 def test_build_panel_assert_attributes_menu_d() -> None:
     attrs = build_panel_assert_attributes(
         panel_executions={"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
-        decisive_falsifier="lack-of-lead-artifact fraction rises",
-        lead_adjudication_artifact="cortex:notes/system/threads/1206-lead-adjudication-artifact.md",
+        decisive_falsifier="lack-of-adjudication-artifact fraction rises",
+        panel_adjudication_artifact="cortex:notes/system/threads/1206-panel-adjudication-artifact.md",
         member_models={
             "skeptic": "xai/grok-4.3",
             "reviewer": "openai/gpt-5.5",
@@ -104,7 +118,8 @@ def test_build_panel_assert_attributes_menu_d() -> None:
     )
     assert attrs["consensus_disposition"] == "panel"
     assert len(attrs["panel_families"]) >= 2
-    assert attrs["lead_adjudication_artifact"].startswith("cortex:")
+    assert attrs["panel_adjudication_artifact"].startswith("cortex:")
+    assert "lead_adjudication_artifact" not in attrs
 
 
 def test_effective_model_uses_role_default_when_omitted() -> None:

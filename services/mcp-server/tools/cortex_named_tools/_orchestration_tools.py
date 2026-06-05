@@ -88,7 +88,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
           family        — model family: claude / gpt / grok / gemini (default: claude)
           platform      — platform surface: cursor / api / web (default: cursor)
           role          — optional functional team seat: lead / reviewer / gatherer /
-                          synthesizer / artisan / skeptic / investigator.
+                          synthesizer / artisan / skeptic / investigator (legacy).
                           Role does NOT change the seat slug — it annotates the session
                           and scopes the role memory anchor. The session_id is always
                           {family}-{platform}-YYYY-MM-DD-HHMM regardless of role.

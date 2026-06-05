@@ -108,7 +108,7 @@ _COMPLETE_ATTRS = {
     "panel_families": ["Claude", "GPT"],
     "panel_executions": {"skeptic": "exec-1", "reviewer": "exec-2"},
     "decisive_falsifier": "15 of 309",
-    "lead_adjudication_artifact": "agent-bus:1206/turn/7",
+    "panel_adjudication_artifact": "agent-bus:1206/turn/7",
 }
 
 _COMPLETE_URIS = ["agent-bus:1206", "execution:exec-1", "execution:exec-2"]
@@ -153,16 +153,31 @@ def test_assertion_panel_missing_falsifier_flagged(conn: sqlite3.Connection) -> 
 def test_assertion_panel_missing_lead_artifact_flagged(
     conn: sqlite3.Connection,
 ) -> None:
-    """Assertion with panel attrs but no lead_adjudication_artifact is flagged."""
+    """Assertion with panel attrs but no panel_adjudication_artifact is flagged."""
     _insert_entity(conn, "decision:no-artifact")
-    attrs = {**_COMPLETE_ATTRS, "lead_adjudication_artifact": ""}
+    attrs = {**_COMPLETE_ATTRS, "panel_adjudication_artifact": ""}
     _insert_assertion(
         conn, "decision:no-artifact", attrs=attrs, evidence_uris=_COMPLETE_URIS
     )
 
     findings = detect_panel_disposition_incomplete(conn)
     assert len(findings) == 1
-    assert "lead_adjudication_artifact" in findings[0]["detail"]
+    assert "panel_adjudication_artifact" in findings[0]["detail"]
+
+
+def test_assertion_panel_deprecated_alias_satisfies(conn: sqlite3.Connection) -> None:
+    """Deprecated `lead_adjudication_artifact` alias still satisfies the detector."""
+    _insert_entity(conn, "decision:alias-ok")
+    attrs = {
+        k: v for k, v in _COMPLETE_ATTRS.items() if k != "panel_adjudication_artifact"
+    }
+    attrs["lead_adjudication_artifact"] = "agent-bus:1206/turn/7"
+    _insert_assertion(
+        conn, "decision:alias-ok", attrs=attrs, evidence_uris=_COMPLETE_URIS
+    )
+
+    findings = detect_panel_disposition_incomplete(conn)
+    assert findings == []
 
 
 def test_assertion_panel_insufficient_execution_uris_flagged(
@@ -283,7 +298,7 @@ def test_falsifier_metric_below_threshold(conn: sqlite3.Connection) -> None:
     for i in range(MIN_MATERIAL_PANEL_COHORT - 1):
         eid = f"decision:panel-{i}"
         _insert_entity(conn, eid)
-        attrs = {**_COMPLETE_ATTRS, "lead_adjudication_artifact": ""}
+        attrs = {**_COMPLETE_ATTRS, "panel_adjudication_artifact": ""}
         _insert_assertion(conn, eid, attrs=attrs, evidence_uris=_COMPLETE_URIS)
 
     findings = detect_panel_falsifier_phase3_metric(conn)
@@ -295,7 +310,7 @@ def test_falsifier_metric_fires_at_threshold(conn: sqlite3.Connection) -> None:
     for i in range(MIN_MATERIAL_PANEL_COHORT):
         eid = f"decision:big-cohort-{i}"
         _insert_entity(conn, eid)
-        attrs = {**_COMPLETE_ATTRS, "lead_adjudication_artifact": ""}
+        attrs = {**_COMPLETE_ATTRS, "panel_adjudication_artifact": ""}
         _insert_assertion(conn, eid, attrs=attrs, evidence_uris=_COMPLETE_URIS)
 
     findings = detect_panel_falsifier_phase3_metric(conn)

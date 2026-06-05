@@ -10,8 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agent_seat.registry import resolve_agent_model
 from model_id import ModelId
+
+from agent_seat.registry import resolve_agent_model
 
 # Guard 3: independent family := distinct provider (display labels for asserts).
 _PROVIDER_FAMILY_LABEL: dict[str, str] = {
@@ -28,6 +29,25 @@ DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
 
 TIEBREAKER_ROLE = "synthesizer"
 MIN_PANEL_PROVIDER_FAMILIES = 2
+
+# Canonical Menu D adjudication-artifact attribute key (rename thread 1268 op-2).
+# ``lead_adjudication_artifact`` is the deprecated alias: the read path accepts
+# either key so assertions written before the rename remain valid; the write
+# path emits only the canonical key.
+PANEL_ADJUDICATION_KEY = "panel_adjudication_artifact"
+_DEPRECATED_ADJUDICATION_KEY = "lead_adjudication_artifact"
+
+
+def read_adjudication_artifact(attributes: dict[str, Any]) -> Any:
+    """Read the panel adjudication artifact, accepting the deprecated alias.
+
+    Canonical key is ``panel_adjudication_artifact``; ``lead_adjudication_artifact``
+    is accepted as a backward-compat alias so pre-rename DB assertions still
+    satisfy Guard 2 detectors.
+    """
+    return attributes.get(PANEL_ADJUDICATION_KEY) or attributes.get(
+        _DEPRECATED_ADJUDICATION_KEY
+    )
 
 
 @dataclass(frozen=True)
@@ -49,7 +69,12 @@ def resolve_panel_members(
     include_synthesizer: bool = False,
     extra_members: list[tuple[str, str | None]] | None = None,
 ) -> tuple[PanelMemberSpec, ...]:
-    """Build the default 3-family panel roster (skeptic + reviewer [+ synthesizer])."""
+    """Build the default 3-family panel roster (skeptic + reviewer [+ synthesizer]).
+
+    ``extra_members`` is a **library-only** hook for programmatic callers. The MCP
+    ``panel_dispatch`` tool intentionally does NOT expose or pass it — the MCP
+    surface stays a fixed roster (skeptic + reviewer [+ synthesizer]).
+    """
     specs: list[PanelMemberSpec] = [
         PanelMemberSpec(role=role, model=model) for role, model in DEFAULT_PANEL_MEMBERS
     ]
@@ -112,7 +137,12 @@ def admit_panel_plan(
     disposition: str,
     include_synthesizer: bool = False,
 ) -> PanelAdmissionPlan | dict[str, Any]:
-    """Validate disposition and return member plan, or an error envelope."""
+    """Validate disposition and return member plan, or an error envelope.
+
+    The MCP ``panel_dispatch`` tool calls this with the fixed roster only —
+    ``extra_members`` (a ``resolve_panel_members`` library-only hook) is never
+    threaded through the MCP surface.
+    """
     if disposition != "panel":
         return {
             "error": {
@@ -169,10 +199,10 @@ def validate_panel_assert_attributes(attributes: dict[str, Any]) -> list[str]:
     if not falsifier or not str(falsifier).strip():
         errors.append("decisive_falsifier required for panel disposition")
 
-    artifact = attributes.get("lead_adjudication_artifact")
+    artifact = read_adjudication_artifact(attributes)
     if not artifact or not str(artifact).strip():
         errors.append(
-            "lead_adjudication_artifact required for panel (Guard 2); "
+            "panel_adjudication_artifact required for panel (Guard 2); "
             "else stamp steelman-only"
         )
 
@@ -192,7 +222,7 @@ def build_panel_assert_attributes(
     *,
     panel_executions: dict[str, str],
     decisive_falsifier: str,
-    lead_adjudication_artifact: str,
+    panel_adjudication_artifact: str,
     member_models: dict[str, str],
     material: bool = True,
 ) -> dict[str, Any]:
@@ -212,7 +242,7 @@ def build_panel_assert_attributes(
         "panel_families": panel_provider_families(member_models),
         "panel_executions": panel_executions,
         "decisive_falsifier": decisive_falsifier,
-        "lead_adjudication_artifact": lead_adjudication_artifact,
+        PANEL_ADJUDICATION_KEY: panel_adjudication_artifact,
     }
 
 
@@ -242,7 +272,7 @@ def panel_result_envelope(
         "dispatches": dispatches,
         "_next": (
             "Lead adjudicates panel outputs (NON-offloadable). Then assert on "
-            "decision:* with build_panel_assert_attributes + lead_adjudication_artifact; "
+            "decision:* with build_panel_assert_attributes + panel_adjudication_artifact; "
             "poll content via pipeline(op=result, execution_id=...)."
         ),
     }
@@ -256,7 +286,7 @@ def panel_result_envelope(
             "panel_families": out["panel_families"],
             "panel_executions": executions,
             "decisive_falsifier": "",
-            "lead_adjudication_artifact": "",
+            PANEL_ADJUDICATION_KEY: "",
         }
     )
     if stamp_errors:

@@ -1016,8 +1016,9 @@ async def test_handler_non_default_model_unaffected_by_default_resolution(
     handler: FrontierDispatchHandler,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Models outside ``_DEFAULT_HIGH_EFFORT_MODELS`` are not coerced. With no
-    caller effort, ``req.effort`` is None and ``req.thinking`` is None — the
+    """Models with no registry default-high-effort entry are not coerced. With
+    no caller effort, ``capability_dispatch.default_reasoning_effort`` returns
+    None, so ``req.effort`` is None and ``req.thinking`` is None — the
     provider-native default takes over.
     """
     captured: dict[str, Any] = {}

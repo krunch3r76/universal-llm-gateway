@@ -184,3 +184,72 @@ def class_6_check(entity_id: str, p: Predicate) -> bool:
         return False
     entity_type = entity_id.split(":", 1)[0] if ":" in entity_id else entity_id
     return entity_type not in CLASS_6_WORKFLOW_ENTITY_TYPES
+
+
+# ---------------------------------------------------------------------------
+# Write-time guard — decision self-status polarity correction.
+#
+# NOT a clustering class (1-6) and NOT part of the §4.1 append-only registry
+# contract. This guard runs only on the write path, and only when the bearer
+# entity's workflow_state is supplied. The clustering / §14.1 backfill path
+# passes no workflow_state, so the guard is a strict no-op there and existing
+# canonical fixed points are unaffected.
+#
+# It enforces one substrate invariant:
+#
+#     An adopted/accepted decision entity must NEVER carry
+#     status(self, rejected) — nor any self-status token that contradicts
+#     its tracked workflow_state.
+#
+# Origin: agent-bus thread 1267 (repro assertion 13130; friction 13132). An
+# upstream predicate-extract LLM step anchored the predicate subject on the
+# bearer decision entity and derived the state token from the claim's OBJECT
+# ("bench / reject <third party>"), emitting status(self, rejected) for a
+# decision that is in fact accepted. Class 6 correctly flagged the row; this
+# guard corrects the polarity at the last gate before storage so the stored
+# canonical mirrors the decision's real workflow_state.
+# ---------------------------------------------------------------------------
+
+
+def is_decision_self_status(entity_id: str, p: Predicate) -> bool:
+    """True iff ``p`` is a 2-arg ``status()`` predicate whose subject is the
+    bearer decision entity itself (a self-status predicate on a decision)."""
+    return (
+        p.name == "status"
+        and len(p.args) == 2
+        and entity_id.startswith("decision:")
+        and p.args[0] == entity_id
+    )
+
+
+def decision_status_token(workflow_state: str | None) -> str | None:
+    """Project a decision's ``workflow_state`` onto a canonical self-status
+    token, or ``None`` when the state is unknown or not a generic-state token.
+
+    Only ``workflow_state`` values that are themselves generic-state tokens
+    (``CLASS_6_GENERIC_STATES``) are projectable; anything else yields ``None``
+    so the guard stays a no-op rather than inventing a token.
+    """
+    if not workflow_state:
+        return None
+    ws = workflow_state.strip().lower()
+    return ws if ws in CLASS_6_GENERIC_STATES else None
+
+
+def correct_decision_self_status(
+    entity_id: str, p: Predicate, workflow_state: str | None
+) -> ClassResult:
+    """Rewrite a decision self-status predicate's state token to match the
+    entity's tracked ``workflow_state`` when (and only when) they differ.
+
+    No-op unless ALL hold: ``workflow_state`` is supplied and projectable, the
+    predicate is a decision self-status, and the stored token contradicts the
+    workflow_state-derived token. Idempotent: a second pass finds the tokens
+    already equal and rewrites nothing.
+    """
+    if not is_decision_self_status(entity_id, p):
+        return ClassResult(p, False)
+    desired = decision_status_token(workflow_state)
+    if desired is None or p.args[1] == desired:
+        return ClassResult(p, False)
+    return ClassResult(Predicate(p.name, (p.args[0], desired)), True)

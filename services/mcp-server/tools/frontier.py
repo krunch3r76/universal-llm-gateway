@@ -3,14 +3,18 @@
 Two tools, two contracts:
 
 - ``team_dispatch(op=..., role=..., messages=..., dispatch_thread_id=..., ...)`` is the role-required
-  door for team-seat consults. ``role`` selects a functional seat from the
-  roster: lead / reviewer / gatherer / synthesizer / artisan / skeptic /
-  investigator. Each resolves its own default (family, platform, model) via
-  ``role:{slug}`` execution contract in Cortex. ``role`` must be a canonical
-  role slug (lead, reviewer, gatherer, synthesizer, artisan, skeptic,
-  investigator).
-  Op enum: "generate" (returns content via tracker) or "to_thread"
-  (dispatches with reply landing on ``thread``).
+  door for team-seat consults. ``role`` selects a functional seat; each resolves
+  its own default (family, platform, model) via the ``role:{slug}`` execution
+  contract in Cortex. Rosters are op-scoped (regenerate via
+  ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
+
+  generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
+  handoff roles: lead, cursor-lead, implementer, investigator (legacy)
+  ``investigator`` is legacy grok-web handoff only — NOT SuperGrok Heavy
+  (SuperHeavy uses operator workflow + ``agent_skill:grok-web-dispatch``).
+
+  Op enum: "generate" (returns content via tracker), "to_thread" (reply lands
+  on ``thread``), or "handoff" (manual-seat agent-bus thread; handoff roles only).
 - ``frontier_dispatch(op=..., model=..., messages=..., ...)`` is direct frontier
   dispatch (no role envelope). Same op enum.
 
@@ -180,11 +184,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Role-aware team-seat dispatch with explicit op discrimination.
 
-        ``role`` selects a functional team seat from the roster (Phase 7 of the
-        agent-naming cleanup arc). Available roles: lead, reviewer, gatherer,
-        synthesizer, artisan, skeptic, investigator. Roles are model-agnostic:
-        any explicit model may assume any role. Each role carries only a default
-        (family, platform, model) used when ``model`` is omitted.
+        ``role`` selects a functional team seat. Rosters are op-scoped
+        (regenerate via ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit
+        the two lines below):
+
+        generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
+        handoff roles: lead, cursor-lead, implementer, investigator (legacy)
+        ``investigator`` is legacy grok-web handoff only — NOT SuperGrok Heavy.
+
+        Roles are model-agnostic: any explicit model may assume any generate
+        role. Each role carries only a default (family, platform, model) used
+        when ``model`` is omitted.
 
         Three ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.

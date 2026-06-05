@@ -27,6 +27,8 @@ from .binding import (
 from .concurrency import ConcurrencyLockTimeoutError
 from .dispatch_frontier import (
     AgentModelMismatchError,
+    CapabilityCatalogMissError,
+    CapabilityKnobRejectedError,
     EmptyCompletionError,
     FrontierDispatchExhaustedError,
     RemoteMcpUnsupportedError,
@@ -48,6 +50,8 @@ __all__ = [
     "RemoteMcpUnsupportedError",
     "UnknownPipelineOptionsError",
     "AgentModelMismatchError",
+    "CapabilityKnobRejectedError",
+    "CapabilityCatalogMissError",
     "EmptyCompletionError",
     "FrontierDispatchExhaustedError",
     "MapPartialFailureError",

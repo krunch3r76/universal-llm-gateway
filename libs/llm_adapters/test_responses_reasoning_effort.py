@@ -1,14 +1,13 @@
-"""Unit tests for reasoning.effort model-gating in ResponsesAPIAdapter.
+"""Unit tests for reasoning.effort gating — registry predicates + G9 boundary reject.
 
-Covers _openai_supports_reasoning_effort and the conditional injection
-logic in build_frontier_request:
-
-- Reasoning OpenAI models (gpt-5.x, o-series) receive reasoning.effort
-- Non-reasoning OpenAI models (gpt-4o, gpt-4.1) get reasoning stripped
-- xAI grok-3 family receives reasoning.effort
-- xAI grok-4.3 receives reasoning.effort (supported per 2026 xAI docs)
-- Earlier grok-4 family (pre-4.3) gets reasoning stripped (built-in, not controllable)
-- No thinking → no reasoning key in body (baseline)
+Post-Fence-D contract:
+- The reasoning-effort support predicates live in the ``capability_dispatch``
+  registry (``openai_supports_reasoning_effort`` / ``xai_supports_reasoning_effort``).
+- The ResponsesAPIAdapter injects ``reasoning.effort`` UNCONDITIONALLY — the
+  adapter no longer silently drops unsupported effort. Unsupported effort is
+  rejected loudly at the ``resolve_dispatch`` boundary (G9 ``ProtocolError``).
+- Reasoning OpenAI models (gpt-5.x, o-series) + xAI grok-3/grok-4.3 still inject
+  effort; the boundary rejects gpt-4o / pre-4.3 grok with a declared effort.
 """
 
 from __future__ import annotations
@@ -16,11 +15,13 @@ from __future__ import annotations
 import pytest
 
 from llm_adapters import FrontierRequest
-from llm_adapters.responses import (
-    ResponsesAPIAdapter,
-    _openai_supports_reasoning_effort,
-    _xai_supports_reasoning_effort,
+from llm_adapters.capability_dispatch import (
+    ProtocolError,
+    openai_supports_reasoning_effort,
+    resolve_dispatch,
+    xai_supports_reasoning_effort,
 )
+from llm_adapters.responses import ResponsesAPIAdapter
 
 
 def _adapter(vendor: str) -> ResponsesAPIAdapter:
@@ -29,15 +30,17 @@ def _adapter(vendor: str) -> ResponsesAPIAdapter:
 
 
 def _req_with_effort(model: str, effort: str = "high") -> FrontierRequest:
+    # max_tokens is a resolved int post-boundary (the adapter is a pure consumer).
     return FrontierRequest(
         messages=[{"role": "user", "content": "hi"}],
         model=model,
+        max_tokens=50000,
         thinking={"effort": effort},
     )
 
 
 # ---------------------------------------------------------------------------
-# _openai_supports_reasoning_effort unit tests
+# Registry support predicates
 # ---------------------------------------------------------------------------
 
 
@@ -56,7 +59,7 @@ def _req_with_effort(model: str, effort: str = "high") -> FrontierRequest:
     ],
 )
 def test_openai_supports_reasoning_effort_true(model: str) -> None:
-    assert _openai_supports_reasoning_effort(model) is True
+    assert openai_supports_reasoning_effort(model) is True
 
 
 @pytest.mark.parametrize(
@@ -67,17 +70,14 @@ def test_openai_supports_reasoning_effort_true(model: str) -> None:
         "gpt-4.1",
         "gpt-4-turbo",
         "gpt-4",
-        # Note: gpt-5-search-api starts with "gpt-5" so _openai_supports_reasoning_effort
-        # returns True for it — but it never reaches this adapter in practice because
-        # frontier_dispatch admission rejects it via _is_chat_completions_only first.
     ],
 )
 def test_openai_supports_reasoning_effort_false(model: str) -> None:
-    assert _openai_supports_reasoning_effort(model) is False
+    assert openai_supports_reasoning_effort(model) is False
 
 
 # ---------------------------------------------------------------------------
-# Adapter: OpenAI reasoning models → reasoning.effort injected
+# Adapter: reasoning models → reasoning.effort injected (unconditional)
 # ---------------------------------------------------------------------------
 
 
@@ -90,25 +90,6 @@ def test_openai_reasoning_model_sends_effort(model: str) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Adapter: OpenAI non-reasoning models → reasoning stripped (no 400)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("model", ["gpt-4o", "gpt-4.1", "gpt-4o-mini"])
-def test_openai_non_reasoning_model_strips_effort(model: str) -> None:
-    req = _req_with_effort(model, effort="high")
-    _url, _headers, body = _adapter("openai").build_frontier_request(req)
-    assert "reasoning" not in body, (
-        f"reasoning must not appear for non-reasoning model={model}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Adapter: xAI grok-3 → reasoning.effort injected
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "model",
     [
@@ -118,7 +99,7 @@ def test_openai_non_reasoning_model_strips_effort(model: str) -> None:
     ],
 )
 def test_xai_grok3_sends_effort(model: str) -> None:
-    assert _xai_supports_reasoning_effort(model) is True
+    assert xai_supports_reasoning_effort(model) is True
     req = _req_with_effort(model, effort="low")
     _url, _headers, body = _adapter("xai").build_frontier_request(req)
     assert body.get("reasoning") == {"effort": "low"}, (
@@ -126,14 +107,9 @@ def test_xai_grok3_sends_effort(model: str) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# Adapter: xAI grok-4.3 → reasoning.effort injected
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("model", ["grok-4.3", "grok-4.20-multi-agent-0309"])
 def test_xai_grok43_sends_effort(model: str) -> None:
-    assert _xai_supports_reasoning_effort(model) is True
+    assert xai_supports_reasoning_effort(model) is True
     req = _req_with_effort(model, effort="medium")
     _url, _headers, body = _adapter("xai").build_frontier_request(req)
     assert body.get("reasoning") == {"effort": "medium"}, (
@@ -142,26 +118,34 @@ def test_xai_grok43_sends_effort(model: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Adapter: xAI grok-4 (pre-4.3) → reasoning stripped (built-in, not controllable)
+# G9 boundary reject: unsupported declared effort raises ProtocolError
+# (replaces the adapter's prior silent drop for gpt-4o / pre-4.3 grok).
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model", ["openai/gpt-4o", "openai/gpt-4.1", "openai/gpt-4o-mini"]
+)
+def test_openai_non_reasoning_model_rejected_at_boundary(model: str) -> None:
+    with pytest.raises(ProtocolError) as exc_info:
+        resolve_dispatch(model, reasoning_effort="high")
+    assert any(v.knob == "reasoning.effort" for v in exc_info.value.violations)
 
 
 @pytest.mark.parametrize(
     "model",
     [
-        "grok-4.20-0309-reasoning",
-        "grok-4.20-0309-non-reasoning",
-        "grok-4-fast-reasoning",
-        "grok-4",
+        "xai/grok-4.20-0309-reasoning",
+        "xai/grok-4.20-0309-non-reasoning",
+        "xai/grok-4-fast-reasoning",
+        "xai/grok-4",
     ],
 )
-def test_xai_grok4_strips_effort(model: str) -> None:
-    assert _xai_supports_reasoning_effort(model) is False
-    req = _req_with_effort(model, effort="high")
-    _url, _headers, body = _adapter("xai").build_frontier_request(req)
-    assert "reasoning" not in body, (
-        f"reasoning must not appear for grok-4 model={model}"
-    )
+def test_xai_pre_43_grok_rejected_at_boundary(model: str) -> None:
+    assert xai_supports_reasoning_effort(model.split("/", 1)[-1]) is False
+    with pytest.raises(ProtocolError) as exc_info:
+        resolve_dispatch(model, reasoning_effort="high")
+    assert any(v.knob == "reasoning.effort" for v in exc_info.value.violations)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +157,7 @@ def test_no_thinking_no_reasoning_key() -> None:
     req = FrontierRequest(
         messages=[{"role": "user", "content": "hi"}],
         model="gpt-5.4",
+        max_tokens=50000,
     )
     _url, _headers, body = _adapter("openai").build_frontier_request(req)
     assert "reasoning" not in body

@@ -40,6 +40,14 @@ review/architecture work off-seat.
 pause after initial exploration (file reads, searches, context gathering) and
 before the first write.
 
+**Material-decision branch (before approach lock-in):** if the work changes a
+policy/invariant, is hard-to-reverse, carries deadline/legal/financial exposure,
+or is a close call among defensible options with reversal cost — read
+`agent-skills/consensus-steelman-posture.md` §1, steelman every live option,
+and use **`panel_dispatch(disposition=panel, …)`** when a hard trigger fires
+(≥2 provider families via skeptic + reviewer). Adjudication +
+`panel_adjudication_artifact` stay NON-offloadable on the calling seat.
+
 **Trigger**: you have gathered context and are about to commit to an approach.
 
 - ✅ Read files, trace call paths, understand the problem → **checkpoint** → write code

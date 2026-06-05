@@ -200,12 +200,29 @@ def _normalize_predicate_form_for_write(
     from predicate_form.entity_resolve import DBEntityResolver
     from predicate_form.parser import PredicateParseError
 
+    # Decision self-status polarity guard context (agent-bus 1267): supply the
+    # bearer's tracked workflow_state so a self-referential status() predicate
+    # on a decision can be corrected to match it instead of trusting a
+    # claim-verb-derived token. Defensive: older callers / test fixtures whose
+    # `entities` table predates the workflow_state column must not 500 here, so
+    # any lookup failure degrades to None (guard then no-ops).
+    entity_workflow_state: str | None = None
+    try:
+        ws_row = conn.execute(
+            "SELECT workflow_state FROM entities WHERE id = ?", (entity_id,)
+        ).fetchone()
+        if ws_row is not None:
+            entity_workflow_state = ws_row[0]
+    except Exception:  # noqa: BLE001 — missing column / row is non-fatal context
+        entity_workflow_state = None
+
     try:
         result = normalize_predicate_domain(
             entity_id,
             predicate_form,
             claim_text=claim,
             resolver=DBEntityResolver(conn),
+            entity_workflow_state=entity_workflow_state,
         )
     except PredicateParseError as exc:
         raise HTTPException(

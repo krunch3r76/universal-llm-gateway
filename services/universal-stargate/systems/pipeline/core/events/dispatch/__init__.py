@@ -1,6 +1,6 @@
 """Package re-exports for async-dispatch tracker and frontier-dispatch event factories.
 
-Re-exports all 24 @event_factory symbols so callers using
+Re-exports all 27 @event_factory symbols so callers using
 ``from ..events.dispatch import X`` or
 ``from systems.pipeline.core.events.dispatch import X``
 require no import-path changes after the package-shadow split.
@@ -24,6 +24,11 @@ from .async_tracker import (
     PipelineDispatchCompleted,
     PipelineDispatchRejected,
     PipelineDispatchTrackerExpired,
+)
+from .capability import (
+    PipelineFrontierCapabilityCatalogMiss,
+    PipelineFrontierCapabilityKnobRejected,
+    PipelineFrontierCapabilityResolved,
 )
 from .frontier_anomaly import (
     PipelineFrontierDispatchAgentModelMismatch,
@@ -86,4 +91,8 @@ __all__ = [
     "PipelineFrontierDispatchOutputShort",
     "PipelineFrontierDispatchTerminationShadow",
     "PipelineFrontierDispatchAgentModelMismatch",
+    # Frontier capability dispatch (G2 — capability_dispatch.*)
+    "PipelineFrontierCapabilityResolved",
+    "PipelineFrontierCapabilityKnobRejected",
+    "PipelineFrontierCapabilityCatalogMiss",
 ]

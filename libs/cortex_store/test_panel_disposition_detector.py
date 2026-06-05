@@ -8,11 +8,11 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-
 from agent_seat.panel_dispatch import (
     build_panel_assert_attributes,
     count_execution_evidence_uris,
 )
+
 from cortex_store.dispatch_ops._detectors.panel_disposition import (
     detect_panel_disposition_incomplete,
     detect_panel_falsifier_phase3_metric,
@@ -103,7 +103,7 @@ def test_incomplete_panel_stamp_warns(tmp_path: Path) -> None:
             "panel_families": ["Grok"],
             "panel_executions": {"skeptic": "e1"},
             "decisive_falsifier": "",
-            "lead_adjudication_artifact": "",
+            "panel_adjudication_artifact": "",
         },
     )
     findings = detect_panel_disposition_incomplete(conn, eid)
@@ -114,8 +114,8 @@ def test_complete_panel_stamp_no_warn_when_execution_uris_ok(tmp_path: Path) -> 
     conn = _make_conn(tmp_path)
     attrs = build_panel_assert_attributes(
         panel_executions={"skeptic": "eb94f022", "reviewer": "fe7abdb4"},
-        decisive_falsifier="missing lead artifact fraction",
-        lead_adjudication_artifact="cortex:notes/system/threads/1206-lead.md",
+        decisive_falsifier="missing adjudication artifact fraction",
+        panel_adjudication_artifact="cortex:notes/system/threads/1206-panel.md",
         member_models={"skeptic": "xai/grok-4.3", "reviewer": "openai/gpt-5.5"},
     )
     eid = "decision:dispatch-test-complete"

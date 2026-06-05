@@ -400,3 +400,86 @@ def test_q1_canonicals_fixed_point_on_live_db(assertion_id: int) -> None:
         )
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Decision self-status polarity guard — agent-bus thread 1267 (repro 13130)
+#
+# Integration coverage on the PATCH write path: a decision entity whose
+# synthesized predicate_form is status(self, rejected) while its tracked
+# workflow_state is 'accepted' must store status(self, accepted) and must NOT
+# be flagged for human review. Uses a dedicated fixture whose `entities` table
+# carries a workflow_state column (the shared _make_conn fixture predates it).
+# ---------------------------------------------------------------------------
+
+_DECISION_ID_1267 = "decision:bench-supergrok-heavy-reviewer-let-subscription-lapse"
+
+
+def _make_decision_conn() -> sqlite3.Connection:
+    """Like _make_conn but with a workflow_state-bearing entities table and a
+    single accepted decision entity (thread-1267 repro shape)."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        _ASSERTIONS_DDL
+        + """
+        CREATE TABLE entities (
+            id TEXT PRIMARY KEY,
+            type TEXT NOT NULL,
+            workflow_state TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO entities (id, type, workflow_state) VALUES (?, 'decision', 'accepted')",
+        (_DECISION_ID_1267,),
+    )
+    conn.commit()
+    return conn
+
+
+def test_patch_decision_self_status_polarity_corrected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """thread 1267: status(self, rejected) on an accepted decision → corrected
+    to status(self, accepted), row NOT flagged for review."""
+    conn = _make_decision_conn()
+    _patch_update(monkeypatch, conn)
+    aid = _insert_assertion(
+        conn,
+        entity_id=_DECISION_ID_1267,
+        claim="Operator decided to bench SuperGrok Heavy and let the subscription lapse.",
+        confidence="confirmed",
+    )
+
+    result = _update_assertion_impl(
+        aid, {"predicate_form": f"status({_DECISION_ID_1267}, rejected)"}
+    )
+
+    expected = f"status({_DECISION_ID_1267}, accepted)"
+    assert result["predicate_form"] == expected
+    row = _row(conn, aid)
+    assert row["predicate_form"] == expected
+    # Faithful self-status → not flagged (contrast test_patch_requires_human_review_flags_row).
+    assert row["review_status"] != "flagged"
+
+
+def test_patch_decision_self_status_missing_workflow_col_is_non_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defensive: when the entities table has no workflow_state column (legacy
+    fixtures / pre-migration DBs), the write path must not 500 — the guard
+    simply no-ops and Class 6 behavior is preserved."""
+    conn = _make_conn()  # entities table here has no workflow_state column
+    _patch_update(monkeypatch, conn)
+    conn.execute(
+        "INSERT INTO entities (id, type) VALUES (?, 'decision')", (_DECISION_ID_1267,)
+    )
+    conn.commit()
+    aid = _insert_assertion(conn, entity_id=_DECISION_ID_1267, confidence="confirmed")
+
+    # Must not raise; stored form is the un-corrected canonical (guard no-op).
+    result = _update_assertion_impl(
+        aid, {"predicate_form": f"status({_DECISION_ID_1267}, rejected)"}
+    )
+    assert result["predicate_form"] == f"status({_DECISION_ID_1267}, rejected)"

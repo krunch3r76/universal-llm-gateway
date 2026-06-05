@@ -2,7 +2,8 @@
 
 Structured errors raised by ``frontier_dispatch_v1`` and its admission checks:
 unsupported remote-MCP requests, unknown pipeline options, agent/seat model
-mismatches, empty completions, and tool-loop exhaustion. Each carries a stable
+mismatches, capability-dispatch knob rejections (G9) and catalog-misses (G13),
+empty completions, and tool-loop exhaustion. Each carries a stable
 ``code`` consumed by ``_normalize_pipeline_exception`` so terminal states map
 to structured envelopes rather than collapsing to ``pipeline_execution_failed``,
 and serializes via ``to_dict()`` for API responses.
@@ -197,6 +198,81 @@ class EmptyCompletionError(PipelineError):
             "provider": self.provider,
             "turns_used": self.turns_used,
             "finish_reason": self.finish_reason,
+        }
+
+
+@dataclass
+class CapabilityKnobRejectedError(PipelineError):
+    """Raised at the ``gen_params`` boundary when ``resolve_dispatch`` rejects a knob.
+
+    G9 live-flip.
+
+    The per-model ``CapabilityDispatch`` boundary loudly rejects any unsupported
+    declared generation knob (e.g. ``reasoning.effort`` on a model whose surface
+    does not accept it), replacing the adapters' prior silent ``logger.warning``
+    drop. ``violations`` carries EVERY rejected knob (collect-all, not
+    first-fail) so the caller sees the full set in one structured 4xx envelope.
+
+    ``code=capability_knob_rejected`` lets ``_normalize_pipeline_exception``
+    surface the structured reject rather than collapsing to the generic
+    ``pipeline_execution_failed`` terminal state.
+    """
+
+    model: str
+    provider: str
+    violations: list[dict[str, str]]
+
+    def __str__(self) -> str:
+        detail = "; ".join(
+            f"{v.get('knob')}: {v.get('reject_code')}" for v in self.violations
+        )
+        return (
+            f"Unsupported dispatch knob(s) rejected for model={self.model!r} "
+            f"provider={self.provider!r}: {detail}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "CapabilityKnobRejectedError",
+            "code": "capability_knob_rejected",
+            "retryable": self.retryable,
+            "model": self.model,
+            "provider": self.provider,
+            "violations": self.violations,
+        }
+
+
+@dataclass
+class CapabilityCatalogMissError(PipelineError):
+    """Raised at the ``gen_params`` boundary on a G13 catalog-miss.
+
+    ``resolve_dispatch`` could not infer the dispatch provider/surface for the
+    admitted model at all (provider-uninferable). G13 mandates a structural
+    fail-fast here, never a silent default. A within-surface fail-closed ceiling
+    (e.g. unknown-claude → 8192) is NOT a catalog-miss and resolves normally.
+
+    ``code=capability_catalog_miss`` surfaces the structured fail-fast via
+    ``_normalize_pipeline_exception``.
+    """
+
+    model: str
+    miss_key: str
+    miss_reason: str
+
+    def __str__(self) -> str:
+        return (
+            f"Dispatch catalog-miss for model={self.model!r} "
+            f"(key={self.miss_key!r}): {self.miss_reason}"
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "error_type": "CapabilityCatalogMissError",
+            "code": "capability_catalog_miss",
+            "retryable": self.retryable,
+            "model": self.model,
+            "miss_key": self.miss_key,
+            "miss_reason": self.miss_reason,
         }
 
 

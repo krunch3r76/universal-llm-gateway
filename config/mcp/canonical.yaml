@@ -2400,9 +2400,9 @@ tools:
     tool: dispatch_team
     substrate_qualified: user-vortex__dispatch_team
   fol_descriptor: |
-    ∀ op ∈ {generate, to_thread} ∧ role ∈ TeamRoles ∧ messages ∈ list[ChatMessage]:
+    ∀ op ∈ {generate, to_thread} ∧ role ∈ GenerateRoles ∧ messages ∈ list[ChatMessage]:
       dispatch_team(op, role, messages) ⟹ {execution_id ∈ UUIDv4, status}.
-    role selects a functional seat (lead/reviewer/gatherer/synthesizer/artisan/skeptic/investigator);
+    GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic);
     model optional (resolves from role default). op=generate → poll pipeline(op="result");
     op=to_thread → Stargate posts the reply to `thread`. Async. Mutating (external call).
     See agent_skill:dispatch.
@@ -2583,11 +2583,11 @@ tools:
     tool: team_dispatch
     substrate_qualified: user-vortex__team_dispatch
   fol_descriptor: |-
-    ∀ role ∈ TeamRoles ∧ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey:
+    ∀ role ∈ GenerateRoles ∧ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey:
       team_dispatch(op=generate, role, messages, dispatch_thread_id) ⟹
         execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content.
-    Role-aware team-seat dispatch (lead/reviewer/gatherer/synthesizer/artisan/skeptic/investigator).
-    Async. Mutating. See agent_skill:dispatch.
+    GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
+    ¬ lead/investigator/cursor-lead/implementer (handoff-only). Async. Mutating. See agent_skill:dispatch.
   json_schema:
     type: object
     properties:
@@ -2617,9 +2617,10 @@ tools:
     tool: team_dispatch_to_thread
     substrate_qualified: user-vortex__team_dispatch_to_thread
   fol_descriptor: |-
-    ∀ role ∈ TeamRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ ThreadKey:
+    ∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ ThreadKey:
       team_dispatch(op=to_thread, role, messages, dispatch_thread_id, thread) ⟹
         Stargate posts the role reply on its behalf to thread after dispatch completes.
+    GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
     Async. Mutating. See agent_skill:dispatch.
   json_schema:
     type: object
@@ -2654,9 +2655,10 @@ tools:
       team_dispatch(op=handoff, role, packet_path, subject) ⟹
         thread_id ∈ AgentBus ∧ to_agent ∈ {claude-web, claude-cursor, grok-web, …}
         ∧ result_handle.kind = agent_bus_thread ∧ ¬execution_id.
-    Manual seats only (delivery=manual, dispatchable=false). Roles: lead → claude-web;
-    cursor-lead → claude-cursor; seat slugs claude-web|claude-cursor|web-claude|cursor-claude
-    also admitted. API roles (reviewer, …) → 422 handoff_requires_web_seat.
+    Manual seats only (delivery=manual, dispatchable=false).
+    handoff seat-map: lead → claude-web; cursor-lead, implementer → claude-cursor; investigator → grok-web (legacy).
+    seat slugs claude-web|claude-cursor|web-claude|cursor-claude also admitted.
+    API roles (reviewer, …) → 422 handoff_requires_web_seat.
     Poll via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result).
   json_schema:
     type: object

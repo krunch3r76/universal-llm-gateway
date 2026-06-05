@@ -706,7 +706,13 @@ def run_gates(
 def _build_parser() -> argparse.ArgumentParser:
     repo_root = Path(__file__).resolve().parent.parent
     p = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Companion gate: scripts/gen-mcp-dispatch-role-docs --check verifies the "
+            "op-scoped dispatch-role clauses in canonical.yaml + frontier.py match "
+            "config/agents.yaml. Run it after any role-roster or dispatch-docstring edit."
+        ),
     )
     p.add_argument(
         "--registry",

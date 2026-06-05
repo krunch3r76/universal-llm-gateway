@@ -11,6 +11,7 @@ def test_anthropic_adaptive_thinking_sends_output_config_effort() -> None:
     req = FrontierRequest(
         messages=[{"role": "user", "content": "think"}],
         model="claude-opus-4-7",
+        max_tokens=64000,
         thinking={"type": "adaptive"},
         effort="medium",
     )

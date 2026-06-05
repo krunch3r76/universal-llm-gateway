@@ -1,0 +1,149 @@
+{
+  "max_output": {
+    "CP.anthropic|claude-opus-4-8|req=1000": 1000,
+    "CP.anthropic|claude-opus-4-8|req=200000": 128000,
+    "CP.anthropic|claude-opus-4-8|req=50000": 50000,
+    "CP.anthropic|claude-opus-4-8|req=None": 128000,
+    "CP.anthropic|claude-sonnet-4-6|req=1000": 1000,
+    "CP.anthropic|claude-sonnet-4-6|req=200000": 64000,
+    "CP.anthropic|claude-sonnet-4-6|req=50000": 50000,
+    "CP.anthropic|claude-sonnet-4-6|req=None": 64000,
+    "F.anthropic|claude-3-5-sonnet|think=adaptive|req=1000": 1000,
+    "F.anthropic|claude-3-5-sonnet|think=adaptive|req=200000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=adaptive|req=50000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=adaptive|req=None": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=enabled_b24000|req=1000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=enabled_b24000|req=200000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=enabled_b24000|req=50000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=enabled_b24000|req=None": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=none|req=1000": 1000,
+    "F.anthropic|claude-3-5-sonnet|think=none|req=200000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=none|req=50000": 8192,
+    "F.anthropic|claude-3-5-sonnet|think=none|req=None": 8192,
+    "F.anthropic|claude-opus-4-8|think=adaptive|req=1000": 1000,
+    "F.anthropic|claude-opus-4-8|think=adaptive|req=200000": 128000,
+    "F.anthropic|claude-opus-4-8|think=adaptive|req=50000": 50000,
+    "F.anthropic|claude-opus-4-8|think=adaptive|req=None": 128000,
+    "F.anthropic|claude-opus-4-8|think=enabled_b24000|req=1000": 48000,
+    "F.anthropic|claude-opus-4-8|think=enabled_b24000|req=200000": 128000,
+    "F.anthropic|claude-opus-4-8|think=enabled_b24000|req=50000": 50000,
+    "F.anthropic|claude-opus-4-8|think=enabled_b24000|req=None": 48000,
+    "F.anthropic|claude-opus-4-8|think=none|req=1000": 1000,
+    "F.anthropic|claude-opus-4-8|think=none|req=200000": 128000,
+    "F.anthropic|claude-opus-4-8|think=none|req=50000": 50000,
+    "F.anthropic|claude-opus-4-8|think=none|req=None": 128000,
+    "F.anthropic|claude-sonnet-4-6|think=adaptive|req=1000": 1000,
+    "F.anthropic|claude-sonnet-4-6|think=adaptive|req=200000": 64000,
+    "F.anthropic|claude-sonnet-4-6|think=adaptive|req=50000": 50000,
+    "F.anthropic|claude-sonnet-4-6|think=adaptive|req=None": 64000,
+    "F.anthropic|claude-sonnet-4-6|think=enabled_b24000|req=1000": 48000,
+    "F.anthropic|claude-sonnet-4-6|think=enabled_b24000|req=200000": 64000,
+    "F.anthropic|claude-sonnet-4-6|think=enabled_b24000|req=50000": 50000,
+    "F.anthropic|claude-sonnet-4-6|think=enabled_b24000|req=None": 48000,
+    "F.anthropic|claude-sonnet-4-6|think=none|req=1000": 1000,
+    "F.anthropic|claude-sonnet-4-6|think=none|req=200000": 64000,
+    "F.anthropic|claude-sonnet-4-6|think=none|req=50000": 50000,
+    "F.anthropic|claude-sonnet-4-6|think=none|req=None": 64000,
+    "F.anthropic|claude-unknown-xyz|think=adaptive|req=1000": 1000,
+    "F.anthropic|claude-unknown-xyz|think=adaptive|req=200000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=adaptive|req=50000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=adaptive|req=None": 8192,
+    "F.anthropic|claude-unknown-xyz|think=enabled_b24000|req=1000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=enabled_b24000|req=200000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=enabled_b24000|req=50000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=enabled_b24000|req=None": 8192,
+    "F.anthropic|claude-unknown-xyz|think=none|req=1000": 1000,
+    "F.anthropic|claude-unknown-xyz|think=none|req=200000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=none|req=50000": 8192,
+    "F.anthropic|claude-unknown-xyz|think=none|req=None": 8192,
+    "F.google|gemini-3-pro|req=1000": 1000,
+    "F.google|gemini-3-pro|req=200000": 200000,
+    "F.google|gemini-3-pro|req=50000": 50000,
+    "F.google|gemini-3-pro|req=None": 131072,
+    "F.responses|gpt-5.5|req=1000": 16384,
+    "F.responses|gpt-5.5|req=200000": 200000,
+    "F.responses|gpt-5.5|req=50000": 50000,
+    "F.responses|gpt-5.5|req=None": 131072,
+    "F.responses|grok-4.3|req=1000": 16384,
+    "F.responses|grok-4.3|req=200000": 200000,
+    "F.responses|grok-4.3|req=50000": 50000,
+    "F.responses|grok-4.3|req=None": 131072,
+    "WB.anthropic|claude-sonnet-4-20250514|req=1000": 1000,
+    "WB.anthropic|claude-sonnet-4-20250514|req=200000": 64000,
+    "WB.anthropic|claude-sonnet-4-20250514|req=50000": 50000,
+    "WB.anthropic|claude-sonnet-4-20250514|req=None": 64000
+  },
+  "reasoning": {
+    "default_effort|anthropic/claude-opus-4-8": null,
+    "default_effort|openai/gpt-5.5": null,
+    "default_effort|xai/grok-4.3": "high",
+    "openai_supports|gpt-4o": false,
+    "openai_supports|gpt-5.5": true,
+    "openai_supports|o3": true,
+    "openai_supports|o4-mini": true,
+    "translate|anthropic|anthropic/claude-opus-4-8|high": {
+      "type": "adaptive"
+    },
+    "translate|anthropic|anthropic/claude-opus-4-8|low": {
+      "type": "adaptive"
+    },
+    "translate|anthropic|anthropic/claude-opus-4-8|medium": {
+      "type": "adaptive"
+    },
+    "translate|anthropic|anthropic/claude-opus-4-8|xhigh": {
+      "type": "adaptive"
+    },
+    "translate|anthropic|anthropic/claude-sonnet-4-5|high": {
+      "budget_tokens": 24000,
+      "type": "enabled"
+    },
+    "translate|anthropic|anthropic/claude-sonnet-4-5|low": {
+      "budget_tokens": 2048,
+      "type": "enabled"
+    },
+    "translate|anthropic|anthropic/claude-sonnet-4-5|medium": {
+      "budget_tokens": 8192,
+      "type": "enabled"
+    },
+    "translate|anthropic|anthropic/claude-sonnet-4-5|xhigh": null,
+    "translate|google|google/gemini-3-pro|high": {
+      "effort": "high"
+    },
+    "translate|google|google/gemini-3-pro|low": {
+      "effort": "low"
+    },
+    "translate|google|google/gemini-3-pro|medium": {
+      "effort": "medium"
+    },
+    "translate|google|google/gemini-3-pro|xhigh": {
+      "effort": "xhigh"
+    },
+    "translate|openai|openai/gpt-5.5|high": {
+      "effort": "high"
+    },
+    "translate|openai|openai/gpt-5.5|low": {
+      "effort": "low"
+    },
+    "translate|openai|openai/gpt-5.5|medium": {
+      "effort": "medium"
+    },
+    "translate|openai|openai/gpt-5.5|xhigh": {
+      "effort": "xhigh"
+    },
+    "translate|xai|xai/grok-4.3|high": {
+      "effort": "high"
+    },
+    "translate|xai|xai/grok-4.3|low": {
+      "effort": "low"
+    },
+    "translate|xai|xai/grok-4.3|medium": {
+      "effort": "medium"
+    },
+    "translate|xai|xai/grok-4.3|xhigh": {
+      "effort": "xhigh"
+    },
+    "xai_supports|grok-3-mini": true,
+    "xai_supports|grok-4.20-0309-non-reasoning": false,
+    "xai_supports|grok-4.3": true
+  }
+}

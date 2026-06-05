@@ -93,7 +93,10 @@ GOLDEN_QUERIES: list[tuple[str, str]] = [
     ("restart service", "bot_supervisor"),
     ("fetch web page", "web_fetch"),
     ("raw sql query", "sql"),
-    ("build with grok", "grokbuild"),  # overflow vestigial relay (11588); prefer cursorbuild
+    (
+        "build with grok",
+        "grokbuild",
+    ),  # overflow vestigial relay (11588); prefer cursorbuild
     ("rag semantic search query", "rag_search"),
     ("model status", "model_status"),
     ("query events", "query_observability_preview"),

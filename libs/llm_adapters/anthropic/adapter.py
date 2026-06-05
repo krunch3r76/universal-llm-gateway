@@ -11,10 +11,6 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
-from provider_model_limits import (
-    anthropic_max_output_tokens,
-    clamp_anthropic_max_tokens,
-)
 from universal_logging import get_logger
 
 from llm_adapters._mcp_entry import (
@@ -27,8 +23,8 @@ from llm_adapters.anthropic._helpers import (
     _build_anthropic_tool,
     _dedupe_preserve_order,
     _is_claude4_model,
-    _resolve_anthropic_max_tokens,
 )
+from llm_adapters.capability_dispatch import resolve_dispatch
 
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
@@ -60,8 +56,10 @@ class AnthropicAdapter:
         self,
         req: LLMRequest,
     ) -> tuple[str, dict[str, str], dict[str, Any]]:
-        resolved_max_tokens = clamp_anthropic_max_tokens(req.model, req.max_tokens)
-        if resolved_max_tokens != req.max_tokens:
+        resolved_max_tokens = resolve_dispatch(
+            req.model, requested_max_output=req.max_tokens
+        ).max_output.resolved
+        if req.max_tokens is not None and resolved_max_tokens != req.max_tokens:
             logger.info(
                 "Clamped Anthropic max_tokens from %d to %d for model=%s",
                 req.max_tokens,
@@ -114,28 +112,10 @@ class AnthropicAdapter:
         thinking_config = _build_anthropic_thinking(req.thinking)
         if thinking_config is not None:
             body["thinking"] = thinking_config
-        resolved_max_tokens = _resolve_anthropic_max_tokens(
-            req.max_tokens, thinking_config, model=req.model
-        )
-        model_max = anthropic_max_output_tokens(req.model)
-        if resolved_max_tokens is not None:
-            body["max_tokens"] = clamp_anthropic_max_tokens(
-                req.model, resolved_max_tokens
-            )
-            if body["max_tokens"] != resolved_max_tokens:
-                logger.info(
-                    "Clamped Anthropic max_tokens from %d to %d for model=%s",
-                    resolved_max_tokens,
-                    body["max_tokens"],
-                    req.model,
-                )
-        else:
-            body["max_tokens"] = model_max
-            logger.info(
-                "No max_tokens specified for model=%s; using model max %d",
-                req.model,
-                model_max,
-            )
+        # Pure consumer: ``req.max_tokens`` is the resolved int from the single
+        # ``CapabilityDispatch`` boundary (cross-knob budget bump + ceiling
+        # clamp already applied upstream in ``gen_params``).
+        body["max_tokens"] = req.max_tokens
 
         if req.remote_mcp:
             if req.mcp_tool_loop:

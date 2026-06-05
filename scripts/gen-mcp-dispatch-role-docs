@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""Regenerate op-scoped dispatch-role clauses from config/agents.yaml.
+
+Single SOT: ``libs/agent_seat/dispatch_role_catalog.py`` (derived from
+``config/agents.yaml`` role roster + capability profiles). This script renders
+the canonical role-clause strings and writes them into the agent-facing docs
+that would otherwise drift:
+
+  - ``config/mcp/canonical.yaml`` — team_dispatch generate / to_thread / handoff
+    fol_descriptor role clauses (``generate/to_thread roles (...)`` and the
+    handoff ``handoff seat-map: ...`` line).
+  - ``services/mcp-server/tools/frontier.py`` — module + tool docstring roster
+    lines (``generate/to_thread roles: ...`` and ``handoff roles: ...``).
+
+Usage:
+  scripts/gen-mcp-dispatch-role-docs            # rewrite docs in place
+  scripts/gen-mcp-dispatch-role-docs --check    # exit non-zero on drift (CI gate)
+
+Companion CI gate to ``scripts/registry-check`` — run ``--check`` alongside it
+after any change to ``config/agents.yaml`` roles or the dispatch docstrings.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "libs"))
+
+from agent_seat.dispatch_role_catalog import (  # noqa: E402
+    generate_comma_clause,
+    generate_slash_clause,
+    handoff_comma_clause,
+    handoff_seat_map_clause,
+)
+
+_CANONICAL = _REPO_ROOT / "config" / "mcp" / "canonical.yaml"
+_FRONTIER = _REPO_ROOT / "services" / "mcp-server" / "tools" / "frontier.py"
+
+
+def _render_canonical(text: str) -> str:
+    slash = generate_slash_clause()
+    seat_map = handoff_seat_map_clause()
+    text = re.sub(
+        r"generate/to_thread roles \([^)]*\)",
+        f"generate/to_thread roles ({slash})",
+        text,
+    )
+    text = re.sub(
+        r"(?m)^(\s*)handoff seat-map: .*$",
+        lambda m: f"{m.group(1)}handoff seat-map: {seat_map}.",
+        text,
+    )
+    return text
+
+
+def _render_frontier(text: str) -> str:
+    comma = generate_comma_clause()
+    handoff = handoff_comma_clause()
+    text = re.sub(
+        r"generate/to_thread roles: [^\n]*",
+        f"generate/to_thread roles: {comma}",
+        text,
+    )
+    text = re.sub(r"handoff roles: [^\n]*", f"handoff roles: {handoff}", text)
+    return text
+
+
+_TARGETS: tuple[tuple[Path, object], ...] = (
+    (_CANONICAL, _render_canonical),
+    (_FRONTIER, _render_frontier),
+)
+
+
+def main(check: bool) -> int:
+    drift: list[str] = []
+    for path, render in _TARGETS:
+        if not path.exists():
+            print(f"FAIL: target not found: {path}", file=sys.stderr)
+            return 1
+        original = path.read_text(encoding="utf-8")
+        rendered = render(original)
+        if rendered == original:
+            print(f"OK   {path.relative_to(_REPO_ROOT)} — up to date")
+            continue
+        if check:
+            drift.append(str(path.relative_to(_REPO_ROOT)))
+            print(f"DRIFT {path.relative_to(_REPO_ROOT)} — role clauses stale")
+        else:
+            path.write_text(rendered, encoding="utf-8")
+            print(f"WROTE {path.relative_to(_REPO_ROOT)} — role clauses regenerated")
+
+    if check and drift:
+        print(
+            f"\nFAIL gen-mcp-dispatch-role-docs: {len(drift)} file(s) drifted — "
+            f"run scripts/gen-mcp-dispatch-role-docs to regenerate.",
+            file=sys.stderr,
+        )
+        return 1
+    print("\nOK gen-mcp-dispatch-role-docs: dispatch-role clauses consistent")
+    return 0
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Exit non-zero on drift without rewriting (CI gate mode)",
+    )
+    sys.exit(main(parser.parse_args().check))

@@ -10,8 +10,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from llm_adapters.capability_dispatch import resolve
 from model_id import ModelId
-from provider_model_limits import anthropic_max_output_tokens
 
 from ..events import (
     CloudproxyMcpCorrelationAssigned,
@@ -169,8 +169,15 @@ class AnthropicAdapter:
 
         system_text = extract_system_text(openai_messages)
         anthropic_messages = convert_messages(openai_messages)
+        # CP is an out-of-claim independent resolver (A8): it migrates off the
+        # deleted ``anthropic_max_output_tokens`` helper to the NEW libs
+        # registry default (the per-model ceiling) but stays a separate
+        # resolution site. Live ``/models`` cache precedence is preserved; the
+        # registry default is the fallback when the model is uncached. Resolve
+        # on the FULL ``model_id`` (registry key); cache on the bare
+        # ``anthropic_model`` (upstream Anthropic model name).
         model_max_tokens = self._model_max_tokens.get(
-            anthropic_model, anthropic_max_output_tokens(anthropic_model)
+            anthropic_model, resolve(model_id).max_output.default
         )
 
         response_format = request_body.get("response_format")

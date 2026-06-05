@@ -1,17 +1,13 @@
 """Anthropic Messages API — private helpers, output-format and tool builders.
 
 Module-private helpers: model-family detection, list deduplication, output-format
-shaping, thinking-config normalization, max_tokens invariant enforcement, and
-tool-entry construction (function tools + Anthropic server tools).
+shaping, thinking-config normalization, and tool-entry construction (function
+tools + Anthropic server tools).
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from universal_logging import get_logger
-
-logger = get_logger(__name__)
 
 _ANTHROPIC_SERVER_TOOL_VERSION_MAP = {
     "web_search": "web_search_20260209",
@@ -83,37 +79,6 @@ def _build_anthropic_thinking(thinking: dict[str, Any] | None) -> dict[str, Any]
         return {"type": "disabled"}
 
     return None
-
-
-def _resolve_anthropic_max_tokens(
-    requested_max_tokens: int | None,
-    thinking_config: dict[str, Any] | None,
-    *,
-    model: str,
-) -> int | None:
-    """Ensure Anthropic's max_tokens > thinking.budget_tokens invariant."""
-    if (
-        not isinstance(thinking_config, dict)
-        or thinking_config.get("type") != "enabled"
-    ):
-        return requested_max_tokens
-
-    budget_tokens = thinking_config.get("budget_tokens")
-    if not isinstance(budget_tokens, int) or budget_tokens < 1:
-        return requested_max_tokens
-
-    if isinstance(requested_max_tokens, int) and requested_max_tokens > budget_tokens:
-        return requested_max_tokens
-
-    bumped_max_tokens = budget_tokens * 2
-    logger.warning(
-        "Auto-bumped Anthropic max_tokens from %s to %d for model=%s to satisfy "
-        "max_tokens > thinking.budget_tokens",
-        requested_max_tokens,
-        bumped_max_tokens,
-        model,
-    )
-    return bumped_max_tokens
 
 
 def _build_anthropic_tool(tool: dict[str, Any]) -> dict[str, Any] | None:

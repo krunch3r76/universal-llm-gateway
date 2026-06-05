@@ -338,7 +338,7 @@ team_dispatch(
 
 | Mode | Trigger | Behavior |
 |---|---|---|
-| Team-seat | `pipeline_options.role ∈ {gatherer, skeptic, synthesizer, reviewer, lead, artisan, investigator}` | Cortex hydration + curated team toolset (`cortex`, `rag`, `agent_bus`) injected when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
+| Team-seat | `pipeline_options.role` set — generate/to_thread: `{reviewer, gatherer, synthesizer, artisan, skeptic}`; handoff/manual: `{lead, cursor-lead, implementer, investigator (legacy), …}` per `config/agents.yaml` | Cortex hydration + curated team toolset (`cortex`, `rag`, `agent_bus`) injected when client-side MCP is enabled. Emits `pipeline.frontier.dispatch.hydrated`. |
 | Role-free | `pipeline_options.role` omitted | Raw native call. No hydration event. Optional read toolset (`cortex`, `rag`) via `pipeline_options.mcp` (default `true`). |
 
 Provider selection is derived from the model id prefix: `openai/*` → OpenAI

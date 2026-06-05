@@ -69,14 +69,20 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         ``panel_families``, and per-role ``dispatches``. Poll member content with
         ``pipeline(op="result", execution_id=...)`` unless ``poll=True``.
 
-        **NON-offloadable (Guard 2):** steelman, falsifier adjudication, lead
-        review of panelist writes, and the ``lead_adjudication_artifact`` — the
-        lead must author those after this helper returns.
+        **NON-offloadable (Guard 2):** steelman, falsifier adjudication, and the
+        ``panel_adjudication_artifact`` are authored by the **adjudicating
+        caller** (the seat that invoked this helper) after it returns. This
+        "adjudicating lead" is the caller's adjudication role for THIS panel — it
+        is distinct from the ``lead`` dispatch role (``team_dispatch(op=handoff,
+        role=lead)`` → claude-web). The adjudicating caller may be any seat.
 
-        **Assert template (Menu D, SPLIT storage):** ``cortex(tool="assert", ...)``
-        for claim + ``evidence_uris``; then ``cortex(tool="entity_update",
-        attributes=build_panel_assert_attributes(...))`` on the decision entity.
-        Requires ``lead_adjudication_artifact``, ``decisive_falsifier``, and ≥2
+        **Assert template (Menu D, assertion SOT):** pass
+        ``attributes=build_panel_assert_attributes(...)`` directly to
+        ``cortex(tool="assert", ...)`` alongside the claim and ``evidence_uris``.
+        ``assertion.attributes`` is the source of truth — ``entity_update(
+        attributes=...)`` is at most an optional derived read-cache, NEVER the
+        primary write (consensus-steelman-posture §3.1). Requires
+        ``panel_adjudication_artifact``, ``decisive_falsifier``, and ≥2
         ``execution:`` evidence_uris. ``validate_panel_assert_attributes`` is
         helper-only (Guard 3); session-close gate runs panel_disposition_incomplete on scoped entities.
 

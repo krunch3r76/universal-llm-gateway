@@ -953,6 +953,9 @@
         "handoff_prompt": {
           "type": "string"
         },
+        "handoff_source_path": {
+          "type": "string"
+        },
         "session_id": {
           "type": "string"
         }
@@ -1107,7 +1110,7 @@
   {
     "cache_priority": "on_demand",
     "canonical_name": "dispatch_team",
-    "description": "\u2200 op \u2208 {generate, to_thread} \u2227 role \u2208 TeamRoles \u2227 messages \u2208 list[ChatMessage]:\n  dispatch_team(op, role, messages) \u27f9 {execution_id \u2208 UUIDv4, status}.\nrole selects a functional seat (lead/reviewer/gatherer/synthesizer/artisan/skeptic/investigator);\nmodel optional (resolves from role default). op=generate \u2192 poll pipeline(op=\"result\");\nop=to_thread \u2192 Stargate posts the reply to `thread`. Async. Mutating (external call).\nSee agent_skill:dispatch.",
+    "description": "\u2200 op \u2208 {generate, to_thread} \u2227 role \u2208 TeamRoles \u2227 messages \u2208 list[ChatMessage]:\n  dispatch_team(op, role, messages) \u27f9 {execution_id \u2208 UUIDv4, status}.\ngenerate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic);\nmodel optional (resolves from role default). op=generate \u2192 poll pipeline(op=\"result\");\nop=to_thread \u2192 Stargate posts the reply to `thread`. Async. Mutating (external call).\nSee agent_skill:dispatch.",
     "domain": "dispatch",
     "inputSchema": {
       "properties": {
@@ -1522,7 +1525,7 @@
   {
     "cache_priority": "on_demand",
     "canonical_name": "fs_search",
-    "description": "\u2200 sandbox = \"workspaces\" \u2227 path \u2208 str \u2227 content \u2208 str:\n  fs_search(sandbox, path, content) \u27f9\n    result \u2208 List[Match] \u2227 \u2200 m \u2208 result: m.line \u220b regex(content).\nRead-only. workspaces sandbox only. See agent_skill:fs.",
+    "description": "\u2200 sandbox \u2208 {\"cortex\",\"workspaces\"} \u2227 path \u2208 str \u2227 content \u2208 str:\n  fs_search(sandbox, path, content) \u27f9\n    result.mode \u2208 {\"file\",\"directory\"} \u2227 matches are regex line hits.\nConversion-aware (PDF/DOCX/ODT/EML/HTML). Read-only. See agent_skill:fs.",
     "domain": "fs",
     "inputSchema": {
       "properties": {

@@ -37,6 +37,9 @@ from .classes import (
     apply_class_3,
     apply_class_4,
     class_6_check,
+    correct_decision_self_status,
+    decision_status_token,
+    is_decision_self_status,
 )
 from .entity_resolve import (
     CortexEntityResolver,
@@ -84,6 +87,7 @@ def normalize_predicate_domain(
     claim_text: str | None = None,
     *,
     resolver: EntityResolver | None = None,
+    entity_workflow_state: str | None = None,
 ) -> dict:
     """Canonicalize a predicate_form to its (domain_key, canonical_form) pair.
 
@@ -97,6 +101,13 @@ def normalize_predicate_domain(
             signature stable for the §14.1 backfill dispatch.
         resolver: Optional EntityResolver. Defaults to a cortex-backed
             resolver; tests and offline callers inject StaticEntityResolver.
+        entity_workflow_state: Optional tracked workflow_state of the bearer
+            entity (write path only). When supplied for a ``decision:`` bearer,
+            enables the self-status polarity guard: a self-referential
+            ``status(self, X)`` predicate whose token contradicts the tracked
+            state is rewritten to match it, and a faithful self-status is
+            exempted from the Class 6 review flag. Omitted (None) on the
+            clustering / backfill path → guard is a strict no-op.
 
     Returns:
         dict with keys ``domain_key`` (bare form), ``canonical_form``
@@ -164,7 +175,30 @@ def normalize_predicate_domain(
     if fired:
         classes_applied.append(2)
 
+    # Write-time decision self-status polarity guard (NOT a clustering class).
+    # Fires only when the bearer's workflow_state is supplied (write path); the
+    # clustering / §14.1 backfill path passes none, so this is a strict no-op
+    # there and existing canonical fixed points are preserved. See classes.py
+    # header + agent-bus thread 1267.
+    p, decision_self_status_corrected = correct_decision_self_status(
+        entity_id, p, entity_workflow_state
+    )
+
     requires_review = class_6_check(entity_id, p)
+    # A *faithful* decision self-status (state token == the entity's tracked
+    # workflow_state) is a correct projection of a tracked state, not an
+    # accidental cross-entity merge — so it is exempt from the Class 6
+    # human-review flag. Only applies when workflow_state context confirms
+    # faithfulness; without that context we stay conservative and let Class 6
+    # flag as before.
+    _desired_self_status = decision_status_token(entity_workflow_state)
+    decision_self_status_faithful = (
+        is_decision_self_status(entity_id, p)
+        and _desired_self_status is not None
+        and p.args[1] == _desired_self_status
+    )
+    if requires_review and decision_self_status_faithful:
+        requires_review = False
     if requires_review:
         classes_applied.append(6)
 
@@ -180,6 +214,7 @@ def normalize_predicate_domain(
         "normalization_decision": normalization_decision,
         "candidate_set_fingerprint": candidate_set_fingerprint,
         "normalizer_version": NORMALIZER_VERSION,
+        "decision_self_status_corrected": decision_self_status_corrected,
     }
 
 

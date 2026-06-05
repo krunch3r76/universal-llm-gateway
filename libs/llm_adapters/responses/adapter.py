@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from universal_logging import get_logger
-
 from llm_adapters._mcp_entry import (
     openai_xai_mcp_tool_entry,
     resolve_mcp_env,
@@ -19,15 +17,9 @@ from llm_adapters.responses.normalization import (
     _normalize_input_content,
     _normalize_tool_for_responses_api,
 )
-from llm_adapters.responses.reasoning_capabilities import (
-    _openai_supports_reasoning_effort,
-    _xai_supports_reasoning_effort,
-)
 
 if TYPE_CHECKING:
     from llm_adapters import FrontierRequest, LLMRequest
-
-logger = get_logger(__name__)
 
 
 class RemoteMcpUnsupportedError(RuntimeError):
@@ -116,30 +108,10 @@ class ResponsesAPIAdapter:
             "input": input_msgs,
             "store": False,
         }
-        responses_min_output_tokens = 16384
-        responses_default_output_tokens = 131072
-        if req.max_tokens is not None:
-            effective = max(req.max_tokens, responses_min_output_tokens)
-            if effective != req.max_tokens:
-                logger.info(
-                    "Bumped max_tokens from %d to %d for model=%s (frontier floor)",
-                    req.max_tokens,
-                    effective,
-                    req.model,
-                )
-            body["max_output_tokens"] = effective
-        else:
-            # Kludge default: max_tokens is a ceiling not a target — reasoning
-            # models don't size to fit it (they generate what the task
-            # requires and may overshoot/undershoot, ignoring the limit as a
-            # soft target). Default high to avoid silent low caps. 131072 =
-            # 128k, anchored to Anthropic Opus 4.7's documented streaming
-            # max output ceiling; chosen as the highest documented streaming
-            # ceiling across the frontier providers we use. If a
-            # smaller-variant model rejects this, that's a LOUD signal to
-            # add a per-model entry per
-            # todo:universal-max-tokens-model-ceiling-default.
-            body["max_output_tokens"] = responses_default_output_tokens
+        # Pure consumer: ``req.max_tokens`` is the resolved int from the single
+        # ``CapabilityDispatch`` boundary (Responses floor-bump + default
+        # already applied upstream in ``gen_params``).
+        body["max_output_tokens"] = req.max_tokens
         if req.temperature is not None:
             body["temperature"] = req.temperature
         if req.top_p is not None:
@@ -152,30 +124,12 @@ class ResponsesAPIAdapter:
         if req.thinking:
             if req.thinking.get("include_encrypted"):
                 body.setdefault("include", []).append("reasoning.encrypted_content")
+            # Unsupported reasoning.effort is rejected loudly upstream at the
+            # ``CapabilityDispatch`` boundary (G9), so the adapter injects
+            # unconditionally — no per-vendor silent-drop branch survives.
             effort = req.thinking.get("effort")
             if effort:
-                if self._vendor == "xai" and _xai_supports_reasoning_effort(req.model):
-                    body["reasoning"] = {"effort": effort}
-                elif self._vendor == "xai":
-                    logger.warning(
-                        "Dropping unsupported reasoning.effort=%s for model=%s "
-                        "(grok-4 family has built-in reasoning, "
-                        "does not accept effort control)",
-                        effort,
-                        req.model,
-                    )
-                elif self._vendor == "openai" and not _openai_supports_reasoning_effort(
-                    req.model
-                ):
-                    logger.warning(
-                        "Dropping unsupported reasoning.effort=%s for model=%s "
-                        "(only o-series and gpt-5 family accept reasoning.effort; "
-                        "pass a reasoning model or omit reasoning_effort)",
-                        effort,
-                        req.model,
-                    )
-                else:
-                    body["reasoning"] = {"effort": effort}
+                body["reasoning"] = {"effort": effort}
 
         if req.response_format:
             fmt = req.response_format

@@ -4,14 +4,19 @@ Extracted from ``frontier_dispatch.py`` to keep that module under the SLOC
 ceiling.  Contains:
 
 - ``_VALID_REASONING_EFFORTS`` — accepted effort vocabulary (union of
-  documented provider surfaces; provider gating lives in the adapters).
-- ``_REASONING_EFFORT_BUDGET_TOKENS`` — budget-mode (pre-adaptive Anthropic) map.
-- ``_ANTHROPIC_ADAPTIVE_MODELS`` — Anthropic models that take adaptive
-  thinking (per docs/thirdparty/claude-api/upstream/adaptive-thinking.md).
-- ``translate_reasoning_effort`` — maps ``reasoning_effort`` to provider-native
-  thinking dict.
+  documented provider surfaces; per-model support is enforced at the
+  ``CapabilityDispatch`` boundary, G9).
+- ``translate_reasoning_effort`` — thin spec-reader delegating to the per-surface
+  ``ModelWrapper.translate_reasoning`` (the SOLE translation mechanism).
+- ``resolve_default_reasoning_effort`` — thin spec-reader delegating to the
+  registry ``default_reasoning_effort``.
 - ``resolve_model`` / ``resolve_agent`` / ``resolve_user_prompt`` /
   ``resolve_system_prompt`` — parameter extraction helpers shared by ``execute``.
+
+The per-model reasoning/max-output DATA + translation MECHANISM live in the
+``llm_adapters.capability_dispatch`` registry (thread 1234/1271); the static
+maps (``_REASONING_EFFORT_BUDGET_TOKENS``, ``_ANTHROPIC_ADAPTIVE_MODELS``,
+``_DEFAULT_HIGH_EFFORT_MODELS``) were deleted there.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from agent_seat import normalize_agent_slug
 from agent_seat.registry import resolve_agent_model
-from model_id import ModelId, WireModelResolutionError, resolve_wire_model_id
+from llm_adapters.capability_dispatch import default_reasoning_effort, wrapper_for
 
 from ..execution.resolver import NamespaceResolver, traverse_path
 
@@ -28,131 +33,46 @@ if TYPE_CHECKING:
     from ..schemas import StepConfig
     from .protocol import PipelineContext
 
-# Provider-native ``thinking`` shapes for the convenience ``reasoning_effort``
-# knob on ``frontier_dispatch`` / ``/api/v1/frontier/dispatch``.
-#
-# - Anthropic adaptive-capable models (Mythos Preview, Opus 4.8, Opus 4.7,
-#   Opus 4.6, Sonnet 4.6) get ``{"type": "adaptive"}``; effort is surfaced separately
-#   via ``req.effort`` → ``output_config.effort`` in the adapter. Per
-#   adaptive-thinking.md, manual ``{type: enabled, budget_tokens}`` is
-#   deprecated on the 4.6 family and rejected on Opus 4.7.
-# - Budget-mode (pre-adaptive Anthropic) models (Sonnet 3.7, Sonnet 4.5, Opus 4.5,
-#   etc.) take ``{"type": "enabled", "budget_tokens": N}`` with N drawn from
-#   the budget-tokens map. Extended-vocabulary efforts (none/minimal/xhigh/
-#   max) have no documented budget mapping and skip thinking on legacy.
-# - OpenAI / xAI / OpenRouter / Google: lowercase effort string consumed by
-#   the adapter (Responses API ``reasoning.effort`` for OpenAI/xAI; Gemini
-#   ``thinkingLevel``/``thinkingBudget`` translation for Google). Provider
-#   gating (grok-4 built-in reasoning, gpt-4o non-reasoning, etc.) lives in
-#   the adapter layer, not here.
-
+# Accepted effort vocabulary (union of documented provider surfaces). Per-model
+# support — and the native-shape translation — is owned by the
+# ``llm_adapters.capability_dispatch`` registry/wrappers; only the admission
+# vocabulary gate stays here.
 _VALID_REASONING_EFFORTS: frozenset[str] = frozenset(
-    # Union of documented provider vocabularies across the four upstream
-    # mirrors. Provider-specific support is enforced at the adapter layer.
     {"none", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
-
-_REASONING_EFFORT_BUDGET_TOKENS: dict[str, int] = {
-    # Used only by the budget-mode (pre-adaptive Anthropic) branch. Adaptive-capable
-    # models surface effort via ``output_config.effort`` separately; this
-    # map is intentionally narrow to the documented budget-mode vocabulary.
-    "low": 2048,
-    "medium": 8192,
-    "high": 24000,
-}
-
-# Per docs/thirdparty/claude-api/upstream/adaptive-thinking.md.
-_ANTHROPIC_ADAPTIVE_MODELS: frozenset[str] = frozenset(
-    {
-        "claude-mythos-preview",
-        "claude-opus-4-8",
-        "claude-opus-4-7",
-        "claude-opus-4-6",
-        "claude-sonnet-4-6",
-    }
-)
-
-
-# Models for which ``reasoning_effort="high"`` is the implicit default when
-# the caller does not specify one. Provider defaults underserve these models
-# in measured comparisons — most concretely, ``xai/grok-4.3`` at provider
-# default produced a Phase 1 modularization plan with 4 dedup items vs gpt-5.5
-# @ high's 9 items (cortex thread 1024, 2026-05-17); the same dispatch re-run
-# at ``reasoning_effort="high"`` reached parity in 3× less time and 5× fewer
-# tokens. Centralized here so every *_dispatch path (frontier_dispatch,
-# team_dispatch, the raw pipeline escape hatch) inherits the default
-# uniformly.
-#
-# Caller-supplied ``reasoning_effort`` (including the empty-string convention
-# from the MCP tool wrapper) is treated identically to the existing
-# translation gate: only an absent or empty value triggers the model default.
-# Explicit values always win.
-_DEFAULT_HIGH_EFFORT_MODELS: frozenset[str] = frozenset(
-    {
-        "xai/grok-4.3",
-    }
-)
-
-
-def _wire_model_key(model: str) -> str:
-    """Normalized provider/model id for defaults and adaptive-thinking gates."""
-    try:
-        return resolve_wire_model_id(model.strip()).wire_id
-    except WireModelResolutionError:
-        parsed = ModelId.parse(model.strip())
-        if parsed.provider:
-            return f"{parsed.provider}/{parsed.base_id}"
-        return model.strip()
 
 
 def resolve_default_reasoning_effort(model: str | None) -> str | None:
     """Return the implicit default ``reasoning_effort`` for ``model``, or None.
 
-    Used by ``frontier_dispatch_v1`` to apply a model-specific default when
-    the caller has not supplied one. Returning ``None`` means no default
-    applies and the existing provider-native default takes over.
-
-    ``resolve_model`` normalizes bare ids before this runs; ``_wire_model_key``
-    still strips ``__effort_*`` suffixes and applies bare-family inference.
+    Thin spec-reader delegating to the registry ``default_reasoning_effort``
+    (the reshaped ``_DEFAULT_HIGH_EFFORT_MODELS``). Returning ``None`` means no
+    default applies and the provider-native default takes over.
     """
     if not model:
         return None
-    if _wire_model_key(model) in _DEFAULT_HIGH_EFFORT_MODELS:
-        return "high"
-    return None
-
-
-def _anthropic_uses_adaptive_thinking(model: str | None) -> bool:
-    """Return true when Anthropic prefers (or requires) adaptive thinking."""
-    if not model:
-        return False
-    wire = _wire_model_key(model)
-    bare = wire.split("/", 1)[-1].lower()
-    return bare in _ANTHROPIC_ADAPTIVE_MODELS
+    return default_reasoning_effort(model)
 
 
 def translate_reasoning_effort(
     effort: str, provider: str, *, model: str | None = None
 ) -> dict[str, Any] | None:
-    """Map ``reasoning_effort`` to a provider-native ``thinking`` dict."""
+    """Map ``reasoning_effort`` to a provider-native ``thinking`` dict.
+
+    Thin spec-reader: validates against the admission vocabulary, then delegates
+    to the per-surface ``ModelWrapper.translate_reasoning`` (the SOLE
+    translation MECHANISM). ``provider`` is retained for the caller signature;
+    the wrapper is keyed on ``model`` (cloud ``ModelId.normalized``).
+    """
     normalized = effort.strip().lower()
     if normalized not in _VALID_REASONING_EFFORTS:
         raise ValueError(
             f"reasoning_effort={effort!r} must be one of: "
             f"{', '.join(sorted(_VALID_REASONING_EFFORTS))}"
         )
-    if provider == "anthropic":
-        if _anthropic_uses_adaptive_thinking(model):
-            return {"type": "adaptive"}
-        budget = _REASONING_EFFORT_BUDGET_TOKENS.get(normalized)
-        if budget is None:
-            # Extended-vocabulary efforts (none/minimal/xhigh/max) have no
-            # documented budget-mode mapping on legacy Anthropic models.
-            # Skip thinking config; caller's raw effort still flows via
-            # req.effort but the adapter has nothing to surface.
-            return None
-        return {"type": "enabled", "budget_tokens": budget}
-    return {"effort": normalized}
+    if not model:
+        return None
+    return wrapper_for(model).translate_reasoning(normalized)
 
 
 def normalize_frontier_wire_model(model: str) -> str:

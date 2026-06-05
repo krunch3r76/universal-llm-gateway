@@ -6,18 +6,24 @@ individual tools with `fs(op="md_read", sandbox="workspaces", path="universal-ll
 
 ## team_dispatch and frontier_dispatch
 
-Two async native-frontier MCP tools. Both return `{execution_id, pipeline, status, started_at}`
-immediately after admission. The `op` parameter selects the output channel:
+Two native-frontier MCP tools. `frontier_generate` and `team_generate` are **retired**
+(Phase 4) — use these only.
+
+For `op="generate"` and `op="to_thread"`, admission is async: returns
+`{execution_id, pipeline, status, started_at}`; poll with `pipeline(op="result")`.
+For `team_dispatch(op="handoff")` only: returns synchronously with
+`{thread_id, to_agent, push_reminder, result_handle, poll_hint}` — **no**
+`execution_id`; poll with `agent_bus(tool="wait", …)` from `poll_hint`.
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | Team consults with role: `gatherer`, `skeptic`, `synthesizer`, `reviewer`, `lead`, `investigator` | `op`, `role` (+ `messages`, `dispatch_thread_id` for generate/to_thread) | yes |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. **Manual-seat handoff** (`op=handoff` only): `lead`, `cursor-lead`, `implementer`, seat slugs `claude-web` / `claude-cursor` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 | `frontier_dispatch` | Raw provider-native call, no role | `op`, `model`, `messages` | no |
 
-`op` values:
+`op` values (`team_dispatch` and `frontier_dispatch`; frontier has no `handoff`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
-- `"to_thread"` — bus mode; agent posts substantive reply to `thread`; dispatcher reads with `agent_bus(tool="fetch")`.
-- `"handoff"` — fresh-WEB dispatch; creates an agent-bus thread for the role's web seat synchronously. Returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status, poll_hint}`. No `execution_id`; poll via `poll_hint` (`agent_bus(tool="wait")` with args from `result_handle`). No model dispatch; operator push required.
+- `"to_thread"` — bus mode; Stargate posts the model's reply to `thread` on its behalf after dispatch completes.
+- `"handoff"` (**team_dispatch only**) — manual-seat consult (`lead` → `claude-web`, `cursor-lead` / `implementer` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
 
@@ -30,7 +36,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | `"gatherer"\|"skeptic"\|"synthesizer"\|"reviewer"\|"lead"\|"investigator"` | Required role slug |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `lead`, `cursor-lead`, `implementer`, `claude-web`, `claude-cursor` (and nicknames `web-claude`, `cursor-claude`) | Role slug or manual-seat alias |
 | `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread. Unused by `op="handoff"`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
@@ -51,9 +57,16 @@ e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
 `web_seat_not_generate_target` — including when `model=` is supplied explicitly.
 Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 `synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
-web-default roles (`lead`, `investigator`), and Cursor handoff-only roles
+web-default roles (`lead`, `investigator` (legacy)), and Cursor handoff-only roles
 (`claude-cursor`, `cursor-lead`, `implementer`). Web Claude doing local file work should
 use `fs` directly; peer consult → `frontier_dispatch` or an API role.
+
+**`investigator` is legacy** (`role=investigator` → `grok-web`): a deep manual
+grok-web research handoff, NOT the SuperGrok Heavy dispatch path. SuperHeavy uses
+its own operator-driven workflow (`agent_skill:grok-web-dispatch` + connector
+canary), not `team_dispatch(op=handoff, role=investigator)`. Do not list
+`investigator` alongside `lead` / `cursor-lead` / `implementer` as a recommended
+handoff target without the `(legacy)` marker.
 
 **`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
 
@@ -63,7 +76,7 @@ is for **fresh perspective and tier upgrade** in a new IDE thread (packet-booted
 operator picks Opus in the model picker) — reviews, ongoing `project:` exploration, architecture,
 and extension work alike. The **`implementer`** role also resolves to `claude-cursor` (handoff-only,
 generate → 422) but is **packet-bound code execution**: a bound todo/spec + acceptance criteria +
-quality gates, distinct from `cursor-lead`'s reasoning consult. See `.cursor/rules/handoff-dispatchers.mdc`
+quality gates, distinct from `cursor-lead`'s reasoning consult. See `projects/.cursor/rules/handoff-dispatchers.mdc`
 § `cursor-claude`; consult index `agent-skills/consult-routing.md`.
 
 Creates an agent-bus thread (e.g. `lead` → `claude-web`,
@@ -84,11 +97,11 @@ are rejected with `handoff_requires_web_seat` 422.
 **itself** (`lead`/`claude-web`, `cursor-lead`/`claude-cursor`) to open a new
 agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
-Authority: `.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
+Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
 `agent-skills/consult-routing.md`.
 
 The pointer body defaults to the standard ≤25-line pointer template (see
-`.cursor/rules/handoff-dispatchers.mdc` and `tmp/reviews/_handoff-packet-template.md`)
+`projects/.cursor/rules/handoff-dispatchers.mdc` and `tmp/reviews/_handoff-packet-template.md`)
 (packet path + six-block enumeration + reply instruction). Caller may supply
 `pointer_body` override up to 25 lines. Longer overrides are rejected 422.
 
@@ -207,11 +220,13 @@ on both dispatch tools. Use `llm_generate` for those.
 
 ## panel_dispatch
 
-Consensus panel helper — the **only** multi-family panel entry point. Fans out
-`skeptic` + `reviewer` (optional `synthesizer`) via `team_dispatch` admission;
-returns `panel_executions` for Menu D asserts. Read `agent-skills/consensus-steelman-posture.md`
-and `agent-skills/dispatch-workflow.md` before use. Lead adjudication remains
-NON-offloadable after the helper returns.
+Consensus panel helper — the **default transport for ≥2-family material decisions**
+(hard triggers in `consensus-steelman-posture` §1). Fans out `skeptic` + `reviewer`
+(optional `synthesizer`) via `team_dispatch` admission; returns `panel_executions`
+for Menu D asserts. **Always steelman live options first**; run the panel when the
+material gate fires — not only on explicit operator request. Read
+`agent-skills/consensus-steelman-posture.md` before use. Adjudicating-caller review +
+`panel_adjudication_artifact` remain NON-offloadable after the helper returns.
 
 | Arg | Type | Description |
 |---|---|---|
@@ -220,6 +235,10 @@ NON-offloadable after the helper returns.
 | `disposition` | `"panel"` | Must be `panel` |
 | `include_synthesizer` | `bool` | Optional gemini tiebreaker |
 | `poll` | `bool` | Block-poll each `execution_id` when true |
+
+`extra_members` is a **library-only** hook on `agent_seat.panel_dispatch.resolve_panel_members`;
+the MCP `panel_dispatch` tool intentionally does not expose it — the MCP surface stays a
+fixed roster (`skeptic` + `reviewer` [+ `synthesizer`]).
 
 The legacy `agent_consult` overflow tool was removed (2026-06); use
 `panel_dispatch` for ≥2-provider panels or explicit `team_dispatch` per role.
