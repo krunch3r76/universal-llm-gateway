@@ -1034,6 +1034,49 @@ class FederatedGatewayManager(Sequential):
                 )
         return updated_gateway
 
+    def _publish_telemetry_received(self, gw: FederatedGateway, msg_type: str) -> None:
+        """Project federation.telemetry.received from authoritative gateway state."""
+        if not self._event_bus:
+            return
+        from src.scheduling.events import FederationTelemetryReceived
+
+        model_count = 0
+        resource_summary: dict[str, Any] = {}
+        catalog_model_count: int | None = None
+        loaded_model_count: int | None = None
+        count_source = "unknown"
+
+        if msg_type == FederationMessageType.GATEWAY_SNAPSHOT.value:
+            catalog_model_count = len(gw.available_models)
+            model_count = catalog_model_count
+            count_source = "authoritative_available_models"
+            resource_summary = {
+                "available_vram_mb": gw.vram_free_mb,
+                "available_ram_mb": gw.ram_free_mb,
+            }
+        elif msg_type == FederationMessageType.RESOURCE_UPDATE.value:
+            loaded_model_count = len(gw.loaded_models)
+            model_count = loaded_model_count
+            count_source = "authoritative_loaded_models"
+            resource_summary = {
+                "available_vram_mb": gw.vram_free_mb,
+                "available_ram_mb": gw.ram_free_mb,
+            }
+
+        asyncio.create_task(
+            self._event_bus.publish_nowait(
+                FederationTelemetryReceived(
+                    remote_id=gw.remote_stargate_id,
+                    model_count=model_count,
+                    resource_summary=resource_summary,
+                    msg_type=msg_type,
+                    catalog_model_count=catalog_model_count,
+                    loaded_model_count=loaded_model_count,
+                    count_source=count_source,
+                )
+            )
+        )
+
     @sequential
     async def update_from_event(
         self,
@@ -1121,6 +1164,10 @@ class FederatedGatewayManager(Sequential):
 
         # Update timestamps (CRITICAL: prevents gateway from becoming unreachable)
         gw = self._update_telemetry_timestamps(gw)
+
+        committed = self._gateways.get(gateway_id)
+        if committed is not None:
+            self._publish_telemetry_received(committed, msg_type)
 
         if self._event_bus and msg_type == FederationMessageType.RESOURCE_UPDATE.value:
             from src.scheduling.events.federation_signaling import (
@@ -1764,6 +1811,12 @@ class FederatedGatewayManager(Sequential):
         # Commit updates
         self._commit_gateway_update(gateway_id, gateway, updates, sequence_number)
 
+        if sequence_number != -1:
+            committed = self._gateways[gateway_id]
+            self._publish_telemetry_received(
+                committed, FederationMessageType.RESOURCE_UPDATE.value
+            )
+
     def _is_out_of_order(self, gateway: FederatedGateway, sequence_number: int) -> bool:
         """
         Check if delta is duplicate or out-of-order (should be skipped).
@@ -1979,6 +2032,11 @@ class FederatedGatewayManager(Sequential):
 
         # Commit updates
         self._commit_gateway_update(gateway_id, gateway, updates, sequence_number)
+
+        committed = self._gateways[gateway_id]
+        self._publish_telemetry_received(
+            committed, FederationMessageType.GATEWAY_SNAPSHOT.value
+        )
 
         logger.info(
             f"Applied full snapshot to {gateway_id}: seq={sequence_number}, "

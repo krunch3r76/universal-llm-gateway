@@ -1573,9 +1573,10 @@ signal.
 **`federation.telemetry.received` disambiguation fields**: `model_count` is the
 backward-compatible count scoped by message type. The optional fields clarify its
 source: `msg_type` (`GATEWAY_SNAPSHOT` or `RESOURCE_UPDATE`), `count_source`
-(`snapshot_available_models` or `message_loaded_models`), `catalog_model_count`
-(set on snapshots), and `loaded_model_count` (set on resource updates — may be 0
-when edge strips `loaded_models` from the wire payload).
+(`authoritative_available_models` or `authoritative_loaded_models` — projected
+from `FederatedGatewayManager` state after ingestion, not from inbound wire
+payloads), `catalog_model_count` (set on snapshots), and `loaded_model_count`
+(set on resource updates — derived from `gw.loaded_models`).
 
 **`federation.activation.filtered.empty`**: Diagnostic signal emitted during
 `GATEWAY_SNAPSHOT` application when a gateway reports `available_models > 0` but

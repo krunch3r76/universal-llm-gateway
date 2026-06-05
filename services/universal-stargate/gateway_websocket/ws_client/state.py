@@ -132,7 +132,7 @@ class GatewayState:
             total_vram_mb=self._resources.total_vram_mb,
             available_vram_mb=self._resources.available_vram_mb,
             loaded_models=frozenset(self._loaded_models),
-            busy_models=frozenset(self._busy_models),
+            busy_models=self.get_busy_models(),
             model_details=self._model_details.copy(),
             model_last_inference=self._model_last_inference.copy(),
         )

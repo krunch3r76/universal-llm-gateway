@@ -10,7 +10,7 @@ use only the **read/plan** column.
 | `/cortex-boot` | `.cursor/commands/cortex-boot.md` → `cortex_boot(agent=<family>-cursor)` + TIER-2 rules | `cortex_boot(agent="claude-web", …)`; `agent-guides/web-agent-orientation.md` | Static boot: `AGENTS.md` router + `docs/agent-guides/no-cortex.md` |
 | `/agent-bus` | `.cursor/commands/agent-bus.md` → `scripts/agent-bus` or `agent_bus` MCP | `agent_bus(threads/fetch/post/reply/wait, …)` + cortex sidecars | Out of scope (writes); findings via operator paste |
 | `/session-end` | `.cursor/commands/session-end.md` → `cortex(session_close, transcript_jsonl_path=…)` | `cortex(session_close, transcript_md=…)` | Out of scope |
-| `/todo` | `.cursor/commands/todo.md` → `cortex(todo_candidates)` / `entity_create(type=todo)` | same cortex ops | Read spec/todo entities only if inlined in packet |
+| `/todo` | `.cursor/commands/todo.md` → `cortex(todo_candidates)` / `entity_create(type=todo)`; **`/todo pickup {slug}`** loads `implement-todo` skill | same cortex ops; **`Pick up todo:{slug}`** loads `implement-todo` skill | Read spec/todo entities only if inlined in packet |
 | `/plan-seed` | `.cursor/commands/plan-seed.md` → spec write + `pipeline(plan-seed)` | `fs` spec + `pipeline(plan-seed)` or manual `plan:`/`todo:` entities | Out of scope (authoring) |
 | `/create-implementation-plan` | `.cursor/commands/create-implementation-plan.md` → plan deck + cortex entities | `fs` + cortex entities per `implementation-plan-workflow` skill | Plan *review* only — packet + repo read |
 | `/implement-plan` | `.cursor/commands/implement-plan.md` — Cursor/cursorbuild executes | Coordinate via `agent_bus` + dispatch; no slash emulation | Out of scope (execution) |

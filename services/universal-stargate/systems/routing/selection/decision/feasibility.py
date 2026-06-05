@@ -220,8 +220,9 @@ def evaluate_feasibility(
     # Check 3: Model already loaded (fast path)
     # Admission control handled by CapacityPool (master-local, count-based).
     # busy_models is a telemetry hint used for scoring and eviction protection
-    # but NOT as a hard gate — it can go stale when the Gateway→Edge WebSocket
-    # drops, causing permanent routing lockup (no expiry, no reconciliation).
+    # but NOT as a hard gate — admission is handled by CapacityPool.
+    # TTL self-heal fires at read time (get_busy_models()); eviction reconciles
+    # separately via routing_key_tracker → actually_busy_models.
     if _is_model_loaded(gateway, placement):
         if placement.model_id in gateway.busy_models:
             logger.info(

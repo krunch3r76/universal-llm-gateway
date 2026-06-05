@@ -55,64 +55,6 @@ class TelemetryApplicator:
         else:
             await self._apply_delta(response)
 
-        # Emit telemetry received event with disambiguation fields
-        from src.scheduling.events import FederationTelemetryReceived
-
-        model_count = 0
-        resource_summary: dict[str, Any] = {}
-        catalog_model_count: int | None = None
-        loaded_model_count: int | None = None
-        msg_type: str
-
-        if response.update_type == "snapshot":
-            msg_type = "GATEWAY_SNAPSHOT"
-            state = response.data.get("state", response.data)
-            available = state.get("available_models", [])
-            catalog_model_count = len(available) if isinstance(available, list) else 0
-            model_count = catalog_model_count
-            count_source = "snapshot_available_models"
-            resource_summary = {
-                "available_vram_mb": state.get(
-                    "available_vram_mb",
-                    state.get("vram_free_mb", 0),
-                ),
-                "available_ram_mb": state.get(
-                    "available_ram_mb",
-                    state.get("ram_free_mb", 0),
-                ),
-            }
-        else:
-            msg_type = "RESOURCE_UPDATE"
-            changes = response.data.get("changes", {})
-            loaded = changes.get("loaded_models", [])
-            loaded_model_count = len(loaded) if isinstance(loaded, list) else 0
-            model_count = loaded_model_count
-            count_source = "message_loaded_models"
-            resource_summary = {
-                "available_vram_mb": changes.get(
-                    "available_vram_mb",
-                    changes.get("vram_free_mb", 0),
-                ),
-                "available_ram_mb": changes.get(
-                    "available_ram_mb",
-                    changes.get("ram_free_mb", 0),
-                ),
-            }
-
-        asyncio.create_task(
-            self._event_bus.publish_nowait(
-                FederationTelemetryReceived(
-                    remote_id=response.remote_stargate_id,
-                    model_count=model_count,
-                    resource_summary=resource_summary,
-                    msg_type=msg_type,
-                    catalog_model_count=catalog_model_count,
-                    loaded_model_count=loaded_model_count,
-                    count_source=count_source,
-                )
-            )
-        )
-
         # CRITICAL: Notify FreshnessWaiter via GATEWAY_RESOURCE_UPDATE
         await self._publish_resource_update(response.gateway_id)
 
@@ -132,15 +74,14 @@ class TelemetryApplicator:
         """Apply delta changes."""
         changes = response.data.get("changes", {})
 
-        if changes or response.data.get("critical_events"):
-            await self._gateway_manager.apply_delta(
-                response.gateway_id,
-                changes,
-                response.sequence_number,
-                remote_stargate_id=response.remote_stargate_id,
-            )
+        await self._gateway_manager.apply_delta(
+            response.gateway_id,
+            changes,
+            response.sequence_number,
+            remote_stargate_id=response.remote_stargate_id,
+        )
 
-            # Process critical events
+        if changes or response.data.get("critical_events"):
             await self._publish_critical_events(response)
 
             logger.info(
