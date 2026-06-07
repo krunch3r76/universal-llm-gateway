@@ -373,6 +373,7 @@ def _build_server() -> tuple[
     md_op_map: dict[str, str] = {
         "md_list": "list_sections",
         "md_read": "read_section",
+        "md_to_dict": "to_dict",
         "md_replace": "replace_section",
         "md_append": "append_section",
         "md_delete": "delete_section",
@@ -391,8 +392,9 @@ def _build_server() -> tuple[
         "(cortex sandbox only) to stage base64-encoded binary files (PDFs, images)\n"
         "— pass the base64 string as `content`. Use `move` to rename or relocate\n"
         "a file within the selected sandbox. Prefer the markdown ops for large\n"
-        "structured docs when you need sections/TOC; for PDFs they operate on\n"
-        "markdown produced internally by ``pymupdf4llm.to_markdown()``.\n\n"
+        "structured docs when you need sections/TOC; for PDFs, ``md_list`` / ``md_read``\n"
+        "/ ``md_to_dict`` use the embedded outline (TOC) with coordinate-clipped\n"
+        "page regions — not ATX markdown from ``pymupdf4llm``.\n\n"
         "**PDF extraction**: Default uses pymupdf4llm (prose-oriented markdown).\n"
         "For tabular or columnar PDFs (statements, invoices, ledger exports),\n"
         'prefer ``finance(op="inspect", path=...)`` which uses pdfplumber and\n'
@@ -415,8 +417,9 @@ def _build_server() -> tuple[
         "``search`` for filenames. ``search`` scans file *contents* with a regex.\n\n"
         f"{_fs_standard_ops_doc}\n\n"
         "Markdown section ops (for large docs):\n"
-        "  md_list    (path)                    — list sections/TOC (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)\n"
-        "  md_read    (path, section)           — read one section (also works on PDF/DOCX/ODT/EML/HTML via auto-converted markdown)\n"
+        "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; others: ATX markdown)\n"
+        "  md_read    (path, section)           — read one section (PDFs: coordinate-clipped region; others: ATX slice)\n"
+        "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
         "  md_replace (path, section, content)  — replace section (text files only)\n"
         "  md_append  (path, section, content)  — append to section (text files only)\n"
         "  md_delete  (path, section)           — delete section (text files only)\n"

@@ -18,6 +18,10 @@ AGENT_GUIDES_RULE_SLUGS: dict[str, str] = {
     "agent-identity-signoff": "agent-surface/sources/agent-identity-signoff.md",
     "md-navigation": "agent-surface/sources/md-navigation.md",
     "capability-dispatch": "agent-surface/sources/capability-dispatch.md",
+    "handoff-pickup": "agent-surface/sources/handoff-pickup.md",
+    "commit-optionality": "agent-surface/sources/commit-optionality.md",
+    "git-revert-scope": "agent-surface/sources/git-revert-scope.md",
+    "plan-slug-coherence": "agent-surface/sources/plan-slug-coherence.md",
 }
 
 
