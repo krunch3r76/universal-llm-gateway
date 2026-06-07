@@ -164,6 +164,10 @@ TEAM_TOOL_DEFINITIONS: list[dict[str, Any]] = [
     _AGENT_BUS_TOOL_DEFINITION,
 ]
 
+# Static fallback when the live MCP catalog is unreachable. TEAM_TOOL_DEFINITIONS
+# is the superset — do NOT concatenate TOOL_DEFINITIONS (duplicate cortex).
+STATIC_TOOL_FALLBACK: list[dict[str, Any]] = TEAM_TOOL_DEFINITIONS
+
 
 # Tool-registry entry: definition + async executor reference name. The
 # executor name is resolved by libs/agent_seat/executor.py at tool-loop

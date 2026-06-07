@@ -17,6 +17,7 @@ AGENT_GUIDES_RULE_SLUGS: dict[str, str] = {
     "system-conduct": "agent-surface/sources/system-conduct.md",
     "agent-identity-signoff": "agent-surface/sources/agent-identity-signoff.md",
     "md-navigation": "agent-surface/sources/md-navigation.md",
+    "capability-dispatch": "agent-surface/sources/capability-dispatch.md",
 }
 
 

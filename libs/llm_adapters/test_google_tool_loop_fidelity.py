@@ -62,6 +62,14 @@ def test_normalize_gemini_parts_drops_empty_text() -> None:
     assert "functionCall" in normalized[0]
 
 
+def test_normalize_gemini_parts_retains_empty_text_with_thought_signature() -> None:
+    parts = [{"text": "", "thoughtSignature": "sig-xyz"}]
+    normalized = normalize_gemini_parts(parts)
+    assert len(normalized) == 1
+    assert normalized[0]["thoughtSignature"] == "sig-xyz"
+    assert normalized[0]["text"] == ""
+
+
 def test_replay_model_turn_preserves_thought_signature() -> None:
     raw = {
         "candidates": [

@@ -139,6 +139,9 @@ bouncing between two incompatible approaches.
 | Open substantive consult via `agent_bus(post/reply)` without `team_dispatch(handoff)` | `team_dispatch(op=handoff, …)` + packet file; `agent_bus` pointer-only |
 | Use handoff for thin implement ping | `agent_bus(post, to=claude-cursor, …)` + spec/tags |
 | Poll `pipeline(op=result)` after handoff | `agent_bus(wait)` from `poll_hint` — handoff has no `execution_id` |
+| Override operator `team_dispatch` with `agent_bus`, citing the thin-ping row | Operator-named transport wins; obey it or stop and ask — never silently substitute |
+| Open a codified bug report with redesign / graph-walk before investigate/fix/report | Run the bug cycle first; secondary findings belong in the closeout |
+| Treat a codified bug report as file+friction only (no fix) | Bound implement: investigate, fix, verify, report |
 
 ## Relationship to Other Rules
 

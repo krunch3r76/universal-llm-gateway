@@ -14,6 +14,7 @@ from ..dispatch_ops._shared import (
     _SESSION_ID_RE_SOURCE,
 )
 from ..models import SessionCloseRequest
+from ..handoff_audit import check_handoff_transcript_anchor
 from ..session_close_validation import (
     _USER_VOICE_RE,
     build_validation_error,
@@ -357,4 +358,53 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         source_uri=source_uri,
         now=now,
         opened_at=opened_at,
+    )
+
+
+def enforce_handoff_transcript_anchor(
+    *,
+    session_id: str,
+    agent: str,
+    handoff_prompt: str | None,
+    handoff_source_path: str | None,
+) -> None:
+    """Reject (422) when a persisted handoff omits the closing-session anchor.
+
+    Promotes the former warn-only ``handoff_missing_transcript_anchor`` finding
+    to a pre-commit gate (root cause 3, session-close-handoff-pickup-refine).
+    Runs on the *resolved* handoff prompt so both detached-string and
+    file-marker derivations are covered; the underlying check short-circuits
+    when ``handoff_source_path`` already names the session.
+    """
+    gap = check_handoff_transcript_anchor(
+        session_id=session_id,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=handoff_source_path,
+    )
+    if gap is None:
+        return
+    entity_ref = f"transcript:{session_id}"
+    file_ref = f"notes/system/transcripts/{session_id}.md"
+    payload = build_validation_error(
+        reason="handoff.missing_transcript_anchor",
+        field="handoff_prompt",
+        received="handoff_prompt without closing-session anchor",
+        expected=f"handoff_prompt contains {entity_ref!r} or {file_ref!r}",
+        examples=[
+            f"**Closing session:** {entity_ref}\n"
+            f"**Load context:** fs(cortex, op=read, path={file_ref})"
+        ],
+        hint=(
+            "A handoff must tell the next session how to load THIS closing "
+            "transcript. Prepend the anchor block (Closing session + Load "
+            "context lines) to handoff_prompt and re-call session_close."
+        ),
+        detail=gap["detail"],
+    )
+    _raise_422(
+        reason="handoff.missing_transcript_anchor",
+        session_id=session_id,
+        agent=agent,
+        detail=gap["detail"],
+        payload=payload,
     )

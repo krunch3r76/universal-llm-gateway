@@ -33,7 +33,7 @@ Run `scripts/gen-rules --target cursor --check` and
 | `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `.cursor/rules/mcp-tool-awareness_ws.mdc` | `<!-- gen-rules:start:mcp-tool-awareness -->` |
 | `subagent-model-table` | `table-variants/subagent-model-table.{cursor,grok}.md` | drift-check only | `<!-- gen-rules:start:subagent-model-table -->` |
 | `command-map` | `sources/command-map.md` | — | `docs/agent-guides/mvw-command-map.md` (`gen-rules --target command-map`) |
-| `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | — (read surface only) | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) |
+| `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | — (read surface only; Cursor stubs point here) | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) — incl. `capability-dispatch` |
 
 **Manual sync (cortex sandbox):** `sources/session-close-handoff.md` (+ depth-gate section
 from `session-close-handoff-depth-gate.md`) — merge into `agent-skills/session-close-handoff.md`

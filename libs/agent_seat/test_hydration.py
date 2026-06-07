@@ -33,11 +33,11 @@ class _Scripted:
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
-        # gemini is policy inline-only on the (gemini, api) profile, so an
-        # explicit model=gemini override on any write-capable role is suppressed.
-        ("google/gemini-3.5-flash", True),
-        ("google/gemini-2.5-pro", True),
-        # Non-inline-only families are unaffected.
+        # gemini/api is MCP-enabled (capability_tier removed); inline_only_for_model
+        # must return False for all google models.
+        ("google/gemini-3.5-flash", False),
+        ("google/gemini-2.5-pro", False),
+        # Other families unaffected.
         ("openai/gpt-5.5", False),
         ("anthropic/claude-opus-4-8", False),
         ("xai/grok-4.3", False),
@@ -52,19 +52,18 @@ def test_inline_only_for_model_binds_to_effective_family(
 
 
 @pytest.mark.asyncio
-async def test_hydrate_reviewer_with_explicit_gemini_is_inline_only(
+async def test_hydrate_reviewer_with_explicit_gemini_is_mcp_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """reviewer (default gpt, write-capable) + explicit model=gemini must be
-    coerced to capability_tier=inline-only — capability binds to the effective
-    model, not the role label (Guard 1 anti-corruption)."""
+    """reviewer + explicit model=gemini is MCP-enabled; gemini/api capability_tier
+    is no longer inline-only so no coercion occurs."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent("reviewer", model="google/gemini-2.5-pro")
 
-    assert bundle.inline_only is True
-    assert bundle.agent_meta.capability_tier == "inline-only"
+    assert bundle.inline_only is False
+    assert bundle.agent_meta.capability_tier != "inline-only"
 
 
 @pytest.mark.asyncio
@@ -193,14 +192,68 @@ async def test_hydrate_agent_missing_transcript_logs_and_continues(
 
 
 @pytest.mark.asyncio
-async def test_hydrate_synthesizer_inherits_gemini_api_inline_only(
+async def test_hydrate_synthesizer_is_mcp_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """synthesizer → gemini/api capability_tier=inline-only suppresses MCP writes."""
+    """synthesizer → gemini/api is MCP-enabled; capability_tier no longer
+    inline-only so the tool surface is admitted."""
     monkeypatch.setattr(_hyd, "_cortex_get", _Scripted({"/": {}}))
     monkeypatch.setattr(_hyd, "_bus_get", _Scripted({}))
 
     bundle = await hydrate_agent("synthesizer")
 
-    assert bundle.inline_only is True
-    assert bundle.agent_meta.capability_tier == "inline-only"
+    assert bundle.inline_only is False
+    assert bundle.agent_meta.capability_tier != "inline-only"
+
+
+@pytest.mark.asyncio
+async def test_hydrate_role_loads_default_model_from_role_anchor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """team_dispatch roles must resolve default_model from role:*, not family:*."""
+
+    class _RoleAwareScripted:
+        calls: list[str] = []
+
+        async def __call__(self, path: str) -> Any:
+            _RoleAwareScripted.calls.append(path)
+            if "role:synthesizer" in path:
+                return {
+                    "attributes": {
+                        "default_model": "google/gemini-3.1-pro-preview",
+                        "allowed_models": [
+                            "google/gemini-3.1-pro-preview",
+                            "google/gemini-3.5-flash",
+                            "google/gemini-2.5-flash",
+                            "google/gemini-2.5-pro",
+                        ],
+                        "frontier_kind": "google",
+                    }
+                }
+            if "family:gemini" in path:
+                return {"attributes": {}}
+            return {}
+
+    fake = _RoleAwareScripted()
+    monkeypatch.setattr(_hyd, "_cortex_get", fake)
+    monkeypatch.setattr(_hyd, "_bus_get", _Scripted({"/": {}}))
+
+    bundle = await hydrate_agent("synthesizer")
+
+    assert bundle.agent_meta.default_model == "google/gemini-3.1-pro-preview"
+    assert "google/gemini-3.1-pro-preview" in bundle.agent_meta.allowed_models
+    meta_entity_calls = [c for c in fake.calls if "/entities/" in c]
+    assert any("role:synthesizer" in c for c in meta_entity_calls)
+    assert not any(
+        "family:gemini" in c and "role:" not in c for c in meta_entity_calls
+    )
+
+
+def test_static_tool_fallback_unique_names() -> None:
+    """STATIC_TOOL_FALLBACK must have unique function.name values and exactly
+    one 'cortex' entry — guards against the duplicate-cortex regression."""
+    from agent_seat import STATIC_TOOL_FALLBACK
+
+    names = [d.get("function", {}).get("name", "") for d in STATIC_TOOL_FALLBACK]
+    assert len(names) == len(set(names)), f"Duplicate tool names: {names}"
+    assert names.count("cortex") == 1, f"Expected exactly one cortex, got: {names}"

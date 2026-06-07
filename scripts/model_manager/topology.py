@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import yaml
+from transport_utils import MANAGE_SOCKET
 
 from scripts.model_manager.ui.model.service_state import (
     ServiceInfo,
@@ -110,6 +111,7 @@ class TopologySnapshot:
     remotes: list[RemoteInfo]
     models: ModelSummary
     diagnostics: list[Diagnostic]
+    manage_socket: str
 
     def to_dict(self) -> dict[str, object]:
         """Nested dict suitable for ``yaml.dump()``."""
@@ -477,6 +479,7 @@ def build_snapshot(
         ),
         models=_probe_models(port, sg_info, diagnostics),
         diagnostics=diagnostics,
+        manage_socket=MANAGE_SOCKET,
     )
 
 

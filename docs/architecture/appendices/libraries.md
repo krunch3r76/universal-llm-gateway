@@ -172,7 +172,7 @@ directly.
 
 UDS/TCP service client factories. Canonical entry point for all
 internal HTTP clients: `make_async_client(url)` / `make_sync_client(url)`.
-Exports pre-wired socket path constants (`CORTEX_SOCKET_PATH`,
+Exports pre-wired socket path constants (`CORTEX_API_SOCK`,
 `RAG_SOCKET_PATH`, etc.) and default URL helpers. All service-to-service HTTP
 clients MUST use this library — not raw `httpx.AsyncClient(transport=...)`.
 

@@ -172,6 +172,7 @@ _REJECT_REASONS = frozenset(
         "session_summary.invalid",
         "transcript_source.missing",
         "handoff.requires_transcript_entity",
+        "handoff.missing_transcript_anchor",
         "agent.invalid",
     }
 )

@@ -1,0 +1,161 @@
+<!-- target:* -->
+# Capability Dispatch (Frontier Model Descriptors)
+
+## What this is
+
+**Invariant**: ∀ cloud/frontier model ids (`provider/model`, e.g. `openai/gpt-5.5`): the
+typed **dispatch facet** is `CapabilityDispatch` — the authoritative description of which
+API surface the model uses and which generation knobs it accepts.
+
+| Term | Meaning |
+|---|---|
+| **`CapabilityDispatch`** | The descriptor (DATA) — use this name for the model card |
+| **dispatch facet** | Informal synonym for `CapabilityDispatch` |
+| **`ModelWrapper`** | Translation mechanism (MECHANISM) — NOT the descriptor |
+| **`resolve_dispatch()`** | Runtime boundary that validates + resolves knobs before a provider call |
+
+**¬** call the descriptor `ModelWrapper`. Wrapper = translator hydrated from dispatch.
+
+## Model ID format
+
+Cloud dispatch keys use the full admission id:
+
+```
+provider/model-id
+```
+
+Examples: `openai/gpt-5.5`, `anthropic/claude-sonnet-4-6`, `xai/grok-4.3`, `google/gemini-3-pro`
+
+Bare aliases (`gpt-5.5`) resolve via `ModelId` + provider inference. Prefer `provider/model`
+in specs, handoffs, and registry edits.
+
+Related: cloud model routing (Stargate surfaces) — Cursor:
+`universal-llm-gateway/.cursor/rules/cloud-model-routing_ws.mdc`.
+
+## Descriptor schema (`CapabilityDispatch`)
+
+```python
+CapabilityDispatch(
+    api_surface: str,           # anthropic | openai_responses | openai_chat_completions | google_generate_content
+    max_output: CapabilityMaxOutput,
+    reasoning: CapabilityReasoningDispatch | None,
+    params: Mapping[str, KnobSpec],   # extensible extra knobs (often empty today)
+    specializations: CapabilitySpecializations | None,
+)
+```
+
+### `max_output` fields
+
+| Field | Role |
+|---|---|
+| `default` | Used when caller omits `max_tokens` |
+| `floor` | Minimum effective value (Responses: 16384) |
+| `ceiling` | Hard upper bound (Anthropic per-family table) |
+| `native_field` | Wire field name (`max_tokens`, `max_output_tokens`, `maxOutputTokens`) |
+| `over_ceiling` | `clamp` or `reject` |
+
+### `reasoning` fields
+
+| `value_kind` | Provider behavior |
+|---|---|
+| `adaptive` | Anthropic adaptive thinking (`{"type":"adaptive"}`) |
+| `token_budget` | Anthropic budget map (low/medium/high → token counts) |
+| `effort_string` | OpenAI/xAI/Google (`{"effort": "high"}` or `thinkingConfig`) |
+
+Accepted efforts: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+
+### `KnobSpec` (`params` dict)
+
+Optional declared knobs beyond max_output/reasoning. `default is OMIT` ⟺ leave absent
+when caller omits the knob (never coerce to a wrong explicit default).
+
+## Agent interface — lookup (read)
+
+```python
+from llm_adapters.capability_dispatch import resolve, resolve_dispatch, wrapper_for
+from llm_adapters.capability_dispatch.serialization import to_wire_dict
+
+# Descriptor only
+dispatch = resolve("openai/gpt-5.5")
+
+# Resolved values at the frontier boundary (what actually ships)
+result = resolve_dispatch(
+    "openai/gpt-5.5",
+    requested_max_output=4096,
+    reasoning_effort="high",
+)
+# result.max_output.resolved, result.max_output.decision, result.reasoning.native
+
+# JSON-shaped facet (catalog / handoff payloads)
+wire = to_wire_dict(dispatch)
+```
+
+Shell probe (no credentials):
+
+```bash
+python -c "from llm_adapters.capability_dispatch import resolve; from llm_adapters.capability_dispatch.serialization import to_wire_dict; import json; print(json.dumps(to_wire_dict(resolve('openai/gpt-5.5')), indent=2))"
+```
+
+## Agent interface — write (add/change a model)
+
+**Source of truth**: `libs/llm_adapters/capability_dispatch/registry.py`
+
+Gate checklist (required before merge):
+`libs/llm_adapters/capability_dispatch/MODEL_ADD_CHECKLIST.md`
+
+Lane A offline tests (every PR):
+
+```bash
+pytest libs/llm_adapters/test_dispatch_registry_coherence.py \
+       libs/llm_adapters/test_max_output_parity.py -q
+```
+
+Lane B live probes (model-add): `scripts/dispatch-anti-drift/run.py`
+
+## Runtime integration
+
+| Layer | Role |
+|---|---|
+| `boundary.resolve_dispatch()` | Single frontier resolution site (G7) |
+| `gen_params.build_frontier_request()` | Stargate callsite; adapters receive resolved `max_tokens` |
+| `CapabilityDispatchFacet` | Pydantic mirror on gateway (`schemas/capabilities.py`) for `/v1/models` projection |
+
+Events: `pipeline.frontier.dispatch.capability.{resolved,knob_rejected,catalog_miss}`
+
+Errors:
+- `ProtocolError` (G9) — unsupported knob; collect-all violations
+- `CatalogMissError` (G13) — provider uninferable; fail-fast
+
+## Representative models (quick reference)
+
+| Model | `api_surface` | Notable dispatch |
+|---|---|---|
+| `openai/gpt-5.5` | `openai_responses` | floor 16384; effort_string; supports `reasoning.effort` |
+| `xai/grok-4.3` | `openai_responses` | same surface; implicit default effort `high` |
+| `anthropic/claude-sonnet-4-6` | `anthropic` | ceiling 64000; adaptive thinking |
+| `google/gemini-3-pro` | `google_generate_content` | no floor/ceiling; `thinkingConfig` path |
+
+## Handoff wording for other agents
+
+When briefing agents on frontier models, use:
+
+> Dispatch facet for `{model}`: `CapabilityDispatch` from `llm_adapters.capability_dispatch.resolve("{model}")`.
+> Inspect via `to_wire_dict()` or `resolve_dispatch()` for resolved knob values.
+> To add/change: edit `registry.py` per `MODEL_ADD_CHECKLIST.md`.
+
+## Load triggers
+
+Load this rule when: adding cloud models, debugging `reasoning_effort` / `max_tokens`
+resolution, authoring frontier dispatch handlers, or writing specs that reference
+model generation knobs.
+
+**Read surface:** `docs/agent-guides/rules/capability-dispatch.md` (generated from this source).
+
+```
+fs(sandbox="workspaces", op="md_list",
+   path="universal-llm-gateway/docs/agent-guides/rules/capability-dispatch.md")
+fs(sandbox="workspaces", op="md_read",
+   path="universal-llm-gateway/docs/agent-guides/rules/capability-dispatch.md",
+   section="Agent interface — lookup (read)")
+```
+<!-- /target:* -->

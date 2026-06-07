@@ -135,6 +135,8 @@ README_REVISED.md
 !/docs/architecture/design/*.md
 # Public-promoted reference docs (linked from README; see docs-write-guard_ws.mdc)
 !/docs/agm-compliance-report.md
+# Agent guidance docs — public agent surface (operator-directed; see docs-write-guard_ws.mdc)
+!/docs/agent-guides/skills/*.md
 !/docs/tool-reference.md
 !/docs/cortex-spec.md
 !/docs/cursor/cortex-registry.md

@@ -43,7 +43,7 @@ attributes:
   default_family: gpt
   default_platform: api
   default_model: openai/gpt-5.5
-  allowed_models: [openai/gpt-5.5, anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-8]
+  allowed_models: [openai/gpt-5.5, anthropic/claude-sonnet-4-6, anthropic/claude-opus-4-8, google/gemini-3.1-pro-preview, google/gemini-2.5-pro]
   frontier_kind: openai
   required_tools: [cortex, fs]
   mcp_required: true
@@ -81,29 +81,30 @@ attributes:
 
 ## Worked example — `role:synthesizer`
 
-`role:synthesizer` is the default multimodal synthesis seat (Gemini API profile is inline-only):
+`role:synthesizer` is the default analysis/synthesis role via the Gemini API profile
+(`gemini/api`, `tool_surface: mcp`). Dispatches run the in-process MCP tool loop;
+for guaranteed durable substrate writes prefer `reviewer` (gpt-5.5) or `claude-web`.
+Default model is pro-tier for cognitive synthesis (Phase-B, agent-bus thread 1335).
 
 ```yaml
 id: role:synthesizer
 type: role
 name: Synthesizer
-description: Generalist analysis, multimodal, broad-knowledge synthesis
+description: Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion.
 attributes:
-  purpose: Generalist analysis, multimodal, broad-knowledge synthesis
+  purpose: Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed durable writes use reviewer (gpt-5.5) or claude-web.
   default_family: gemini
   default_platform: api
-  default_model: google/gemini-3.5-flash
+  default_model: google/gemini-3.1-pro-preview
   allowed_models:
-    - google/gemini-3.5-flash
-    - google/gemini-2.5-pro
-    - google/gemini-2.5-flash
-    - google/gemini-3-flash-preview
     - google/gemini-3.1-pro-preview
+    - google/gemini-3.5-flash
+    - google/gemini-2.5-flash
+    - google/gemini-2.5-pro
+    - google/gemini-2.5-flash-lite
   frontier_kind: google
-  # gemini/api profile is capability_tier=inline-only — team_dispatch gets no MCP
-  # tool loop (cortex/fs writes unreliable on Gemini API). Mutations → claude-web, reviewer (gpt-5.5), or cursor-claude.
-  required_tools: []
-  mcp_required: false
+  required_tools: [cortex, fs, agent_bus]
+  mcp_required: true
   verification: []
   failure_mode:
     on_tool_unavailable: fail_closed
@@ -115,6 +116,10 @@ attributes:
     - optional_cortex_assertions_with_evidence_uris
 ```
 
+**Seat defaults** (`gemini/api`, `gemini/cursor`): throughput/lightweight work stays on
+`google/gemini-3.5-flash` per `config/agents.yaml` `profiles:` — distinct from the
+synthesizer role default above.
+
 ## Lint vocabulary (Q3)
 
 Final predicate set = **R1–R4** in `role_lint` (see linked spec). Web review on thread **953** tightened R2 and requested an observed-vocabulary receipt for R3; changes require updating `libs/role_lint/__init__.py` + tests + this doc in one commit.
@@ -125,7 +130,7 @@ The `ai_agent:` → `role:` and birth-prompt retirement migration is **complete*
 
 **Ongoing maintenance** (not a cutover checklist):
 
-1. Upsert or refresh `role:{slug}` from [`scripts/cortex/sync_role_and_seat_entities.py`](../../../scripts/cortex/sync_role_and_seat_entities.py) when `config/agents.yaml` `roles:` changes.
+1. Upsert or refresh `role:{slug}` from [`scripts/cortex/sync_role_and_seat_entities.py`](../../../scripts/cortex/sync_role_and_seat_entities.py) when `config/agents.yaml` `roles:` changes. **Service restart alone does not update Cortex `role:*` attributes** — hydration reads `role:{slug}` first; run the sync script after YAML role edits (verified agent-bus thread 1335 post-Phase-B).
 2. Run `role_lint` on any hand-edited `role:` payloads before `entity_create` / PATCH.
 3. Grep the repo for vestigial `ai_agent:` / `prompt:*-birth` references in code paths (should be zero on dispatch surfaces).
 

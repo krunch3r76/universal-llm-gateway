@@ -62,6 +62,7 @@ from agent_seat.prompts import (
 from agent_seat.registry import is_lead_agent, normalize_agent_slug
 from agent_seat.tools import (
     BRAVE_SEARCH_TOOL_DEFINITION,
+    STATIC_TOOL_FALLBACK,
     TEAM_TOOL_DEFINITIONS,
     TOOL_DEFINITIONS,
     TOOL_REGISTRY,
@@ -78,6 +79,7 @@ __all__ = [
     "NativeLoopResult",
     "NativeToolCall",
     "RoleProfile",
+    "STATIC_TOOL_FALLBACK",
     "TEAM_TOOL_DEFINITIONS",
     "TOOL_DEFINITIONS",
     "TOOL_REGISTRY",

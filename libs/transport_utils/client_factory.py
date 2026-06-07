@@ -9,15 +9,15 @@ import httpx
 RAG_SOCKET_PATH = os.environ.get("RAG_SOCKET_PATH", "/tmp/universal-protocol/rag.sock")
 DEFAULT_RAG_URL = f"unix://{RAG_SOCKET_PATH}"
 
-CORTEX_SOCKET_PATH = os.environ.get(
+CORTEX_API_SOCK = os.environ.get(
     "CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock"
 )
-DEFAULT_CORTEX_URL = f"unix://{CORTEX_SOCKET_PATH}"
+DEFAULT_CORTEX_URL = f"unix://{CORTEX_API_SOCK}"
 
-AGENT_BUS_SOCKET_PATH = os.environ.get(
+AGENT_BUS_SOCK = os.environ.get(
     "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
 )
-DEFAULT_AGENT_BUS_URL = f"unix://{AGENT_BUS_SOCKET_PATH}"
+DEFAULT_AGENT_BUS_URL = f"unix://{AGENT_BUS_SOCK}"
 
 # Resolution order for Stargate URL:
 #   1. STARGATE_UNIX_SOCKET — UDS mode (edge container deployment).
@@ -26,18 +26,30 @@ DEFAULT_AGENT_BUS_URL = f"unix://{AGENT_BUS_SOCKET_PATH}"
 #                              mcp-server with STARGATE_URL=http://io:9999).
 #   3. http://localhost:STARGATE_PORT — host-process callers (e.g.
 #                              frontier_consult inside Stargate itself).
-STARGATE_SOCKET_PATH: str | None = os.environ.get("STARGATE_UNIX_SOCKET") or None
-if STARGATE_SOCKET_PATH:
-    DEFAULT_STARGATE_URL = f"unix://{STARGATE_SOCKET_PATH}"
+STARGATE_UNIX_SOCKET: str | None = os.environ.get("STARGATE_UNIX_SOCKET") or None
+if STARGATE_UNIX_SOCKET:
+    DEFAULT_STARGATE_URL = f"unix://{STARGATE_UNIX_SOCKET}"
 elif os.environ.get("STARGATE_URL"):
     DEFAULT_STARGATE_URL = os.environ["STARGATE_URL"]
 else:
     DEFAULT_STARGATE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
 
-EVENTS_QUERY_SOCKET_PATH = os.environ.get(
+EVENTS_QUERY_SOCK = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
 )
 EVENTS_SUBSCRIBE_PATH = "http://localhost/v1/subscribe"  # host ignored with UDS
+
+MANAGE_SOCKET = os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
+
+CLOUD_PROXY_SOCKET_PATH = os.environ.get(
+    "CLOUD_PROXY_SOCKET_PATH", "/tmp/universal-protocol/cloud-proxy.sock"
+)
+DEFAULT_CLOUD_PROXY_URL = f"unix://{CLOUD_PROXY_SOCKET_PATH}"
+
+EMAIL_BRIDGE_SOCK = os.environ.get(
+    "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
+)
+DEFAULT_EMAIL_BRIDGE_URL = f"unix://{EMAIL_BRIDGE_SOCK}"
 
 
 def parse_rag_url(url: str) -> tuple[str | None, str]:

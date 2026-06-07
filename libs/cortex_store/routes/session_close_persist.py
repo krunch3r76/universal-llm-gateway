@@ -27,7 +27,10 @@ from ..session_handoff import (
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 from ..transcript_assembly import compute_text_content_hash
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
-from .session_close_validate import ValidatedCloseContext
+from .session_close_validate import (
+    ValidatedCloseContext,
+    enforce_handoff_transcript_anchor,
+)
 
 logger = get_logger("cortex-api.session_close")
 
@@ -136,6 +139,29 @@ def persist_session_close(
     ctx: ValidatedCloseContext,
 ) -> SessionCloseResponse:
     """Write transcript file (if any), commit DB tx, return close response."""
+    handoff_resolution = resolve_handoff_for_write(
+        files_root=_FILES_ROOT,
+        write_path=WRITE_PATH_SESSION_CLOSE,
+        written_at=ctx.now,
+        handoff_source_path=body.handoff_source_path,
+        handoff_source_section=body.handoff_source_section,
+        handoff_prompt=body.handoff_prompt,
+        expected_handoff_prompt=body.expected_handoff_prompt,
+        expected_derived_handoff_prompt_sha256=(
+            body.expected_derived_handoff_prompt_sha256
+        ),
+        expected_source_file_sha256=body.expected_source_file_sha256,
+    )
+    handoff_prompt = handoff_resolution.handoff_prompt
+    handoff_provenance = handoff_resolution.provenance
+
+    enforce_handoff_transcript_anchor(
+        session_id=body.session_id,
+        agent=body.agent,
+        handoff_prompt=handoff_prompt,
+        handoff_source_path=body.handoff_source_path,
+    )
+
     abs_path: Path | None = None
     if ctx.transcript_path is not None:
         assert ctx.transcript_md is not None
@@ -157,22 +183,6 @@ def persist_session_close(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Transcript file write failed: {exc}",
             ) from exc
-
-    handoff_resolution = resolve_handoff_for_write(
-        files_root=_FILES_ROOT,
-        write_path=WRITE_PATH_SESSION_CLOSE,
-        written_at=ctx.now,
-        handoff_source_path=body.handoff_source_path,
-        handoff_source_section=body.handoff_source_section,
-        handoff_prompt=body.handoff_prompt,
-        expected_handoff_prompt=body.expected_handoff_prompt,
-        expected_derived_handoff_prompt_sha256=(
-            body.expected_derived_handoff_prompt_sha256
-        ),
-        expected_source_file_sha256=body.expected_source_file_sha256,
-    )
-    handoff_prompt = handoff_resolution.handoff_prompt
-    handoff_provenance = handoff_resolution.provenance
 
     name_words = body.summary.split()[:6]
     entity_name = " ".join(name_words)

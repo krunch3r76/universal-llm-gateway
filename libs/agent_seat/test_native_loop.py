@@ -922,6 +922,86 @@ def test_responses_strip_tools_and_advisory_shape() -> None:
     assert body["input"][-1] == {"role": "system", "content": "synthesize now"}
 
 
+def _google_malformed_fc() -> dict[str, Any]:
+    return {
+        "candidates": [
+            {
+                "finishReason": "MALFORMED_FUNCTION_CALL",
+                "content": {"role": "model", "parts": []},
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 0},
+    }
+
+
+def _google_terminal(text: str = "done") -> dict[str, Any]:
+    return {
+        "candidates": [
+            {
+                "finishReason": "STOP",
+                "content": {"role": "model", "parts": [{"text": text}]},
+            }
+        ],
+        "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 5},
+    }
+
+
+@pytest.mark.asyncio
+async def test_google_malformed_retry_preserves_gemini3_temperature() -> None:
+    send = _FakeSend([_google_malformed_fc(), _google_terminal("ok")])
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        model="gemini-3.5-flash",
+        max_tokens=100,
+        temperature=1.0,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "cortex", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+    result = await run_native_tool_loop(
+        model="google/gemini-3.5-flash",
+        req=req,
+        send_native=send,
+        max_turns=2,
+    )
+    assert result.content == "ok"
+    retry_body = send.calls[1][1]
+    gen_cfg = retry_body.get("generationConfig") or {}
+    assert gen_cfg.get("temperature", 1.0) == 1.0
+
+
+@pytest.mark.asyncio
+async def test_google_malformed_retry_coerces_gemini25_temperature() -> None:
+    send = _FakeSend([_google_malformed_fc(), _google_terminal("ok")])
+    req = FrontierRequest(
+        messages=[{"role": "user", "content": "hi"}],
+        model="gemini-2.5-flash",
+        max_tokens=100,
+        temperature=1.0,
+        tools=[
+            {
+                "type": "function",
+                "function": {"name": "cortex", "parameters": {"type": "object"}},
+            }
+        ],
+        mcp_tool_loop=True,
+    )
+    result = await run_native_tool_loop(
+        model="google/gemini-2.5-flash",
+        req=req,
+        send_native=send,
+        max_turns=2,
+    )
+    assert result.content == "ok"
+    retry_body = send.calls[1][1]
+    gen_cfg = retry_body.get("generationConfig") or {}
+    assert gen_cfg.get("temperature") == 0.7
+
+
 def test_google_strip_tools_and_advisory_shape() -> None:
     """Tight adapter-level shape check for the Google synth hooks."""
     from llm_adapters.google import GoogleAdapter

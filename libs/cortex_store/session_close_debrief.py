@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from transport_utils import make_sync_client
+from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_logging import get_logger
 
 from .session_close_enrichment_telemetry import emit_session_close_debrief_failed
@@ -23,7 +23,7 @@ DEDUPE_SCAN_LAST = 50
 
 DebriefStatus = Literal["posted", "skipped_existing", "failed", "disabled"]
 
-_AGENT_BUS_URL = f"unix://{os.environ.get('AGENT_BUS_SOCK', '/tmp/universal-protocol/agent-bus.sock')}"
+_AGENT_BUS_URL = DEFAULT_AGENT_BUS_URL
 
 
 def session_debrief_token(session_id: str) -> str:

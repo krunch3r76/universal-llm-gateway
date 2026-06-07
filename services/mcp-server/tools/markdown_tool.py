@@ -31,6 +31,12 @@ from markdown_sections import (
 from mcp_events import record
 
 from ._file_helpers import extract_text_content, is_converted_format
+from ._pdf_sections import (
+    PdfSectionError,
+    list_pdf_sections,
+    pdf_to_dict,
+    read_pdf_section,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -113,6 +119,49 @@ def _section_write_result(
     return {"status": status, "path": path, "section": section}
 
 
+def _pdf_section_op(
+    op: str, resolved: Path, path: str, sandbox: str, section: str
+) -> dict[str, Any]:
+    """List/read PDF sections via the outline-driven (TOC) navigator."""
+    if not resolved.exists():
+        return {"error": f"File not found: {resolved.name}"}
+    try:
+        if op == "list_sections":
+            listing = list_pdf_sections(resolved)
+            record(
+                "mcp.tool.markdown.sections.listed",
+                path=path,
+                sandbox=sandbox,
+                count=len(listing["sections"]),
+                source=listing["source"],
+            )
+            return {"path": path, "sandbox": sandbox, **listing}
+        if op == "to_dict":
+            data = pdf_to_dict(resolved)
+            record(
+                "mcp.tool.markdown.converted.to.dict",
+                path=path,
+                sandbox=sandbox,
+                keys=len(data),
+                source="pdf",
+            )
+            return {"data": data, "path": path, "sandbox": sandbox}
+        body = read_pdf_section(resolved, section)
+        record(
+            "mcp.tool.markdown.section.read",
+            path=path,
+            sandbox=sandbox,
+            section=section,
+            chars=len(body),
+            source="pdf",
+        )
+        return {"content": body, "path": path, "sandbox": sandbox, "section": section}
+    except PdfSectionError as e:
+        return {"error": str(e)}
+    except Exception as e:  # pymupdf open/parse failures surface as a tool error
+        return {"error": f"PDF section extraction failed: {e}"}
+
+
 def register_markdown_tools(mcp: FastMCP) -> None:
     @mcp.tool(title="Markdown Operations")
     def markdown(
@@ -133,6 +182,14 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         read ops (list_sections, read_section, to_dict). Write ops
         (replace/append/delete/from_dict) are text-only — converted formats
         are rejected.
+
+        PDFs use outline-driven navigation: list_sections returns the embedded
+        TOC entries (source=pdf_toc, boundary_precision=coordinate), read_section
+        clips the page region between outline anchors, and to_dict nests those
+        sections by heading (parent bodies under _content). PDFs with
+        no outline fall back to one section per page (source=pdf_page_fallback,
+        boundary_precision=page) so reads stay bounded. A PDF section read is a
+        coordinate-clipped region, not an exact markdown slice.
         """
         if not op:
             return {"error": "'op' is required"}
@@ -142,6 +199,12 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             resolved = _resolve_sandbox(sandbox, path)
         except ValueError as e:
             return {"error": str(e)}
+
+        if (
+            op in ("list_sections", "read_section", "to_dict")
+            and resolved.suffix.lower() == ".pdf"
+        ):
+            return _pdf_section_op(op, resolved, path, sandbox, section)
 
         if op in ("list_sections", "read_section", "to_dict"):
             text, err = _load_text(resolved)

@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any
 
+from transport_utils import MANAGE_SOCKET
 from universal_event_bus.events.debug import emit_debug_event
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
-_MANAGE_SOCK = os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
+_MANAGE_SOCK = MANAGE_SOCKET
 _RESTORE_COOLDOWN_S = 30.0
 _START_TIMEOUT_S = 30.0
 _WAIT_HEALTHY_TIMEOUT_S = 45.0

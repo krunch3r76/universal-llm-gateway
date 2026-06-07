@@ -88,11 +88,10 @@ def _normalize_slug_to_anchors(
 
 @dataclass(slots=True)
 class AgentMeta:
-    """Execution contract loaded from Cortex family-anchor entity attributes.
+    """Execution contract loaded from Cortex role:* or family:* entity attributes.
 
-    Carries the dispatch-time overrides that a Cortex operator can set on a
-    per-family basis: default model, allowed models, capability tier, and
-    optional role restrictions.
+    Role slugs (team_dispatch) source execution fields from role:*; seat slugs
+    from family:*. Registry fallback fills gaps when Cortex attributes are empty.
 
     ``capability_tier`` is an agent-level dispatch-surface gate. When set to
     ``"inline-only"`` the dispatch handler coerces the tool surface to empty
@@ -194,16 +193,53 @@ def _parse_agent_meta(entity: Any) -> AgentMeta:
     )
 
 
+def _execution_meta_entity_id(anchors: list[str]) -> str:
+    """Pick the Cortex entity that carries dispatch execution contract.
+
+    Role slugs hydrate with [family_anchor, role_anchor]; execution fields
+    (default_model, allowed_models, frontier_kind) live on role:* after sync.
+    Seat slugs use family:* only.
+    """
+    if len(anchors) > 1 and anchors[-1].startswith("role:"):
+        return anchors[-1]
+    return anchors[0] if anchors else "family:claude"
+
+
+def _registry_meta_fallback(agent: str, meta: AgentMeta) -> AgentMeta:
+    """Fill missing execution fields from agents.yaml when Cortex is sparse."""
+    canonical = normalize_agent_slug(agent)
+    role_profile = load_roles().get(canonical)
+    if role_profile is None:
+        return meta
+    updates: dict[str, Any] = {}
+    if not meta.default_model and role_profile.default_model:
+        updates["default_model"] = role_profile.default_model
+    if not meta.allowed_models and role_profile.allowed_models:
+        updates["allowed_models"] = list(role_profile.allowed_models)
+    if not meta.frontier_kind:
+        try:
+            profile = get_profile(
+                role_profile.default_family, role_profile.default_platform
+            )
+            updates["frontier_kind"] = profile.provider
+        except KeyError:
+            pass
+    return replace(meta, **updates) if updates else meta
+
+
 async def _fetch_agent_meta(agent: str) -> AgentMeta:
     """Fetch and parse execution-contract attributes for *agent* from Cortex.
 
-    Reads the primary family anchor entity (family:{family}). Falls back to
-    AgentMeta() on any fetch or parse error so the caller is never blocked.
+    Role slugs read role:* (execution contract); seat slugs read family:*.
+    Falls back to agents.yaml registry when Cortex attributes are empty.
+    Returns AgentMeta() on fetch/parse error so the caller is never blocked.
     """
     anchors = _normalize_slug_to_anchors(agent)
-    entity_id = anchors[0] if anchors else "family:claude"
+    entity_id = _execution_meta_entity_id(anchors)
     raw = await _cortex_get(f"/entities/{quote(entity_id, safe=':')}")
-    return _parse_agent_meta(raw)
+    if isinstance(raw, dict) and "error" in raw:
+        return _registry_meta_fallback(agent, AgentMeta())
+    return _registry_meta_fallback(agent, _parse_agent_meta(raw))
 
 
 async def _resolve_continuation(

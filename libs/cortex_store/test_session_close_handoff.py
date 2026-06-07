@@ -230,6 +230,15 @@ def _session_summary(summary: str) -> str:
     )
 
 
+def _anchored_handoff(session_id: str, body: str) -> str:
+    return (
+        f"**Closing session:** transcript:{session_id}\n"
+        f"**Load context:** fs(cortex, op=read, path=notes/system/transcripts/"
+        f"{session_id}.md)\n"
+        f"{body}"
+    )
+
+
 def _payload(
     *,
     session_id: str,
@@ -284,11 +293,15 @@ def _query_count(db_path: Path, sql: str, params: tuple[Any, ...] = ()) -> int:
 def test_session_close_happy_path_with_handoff(session_env: dict[str, Path]) -> None:
     db_path = session_env["db_path"]
     files_root = session_env["files_root"]
-    handoff = "Start with the openapi and tool-doc pass, then verify rollback tests."
+    session_id = "orion-2026-05-04-0844"
+    handoff = _anchored_handoff(
+        session_id,
+        "Start with the openapi and tool-doc pass, then verify rollback tests.",
+    )
 
     result = ops_journals._op_session_close(
         **_payload(
-            session_id="orion-2026-05-04-0844",
+            session_id=session_id,
             prior_session_id="orion-2026-05-04-0700",
             handoff_prompt=handoff,
             transcripts_root=session_env["transcripts_root"],
@@ -347,7 +360,9 @@ def test_close_sets_attribute_on_preexisting_bare_transcript_entity(
     session_a = "orion-2026-05-04-0700"
     session_b = "orion-2026-05-04-0847"
 
-    handoff = "Resume from the G2 confirmed+inference policy."
+    handoff = _anchored_handoff(
+        session_a, "Resume from the G2 confirmed+inference policy."
+    )
     handoff_file = files_root / "notes/system/sessions/a-handoff.md"
     handoff_file.parent.mkdir(parents=True, exist_ok=True)
     handoff_file.write_text(
@@ -466,7 +481,9 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_journal_insert_failu
         **_payload(
             session_id="orion-2026-05-04-0845",
             prior_session_id="orion-2026-05-04-0700",
-            handoff_prompt="Resume with rollback verification.",
+            handoff_prompt=_anchored_handoff(
+                "orion-2026-05-04-0845", "Resume with rollback verification."
+            ),
             transcripts_root=session_env["transcripts_root"],
         )
     )
@@ -580,9 +597,12 @@ def test_session_close_prefers_jsonl_path_when_both_supplied(
     assert "## Turn 1" in on_disk
 
 
-def test_session_close_warns_handoff_missing_transcript_anchor(
+def test_session_close_rejects_handoff_missing_transcript_anchor(
     session_env: dict[str, Path],
 ) -> None:
+    """Root cause 3: a handoff without the closing-session anchor is a 422,
+    not a post-close warning — rejected before any journal row is written."""
+    db_path = session_env["db_path"]
     result = ops_journals._op_session_close(
         **_payload(
             session_id="orion-2026-05-04-0848",
@@ -590,9 +610,36 @@ def test_session_close_warns_handoff_missing_transcript_anchor(
             transcripts_root=session_env["transcripts_root"],
         )
     )
+    assert "error" in result
+    assert result.get("reason") == "handoff.missing_transcript_anchor"
+    journal = _query_one(
+        db_path,
+        "SELECT id FROM session_journals WHERE session_id = ?",
+        ("orion-2026-05-04-0848",),
+    )
+    assert journal is None
+
+
+def test_session_close_handoff_anchor_via_source_path_no_reject(
+    session_env: dict[str, Path],
+) -> None:
+    """Anchor satisfied when handoff_source_path names the session — no 422."""
+    session_id = "orion-2026-05-04-0851"
+    files_root = session_env["files_root"]
+    handoff_file = files_root / f"notes/system/transcripts/{session_id}.md"
+    handoff_file.parent.mkdir(parents=True, exist_ok=True)
+    handoff_file.write_text(
+        "<!-- handoff:start -->\nPoll agent-bus thread 99.\n<!-- handoff:end -->\n",
+        encoding="utf-8",
+    )
+    payload = _payload(
+        session_id=session_id,
+        transcripts_root=session_env["transcripts_root"],
+    )
+    payload["handoff_source_path"] = f"notes/system/transcripts/{session_id}.md"
+    payload["handoff_source_section"] = None
+    result = ops_journals._op_session_close(**payload)
     assert "error" not in result, result
-    findings = result.get("_warning", {}).get("post_close_findings", [])
-    assert any(f["kind"] == "handoff_missing_transcript_anchor" for f in findings)
 
 
 def test_session_close_handoff_with_transcript_anchor_no_anchor_warning(
@@ -623,7 +670,10 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
     first = ops_journals._op_session_close(
         **_payload(
             session_id="orion-2026-05-04-0700",
-            handoff_prompt="Next session should continue the handoff capture work.",
+            handoff_prompt=_anchored_handoff(
+                "orion-2026-05-04-0700",
+                "Next session should continue the handoff capture work.",
+            ),
             transcripts_root=session_env["transcripts_root"],
         )
     )
@@ -632,7 +682,10 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
     second = ops_journals._op_session_close(
         **_payload(
             session_id="orion-2026-05-04-0847",
-            handoff_prompt="Resume with the final documentation pass.",
+            handoff_prompt=_anchored_handoff(
+                "orion-2026-05-04-0847",
+                "Resume with the final documentation pass.",
+            ),
             transcripts_root=session_env["transcripts_root"],
         )
     )
@@ -818,10 +871,13 @@ def test_close_light_with_handoff_mirrors_to_transcript_entity(
     session_env: dict[str, Path],
 ) -> None:
     """light + handoff ⟹ entity attributes carry handoff (canonical pickup surface)."""
-    handoff = "Pick up phase 3 bus handoff — verify thread state first."
+    session_id = "web-2026-05-27-1016"
+    handoff = _anchored_handoff(
+        session_id, "Pick up phase 3 bus handoff — verify thread state first."
+    )
     summary = "Light-depth close with handoff mirrored to transcript entity."
     result = ops_journals._op_session_close(
-        session_id="web-2026-05-27-1016",
+        session_id=session_id,
         agent="web",
         session_summary_md=_session_summary(summary),
         summary=summary,

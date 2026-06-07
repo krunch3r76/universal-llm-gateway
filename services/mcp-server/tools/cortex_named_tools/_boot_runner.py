@@ -221,11 +221,8 @@ def run_cortex_boot(
 
     extracted = extract_boot_results(seat_slug, raw, profile_dict)
 
+    # One canonical file per seat; role affects render inputs only (not path).
     op_ctx_path = f"notes/system/shared/operational-context-{seat_slug}.md"
-    if role is not None:
-        op_ctx_path = (
-            f"notes/system/shared/operational-context-{seat_slug}-role-{role}.md"
-        )
     ops_context = render_operational_context(
         agent=seat_slug,
         family=resolved_family,

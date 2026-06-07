@@ -27,7 +27,10 @@ def normalize_gemini_parts(parts: list[Any]) -> list[dict[str, Any]]:
         if set(part.keys()) == {"text"} and not str(part.get("text", "")):
             continue
         if "text" in part and not part.get("text") and not part.get("thought"):
-            if not any(k in part for k in ("functionCall", "functionResponse")):
+            if not any(
+                k in part
+                for k in ("functionCall", "functionResponse", "thoughtSignature")
+            ):
                 continue
         normalized.append(dict(part))
     return normalized

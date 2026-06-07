@@ -119,6 +119,78 @@ def test_boot_inspect_has_no_live_side_effects(
     assert result["audit_dump_path"] is None
 
 
+def test_boot_operational_context_ref_ignores_role_suffix(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """role= must not advertise a -role-{role} path that fs cannot resolve."""
+    monkeypatch.setattr(boot_runner, "resolve_transcript", lambda _tid: None)
+    monkeypatch.setattr(
+        boot_runner,
+        "build_futures_spec",
+        lambda _agent, _profile, _recorder: {"placeholder": (lambda: {},)},
+    )
+    monkeypatch.setattr(
+        boot_runner,
+        "extract_boot_results",
+        lambda _agent, _raw, _profile: {
+            "sessions": [],
+            "deadlines": [],
+            "threads": [],
+            "unread_turns": [],
+            "staging_items": [],
+            "todos": [],
+            "self_reflections": [],
+            "rj_entries": [],
+            "rj_total": 0,
+            "recent_mentions": [],
+            "skills": [],
+            "plan_phases": [],
+            "in_flight_todos": [],
+            "temporal_active": [],
+            "expired_unresolved": [],
+            "review_total": 0,
+            "rag_pipeline": {},
+            "audit_counters": None,
+            "async_dispatches": [],
+        },
+    )
+    monkeypatch.setattr(boot_runner, "build_unread_threads", lambda _threads: [])
+    monkeypatch.setattr(boot_runner, "build_review_top", lambda _items: [])
+    monkeypatch.setattr(
+        boot_runner,
+        "render_operational_context",
+        lambda **_kwargs: "operational context for lead boot",
+    )
+    monkeypatch.setattr(
+        boot_runner,
+        "render_briefing_card",
+        lambda **_kwargs: ("briefing card", []),
+    )
+    monkeypatch.setattr(boot_runner, "record", lambda signal, **_kw: None)
+    monkeypatch.setattr(boot_runner, "write_audit_dump", lambda **_kw: None)
+
+    shared_dir = tmp_path / "shared"
+    shared_dir.mkdir(parents=True)
+    monkeypatch.setattr(boot_runner, "_OPS_CONTEXT_DIR", shared_dir)
+    audit_dir = tmp_path / "audit"
+    audit_dir.mkdir()
+    monkeypatch.setattr(boot_audit_dump, "AUDIT_DIR", audit_dir)
+
+    mcp = _DummyMcp()
+    orchestration_tools.register_orchestration_tools(mcp)
+    result = mcp.tools["cortex_boot"](
+        family="claude", platform="web", role="lead"
+    )
+
+    seat_path = "notes/system/shared/operational-context-claude-web.md"
+    assert result["operational_context_ref"] == seat_path
+    op_ctx = next(
+        a for a in result["injected_artifacts"] if a["name"] == "operational_context"
+    )
+    assert op_ctx["path"] == seat_path
+    assert (shared_dir / "operational-context-claude-web.md").is_file()
+
+
 def test_view_materialization_path(monkeypatch: Any, tmp_path: Path) -> None:
     """At least one fixture exercises the full view materialization path.
 

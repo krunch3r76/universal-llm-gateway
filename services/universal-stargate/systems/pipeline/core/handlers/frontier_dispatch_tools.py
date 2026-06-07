@@ -55,14 +55,13 @@ async def resolve_default_tools(
     temporarily unreachable).
     """
     from agent_seat import (
-        TEAM_TOOL_DEFINITIONS,
-        TOOL_DEFINITIONS,
+        STATIC_TOOL_FALLBACK,
         get_mcp_tool_definitions,
     )
 
     static_defs = {
         d.get("function", {}).get("name", ""): d
-        for d in [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+        for d in STATIC_TOOL_FALLBACK
     }
     live_defs = {
         d.get("function", {}).get("name", ""): d
@@ -117,8 +116,7 @@ async def resolve_dispatch_tool_set(
       signal.
     """
     from agent_seat import (
-        TEAM_TOOL_DEFINITIONS,
-        TOOL_DEFINITIONS,
+        STATIC_TOOL_FALLBACK,
         assemble_system_prompt,
         get_mcp_tool_definitions,
         hydrate_agent,
@@ -234,11 +232,11 @@ async def resolve_dispatch_tool_set(
         elif provider == "anthropic":
             tools = await resolve_default_tools(
                 team_tool_names,
-                fallback=[*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS],
+                fallback=STATIC_TOOL_FALLBACK,
             )
         else:
             live = await get_mcp_tool_definitions()
-            tools = live or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+            tools = live or STATIC_TOOL_FALLBACK
         assembled_system = assemble_system_prompt(
             agent,
             briefing_card_md=bundle.briefing_card_md,
@@ -264,5 +262,5 @@ async def resolve_dispatch_tool_set(
         tools = []
     else:
         live = await get_mcp_tool_definitions()
-        tools = live or [*TOOL_DEFINITIONS, *TEAM_TOOL_DEFINITIONS]
+        tools = live or STATIC_TOOL_FALLBACK
     return tools, system_prompt, {"agent": None}

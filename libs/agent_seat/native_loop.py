@@ -262,9 +262,13 @@ async def _run_native_tool_loop_body(
         ):
             google_malformed_retried = True
             gen_cfg = dict(json_body.get("generationConfig") or {})
-            temp = gen_cfg.get("temperature", 1.0)
-            if isinstance(temp, (int, float)) and temp > 0.7:
-                gen_cfg["temperature"] = 0.7
+            # Gemini 3.x requires temperature at its 1.0 default — lowering it is
+            # contra-indicated and can induce the looping the retry tries to fix.
+            model_lower = str(json_body.get("model", "")).lower()
+            if not model_lower.startswith("gemini-3"):
+                temp = gen_cfg.get("temperature", 1.0)
+                if isinstance(temp, (int, float)) and temp > 0.7:
+                    gen_cfg["temperature"] = 0.7
             json_body["generationConfig"] = gen_cfg
             allowed: list[str] = []
             for group in json_body.get("tools") or []:

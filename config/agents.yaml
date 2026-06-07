@@ -198,17 +198,14 @@ profiles:
       - xai/grok-4.3
 
   gemini/api:
-    # CANDIDATE SEAT — declared tool_surface=mcp, but end-to-end MCP wiring
-    # has not been verified by a round-trip dispatch. Treat as a dispatch
-    # target until todo:gemini-api-mcp-wiring-verify confirms cortex
-    # participation under the gemini-api slug. See agent-identity-signoff.mdc
+    # CANDIDATE SEAT — declared tool_surface=mcp. MCP tool loop verified by
+    # smoke (catalog=15, cortex round-trip) but seat-attributed wiring not
+    # confirmed under the gemini-api slug. See agent-identity-signoff.mdc
     # "Four-layer model" for the seat ≡ MCP-wired runtime criterion.
-    # team_dispatch uses inline-only: Gemini API is unreliable on cortex/fs
-    # workspace writes; analysis consults only (substrate inlined in prompt).
+    # Gemini MCP ON: full catalog (inc. writes); model discretion applies.
     provider: google
     default_model: google/gemini-3.5-flash
     tool_surface: mcp
-    # capability_tier: inline-only
     delivery: auto
     include_deadlines: true
     include_review_queue: true
@@ -216,10 +213,10 @@ profiles:
     addenda: []
     allowed_models:
       - google/gemini-3.5-flash
-      - google/gemini-2.5-pro
-      - google/gemini-2.5-flash
-      - google/gemini-3-flash-preview
       - google/gemini-3.1-pro-preview
+      - google/gemini-2.5-flash
+      - google/gemini-2.5-pro
+      - google/gemini-2.5-flash-lite
 
   gemini/cursor:
     # Cursor seat for Gemini. MCP is wired for IDE use; prefer claude-cursor for
@@ -237,10 +234,10 @@ profiles:
       - session-close-transcript
     allowed_models:
       - google/gemini-3.5-flash
-      - google/gemini-2.5-pro
-      - google/gemini-2.5-flash
-      - google/gemini-3-flash-preview
       - google/gemini-3.1-pro-preview
+      - google/gemini-2.5-flash
+      - google/gemini-2.5-pro
+      - google/gemini-2.5-flash-lite
 
   gemini/web:
     # CANDIDATE SEAT — tool_surface=mcp is ASPIRATIONAL until a round-trip MCP
@@ -280,7 +277,7 @@ profiles:
 #   Bound implement: team_dispatch(op="handoff", role="cursor-implement") →
 #     claude-cursor from any dispatching seat; packet + acceptance criteria required.
 #   Review / MCP writes (automated): team_dispatch role=reviewer → gpt-5.5.
-#   Analysis (no substrate writes): role=synthesizer → gemini-3.5-flash (inline-only).
+#   Analysis (no substrate writes): role=synthesizer → gemini-3.1-pro-preview (MCP tool loop).
 #   Reliable MCP writers: claude-web, gpt-5.5, anthropic API. Anthropic API last (cost).
 
 roles:
@@ -315,6 +312,8 @@ roles:
       - openai/gpt-5.5
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-4-8
+      - google/gemini-3.1-pro-preview
+      - google/gemini-2.5-pro
 
   gatherer:
     description: "Context gathering, structured extraction, broad research"
@@ -328,16 +327,16 @@ roles:
       - openai/o3
 
   synthesizer:
-    description: "Analysis/synthesis on inline substrate only (no MCP writes). Mutations: claude-web, team_dispatch reviewer (gpt-5.5), or cursor-claude"
+    description: "Analysis/synthesis via MCP tools. Full catalog access; writes allowed by model discretion. For guaranteed durable writes use reviewer (gpt-5.5) or claude-web."
     default_family: gemini
     default_platform: api
-    default_model: google/gemini-3.5-flash
+    default_model: google/gemini-3.1-pro-preview
     allowed_models:
-      - google/gemini-3.5-flash
-      - google/gemini-2.5-pro
-      - google/gemini-2.5-flash
-      - google/gemini-3-flash-preview
       - google/gemini-3.1-pro-preview
+      - google/gemini-3.5-flash
+      - google/gemini-2.5-flash
+      - google/gemini-2.5-pro
+      - google/gemini-2.5-flash-lite
 
   artisan:
     description: "Inline reasoning specialist; structured execution at frontier-grade reasoning"

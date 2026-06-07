@@ -9,11 +9,11 @@ point reduces agent context overhead.
 from __future__ import annotations
 
 import json
-import os
 import socket
 from typing import TYPE_CHECKING, Any
 
 from mcp_events import monotonic_now, record
+from transport_utils import MANAGE_SOCKET
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
@@ -21,7 +21,6 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-_MANAGE_SOCK = os.environ.get("MANAGE_SOCKET", "/tmp/universal-protocol/manage.sock")
 _DEFAULT_TIMEOUT = 30.0
 _WAIT_HEALTHY_BUFFER = 30.0
 _PROGRESS_PROBE_TIMEOUT = 5.0
@@ -48,7 +47,7 @@ def _call_manage(
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.settimeout(timeout)
         try:
-            sock.connect(_MANAGE_SOCK)
+            sock.connect(MANAGE_SOCKET)
             sock.sendall(json.dumps(body).encode() + b"\n")
             data = b""
             while True:
@@ -62,7 +61,7 @@ def _call_manage(
         except FileNotFoundError:
             # Common when ./manage TUI is not running; error message guides user.
             # Do not log as ERROR (per quality gates — use event instead).
-            logger.warning("Manage socket not found: %s", _MANAGE_SOCK)
+            logger.warning("Manage socket not found: %s", MANAGE_SOCKET)
             return {
                 "error": (
                     "manage.sock not found. Ensure ./manage is running (TUI or headless)."

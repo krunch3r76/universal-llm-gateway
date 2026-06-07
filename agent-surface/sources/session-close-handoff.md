@@ -40,13 +40,15 @@ Prefer file-backed derivation when the handoff body is long:
 
 3. `session_close` derives `handoff_prompt` server-side → `handoff_provenance.derivation=file_markers` (verified surface).
 
-Detached-string `handoff_prompt` without anchor → advisory `handoff_missing_transcript_anchor` on the 201 response.
+`handoff_prompt` without the anchor → **422 `handoff.missing_transcript_anchor`**
+(atomic rollback, enforced pre-commit). Add the anchor block and re-call. A
+`handoff_source_path` whose path already names the session satisfies the gate.
 
 ## Anti-patterns
 
 | Bad | Good |
 |---|---|
-| Poll thread N only; no transcript ref | Transcript anchor first, then poll/delegate steps |
+| Poll thread N only; no transcript ref (→ 422 `handoff.missing_transcript_anchor`) | Transcript anchor first, then poll/delegate steps |
 | Repeat decisions/files from summary inline | Point at transcript file; handoff stays short |
 | `transcript_depth=none` + handoff | `light` + handoff (422 otherwise) |
 <!-- /target:* -->

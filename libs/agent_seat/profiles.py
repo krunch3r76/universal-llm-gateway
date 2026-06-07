@@ -206,14 +206,12 @@ _PROVIDER_TO_FAMILY: dict[str, str] = {
 
 
 def inline_only_for_model(model: str) -> bool:
-    """True iff the effective model's family is policy-restricted to inline-only.
+    """True iff the effective model's family resolves to an inline-only profile.
 
-    Capability binds to the EFFECTIVE model, not the role label. A model whose
-    ``(family, "api")`` profile is inline-only — e.g. gemini, which hallucinates
-    MCP calls and is barred from write surfaces on any role — must never receive
-    a client-side tool loop, even when an explicit ``model=`` override assigns it
-    to a write-capable role (reviewer/lead). Closes the explicit-override gap
-    where ``capability_tier`` was derived only from the role's default profile.
+    Looks up the (family, "api") CapabilityProfile for the model's provider.
+    Returns True only if that profile has capability_tier="inline-only" or
+    tool_surface="inline-only". Falls through to False for unknown providers
+    or families without an explicit profile restriction.
     """
     from model_id import ModelId
 
@@ -228,8 +226,9 @@ def client_side_mcp_tool_loop_admitted(model: str) -> bool:
     """True iff dispatch admission may enable a client-side MCP function-tool loop.
 
     Shared by ``mcp_enabled_for_team_dispatch`` and ``mcp_enabled_for_frontier_dispatch``
-    (via ``_mcp_base_admitted``). False for inline-only families (gemini) and for
-    xAI multi-agent models (API rejects client-side function tools; server builtins only).
+    (via ``_mcp_base_admitted``). False for profiles with capability_tier/tool_surface
+    inline-only, and for xAI multi-agent models (API rejects client-side function
+    tools; server-side built-ins injected via provider_options instead).
     """
     if inline_only_for_model(model):
         return False

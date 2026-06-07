@@ -12,7 +12,12 @@ from typing import Any
 
 import httpx
 from mcp_events import monotonic_now, record
-from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
+from transport_utils import (
+    DEFAULT_AGENT_BUS_URL,
+    DEFAULT_CORTEX_URL,
+    DEFAULT_EMAIL_BRIDGE_URL,
+    make_sync_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,14 +44,14 @@ _SERVICES: dict[str, dict[str, str]] = {
         "token_env": "BRIDGE_TOKEN",
     },
     "agent-bus": {
-        "url": f"unix://{os.environ.get('AGENT_BUS_SOCK', '/tmp/universal-protocol/agent-bus.sock')}",
+        "url": DEFAULT_AGENT_BUS_URL,
         "token_env": "AGENT_BUS_TOKEN",
     },
     "cortex-api": {
         "url": DEFAULT_CORTEX_URL,
     },
     "email-bridge": {
-        "url": f"unix://{os.environ.get('EMAIL_BRIDGE_SOCK', '/tmp/universal-protocol/email-bridge.sock')}",
+        "url": DEFAULT_EMAIL_BRIDGE_URL,
     },
 }
 

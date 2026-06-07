@@ -114,7 +114,8 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Surface axis: team_dispatch handoff = role (web-consult/cursor-consult/cursor-implement); team_dispatch generate = API role + optional model= override within allowed_models."""
+Surface axis: team_dispatch handoff = role (web-consult/cursor-consult/cursor-implement); team_dispatch generate = API role + optional model= override within allowed_models.
+Codified bug report (operator directs report bug/friction to cursor) = bound implement → team_dispatch(op=handoff, role=cursor-implement), lifecycle investigate→fix→report; an operator-named transport wins (never silently substitute agent_bus). See skill § Codified bug reports."""
 
 
 def _render_server_primary_manifest_line() -> str:
