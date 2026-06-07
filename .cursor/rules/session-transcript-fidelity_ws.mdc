@@ -1,0 +1,148 @@
+---
+description: Workspace session-transcript fidelity — structural-layer (`session_summary_md`) discipline for cortex(tool=session_close), six failure-mode canaries, dual-layer doctrine. Verbatim layer is server-derived. Load on session close (alongside session-close.mdc).
+globs: []
+alwaysApply: false
+---
+# Session Transcript Fidelity — Workspace (post 2026-05-16 server-side refactor)
+
+**Source:** Cortex assertion 1627 (`decision:session-close-entity-protocol`)
+**Updated:** session-close-server-side-transcript Phase 5
+
+---
+
+## What This Governs
+
+As of 2026-05-16, `cortex(tool="session_close", ...)` takes
+`transcript_jsonl_path` + `session_summary_md` — NOT `transcript_md`.
+The verbatim layer is assembled server-side from the Cursor
+agent-transcripts JSONL. The agent authors only the structural layer
+(`## Session Summary` block + decisions / files / open items /
+continuation pointer).
+
+This rule covers the residual fidelity concerns on the agent-authored
+half. The verbatim layer's "are these the actual words?" question is
+guaranteed by deterministic server assembly — not a discipline
+problem anymore.
+
+### Dual-Layer Doctrine
+
+| Layer | Source | Path of construction |
+|---|---|---|
+| Verbatim — `### User` / `### Assistant` blocks | cortex-api reads `transcript_jsonl_path` | `libs/cortex_store/transcript_assembly.assemble_verbatim_md` |
+| Structural — `## Session Summary` block | Agent composes from context | passed as `session_summary_md` arg |
+
+Server-side enforcement (`mcp.session.close.rejected` reasons):
+- `transcript.hollow` — assembled verbatim has zero User-voice
+  blocks. Usually means the path points at a tool-only record set or
+  the wrong UUID directory.
+- `transcript.missing_structure` — composed transcript <200 chars.
+- `session_summary.invalid` — structural layer missing or no
+  `## Session Summary` heading.
+- `transcript_jsonl.invalid` — path missing, outside
+  `CURSOR_AGENT_TRANSCRIPTS_ROOT`, or JSONL parse error.
+
+---
+
+## Required `session_summary_md` Skeleton
+
+```
+## Session Summary
+
+**Continues:** gemini-cursor-YYYY-MM-DD-HHmm  (when continuation)
+
+**Decisions:**
+1. <what was decided + why; rejected alternatives>
+2. ...
+
+**Files modified:**
+- path/to/file.py
+
+**Open items:**
+- <follow-up>
+
+**Attachments:** (optional)
+
+**Journal:** gemini-cursor-YYYY-MM-DD-HHmm
+**Transcript:** gemini-cursor-YYYY-MM-DD-HHmm
+```
+
+Size: kilobytes. ∀ `session_summary_md` exceeding ~10 KB: you're
+probably writing the verbatim layer into the wrong field. Stop, trim
+to decisions / files / open items, and trust the server.
+
+---
+
+## Self-Check Gate
+
+1. **Verbatim-leakage test** — `grep -c '### User' session_summary_md`.
+   Expected: 0. Any hits → strip; the server assembles `### User`
+   blocks from the JSONL.
+2. **Structural heading test** — Does the structural layer start with
+   `## Session Summary`? Server rejects `session_summary.invalid`
+   otherwise.
+3. **Action-log smell** — Are decisions narrated as "I read...
+   I posted... I dispatched..."? Convert to outcome bullets in
+   `decisions[]` and `**Decisions:**`.
+4. **Path freshness** — Is `transcript_jsonl_path` the
+   most-recently-modified UUID directory?
+   `ls -lt $CURSOR_AGENT_TRANSCRIPTS_ROOT | head -2` confirms.
+5. **Continuation pointer** — If a prior session exists, is
+   `**Continues:** cursor-YYYY-MM-DD-HHmm` set? Server's post-close
+   detector flags omission.
+6. **Hash discipline** — On 201, quote `content_hash` in the report
+   line. ¬ re-read the transcript file to "confirm" — the hash IS
+   the confirmation (per `provenance-discipline.mdc`).
+
+---
+
+## Failure Mode Canaries
+
+| # | Failure Mode | Detection | Resolution |
+|---|---|---|---|
+| 1 | Verbatim leak into structural | `### User` / `### Assistant` in `session_summary_md` | Strip; trust server assembly |
+| 2 | Wrong JSONL path | `transcript.hollow` 422 | Re-run `ls -lt`, point at most recent |
+| 3 | Sandbox escape | `transcript_jsonl.invalid` 422 | Path must resolve under `CURSOR_AGENT_TRANSCRIPTS_ROOT` |
+| 4 | Missing structural heading | `session_summary.invalid` 422 | Prepend `## Session Summary` |
+| 5 | Stub-only structural layer | `transcript.missing_structure` 422 | Add Decisions / Files / Open items content |
+| 6 | Read-back ceremony | re-reading the transcript file after 201 | Quote `content_hash`; don't re-read |
+| 7 | Continuation pointer omitted | `prior_session_id_omitted` post-close warning | Set `**Continues:**` in `session_summary_md` AND `prior_session_id` arg |
+
+---
+
+## Truncation Protocol (Long Sessions)
+
+Length is the server's problem now. A 60-turn session produces a
+60-turn verbatim layer; cortex-api reads the JSONL once and writes the
+composed markdown atomically. Agent context overhead is bounded by the
+size of `session_summary_md` (a few KB), not by the verbatim transcript.
+
+If you ever see context-pressure errors during session_close: the
+agent is doing too much. Check that you are passing the PATH, not
+echoing the transcript content.
+
+---
+
+## Post-Close Review Pattern
+
+When dispatching a reviewing agent to review a session:
+
+- Pass the **transcript file path** (e.g. `notes/system/transcripts/cursor-2026-05-16-1820.md`), not the session summary, as input.
+- The review agent reads the assembled transcript via
+  `fs(sandbox="cortex", op="read", ...)`.
+- The session-close response's `content_hash` lets the reviewer
+  detect tampering or accidental rewrite — quote it in the review
+  packet.
+
+---
+
+## Relation to `/session-end` Command
+
+The `/session-end` command orchestrates the synthesis + `session_close`
+workflow. The summary (synthesis) and the structural layer
+(`session_summary_md`) are distinct artifacts; produce both
+independently. The verbatim layer is no longer in either artifact —
+it lives on disk after the server writes it.
+
+- `summary` field → 2-3 sentence compression (synthesis)
+- `session_summary_md` → `## Session Summary` block (structural)
+- on-disk transcript → server-assembled verbatim + appended structural

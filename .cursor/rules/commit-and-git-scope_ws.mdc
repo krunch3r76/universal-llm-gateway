@@ -1,0 +1,25 @@
+---
+description: Commit optionality + git-tool seat scope. Uncommitted edits in the live checkout are real state; commit is NOT a finality/completion gate. git_* MCP tools and git CLI are headless/external-agent + manual-worktree concerns — a Cursor IDE session essentially never reaches for them. Load always.
+alwaysApply: true
+---
+# Commit Optionality & Git-Tool Seat Scope (Workspace)
+
+## Invariant 1 — Commit is optional; not a finality gate
+
+∀ edit in the live checkout: it is real workspace state the moment it is on disk. `git commit` is OPTIONAL bookkeeping; uncommitted-on-master ⟺ committed-on-master in how real/durable/"done" it is. Commit is load-bearing for exactly one property:
+- **Liveness** (loaded in the running process) — needs a deploy / `manage` restart, not commit.
+- **Provenance** (proof you did it) — needs a file read-back, not a SHA.
+- **Rebuild-persistence** (survives a `--no-cache` rebuild) — needs committing a *git-tracked config file* (e.g. `config/mcp/canonical.yaml`). **Only here does commit matter, and it means "tracked," not "more final."**
+
+So: the completion claim for code work is "edited `<file>`, verified by read-back / lint / test," never "committed"; `tmp/` is ephemeral because it is `tmp/`, not because it is uncommitted; commit freely as a checkpoint, never *because* the work isn't "real" without it.
+
+## Invariant 2 — git_* tools and git CLI are headless / manual-worktree concerns
+
+∀ Cursor-IDE session (`claude-cursor`, `gemini-cursor`, …): ¬ reach for `git_*` MCP tools (`git_status/diff/commit/integrate/land`) ∨ raw `git` CLI in normal work — they exist for multi-writer concurrency and unattended landing, which a single operator-attended IDE writer does not have. Relevant only for headless seats and manual arc worktrees (PARKED).
+
+Instead: **edit/review** via the editor (native apply IS the gate); **revert** via editor undo / Cursor revert UI, NOT `git checkout`/`restore`/`reset`/`stash`; **commit** only if the operator asks. **To answer "is this mine vs pre-existing?" read the file / traceback — NEVER manipulate shared git state (`git stash`/`checkout`/`reset`); the live checkout and global stash stack belong to no single agent.**
+
+| Bad (Cursor IDE) | Good |
+|---|---|
+| `git stash` / `git checkout -- <file>` to check or revert my edit | read the traceback; editor undo / revert UI |
+| `git_commit` / `git_land` mid-session | operator-attended apply; commit only if asked |

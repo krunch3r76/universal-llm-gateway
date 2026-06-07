@@ -1,0 +1,144 @@
+# Gatherer (Plan-Before-Write) Discipline (Workspace)
+
+## Canonical Source
+
+The authoritative procedure also lives in `agent-skills/gatherer-plan-discipline.md`
+in the cortex sandbox. Web-Claude loads it via the boot manifest. ∀ edits: update
+both locations.
+
+## Applies To
+
+All IDE-resident agents (Claude, gpt-cursor) and Web-Claude when dispatched
+via agent_bus. This is a shared posture, not a per-agent option.
+
+## Invariant
+
+**Invariant**: ∀ write task meeting any trigger below: dispatch the `gatherer` role (openai/gpt-5.5)
+for a **read-only plan pass** before the first write. Get explicit approval.
+Then execute against the approved plan.
+
+This is not the `advisor` tool (inline one-shot). This is a structured two-phase
+offload: Phase 1 produces a durable artifact; the human approves it; Phase 2
+executes it.
+
+## Triggers
+
+| Trigger | Threshold |
+|---|---|
+| File writes | >3 files to be modified/created |
+| Graph mutations | >15 assertions to be created, migrated, or superseded |
+| Modularization plans | any split plan regardless of file count |
+| Entity restructuring | any parent-to-child entity migration |
+| Schema or API surface changes | any — plan pass is mandatory |
+
+**Sub-threshold tasks** (≤3 files, ≤15 assertions, no structural change):
+proceed directly per `advisor-timing.mdc` checkpoints.
+
+## Two-Phase Pattern
+
+### Phase 1 — Read-Only Plan
+
+Dispatch the `gatherer` role via `team_dispatch`:
+- `reasoning_effort: "high"`
+- `max_tool_turns: 25` (minimum; raise to 50 for complex reads)
+- Brief must be **pathwise** (file path in brief, not inline corpus) when
+  the corpus exceeds ~3000 tokens — per `frontier-dispatch.md`
+- Phase 1 brief MUST prohibit writes explicitly
+
+Phase 1 returns a structured proposal:
+- What changes, what stays
+- Concrete IDs / file paths / module names
+- Conflict flags requiring resolution before Phase 2
+- Estimated write count
+
+**Do not fire Phase 2 until:**
+1. Human has reviewed Phase 1 output
+2. All conflict flags are resolved
+3. Human gives explicit approval
+
+### Phase 2 — Execute Against Approved Plan
+
+Phase 2 brief includes:
+- The full approved plan from Phase 1 verbatim
+- Resolved flag values (annotated clearly)
+- Which assertions/files stay on parent, which migrate
+- Provenance fields (`session_id`, `agent`, `confidence`)
+- `max_tool_turns: 50` (write passes need more turns)
+- Signal-back protocol: on repeated tool failure, stop and report — do not exhaust silently
+
+### Skill Authorship
+
+When Phase 2 completes, **the executing agent writes the skill file** covering:
+- The procedure used
+- Gotchas encountered in execution
+- Anti-patterns from live friction
+
+This produces ground-truth documentation, not theoretical spec. Register the
+skill per `agent-skills_ws.mdc` invariant.
+
+## Modularization Default
+
+For `/overhaul` and `/modularize` modularization passes:
+
+- **Plan step**: `gatherer` role (`openai/gpt-5.5`) — two-phase discipline applies
+- **Execute step**: `gatherer` role (`openai/gpt-5.5`) or Claude per the approved plan
+- Claude reviews the plan (human approval gate) before execution fires
+
+The pipeline `plan_model` in `pipelines/modularize/models.yaml` reflects this.
+The bootstrap-era "Claude-family for un-baselined territory" restriction is
+**lifted** — the two-phase workflow with human approval compensates for
+navigation ambiguity regardless of baseline state.
+
+## Architecture Context Injection (MANDATORY until baseline is complete)
+
+**Invariant**: ∀ `gatherer` dispatch for overhaul or modularization work: inject
+project-level architecture context in the Phase 1 brief. The gatherer role cannot
+self-supply this — `docs/architecture/` is sparse for most subsystems.
+
+Cursor holds this context in working memory and from loaded rules. Every
+brief MUST include a `<project_context>` block covering at minimum:
+
+| What | Example content |
+|---|---|
+| Service topology | Stargate :9999 → UDS → Edge → Gateway :9998 (container-internal) |
+| Transport invariant | UDS-first via `transport_utils`; ¬direct TCP for internal hops |
+| Model identity | `ModelId` objects from `libs/model_id`; ¬string manipulation |
+| Event factory | `@event_factory` only; ¬direct `Event()` construction; signal regex |
+| SLOC limits | ≤300 new, ≤400 existing; split before committing |
+| Exception policy | ∀ caught: emit_event(WARN) or re-raise; ¬silent swallow |
+| Subsystem-specific | Any invariants Cursor knows for the target path |
+
+As subsystems are overhauled and `docs/architecture/{slug}.md` reaches
+baseline, the inline context block can be replaced by a doc reference.
+Track baseline state via `subsystem_baseline:{path}` entities
+(see `todo:subsystem-baseline-tracking`).
+
+This injection is **Cursor's responsibility** — not something the gatherer role can
+retrieve from Cortex or the workspace in a plan-phase pass without explicit
+guidance.
+
+## Dispatch Recipe
+
+```python
+team_dispatch(
+    agent="gatherer",
+    messages=[{"role": "user", "content": "<phase-1-brief>"}],
+    caller_agent="cursor",
+    reasoning_effort="high",
+    max_tool_turns=25,  # Phase 1; raise to 50 for Phase 2
+)
+```
+
+Poll with `pipeline(op="result", execution_id="...", wait_seconds=60)`.
+Re-poll up to 5 × 60s. Save `execution_id` if still running — resumable.
+
+## Anti-Patterns
+
+| Bad | Good |
+|---|---|
+| Single-shot dispatch (plan + write in one prompt) | Two-phase: plan → approve → execute |
+| Inline corpus for large reads | Pathwise brief via `fs` |
+| Claude writes the skill after gatherer executes | Gatherer writes the skill as part of Phase 2 output |
+| Fire Phase 2 before all conflict flags resolved | Resolve every flag before Phase 2 brief is written |
+| `max_tool_turns` default (10) for execution passes | Raise to 50 for write-heavy passes |
+| Skip this discipline because task "feels small" | Check trigger thresholds — threshold, not feel |

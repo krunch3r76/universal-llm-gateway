@@ -1,0 +1,46 @@
+---
+description: ULG pytest layout and verify commands — load with testing-discipline on tests/migrations
+globs: "**/test_*.py,**/*_test.py,**/migrations/*,libs/**"
+alwaysApply: false
+---
+# Testing (Workspace)
+
+**Extends**: `testing-discipline.mdc` (parent). Load both when globs match.
+
+## Config
+
+| Item | Value |
+|------|-------|
+| Root | `pytest.ini` — `pythonpath = libs services/universal-stargate` |
+| Discovery | `test_*.py`, `*_test.py`; `norecursedirs` includes `tmp` |
+| Venv | `$HOME/.venvs/universal` |
+
+## Default verify stack
+
+```
+VERIFY_default ≡ ruff_check ∧ ruff_format ∧ compileall   (core_ws)
+VERIFY_test    ≡ pytest_narrow_path   (additive when test file touched)
+VERIFY_default ∧ (test_changed ⟹ VERIFY_test)
+```
+
+## Examples
+
+```bash
+# Migration + registry (email-capture pattern)
+pytest libs/cortex_store/test_correspondence_registration_migration.py -q
+
+# Package suite
+pytest libs/cortex_store/ -q --ignore=...   # prefer single file when possible
+```
+
+## CI gap
+
+∄ `.github/workflows` pytest job (2026-06). ∀ new contract test: still commit; optional later — single-path workflow on touched `libs/**/test_*.py`.
+
+## Anti-patterns
+
+| Bad | Good |
+|-----|------|
+| Root orphan `test_foo.py` undiscovered by `pytest.ini` | Colocate under `libs/<pkg>/` |
+| `tmp/prompts/` test as only copy | Implement under `libs/`; phase spec references path |
+| "Tests pass" with no pytest line | Quote `N passed` from tool output |

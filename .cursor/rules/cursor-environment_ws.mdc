@@ -1,0 +1,134 @@
+---
+description: Cursor IDE environment briefing — worksite, workspace rules, IDE affordances (commands, hooks, agent transcripts, terminal files), working-directory and sandbox routing, tool surface, shell environment, operational topology. Load on cortex boot or when orienting to the IDE environment. Triggered by /cortex-boot, /agent-bus, /session-end, /todo, "boot cortex".
+alwaysApply: false
+---
+
+# Cursor IDE Environment Briefing
+
+## Canonical Source
+
+The body below mirrors `cursor-environment.md` in the **Cortex data layer**
+at `/mnt/torus/mcp-data/files/agent-identity/` (sandbox path:
+`agent-identity/cursor-environment.md`).
+
+∀ edits to the briefing text below: first update
+`agent-identity/cursor-environment.md` via
+`fs(sandbox="cortex", op="write", ...)`, then mirror the change here.
+Do not edit this rule in isolation.
+
+## Scope
+
+This file orients any agent that boots inside the Cursor IDE on this
+workspace. It is environmental, not identity-shaped: it describes the
+worksite, the affordances, and the conventions of the place — not who you
+are or how you should sound.
+
+## Worksite
+
+When a session starts here, it is not starting from zero. The repository
+holds accumulated work — commits, decisions, migrations, running services —
+and work in this environment happens inside that body directly, not from a
+distance.
+
+Access in the IDE is different from access on other surfaces. Source can be
+inspected, call paths traced, diffs read, commands run. Writes persist.
+Services restart or fail based on what is done here. This is implementation
+territory: the place where architecture meets syntax, where intention meets
+the stubborn detail of the actual repository.
+
+## Workspace rules
+
+The `.cursor/rules/` directory contains the operating rules for this
+environment: service lifecycle, transport conventions, API surface
+invariants, quality gates, tool usage. Some are always-applied; others load
+on demand based on globs or task triggers. Read them, follow them, surface
+conflicts rather than silently violating them.
+
+Workspace-rule catalog and discovery conventions live in `.cursor/rules/index.mdc`.
+
+## IDE affordances
+
+- **Cursor commands** — `.cursor/commands/*.md` define repeatable workflows
+  (`/cortex-boot`, `/implement-plan`, `/session-end`, `/agent-bus`,
+  `/todo`). Invoke by name; the command body is loaded into the prompt.
+- **Sticky slash commands (`<cursor_commands>`)** — when a slash command
+  stays attached to the composer thread, Cursor injects it into
+  `<cursor_commands>` on **every** turn (before `<user_query>`). This is IDE
+  behavior, not hooks or repo config. Appending freeform text after a slash
+  command in the same input (e.g. `/session-end` + "share a handoff…") causes
+  the compound block to replay for the rest of the thread. **Agent rule:**
+  `<user_query>` is operator intent; `<cursor_commands>` alone is harness noise
+  — ignore silently unless `<user_query>` also requests that command. **Operator
+  fix:** clear the pinned command chip or start a fresh chat.
+- **Hooks** — `.cursor/hooks.json` (when present) wires shell scripts to
+  agent events.
+- **Agent transcripts** — past chat transcripts live under
+  `~/.cursor/projects/<workspace-mount>/agent-transcripts/<uuid>.jsonl`.
+  Cite parent transcripts by uuid; never cite subagent transcripts.
+- **Terminals folder** — open terminals are mirrored as text files at
+  `~/.cursor/projects/<workspace-mount>/terminals/<id>.txt`. Each file's
+  first ~10 lines carry metadata (pid, cwd, last command, exit code); the
+  rest is rolling output. Read these files directly; do not announce them
+  to the user.
+- **Recently viewed / open files** — surfaced in the context envelope as
+  hints; treat as suggestions, not authoritative scope.
+
+## Working directory and sandbox routing
+
+- **Workspace path** — the workspace root for this session is the
+  repository checkout (e.g. `/mnt/torus/projects/<repo>`). Shell commands
+  start there unless `working_directory` is overridden.
+- **MCP `fs` sandboxes** — file I/O routes through one of two sandboxes:
+  - `sandbox="workspaces"` for repo source, config, tasks, docs. Paths
+    MUST include the repo-name prefix
+    (e.g. `universal-llm-gateway/tasks/specs/foo.md`).
+  - `sandbox="cortex"` for Cortex-managed documents under `/data/files/`
+    (notes, agent-identity, agent-skills, uploads).
+- **Response-store flagged payloads** — large MCP responses may return a
+  flag rather than inline content; resolve via the indicated retrieval
+  call. See `mcp-tool-awareness_ws.mdc` for the full convention.
+
+## Tool surface
+
+The IDE exposes specialized tools for file I/O, search, and editing
+(`Read`, `Glob`, `Grep`, `StrReplace`, `Write`, `EditNotebook`, `Delete`)
+alongside `Shell` for terminal operations. Prefer the specialized tools
+over shell equivalents (`cat`, `find`, `sed`, `awk`); the specialized
+tools are bounded, indexed, and faster for the IDE.
+
+MCP tools are reached via `CallMcpTool` against the configured servers
+(see `mcp-tool-awareness_ws.mdc` for the calling convention and the
+user-vortex tool set).
+
+## Shell environment
+
+- Python venv: `$HOME/.venvs/universal` (Python 3.12).
+- `PYTHONPATH`: `libs/` is added via `sitecustomize.py`; libraries import
+  directly (e.g. `from process_ipc.core import ...`).
+- Logging: ecosystem components use `universal_logging.get_logger(...)`,
+  not stdlib `logging` directly (see `core_ws.mdc`).
+- `tmp/`: ephemeral; never committed; never referenced from durable
+  knowledge (rules, cortex notes, journal entries).
+
+## Operational topology
+
+- Stargate, RAG, Cortex API, agent-bus, grokbuild-worker, and git-integration-worker
+  are host-managed via `./manage` (subprocess or uvicorn on loopback TCP). Gateway
+  runs in edge containers; MCP runs in its own container. Lifecycle: `manage` MCP
+  tool against the local control socket — not systemd by default.
+- **Host UDS paths** (code SOT: `libs/transport_utils/client_factory.py`; snapshot:
+  `~/.gateway/topology.yaml`):
+
+  | Socket | Default path | Env override |
+  |---|---|---|
+  | Manage controller | `/tmp/universal-protocol/manage.sock` | `MANAGE_SOCKET` |
+  | Cortex API | `/tmp/universal-protocol/cortex-api.sock` | `CORTEX_API_SOCK` |
+  | Agent bus | `/tmp/universal-protocol/agent-bus.sock` | `AGENT_BUS_SOCK` |
+  | RAG | `/tmp/universal-protocol/rag.sock` | `RAG_SOCKET_PATH` |
+
+  Agents: prefer MCP `manage(action="status")` over shell `test -S`. Do **not**
+  probe `…/universal-llm-gateway/manage.sock` or `~/.gateway/manage.sock`.
+- Logs land under `/tmp/logs/<service>/` as a fallback; the Event Service
+  (`scripts/query-events`, or the `observability` MCP tool) is the primary
+  query surface.
+- Topology details (nodes, ports, federation) are in `topology_ws.mdc`.

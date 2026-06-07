@@ -60,7 +60,6 @@ docs/vision/
 
 # IDE - Keep settings.json but ignore other VS Code files
 .vscode/
-.cursor/
 
 # Ruff cache (MUST be added BEFORE running ruff format/check)
 .ruff_cache/
@@ -129,6 +128,15 @@ README_REVISED.md
 !/libs/llm_adapters/capability_dispatch/MODEL_ADD_CHECKLIST.md
 !/README.md
 !/CONTRIBUTING.md
+# .cursor rules/skills/commands/invariants are public agent surface
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
+!.cursor/commands/
+!.cursor/commands/**
+!.cursor/invariants/
+!.cursor/invariants/**
 !/examples/adding-model-workflow-cpu.md
 !/docs/architecture/*.md
 !/docs/architecture/appendices/*.md
@@ -172,4 +180,9 @@ snapshots/
 libs/cortex_store/migrations/
 .*
 */.*
-*/.*/
+*/.*/ 
+# Un-ignore .cursor so rules/skills/commands/invariants are tracked in git
+!.cursor/
+.cursor/debug-*.log
+.cursor/mcp.json
+.cursor/worktrees.json

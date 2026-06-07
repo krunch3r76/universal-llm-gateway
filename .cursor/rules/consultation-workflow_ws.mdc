@@ -1,0 +1,353 @@
+# Consultation Workflow (Workspace)
+
+## Purpose
+
+`scripts/consult` routes questions to multiple local and cloud models in
+parallel with RAG-injected architecture context. Use it to get expert
+input without consuming the main agent's context window or budget.
+
+Both `scripts/consult` and `pipeline_test consult` call
+`consult_lib.execute_consult()` — same RAG, same model selection, same execution path.
+
+**`pipeline_test ask` has been removed.** For free-form research questions,
+use `scripts/consult -r researcher --scope research`.
+
+Five Cursor commands wrap the consultation workflow:
+
+| Command | When | Pattern |
+|---|---|---|
+| `/consult-architect` | Draft spec exists, needs architectural validation | Single-phase: architect with spec + key files |
+| `/consult-plan` | Before building anything architectural | Two-phase: scoping → deep planner |
+| `/consult-plan --review {planname}` | Phase files exist, want gap analysis before implementing | Frontier review → update phases |
+| `/consult-implement` | Stuck ≥2 attempts on same problem | Single-phase: architect with current files |
+| `/consult-review` | Before multi-file/multi-subsystem commit | Single-phase: reviewer with git-diff files |
+| `/consult-research` | Design grounded in research corpus | Two-step: research scope → source-code scope |
+
+## Docstring Quality Priority (All Workflows)
+
+When consultation results drive Python code changes, treat docstring quality as
+a first-class deliverable because overhaul and `doc-generate` consume
+docstrings directly to keep `docs/architecture/` current.
+
+Baseline expectations:
+- module/class docstrings target ≥15 words
+- public function docstrings target ≥10 words
+- no placeholder/name-echo first sentence
+- include purpose, caller context, invariants/constraints, and side effects
+  when relevant
+
+Apply this baseline consistently in `/consult-architect`, `/consult-plan`,
+`/consult-implement`, `/consult-review`, and implementation/review workflows
+that consume consult outputs.
+
+## Two Tools, One Boundary
+
+| Tool | Purpose | When |
+|---|---|---|
+| `scripts/consult` | Ask experts a question | Anytime — design, review, research |
+| `pipeline_test consult` | Debug a pipeline step | After pipeline ran, snapshot exists |
+
+**Decision rule**: Have a snapshot of a specific step with a specific problem?
+-> `pipeline_test consult`. Everything else -> `scripts/consult`.
+
+**Caveat**: `pipeline_test consult` only works for steps that have **model_calls** in the snapshot (generate steps: prompt + model response). Handler steps (e.g. `retrieve_assemble`) have no model_calls; for design questions about handler/config (e.g. retry-time parameters) use `scripts/consult -r planner` with the step context in the question instead.
+
+When improving a **pipeline** (e.g. RAG retrieval, consensus): use both (1) consult-plan with `-f` files and task-relevant `--scope` (e.g. `rag_systems` or `workflows`) for design, and (2) **pipeline_test consult** on a step that has model_calls (e.g. `analyze_rewrite`) so consultants see actual step output; for handler/config design use `scripts/consult -r planner`. For **RRF/retrieval consults** use `--rag-direct` (and optional `--rag-top-k 20`) so the consultant receives many chunks instead of 1 pipeline blob; otherwise RAG yields only 1 finding and the consult is under-grounded.
+
+**Pipeline RAG count = 1**: When using the pipeline for consult RAG (default), the pipeline returns a single assembled context blob, so the consultant sees only 1 finding. To make that finding as useful as possible for **pipelines that use a small/local model** (e.g. rag-context `analyze_rewrite` with a 9B model): use scope **`small_llm_prompting`** and frame questions around **small-LLM prompt design** (rewrite behavior, instruction clarity, token budget, local-model constraints). That focuses the single retrieved blob on prompt engineering for small models rather than generic research.
+
+## Trigger Rules
+
+### Use `/consult-architect` when:
+- A draft spec (`tasks/specs/*.md`) exists and needs architectural validation
+  before creating implementation phases
+- The spec proposes schema changes, new tables, or data model modifications
+- The spec crosses subsystem boundaries (e.g., RAG service + MCP server +
+  pipeline handlers)
+- You want to verify integration points and data compatibility against actual
+  code before committing to a phase structure
+
+Do NOT use for planning or implementation — use `/consult-plan` for that.
+`/consult-architect` validates the *spec*; `/consult-plan` creates the *plan*.
+
+**Workflow position**: draft spec → `/consult-architect` → incorporate feedback
+→ create phases → `/consult-plan --review` (optional) → implement
+
+**Agent steps**:
+1. Read the spec file
+2. Read key implementation files referenced in the spec's "Key files" table
+3. Validate spec schemas and data flow against actual code (the agent's own
+   analysis — identify gaps, missing integration points, schema mismatches)
+4. **Scope discovery** — identify RAG scopes relevant to the spec's domain:
+   - Call `rag(op="list_scopes")` (MCP) to get available scopes and descriptions
+   - Match the spec's domain against scope descriptions (e.g., a spec
+     touching RAG architecture → `rag_systems`; knowledge graphs → `knowledge_systems`;
+     pipeline orchestration → `workflows`)
+   - Build the `--scope` argument: always include `project`, append any
+     domain-specific matches (space-separated)
+   - State the chosen scopes and rationale before running the consultation
+   - If `rag(op="list_scopes")` fails (RAG not running), omit `--scope` entirely —
+     the consultation proceeds without RAG context (same as current behavior)
+5. Run consultation:
+   ```bash
+   ~/.venvs/universal/bin/python scripts/consult -r architect \
+     -Q {spec_path} \
+     -f {file1} -f {file2} ... \
+     --scope project {domain_scopes} \
+     -o tmp/consult-{spec-slug}.md
+   ```
+6. Read output, synthesize findings with own analysis
+7. Update the spec: resolve unidentified needs, add discovered integration
+   points, fix schema issues, append to Consultation section with provenance
+
+**Scope**: discovered in step 4 via `rag(op="list_scopes")` — don't guess scope
+names, query them. Always include `project` when it has indexed content;
+currently `project` scope emits 0 chunks (docs not yet indexed), so domain
+research scopes are the primary value. See the scope table below for the
+full catalog. If no scopes are relevant or RAG is down, the consultation
+proceeds without RAG context — scope discovery is additive, never blocking.
+
+### Use `/consult-plan` when (PRIMARY planning workflow):
+- **Default for any non-trivial implementation** — prefer over `/create-implementation-plan`
+- The task requires a new module, new file, or new public interface
+- The task changes data flow across subsystem boundaries (e.g., stargate ↔ gateway ↔ pipeline)
+- The task requires understanding federation, routing, or event contract implications
+- The task introduces behavioral changes that may need new event signals
+- Implementation would take >30 minutes of focused work
+- You have any uncertainty about the right architectural approach
+- The user has discussed and outlined a direction and wants a structured plan
+
+`/consult-plan` subsumes `/create-implementation-plan` for architectural work.
+Use `/create-implementation-plan` only for purely mechanical refactoring where
+multi-model consultation adds no value (e.g., rename-and-move, delete dead code).
+
+**If a plan document already exists** (in-thread outline, phase doc, prior
+consultation): still run `/consult-plan` — the consultation catches gaps the
+discussion didn't surface. Use the **pre-plan variant** (see step 6 in
+`/consult-plan`): include the plan as a `-f` file and frame the prompt as
+gap analysis rather than plan generation. This avoids redundant cloud spend
+on settled decisions while getting fresh eyes on event vocabulary, invariant
+preservation, failure modes, and other gaps.
+
+This subsumes `/review-prompt` — prefer `/consult-plan` pre-plan variant for
+all plan review. `/review-prompt` is deprecated.
+
+### Use `/consult-implement` when:
+- Stuck on the same problem after 2 tool call attempts with no progress
+- Hitting an unexpected error or invariant conflict with no clear path
+- Needing to understand how an unfamiliar module works before using it
+- At an implementation branch point with unclear trade-offs
+
+Do NOT use for architectural decisions from scratch — use `/consult-plan`.
+
+### Use `/consult-review` when:
+- About to commit changes touching >3 files
+- Changes span more than one subsystem
+- Changes introduce a new module, new public API, or new event signal
+- Any doubt about correctness, races, or invariant preservation
+- If review calls time out: run `scripts/report-timeout-models --pipeline code-review`,
+  report the timed-out model IDs, and avoid repeatedly failing reviewer models
+
+## How Consultation Works
+
+1. `scripts/consult` queries multiple models in parallel (default) or chained sequentially (`--chain`).
+   `/consult-plan` (deep call) and `/consult-review` use `--chain` by convention.
+2. RAG injects relevant context based on `--scope` (see scope table below)
+3. File context is injected directly via `-f` flags
+4. All model responses are collected and written to the output file
+5. **The agent synthesizes the responses** — models provide input, not final decisions
+
+## Scope Selection (MANDATORY)
+
+∀ consult invocations: state the chosen `--scope` and rationale before running.
+
+Corpora live under `docs/research/` (see `scripts/restore-research-corpus.py` for the full list). RAG config (`~/.gateway/rag.yaml`) maps scope names to source prefixes; actual scope names may vary by deployment.
+
+| Scope | Content (docs/research/…) | Use for |
+|---|---|---|
+| `project` | Architecture docs, vision, engram (not under research/) | Default for `scripts/consult` — architecture/design questions |
+| `small_llm_prompting` | small_llm/prompting | Prompt engineering for local inference — **prefer for consults on rag-context / 9B rewrite model** (pipeline RAG = 1 finding; focus corpus and questions here) |
+| `llm_prompting` | llm/prompting | Prompt engineering for cloud APIs |
+| `prompting` | prompting/ (tier-agnostic superset) | Tier-agnostic prompt research |
+| `workflows` | workflows/ | Pipeline design, agent orchestration, consensus, multi-step reasoning |
+| `research` | All research papers (union of scopes below) | Broad research questions |
+| `rag_systems` | rag-systems/ | RAG architecture, chunking, retrieval, reranking, evaluation — **use for retrieval/pipeline design** |
+| `code_retrieval` | code-retrieval/ | AST chunking, dependency retrieval, code embeddings |
+| `knowledge_management` | knowledge-management/ | PKM, second brain, personal knowledge graphs, agent memory |
+| `graph_modeling` | graph-modeling/ | Property graphs, RDF/OWL, KG construction, schema evolution |
+| `temporal_provenance` | temporal-provenance/ | Bitemporal DBs, versioning, lineage, provenance tracking |
+| `belief_consistency` | belief-consistency/ | Belief revision, contradiction handling, uncertainty, entity resolution |
+| `knowledge_systems` | Union of knowledge_management + graph_modeling + temporal_provenance + belief_consistency | All knowledge-systems research |
+| `llm_foundations` | LLM reference ebooks | Deep conceptual questions about LLM internals |
+| `all_research` | All papers + reference ebooks | Comprehensive search |
+| `both` | project + research | Broad fallback for ambiguous or cross-domain queries |
+| `all` | All indexed content | When scope is unclear or spans multiple domains |
+
+`pipeline_test consult` **auto-detects scope** from the step's model tier:
+- Cloud model (`/` in ID) -> `llm_prompting`
+- Local model -> `small_llm_prompting`
+- Override with `--scope`. Multiple scopes: pass space-separated, e.g. `--scope project research` (union of both).
+
+If uncertain about available scope names, check `GET /scopes` from the RAG
+service or `~/.gateway/rag.yaml` before assuming.
+
+**Anti-patterns:**
+- ❌ Running only a research scope for implementation validation
+- ❌ Omitting `--scope` without stating why defaults are sufficient
+- ✅ For code changes, always follow with source-code scope unless user explicitly skips
+
+## Chained Consultation (`--chain`)
+
+`--chain` runs models sequentially instead of in parallel. Model 1 (analyst)
+receives the standard prompt. Model 2+ (reviewers) receive the same prompt
+**plus** all prior models' full responses and a reviewer directive.
+
+**Default usage:**
+- `/consult-plan` (deep call) and `/consult-review` use `--chain` by convention
+- `pipeline_test consult` chains by default (`--parallel` to opt out)
+- `scripts/consult` defaults to parallel (`--chain` to opt in)
+
+```bash
+# scripts/consult: --chain is opt-in
+consult --chain -r planner \
+  -f relevant/files/ "complex architectural question"
+
+# pipeline_test consult: chained by default
+python -m tools.pipeline_test consult --latest consensus-chain-v7 \
+  -s review_coherence -p "problem"
+```
+
+**When to chain vs. parallel:**
+- **Chain**: complex diagnosis where the second model benefits from
+  seeing the first's analysis — produces ~40-75% more actionable changes than
+  either model alone
+- **Parallel**: independent perspectives on simpler questions, or when
+  convergence/divergence across models is the signal you want
+
+**Invariants:**
+- ∀ chained consultation: use different vendors or architectures (same model
+  twice has diminishing returns)
+- RAG is fetched once and shared across all phases
+- Cost: 2x a single call, >2x value (reviewer gets a head start)
+
+**Custom directive:** `--chain-directive "your instructions"` overrides the
+built-in reviewer prompt.
+
+See: `docs/engram/chained-consultation-division-of-labor.md` for the pattern.
+
+## Synthesis Responsibility
+
+After any consultation, the agent (you) must:
+1. Read the consultation output
+2. Identify consensus or disagreement across models
+3. **Validate every actionable suggestion against loaded workspace rules and
+   project invariants before applying** — consultation models are external and
+   lack full awareness of project conventions
+4. Apply judgment to select the best recommendation given project constraints
+5. Present a clear synthesis to the user before acting
+
+∀ synthesis: agent judgment > model vote count. Models are advisors, not oracles.
+
+### Invariant Validation (MANDATORY)
+
+**Invariant**: ∀ consultation suggestion → validated against project rules ∨ rejected
+
+Consultation models (cloud or local) do not see `.cursor/rules/`, architecture
+invariants, or workspace conventions. They may suggest patterns that violate:
+
+- Python 3.12+ conventions (`python312.mdc`) — e.g., `Union[X, Y]` instead of `X | Y`
+- Exception handling policy — e.g., silent `except` blocks
+- Modularization rules (`modularization.mdc`) — e.g., naming files `utils.py`
+- Ecosystem rule (`core_ws.mdc`) — e.g., backward compatibility shims
+- Event contracts (`docs/event-contracts.md`) — e.g., missing required payload fields
+- Code style — e.g., comments that narrate what code does
+
+When the user asks to "apply all suggestions" or similar:
+- ¬ apply blindly — validate each against rules first
+- Reject suggestions that violate invariants; explain the conflict
+- Offer a rule-compliant alternative when possible
+- Suggestions that pass validation may be applied per the command's approval policy
+
+## Output Files
+
+All consultation outputs go to `./tmp/`:
+- `./tmp/consult-{spec-slug}.md` — architect review output (from `/consult-architect`)
+- `./tmp/consult-scope.md` — scoping call output (from `/consult-plan`)
+- `./tmp/consult-plan.md` — deep planner call output
+- `./tmp/consult-plan-final.md` — unified synthesis (from `/consult-plan`)
+- `./tmp/consult-plan-review.md` — frontier review output (from `/consult-plan --review`)
+- `./tmp/prompts/{planname}/phase1.md`, `phase2.md`, ... — phase files consumable by `/implement-plan`
+- `./tmp/consult-impl.md` — implement call output
+- `./tmp/consult-review-sessions/{session-id}/` — `/consult-review` run directory
+  (batch payloads, batch results, report, and implementation artifacts for that session)
+- `./tmp/consult-research.md` — research scope output (from `/consult-research`)
+- `./tmp/consult-research-source.md` — source-code follow-up output
+
+These are ephemeral scratch files, not committed. Do NOT reference them in
+code comments, docstrings, commit messages, or journal entries.
+
+**Web Claude / MCP:** `tmp/` is gitignored. To list or search it via MCP, use
+`include_untracked=True` on `list_project_files`, `search_project_files`, or
+`project(op="list"|"search", ...)`. Reading a known path uses `read_project_file`
+without that flag.
+
+## Cost Awareness
+
+Consultation calls use real compute (local GPU + cloud API).
+
+- ¬ run consultation speculatively "just to see what they say"
+- ¬ loop consultation more than twice on the same problem without user input
+- For scoping calls (no RAG, single model): `--models qwen3-32b-awq-32768` (local, free)
+- For deep calls: omit `--models` — the cloud proxy selects models dynamically
+  via `/api/select` based on tags and context length from `consult-roles.yaml`
+- `--models` overrides cloud proxy selection for any role when you want specific models
+
+## Cursor Agent Model Selection (PROACTIVE)
+
+The consultation *target* models (cloud/local) are selected by the proxy.
+The **Cursor agent model** — the model running the conversation — should
+match the workflow step's reasoning demands. ∀ workflow step transition:
+recommend the appropriate agent model before proceeding.
+
+| Workflow step | Reasoning needed | Recommended agent model |
+|---|---|---|
+| Draft spec | Yes — problem analysis, schema design | Opus 4.6 or GPT-5.4 High |
+| `/consult-architect` | Yes — validate spec against code, identify gaps | Opus 4.6 or GPT-5.4 High |
+| `/consult-plan` | Yes — derive phase structure from ambiguous requirements | Opus 4.6 or GPT-5.4 High |
+| `/create-implementation-plan` | No — fill phase template from prescribed structure | GPT-5.3 Codex High |
+| `/consult-plan --review` | Moderate — check phase sequencing | Opus 4.6 if concerned, Codex if confident |
+| `/implement-plan` per phase | Per density classification | See `create-implementation-plan.md` (workspace extensions inlined) |
+
+**Decision rule**: if the spec + consultation already prescribe the phase
+structure (file groupings, density classifications, constraints), use
+`/create-implementation-plan` on a coding model. Use `/consult-plan` on a
+reasoning model only when phases need to be *derived*, not transcribed.
+
+∀ workflow step transition: state "Next step is [X]. Consider [model]
+for that thread." when the current step completes.
+
+## Consultation Target Model Selection
+
+Models are selected dynamically via the cloud proxy (`/api/select`) based on
+each role's `_select` block in `scripts/consult-roles.yaml`:
+
+| Role | Tags | Min context |
+|---|---|---|
+| architect | general, reasoning | 128K |
+| reviewer | code, reasoning | 32K |
+| planner | code, reasoning | 64K |
+| researcher | general, reasoning | 128K |
+| modularizer | code, reasoning | 32K |
+| prompt_engineer | code, reasoning | 32K |
+
+Selection priority: `--models` CLI flag → intelligence profiles → cloud proxy → `DEFAULT_MODELS` fallback.
+
+## Reference
+
+- CLI: `scripts/consult --help` for all options
+- Role definitions + selection criteria: `scripts/consult-roles.yaml`
+- Stable API: `scripts/consult_lib/core.py` → `execute_consult()`
+- Cloud model selection: Stargate passthrough `http://localhost:9999/api/select`
+- RAG scopes: `~/.gateway/rag.yaml`
+- Chained consultation: `docs/engram/chained-consultation-division-of-labor.md`
+- Timeout diagnostics helper: `scripts/report-timeout-models` (use `--pipeline code-review` during `/consult-review`)

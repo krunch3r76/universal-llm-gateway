@@ -1,0 +1,32 @@
+---
+description: Gateway doc-check extensions — architecture doc mapping table
+alwaysApply: false
+globs: []
+---
+# Doc Check Extensions (Workspace)
+
+## Coverage Table
+
+| Doc | Covers |
+|---|---|
+| `docs/architecture/overview.md` | System-level: services, roles, request flow |
+| `docs/architecture/stargate.md` | `services/universal-stargate/` |
+| `docs/architecture/gateway.md` | `services/_universal-llm-gateway/` |
+| `docs/architecture/federation.md` | `systems/federation/`, federation config |
+| `docs/architecture/routing.md` | `systems/proxy/`, routing, capacity |
+| `docs/architecture/pipeline-system.md` | `pipelines/`, `systems/pipeline/` |
+| `docs/architecture/libraries.md` | `libs/` |
+| `docs/architecture/event-system.md` | Event factories, contracts, persistence |
+| `docs/architecture/tools.md` | `tools/`, `scripts/` |
+| `docs/architecture/configuration.md` | Config files, env vars, paths |
+
+Use `docs/architecture/README_AI.md` as the routing index.
+
+## Architecture-Relevant Paths
+
+Filter changed files to: `services/`, `libs/`, `tools/`, `scripts/`,
+`pipelines/`, `systems/`.
+
+## Integration with /commit
+
+If invoked from `/commit`: apply targeted `StrReplace` corrections and stage them.

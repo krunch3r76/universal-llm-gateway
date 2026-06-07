@@ -1,0 +1,20 @@
+---
+description: Doc opportunity detection extensions for this workspace
+---
+# Check Doc Opportunities (Workspace)
+
+**Workspace-specific**: Doc opportunity detection additions (no base rule)
+
+## Canonical Doc Location
+
+`docs/architecture/` is the single source of AI-readable architecture documentation.
+Use `docs/architecture/README_AI.md` as the routing index to identify which file covers
+the changed area. Module-level `README_AI.md` files are supplemental deep-dives for
+modules not consolidated into `docs/architecture/` (e.g., `systems/proxy/core/*/README_AI.md`).
+
+## Additional Detection Patterns
+
+| Type | grep Pattern | Required Update |
+|------|-------------|-----------------|
+| Event emit | `publish.*\(['"][A-Z_]+['"]` | EVENT_EMISSION_POINTS + frontmatter |
+| Event subscribe | `subscribe\(['"][A-Z_]+['"]` | EVENT_CONSUMPTION_POINTS + frontmatter |

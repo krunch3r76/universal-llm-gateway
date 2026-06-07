@@ -1,0 +1,163 @@
+---
+description: Architecture documentation maintenance
+globs:
+  - "docs/architecture/**"
+  - "services/**/*.py"
+  - "libs/**/*.py"
+  - "tools/**/*.py"
+  - "scripts/**"
+---
+
+# Architecture Docs Maintenance (Workspace)
+
+## Directory Layout
+
+| Directory | Contents | Write authority |
+|---|---|---|
+| `docs/architecture/*.md` | Subsystem docs (one per overhaul target) | `/overhaul` only — ¬direct edits |
+| `docs/architecture/appendices/` | Cross-cutting reference (config, tools, libs, events) | `/doc-check` factual corrections via `StrReplace` |
+| `docs/architecture/design/` | Historical design docs and proposals | User-directed only |
+
+## Subsystem Docs — Write Authority (CRITICAL)
+
+**Invariant**: ∀ files in `docs/architecture/*.md`: written ONLY via `/overhaul {service_dir}`
+
+The `/overhaul` command runs `doc-generate` (extract docstrings → draft → review → merge).
+Direct writes by the agent — even accurate ones — bypass this pipeline and create:
+- Docs not grounded in source docstrings (will drift silently)
+- No staleness baseline (doc-check can't detect when they go stale)
+- Precedent that undermines the quality pipeline
+
+∀ coverage gap (new subsystem lacks an architecture doc):
+- ✅ Propose `/overhaul {service_dir}` to generate it
+- ✅ Draft goes to `tmp/prompts/{slug}-architecture-draft.md` as input for the overhaul pass
+- ❌ Do NOT write directly to `docs/architecture/`
+
+¬exceptions. If `/doc-check` finds staleness in a subsystem doc, note it in the
+commit body ("docs/architecture/{file}.md may need updating via /overhaul") but
+do NOT edit the file.
+
+## Appendices — Write Authority
+
+**Invariant**: ∀ files in `docs/architecture/appendices/`: targeted `StrReplace` corrections permitted during `/doc-check`
+
+Appendices are cross-cutting reference docs with no single `/overhaul` target
+(configuration, tools, libraries, event system). They are maintained by factual
+corrections when `/doc-check` detects staleness — same scope as the former
+exception clause, but confined to this directory.
+
+- ✅ Targeted `StrReplace` to fix stale paths, renamed signals, removed config keys
+- ❌ Large rewrites or new sections — propose to the user first
+
+## Design Docs — Write Authority
+
+**Invariant**: ∀ files in `docs/architecture/design/`: ¬agent writes unless user-directed
+
+Historical design documents and proposals. Not actively maintained. The agent
+must not edit these unless the user explicitly requests it.
+
+## Canonical Reference
+
+`docs/architecture/` is the single source of AI-readable architecture documentation.
+It is indexed into RAG and consumed by consultation models.
+
+### Subsystem docs (`docs/architecture/*.md`)
+
+| File | Covers | Overhaul target |
+|---|---|---|
+| `overview.md` | System-level: services, roles, request flow | — (system-level) |
+| `stargate.md` | Stargate internals: proxy, routing, lifecycle | `services/universal-stargate/` |
+| `gateway.md` | Gateway: workers, model management, inference | `services/_universal-llm-gateway/` |
+| `federation.md` | Federation: roles, routing, telemetry, config | `systems/federation/` |
+| `routing.md` | Routing + capacity: feasibility, admission, sticky | `systems/routing/` + `systems/proxy/` |
+| `pipeline-system.md` | Pipelines: DAG, handlers, registry, events | `systems/pipeline/` |
+| `handlers.md` | Doc-generate pipeline handlers | `pipelines/doc_generate/handlers/` |
+
+### Appendices (`docs/architecture/appendices/`)
+
+| File | Covers |
+|---|---|
+| `configuration.md` | Config files, env vars, paths |
+| `tools.md` | Tools, scripts, manage TUI |
+| `libraries.md` | Shared libs: purpose, API, patterns |
+| `event-system.md` | Events: contracts, factories, signals, persistence |
+
+### Design docs (`docs/architecture/design/`)
+
+Historical. See `docs/architecture/README_AI.md` for the full list.
+
+## On `/commit` — Architecture Doc Check
+
+`/commit` step 3 invokes `/doc-check`, which detects staleness, coverage gaps,
+and broken references. See `.cursor/commands/doc-check.md` for the full procedure.
+
+Summary: ∀ commit touching `services/`, `libs/`, `tools/`, `scripts/`, `pipelines/`:
+
+**Subsystem docs** (`docs/architecture/*.md`):
+- STALE → note in commit body: "docs/architecture/{file}.md may need updating via /overhaul". ¬edit directly.
+- COVERAGE GAPS → propose `/overhaul` or note the gap
+- BROKEN REFERENCES → note in commit body (same as STALE)
+
+**Appendices** (`docs/architecture/appendices/`):
+- STALE → apply targeted `StrReplace` and stage in same commit
+- BROKEN REFERENCES → fix and stage in same commit
+
+**Design docs** (`docs/architecture/design/`): not checked (historical).
+
+Internal logic changes (bug fix, refactor) → no doc update needed in either category.
+
+## On `/journal-entry` — Architecture Decision Capture
+
+∀ journal entry with domain ∈ {routing, federation, events, pipeline, rag}:
+
+If the journal entry captures an **architectural decision** (not just a bug fix):
+1. Check if `docs/architecture/` reflects the new decision
+2. If not → propose a doc update (don't block the journal entry)
+
+## Skill Docs Staleness
+
+`.cursor/skills/build-pipeline/` documents the pipeline system's public API for agents
+building pipelines. Its reference files track specific source interfaces:
+
+| Skill file | Stale when these change |
+|---|---|
+| `yaml-reference.md` | `systems/pipeline/core/pipeline_config.py`, `systems/pipeline/core/step_config.py` |
+| `handler-reference.md` | `systems/pipeline/core/handlers/builtin/base.py`, `systems/pipeline/core/handlers/protocol.py` |
+| `SKILL.md` | New built-in step types in `systems/pipeline/core/handlers/`, schema version bump |
+
+∀ commit touching the source files above: check if the corresponding skill reference
+file needs updating. Internal refactors (no API change) do not require skill updates.
+
+## Staleness Signals
+
+Every doc references source paths (e.g., `systems/proxy/stargate/proxy.py`).
+
+**Detection**: A referenced path that no longer exists means the doc section is stale.
+**Resolution**: Source code is always authoritative. Update the doc.
+
+## Consultation Awareness
+
+`/consult-plan` and `/consult-review` do NOT inject architecture docs for now —
+docs are outdated and not maintained automatically. Re-enable when curated.
+
+`scripts/consult` (when used with RAG and scope `project`) would inject
+architecture docs; consult-plan uses `--no-rag` to avoid that.
+
+`tools/pipeline_test ask/consult` scopes to research papers and engram — it
+does NOT search architecture docs by default (different purpose: prompt engineering).
+
+## RAG Indexing
+
+`docs/architecture/` is watched by the RAG service (`~/.gateway/rag.yaml`).
+
+RAG scope separation:
+- `scripts/consult` defaults: `docs/architecture`, `docs/vision`, `docs/engram`
+- `tools/pipeline_test` defaults: `docs/research/prompting`, `docs/research/rag-systems`, `docs/engram`
+
+Changes to docs are auto-indexed by the watcher. Manual re-index:
+```bash
+curl -sf -X POST --unix-socket /tmp/universal-protocol/rag.sock \
+  http://localhost/reindex_directory \
+  -H 'Content-Type: application/json' \
+  -d '{"path": "/mnt/torus/projects/universal-llm-gateway/docs/architecture"}'
+```

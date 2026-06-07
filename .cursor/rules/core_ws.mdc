@@ -1,0 +1,68 @@
+---
+description: Core workspace environment and policies
+alwaysApply: true
+---
+# Core (Workspace)
+
+**Extends**: `@system.mdc`
+
+## Environment
+| Venv | PYTHONPATH | Import |
+|---|---|---|
+| `$HOME/.venvs/universal` (Python 3.12) | `libs/` via `sitecustomize.py` | `from process_ipc.core import ...` |
+
+## `tmp/` — Ephemeral
+**Invariant**: ¬persist across sessions, ¬commit. `tmp/prompts/`: specs/handoffs. `tmp/summaries/`: scratch. ∀ durable knowledge → `tasks/journal/`, `docs/`, `.cursor/rules/`, source.
+
+## Observability
+| Layer | Interface | Purpose |
+|---|---|---|
+| **Event Service** (PRIMARY) | `scripts/query-events --op <name>` | query FIRST |
+| **MCP** | `observability(...)` | agent access |
+
+## Logging
+**Invariant**: `from universal_logging import get_logger; logger = get_logger(__name__)`. ¬`import logging`/`logging.getLogger(...)`. Level constants re-exported from `universal_logging`.
+
+## Subagent Model Selection (quick ref)
+
+| Model | MCP in Cursor subagent? | Notes |
+|---|---|---|
+| Auto Efficiency | Yes | Mechanical batch work (or `gpt-5.3-codex` if explicit slug needed) |
+| `claude-4.6-sonnet-medium-thinking` | Yes | **Default** for general subagent work in this workspace (MCP-capable) |
+| `composer-2.5` | Yes | Code-composition tasks: codegen, refactors, implementation against a spec |
+| `grok-4.3` | **No** | Specialized only: non-MCP frontier dispatch with pre-staged corpus/context inline |
+| `gpt-5.5-high` | Yes | High-rework territory |
+| `claude-opus-4-7-thinking-xhigh` | Yes | Last resort / cross-agent protocol |
+
+**Invariant**: Default for general subagent work in this workspace: `claude-4.6-sonnet-medium-thinking` (MCP-capable). Use `grok-4.3` only for non-MCP frontier dispatch tasks where corpus is pre-staged inline.
+
+Full policy: `subagent-strategy.mdc`.
+
+## Logs (fallback — Event Service first)
+| Service | Path |
+|---|---|
+| Gateway | `/tmp/logs/universal-llm-gateway/` |
+| Stargate | `/tmp/logs/universal-stargate/` |
+| RAG | `/tmp/logs/universal-rag/rag.log` |
+| Workers | `/tmp/llm_gateway/worker-logs/{model}.log` |
+
+## Ecosystem
+Sole maintainers: gateway, stargate, inference_djinn, process_ipc, event_bus, logging, transport, protocol
+
+## User Approval
+- **Allowed**: read, analyze, search, propose; service lifecycle via `manage` MCP; routine git commits
+- **Forbidden**: `systemctl`, `pkill`, `docker restart/stop`; shell mutations outside edit/commit flow
+- **Gated**: arc worktree→`master` integration requires operator approval (`git_integrate`/`git_land`; `decision:lead-agent-git-integration`). Routine in-tree commits: NOT gated.
+
+## Output
+¬summaries unless asked. Artifacts only (code, UML, verification).
+
+## Code Style
+Naming: verbs (`calculate_x`), nouns (`pending_requests`), predicates (`is_loaded`). Comments: "why" only. Symbols: ∀ ∃ ∃! ∈ ∉ ⊆ ∪ ∩ ∖ ∅ ∧ ∨ ¬ ⟹ ⟺
+
+## Workflow
+1. Events first (`observability` MCP or `scripts/query-events`); consider vocabulary updates when proposing changes
+2. DELETE → IMPLEMENT → VERIFY: `ruff check --select=UP --fix && ruff format && compileall && ruff check`; tests changed → load `testing_ws.mdc`
+
+## Session Close
+See `session-close.mdc`.

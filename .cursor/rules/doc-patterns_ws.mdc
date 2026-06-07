@@ -1,0 +1,47 @@
+---
+description: Workspace-specific documentation source patterns
+globs:
+  - "**/README_AI.md"
+  - "**/README.md"
+---
+# Documentation Patterns (Workspace)
+
+**Extends**: `doc-patterns.mdc`
+
+## Source Pattern Examples
+
+### Module Docstring
+```python
+"""
+Consensus verification handler.
+
+INVARIANTS:
+∀ statement s, verifier v: s.originator ≠ v
+∀ result: vote ∈ {TRUE, FALSE, ABSTAIN}
+
+EVENTS: VERIFICATION_COMPLETE
+"""
+```
+
+### Dataclass Contract
+```python
+@dataclass(slots=True, kw_only=True)
+class StatementCandidate:
+    """
+    Atomic statement for verification.
+    
+    statement_id: "{step}:{idx}" - stable, unique
+    domain: ∈ ALLOWED_DOMAINS
+    """
+    statement_id: str
+    text: str
+    domain: str
+```
+
+### Inline Invariant
+```python
+def verify(self, stmt: StatementCandidate, verifier: str) -> Vote:
+    # INVARIANT: ∀ s, v: s.originator ≠ v (independence)
+    if stmt.provenance.originator == verifier:
+        raise IndependenceViolation(stmt, verifier)
+```

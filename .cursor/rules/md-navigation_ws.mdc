@@ -1,0 +1,26 @@
+---
+description: Markdown section navigation — md_list / md_read / md_replace for .md and .mdc files. Load before reading any large .md/.mdc file when a single section answers the question.
+alwaysApply: true
+---
+# Markdown Navigation
+
+**Invariant**: ∀ `.md`/`.mdc` reads via `fs`: prefer section ops over full-file reads. Full read only when whole-file coverage is the actual need.
+
+**Workspace SKILL.md invariant**: ∀ skill file under `universal-llm-gateway/.cursor/skills/`: call `md_list` first to get the TOC, then `md_read` for the section(s) needed. ¬ full-file read.
+
+| Op | Purpose | Args |
+|---|---|---|
+| `md_list` | TOC — heading tree (use this first) | `path` |
+| `md_read` | Read one section by heading | `path`, `section` |
+| `md_replace` | Replace section body | `path`, `section`, `content` |
+| `md_append` | Append to section | `path`, `section`, `content` |
+| `md_delete` | Delete section + body | `path`, `section` |
+
+Works on both sandboxes:
+
+```
+fs(sandbox="workspaces", op="md_list", path="universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md")
+fs(sandbox="workspaces", op="md_read", path="universal-llm-gateway/.cursor/skills/service-lifecycle/SKILL.md", section="Post-code-change loop")
+fs(sandbox="cortex",     op="md_list", path="agent-skills/consult-routing.md")
+fs(sandbox="cortex",     op="md_read", path="agent-skills/consult-routing.md", section="Decision table")
+```
