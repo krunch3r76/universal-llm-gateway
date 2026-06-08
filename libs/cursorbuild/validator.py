@@ -5,10 +5,11 @@ from __future__ import annotations
 import functools
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass
 from typing import Literal
 
+from admission_common.prompt_safety import forbidden_token_reason
+from admission_common.tree_probe import probe_working_tree
 from universal_logging import get_logger
 
 from cursorbuild.constants import (
@@ -46,22 +47,6 @@ def _resolve_cursor_agent_bin() -> str | None:
 
 def _reset_cursor_agent_cache_for_tests() -> None:
     _resolve_cursor_agent_bin.cache_clear()
-
-
-def _git_status_pre(cwd: str) -> tuple[str, bool]:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", cwd, "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
-        logger.warning("git status probe failed for cwd=%s: %s", cwd, exc)
-        return "", True
-    status = proc.stdout
-    return status, bool(status.strip())
 
 
 def validate_dispatch(  # noqa: PLR0911
@@ -104,18 +89,15 @@ def validate_dispatch(  # noqa: PLR0911
         )
     if not os.path.isdir(cwd):
         return _reject("bad_cwd", f"cwd is not a directory: {cwd!r}")
-    for token in FORBIDDEN_ARGV_TOKENS:
-        if token in prompt:
-            return _reject(
-                "forbidden_prompt_token",
-                f"prompt must not contain forbidden argv token {token!r}",
-            )
+    token_reason = forbidden_token_reason(prompt, FORBIDDEN_ARGV_TOKENS)
+    if token_reason:
+        return _reject("forbidden_prompt_token", token_reason)
     try:
         _SIDECAR_DIR.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return _reject("sidecar_unwritable", f"cannot create sidecar dir: {exc}")
 
-    git_pre, dirty = _git_status_pre(cwd)
+    git_pre, dirty = probe_working_tree(cwd)
     if mode == "edit" and dirty:
         return _reject(
             "dirty_cwd",

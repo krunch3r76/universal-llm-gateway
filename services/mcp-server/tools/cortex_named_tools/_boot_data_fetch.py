@@ -172,7 +172,7 @@ def build_futures_spec(
     )
     futures_spec["temporal"] = (wrapped_cx, "GET", f"/boot-temporal?{temporal_qs}")
 
-    # Reflective journal is seat-keyed (e.g. `claude-web`, `grok-direct`,
+    # Reflective journal is seat-keyed (e.g. `claude-web`, `grok-cursor`,
     # `claude-cursor`) — pass the full seat slug. Stripping to the family
     # slug returned 0 rows for every seat in the current data set
     # (todo:cortex-boot-reflective-journal-seat-lookup, discovered
@@ -230,6 +230,20 @@ def build_futures_spec(
         # read-only: fetch non-superseded self-reflection assertions
         futures_spec["self_reflections"] = (wrapped_cx, "GET", f"/assertions?{refl_qs}")
 
+    principal = profile.get("principal")
+    if principal:
+        principal_qs = urlencode(
+            {
+                "principal": principal,
+                "active_limit": profile.get("principal_active_limit", 5),
+            }
+        )
+        futures_spec["principal_context"] = (
+            wrapped_cx,
+            "GET",
+            f"/boot-principal-context?{principal_qs}",
+        )
+
     return futures_spec
 
 
@@ -272,6 +286,11 @@ def extract_boot_results(
     )
     in_flight_todos: list[dict[str, Any]] = (
         recent_work_raw.get("in_flight_todos", [])
+        if isinstance(recent_work_raw, dict)
+        else []
+    )
+    open_arcs: list[dict[str, Any]] = (
+        recent_work_raw.get("open_arcs", [])
         if isinstance(recent_work_raw, dict)
         else []
     )
@@ -321,6 +340,11 @@ def extract_boot_results(
     # In-flight async dispatches — already a structured list from event service.
     async_dispatches: list[dict[str, Any]] = safe_list(raw.get("async_dispatches", []))
 
+    principal_context: dict[str, Any] | None = None
+    _pc_raw = raw.get("principal_context")
+    if isinstance(_pc_raw, dict) and _pc_raw.get("principal_id"):
+        principal_context = _pc_raw
+
     return {
         "sessions": sessions,
         "continuity": raw.get("continuity")
@@ -339,9 +363,11 @@ def extract_boot_results(
         "skills_unpartitioned_count": skills_unpartitioned,
         "plan_phases": plan_phases,
         "in_flight_todos": in_flight_todos,
+        "open_arcs": open_arcs,
         "temporal_active": temporal_active,
         "expired_unresolved": expired_unresolved,
         "review_total": review_total,
         "audit_counters": audit_counters,
         "async_dispatches": async_dispatches,
+        "principal_context": principal_context,
     }

@@ -152,7 +152,6 @@ OVERRIDES: dict[str, list[str]] = {
     "agent_skill:agent-build": [
         "claude-web",
         "claude-cursor",
-        "grok-direct",
         "gpt-cursor",
         "subagent",
     ],

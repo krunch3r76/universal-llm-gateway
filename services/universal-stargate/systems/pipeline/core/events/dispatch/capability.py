@@ -48,7 +48,8 @@ def PipelineFrontierCapabilityResolved(  # noqa: N802
     ``resolved_fields`` payload is ``DispatchResolution.resolved_event_fields()``
     verbatim (G2 pinned): ``max_output_requested``, ``max_output_resolved``,
     ``max_output_decision``, ``max_output_floor``, ``max_output_ceiling``,
-    ``reasoning_budget``.
+    ``reasoning_budget``, ``reasoning_effort``, ``reasoning_native``,
+    ``reasoning_value_kind``, and (adaptive-only) ``reasoning_output_config_effort``.
 
     Payload:
         execution_id: Pipeline execution UUID

@@ -19,6 +19,7 @@
 | `ulg-architecture` | `ulg-architecture.md` |
 | `build-pipeline` | `build-pipeline/` (SKILL + reference files) |
 | `refine-pipeline` | `refine-pipeline.md` |
+| `friction-review` | `friction-review.md` — friction log vs codified bug ticket (`team_dispatch` implement handoff) |
 
 ## Cortex SOT (boot-indexed — stub in `.cursor/skills/`)
 

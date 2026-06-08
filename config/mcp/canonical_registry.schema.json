@@ -103,7 +103,7 @@
         },
         "seat_visibility": {
           "type": "array",
-          "items": {"type": "string", "enum": ["mcp", "mcp_grok"]},
+          "items": {"type": "string", "enum": ["mcp", "mcp_claude"]},
           "minItems": 1,
           "uniqueItems": true
         },

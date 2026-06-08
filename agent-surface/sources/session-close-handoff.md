@@ -19,7 +19,32 @@ Boot does **not** auto-surface handoffs (assertion 8384). Without an explicit an
   — or `cortex_boot(agent="{agent}", transcript_id="{session_id}")`
 ```
 
-Then § Outstanding work and § Next steps (poll hints, bus threads, todos).
+Then § State at close, § Deferred inventory, § Await operator (see below). ¬ § Next
+steps with imperatives.
+
+## Invariant — handoff ≠ dispatch (MANDATORY)
+
+A **continuation handoff** orients the **next** session — decisions, artifacts,
+deferred inventory. It is **not** a work order.
+
+| | **Handoff (continuation)** | **Dispatch (execution)** |
+|---|---|---|
+| Purpose | State at close + what remains open | Order work now |
+| Authority | Operator's **next** explicit message | `/agent-bus {n}`, `team_dispatch`, implement packet, "this chat is thread X" |
+| Pickup agent | Load anchor + transcript → **stop** → await operator | Act on the order |
+
+**Authoring `handoff_prompt`:** state and pointers only. **Forbidden:** "first
+action," "execute," "implement," "parallelize," "proceed to," poll/delegate
+imperatives, multi-thread runbooks. **Required closing line:**
+`**Await operator:**` — which thread/seat/slice (if any) is chosen in the
+operator's **next** message, not inferred from the inventory.
+
+**Deferred inventory** (not a todo list): name threads/todos/artifacts as nouns —
+e.g. "thread 1340 — compact boot field 2; field 1 gated" — without instructing
+the pickup agent to open or implement them.
+
+Dispatch happens when the operator issues a **separate** execution directive
+after pickup. Recency of bus threads is ¬ authority (see `handoff-pickup_ws.mdc`).
 
 ## Depth
 
@@ -48,7 +73,9 @@ Prefer file-backed derivation when the handoff body is long:
 
 | Bad | Good |
 |---|---|
-| Poll thread N only; no transcript ref (→ 422 `handoff.missing_transcript_anchor`) | Transcript anchor first, then poll/delegate steps |
+| Poll thread N only; no transcript ref (→ 422 `handoff.missing_transcript_anchor`) | Transcript anchor first, then state + deferred inventory |
 | Repeat decisions/files from summary inline | Point at transcript file; handoff stays short |
 | `transcript_depth=none` + handoff | `light` + handoff (422 otherwise) |
+| "First action: `/agent-bus 1340`"; "parallelize"; "proceed to implement" (handoff as dispatch) | `**Await operator:**` + deferred inventory; dispatch is a later operator message |
+| Multiple threads in one imperative runbook | Separate arcs named in inventory; one thread per operator-directed session |
 <!-- /target:* -->

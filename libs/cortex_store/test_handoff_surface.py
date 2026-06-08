@@ -10,6 +10,7 @@ from cortex_store.handoff_derivation import (
 from cortex_store.handoff_surface import (
     apply_handoff_read_projection,
     build_handoff_surface,
+    build_handoff_surface_preview,
     effective_handoff_derivation,
     handoff_surface_action_hints,
 )
@@ -95,3 +96,41 @@ def test_apply_read_projection_enriches_attributes_and_hints() -> None:
     assert projected["attributes"]["handoff_surface"]["verified"] is False
     assert hints is not None
     assert hints[0].category == "handoff_unverified"
+
+
+def test_surface_preview_unverified_for_detached_string() -> None:
+    # Write-time mirror: an inline prompt with detached_string provenance and
+    # no source file is the exact symptom the close advisory must surface.
+    preview = build_handoff_surface_preview(
+        "Inline detached handoff.",
+        {
+            "derivation": DERIVATION_DETACHED_STRING,
+            "source_file": None,
+            "source_file_sha256": None,
+        },
+    )
+    assert preview is not None
+    assert preview["verified"] is False
+    assert preview["flag"] == "unverified"
+    assert preview["derivation"] == DERIVATION_DETACHED_STRING
+
+
+def test_surface_preview_none_for_verified_section() -> None:
+    # Verified (file-backed marker) path carries no advisory.
+    assert (
+        build_handoff_surface_preview(
+            "Continue from marker.",
+            {
+                "derivation": DERIVATION_SECTION,
+                "source_file": "notes/system/sessions/h.md",
+                "source_file_sha256": "sha256:abc",
+            },
+        )
+        is None
+    )
+
+
+def test_surface_preview_none_without_prompt() -> None:
+    # No handoff supplied → no advisory regardless of provenance.
+    assert build_handoff_surface_preview(None, None) is None
+    assert build_handoff_surface_preview("", None) is None

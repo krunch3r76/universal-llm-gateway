@@ -1,4 +1,4 @@
-"""MCP request lifecycle middleware — emits ``mcp.request.*`` signals for ``/mcp`` and ``/mcp/grok``.
+"""MCP request lifecycle middleware — emits ``mcp.request.*`` signals for ``/mcp``.
 
 Sits inside the auth middleware so that rejected OAuth tokens terminate before
 ``mcp.request.started`` fires.  Includes ``auth_mode`` from the ASGI scope
@@ -12,9 +12,8 @@ both log lines and event payloads, enabling per-tool observability.
 ``seat_class`` field: derived from the request path and included in every event
 payload and in the request-scoped metadata (via ``bind_request``).  Allows
 per-endpoint event queries, e.g.
-``scripts/query-events --op mcp.tool.call.error --filter seat_class=grok``.
+``scripts/query-events --op mcp.tool.call.error --filter seat_class=claude``.
   /mcp       → ``seat_class: "claude"``  (Cursor / Anthropic API surface)
-  /mcp/grok  → ``seat_class: "grok"``   (grok-CLI flat-manifest surface)
   other      → ``seat_class: "unknown"``
 """
 
@@ -37,20 +36,16 @@ _SUSPECTED_TIMEOUT_MAX_RESPONSE_BYTES = 100
 
 # Paths handled by this middleware; everything else is passed through unchanged.
 _MCP_CLAUDE_PATH = "/mcp"
-_MCP_GROK_PREFIX = "/mcp/grok"
 
 
 def _seat_class_from_path(path: str) -> str:
     """Return the seat_class tag for the given request path.
 
-    /mcp        → "claude"   (Cursor / Anthropic API surface)
-    /mcp/grok*  → "grok"    (grok-CLI flat-manifest surface)
-    other       → "unknown"
+    /mcp    → "claude"   (Cursor / Anthropic API surface)
+    other   → "unknown"
     """
     if path == _MCP_CLAUDE_PATH:
         return "claude"
-    if path == _MCP_GROK_PREFIX or path.startswith(_MCP_GROK_PREFIX + "/"):
-        return "grok"
     return "unknown"
 
 
@@ -169,7 +164,7 @@ def _is_suspected_fs_timeout(
 
 
 class McpRequestEventsMiddleware:
-    """Emit ``mcp.request.*`` signals for authenticated ``/mcp`` and ``/mcp/grok`` traffic."""
+    """Emit ``mcp.request.*`` signals for authenticated ``/mcp`` traffic."""
 
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -181,7 +176,7 @@ class McpRequestEventsMiddleware:
 
         request = Request(scope, receive)
         path = request.url.path
-        if path != _MCP_CLAUDE_PATH and not path.startswith(_MCP_GROK_PREFIX):
+        if path != _MCP_CLAUDE_PATH:
             await self._app(scope, receive, send)
             return
 
@@ -196,9 +191,6 @@ class McpRequestEventsMiddleware:
         # Mcp-Session-Id: client-side session token (stable across tool calls
         # within one session even in stateless_http=True mode).
         mcp_session_id = (request.headers.get("mcp-session-id", "") or "").strip()
-        # Dispatch-scoped attribution (C.1-i): present when grok-build-dispatch
-        # bearer was admitted with X-Grokbuild-Dispatch-Id (set by AuthMiddleware).
-        dispatch_id = str(scope.get("grokbuild_dispatch_id", "") or "")
         t0 = monotonic_now()
         mcp_method = ""
         tool_name = ""
@@ -235,7 +227,6 @@ class McpRequestEventsMiddleware:
             "seat_class": seat_class,
             **({"tool_name": tool_name} if tool_name else {}),
             **({"caller_identity": caller_identity} if caller_identity else {}),
-            **({"dispatch_id": dispatch_id} if dispatch_id else {}),
         }
 
         record("mcp.request.started", **started_payload)
@@ -300,7 +291,6 @@ class McpRequestEventsMiddleware:
             caller_identity=caller_identity or None,
             oauth_client_id=oauth_client_id or None,
             mcp_session_id=mcp_session_id or None,
-            dispatch_id=dispatch_id or None,
             **request_tool_context,
         ):
             try:
@@ -359,7 +349,6 @@ class McpRequestEventsMiddleware:
                     "seat_class": seat_class,
                     **({"tool_name": tool_name} if tool_name else {}),
                     **({"caller_identity": caller_identity} if caller_identity else {}),
-                    **({"dispatch_id": dispatch_id} if dispatch_id else {}),
                 }
                 record("mcp.request.completed", **completed_payload)
                 tdone: dict[str, Any] = {

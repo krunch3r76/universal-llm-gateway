@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query
 
 from ...db import cortex_conn
 from ...db import query as db_query
+from ._open_arcs import fetch_open_arcs
 
 router = APIRouter(tags=["boot"])
 
@@ -42,6 +43,9 @@ def get_boot_recent_work(
     todo_limit: int = Query(
         5, ge=1, le=20, description="Max in-flight todos to return"
     ),
+    arc_limit: int = Query(
+        5, ge=1, le=10, description="Max open/in_progress task arcs to return"
+    ),
 ) -> dict[str, Any]:
     """Recent work trail for boot briefings.
 
@@ -56,6 +60,7 @@ def get_boot_recent_work(
     with cortex_conn() as conn:
         phase_rows = db_query(conn, _BOOT_PLAN_PHASES_SQL, (phase_limit,))
         todo_rows = db_query(conn, _BOOT_IN_FLIGHT_TODOS_SQL, (todo_limit,))
+        open_arcs = fetch_open_arcs(conn, arc_limit=arc_limit)
 
     plan_phases = [
         {
@@ -85,4 +90,5 @@ def get_boot_recent_work(
     return {
         "plan_phases": plan_phases,
         "in_flight_todos": in_flight_todos,
+        "open_arcs": open_arcs,
     }

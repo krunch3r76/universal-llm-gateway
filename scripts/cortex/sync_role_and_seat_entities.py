@@ -32,7 +32,8 @@ import httpx
 
 sys.path.insert(0, "libs/")
 
-from agent_seat.profiles import derive_inline_only, get_profile, load_roles
+from agent_seat.profiles import get_profile, load_roles
+from agent_seat.role_entity_sync import build_role_execution_attributes
 from role_lint import RoleLintError, lint_role_payload
 
 _CORTEX_BASE = "http+unix://%2Ftmp%2Funiversal-protocol%2Fcortex-api.sock"
@@ -67,40 +68,6 @@ def build_family_entities() -> dict[str, dict[str, object]]:
     }
 
 
-def _role_execution_attributes(
-    role_name: str, role: object, profile: object
-) -> dict[str, object]:
-    """Execution-contract fields merged into Cortex ``role:`` attributes."""
-    inline = derive_inline_only(profile)
-    required_tools: list[str] = [] if inline else ["cortex", "fs", "agent_bus"]
-    verification: list[dict[str, str]] = []
-    if role_name == "reviewer":
-        verification = [
-            {"skill": "skill:named-entity-verification-gate", "hook": "admit"}
-        ]
-    attrs: dict[str, object] = {
-        "purpose": role.description,
-        "required_tools": required_tools,
-        "mcp_required": not inline,
-        "verification": verification,
-        "failure_mode": {
-            "on_tool_unavailable": "fail_closed",
-            "on_model_unavailable": "escalate_to_operator",
-            "on_uncertainty": "escalate_to_operator",
-            "on_contract_violation": "reject_dispatch",
-        },
-        "output_schema": [
-            "markdown_response",
-            "optional_cortex_assertions_with_evidence_uris",
-        ],
-        # Explicit nulls clear stale role-level constraints from prior syncs.
-        # Roles are model-agnostic; profile constraints belong to concrete seats.
-        "capability_tier": None,
-        "required_model_substring": None,
-    }
-    return attrs
-
-
 def build_role_entities() -> dict[str, dict[str, object]]:
     """Generate role:* entity payloads from load_roles()."""
     out = {}
@@ -114,7 +81,7 @@ def build_role_entities() -> dict[str, dict[str, object]]:
             "allowed_models": list(role.allowed_models),
             "frontier_kind": provider,
         }
-        attrs.update(_role_execution_attributes(role_name, role, profile))
+        attrs.update(build_role_execution_attributes(role_name, role, profile))
         out[f"role:{role_name}"] = {
             "type": "role",
             "name": role_name.title(),

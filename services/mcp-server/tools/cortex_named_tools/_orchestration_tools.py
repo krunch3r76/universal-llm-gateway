@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_seat.profiles import resolve_seat
+from agent_seat.profiles import resolve_seat, seat_to_family
 from agent_seat.registry import normalize_agent_slug
 
 from ._boot_diff import build_boot_diff
@@ -12,9 +12,6 @@ from ._boot_runner import BootMode, run_cortex_boot
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
-
-
-_KNOWN_FAMILIES = frozenset({"claude", "gpt", "grok", "gemini"})
 
 
 def _parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
@@ -25,9 +22,12 @@ def _parse_seat_slug(slug: str) -> tuple[str | None, str | None]:
     """
     if not slug:
         return None, None
+    family = seat_to_family(slug)
+    if family is None:
+        return None, None
     parts = slug.split("-", 1)
-    if len(parts) == 2 and parts[0] in _KNOWN_FAMILIES:
-        return parts[0], parts[1]
+    if len(parts) == 2:
+        return family, parts[1]
     return None, None
 
 
@@ -40,7 +40,7 @@ def _resolve_boot_family_platform(
     """Map boot call axes to canonical (family, platform).
 
     ``agent`` is the primary seat slug (e.g. ``cursor`` → ``claude-cursor``,
-    ``grok-direct``). Explicit ``family`` / ``platform`` apply only when
+    ``grok-cursor``). Explicit ``family`` / ``platform`` apply only when
     ``agent`` is absent or does not parse as ``{family}-{platform}``.
     """
     if agent:
@@ -63,6 +63,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         role: str | None = None,
         transcript_id: str = "",
         views: list[str] | None = None,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Slim boot briefing for session start. Returns a compact briefing card
         (soft target ≤ ~8KB inline) with priority signals and a section manifest for on-demand pulls.
@@ -81,7 +82,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         contents) is NOT inlined — pull on demand via manifest hints.
 
         Args:
-          agent         — seat slug (primary): cursor, claude-web, grok-direct, etc.
+          agent         — seat slug (primary): cursor, claude-web, grok-cursor, etc.
                           Legacy aliases (cursor → claude-cursor) normalize via
                           agent_seat.registry. When set, overrides family/platform
                           unless the slug does not parse as {family}-{platform}.
@@ -106,6 +107,11 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           edges) plus a retrieval hint. No prose is inlined (§C.3). The
                           section_manifest includes a render_subgraph entry per view for
                           on-demand full materialization (§C.4).
+          principal     — optional principal entity_id (e.g. person:kaywan-mansubi).
+                          Projects curated fields 1+2 at the card head via
+                          GET /boot-principal-context. Field 1 (durable_identity) renders
+                          only when attributes.durable_identity is set on the entity;
+                          field 2 is legal_matter:* temporally active rows only (F3 allowlist).
 
         Key response fields:
           session_id             — server-minted ID; hold for entire session
@@ -122,6 +128,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             role=role,
             transcript_id=transcript_id,
             views=views,
+            principal=principal,
         )
 
     @mcp.tool(title="Boot Inspect")
@@ -133,6 +140,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
         transcript_id: str = "",
         diff_with: str = "",
         views: list[str] | None = None,
+        principal: str | None = None,
     ) -> dict[str, Any]:
         """Read-only inspection of the boot surface without boot side effects.
 
@@ -160,6 +168,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
             transcript_id=transcript_id,
             mode=BootMode.INSPECT,
             views=views,
+            principal=principal,
         )
         if not diff_with:
             return primary

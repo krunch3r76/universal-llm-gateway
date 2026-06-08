@@ -28,8 +28,6 @@ _PROMPT_BATTERY: list[tuple[str, str, str]] = [
     # fs (16 ops: read, write, append, list, delete, ...)
     ("read the file at workspaces/universal-llm-gateway/docs/VISION.md", "fs", ""),
     ("write a markdown file to the cortex sandbox", "fs", ""),
-    # grokbuild (6 ops: build, build_status, fetch_result, worktree_create, ...)
-    ("create a grokbuild worktree for the feature branch", "grokbuild", ""),
     # manage (5 ops: health, rebuild, restart, status, wait_healthy)
     ("rebuild and restart the mcp service", "manage", ""),
     ("check if stargate is healthy and wait until it is", "manage", ""),

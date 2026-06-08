@@ -247,3 +247,27 @@ def resolve_seat(
     Default: family → claude, platform → cursor.
     """
     return family or _DEFAULT_FAMILY, platform or _DEFAULT_PLATFORM
+
+
+@functools.cache
+def known_families() -> frozenset[str]:
+    """Families present in the agents.yaml profile registry (e.g. claude, gpt, grok, gemini)."""
+    return frozenset(family for family, _platform in load_profiles())
+
+
+def seat_to_family(slug: str) -> str | None:
+    """Project a seat slug to its model family (provenance granularity).
+
+    ``claude-cursor`` → ``claude``; ``grok-cursor`` → ``grok``. Returns the
+    input unchanged when it is already a bare family. Returns None when the
+    leading token is not a registered family — caller decides reject vs pass.
+    Routing/operational identity keeps the full seat; this projection is for
+    knowledge provenance (``seeded_by``) only.
+    """
+    if not slug:
+        return None
+    families = known_families()
+    if slug in families:
+        return slug
+    head = slug.split("-", 1)[0]
+    return head if head in families else None

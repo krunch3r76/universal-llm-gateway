@@ -180,6 +180,11 @@ class SessionCloseResponse(BaseModel):
     # v1.3.1 Path 3 advisory (non-blocking): normalization refusals detected
     # in session-written assertions via the ledger. Never causes 422.
     audit_warnings: list[dict[str, Any]] | None = None
+    # Write-time mirror of the read-side ``attributes.handoff_surface`` trust
+    # block: populated only when a supplied handoff_prompt will read back as
+    # unverified/invalid (inline prompt with no file-backed handoff_source_path).
+    # Null on the verified path and when no handoff is supplied. Never blocks.
+    handoff_surface_preview: dict[str, Any] | None = None
     debrief_turn_number: int | None = None
     debrief_status: (
         Literal["posted", "skipped_existing", "failed", "disabled"] | None

@@ -1,0 +1,8 @@
+{
+  "source_ref": "todo:todo-plan-threshold-trip",
+  "door": "todo",
+  "expected_classification": "match",
+  "legacy_route": {"gated": true},
+  "legacy_closeout_mutation": null,
+  "_comment": "todo tripping Todo→Plan threshold → gated/coordinator not silent single"
+}

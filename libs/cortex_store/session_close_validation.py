@@ -276,6 +276,7 @@ def _validate_session_close_args(
     handoff_prompt: str | None = None,
     handoff_source_path: str | None = None,
     emit_rejected: bool = True,
+    skip_handoff_depth_check: bool = False,
 ) -> dict[str, Any] | None:
     """Lightweight arg-presence + session_id pattern + summary length gate.
 
@@ -293,7 +294,9 @@ def _validate_session_close_args(
     neither source nor transcript entity is written (journal row only).
     Cursor passes the path at verbatim; web passes markdown at verbatim.
 
-    Handoff at ``none`` is rejected (``handoff.requires_transcript_entity``).
+    Handoff at ``none`` is rejected (``handoff.requires_transcript_entity``)
+    unless ``skip_handoff_depth_check=True`` (used by dry_run preview, which
+    does not write and therefore does not need a transcript entity).
     """
     required = {
         "session_id": session_id,
@@ -317,7 +320,7 @@ def _validate_session_close_args(
         handoff_prompt=handoff_prompt,
         handoff_source_path=handoff_source_path,
     )
-    if handoff_reject is not None:
+    if handoff_reject is not None and not skip_handoff_depth_check:
         if emit_rejected and session_id and agent:
             _emit_rejected(
                 handoff_reject["reason"],

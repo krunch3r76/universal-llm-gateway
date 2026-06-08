@@ -56,9 +56,7 @@ def test_status_is_two_state_only():
 
     # Qualifying reply lands → complete.
     replied = [_turn(1, "cursor"), _turn(2, "claude-web")]
-    assert (
-        derive_status(thread, replied, after_turn=1, completion=comp) == "complete"
-    )
+    assert derive_status(thread, replied, after_turn=1, completion=comp) == "complete"
 
 
 def test_suggested_next_names_consult_turn_not_pointer():

@@ -21,7 +21,7 @@ from model_id import ModelId
 NATIVE_PROVIDER_KEYS = frozenset({"anthropic", "xai", "openai", "google"})
 
 # xAI effort-tier encoding — suffix appended to model ID out-of-band so that
-# callers (grok CLI, grokbuild) that cannot pass reasoning.effort directly can
+# callers (e.g. grok CLI) that cannot pass reasoning.effort directly can
 # encode the desired tier in the stanza model name.
 # Shared by native_routes, cloud_proxy, and catalog synthesis.
 _EFFORT_SUFFIX = "__effort_"

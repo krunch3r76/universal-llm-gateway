@@ -27,25 +27,6 @@ CallMcpTool(server="user-vortex", toolName="agent_bus", arguments={
 })
 ```
 <!-- /target:cursor -->
-<!-- target:grok-direct -->
-# MCP Tool Awareness
-
-## Calling Convention
-
-All MCP tools are called natively in grok-direct — no `CallMcpTool(...)` wrapper.
-Shorthand forms used in rules and docs are direct call syntax:
-
-- `fs(sandbox="cortex", op="read", path="...")` — filesystem operations
-- `cortex(tool="entities", arguments='{"type": "decision", "limit": 20}')` — cortex operations
-- `agent_bus(tool="threads", arguments='{"status": "active"}')` — agent bus operations
-
-Dispatch-style `arguments` is always a **JSON string** on the wire — never a bare
-object. After `team_dispatch(op=handoff)`, use `poll_hint.arguments_json` for MCP
-`agent_bus` calls. Full shape: `agent-skills/dispatch-shape.md`.
-
-When rules or docs reference `CallMcpTool(server="user-vortex", toolName=X,
-arguments=A)`, translate to native `X(A)` call shorthand.
-<!-- /target:grok-direct -->
 <!-- target:* -->
 ## fs — Markdown Ops (PRIMARY)
 

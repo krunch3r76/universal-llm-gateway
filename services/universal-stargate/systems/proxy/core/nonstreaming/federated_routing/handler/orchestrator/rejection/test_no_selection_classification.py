@@ -9,9 +9,7 @@ _stargate_root = Path(__file__).resolve().parents[8]
 if str(_stargate_root) not in sys.path:
     sys.path.insert(0, str(_stargate_root))
 
-_constraint_mod_path = (
-    Path(__file__).resolve().parents[4] / "constraint_retryable.py"
-)
+_constraint_mod_path = Path(__file__).resolve().parents[4] / "constraint_retryable.py"
 _spec = importlib.util.spec_from_file_location(
     "constraint_retryable_classification_test", _constraint_mod_path
 )

@@ -22,6 +22,7 @@ from .handoff_derivation import (
 from .handoff_marker import extract_handoff_marker_region
 from .handoff_paths import normalize_handoff_source_path, sha256_bytes, sha256_text
 from .handoff_provenance import build_handoff_provenance
+from .handoff_surface import build_handoff_surface_preview
 from .session_close_validation import build_validation_error
 
 
@@ -364,6 +365,9 @@ def handoff_dry_run_preview(
     return {
         "derived_handoff_prompt": resolution.derived_handoff_prompt,
         "handoff_provenance_preview": resolution.provenance,
+        "handoff_surface_preview": build_handoff_surface_preview(
+            resolution.handoff_prompt, resolution.provenance
+        ),
         "handoff_valid": resolution.handoff_valid,
         "findings": findings,
     }

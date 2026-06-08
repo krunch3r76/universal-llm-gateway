@@ -47,7 +47,9 @@ def _parse_trigger_line(text: str) -> str | None:
 def _resolve_skill_file(source_uri: str | None, slug: str) -> Path | None:
     if source_uri:
         raw = source_uri.removeprefix("cortex://")
-        candidate = Path(source_uri) if Path(source_uri).is_absolute() else _FILES_ROOT / raw
+        candidate = (
+            Path(source_uri) if Path(source_uri).is_absolute() else _FILES_ROOT / raw
+        )
         if candidate.is_file():
             return candidate
     fallback = _FILES_ROOT / "agent-skills" / f"{slug}.md"

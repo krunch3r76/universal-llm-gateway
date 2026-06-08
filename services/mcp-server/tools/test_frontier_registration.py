@@ -91,16 +91,27 @@ def test_team_dispatch_op_accepts_handoff() -> None:
 
 
 def test_team_dispatch_handoff_params_present() -> None:
-    """Handoff-only params packet_path and subject are on the team_dispatch signature."""
+    """Handoff-only params packet_path, source_ref, and subject are on the signature."""
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
 
     sig = inspect.signature(recorder.functions["team_dispatch"])
     assert "packet_path" in sig.parameters, "packet_path missing from team_dispatch"
+    assert "source_ref" in sig.parameters, "source_ref missing from team_dispatch"
     assert "subject" in sig.parameters, "subject missing from team_dispatch"
-    # Both are optional (default None) — handoff callers provide them; others omit
+    # All optional (default None) — handoff callers provide at least one input path
     assert sig.parameters["packet_path"].default is None
+    assert sig.parameters["source_ref"].default is None
     assert sig.parameters["subject"].default is None
+
+
+def test_team_dispatch_source_ref_signature() -> None:
+    """source_ref defaults to None on the team_dispatch signature."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert sig.parameters["source_ref"].default is None
 
 
 def test_team_dispatch_messages_has_default() -> None:
@@ -173,3 +184,92 @@ def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
     # telemetry record fires before relay (record_calls is ordered)
     telemetry_events = [ev for ev, _ in record_calls]
     assert "mcp.team.handoff.called" in telemetry_events
+
+
+def _run_handoff_relay(
+    **kwargs: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Invoke team_dispatch op=handoff with mocked relay; return relay_calls and error."""
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append(
+            {"endpoint": endpoint, "body": body, "record_prefix": record_prefix}
+        )
+        return {"thread_id": "thread-test-123", "to_agent": "claude-cursor"}
+
+    with patch("tools.frontier._relay", side_effect=_fake_relay):
+        result = asyncio.run(team_dispatch_fn(op="handoff", **kwargs))
+
+    if isinstance(result, dict) and "error" in result:
+        return relay_calls, result
+    return relay_calls, None
+
+
+def test_team_dispatch_handoff_source_ref_only() -> None:
+    """source_ref only relays raw source_ref with no client-side resolution."""
+    relay_calls, error = _run_handoff_relay(
+        role="cursor-implement",
+        source_ref="todo:unified-admission-handoff-source-ref",
+        subject="Implement source_ref adoption",
+    )
+    assert error is None
+    assert len(relay_calls) == 1
+    body = relay_calls[0]["body"]
+    assert body == {
+        "op": "handoff",
+        "role": "cursor-implement",
+        "source_ref": "todo:unified-admission-handoff-source-ref",
+        "subject": "Implement source_ref adoption",
+    }
+    assert "packet_path" not in body
+
+
+def test_team_dispatch_handoff_both_present() -> None:
+    """Both source_ref and packet_path are relayed when provided."""
+    relay_calls, error = _run_handoff_relay(
+        role="cursor-implement",
+        source_ref="todo:example",
+        packet_path="universal-llm-gateway/tmp/prompts/example-packet.md",
+        subject="Bound implement",
+    )
+    assert error is None
+    body = relay_calls[0]["body"]
+    assert body["source_ref"] == "todo:example"
+    assert body["packet_path"] == "universal-llm-gateway/tmp/prompts/example-packet.md"
+
+
+def test_team_dispatch_handoff_underspecified() -> None:
+    """Neither packet_path nor source_ref returns validation_error without relay."""
+    relay_calls, error = _run_handoff_relay(
+        role="cursor-implement",
+        subject="Missing input path",
+    )
+    assert len(relay_calls) == 0
+    assert error is not None
+    assert error["error"]["code"] == "validation_error"
+    assert "packet_path" in error["error"]["message"]
+    assert "source_ref" in error["error"]["message"]
+
+
+def test_team_dispatch_handoff_packet_only_parity() -> None:
+    """packet_path-only handoff body is unchanged from the pre-source_ref relay shape."""
+    relay_calls, error = _run_handoff_relay(
+        role="web-consult",
+        packet_path="universal-llm-gateway/tmp/test-packet.md",
+        subject="Test handoff subject",
+    )
+    assert error is None
+    body = relay_calls[0]["body"]
+    assert body == {
+        "op": "handoff",
+        "role": "web-consult",
+        "packet_path": "universal-llm-gateway/tmp/test-packet.md",
+        "subject": "Test handoff subject",
+    }

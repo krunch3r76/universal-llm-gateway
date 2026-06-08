@@ -1,8 +1,10 @@
-"""Read-side handoff surface projection (agent-bus 1188, surface-but-flag).
+"""Handoff surface projection (agent-bus 1188, surface-but-flag).
 
-Surfaces ``handoff_prompt`` on entity reads with an explicit trust block so
-``source_file:null`` / legacy detached rows are visible but flagged — not
-silently treated as file-backed.
+Read side: surfaces ``handoff_prompt`` on entity reads with an explicit trust
+block so ``source_file:null`` / legacy detached rows are visible but flagged —
+not silently treated as file-backed. Write side: ``build_handoff_surface_preview``
+reuses the same builder so ``session_close`` can warn the writer at close time
+when a supplied handoff will read back as unverified.
 """
 
 from __future__ import annotations
@@ -113,6 +115,31 @@ def build_handoff_surface(attributes: dict[str, Any] | None) -> dict[str, Any] |
             source_file=source_file,
             provenance_missing=provenance_missing,
         )
+    return surface
+
+
+def build_handoff_surface_preview(
+    handoff_prompt: str | None,
+    provenance: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Write-time mirror of the read-side ``handoff_surface``.
+
+    Given the ``(handoff_prompt, handoff_provenance)`` a close is about to
+    persist, return the same trust block a later ``entity_get`` reader will
+    compute via ``build_handoff_surface`` — but only when it is *not* verified.
+    This lets ``session_close`` tell the writer at close time that an inline
+    ``handoff_prompt`` with no ``handoff_source_path`` will read back as
+    ``unverified``. Returns ``None`` on the verified path and when no handoff
+    prompt is present, so the verified path carries no advisory.
+
+    The unverified classification is unchanged — this reuses the read-side
+    builder rather than re-deriving the flag.
+    """
+    surface = build_handoff_surface(
+        {"handoff_prompt": handoff_prompt, "handoff_provenance": provenance}
+    )
+    if surface is None or surface.get("verified"):
+        return None
     return surface
 
 

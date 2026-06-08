@@ -76,7 +76,7 @@ def test_derive_all_canonical_tool_names_fixture() -> None:
                     "dispatch_key": "op",
                     "dispatch_value": "write",
                 },
-                "seat_visibility": ["mcp_grok"],
+                "seat_visibility": ["mcp", "mcp_claude"],
             },
         ],
     }
@@ -256,7 +256,6 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.pipeline_consult", "register_pipeline_consult_tools"),
         ("tools.frontier", "register_frontier_tools"),
         ("tools.panel_dispatch", "register_panel_dispatch_tools"),
-        ("tools.grokbuild", "register_grokbuild_tools"),
         ("tools.git_integrate", "register_git_integrate_tools"),
         ("tools.quality", "register_quality_tools"),
         ("tools.agent_bus", "register_agent_bus_tools"),

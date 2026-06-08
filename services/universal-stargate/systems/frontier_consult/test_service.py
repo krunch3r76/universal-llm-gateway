@@ -59,6 +59,40 @@ async def test_permissive_persona_accepts_anything(
 
 
 @pytest.mark.asyncio
+async def test_build_dispatch_body_sets_knob_resolution_preview(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "hello"}],
+        role="gatherer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        reasoning_effort="high",
+    )
+    body = await build_dispatch_body(req)
+    preview = body["pipeline_options"]["_knob_resolution_preview"]
+    assert preview["provenance"] == "preview"
+    assert preview["resolved_model"] == body["pipeline_options"]["model"]
+    assert preview["status"] == "mapped"
+    assert preview["reasoning_native"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
 async def test_explicit_model_override_can_fill_any_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -129,6 +163,11 @@ async def test_team_dispatch_xai_agent_auto_suppresses_mcp(
     )
     body = await build_dispatch_body(req)
     assert body["pipeline_options"]["mcp"] is False
+    caps = body["pipeline_options"]["_capability_preview"]
+    assert caps["role"] == "skeptic"
+    assert caps["inline_only"] is True
+    assert caps["mcp_enabled"] is False
+    assert caps["resolved_model"] == "xai/grok-4.20-multi-agent-0309"
 
 
 @pytest.mark.asyncio

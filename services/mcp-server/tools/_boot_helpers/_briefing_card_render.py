@@ -82,6 +82,49 @@ def filter_recent_self_reflections(
     return fresh
 
 
+def render_compact_block(
+    *,
+    principal_name: str,
+    durable_identity: str | None,
+    active_matters: list[dict[str, Any]],
+    today: datetime,
+) -> tuple[list[str], set[int]]:
+    """Render fields 1+2 at the card head (fact-form, ≤ ~800 bytes target).
+
+    Returns (markdown lines, assertion ids rendered in field 2) for dedup
+    against the global ``## Temporally Active`` section (F6).
+    """
+    if not durable_identity and not active_matters:
+        return [], set()
+
+    lines: list[str] = ["\n## Compact"]
+    if durable_identity:
+        lines.append(f"- **{principal_name}** — {durable_identity}")
+
+    rendered_ids: set[int] = set()
+    for row in active_matters[:5]:
+        aid = row.get("id")
+        if aid is not None:
+            rendered_ids.add(int(aid))
+        name = row.get("entity_name", row.get("entity_id", "?"))
+        until = row.get("valid_until", "")
+        tag = ""
+        if until:
+            try:
+                exp = datetime.fromisoformat(str(until).replace("Z", "+00:00")).date()
+                delta = (exp - today).days
+                if delta == 0:
+                    tag = " (expires today)"
+                elif delta > 0:
+                    tag = f" (expires in {delta}d)"
+            except (ValueError, TypeError):
+                pass
+        claim = str(row.get("claim") or "")[:120]
+        lines.append(f"- **{name}**{tag} — {claim}")
+
+    return lines, rendered_ids
+
+
 def render_views_section(views_data: list[dict[str, Any]]) -> list[str]:
     """Render the Views section lines from materialized subgraph data.
 
@@ -248,6 +291,51 @@ def deadline_line(d: dict[str, Any], today: datetime) -> str:
     )
 
 
+_OPEN_ARC_CHILD_DISPLAY_CAP = 8
+
+
+def _short_entity_id(entity_id: str) -> str:
+    if ":" in entity_id:
+        return entity_id.split(":", 1)[1]
+    return entity_id
+
+
+def _format_open_arc_line(arc: dict[str, Any]) -> str:
+    children = list(arc.get("children") or [])
+    n = len(children)
+    if n == 0:
+        child_suffix = "0 leaf todos"
+    else:
+        labels = [
+            _short_entity_id(c.get("id", "?"))
+            for c in children[:_OPEN_ARC_CHILD_DISPLAY_CAP]
+        ]
+        tail = (
+            f" +{n - _OPEN_ARC_CHILD_DISPLAY_CAP} more"
+            if n > _OPEN_ARC_CHILD_DISPLAY_CAP
+            else ""
+        )
+        child_suffix = f"{n} leaf todos ({', '.join(labels)}{tail})"
+    state = arc.get("workflow_state", "?")
+    return f"- `{arc.get('id', '?')}` [{state}] — {child_suffix}"
+
+
+def render_open_arcs_section(
+    open_arcs: list[dict[str, Any]],
+    *,
+    legend: str | None = None,
+) -> list[str]:
+    """Compact ## Open arcs block (ids + counts only)."""
+    if not open_arcs:
+        return []
+    header = "## Open arcs"
+    if legend:
+        header = f"{header}\n> {legend}"
+    lines = [f"\n{header}"]
+    lines.extend(_format_open_arc_line(arc) for arc in open_arcs)
+    return lines
+
+
 __all__ = [
     "PREVIEW_MAX_CHARS",
     "deadline_line",
@@ -255,6 +343,8 @@ __all__ = [
     "truncate_at_sentence",
     "render_async_dispatch_section",
     "render_audit_alerts_section",
+    "render_compact_block",
+    "render_open_arcs_section",
     "render_skills_section",
     "render_views_section",
 ]

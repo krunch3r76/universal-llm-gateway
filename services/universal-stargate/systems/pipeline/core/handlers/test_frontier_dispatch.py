@@ -645,7 +645,9 @@ async def test_handler_rejects_raw_agent_plus_endpoint_tools(
         }
     )
 
-    with pytest.raises(ValueError, match="only supported via POST /api/v1/frontier/dispatch"):
+    with pytest.raises(
+        ValueError, match="only supported via POST /api/v1/frontier/dispatch"
+    ):
         await handler.execute(step, context)
 
 

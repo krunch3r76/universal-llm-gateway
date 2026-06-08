@@ -6,7 +6,7 @@ See `agent-surface/README.md` and `tmp/prompts/phase3-neutral-canonical-design.m
 
 from .check import diff_against, extract_core_subagent_table
 from .parser import Block, ParsedSource, parse_source
-from .renderer import render_agents_md_section, render_cursor_mdc, splice_agents_md
+from .renderer import render_cursor_mdc
 
 __all__ = [
     "Block",
@@ -14,7 +14,5 @@ __all__ = [
     "diff_against",
     "extract_core_subagent_table",
     "parse_source",
-    "render_agents_md_section",
     "render_cursor_mdc",
-    "splice_agents_md",
 ]

@@ -162,7 +162,7 @@ A compliant transcript contains:
 2. Seed outstanding assertions
 3. Atomic close: `cortex(tool="session_close", arguments='{"transcript_md": "<verbatim
    transcript markdown>", "session_summary_md": "<structural summary>",
-   "agent": "claude-web", "family": "Claude", "session_id": "claude-web-YYYY-MM-DD-HHmm",
+   "agent": "claude-web", "session_id": "claude-web-YYYY-MM-DD-HHmm",
    ...}')` — creates transcript entity, journal row, and session edges in one call
 4. Post session-close entry to agent-activity-journal (thread 480)
 5. Report transcript ID and file path to the user"""

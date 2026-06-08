@@ -1,0 +1,7 @@
+{
+  "source_ref": "packet:universal-llm-gateway/services/universal-stargate/systems/frontier_consult/fixtures/implement_admission/packets/missing-acceptance.md",
+  "door": "packet",
+  "expected_classification": "match",
+  "legacy_route": {"expect_error": "handoff_packet_missing_acceptance"},
+  "legacy_closeout_mutation": null
+}

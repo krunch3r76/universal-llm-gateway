@@ -44,6 +44,8 @@ class ReasoningResolution:
     effort: str | None
     native: dict[str, Any] | None
     native_field_path: str | None
+    value_kind: str | None = None
+    default: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +63,9 @@ class DispatchResolution:
             "max_output_floor": self.max_output.floor,
             "max_output_ceiling": self.max_output.ceiling,
             "reasoning_budget": self.max_output.reasoning_budget,
+            "reasoning_effort": self.reasoning.effort,
+            "reasoning_native": self.reasoning.native,
+            "reasoning_value_kind": self.reasoning.value_kind,
         }
 
 
@@ -107,6 +112,8 @@ def resolve_dispatch(
         native_field_path=(
             dispatch.reasoning.native_field_path if dispatch.reasoning else None
         ),
+        value_kind=dispatch.reasoning.value_kind if dispatch.reasoning else None,
+        default=dispatch.reasoning.default if dispatch.reasoning else None,
     )
     return DispatchResolution(
         api_surface=dispatch.api_surface,

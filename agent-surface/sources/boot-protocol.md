@@ -90,26 +90,13 @@ path is deprecated and does not perform the close (see agent-bus thread
 key fields incl. `content_hash`) before reporting success.
 Authoritative protocol lives in `session-close.mdc`.
 
+**`seeded_by` on assertions is family-level** (server-normalized seat→family); do not pass a seat slug in `seeded_by`.
+
 ## Reference Files (read on demand)
 
 - `universal-llm-gateway/docs/tool-reference.md` — canonical MCP tool signatures and full op catalog
 - Sandbox routing and markdown ops: see `mcp-tool-awareness_ws.mdc` (always loaded)
 <!-- /target:cursor -->
-<!-- target:grok-direct -->
-# Cortex Boot
-
-Run this ritual at session start (same intent as Cursor's `cursor-boot_ws.mdc`;
-you call MCP tools directly—no slash-command wrapper):
-
-1. **Open todos** — `cortex(tool="entities", arguments='{"workflow_state": "open"}')`
-2. **Prior context** — `cortex(tool="journal_read", arguments='{}')`
-3. **Active threads** — `agent_bus(tool="threads", arguments='{"status": "active"}')`
-4. **Skill manifest** — `fs(sandbox="cortex", op="list", path="agent-skills")` then read skills relevant to the task
-
-Optional slim briefing: `cortex_boot(agent="grok-direct", family="Grok", session_id="grok-direct-YYYY-MM-DD-HHmm")`.
-
-**Investigation order:** for failures, query the Event Service first (`observability` or `scripts/query-events`), then logs under `/tmp/logs/`.
-<!-- /target:grok-direct -->
 
 <!-- target:* -->
 ## Schema-Change Discipline

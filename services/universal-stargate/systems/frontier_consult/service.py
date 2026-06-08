@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent_seat import AgentMeta, assemble_system_prompt, hydrate_agent
+from agent_seat.role_entity_sync import resolve_dispatch_capabilities
+from llm_adapters.capability_dispatch import project_knob_resolution
 from model_id import (
     WireModelResolutionError,
     canonical_model_entity_id,
@@ -181,10 +183,23 @@ async def build_dispatch_body(
         meta=meta,
         event_publisher=event_publisher,
     )
+    _eff = generation_options.get("reasoning_effort")
+    _eff = _eff if isinstance(_eff, str) and _eff else None
+    _maxt = generation_options.get("max_tokens")
+    _knob_resolution_preview = project_knob_resolution(
+        resolved_model=effective_model,
+        requested_effort=_eff,
+        requested_max_output=_maxt if isinstance(_maxt, int) else None,
+    )
     if req.role is not None:
         mcp_enabled = mcp_enabled_for_team_dispatch(effective_model)
     else:
         mcp_enabled = mcp_enabled_for_frontier_dispatch(effective_model, req.mcp)
+
+    capability_preview: dict[str, Any] | None = None
+    if req.role is not None:
+        capability_preview = resolve_dispatch_capabilities(model=effective_model)
+        capability_preview["role"] = req.role
 
     pipeline_options: dict[str, Any] = {
         "model": effective_model,
@@ -193,8 +208,11 @@ async def build_dispatch_body(
         "generation_parameters": generation_options,
         "mcp": mcp_enabled,
         "_endpoint_request_id": request_id,
+        "_knob_resolution_preview": _knob_resolution_preview,
         "output_contract": req.output_contract,
     }
+    if capability_preview is not None:
+        pipeline_options["_capability_preview"] = capability_preview
     if req.role:
         pipeline_options["role"] = req.role
     if req.max_tool_turns is not None:

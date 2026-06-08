@@ -69,6 +69,17 @@ Accepted efforts: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
 Optional declared knobs beyond max_output/reasoning. `default is OMIT` ⟺ leave absent
 when caller omits the knob (never coerce to a wrong explicit default).
 
+## Agent mental model — reasoning_effort is portable intent, not parity
+
+`reasoning_effort` is a portable *intent* label, not cross-provider semantic parity.
+The same string maps to different native shapes by `value_kind`: `effort_string` →
+`{effort: e}`; `token_budget` → `{type: enabled, budget_tokens: N}` or, for efforts
+absent from `budget_map`, no thinking; `adaptive` → `{type: adaptive}` with
+`output_config.effort` assembled in gen_params.
+To see the real per-dispatch resolution, read the `knob_resolution` /
+`member_knob_resolution` echo on the dispatch envelope, or call `resolve_dispatch()`.
+Never assume parity across providers.
+
 ## Agent interface — lookup (read)
 
 ```python

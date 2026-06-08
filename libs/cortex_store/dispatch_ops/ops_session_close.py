@@ -349,6 +349,7 @@ def _op_session_close(
         handoff_prompt=handoff_prompt,
         handoff_source_path=handoff_source_path,
         emit_rejected=not dry_run,
+        skip_handoff_depth_check=dry_run,
     )
     if arg_error is not None:
         if dry_run:

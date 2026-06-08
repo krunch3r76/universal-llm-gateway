@@ -64,17 +64,6 @@ emission so callers don't duplicate it.
 
 ---
 
-## `libs/grokbuild`
-
-Shared grokbuild dispatch, worktree, runner, and event factories (formerly
-`services/mcp-server/tools/_grokbuild_*`). Consumed by `services/grokbuild_worker/`
-(the execution host) and re-exported for tests; the MCP `grokbuild` tool is a
-thin HTTP relay to the worker via Stargate (`systems/proxy/routers/api/grokbuild.py`).
-Lib-level signals use the `mcp.grokbuild.*` family; worker lifecycle/async
-signals use `grokbuild.*` (`services/grokbuild_worker/events.py`).
-
----
-
 ## `libs/inference_djinn`
 
 Async inference worker package. Manages asynchronous inference workers over

@@ -21,7 +21,7 @@ _DIFF_SCOPED_GATE_SCRIPT = (
 )
 _DEFAULT_GREEN_GATE = ["bash", "-lc", _DIFF_SCOPED_GATE_SCRIPT]
 _DEFAULT_SOURCE_REPO = "/mnt/torus/projects/universal-llm-gateway"
-_DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-grok-worktrees"
+_DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-arc-worktrees"
 
 
 @dataclass(frozen=True, slots=True)

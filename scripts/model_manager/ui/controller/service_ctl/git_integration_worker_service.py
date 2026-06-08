@@ -1,6 +1,6 @@
 """git-integration-worker service lifecycle — start, stop, PID/port management.
 
-Mirrors grokbuild-worker: host uvicorn on TCP (default 127.0.0.1:8091).
+Host uvicorn on TCP (default 127.0.0.1:8091).
 Stargate's git proxy router talks to the worker over HTTP.
 """
 
@@ -21,7 +21,7 @@ _LOG_DIR = Path("/tmp/logs/git-integration-worker")
 _DEFAULT_HOST = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
 _DEFAULT_PORT = int(os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091"))
 _DEFAULT_SOURCE_REPO = "/mnt/torus/projects/universal-llm-gateway"
-_DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-grok-worktrees"
+_DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-arc-worktrees"
 
 
 def _tcp_config() -> tuple[str, int]:

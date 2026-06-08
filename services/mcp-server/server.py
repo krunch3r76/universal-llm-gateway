@@ -62,7 +62,6 @@ from tools.filesystem._paths import FS_WORKFLOW_HINTS
 from tools.frontier import register_frontier_tools
 from tools.frontier_imagine import register_imagine_tools
 from tools.git_integrate import register_git_integrate_tools
-from tools.grokbuild import register_grokbuild_tools
 from tools.llm import register_llm_tools
 from tools.manage import register_manage_tools
 from tools.markdown_tool import register_markdown_tools
@@ -254,20 +253,8 @@ async def _tool_names(mcp: FastMCP) -> set[str]:
     return {t.name for t in await mcp.list_tools()}
 
 
-async def _capture_pre_prune_tools(mcp: FastMCP) -> dict[str, Any]:
-    """Capture all registered Tool objects before pruning for the grok server (B2).
-
-    ∀ tool registered at call time: captured by name → Tool object.
-    Must be called before _prune_to_primary removes non-primary tools.
-    """
-    from grok_route import capture_pre_prune_tools  # noqa: PLC0415
-
-    return await capture_pre_prune_tools(mcp)
-
-
 def _build_server() -> tuple[
     FastMCP,
-    dict[str, Any],
     dict[str, tuple[str, dict[str, Any]]],
     dict[str, Any],
 ]:
@@ -277,9 +264,8 @@ def _build_server() -> tuple[
     tools through `dispatch` for clients with limited tool enumeration capacity.
 
     Returns:
-        Tuple of (mcp, pre_prune_tool_objects, overflow_metadata, overflow_registry).
-        pre_prune_tool_objects: all Tool objects (including post-prune inline tools) for B2.
-        overflow_registry: callables for rag and other demoted inline wrappers, for B2.
+        Tuple of (mcp, overflow_metadata, overflow_registry).
+        overflow_registry: callables for rag and other demoted inline wrappers.
     """
     mcp: FastMCP = FastMCP("gateway-tools")
     register_filesystem_tools(mcp)
@@ -312,8 +298,6 @@ def _build_server() -> tuple[
     register_pipeline_consult_tools(mcp)
     register_frontier_tools(mcp)
     register_panel_dispatch_tools(mcp)
-    # Vestigial relay (harness retired 11588); see tools/grokbuild.py module doc.
-    register_grokbuild_tools(mcp)
     register_git_integrate_tools(mcp)
     register_quality_tools(mcp)
     register_agent_bus_tools(mcp)
@@ -353,14 +337,12 @@ def _build_server() -> tuple[
     overflow_metadata = asyncio.run(
         capture_overflow_metadata(mcp, frozenset(_PRIMARY_TOOLS))
     )
-    # Capture all Tool objects before pruning for the /mcp/grok server (B2).
-    pre_prune_tool_objects = asyncio.run(_capture_pre_prune_tools(mcp))
     from _coherence_allowlist import INTENTIONAL_OVERFLOW  # noqa: PLC0415
     from _derive import run_startup_tool_coherence_checks  # noqa: PLC0415
 
     run_startup_tool_coherence_checks(
         _PRIMARY_TOOLS,
-        set(pre_prune_tool_objects.keys()),
+        _PRIMARY_TOOLS | set(overflow_metadata.keys()),
         allowlist=INTENTIONAL_OVERFLOW,
     )
     overflow_registry: dict[str, Callable[..., Any]] = _prune_to_primary(mcp)
@@ -724,12 +706,6 @@ def _build_server() -> tuple[
 
     _ts_module._MANIFEST = _build_mf(overflow_metadata)
 
-    # Capture inline tools (fs, dispatch — primary, defined post-prune) into
-    # pre_prune_tool_objects for /mcp/grok flat server construction (B2).
-    from grok_route import capture_post_prune_tools  # noqa: PLC0415
-
-    asyncio.run(capture_post_prune_tools(mcp, pre_prune_tool_objects))
-
     primary_count = len(_PRIMARY_TOOLS)
     overflow_count = len(overflow_registry)
     logger.info(
@@ -742,7 +718,7 @@ def _build_server() -> tuple[
             "Overflow tools (not in _PRIMARY_TOOLS — add to promote): %s",
             sorted(overflow_registry),
         )
-    return mcp, pre_prune_tool_objects, overflow_metadata, overflow_registry
+    return mcp, overflow_metadata, overflow_registry
 
 
 def _demote_inline_wrappers(
@@ -912,7 +888,7 @@ def main() -> None:
     auth_token = _require_env(_AUTH_TOKEN_ENV)
     oauth_config = load_oauth_config()
     oauth_service = _build_oauth_service(oauth_config)
-    mcp, pre_prune_tool_objects, overflow_metadata, overflow_registry = _build_server()
+    mcp, overflow_metadata, overflow_registry = _build_server()
 
     # stateless_http=True: each POST is self-contained (no session ID tracking).
     # Anthropic's API client creates a new session per interaction rather than
@@ -930,12 +906,6 @@ def main() -> None:
             authorization_endpoint=oauth_service.authorization_endpoint,
         )
 
-    # Wire /mcp/grok flat-manifest route (B2).
-    from grok_route import wire_grok_route  # noqa: PLC0415
-
-    wire_grok_route(
-        asgi_app, pre_prune_tool_objects, overflow_metadata, overflow_registry
-    )
     _emit_claude_boot_shadow_log()
 
     # Middleware composition order (outermost first):

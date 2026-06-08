@@ -2,7 +2,7 @@
 
 The MCP catalog advertises a compact primary set (≤24 domain dispatchers from
 ``config/mcp/canonical.yaml`` via ``_derive.get_claude_manifest``): ``agent_bus``,
-``cortex``, ``dispatch``, ``fs``, ``grokbuild``, ``manage``, ``observability``,
+``cortex``, ``dispatch``, ``fs``, ``manage``, ``observability``,
 ``pipeline``, ``rag``, ``retrieve``, ``tool_search``. All other tools registered
 at boot — ``cortex_boot``, ``sql``, ``web_fetch``, ``quality_gate``, etc. — are
 pruned from ``tools/list`` but kept in the overflow registry. Gitignored
@@ -90,7 +90,7 @@ def register_tool_search_tool(
         the tool.
 
         This endpoint indexes **overflow only**: sql, web_fetch, advisor,
-        boot_inspect, quality_gate, pipeline_consult, git_*, grokbuild, and
+        boot_inspect, quality_gate, pipeline_consult, git_*, and
         ``tools.local`` when installed. Results include ``dispatch_template`` —
         invoke via ``dispatch(tool="<name>", arguments='…')`` when ``dispatch``
         is bound. Do NOT route server-primary names through ``dispatch``; it

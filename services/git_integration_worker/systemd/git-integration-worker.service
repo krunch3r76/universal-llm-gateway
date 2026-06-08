@@ -11,7 +11,7 @@ Environment=PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs
 Environment=GIT_INTEGRATION_WORKER_HOST=127.0.0.1
 Environment=GIT_INTEGRATION_WORKER_PORT=8091
 Environment=GIT_INTEGRATION_SOURCE_REPO=/mnt/torus/projects/universal-llm-gateway
-Environment=GIT_INTEGRATION_WORKTREE_ROOT=/mnt/torus/projects/ulg-grok-worktrees
+Environment=GIT_INTEGRATION_WORKTREE_ROOT=/mnt/torus/projects/ulg-arc-worktrees
 Restart=on-failure
 RestartSec=2
 

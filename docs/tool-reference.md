@@ -127,8 +127,8 @@ The pointer body defaults to the standard ≤25-line pointer template (see
 `pointer_body` override up to 25 lines. Longer overrides are rejected 422.
 
 Caller **must** write the packet file before calling handoff; only a pointer is posted
-to the bus. Operator push is still mandatory — `push_reminder` in the response carries
-the formatted push instruction per `agent-bus-push-reminder_ws.mdc`.
+to the bus. `push_reminder` in the response carries the formatted push instruction
+when the handoff thread stays open and web must act (see `agent-bus-push-reminder_ws.mdc`).
 
 **Canonical retrieval** (submit → handle → wait):
 

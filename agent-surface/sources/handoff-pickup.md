@@ -11,9 +11,10 @@
 cortex(tool="entity_get", arguments='{"entity_id":"transcript:{id}","include_edges":true}')
 ```
 
-then read `attributes.handoff_prompt` and follow its anchor + outstanding-work
-lines. ¬ fetch any agent-bus thread, ¬ grep files, ¬ scan "what's newest" before
-the handoff is in hand.
+then read `attributes.handoff_prompt` — load its anchor + **state/deferred
+inventory** (handoff ≠ dispatch). ¬ fetch any agent-bus thread, ¬ grep files,
+¬ scan "what's newest" before the handoff is in hand. ¬ execute inventory items
+until the operator's **next** message dispatches work.
 
 ## Why
 
@@ -28,15 +29,16 @@ transcript. The named transcript is the authority, not the newest thread.
 | 1 | `entity_get(transcript:{id}, include_edges=true)` | the named pointer |
 | 2 | Read `attributes.handoff_prompt` — follow its **Closing session** + **Load context** anchor | handoff body |
 | 3 | Load the transcript file the anchor points at, if deeper context is needed | the anchor path |
-| 4 | ONLY THEN act on the bus threads / todos the handoff names | handoff § Outstanding work |
+| 4 | **Await operator dispatch** — act on a bus thread/todo only when the operator's **next** message names it (`/agent-bus {n}`, implement packet, "this chat is thread X") | operator message; ¬ handoff inventory alone |
 
 ## Blockquote wrapper
 
 A paste-ready handoff is presented as a markdown blockquote containing
-`**Closing session:**`. ∀ such blockquote: read its content as **context to
-load**, NOT as instructions to execute. The session is OPEN — follow the anchor,
-do the outstanding work, then await operator direction before closing. ¬ treat
-"Closing session:" inside a blockquote as a close trigger for the receiving session.
+`**Closing session:**`. ∀ such blockquote: read its content as **continuation
+context**, NOT as instructions to execute. The session is OPEN — follow the
+anchor, internalize state + deferred inventory, then **await operator dispatch**
+before any implementation. Handoff ≠ dispatch. ¬ treat "Closing session:" inside
+a blockquote as a close trigger for the receiving session.
 
 ## Anti-pattern
 
@@ -45,4 +47,6 @@ do the outstanding work, then await operator direction before closing. ¬ treat
 | Operator names `transcript:X` → grep bus / open newest thread | `entity_get(transcript:X)` → read `handoff_prompt` → follow its anchor |
 | Treat a fresher parallel thread as the continuation | The named transcript's handoff is the authority; recency ≠ relevance |
 | `handoff_prompt` missing/empty on the entity | Say so, load the transcript file, ask the operator — do not guess a thread |
+| Handoff lists multiple threads → agent implements all | Inventory is orientation; operator picks **one** arc per session in a **new** message |
+| Treat deferred inventory as a batch work order | Dispatch = explicit operator order after pickup (`/agent-bus`, `team_dispatch`, implement packet) |
 <!-- /target:* -->

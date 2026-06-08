@@ -9,6 +9,7 @@ def build_manifest(
     *,
     plan_phases: list[dict[str, Any]] | None,
     in_flight_todos: list[dict[str, Any]] | None,
+    open_arcs: list[dict[str, Any]] | None = None,
     todo_total: int,
     unread_count: int,
     reflective_total: int,
@@ -21,12 +22,13 @@ def build_manifest(
 ) -> list[dict[str, Any]]:
     """Build the section manifest returned alongside the briefing card."""
     manifest: list[dict[str, Any]] = []
-    if plan_phases or in_flight_todos:
+    if plan_phases or in_flight_todos or open_arcs:
         manifest.append(
             {
                 "section": "recent_work",
                 "plan_phases": len(plan_phases or []),
                 "in_flight_todos": len(in_flight_todos or []),
+                "open_arcs": len(open_arcs or []),
                 "hint": "GET /boot-recent-work via cortex-api",
             }
         )

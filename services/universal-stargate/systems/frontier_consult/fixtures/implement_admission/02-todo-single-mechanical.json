@@ -1,0 +1,10 @@
+{
+  "source_ref": "todo:relay-bounded-single",
+  "door": "todo",
+  "expected_classification": "match",
+  "legacy_route": {
+    "orchestration_mode": "single",
+    "executor_style": "mechanical"
+  },
+  "legacy_closeout_mutation": {"adapter": "todo"}
+}

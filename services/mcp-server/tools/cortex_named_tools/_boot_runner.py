@@ -145,6 +145,7 @@ def run_cortex_boot(
     transcript_id: str = "",
     mode: BootMode = BootMode.LIVE,
     views: list[str] | None = None,
+    principal: str | None = None,
 ) -> dict[str, Any]:
     """Build a Cortex boot briefing for internal callers and MCP.
 
@@ -157,6 +158,10 @@ def run_cortex_boot(
         mode         — LIVE (default) writes op-context to disk; INSPECT is side-effect-free
         views        — optional list of entity IDs to materialize as subgraph views
                        in the briefing card (structural counts + manifest hints, no prose)
+        principal    — optional principal entity_id (e.g. person:kaywan-mansubi).
+                       When set, fetches GET /boot-principal-context for the compact
+                       head block (fields 1+2). Field 1 renders only when
+                       attributes.durable_identity is set on the principal entity.
 
     Returns a slim briefing card (~25-35KB typical) with a section manifest pointing
     to existing MCP tools for deeper pulls. Heavy data is NOT inlined — pull on demand.
@@ -209,6 +214,8 @@ def run_cortex_boot(
         # for future expansion. Record both in the profile dict.
         profile_dict["role_entity_id"] = role_anchor(role)
     profile_dict["self_entity_id"] = self_entity_id
+    if principal:
+        profile_dict["principal"] = principal
 
     recorder = FetchRecorder()
     futures_spec = build_futures_spec(seat_slug, profile_dict, recorder)
@@ -307,6 +314,7 @@ def run_cortex_boot(
         skills_unpartitioned_count=extracted.get("skills_unpartitioned_count", 0),
         plan_phases=extracted["plan_phases"] or None,
         in_flight_todos=extracted["in_flight_todos"] or None,
+        open_arcs=extracted.get("open_arcs") or None,
         dropbox_files=dropbox_files or None,
         views_data=views_data or None,
         async_dispatches=extracted.get("async_dispatches") or None,
@@ -315,6 +323,7 @@ def run_cortex_boot(
         # → dispatch-route (OVERFLOW). See _orientation_blocks (thread 1167).
         family=resolved_family,
         agent=seat_slug,
+        principal_context=extracted.get("principal_context") or None,
     )
 
     artifacts = _build_artifacts(

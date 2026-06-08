@@ -67,7 +67,7 @@ def test_fields_projection_decodes_attribute_list() -> None:
     _insert_skill(
         conn,
         "agent_skill:audit-b",
-        applicable_agents=["grok-direct"],
+        applicable_agents=["grok-cursor"],
     )
     conn.commit()
 

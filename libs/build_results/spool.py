@@ -21,7 +21,7 @@ from build_results.signals import compute_signals
 logger = get_logger(__name__)
 
 # Workspaces sandbox root == /mnt/torus/projects; the spool is a non-repo sibling
-# of ulg-grok-worktrees so it pollutes no git tree and needs no new mount.
+# so it pollutes no git tree and needs no new mount.
 WORKSPACES_RELATIVE_ROOT = "ulg-build-results"
 BUILD_RESULTS_DIR: Path = Path(
     os.getenv("BUILD_RESULTS_DIR", "/mnt/torus/projects/ulg-build-results")

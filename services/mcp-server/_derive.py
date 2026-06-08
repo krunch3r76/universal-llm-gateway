@@ -1,11 +1,4 @@
-"""Grok flat-manifest derivation from canonical.yaml (D7 / G2).
-
-∀ canonical_yaml_path: derive_grok_manifest(canonical_yaml_path) ⟹
-  deterministic list[ToolManifestEntry] for /mcp/grok.
-
-Pure function — same YAML in, same manifest out, byte-stable (entries
-sorted by canonical_name). Init-time / module-load only per plan PB-3
-(¬per-request).
+"""Manifest derivation from canonical.yaml (D7).
 
 Co-located with server.py per operator decision D7: derivation logic lives
 here, not in a separate loader module. This is a helper for derivation and
@@ -41,40 +34,6 @@ def _load_registry(canonical_yaml_path: Path) -> dict[str, Any]:
     raw = canonical_yaml_path.read_text(encoding="utf-8")
     data: dict[str, Any] = yaml.safe_load(raw)
     return data
-
-
-def derive_grok_manifest(
-    canonical_yaml_path: Path = _DEFAULT_CANONICAL,
-) -> list[ToolManifestEntry]:
-    """Return flat tool manifest for /mcp/grok derived from canonical.yaml.
-
-    ∀ entry T ∈ registry.tools where 'mcp_grok' ∈ T.seat_visibility:
-      emit {canonical_name, name, description, inputSchema, domain,
-            mandate_safety, cache_priority, skill_uri}.
-    Sorted by canonical_name for byte-stable output.
-
-    Pure function. Init-time / module-load only. ¬per-request.
-    """
-    data = _load_registry(canonical_yaml_path)
-    tools: list[dict[str, Any]] = data.get("tools", [])
-
-    manifest: list[ToolManifestEntry] = []
-    for t in sorted(tools, key=lambda x: x["canonical_name"]):
-        if "mcp_grok" not in t.get("seat_visibility", []):
-            continue
-        entry: ToolManifestEntry = {
-            "canonical_name": t["canonical_name"],
-            "name": t["flat_call_shape"]["tool"],
-            "description": t.get("fol_descriptor", "").strip(),
-            "inputSchema": t.get("json_schema", {}),
-            "domain": t["domain"],
-            "mandate_safety": t.get("mandate_safety", ""),
-            "cache_priority": t.get("cache_priority", ""),
-            "skill_uri": t.get("skill_uri", ""),
-        }
-        manifest.append(entry)
-
-    return manifest
 
 
 def derive_mcp_dispatcher_domain_set(

@@ -23,14 +23,6 @@ def test_seat_class_claude_path() -> None:
     assert _seat_class_from_path("/mcp") == "claude"
 
 
-def test_seat_class_grok_paths() -> None:
-    from mcp_request_middleware import _seat_class_from_path
-
-    assert _seat_class_from_path("/mcp/grok") == "grok"
-    assert _seat_class_from_path("/mcp/grok/") == "grok"
-    assert _seat_class_from_path("/mcp/grok/mcp/v1/tools/call") == "grok"
-
-
 def test_seat_class_unknown_path() -> None:
     from mcp_request_middleware import _seat_class_from_path
 

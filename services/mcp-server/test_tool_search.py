@@ -34,7 +34,7 @@ def server_state() -> dict:
     import tool_search as ts_module  # noqa: PLC0415
     from server import _PRIMARY_TOOLS, _build_server  # noqa: PLC0415
 
-    mcp, _pre_prune, _overflow_md, _overflow_reg = _build_server()
+    mcp, _overflow_md, _overflow_reg = _build_server()
     tools = asyncio.run(mcp.list_tools())
     manifest = dict(ts_module._MANIFEST)
     return {
@@ -90,10 +90,6 @@ GOLDEN_QUERIES: list[tuple[str, str]] = [
     ("restart service", "bot_supervisor"),
     ("fetch web page", "web_fetch"),
     ("raw sql query", "sql"),
-    (
-        "build with grok",
-        "grokbuild",
-    ),  # overflow vestigial relay (11588); prefer cursorbuild
     ("rag semantic search query", "rag_search"),
     ("model status", "model_status"),
     ("query events", "query_observability_preview"),
@@ -142,7 +138,7 @@ def test_catalog_byte_deterministic_across_renders() -> None:
     from server import _build_server  # noqa: PLC0415
 
     def _render() -> str:
-        mcp, _pre_prune, _overflow_md, _overflow_reg = _build_server()
+        mcp, _overflow_md, _overflow_reg = _build_server()
         tools = asyncio.run(mcp.list_tools())
         recs = [
             t.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)

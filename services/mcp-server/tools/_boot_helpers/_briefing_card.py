@@ -13,6 +13,8 @@ from ._briefing_card_render import (
     filter_recent_self_reflections,
     render_async_dispatch_section,
     render_audit_alerts_section,
+    render_compact_block,
+    render_open_arcs_section,
     render_skills_section,
     render_views_section,
     truncate_at_sentence,
@@ -59,10 +61,12 @@ def render_briefing_card(
     skills_unpartitioned_count: int = 0,
     plan_phases: list[dict[str, Any]] | None = None,
     in_flight_todos: list[dict[str, Any]] | None = None,
+    open_arcs: list[dict[str, Any]] | None = None,
     dropbox_files: list[str] | None = None,
     views_data: list[dict[str, Any]] | None = None,
     async_dispatches: list[dict[str, Any]] | None = None,
     audit_counters: dict[str, int] | None = None,
+    principal_context: dict[str, Any] | None = None,
     family: str | None = None,
     agent: str | None = None,
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -83,6 +87,19 @@ def render_briefing_card(
     parts: list[str] = [
         f"# Boot Briefing — {local_now.strftime('%Y-%m-%dT%H:%M:%S%z')}"
     ]
+
+    compact_dedup_ids: set[int] = set()
+    if principal_context:
+        compact_lines, compact_dedup_ids = render_compact_block(
+            principal_name=str(
+                principal_context.get("principal_name")
+                or principal_context.get("principal_id", "?")
+            ),
+            durable_identity=principal_context.get("durable_identity"),
+            active_matters=list(principal_context.get("active_matters") or []),
+            today=now,
+        )
+        parts.extend(compact_lines)
 
     if transcript_continuation:
         tc = transcript_continuation
@@ -181,24 +198,32 @@ def render_briefing_card(
         )
 
     if temporal_active:
-        parts.append(f"\n## Temporally Active ({len(temporal_active)})")
-        for a in temporal_active[:5]:
-            name = a.get("entity_name", a.get("entity_id", "?"))
-            until = a.get("valid_until", "")
-            tag = ""
-            if until:
-                try:
-                    exp = datetime.fromisoformat(until.replace("Z", "+00:00")).date()
-                    delta = (exp - today).days
-                    if delta == 0:
-                        tag = " (expires today)"
-                    elif delta > 0:
-                        tag = f" (expires in {delta}d)"
-                    else:
-                        tag = f" (**expired {abs(delta)}d ago**)"
-                except (ValueError, TypeError):
-                    pass
-            parts.append(f"- **{name}**{tag} — {a.get('claim', '')[:120]}")
+        scoped_active = (
+            [a for a in temporal_active if a.get("id") not in compact_dedup_ids]
+            if compact_dedup_ids
+            else temporal_active
+        )
+        if scoped_active:
+            parts.append(f"\n## Temporally Active ({len(scoped_active)})")
+            for a in scoped_active[:5]:
+                name = a.get("entity_name", a.get("entity_id", "?"))
+                until = a.get("valid_until", "")
+                tag = ""
+                if until:
+                    try:
+                        exp = datetime.fromisoformat(
+                            until.replace("Z", "+00:00")
+                        ).date()
+                        delta = (exp - today).days
+                        if delta == 0:
+                            tag = " (expires today)"
+                        elif delta > 0:
+                            tag = f" (expires in {delta}d)"
+                        else:
+                            tag = f" (**expired {abs(delta)}d ago**)"
+                    except (ValueError, TypeError):
+                        pass
+                parts.append(f"- **{name}**{tag} — {a.get('claim', '')[:120]}")
 
     if unread_count > 0:
         _uthreads = unread_threads or []
@@ -276,6 +301,17 @@ def render_briefing_card(
                     f"- *…{len(open_items) - 5} more — "
                     f"`{_LAST_SESSION_RECOVERY}` for full list*"
                 )
+
+    if open_arcs:
+        parts.extend(
+            render_open_arcs_section(
+                open_arcs,
+                legend=(
+                    "task: = bounded arc of child_of todos; "
+                    "plan: = ordered phases; todo: = one unit"
+                ),
+            )
+        )
 
     if plan_phases or in_flight_todos:
         parts.append("\n## Recent Work")
@@ -391,6 +427,7 @@ def render_briefing_card(
     manifest = build_manifest(
         plan_phases=plan_phases,
         in_flight_todos=in_flight_todos,
+        open_arcs=open_arcs,
         todo_total=todo_total,
         unread_count=unread_count,
         reflective_total=reflective_total,

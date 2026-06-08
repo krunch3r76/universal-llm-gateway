@@ -10,7 +10,29 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_seat import known_families, seat_to_family
+
 from ._shared import record
+
+
+def _project_seeded_by(seeded_by: str) -> tuple[str, str]:
+    """Map a seeded_by value to (stored_value, projection_tag).
+
+    seat→family            → (family, "seat_to_family")
+    already a bare family   → (seeded_by, "identity")
+    non-projectable (pipeline ids, unrecognized) → (seeded_by, "passthrough_unrecognized")
+
+    NEVER raises / NEVER returns an error — non-agent provenance (e.g.
+    pipeline context.pipeline.id like ``summarize_thread_v1``) must survive to
+    keep the chat-archive pipeline green (review C1). Operators grep
+    ``passthrough_unrecognized`` to catch genuine seat-level drift.
+    """
+    if seeded_by in known_families():
+        return seeded_by, "identity"
+    projected = seat_to_family(seeded_by)
+    if projected is not None:
+        return projected, "seat_to_family"
+    return seeded_by, "passthrough_unrecognized"
 
 
 def _emit_predicate_form_normalize_events(
@@ -48,4 +70,4 @@ _UNSET: Any = object()
 distinct from "argument absent". See _op_assertion_update.predicate_form."""
 
 
-__all__ = ["_UNSET", "_emit_predicate_form_normalize_events"]
+__all__ = ["_UNSET", "_emit_predicate_form_normalize_events", "_project_seeded_by"]

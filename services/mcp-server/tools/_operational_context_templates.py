@@ -37,8 +37,6 @@ from ._oc_surface_templates import (
     CURSOR_LOCAL_ENFORCEMENT,
     FRONTIER_MODEL_ROUTING,
     FRONTIER_REASONING,
-    render_frontier_reasoning,
-    GROK_DIRECT_SESSION_CLOSE,
     GROK_WEB_TOOL_SURFACE,
     MCP_TOOL_SEARCH,
     NOTES_TO_SELF,
@@ -49,6 +47,7 @@ from ._oc_surface_templates import (
     TOOL_REFERENCE_POINTERS,
     WEB_SESSION_CLOSE_GENERIC,
     WEB_TRANSCRIPT_PREPROCESSING,
+    render_frontier_reasoning,
 )
 
 __all__ = [
@@ -65,7 +64,6 @@ __all__ = [
     "FRONTIER_MODEL_ROUTING",
     "FRONTIER_REASONING",
     "render_frontier_reasoning",
-    "GROK_DIRECT_SESSION_CLOSE",
     "GROK_WEB_TOOL_SURFACE",
     "JOURNALING_PROTOCOL",
     "MCP_TOOL_SEARCH",

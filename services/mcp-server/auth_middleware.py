@@ -6,14 +6,6 @@ bearer validation, and ``WWW-Authenticate`` response construction.  Does
 authenticated requests with ``scope["auth_mode"]`` so downstream middleware
 can include the admission path in telemetry.
 
-Grok bearer-context enforcement (``/mcp/grok`` path only):
-  - ``grok-build-dispatch`` bearer (``MCP_GROK_BUILD_DISPATCH_TOKEN``) REQUIRES
-    ``X-Grokbuild-Dispatch-Id`` on every request; absent → 400.
-  - Any other static bearer WITH ``X-Grokbuild-Dispatch-Id`` → 400 (prevents
-    silent identity collapse where a grok-direct session masquerades as a
-    dispatch subprocess by sending the dispatch-id header).
-  On success the dispatch-id is placed in ``scope["grokbuild_dispatch_id"]``
-  for downstream event propagation.
 """
 
 from __future__ import annotations
@@ -98,12 +90,6 @@ class AuthMiddleware:
         self._token = token
         self._oauth_service = oauth_service
         self._cursor_token = os.getenv("MCP_CURSOR_AUTH_TOKEN", "").strip()
-        # Bearer for grok-build-dispatch subprocesses (distinct seat slug).
-        # When set, the /mcp/grok enforcement requires X-Grokbuild-Dispatch-Id
-        # when this token is used, and forbids it for all other tokens.
-        self._grok_build_dispatch_token = os.getenv(
-            "MCP_GROK_BUILD_DISPATCH_TOKEN", ""
-        ).strip()
         # Additional valid bearer tokens, one per line. Each is independently
         # valid; absent or empty → no extra tokens (backward-compatible).
         _extra = os.getenv("VORTEX_BEARER_TOKENS", "")
@@ -157,8 +143,6 @@ class AuthMiddleware:
         token = self._extract_authorization_token(auth_header)
         if self._cursor_token and token == self._cursor_token:
             return "cursor"
-        if self._grok_build_dispatch_token and token == self._grok_build_dispatch_token:
-            return "grok-build-dispatch"
         configured = os.getenv("MCP_STATIC_CALLER_IDENTITY", "").strip()
         return configured or "static"
 
@@ -168,10 +152,6 @@ class AuthMiddleware:
         return (
             token == self._token
             or (self._cursor_token and token == self._cursor_token)
-            or (
-                self._grok_build_dispatch_token
-                and token == self._grok_build_dispatch_token
-            )
             or (token is not None and token in self._bearer_tokens)
         )
 
@@ -307,43 +287,6 @@ class AuthMiddleware:
 
         if self._is_static_token_authorized(auth_header):
             caller_identity = self._resolve_static_caller_identity(auth_header)
-            # Bearer-context enforcement for /mcp/grok — prevents identity collapse.
-            # Build-dispatch bearer ⟹ X-Grokbuild-Dispatch-Id required (else 400).
-            # Any other bearer WITH that header ⟹ 400 (no silent masquerade).
-            if path.startswith("/mcp/grok"):
-                _disp_hdr = (
-                    request.headers.get("x-grokbuild-dispatch-id", "") or ""
-                ).strip()
-                _is_dispatch = caller_identity == "grok-build-dispatch"
-                if _is_dispatch and not _disp_hdr:
-                    record(
-                        "mcp.grokbuild.bearer.context.rejected",
-                        reason="missing_dispatch_id_header",
-                        path=path,
-                    )
-                    await JSONResponse(
-                        {
-                            "error": "X-Grokbuild-Dispatch-Id required for build-dispatch bearer"
-                        },
-                        status_code=400,
-                    )(scope, receive, send)
-                    return
-                if not _is_dispatch and _disp_hdr:
-                    record(
-                        "mcp.grokbuild.bearer.context.rejected",
-                        reason="dispatch_id_header_not_permitted",
-                        caller_identity=caller_identity,
-                        path=path,
-                    )
-                    await JSONResponse(
-                        {
-                            "error": "X-Grokbuild-Dispatch-Id not permitted for this bearer"
-                        },
-                        status_code=400,
-                    )(scope, receive, send)
-                    return
-                if _is_dispatch:
-                    scope["grokbuild_dispatch_id"] = _disp_hdr
             scope["auth_mode"] = "static"
             scope["mcp_profile"] = self._resolve_profile(auth_header)
             scope["mcp_caller_identity"] = caller_identity

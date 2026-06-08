@@ -13,17 +13,23 @@ from ...open_items.resolution_index import fetch_resolution_index_records
 
 router = APIRouter(tags=["boot"])
 
-_TEMPORAL_ACTIVE_SQL = """
-    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
-           a.valid_from, a.valid_until, a.confidence
-    FROM assertions a
-    JOIN entities e ON a.entity_id = e.id
-    WHERE a.valid_until IS NOT NULL
+# Shared predicate for auto-expiring, committed-only temporal rows.
+# Imported by boot/principal_context.py — keep ONE definition (F4).
+_TEMPORAL_ACTIVE_PREDICATE = """
+      a.valid_until IS NOT NULL
       AND a.valid_until >= datetime('now')
       AND (a.valid_from IS NULL OR a.valid_from <= datetime('now'))
       AND a.review_status = 'committed'
       AND a.superseded_by IS NULL
       AND (a.resolution_status IS NULL OR a.resolution_status = 'pending')
+"""
+
+_TEMPORAL_ACTIVE_SQL = f"""
+    SELECT a.id, a.entity_id, e.name AS entity_name, a.claim,
+           a.valid_from, a.valid_until, a.confidence
+    FROM assertions a
+    JOIN entities e ON a.entity_id = e.id
+    WHERE {_TEMPORAL_ACTIVE_PREDICATE}
     ORDER BY a.valid_until ASC
     LIMIT ?
 """

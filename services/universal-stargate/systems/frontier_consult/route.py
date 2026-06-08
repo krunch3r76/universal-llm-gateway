@@ -2,20 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from functools import partial
 from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import APIRouter, Response
 from fastapi.responses import JSONResponse
+from implement_admission.preflight import (
+    DecisionNotAssertedError,
+    require_decision_asserted,
+)
 from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import resolve_handoff_contract, resolve_handoff_target
 from .events import FrontierHandoffCreated, FrontierHandoffRequested
-from .handoff import build_pointer_body, create_handoff_thread, validate_packet
+from .handoff import (
+    _workspaces_root,
+    build_pointer_body,
+    create_handoff_thread,
+    validate_packet,
+)
 from .handoff_response import build_handoff_result, build_push_reminder
+from .implement_admission_bridge import (
+    BridgeResult,
+    StargateCortexReader,
+    resolve_source_ref_to_packet,
+    verify_both_present_hash,
+)
 from .service import (
     FrontierEndpointError,
     FrontierGenerateRequest,
@@ -185,6 +202,9 @@ async def _dispatch(
             event_bus.publish_from_sync(event)
 
         dispatch_body = await build_dispatch_body(req, event_publisher=_publish_event)
+        pipeline_opts = dispatch_body.get("pipeline_options", {})
+        preview = pipeline_opts.pop("_knob_resolution_preview", None)
+        capability_preview = pipeline_opts.pop("_capability_preview", None)
     except FrontierEndpointError as exc:
         logger.warning(
             "dispatch rejected: request_id=%s field=%s reason=%s",
@@ -201,7 +221,7 @@ async def _dispatch(
 
     response.status_code = forward.status_code
     try:
-        return forward.json()
+        result = forward.json()
     except ValueError as exc:
         logger.error(
             "dispatch forward returned non-JSON: status=%s error=%s",
@@ -214,6 +234,12 @@ async def _dispatch(
                 "message": forward.text[:500],
             }
         }
+    if isinstance(result, dict):
+        if preview is not None:
+            result["knob_resolution"] = preview
+        if capability_preview is not None:
+            result["capabilities"] = capability_preview
+    return result
 
 
 # ---- dispatch-surface-split Phase 1: op-discriminated routes ----
@@ -268,13 +294,17 @@ class TeamHandoffBody(BaseModel):
     ``role`` — handoff roster slug (``web-consult``, ``cursor-consult``,
     ``cursor-implement``) resolved via ``RoleProfile``. Contract is derived from
     the role ({platform}-{contract} naming).
+
+    At least one of ``source_ref`` or ``packet_path`` must be present.
+    ``source_ref`` triggers normalize→materialize (Phase 2 unified admission).
     """
 
     model_config = {"extra": "forbid"}
 
     op: Literal["handoff"]
     role: str
-    packet_path: str
+    packet_path: str | None = None
+    source_ref: str | None = None
     subject: str
     pointer_body: str | None = None
     tags: list[str] | None = None
@@ -293,7 +323,70 @@ async def team_handoff(
     """
     request_id = uuid.uuid4().hex[:12]
 
+    if body.source_ref is None and body.packet_path is None:
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="source_ref",
+                reason=(
+                    "At least one of source_ref or packet_path is required "
+                    "for handoff admission"
+                ),
+                status_code=422,
+                code="handoff_input_underspecified",
+            ).to_dict(),
+        )
+
+    loop = asyncio.get_running_loop()
+    workspaces_root = _workspaces_root()
+    reader = StargateCortexReader()
+
+    packet_path = body.packet_path
+    implement_spec_hash_value: str | None = None
+    warnings: list[str] = []
+
     try:
+        if body.source_ref is not None:
+            await loop.run_in_executor(
+                None,
+                partial(require_decision_asserted, cortex=reader),
+            )
+
+            if packet_path is not None:
+                implement_spec_hash_value = await loop.run_in_executor(
+                    None,
+                    partial(
+                        verify_both_present_hash,
+                        request_id=request_id,
+                        source_ref=body.source_ref,
+                        packet_path=packet_path,
+                        cortex=reader,
+                        workspaces_root=workspaces_root,
+                    ),
+                )
+            else:
+                bridge_result: BridgeResult = await loop.run_in_executor(
+                    None,
+                    partial(
+                        resolve_source_ref_to_packet,
+                        body.source_ref,
+                        cortex=reader,
+                        workspaces_root=workspaces_root,
+                    ),
+                )
+                if bridge_result.gated:
+                    return {
+                        "status": "gated",
+                        "gated_reason": bridge_result.gated_reason,
+                        "source_ref": body.source_ref,
+                        "thread_id": None,
+                    }
+                packet_path = bridge_result.packet_path
+                implement_spec_hash_value = bridge_result.implement_spec_hash
+
+        assert packet_path is not None
+
         from systems.proxy.dependencies import get_proxy
 
         proxy = get_proxy()
@@ -316,9 +409,10 @@ async def team_handoff(
 
         validate_packet(
             request_id=request_id,
-            packet_path=body.packet_path,
+            packet_path=packet_path,
             to_agent=to_agent,
             handoff_contract=handoff_contract,
+            workspaces_root=workspaces_root,
         )
 
         _publish(
@@ -333,7 +427,7 @@ async def team_handoff(
 
         pointer = build_pointer_body(
             request_id=request_id,
-            packet_path=body.packet_path,
+            packet_path=packet_path,
             subject=body.subject,
             pointer_body=body.pointer_body,
             handoff_contract=handoff_contract,
@@ -357,6 +451,22 @@ async def team_handoff(
             )
         )
 
+    except DecisionNotAssertedError as exc:
+        logger.warning(
+            "handoff rejected: request_id=%s field=source_ref reason=%s",
+            request_id,
+            exc,
+        )
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="source_ref",
+                reason=str(exc),
+                status_code=422,
+                code="decision_not_asserted",
+            ).to_dict(),
+        )
     except FrontierEndpointError as exc:
         logger.warning(
             "handoff rejected: request_id=%s field=%s reason=%s",
@@ -379,4 +489,10 @@ async def team_handoff(
         ),
         **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
     }
+    if body.source_ref is not None:
+        result["source_ref"] = body.source_ref
+    if implement_spec_hash_value is not None:
+        result["implement_spec_hash"] = implement_spec_hash_value
+    if warnings:
+        result["warnings"] = warnings
     return result

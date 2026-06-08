@@ -80,9 +80,7 @@ def test_extract_retryable_returns_busy_block_constraint() -> None:
             details={"retryable": True, "loaded_count": 2, "busy_count": 2},
         ),
     )
-    assert (
-        extract_retryable_constraint(trace) == "eviction_blocked_by_busy_models"
-    )
+    assert extract_retryable_constraint(trace) == "eviction_blocked_by_busy_models"
 
 
 def test_constraint_failure_is_retryable_uses_details_stamp() -> None:
@@ -109,9 +107,7 @@ def test_constraint_failure_fallback_without_details_stamp() -> None:
     )
     assert (
         constraint_failure_is_retryable(
-            ConstraintFailure(
-                constraint="eviction_blocked_by_busy_models", reason="x"
-            )
+            ConstraintFailure(constraint="eviction_blocked_by_busy_models", reason="x")
         )
         is True
     )

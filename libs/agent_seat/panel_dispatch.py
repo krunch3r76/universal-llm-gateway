@@ -12,10 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from llm_adapters.capability_dispatch import project_knob_resolution
 from model_id import ModelId
 
 from agent_seat.profiles import get_profile, get_role
 from agent_seat.registry import resolve_agent_model
+from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 
 # Guard 3: independent family := distinct provider (display labels for asserts).
 _PROVIDER_FAMILY_LABEL: dict[str, str] = {
@@ -161,6 +163,27 @@ def panel_provider_families(member_models: dict[str, str]) -> list[str]:
             seen.add(label)
             out.append(label)
     return out
+
+
+def member_dispatch_thread_id(base: str, role: str) -> str:
+    """Per-member compaction key — distinct thread per panel role (RC1 fix)."""
+    return f"{base}:{role}"
+
+
+def lint_panel_messages(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Reject block-array message content before any paid admission."""
+    for message in messages:
+        if isinstance(message.get("content"), list):
+            return {
+                "error": {
+                    "code": "validation_error",
+                    "message": (
+                        "panel_dispatch messages[].content must be a string, "
+                        "not a block array"
+                    ),
+                }
+            }
+    return None
 
 
 def build_team_dispatch_body(
@@ -313,12 +336,117 @@ def build_panel_assert_attributes(
     }
 
 
+def _usage_tokens(usage: dict[str, Any] | None) -> tuple[int, int]:
+    if not usage:
+        return 0, 0
+    tokens_in = (
+        usage.get("tokens_in")
+        or usage.get("prompt_tokens")
+        or usage.get("input_tokens")
+        or 0
+    )
+    tokens_out = (
+        usage.get("tokens_out")
+        or usage.get("completion_tokens")
+        or usage.get("output_tokens")
+        or 0
+    )
+    return int(tokens_in), int(tokens_out)
+
+
+def _tokens_from_poll_result(poll_result: dict[str, Any]) -> tuple[int, int]:
+    if poll_result.get("error"):
+        return 0, 0
+    result = poll_result.get("result")
+    if isinstance(result, dict):
+        usage = result.get("usage")
+        if isinstance(usage, dict):
+            return _usage_tokens(usage)
+    return 0, 0
+
+
+def member_status_from_poll(
+    dispatch_payload: Any,
+    poll_result: dict[str, Any] | None,
+    *,
+    polled: bool,
+) -> str:
+    """Map dispatch + optional pipeline poll to panel member status."""
+    if isinstance(dispatch_payload, dict) and dispatch_payload.get("error"):
+        return "failed"
+    if not isinstance(dispatch_payload, dict) or not dispatch_payload.get(
+        "execution_id"
+    ):
+        return "failed"
+    if not polled or poll_result is None:
+        return "running"
+    if poll_result.get("error"):
+        return "failed"
+    pipe_status = poll_result.get("status")
+    if pipe_status == "completed":
+        return "complete"
+    if pipe_status == "failed":
+        return "failed"
+    return "running"
+
+
+def aggregate_panel_status(member_status: dict[str, str], *, polled: bool) -> str:
+    if not polled:
+        return "dispatched"
+    if any(status == "running" for status in member_status.values()):
+        return "partial"
+    if any(status == "failed" for status in member_status.values()):
+        return "failed"
+    return "complete"
+
+
+def build_panel_poll_summary(
+    *,
+    dispatches: dict[str, Any],
+    poll_results: dict[str, Any] | None,
+    polled: bool,
+) -> dict[str, Any]:
+    """Poll envelope: status, per-member status, aggregate tokens (E6/E8)."""
+    member_status: dict[str, str] = {}
+    tokens_in = 0
+    tokens_out = 0
+    in_flight: list[str] = []
+
+    for role, dispatch_payload in dispatches.items():
+        poll_result = (poll_results or {}).get(role) if polled else None
+        status = member_status_from_poll(dispatch_payload, poll_result, polled=polled)
+        member_status[role] = status
+        if polled and poll_result is not None:
+            tin, tout = _tokens_from_poll_result(poll_result)
+            tokens_in += tin
+            tokens_out += tout
+        if status == "running" and isinstance(dispatch_payload, dict):
+            execution_id = dispatch_payload.get("execution_id")
+            if execution_id:
+                in_flight.append(str(execution_id))
+
+    summary: dict[str, Any] = {
+        "status": aggregate_panel_status(member_status, polled=polled),
+        "member_status": member_status,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+    }
+    if polled:
+        summary["do_not_resubmit"] = bool(in_flight)
+        summary["in_flight_execution_ids"] = in_flight
+    return summary
+
+
 def panel_result_envelope(
     *,
     plan: PanelAdmissionPlan,
     dispatches: dict[str, Any],
     member_models: dict[str, str],
     poll_results: dict[str, Any] | None = None,
+    submission_plan: list[dict[str, Any]] | None = None,
+    poll_summary: dict[str, Any] | None = None,
+    reasoning_effort: str | None = None,
+    requested_max_output: int | None = None,
 ) -> dict[str, Any]:
     """Structured panel helper output for lead adjudication + Menu D assert."""
     executions: dict[str, str] = {}
@@ -335,18 +463,36 @@ def panel_result_envelope(
         "disposition": plan.disposition,
         "panel_families": panel_provider_families(member_models),
         "panel_executions": executions,
+        "panel_capabilities": {
+            role: resolve_dispatch_capabilities(model=model)
+            for role, model in member_models.items()
+        },
         "member_models": member_models,
         "dispatches": dispatches,
         "_next": (
-            "Lead adjudicates panel outputs (NON-offloadable). Then assert on "
-            "decision:* with build_panel_assert_attributes + panel_adjudication_artifact; "
-            "poll content via pipeline(op=result, execution_id=...)."
+            "Lead adjudicates panel outputs (NON-offloadable). Before adjudication, "
+            "inspect member_knob_resolution[*].status/parity/notes; do not infer "
+            "cross-provider parity. Then assert on decision:* with "
+            "build_panel_assert_attributes + panel_adjudication_artifact; poll "
+            "content via pipeline(op=result, execution_id=...)."
         ),
     }
     if errors:
         out["errors"] = errors
     if poll_results:
         out["poll_results"] = poll_results
+    if submission_plan is not None:
+        out["submission_plan"] = submission_plan
+    if poll_summary is not None:
+        out.update(poll_summary)
+    out["member_knob_resolution"] = {
+        role: project_knob_resolution(
+            resolved_model=model,
+            requested_effort=reasoning_effort,
+            requested_max_output=requested_max_output,
+        )
+        for role, model in member_models.items()
+    }
     stamp_errors = validate_panel_assert_attributes(
         {
             "consensus_disposition": "panel",

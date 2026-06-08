@@ -18,10 +18,6 @@ def test_agent_claude_web_slug() -> None:
     assert _resolve_boot_family_platform(agent="claude-web") == ("claude", "web")
 
 
-def test_agent_grok_direct() -> None:
-    assert _resolve_boot_family_platform(agent="grok-direct") == ("grok", "direct")
-
-
 def test_family_platform_when_agent_absent() -> None:
     assert _resolve_boot_family_platform(family="grok", platform="api-multi") == (
         "grok",

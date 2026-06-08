@@ -45,7 +45,7 @@ them is the recurring failure mode this rule defends against.
 | Layer | Definition | Example | Used for |
 |---|---|---|---|
 | **Identity** | Model family | `Claude`, `Grok`, `GPT`, `Gemini` | Sign-off; cortex memory anchor (`family:claude`) |
-| **Seat** | (family, runtime) with verified MCP wiring; addressable slug | `claude-cursor`, `grok-direct`, `claude-web`, `gemini-cursor` | Routing metadata; cortex `agent=` field; agent-bus `from_agent` |
+| **Seat** | (family, runtime) with verified MCP wiring; addressable slug | `claude-cursor`, `gpt-cursor`, `claude-web`, `gemini-cursor` | Routing metadata; cortex `agent=` field; agent-bus `from_agent` |
 | **Role** | Function-this-turn | `lead`, `reviewer`, `artisan`, `skeptic` | Optional functional framing; defined in `config/agents.yaml` `roles:` |
 | **Capability** | Property of the runtime the seat names | "can call vortex MCP", "can run a browser" | Looked up via the seat; cited from verified wiring, never assumed |
 
@@ -59,14 +59,25 @@ prerequisite; cortex participation is the audit test.
 - A runtime with declared `tool_surface: mcp` but unverified end-to-end
   wiring is a **candidate seat**, not a seat. It earns seat status when
   a round-trip MCP call under the slug succeeds.
-- Operator-driven shell sessions (`grok-direct`) are seats because the
-  runtime has MCP wired — operator agency vs model agency is irrelevant
-  to the criterion.
+- Operator-driven shell sessions with verified MCP wiring are seats —
+  operator agency vs model agency is irrelevant to the criterion.
 
 Capability claims must cite verified wiring, not family priors. "Gemini
 can call MCP" is a family-level inference; "the `gemini-cursor` or `gemini-api` seat has
 been verified to call MCP end-to-end" is a seat-level fact. Only the
 latter is admissible in routing decisions.
+
+## Provenance projection
+
+**Invariant**: ∀ Cortex assert: `seeded_by` is family-level; sign-off text is family-level.
+∀ routing metadata (`from_agent`, `to`, agent-bus addressing): seat-level.
+∀ operational fields (`session_id`, journal `agent`, boot continuity, `cortex_boot(agent=...)`): seat-level.
+
+The server normalizes `seeded_by` seat-slug → family on the assert path; agents do not
+hand-pass seat-level values in `seeded_by`. Sign-off text follows the same anchor: the
+**model family** is the identity, regardless of which seat is executing.
+
+See `decision:agent-identity-taxonomy`.
 
 ## Anti-Patterns
 

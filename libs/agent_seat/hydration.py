@@ -42,6 +42,7 @@ from .profiles import (
     inline_only_for_model,
     load_roles,
     role_anchor,
+    seat_to_family,
 )
 from .registry import normalize_agent_slug
 
@@ -71,12 +72,9 @@ def _normalize_slug_to_anchors(
         return anchors
 
     # Caller passed a seat slug ({family}-{platform})
-    parts = canonical.split("-", 1)
-    if len(parts) == 2 and parts[0] in {"claude", "gpt", "grok", "gemini"}:
-        anchors.append(family_anchor(parts[0]))
-    elif parts[0] in {"claude", "gpt", "grok", "gemini"}:
-        # Single-word family slug (shouldn't normally occur, but handle gracefully)
-        anchors.append(family_anchor(parts[0]))
+    family = seat_to_family(canonical)
+    if family is not None:
+        anchors.append(family_anchor(family))
     else:
         # Unknown slug — fall back to family:claude for the cursor seat default
         anchors.append(family_anchor("claude"))

@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from agent_seat.panel_dispatch import (
     MIN_PANEL_PROVIDER_FAMILIES,
     PanelMemberSpec,
     admit_panel_plan,
     build_panel_assert_attributes,
+    build_panel_poll_summary,
     build_team_dispatch_body,
     effective_model_for_member,
+    lint_panel_messages,
+    member_dispatch_thread_id,
     panel_provider_families,
+    panel_result_envelope,
     resolve_panel_members,
     validate_panel_assert_attributes,
     verify_panel_role_model_resolution,
+)
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TEAM_DISPATCH_YAML = (
+    _REPO_ROOT / "pipelines.local/team_dispatch/v1/team-dispatch-v1.yaml"
 )
 
 
@@ -151,3 +164,204 @@ def test_effective_model_uses_role_default_when_omitted() -> None:
 def test_verify_panel_role_model_resolution_passes_default_roster() -> None:
     errors = verify_panel_role_model_resolution()
     assert errors == [], f"panel role resolution drift: {errors}"
+
+
+def test_member_dispatch_thread_id_suffix() -> None:
+    assert member_dispatch_thread_id("panel-base", "skeptic") == "panel-base:skeptic"
+
+
+def test_lint_panel_messages_rejects_block_array() -> None:
+    err = lint_panel_messages([{"role": "user", "content": [{"type": "text"}]}])
+    assert err is not None
+    assert err["error"]["code"] == "validation_error"
+
+
+def test_lint_panel_messages_accepts_string() -> None:
+    assert lint_panel_messages([{"role": "user", "content": "ok"}]) is None
+
+
+def test_panel_result_envelope_submission_plan() -> None:
+    plan = admit_panel_plan(disposition="panel")
+    assert not isinstance(plan, dict)
+    member_models = {"skeptic": "xai/grok-4.3", "reviewer": "openai/gpt-5.5"}
+    envelope = panel_result_envelope(
+        plan=plan,
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        member_models=member_models,
+        submission_plan=[
+            {
+                "role": "skeptic",
+                "model": "xai/grok-4.3",
+                "execution_id": "e1",
+                "dispatch_key": "base:skeptic",
+            },
+            {
+                "role": "reviewer",
+                "model": "openai/gpt-5.5",
+                "execution_id": "e2",
+                "dispatch_key": "base:reviewer",
+            },
+        ],
+        reasoning_effort="high",
+    )
+    assert len(envelope["submission_plan"]) == 2
+    assert envelope["submission_plan"][0]["dispatch_key"] == "base:skeptic"
+    assert "member_knob_resolution" in envelope
+
+
+def test_build_panel_poll_summary_partial_e6() -> None:
+    summary = build_panel_poll_summary(
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        poll_results={
+            "skeptic": {"status": "running", "execution_id": "e1"},
+            "reviewer": {
+                "status": "completed",
+                "execution_id": "e2",
+                "result": {
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 50},
+                },
+            },
+        },
+        polled=True,
+    )
+    assert summary["status"] == "partial"
+    assert summary["do_not_resubmit"] is True
+    assert summary["in_flight_execution_ids"] == ["e1"]
+    assert summary["member_status"] == {
+        "skeptic": "running",
+        "reviewer": "complete",
+    }
+    assert summary["tokens_in"] == 100
+    assert summary["tokens_out"] == 50
+
+
+def test_build_panel_poll_summary_complete_e8() -> None:
+    summary = build_panel_poll_summary(
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        poll_results={
+            "skeptic": {
+                "status": "completed",
+                "result": {"usage": {"prompt_tokens": 200, "completion_tokens": 30}},
+            },
+            "reviewer": {
+                "status": "completed",
+                "result": {"usage": {"prompt_tokens": 150, "completion_tokens": 20}},
+            },
+        },
+        polled=True,
+    )
+    assert summary["status"] == "complete"
+    assert summary["member_status"] == {
+        "skeptic": "complete",
+        "reviewer": "complete",
+    }
+    assert summary["tokens_in"] == 350
+    assert summary["tokens_out"] == 50
+    assert "do_not_resubmit" not in summary or summary.get("do_not_resubmit") is False
+
+
+def test_build_panel_poll_summary_dispatched_without_poll() -> None:
+    summary = build_panel_poll_summary(
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        poll_results=None,
+        polled=False,
+    )
+    assert summary["status"] == "dispatched"
+    assert summary["member_status"] == {
+        "skeptic": "running",
+        "reviewer": "running",
+    }
+    assert summary["tokens_in"] == 0
+    assert summary["tokens_out"] == 0
+
+
+def test_build_panel_poll_summary_failed() -> None:
+    summary = build_panel_poll_summary(
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"error": {"code": "validation_error"}},
+        },
+        poll_results={
+            "skeptic": {"status": "failed", "error": {"code": "step_timeout"}},
+        },
+        polled=True,
+    )
+    assert summary["status"] == "failed"
+    assert summary["member_status"]["skeptic"] == "failed"
+    assert summary["member_status"]["reviewer"] == "failed"
+
+
+def test_panel_result_envelope_poll_summary_do_not_resubmit() -> None:
+    plan = admit_panel_plan(disposition="panel")
+    assert not isinstance(plan, dict)
+    member_models = {"skeptic": "xai/grok-4.3", "reviewer": "openai/gpt-5.5"}
+    poll_summary = build_panel_poll_summary(
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        poll_results={
+            "skeptic": {"status": "running"},
+            "reviewer": {"status": "completed"},
+        },
+        polled=True,
+    )
+    envelope = panel_result_envelope(
+        plan=plan,
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        member_models=member_models,
+        poll_summary=poll_summary,
+    )
+    assert envelope["do_not_resubmit"] is True
+    assert envelope["in_flight_execution_ids"] == ["e1"]
+    assert envelope["status"] == "partial"
+
+
+def test_team_dispatch_yaml_concurrency_respond_floor() -> None:
+    data = yaml.safe_load(_TEAM_DISPATCH_YAML.read_text(encoding="utf-8"))
+    concurrency_timeout = data["concurrency"]["timeout_seconds"]
+    respond_timeout = next(
+        step["timeout_seconds"] for step in data["steps"] if step["name"] == "respond"
+    )
+    assert concurrency_timeout >= respond_timeout
+
+
+def test_panel_result_envelope_member_knob_resolution() -> None:
+    plan = admit_panel_plan(disposition="panel")
+    assert not isinstance(plan, dict)
+    member_models = {
+        "skeptic": "xai/grok-4.20-multi-agent-0309",
+        "reviewer": "openai/gpt-5.5",
+    }
+    envelope = panel_result_envelope(
+        plan=plan,
+        dispatches={
+            "skeptic": {"execution_id": "e1"},
+            "reviewer": {"execution_id": "e2"},
+        },
+        member_models=member_models,
+        reasoning_effort="high",
+    )
+    assert set(envelope["member_knob_resolution"]) == set(member_models)
+    reviewer = envelope["member_knob_resolution"]["reviewer"]
+    assert reviewer["status"] == "mapped"
+    assert reviewer["reasoning_native"] == {"effort": "high"}
+    assert "stamp_warnings" in envelope
+    panel_caps = envelope["panel_capabilities"]
+    assert panel_caps["skeptic"]["inline_only"] is True
+    assert panel_caps["reviewer"]["mcp_enabled"] is True

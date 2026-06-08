@@ -17,6 +17,7 @@ from .boundary import (
     ReasoningResolution,
     resolve_dispatch,
 )
+from .projection import project_knob_resolution
 from .registry import (
     VALID_REASONING_EFFORTS,
     default_reasoning_effort,
@@ -71,6 +72,7 @@ __all__ = [
     "wrapper_for",
     # boundary
     "resolve_dispatch",
+    "project_knob_resolution",
     "DispatchResolution",
     "MaxOutputResolution",
     "ReasoningResolution",

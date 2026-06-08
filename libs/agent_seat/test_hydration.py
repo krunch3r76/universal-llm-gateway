@@ -244,9 +244,7 @@ async def test_hydrate_role_loads_default_model_from_role_anchor(
     assert "google/gemini-3.1-pro-preview" in bundle.agent_meta.allowed_models
     meta_entity_calls = [c for c in fake.calls if "/entities/" in c]
     assert any("role:synthesizer" in c for c in meta_entity_calls)
-    assert not any(
-        "family:gemini" in c and "role:" not in c for c in meta_entity_calls
-    )
+    assert not any("family:gemini" in c and "role:" not in c for c in meta_entity_calls)
 
 
 def test_static_tool_fallback_unique_names() -> None:

@@ -4,8 +4,7 @@
 Gates:
   G1 — JSON-Schema validate config/mcp/canonical.yaml against
        config/mcp/canonical_registry.schema.json.
-  G2 — Derivation-determinism snapshot: derive_grok_manifest output matches
-       services/mcp-server/testdata/golden_grok_manifest.json.
+  G2 — (retired) grok manifest derivation removed with /mcp/grok collapse.
   G3 — Claude /mcp cap enforcement: number of unique domains ≤ 24.
   G4 — Skill ↔ registry consistency: every canonical name referenced in
        .cursor/skills/**/*.md exists in canonical.yaml.
@@ -94,36 +93,8 @@ def _warn(gate: str, detail: str) -> None:
 
 
 def _run_g2(registry_path: Path) -> None:
-    """G2: derive_grok_manifest output must match golden snapshot."""
-    repo_root = Path(__file__).resolve().parent.parent
-    golden_path = (
-        repo_root / "services" / "mcp-server" / "testdata" / "golden_grok_manifest.json"
-    )
-    derive_path = repo_root / "services" / "mcp-server"
-
-    if not golden_path.exists():
-        _fail(
-            "G2", f"golden file missing: {golden_path} — run test_derive.py --refresh"
-        )
-
-    sys.path.insert(0, str(derive_path))
-    try:
-        from _derive import derive_grok_manifest  # type: ignore[import]
-    except ImportError as exc:
-        _fail("G2", f"cannot import _derive: {exc}")
-    finally:
-        sys.path.pop(0)
-
-    manifest = derive_grok_manifest(registry_path)
-    actual = json.dumps(manifest, sort_keys=True, indent=2)
-    expected = golden_path.read_text(encoding="utf-8")
-    if actual != expected:
-        _fail(
-            "G2",
-            "snapshot drift — canonical.yaml changed without updating golden. "
-            "Run: python3 services/mcp-server/test_derive.py --refresh",
-        )
-    _ok("G2", f"golden matches — {len(manifest)} grok manifest entries")
+    """G2 retired — /mcp/grok flat manifest derivation removed (expunge-grok Pass B)."""
+    _ok("G2", "skipped — grok manifest derivation retired")
 
 
 # ── G4 helpers ────────────────────────────────────────────────────────────────
@@ -419,16 +390,9 @@ _DISPATCHER_RE = re.compile(
 def _run_g9(tools: list[dict], skills_root: Path) -> None:
     """G9: seat-visibility coherence across corpus.
 
-    ∀ canonical name referenced as a flat call (grok surface) in a skill:
-      'mcp_grok' ∈ seat_visibility.
     ∀ domain name referenced as a dispatcher call (claude surface) in a skill:
       'mcp' ∈ domain_seat_visibility.
-    Violations are B2 prerequisite blockers (operator reclassification 2026-05-22).
     """
-    cn_to_sv: dict[str, list[str]] = {
-        t["canonical_name"]: t.get("seat_visibility", []) for t in tools
-    }
-    canonical_names: set[str] = set(cn_to_sv.keys())
     domain_set: set[str] = {t["domain"] for t in tools}
     domain_sv: dict[str, list[str]] = {}
     for t in tools:
@@ -442,29 +406,6 @@ def _run_g9(tools: list[dict], skills_root: Path) -> None:
     for skill_file in sorted(skill_files):
         content = skill_file.read_text(encoding="utf-8", errors="ignore")
         rel = skill_file.relative_to(skills_root.parent)
-
-        # Flat call references (grok surface): canonical_name(...)
-        for m in _FLAT_CALL_RE.finditer(content):
-            token = m.group(1)
-            if token not in canonical_names:
-                continue
-            sv = cn_to_sv[token]
-            if "mcp_grok" not in sv:
-                violations.append(
-                    f"{rel}: {token!r} referenced as flat call but "
-                    f"seat_visibility={sv!r} lacks 'mcp_grok'"
-                )
-
-        # Substrate-qualified references (grok surface)
-        for m in _SUBSTRATE_RE.finditer(content):
-            token = m.group(1)
-            if token not in canonical_names:
-                continue
-            sv = cn_to_sv[token]
-            if "mcp_grok" not in sv:
-                violations.append(
-                    f"{rel}: user-vortex__{token} lacks 'mcp_grok' in seat_visibility"
-                )
 
         # Dispatcher call references (claude surface): domain(tool=... / op=... / ...)
         for m in _DISPATCHER_RE.finditer(content):

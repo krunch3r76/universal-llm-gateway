@@ -27,10 +27,7 @@ def test_change_b_lead_seats_get_consensus_rule_zero() -> None:
 
 
 def test_change_b_non_lead_seats_omit_rule_zero() -> None:
-    for agent, family, platform in (
-        ("grok-direct", "grok", "direct"),
-        ("gemini-cursor", "gemini", "cursor"),
-    ):
+    for agent, family, platform in (("gemini-cursor", "gemini", "cursor"),):
         rendered = render_operational_context(agent, family=family, platform=platform)
         assert "0. **Material lead decisions**" not in rendered
         assert render_frontier_reasoning(lead_posture=False) in rendered

@@ -7,8 +7,6 @@ from pathlib import Path
 
 import pytest
 
-pytest_plugins = ["grokbuild.test_support"]
-
 REPO_ROOT = Path(__file__).resolve().parent
 LIBS = REPO_ROOT / "libs"
 STARGATE = REPO_ROOT / "services" / "universal-stargate"

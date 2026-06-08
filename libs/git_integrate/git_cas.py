@@ -1,7 +1,7 @@
 """Pure git mechanics for arc-worktree integration.
 
-All async functions use _run_command (SIGTERM→SIGKILL timeout pattern,
-mirroring grokbuild.git_ops). diff_sha256 is synchronous (called from
+All async functions use _run_command (SIGTERM→SIGKILL timeout pattern).
+diff_sha256 is synchronous (called from
 validate_integrate which runs in run_in_executor).
 
 Ref-advance shape chosen: direct CAS on refs/heads/master via
@@ -422,7 +422,7 @@ async def _run_command(
     cwd: str | None = None,
     timeout: float = _GIT_TIMEOUT,
 ) -> subprocess.CompletedProcess[str]:
-    """Run a subprocess with SIGTERM→SIGKILL timeout (mirrors grokbuild.git_ops).
+    """Run a subprocess with SIGTERM→SIGKILL timeout.
 
     ∀ network-touching or potentially-blocking git ops: explicit timeout
     prevents a misconfigured repo from hanging the worker indefinitely.

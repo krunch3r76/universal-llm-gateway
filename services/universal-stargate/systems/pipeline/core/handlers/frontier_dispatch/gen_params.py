@@ -22,6 +22,7 @@ from llm_adapters.capability_dispatch import (
     KNOB_REJECTED_EVENT,
     RESOLVED_EVENT,
     CatalogMissError,
+    DispatchResolution,
     ProtocolError,
     resolve_dispatch,
 )
@@ -274,7 +275,19 @@ def _resolve_dispatch_boundary(
             model_entity_id=admission.model_entity_id,
             provider=admission.provider,
             api_surface=resolution.api_surface,
-            resolved_fields=resolution.resolved_event_fields(),
+            resolved_fields=_resolved_event_fields(resolution, reasoning_effort),
         )
     )
     return resolution
+
+
+def _resolved_event_fields(
+    resolution: DispatchResolution, reasoning_effort: str | None
+) -> dict[str, Any]:
+    resolved_fields = resolution.resolved_event_fields()
+    if resolution.reasoning.value_kind == "adaptive" and reasoning_effort:
+        resolved_fields = {
+            **resolved_fields,
+            "reasoning_output_config_effort": reasoning_effort,
+        }
+    return resolved_fields

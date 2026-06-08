@@ -13,7 +13,10 @@ from typing import Any
 from universal_logging import get_logger
 
 from ..routes.assertions import _create_assertion_impl
-from ._assertions_shared import _emit_predicate_form_normalize_events
+from ._assertions_shared import (
+    _emit_predicate_form_normalize_events,
+    _project_seeded_by,
+)
 from ._shared import (
     _DEFAULT_USER_ENTITY,
     _FRICTION_CATEGORIES,
@@ -139,8 +142,15 @@ def _op_assert(
             derivation_type,
             confidence_score,
         )
+    projection_tag = None
+    if seeded_by is not None:
+        body["seeded_by"], projection_tag = _project_seeded_by(seeded_by)
     result = _create_assertion_impl(body)
     if "error" not in result:
+        if seeded_by is not None:
+            result["seeded_by_input"] = seeded_by
+            result["seeded_by"] = body["seeded_by"]
+            result["seeded_by_projection"] = projection_tag
         logger.info("cortex assert: %s — %s (%s)", entity_id, claim[:60], confidence)
         record(
             "mcp.cortex.assertion.seeded", entity_id=entity_id, confidence=confidence

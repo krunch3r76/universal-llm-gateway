@@ -85,7 +85,7 @@ agents who treat entity-attached assertions as current truth).
 | Smoke-test fail surfacing a real defect | `friction(...)`, then fix |
 | "I caught my own mistake mid-session" | git commit + docstring caveat at the source of the trap |
 | Plan / next-step intent | `entity_create` (todo) or in-context todo list — not an assertion |
-| Multi-todo arc / grouping | `project:` entity + spec + graph edges — not a master-`todo:` (`task:` retired 2026-06-04) |
+| Multi-todo arc / grouping | `task:` container + `child_of` leaf `todo:` entities + spec (`task-seed`/`task-close` workflows retired 2026-06-04; entity type live) |
 | Ranked open todos | `cortex(tool="todo_candidates", ...)` |
 
 ### When you've already seeded noise: retract, don't supersede

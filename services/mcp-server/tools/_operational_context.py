@@ -185,9 +185,7 @@ def render_operational_context(
     # dispatcher, not the executor.
     if not (family == "subagent" and platform == "subagent"):
         sections.append(
-            templates.render_frontier_reasoning(
-                lead_posture=is_lead_agent(agent)
-            )
+            templates.render_frontier_reasoning(lead_posture=is_lead_agent(agent))
         )
     sections.append(_render_observe_and_search(agent))
     sections.append(templates.ASSERTION_SEARCH)

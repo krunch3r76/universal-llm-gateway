@@ -110,29 +110,6 @@ async def test_resolve_boot_directive_agent_claude_cursor() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_boot_directive_agent_grok_direct() -> None:
-    calls: list[tuple[str, dict[str, object]]] = []
-
-    async def _fake_execute(name: str, arguments: dict[str, object]) -> str:
-        calls.append((name, arguments))
-        return json.dumps({"briefing_card": "GROK BRIEF"})
-
-    executor = McpToolExecutor(mcp_url="https://mcp.example.com/mcp")
-    executor.execute_tool = _fake_execute  # type: ignore[method-assign]
-
-    messages = [
-        {
-            "role": "system",
-            "content": "cortex_boot(agent='grok-direct')",
-        }
-    ]
-    await executor._resolve_boot_directive(messages)
-
-    assert calls == [("cortex_boot", {"agent": "grok-direct"})]
-    assert messages[0]["content"] == "GROK BRIEF"
-
-
-@pytest.mark.asyncio
 async def test_resolve_boot_directive_family_platform() -> None:
     calls: list[tuple[str, dict[str, object]]] = []
 

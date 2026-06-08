@@ -65,7 +65,7 @@ _FRONTIER_GENERATE_HINT = (
     "role=synthesizer, dispatch_thread_id=…)`; pipeline authors use "
     "`POST /api/v1/frontier/dispatch` or "
     '`pipeline(pipeline_id="frontier-dispatch")` with structured admission. '
-    "Bare `pipeline(pipeline_id=\"frontier-dispatch\")` without "
+    'Bare `pipeline(pipeline_id="frontier-dispatch")` without '
     "`_endpoint_request_id` skips the canonical admission gate."
 )
 

@@ -1,11 +1,9 @@
 # mcp-registry.toml — canonical MCP server registry
-# Source of truth for: Cursor descriptors, Grok ~/.grok/config.toml entries, cortex
+# Source of truth for: Cursor descriptors, cortex
 # entity registrations for MCP-only-agent discovery.
 #
-# Edit this file; run `scripts/gen-agents-md` to regenerate the MCP surface
-# block of AGENTS.md (Grok config section).
 # Run `scripts/mcp-registry-project` (Phase 2 follow-on) for full projection
-# to all three targets: Cursor descriptors, Grok config, and cortex entities.
+# to Cursor descriptors and cortex entities.
 # CI checks generated outputs match this source (re-project diff gate).
 #
 # Schema version: bumped on breaking field changes.
@@ -23,11 +21,10 @@ transport = "http"
 # Required for http transport.
 url = "https://mcp.k-1.me/mcp"
 
-# Projection targets: this server is projected to all three classes.
+# Projection targets:
 #   cursor           — Cursor descriptor dir + auto-discovered tools/*.json
-#   grok-direct      — ~/.grok/config.toml [mcp_servers.user-vortex] block
 #   cortex-projection — mcp_server:user-vortex entity for MCP-only-agent discovery
-applicable_targets = ["cursor", "grok-direct", "cortex-projection"]
+applicable_targets = ["cursor", "cortex-projection"]
 
 # Cortex entity applicable_agents: all agent classes can discover this server.
 applicable_agents = ["*"]
@@ -37,49 +34,35 @@ Primary universal vortex MCP server. Primary Claude/Cursor catalog: cortex, cort
 boot_inspect, fs, agent_bus, observability, rag, pipeline, dispatch, \
 team_dispatch, manage, sql, retrieve, \
 quality_gate, web_fetch, web_search, email, model_status, bot_supervisor, \
-claudeburst. grokbuild is RETIRED (11588) — overflow relay only via tool_search. \
-Full vortex surface available to both Cursor and grok-direct \
+claudeburst. Full vortex surface available to Cursor \
 (ULG trust model: secure environment, sole consumer, operator discipline).
 """
 
 # Bearer token; env var name resolved at projection time, never stored here.
 # The env var must be present in the operator environment when the projection
-# script runs (or when grok reads ~/.grok/config.toml at session start).
+# script runs.
 [server.auth]
 type = "bearer"
-# Operator-canonical name (matches AGENTS.md and ~/.grok/config.toml). Harmonized
+# Operator-canonical name (matches AGENTS.md). Harmonized
 # 2026-05-22 in Phase 3 — was VORTEX_MCP_TOKEN.
 env = "MCP_AUTH_TOKEN"
 
-# Per-target URL overrides.
-# grok-direct uses the flat-manifest /mcp/grok endpoint (D4 decision: per-seat
-# endpoints for explicit routing). Cursor stays at /mcp.
-[server.url_overrides]
-"grok-direct" = "https://mcp.k-1.me/mcp/grok"
-
-# Per-target tool filter.
-# Per B-Q4/§4.6: grok CLI TOML has no per-server tool-filter primitive.
-# `exclude_for.grok-direct` is schema-retained for future multi-tenant operators
-# but UNUSED for ULG (operator decision locked 2026-05-22, OD1).
-# If non-empty, the projector emits a WARNING comment in the Grok TOML block.
 [server.tool_filter]
 include = ["*"]
-[server.tool_filter.exclude_for]
-"grok-direct" = []
 
 # ─────────────────────────────────────────────────────────────────────────
 
 [[server]]
-# Cursor IDE-owned browser tab server. B-Q4 hard-exclude: not projectable to grok-direct.
+# Cursor IDE-owned browser tab server.
 name = "cursor-ide-browser"
 
 # cursor-internal: managed by Cursor's IDE-resident MCP layer; no URL/auth needed.
 transport = "cursor-internal"
 
-# Cursor-only: excluded from grok-direct and cortex-projection per B-Q4.
+# Cursor-only: excluded from cortex-projection per B-Q4.
 applicable_targets = ["cursor"]
 
 # Not discoverable via cortex for MCP-only agents.
 applicable_agents = ["cursor"]
 
-description = "Cursor IDE-owned browser tab via CDP. Cursor-internal; no tool descriptors enumerable as JSON. Not available to grok-direct or MCP-only agents."
+description = "Cursor IDE-owned browser tab via CDP. Cursor-internal; no tool descriptors enumerable as JSON. Not available to MCP-only agents."

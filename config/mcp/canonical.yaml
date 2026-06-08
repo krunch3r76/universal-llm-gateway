@@ -1,5 +1,4 @@
-# Canonical Tool Name Registry — single source of truth for /mcp (Claude dispatcher)
-# and /mcp/grok (flat 99-tool) manifest derivation.
+# Canonical Tool Name Registry — single source of truth for /mcp (Claude dispatcher).
 #
 # Phase A skeleton — 2026-05-22.
 # Authorship policy: YAML-only (D7); no separate Python loader module.
@@ -11,7 +10,6 @@
 #
 # Derivation rules (Phase B):
 #   /mcp  (Claude)  → one dispatcher tool per domain; op enumeration via inputSchema.
-#   /mcp/grok (grok) → all entries with 'mcp_grok' in seat_visibility emitted flat.
 #
 # dispatcher_call_shape.dispatch_key: normalized to 'op' (D8).
 # All existing heterogeneous keys (tool=, action=, operation=) migrate to op= at cutover.
@@ -27,8 +25,6 @@ domains:
 - fs
 - pipeline
 - rag
-# grokbuild: domain retained for mcp_grok flat manifest + overflow relay (harness retired 11588)
-- grokbuild
 - git_integrate
 - git_land
 - git_status
@@ -83,7 +79,7 @@ tools:
       content_hash: {type: string, description: "Exact-match on content_hash column. Accepts raw hex or sha256:<hex> form."}
       fields: {type: array, items: {type: string}, description: "Project only these fields. Base columns pass through; other names resolve from attributes JSON (e.g. applicable_agents). Collapses an N+1 attribute audit to one query."}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -115,7 +111,7 @@ tools:
       limit: {type: integer, description: "Result cap (default 5)."}
     required: [content_hash]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-24
@@ -143,7 +139,7 @@ tools:
       include_edges: {type: boolean}
     required: [entity_id]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -174,7 +170,7 @@ tools:
       workflow_state: {type: string}
     required: [id, type, name]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -205,7 +201,7 @@ tools:
       attributes: {type: object, description: "Shallow top-level merge into existing attributes; omitted keys are preserved. Cannot delete attribute keys via PATCH — use explicit null only where the API documents field clearing."}
     required: [entity_id]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -232,7 +228,7 @@ tools:
       if_exists: {type: string, enum: [fail, update, skip]}
     required: [entities]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -263,7 +259,7 @@ tools:
       derivation_type: {type: string}
     required: [entity_id, claim, confidence, evidence, derivation_type]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -292,7 +288,7 @@ tools:
       superseded: {type: boolean}
       limit: {type: integer}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -325,7 +321,7 @@ tools:
     required: [old_assertion_id, entity_id, claim, confidence, evidence, 
         session_id, agent]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -353,7 +349,7 @@ tools:
       review_status: {type: string}
     required: [assertion_id]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -378,7 +374,7 @@ tools:
     properties:
       limit: {type: integer}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -411,7 +407,7 @@ tools:
       summary: {type: string}
     required: [session_id, agent, session_summary_md, summary]
   skill_uri: agent_skill:session-close
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -445,7 +441,7 @@ tools:
       transcript_depth: {type: string}
     required: [session_id, agent, session_summary_md, summary]
   skill_uri: agent_skill:session-close-audit
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-06-05
@@ -474,7 +470,7 @@ tools:
       handoff_source_path: {type: string}
     required: [session_id, handoff_prompt]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-31
@@ -502,7 +498,7 @@ tools:
       entity_type: {type: string}
     required: [query]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -530,7 +526,7 @@ tools:
       limit: {type: integer}
       workflow_state: {type: string}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -559,7 +555,7 @@ tools:
       edge_type: {type: string}
     required: [session_id, agent, from_node, to_node, edge_type]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -585,7 +581,7 @@ tools:
       edge_type: {type: string}
       limit: {type: integer}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -613,7 +609,7 @@ tools:
       min_strength: {type: number}
     required: [node]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -639,7 +635,7 @@ tools:
       type_id: {type: string}
       limit: {type: integer}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -668,7 +664,7 @@ tools:
       strength: {type: number}
     required: [source_id, target_id, type_id]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -703,7 +699,7 @@ tools:
       session_id: {type: string}
     required: [service, category, note, agent]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -731,7 +727,7 @@ tools:
       session_id: {type: string}
     required: [claim, agent]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -763,7 +759,7 @@ tools:
       consolidation_data: {type: object}
     required: [agent, register, entry]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -788,7 +784,7 @@ tools:
       entry_id: {type: integer}
     required: [entry_id]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -815,7 +811,7 @@ tools:
       limit: {type: integer}
       offset: {type: integer}
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -843,7 +839,7 @@ tools:
       link_type: {type: string, default: "related"}
     required: [entry_id]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -880,7 +876,7 @@ tools:
       source_entry_ids: {type: array, items: {type: integer}}
     required: [agent, register, entry, throughline, before, now]
   skill_uri: agent_skill:cortex
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-23
@@ -914,7 +910,7 @@ tools:
       limit: {type: integer}
       has_unread: {type: boolean}
   skill_uri: agent_skill:agent_bus
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -942,7 +938,7 @@ tools:
       compact: {type: boolean}
     required: [thread]
   skill_uri: agent_skill:agent_bus
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -968,7 +964,7 @@ tools:
       turn_number: {type: integer}
     required: [thread, turn_number]
   skill_uri: agent_skill:agent_bus
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -997,7 +993,7 @@ tools:
       subject: {type: string}
     required: [thread, body, from_agent]
   skill_uri: agent_skill:agent_bus
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -1027,7 +1023,7 @@ tools:
       subject: {type: string}
     required: [body, from_agent, to]
   skill_uri: agent_skill:agent_bus
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1036,8 +1032,7 @@ tools:
   # Read-only projection of the agent_bus surface for the Claude/web seat only.
   # The unified agent_bus tool mixes read+write so harnesses cannot advertise it
   # readOnlyHint; this domain registers a separate readOnlyHint=True tool so reads
-  # auto-approve (agent-bus thread 1241). NOT exposed on mcp_grok — the grok flat
-  # manifest already carries per-op mandate_safety. Live tool: agent_bus_read.
+  # auto-approve (agent-bus thread 1241). Live tool: agent_bus_read.
 
 - canonical_name: agent_bus_read_threads
   domain: agent_bus_read
@@ -1199,7 +1194,7 @@ tools:
       path: {type: string}
     required: [sandbox, path]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -1226,7 +1221,7 @@ tools:
       content: {type: string}
     required: [sandbox, path, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -1252,7 +1247,7 @@ tools:
       path: {type: string}
     required: [sandbox]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -1278,7 +1273,7 @@ tools:
       path: {type: string}
     required: [sandbox, path]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: destructive
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1305,7 +1300,7 @@ tools:
       content: {type: string}
     required: [sandbox, path, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1335,7 +1330,7 @@ tools:
       all_occurrences: {type: boolean}
     required: [sandbox, path, target, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1362,7 +1357,7 @@ tools:
       target: {type: string}
     required: [sandbox, path, target]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1390,7 +1385,7 @@ tools:
       target_sandbox: {type: string}
     required: [sandbox, path, target]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1418,7 +1413,7 @@ tools:
       content: {type: string}
     required: [sandbox, path, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1445,7 +1440,7 @@ tools:
       paths: {type: array, items: {type: string}}
     required: [sandbox, paths]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1472,7 +1467,7 @@ tools:
       section: {type: string}
     required: [sandbox, path, section]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -1498,7 +1493,7 @@ tools:
       path: {type: string}
     required: [sandbox, path]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1527,7 +1522,7 @@ tools:
       content: {type: string}
     required: [sandbox, path, section, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1556,7 +1551,7 @@ tools:
       content: {type: string}
     required: [sandbox, path, section, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1584,7 +1579,7 @@ tools:
       section: {type: string}
     required: [sandbox, path, section]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: destructive
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1611,7 +1606,7 @@ tools:
       content: {type: string}
     required: [sandbox, path, content]
   skill_uri: agent_skill:fs
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1642,7 +1637,7 @@ tools:
       async_exec: {type: boolean}
     required: [pipeline]
   skill_uri: agent_skill:pipeline
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1668,7 +1663,7 @@ tools:
       execution_id: {type: string}
     required: [execution_id]
   skill_uri: agent_skill:pipeline
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1694,7 +1689,7 @@ tools:
       scope: {type: string}
     required: [question]
   skill_uri: agent_skill:pipeline
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1725,7 +1720,7 @@ tools:
       limit: {type: integer}
     required: [query]
   skill_uri: agent_skill:rag
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1753,7 +1748,7 @@ tools:
       scope: {type: string}
     required: [source_uri, content]
   skill_uri: agent_skill:rag
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1777,7 +1772,7 @@ tools:
     properties:
       scope: {type: string}
   skill_uri: agent_skill:rag
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -1801,215 +1796,10 @@ tools:
     properties:
       scope: {type: string}
   skill_uri: agent_skill:rag
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
-
-  # ─── domain: grokbuild (RETIRED harness — overflow relay only) ───────────────
-  # Off mcp_claude (11588). Worker maintenance: dispatch(tool="grokbuild", ...).
-  # New work: cursorbuild (code) / team_dispatch role=artisan|skeptic (Grok consult).
-
-- canonical_name: grokbuild_build
-  domain: grokbuild
-  operation: build
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: build
-  flat_call_shape:
-    tool: grokbuild_build
-    substrate_qualified: user-vortex__grokbuild_build
-  fol_descriptor: |
-    ∀ args ∈ BuildArgs:
-      grokbuild_build(args) ⟹
-        202 ∧ dispatch_id ∈ UUIDv4.
-      ∧ subsequent grokbuild_build_status(dispatch_id) ⟹ progress.
-      ∧ ∃ T ≤ args.timeout_s: grokbuild_fetch_result(dispatch_id) ⟹ artifact ∨ error.
-    args.source_repo ∈ Workspaces ∧ args.name ∈ valid_worktree_names.
-    Async. Mutating. ¬idempotent across distinct dispatch_ids. See agent_skill:grokbuild.
-  json_schema:
-    type: object
-    properties:
-      source_repo: {type: string}
-      name: {type: string}
-      branch: {type: string}
-      prompt: {type: string}
-      model: {type: string}
-      timeout_s: {type: integer}
-    required: [source_repo, name]
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: write
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: grokbuild_build_status
-  domain: grokbuild
-  operation: build_status
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: build_status
-  flat_call_shape:
-    tool: grokbuild_build_status
-    substrate_qualified: user-vortex__grokbuild_build_status
-  fol_descriptor: |
-    ∀ dispatch_id ∈ UUIDv4:
-      grokbuild_build_status(dispatch_id) ⟹
-        status ∈ {"pending","running","complete","error"} ∧ progress ∈ [0,100].
-    Polling. Read-only per call. See agent_skill:grokbuild.
-  json_schema:
-    type: object
-    properties:
-      dispatch_id: {type: string}
-    required: [dispatch_id]
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: read_only
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: grokbuild_fetch_result
-  domain: grokbuild
-  operation: fetch_result
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: fetch_result
-  flat_call_shape:
-    tool: grokbuild_fetch_result
-    substrate_qualified: user-vortex__grokbuild_fetch_result
-  fol_descriptor: |
-    ∀ dispatch_id ∈ UUIDv4:
-      grokbuild_fetch_result(dispatch_id) ⟹
-        (artifact ∈ str ∧ status = "complete")
-        ∨ (error ∈ str ∧ status = "error").
-    Read-only. Idempotent. See agent_skill:grokbuild.
-  json_schema:
-    type: object
-    properties:
-      dispatch_id: {type: string}
-    required: [dispatch_id]
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: read_only
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: grokbuild_worktree_create
-  domain: grokbuild
-  operation: worktree_create
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: worktree_create
-  flat_call_shape:
-    tool: grokbuild_worktree_create
-    substrate_qualified: user-vortex__grokbuild_worktree_create
-  fol_descriptor: |
-    ∀ source_repo ∈ Workspaces ∧ name ∈ valid_worktree_names:
-      grokbuild_worktree_create(source_repo, name) ⟹
-        worktree at WORKTREE_ROOT/name.
-    Mutating. ¬idempotent (duplicate name → error). See agent_skill:grokbuild.
-  json_schema:
-    type: object
-    properties:
-      source_repo: {type: string}
-      name: {type: string}
-      branch: {type: string}
-    required: [source_repo, name]
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: write
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: grokbuild_worktree_remove
-  domain: grokbuild
-  operation: worktree_remove
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: worktree_remove
-  flat_call_shape:
-    tool: grokbuild_worktree_remove
-    substrate_qualified: user-vortex__grokbuild_worktree_remove
-  fol_descriptor: |
-    ∀ name ∈ ActiveWorktrees:
-      grokbuild_worktree_remove(name) ⟹
-        worktree at WORKTREE_ROOT/name ∉ Filesystem.
-    Mutating. Destructive. See agent_skill:grokbuild.
-  json_schema:
-    type: object
-    properties:
-      name: {type: string}
-    required: [name]
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: destructive
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: grokbuild_worktree_list
-  domain: grokbuild
-  operation: worktree_list
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: worktree_list
-  flat_call_shape:
-    tool: grokbuild_worktree_list
-    substrate_qualified: user-vortex__grokbuild_worktree_list
-  fol_descriptor: |
-    ∀ (): grokbuild_worktree_list() ⟹
-      result ∈ List[WorktreeMeta].
-    Read-only. ¬side-effects. See agent_skill:grokbuild.
-  json_schema:
-    type: object
-    properties: {}
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: read_only
-  cache_priority: on_demand
-  introduced: 2026-05-22
-
-- canonical_name: grokbuild_snapshot
-  domain: grokbuild
-  operation: snapshot
-  dispatcher_call_shape:
-    tool: grokbuild
-    dispatch_key: op
-    dispatch_value: snapshot
-  flat_call_shape:
-    tool: grokbuild_snapshot
-    substrate_qualified: user-vortex__grokbuild_snapshot
-  fol_descriptor: |
-    ∀ source_repo ∈ Workspaces ∧ slug ∈ valid_names:
-      grokbuild_snapshot(source_repo, slug) ⟹
-        arc/<slug> worktree at snapshot commit ∧ main tree unchanged
-        ∨ (reset_main ∧ main tree clean).
-    Mutating. Snapshot commit durable before main tree touched. See decision:worktree-everywhere-isolation.
-  json_schema:
-    type: object
-    properties:
-      source_repo: {type: string}
-      slug: {type: string}
-      name: {type: string}
-      reset_main: {type: boolean, default: false}
-    required: [source_repo, slug]
-  skill_uri: agent_skill:grokbuild
-  # Harness retired (11588). Off mcp_claude → overflow; relay kept for worker maintenance.
-  seat_visibility: [mcp, mcp_grok]
-  mandate_safety: write
-  cache_priority: on_demand
-  introduced: 2026-05-29
 
   # ─── domain: git_integrate / git_land / git_status / git_diff ──────────────────
   # Thin Stargate relay to git-integration-worker (harness-agnostic lead merge).
@@ -2041,9 +1831,9 @@ tools:
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
   # headless/arc-only: git is an external-agent / manual-worktree concern, not a
   # Cursor-IDE concern (decision:cursorbuild-ide-interface). Demoted off mcp_claude
-  # → overflow for Claude seats (still tool_search-discoverable for a Claude lead);
-  # stays primary on mcp_grok (grok-direct is the seat the arc git flow was built for).
-  seat_visibility: [mcp, mcp_grok]
+  # → overflow for Claude seats (still tool_search-discoverable for a Claude lead).
+  seat_visibility: [mcp]
+  skill_uri: agent_skill:cursorbuild
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2077,7 +1867,8 @@ tools:
       remove_worktree: {type: boolean, default: true}
     required: [arc, phase, worktree_path, approval, expected_diff_sha256]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
-  seat_visibility: [mcp, mcp_grok]
+  seat_visibility: [mcp]
+  skill_uri: agent_skill:cursorbuild
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2103,7 +1894,8 @@ tools:
       worktree_path: {type: string}
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
-  seat_visibility: [mcp, mcp_grok]
+  seat_visibility: [mcp]
+  skill_uri: agent_skill:cursorbuild
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2133,7 +1925,8 @@ tools:
       include_full_diff: {type: boolean, default: true}
     required: [worktree_path]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
-  seat_visibility: [mcp, mcp_grok]
+  seat_visibility: [mcp]
+  skill_uri: agent_skill:cursorbuild
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-29
@@ -2168,7 +1961,8 @@ tools:
       dry_run: {type: boolean, default: false}
     required: [worktree_path, expected_branch, paths]
   # headless/arc-only (see git_integrate note). Off mcp_claude → overflow for Claude.
-  seat_visibility: [mcp, mcp_grok]
+  seat_visibility: [mcp]
+  skill_uri: agent_skill:cursorbuild
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-31
@@ -2198,7 +1992,7 @@ tools:
       service: {type: string}
       since_minutes: {type: integer}
   skill_uri: agent_skill:observability
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2225,7 +2019,7 @@ tools:
       limit: {type: integer}
     required: [op_name]
   skill_uri: agent_skill:observability
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2249,7 +2043,7 @@ tools:
     properties:
       service: {type: string}
   skill_uri: agent_skill:observability
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2277,7 +2071,7 @@ tools:
     properties:
       service: {type: string}
   skill_uri: agent_skill:manage
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2303,7 +2097,7 @@ tools:
       service: {type: string}
     required: [service]
   skill_uri: agent_skill:manage
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2329,7 +2123,7 @@ tools:
       service: {type: string}
     required: [service]
   skill_uri: agent_skill:manage
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2355,7 +2149,7 @@ tools:
       service: {type: string}
     required: [service]
   skill_uri: agent_skill:manage
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2382,7 +2176,7 @@ tools:
       timeout: {type: number}
     required: [service]
   skill_uri: agent_skill:manage
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: on_demand
   introduced: 2026-05-22
@@ -2412,7 +2206,7 @@ tools:
       arguments: {type: string}
     required: [tool]
   skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -2441,7 +2235,7 @@ tools:
       id: {type: string}
     required: [id]
   skill_uri: agent_skill:retrieve
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
@@ -2471,11 +2265,11 @@ tools:
       limit: {type: integer}
     required: [query]
   skill_uri: agent_skill:tool_search
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: read_only
   cache_priority: always_loaded
   introduced: 2026-05-22
-- canonical_name: team_dispatch
+- canonical_name: team_dispatch_generate
   domain: team_dispatch
   operation: generate
   dispatcher_call_shape:
@@ -2488,7 +2282,8 @@ tools:
   fol_descriptor: |-
     ∀ role ∈ GenerateRoles ∧ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey:
       team_dispatch(op=generate, role, messages, dispatch_thread_id) ⟹
-        execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content.
+        execution_id ∈ UUIDv4 ∧ poll pipeline(op=result, execution_id) for content
+        ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}.
     GenerateRoles = generate/to_thread roles (reviewer/gatherer/synthesizer/artisan/skeptic).
     ¬ web-consult/cursor-consult/cursor-implement/investigator (handoff-only). Async. Mutating. See agent_skill:dispatch.
   json_schema:
@@ -2505,7 +2300,7 @@ tools:
       subject: {type: string}
     required: [op, role, messages, dispatch_thread_id]
   skill_uri: agent_skill:dispatch
-  seat_visibility: [mcp, mcp_claude, mcp_grok]
+  seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
   cache_priority: always_loaded
   introduced: '2026-05-30'
@@ -2554,11 +2349,13 @@ tools:
     tool: team_dispatch_handoff
     substrate_qualified: user-vortex__team_dispatch_handoff
   fol_descriptor: |-
-    ∀ role ∈ HandoffRole ∧ packet_path ∈ WorkspacesPath ∧ subject ∈ Str:
-      team_dispatch(op=handoff, role, packet_path, subject) ⟹
+    ∀ role ∈ HandoffRole ∧ (packet_path ∈ WorkspacesPath ∨ source_ref ∈ SourceRef) ∧ subject ∈ Str:
+      team_dispatch(op=handoff, role, packet_path|source_ref, subject) ⟹
         thread_id ∈ AgentBus ∧ resolved_model = seat(role) ∧ to_agent = seat(role)
         ∧ handoff_contract = contract(role) ∧ result_handle.kind = agent_bus_thread
         ∧ ¬execution_id.
+    At least one of packet_path | source_ref; source_ref triggers normalize→materialize and the
+    confirmed-decision gate (source_ref path only). Stargate owns resolution — relay pass-through only.
     HandoffRole = web-consult | cursor-consult | cursor-implement.
     web-consult → claude-web | cursor-consult → claude-cursor | cursor-implement → claude-cursor (implement contract).
     ¬model on handoff. ¬handoff_contract on request (derived from role).
@@ -2571,11 +2368,12 @@ tools:
       op: {type: string, enum: [handoff]}
       role: {type: string, enum: [web-consult, cursor-consult, cursor-implement]}
       packet_path: {type: string}
+      source_ref: {type: string}
       subject: {type: string}
       pointer_body: {type: string}
       tags: {type: array, items: {type: string}}
       caller_agent: {type: string}
-    required: [op, role, packet_path, subject]
+    required: [op, role, subject]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write
@@ -2586,7 +2384,7 @@ tools:
   # Phase 2 consensus panel helper (thread 1206). Single-purpose tool — generate-only
   # fan-out via team_dispatch(op=generate); discriminator is disposition, not op.
 
-- canonical_name: panel_dispatch
+- canonical_name: panel_dispatch_panel
   domain: panel_dispatch
   operation: panel
   dispatcher_call_shape:
@@ -2599,7 +2397,8 @@ tools:
   fol_descriptor: |-
     ∀ messages ∈ List[Msg] ∧ dispatch_thread_id ∈ ThreadKey ∧ disposition = panel:
       panel_dispatch(messages, dispatch_thread_id, disposition=panel) ⟹
-        panel_executions ∧ panel_families ∧ per-role dispatches.
+        panel_executions ∧ panel_families ∧ per-role dispatches
+        ∧ member_knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}.
     Runs skeptic + reviewer (≥2 provider families) via team_dispatch admission.
     Lead adjudication + Menu D assert NON-offloadable (Guard 2). Mutating.
     See agent_skill:consensus-steelman-posture.
@@ -2649,7 +2448,7 @@ tools:
   json_schema:
     type: object
     properties:
-      agent: {type: string, description: "Seat slug (claude-web, claude-cursor, grok-direct, ...)"}
+      agent: {type: string, description: "Seat slug (claude-web, claude-cursor, grok-cursor, ...)"}
       family: {type: string, enum: [claude, gpt, grok, gemini]}
       platform: {type: string, enum: [cursor, api, web]}
       role: {type: string}

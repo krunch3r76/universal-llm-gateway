@@ -10,6 +10,7 @@ from universal_logging import get_logger
 
 from ..db import cortex_conn, decode_row, json_encode
 from ..dispatch_ops._shared import _FILES_ROOT, record
+from ..handoff_surface import build_handoff_surface_preview
 from ..models import SessionCloseRequest, SessionCloseResponse
 from ..session_close_debrief import attempt_session_close_debrief
 from ..session_close_enrichment_telemetry import (
@@ -128,6 +129,9 @@ def try_idempotent_session_close(
         turn_count=0,
         byte_count=0,
         audit_warnings=None,
+        handoff_surface_preview=build_handoff_surface_preview(
+            handoff_retry.handoff_prompt, handoff_retry.provenance
+        ),
         debrief_turn_number=debrief.debrief_turn_number,
         debrief_status=debrief.debrief_status,
         debrief_body=debrief.debrief_body,
@@ -351,6 +355,9 @@ def persist_session_close(
         turn_count=ctx.turn_count,
         byte_count=byte_count,
         audit_warnings=audit_warnings,
+        handoff_surface_preview=build_handoff_surface_preview(
+            handoff_prompt, handoff_provenance
+        ),
         debrief_turn_number=debrief.debrief_turn_number,
         debrief_status=debrief.debrief_status,
         debrief_body=debrief.debrief_body,

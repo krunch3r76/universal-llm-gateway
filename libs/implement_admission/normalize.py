@@ -1,0 +1,395 @@
+"""Read-only normalizer: source_ref → ImplementSpec."""
+
+from __future__ import annotations
+
+import re
+from datetime import UTC, datetime
+from typing import Any, Protocol
+
+from implement_admission.admission_read import read_packet
+from implement_admission.routing import derive_routing
+from implement_admission.source_ref import SourceRef, SourceRefError, parse_source_ref
+from implement_admission.spec import (
+    Acceptance,
+    Closeout,
+    CloseoutAdapterKind,
+    ImplementSpec,
+    Intent,
+    Readiness,
+    ReadinessState,
+    Scope,
+    Source,
+    SourceKind,
+    SourceVersion,
+    finalize_spec,
+)
+
+
+class CortexReader(Protocol):
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]: ...
+
+
+def normalize(
+    raw_source_ref: str,
+    *,
+    cortex: CortexReader,
+    workspaces_root: Any = None,
+    dirty_tree_risk: bool = False,
+) -> ImplementSpec:
+    """Parse, resolve (read-only), derive routing, and return ImplementSpec."""
+    ref = parse_source_ref(raw_source_ref)
+    now = datetime.now(UTC)
+
+    if ref.source_kind == SourceKind.AGENT_BUS.value:
+        return _normalize_agent_bus(
+            ref, cortex=cortex, now=now, dirty_tree_risk=dirty_tree_risk
+        )
+
+    if ref.source_kind == SourceKind.PACKET.value:
+        return _normalize_packet(
+            ref,
+            workspaces_root=workspaces_root,
+            now=now,
+            dirty_tree_risk=dirty_tree_risk,
+        )
+
+    return _normalize_entity(
+        ref, cortex=cortex, now=now, dirty_tree_risk=dirty_tree_risk
+    )
+
+
+def _normalize_entity(
+    ref: SourceRef,
+    *,
+    cortex: CortexReader,
+    now: datetime,
+    dirty_tree_risk: bool = False,
+) -> ImplementSpec:
+    entity_id = ref.canonical_ref
+    try:
+        entity = cortex.entity_get(entity_id)
+    except Exception as exc:
+        raise SourceRefError(
+            code="source_not_found",
+            source_ref=ref.external_ref,
+            rule=f"entity_get({entity_id!r})",
+            message=str(exc),
+        ) from exc
+
+    if not entity or entity.get("id") is None:
+        raise SourceRefError(
+            code="source_not_found",
+            source_ref=ref.external_ref,
+            rule=f"entity_get({entity_id!r}) returned empty",
+        )
+
+    attrs = entity.get("attributes") or {}
+    name = entity.get("name") or entity_id
+    content_hash = attrs.get("content_hash") or entity.get("content_hash")
+
+    kind = ref.source_kind
+    multi_phase = False
+    trips_threshold = False
+    gated_reason: str | None = None
+
+    if kind == SourceKind.PLAN.value:
+        phases = attrs.get("phases") or attrs.get("phase_count") or 0
+        if isinstance(phases, list):
+            multi_phase = len(phases) > 1
+        elif isinstance(phases, int):
+            multi_phase = phases > 1
+        if not multi_phase and not phases:
+            gated_reason = "plan has no phases"
+
+    if kind == SourceKind.PLAN_PHASE.value:
+        phase_dir = attrs.get("phase_dir") or attrs.get("directory")
+        if phase_dir is None and not attrs.get("phase_number"):
+            raise SourceRefError(
+                code="phase_not_found",
+                source_ref=ref.external_ref,
+                rule=f"plan_phase entity {entity_id!r} missing phase metadata",
+            )
+
+    if kind == SourceKind.TODO.value:
+        trips_threshold = bool(
+            attrs.get("trips_todo_plan_threshold") or attrs.get("multi_phase_arc")
+        )
+
+    files_expected = _files_from_entity(attrs)
+    acs = _acceptance_from_entity(attrs, name)
+    has_dense = len(acs) >= 1
+    has_files = len(files_expected) >= 1
+
+    routing = None
+    readiness_state = ReadinessState.READY
+
+    if gated_reason:
+        readiness_state = ReadinessState.GATED
+    elif kind == SourceKind.TODO.value and trips_threshold:
+        readiness_state = ReadinessState.GATED
+        gated_reason = "todo trips Todo→Plan threshold — coordinator route required"
+    else:
+        routing = derive_routing(
+            kind,
+            multi_phase=multi_phase,
+            trips_todo_plan_threshold=trips_threshold,
+            has_complete_file_list=has_files,
+            has_dense_acs=has_dense,
+            dirty_tree_risk=dirty_tree_risk,
+        )
+
+    adapter = _adapter_for_kind(kind)
+    source = Source(
+        source_ref=ref.external_ref,
+        canonical_ref=ref.canonical_ref,
+        parent_ref=ref.parent_ref,
+        selector=ref.selector,
+        source_kind=SourceKind(kind),
+        source_version=SourceVersion(content_hash=content_hash),
+    )
+
+    spec = ImplementSpec(
+        source=source,
+        intent=Intent(summary=str(name)),
+        scope=Scope(files_expected=files_expected, bounded=True),
+        readiness=Readiness(
+            state=readiness_state,
+            gated_reason=gated_reason,
+            freshness_checked_at=now,
+        ),
+        skills=list(attrs.get("required_skills") or []),
+        routing=routing,
+        acceptance=Acceptance(criteria=acs or [f"Complete work for {entity_id}"]),
+        closeout=Closeout(adapter=adapter),
+    )
+    return finalize_spec(spec)
+
+
+def infer_packet_legacy_route(text: str) -> dict[str, str]:
+    """Independent oracle for shadow replay — encodes expected legacy_route from packet body."""
+    if not _packet_has_acceptance(text):
+        return {"expect_error": "handoff_packet_missing_acceptance"}
+    has_files, has_dense_acs = _packet_routing_flags(text)
+    routing = derive_routing(
+        SourceKind.PACKET.value,
+        packet_shape="single",
+        has_complete_file_list=has_files,
+        has_dense_acs=has_dense_acs,
+    )
+    if routing is None:
+        return {"expect_error": "handoff_packet_missing_acceptance"}
+    return {
+        "orchestration_mode": routing.orchestration_mode.value,
+        "executor_style": routing.executor_style.value,
+    }
+
+
+def _normalize_packet(
+    ref: SourceRef,
+    *,
+    workspaces_root: Any,
+    now: datetime,
+    dirty_tree_risk: bool = False,
+) -> ImplementSpec:
+    path = ref.external_ref.split(":", 1)[1]
+    try:
+        packet = read_packet(path, workspaces_root=workspaces_root)
+    except SourceRefError:
+        raise
+    except Exception as exc:
+        raise SourceRefError(
+            code="handoff_packet_missing",
+            source_ref=ref.external_ref,
+            rule="read_packet",
+            message=str(exc),
+        ) from exc
+
+    if not _packet_has_acceptance(packet.text):
+        raise SourceRefError(
+            code="handoff_packet_missing_acceptance",
+            source_ref=ref.external_ref,
+            rule="acceptance in task_guidance, output_format, or acceptance/success-criteria headings",
+        )
+
+    files_expected = _files_from_packet(packet.text)
+    has_files, has_dense_acs = _packet_routing_flags(packet.text)
+    routing = derive_routing(
+        SourceKind.PACKET.value,
+        packet_shape="single",
+        has_complete_file_list=has_files,
+        has_dense_acs=has_dense_acs,
+        dirty_tree_risk=dirty_tree_risk,
+    )
+
+    source = Source(
+        source_ref=ref.external_ref,
+        canonical_ref=ref.canonical_ref,
+        parent_ref=None,
+        selector=None,
+        source_kind=SourceKind.PACKET,
+        source_version=SourceVersion(packet_sha256=packet.packet_sha256),
+    )
+
+    spec = ImplementSpec(
+        source=source,
+        intent=Intent(summary=f"Packet {path}"),
+        scope=Scope(files_expected=files_expected, bounded=True),
+        readiness=Readiness(state=ReadinessState.READY, freshness_checked_at=now),
+        routing=routing,
+        acceptance=Acceptance(criteria=_acceptance_from_packet(packet.text)),
+        closeout=Closeout(adapter=CloseoutAdapterKind.PACKET),
+    )
+    return finalize_spec(spec)
+
+
+def _normalize_agent_bus(
+    ref: SourceRef,
+    *,
+    cortex: CortexReader,
+    now: datetime,
+    dirty_tree_risk: bool = False,
+) -> ImplementSpec:
+    ambiguous = ref.turn is None
+    gated_reason = (
+        "agent-bus thread ambiguous — explicit #turn-N or linked source required"
+    )
+
+    source = Source(
+        source_ref=ref.external_ref,
+        canonical_ref=ref.canonical_ref,
+        parent_ref=None,
+        selector=None,
+        source_kind=SourceKind.AGENT_BUS,
+        source_version=SourceVersion(),
+    )
+
+    if not ambiguous:
+        routing = derive_routing(
+            SourceKind.AGENT_BUS.value,
+            ambiguous_bus=False,
+            has_dense_acs=True,
+            dirty_tree_risk=dirty_tree_risk,
+        )
+        spec = ImplementSpec(
+            source=source,
+            intent=Intent(summary=f"Agent-bus turn {ref.turn}"),
+            readiness=Readiness(state=ReadinessState.READY, freshness_checked_at=now),
+            routing=routing,
+            acceptance=Acceptance(criteria=["Execute implement intent from bus turn"]),
+            closeout=Closeout(
+                adapter=CloseoutAdapterKind.AGENT_BUS,
+                bus_thread=ref.canonical_ref.split("#")[0],
+            ),
+        )
+        return finalize_spec(spec)
+
+    spec = ImplementSpec(
+        source=source,
+        intent=Intent(summary="Agent-bus implement intent (ambiguous)"),
+        readiness=Readiness(
+            state=ReadinessState.GATED,
+            gated_reason=gated_reason,
+            freshness_checked_at=now,
+        ),
+        routing=None,
+        acceptance=Acceptance(criteria=["Resolve ambiguity before implement"]),
+        closeout=Closeout(
+            adapter=CloseoutAdapterKind.AGENT_BUS,
+            bus_thread=ref.canonical_ref,
+        ),
+    )
+    return finalize_spec(spec)
+
+
+def _adapter_for_kind(kind: str) -> CloseoutAdapterKind:
+    mapping = {
+        SourceKind.TODO.value: CloseoutAdapterKind.TODO,
+        SourceKind.PLAN.value: CloseoutAdapterKind.PLAN,
+        SourceKind.PLAN_PHASE.value: CloseoutAdapterKind.PLAN_PHASE,
+        SourceKind.PACKET.value: CloseoutAdapterKind.PACKET,
+        SourceKind.AGENT_BUS.value: CloseoutAdapterKind.AGENT_BUS,
+    }
+    return mapping.get(kind, CloseoutAdapterKind.MIXED)
+
+
+def _extract_block(text: str, tag: str) -> str | None:
+    match = re.search(rf"<{tag}>(.*?)</{tag}>", text, flags=re.DOTALL)
+    return match.group(1) if match else None
+
+
+_ACCEPTANCE_HEADING = re.compile(
+    r"^#{1,3}\s+(?:acceptance(?:\s+criteria)?|success criteria)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ACCEPTANCE_PHRASE = re.compile(r"\bacceptance criteria\b", re.IGNORECASE)
+_FILE_PATH_SUFFIXES = (".py", ".md", ".yaml", ".yml", ".json", ".toml", ".mdc")
+
+
+def _packet_has_acceptance(text: str) -> bool:
+    guidance = _extract_block(text, "task_guidance") or ""
+    if "acceptance" in guidance.lower():
+        return True
+    output_fmt = _extract_block(text, "output_format") or ""
+    if "acceptance" in output_fmt.lower():
+        return True
+    if _ACCEPTANCE_HEADING.search(text):
+        return True
+    return _ACCEPTANCE_PHRASE.search(text) is not None
+
+
+def _looks_like_file_path(path: str) -> bool:
+    return "/" in path or path.endswith(_FILE_PATH_SUFFIXES)
+
+
+def _files_from_packet(text: str) -> list[str]:
+    scope_text = _extract_block(text, "scope") or ""
+    seen: set[str] = set()
+    files: list[str] = []
+    for candidate in _files_from_scope(scope_text):
+        if candidate not in seen:
+            seen.add(candidate)
+            files.append(candidate)
+    for path in re.findall(r"`([^`]+)`", text):
+        if _looks_like_file_path(path) and path not in seen:
+            seen.add(path)
+            files.append(path)
+    return files
+
+
+def _packet_routing_flags(text: str) -> tuple[bool, bool]:
+    files = _files_from_packet(text)
+    return len(files) >= 1, _packet_has_acceptance(text)
+
+
+def _files_from_entity(attrs: dict[str, Any]) -> list[str]:
+    files = attrs.get("files_expected") or attrs.get("files_modified") or []
+    if isinstance(files, str):
+        return [files]
+    return list(files)
+
+
+def _files_from_scope(scope_text: str) -> list[str]:
+    paths = re.findall(r"`([^`]+)`", scope_text)
+    return [p for p in paths if _looks_like_file_path(p)]
+
+
+def _acceptance_from_packet(text: str) -> list[str]:
+    guidance = _extract_block(text, "task_guidance") or ""
+    lines = [line.strip() for line in guidance.splitlines() if line.strip()]
+    numbered = [line for line in lines if re.match(r"^\d+\.", line)]
+    if numbered:
+        return numbered
+    if _ACCEPTANCE_HEADING.search(text):
+        return ["Packet acceptance criteria documented in headings"]
+    if _ACCEPTANCE_PHRASE.search(text):
+        return ["Packet acceptance criteria documented in body"]
+    return ["Packet acceptance criteria satisfied"]
+
+
+def _acceptance_from_entity(attrs: dict[str, Any], name: str) -> list[str]:
+    raw = attrs.get("acceptance_criteria") or attrs.get("acceptance") or []
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    return [f"Complete {name}"]

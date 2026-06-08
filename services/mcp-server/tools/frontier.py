@@ -171,6 +171,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         thread: str | None = None,
         subject: str | None = None,
         packet_path: str | None = None,
+        source_ref: str | None = None,
         pointer_body: str | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -183,8 +184,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``role="cursor-implement"`` → ``claude-cursor`` bound implement
         Seat aliases (``claude-web``, ``web``, …) → 422 ``handoff_role_invalid``
 
-        Requires ``role``, ``packet_path``, and ``subject``. Returns
-        ``{thread_id, resolved_model, to_agent, …}``.
+        Requires ``role``, ``subject``, and at least one of ``packet_path`` |
+        ``source_ref``. Returns ``{thread_id, resolved_model, to_agent, …}``.
 
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
@@ -195,8 +196,15 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         provider model used when ``model`` is omitted on those ops.
 
         Three ops:
-        - ``op="generate"``: admits dispatch and returns ``{execution_id, ...}``.
+        - ``op="generate"``: admits dispatch and returns ``{execution_id,
+          capabilities, knob_resolution, ...}``. ``capabilities`` echoes
+          effective ``inline_only``, ``mcp_enabled``, ``tool_surface``, and
+          ``resolved_model`` for the admitted role. Returns ``knob_resolution`` for reasoning
+          knob transparency: ``value_kind``, ``reasoning_native``, ``status``,
+          ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.
           Poll with ``pipeline(op="result", execution_id=...)`` for content.
+          If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
+          do not infer cross-provider parity.
           ``thread`` / ``subject`` must be absent when using this op.
           Synthetic seat models (``claude-web``, ``claude-cursor``) are rejected
           with 422 ``web_seat_not_generate_target``. Use API roles with optional
@@ -229,13 +237,26 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         dispatches can be traced back to the originating session. It is NOT
         forwarded to the dispatched role's context — the receiving model never
         sees it.
+
+        ``reasoning_effort`` — requested reasoning knob; actual resolution is
+        reported in ``knob_resolution``. No parity claim by default.
         """
         if op == "handoff":
-            if not packet_path or not subject:
+            if not subject:
                 return {
                     "error": {
                         "code": "validation_error",
-                        "message": "packet_path and subject are required when op='handoff'",
+                        "message": "subject is required when op='handoff'",
+                    }
+                }
+            if not packet_path and not source_ref:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "at least one of packet_path or source_ref is required "
+                            "when op='handoff'"
+                        ),
                     }
                 }
             if not role:
@@ -261,9 +282,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
                 "role": role,
-                "packet_path": packet_path,
                 "subject": subject,
             }
+            if packet_path is not None:
+                handoff_body["packet_path"] = packet_path
+            if source_ref is not None:
+                handoff_body["source_ref"] = source_ref
             for key, val in (
                 ("pointer_body", pointer_body),
                 ("tags", tags),

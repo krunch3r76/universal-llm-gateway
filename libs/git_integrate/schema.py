@@ -38,7 +38,7 @@ class CommitResult:
 
 @dataclass(frozen=True, slots=True)
 class IntegrateResult:
-    """Admission check result — mirrors GitOpResult shape from grokbuild."""
+    """Admission check result for git arc integration."""
 
     ok: bool
     reason_code: str = ""

@@ -19,6 +19,7 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "edit_file",
         "edit_project_file",
         "files",
+        "find_project_files",
         "list_files",
         "list_project_files",
         "move_file",
@@ -114,7 +115,5 @@ INTENTIONAL_OVERFLOW: frozenset[str] = frozenset(
         "health",
         # Models listing tool not yet canonicalized
         "list_models",
-        # Archived harness stub — canonical entries removed (assertion 11588)
-        "grokbuild",
     }
 )

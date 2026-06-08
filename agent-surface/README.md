@@ -2,38 +2,34 @@
 
 **Unified read surface (all agents):** generated markdown under
 `docs/agent-guides/rules/` — primary path for **web-claude** and repo-only readers.
-SuperGrok / GitHub connector is optional; unification does not depend on that seat.
 
-This tree is the **authoring** source of truth for rules that project to multiple agent targets:
+This tree is the **authoring** source of truth for rules that project to agent targets:
 
 - `sources/<name>.md` — section-tagged source files (markers: `<!-- target:cursor -->`,
-  `<!-- target:grok-direct -->`, `<!-- target:* -->`).
+  `<!-- target:* -->`).
 - `table-variants/<name>.<target>.md` — pre-normalized per-target table content for
   rules whose table-shaped sub-section diverges per target without warranting a full
-  source pivot (currently: `subagent-model-table.cursor.md` drift-check artifact +
-  `subagent-model-table.grok.md` AGENTS.md splice content).
+  source pivot (currently: `subagent-model-table.cursor.md` drift-check artifact).
 
 ## Generator
 
 `scripts/gen-rules` is the single emitter. See `scripts/gen-rules --help`.
 
-| Target | Cursor outputs | grok-direct outputs |
-|---|---|---|
-| `cursor` | `.cursor/rules/cursor-boot_ws.mdc`, `.cursor/rules/mcp-tool-awareness_ws.mdc` + drift-check vs `core_ws.mdc` table | — |
-| `grok-direct` | — | AGENTS.md splice into `gen-rules:start:<id>` markers (`boot-protocol`, `mcp-tool-awareness`, `subagent-model-table`) |
+| Target | Cursor outputs |
+|---|---|
+| `cursor` | `.cursor/rules/cursor-boot_ws.mdc`, `.cursor/rules/mcp-tool-awareness_ws.mdc` + drift-check vs `core_ws.mdc` table |
 
-Run `scripts/gen-rules --target cursor --check` and
-`scripts/gen-rules --target grok-direct --check` in CI; both must exit 0.
+Run `scripts/gen-rules --target cursor --check` in CI; must exit 0.
 
 ## Section IDs
 
-| ID | Source | Cursor output | grok-direct AGENTS.md splice |
-|---|---|---|---|
-| `boot-protocol` | `sources/boot-protocol.md` | `.cursor/rules/cursor-boot_ws.mdc` | `<!-- gen-rules:start:boot-protocol -->` |
-| `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `.cursor/rules/mcp-tool-awareness_ws.mdc` | `<!-- gen-rules:start:mcp-tool-awareness -->` |
-| `subagent-model-table` | `table-variants/subagent-model-table.{cursor,grok}.md` | drift-check only | `<!-- gen-rules:start:subagent-model-table -->` |
-| `command-map` | `sources/command-map.md` | — | `docs/agent-guides/mvw-command-map.md` (`gen-rules --target command-map`) |
-| `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | — (read surface only; Cursor stubs point here) | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) — incl. `capability-dispatch` |
+| ID | Source | Cursor output |
+|---|---|---|
+| `boot-protocol` | `sources/boot-protocol.md` | `.cursor/rules/cursor-boot_ws.mdc` |
+| `mcp-tool-awareness` | `sources/mcp-tool-awareness.md` | `.cursor/rules/mcp-tool-awareness_ws.mdc` |
+| `subagent-model-table` | `table-variants/subagent-model-table.cursor.md` | drift-check only |
+| `command-map` | `sources/command-map.md` | `docs/agent-guides/mvw-command-map.md` (`gen-rules --target command-map`) |
+| `agent-guides-rules` | MVW conduct manifest in `libs/gen_rules/agent_guides.py` | `docs/agent-guides/rules/*.md` (`gen-rules --target agent-guides-rules`) — incl. `capability-dispatch` |
 
 **Manual sync (cortex sandbox):** `sources/session-close-handoff.md` (+ depth-gate section
 from `session-close-handoff-depth-gate.md`) — merge into `agent-skills/session-close-handoff.md`
@@ -46,9 +42,9 @@ Authoritative spec: `tmp/prompts/phase3-neutral-canonical-design.md` (v3 final).
 ## Marker grammar
 
 ```
-<!-- target:(cursor|grok-direct|\*) -->
+<!-- target:(cursor|\*) -->
 ...content...
-<!-- /target:(cursor|grok-direct|\*) -->
+<!-- /target:(cursor|\*) -->
 ```
 
 All content in `sources/*.md` MUST be inside a `target:X` block. Unknown target names
@@ -59,6 +55,5 @@ only for the cursor target (wrapped in `---` fences).
 
 ## Heading normalization
 
-Source files use `#` for the H1. The generator applies a +1 heading depth offset when
-emitting grok-direct content into AGENTS.md. Files in `table-variants/` are pre-normalized
-to AGENTS.md depth and bypass offsetting.
+Source files use `#` for the H1. Files in `table-variants/` are pre-normalized
+to output depth.

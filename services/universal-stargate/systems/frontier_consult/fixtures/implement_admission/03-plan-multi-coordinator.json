@@ -1,0 +1,10 @@
+{
+  "source_ref": "plan:agent-workflow-parity",
+  "door": "plan",
+  "expected_classification": "match",
+  "legacy_route": {
+    "orchestration_mode": "coordinator",
+    "executor_style": "reasoning"
+  },
+  "legacy_closeout_mutation": {"adapter": "plan"}
+}

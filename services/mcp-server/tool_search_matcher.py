@@ -51,7 +51,6 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
     "model_status": {"models", "list", "status"},
     "boot_inspect": {"boot", "audit", "card", "briefing"},
     "cortex_boot": {"boot", "session", "warmup", "start"},
-    "grokbuild": {"grok", "build", "worktree", "dispatch"},
     "quality_gate": {"lint", "ruff", "test", "compile", "ci", "format"},
     "email": {
         "mailbox",

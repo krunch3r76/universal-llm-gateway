@@ -29,18 +29,20 @@ def session_close_kwargs_from_dispatch(
     *,
     session_id: str,
     agent: str,
-    family: str,
     dispatch_id: str,
     rr: RunnerResult,
     summary: str,
     session_summary_md: str,
 ) -> dict[str, Any]:
-    """Build kwargs for ``cortex(tool='session_close', ...)`` after a dispatch."""
+    """Build kwargs for ``cortex(tool='session_close', ...)`` after a dispatch.
+
+    No ``family`` — ``session_close`` has no such field (it was silently
+    swallowed by ``**_``). ``agent`` stays seat-level (operational identity).
+    """
     resolved = rr.resolved_session_id or session_id
     return {
         "session_id": resolved or session_id,
         "agent": agent,
-        "family": family,
         "transcript_depth": "light",
         "session_summary_md": session_summary_md,
         "summary": summary,

@@ -101,6 +101,7 @@ def reject_trait_writes_at_create(payload: dict[str, object]) -> dict[str, Any] 
         )
     }
 
+
 _FRICTION_CATEGORIES = frozenset(
     {
         "tool_mismatch",

@@ -1,0 +1,10 @@
+{
+  "source_ref": "packet:universal-llm-gateway/services/universal-stargate/systems/frontier_consult/fixtures/implement_admission/packets/good-with-acceptance.md",
+  "door": "packet",
+  "expected_classification": "match",
+  "legacy_route": {
+    "orchestration_mode": "single",
+    "executor_style": "reasoning"
+  },
+  "legacy_closeout_mutation": {"adapter": "packet"}
+}

@@ -60,8 +60,7 @@ async def resolve_default_tools(
     )
 
     static_defs = {
-        d.get("function", {}).get("name", ""): d
-        for d in STATIC_TOOL_FALLBACK
+        d.get("function", {}).get("name", ""): d for d in STATIC_TOOL_FALLBACK
     }
     live_defs = {
         d.get("function", {}).get("name", ""): d
@@ -140,7 +139,7 @@ async def resolve_dispatch_tool_set(
             raise ValueError(
                 "pipeline_options.tools with pipeline_options.agent is only "
                 "supported via POST /api/v1/frontier/dispatch; raw "
-                "pipeline(pipeline_id=\"frontier-dispatch\") cannot "
+                'pipeline(pipeline_id="frontier-dispatch") cannot '
                 "validate persona tool policy"
             )
         resolved_names = [str(name) for name in opt_tools if isinstance(name, str)]

@@ -48,11 +48,13 @@ from agent_seat.profiles import (
     family_anchor,
     get_profile,
     get_role,
+    known_families,
     load_lead_agent_slugs,
     load_profiles,
     load_roles,
     resolve_seat,
     role_anchor,
+    seat_to_family,
 )
 from agent_seat.prompts import (
     CORTEX_TOOL_QUICKREF,
@@ -93,6 +95,7 @@ __all__ = [
     "get_role",
     "hydrate_agent",
     "is_lead_agent",
+    "known_families",
     "load_lead_agent_slugs",
     "load_profiles",
     "load_roles",
@@ -101,5 +104,6 @@ __all__ = [
     "resolve_tool_definitions",
     "role_anchor",
     "run_native_tool_loop",
+    "seat_to_family",
     "resolve_tools",
 ]

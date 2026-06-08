@@ -1,0 +1,1516 @@
+{
+  "generated_at": "2026-06-08T01:21:08.408485+00:00",
+  "n": 150,
+  "cases": [
+    {
+      "source_ref": "agent-bus:1351",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "todo:relay-bounded-single",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "todo"
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "plan:agent-workflow-parity",
+      "door": "plan",
+      "legacy_route": {
+        "orchestration_mode": "coordinator",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan"
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "plan:agent-workflow-parity/phase-2",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "plan_phase:agent-workflow-parity/phase-2",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/services/universal-stargate/systems/frontier_consult/fixtures/implement_admission/packets/good-with-acceptance.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/services/universal-stargate/systems/frontier_consult/fixtures/implement_admission/packets/missing-acceptance.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "todo:todo-plan-threshold-trip",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1364",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1364#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/dispatch-knob-transparency/cursor-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/dispatch-knob-transparency/implementation-spec.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1363",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1363#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1363#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-implement-admission-phase1-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1358",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1358#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1358#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/expunge-grok-host-cleanup-checklist.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1362",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1362#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/dispatch-knob-transparency/signpost-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1361",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1361#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1348",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1348#turn-2",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1348#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/session-close-handoff-provenance-signal-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1349",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1349#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1349#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/bug-ticket-channel-guidance-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1342",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1342#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1342#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1343",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1343#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1338",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1338#turn-3",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1338#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1338#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1335",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1335#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1335#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1336",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1336#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1336#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1329",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1329#turn-4",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1329#turn-3",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1329#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1329#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/gemini-mcp-wiring-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1331",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1331#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1331#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/socket-path-naming-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1325",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1325#turn-3",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1325#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1325#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/native-loop-provider-parity-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1324",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1324#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/gemini-toolresult-clamp-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1321",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1321#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1321#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/hermes-p3-config-hygiene-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1317",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1317#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1317#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/g11-cloud-dispatch-close-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1312",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1312#turn-4",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1312#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1312#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1301",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1301#turn-5",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1301#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1301#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1313",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1313#turn-2",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1313#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1308",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1308#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1307",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1307#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1304",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1304#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1303",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1303#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1298",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1298#turn-4",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1298#turn-3",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1298#turn-2",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1298#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1295",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1295#turn-2",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1295#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "agent-bus:1291",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      },
+      "expected_classification": "match"
+    },
+    {
+      "source_ref": "agent-bus:1291#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/dispatch-knob-transparency-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/dispatch-knob-transparency-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/expunge-grok-composer-plan-request.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/expunge-grok-mechanical-manifest-request.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/expunge-grok-retire-grokbuild-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/openai-remote-mcp-ratification/reviews/web-claude-architecture-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/panel-dispatch-p0-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/panel-dispatch-p0-spec-author-request.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/panel-dispatch-redesign-cursor-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/sloc-op-spec-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/socket-path-naming-audit-handoff.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/team-dispatch-claude-web-bus-handoff/phase-1.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-admission-corpus-export-implement-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-admission-full-falsifier-triage-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-implement-admission/implementation-spec.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-implement-admission-consult-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-implement-admission-spec-author-request.md",
+      "door": "packet",
+      "legacy_route": {
+        "expect_error": "handoff_packet_missing_acceptance"
+      }
+    },
+    {
+      "source_ref": "packet:universal-llm-gateway/tmp/prompts/unified-implement-admission-web-packet.md",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "packet"
+      }
+    },
+    {
+      "source_ref": "todo:relay-bounded-hist-1",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "todo"
+      }
+    },
+    {
+      "source_ref": "todo:threshold-gated-hist-1",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-1",
+      "door": "plan",
+      "legacy_route": {
+        "orchestration_mode": "coordinator",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-1/phase-1",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-1/phase-2",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-1/phase-3",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-1/phase-1",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-1/phase-2",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-1/phase-3",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "agent-bus:synth-1",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      }
+    },
+    {
+      "source_ref": "agent-bus:synth-1#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "todo:relay-bounded-hist-2",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "todo"
+      }
+    },
+    {
+      "source_ref": "todo:threshold-gated-hist-2",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-2",
+      "door": "plan",
+      "legacy_route": {
+        "orchestration_mode": "coordinator",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-2/phase-1",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-2/phase-2",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-2/phase-3",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-2/phase-1",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-2/phase-2",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-2/phase-3",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "agent-bus:synth-2",
+      "door": "web-arc",
+      "legacy_route": {
+        "gated": true
+      }
+    },
+    {
+      "source_ref": "agent-bus:synth-2#turn-1",
+      "door": "packet",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "agent-bus"
+      }
+    },
+    {
+      "source_ref": "todo:relay-bounded-hist-3",
+      "door": "todo",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "mechanical"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "todo"
+      }
+    },
+    {
+      "source_ref": "todo:threshold-gated-hist-3",
+      "door": "todo",
+      "legacy_route": {
+        "gated": true
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-3",
+      "door": "plan",
+      "legacy_route": {
+        "orchestration_mode": "coordinator",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-3/phase-1",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-3/phase-2",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan:implement-arc-hist-3/phase-3",
+      "door": "plan_phase_shorthand",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    },
+    {
+      "source_ref": "plan_phase:implement-arc-hist-3/phase-1",
+      "door": "plan_phase",
+      "legacy_route": {
+        "orchestration_mode": "single",
+        "executor_style": "reasoning"
+      },
+      "legacy_closeout_mutation": {
+        "adapter": "plan_phase"
+      }
+    }
+  ]
+}

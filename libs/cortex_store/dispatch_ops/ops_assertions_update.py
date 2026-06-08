@@ -15,7 +15,11 @@ from ..routes.assertions import (
     _supersede_assertion_impl,
     _update_assertion_impl,
 )
-from ._assertions_shared import _UNSET, _emit_predicate_form_normalize_events
+from ._assertions_shared import (
+    _UNSET,
+    _emit_predicate_form_normalize_events,
+    _project_seeded_by,
+)
 from ._shared import record
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
@@ -157,8 +161,15 @@ def _op_supersede(
         body["acknowledge_audit_gaps"] = acknowledge_audit_gaps
     if force:
         body["force"] = True
+    projection_tag = None
+    if seeded_by is not None:
+        body["seeded_by"], projection_tag = _project_seeded_by(seeded_by)
     result = _supersede_assertion_impl(body)
     if "error" not in result:
+        if seeded_by is not None:
+            result["seeded_by_input"] = seeded_by
+            result["seeded_by"] = body["seeded_by"]
+            result["seeded_by_projection"] = projection_tag
         new_id = result.get("new", {}).get("id")
         logger.info("cortex supersede: %d -> %s", old_assertion_id, new_id)
         record(

@@ -1,0 +1,8 @@
+{
+  "source_ref": "agent-bus:1351",
+  "door": "web-arc",
+  "expected_classification": "match",
+  "legacy_route": {"gated": true},
+  "legacy_closeout_mutation": null,
+  "_comment": "thread-1351 ambiguous bus chatter → gated (no #turn-N)"
+}

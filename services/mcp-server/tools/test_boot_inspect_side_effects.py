@@ -178,9 +178,7 @@ def test_boot_operational_context_ref_ignores_role_suffix(
 
     mcp = _DummyMcp()
     orchestration_tools.register_orchestration_tools(mcp)
-    result = mcp.tools["cortex_boot"](
-        family="claude", platform="web", role="lead"
-    )
+    result = mcp.tools["cortex_boot"](family="claude", platform="web", role="lead")
 
     seat_path = "notes/system/shared/operational-context-claude-web.md"
     assert result["operational_context_ref"] == seat_path

@@ -151,9 +151,7 @@ async def _reload_pipelines_after_federation_event(
         )
         await _emit_pipeline_unavailable_events(proxy)
     except Exception:
-        logger.exception(
-            "Pipeline reload failed after %s from %s", reason, gateway_id
-        )
+        logger.exception("Pipeline reload failed after %s from %s", reason, gateway_id)
 
 
 def _subscribe_pipeline_reload_on_federation_signals(proxy: StargateProxy) -> None:
@@ -191,8 +189,7 @@ def _subscribe_pipeline_reload_on_federation_signals(proxy: StargateProxy) -> No
         FEDERATION_GATEWAY_REACHABILITY_RESTORED, on_reachability_restored
     )
     logger.info(
-        "📦 Subscribed to federation catalog + reachability signals "
-        "for pipeline reload"
+        "📦 Subscribed to federation catalog + reachability signals for pipeline reload"
     )
 
 

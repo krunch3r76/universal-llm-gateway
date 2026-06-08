@@ -1,0 +1,10 @@
+{
+  "source_ref": "plan_phase:agent-workflow-parity/phase-2",
+  "door": "plan_phase",
+  "expected_classification": "match",
+  "legacy_route": {
+    "orchestration_mode": "single",
+    "executor_style": "reasoning"
+  },
+  "legacy_closeout_mutation": {"adapter": "plan_phase"}
+}

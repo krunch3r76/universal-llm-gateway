@@ -64,9 +64,8 @@ MCP_URL = os.environ.get("MCP_URL", "https://mcp.k-1.me/mcp")
 # Safety-net: urllib socket timeout is set slightly higher so the watchdog
 # fires first under normal conditions.
 # Default is 1860s (31 min) to accommodate long-running dispatches:
-# grokbuild tier='max' has a 1800s preset for the subprocess itself; the
-# watchdog needs to cover that plus startup, sidecar I/O, and post-state
-# capture (~60s margin). frontier_dispatch and other long flows already
+# the watchdog needs to cover subprocess runtime plus startup, sidecar I/O,
+# and post-state capture (~60s margin). frontier_dispatch and other long flows already
 # fit under this budget.
 _WATCHDOG_TIMEOUT = int(os.environ.get("MCP_PROXY_TIMEOUT", "1860"))
 _SOCKET_TIMEOUT = _WATCHDOG_TIMEOUT + 30  # safety net beyond watchdog

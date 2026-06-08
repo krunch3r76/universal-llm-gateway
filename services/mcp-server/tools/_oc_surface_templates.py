@@ -34,14 +34,6 @@ SUBAGENT_INHERITANCE = """\
 Subagents typically inherit close behavior from the calling agent. When a \
 subagent closes its own session, use the calling agent's bindings."""
 
-GROK_DIRECT_SESSION_CLOSE = """\
-Grok-direct sessions use `cortex(tool="session_close", transcript_md="<full session \
-markdown>", session_summary_md="<summary>", agent="grok-direct", family="Grok")`. \
-Do NOT supply `transcript_jsonl_path` — that is Cursor-only. \
-Assemble the transcript markdown via `tools/grok-session-to-transcript-md` \
-(pending operator verification of grok session log format \
-`~/.grok/sessions/<id>.json`)."""
-
 # ── Tool surface ─────────────────────────────────────────────────────────────
 
 MCP_TOOL_SEARCH = """\
@@ -150,7 +142,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - handoff roles: web-consult, cursor-consult, cursor-implement (only these three)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
-- close-to-code build → cursorbuild (forward harness; grokbuild retired 11588)
+- close-to-code build → cursorbuild (forward harness)
 Read agent-skills/dispatch-workflow.md §0a before first dispatch. Source: claude-web-dispatch-decision-table.md (§2/§3/§4)."""
 
 GEMINI_WEB_TOOL_SURFACE = """\
@@ -178,7 +170,7 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
 - API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id=..., model="provider/model"?, messages=...)`
-- close-to-code build (multi-writer) → `cursorbuild` (forward harness; grokbuild retired, assertion 11588)
+- close-to-code build (multi-writer) → `cursorbuild` (forward harness)
 
 On the shared `/mcp` surface `team_dispatch` is primary — call directly.
 Optional `model=` must be `provider/model` (bare name = 404). A build harness
@@ -398,7 +390,6 @@ ADDENDA_BLOCKS: dict[str, str] = {
     "session-close-pointer-cursor": CURSOR_LOCAL_ENFORCEMENT,
     "session-close-pointer-web": WEB_TRANSCRIPT_PREPROCESSING,  # claude-web only
     "session-close-pointer-web-generic": WEB_SESSION_CLOSE_GENERIC,  # other web seats
-    "session-close-pointer-grok-direct": GROK_DIRECT_SESSION_CLOSE,
     "session-close-pointer-subagent": SUBAGENT_INHERITANCE,
     "session-close-markdown-audit": SESSION_CLOSE_MARKDOWN_AUDIT,
     "session-close-transcript": TRANSCRIPT_CLOSE_PROTOCOL,

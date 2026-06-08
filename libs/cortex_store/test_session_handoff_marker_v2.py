@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -10,18 +11,22 @@ from fastapi import HTTPException
 
 from cortex_store import db
 from cortex_store.dispatch_ops import ops_journals, ops_session_close
-from cortex_store.routes import session_journals
-from cortex_store.test_session_close_handoff import _install_schema
+from cortex_store.routes import (
+    session_close_helpers,
+    session_close_persist,
+    session_journals,
+)
 from cortex_store.session_handoff import (
+    DERIVATION_DETACHED_STRING,
     DERIVATION_SECTION,
     DERIVATION_SECTION_AMBIGUOUS,
     DERIVATION_SECTION_UNRESOLVED,
-    DERIVATION_DETACHED_STRING,
     extract_handoff_marker_region,
+    handoff_dry_run_preview,
     read_handoff_source_file,
     resolve_handoff_for_write,
-    handoff_dry_run_preview,
 )
+from cortex_store.test_session_close_handoff import _install_schema
 
 
 def test_unlabeled_marker_extracts_literal_body() -> None:
@@ -134,6 +139,8 @@ def handoff_close_env(
     monkeypatch.setattr(ops_journals, "_FILES_ROOT", files_root)
     monkeypatch.setattr(ops_session_close, "_FILES_ROOT", files_root)
     monkeypatch.setattr(session_journals, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close_persist, "_FILES_ROOT", files_root)
+    monkeypatch.setattr(session_close_helpers, "_FILES_ROOT", files_root)
     monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(transcripts_root))
     return {
         "db_path": db_path,
@@ -176,6 +183,32 @@ def test_dry_run_section_handoff_valid(handoff_close_env: dict[str, Path]) -> No
     assert preview["derived_handoff_prompt_sha256"].startswith("sha256:")
 
 
+def test_dry_run_detached_string_surfaces_unverified(
+    handoff_close_env: dict[str, Path],
+) -> None:
+    # AC: an inline handoff_prompt with no handoff_source_path must surface a
+    # write-time advisory naming the unverified outcome BEFORE close completes.
+    # depth="light" is the minimum handoff-compatible depth (none rejects a
+    # handoff with handoff.requires_transcript_entity).
+    summary = "Dry-run surfaces unverified advisory for detached handoff."
+    result = ops_journals._op_session_close(
+        session_id="web-2026-06-03-1202",
+        agent="web",
+        session_summary_md=_session_summary(summary),
+        summary=summary,
+        transcript_depth="light",
+        dry_run=True,
+        handoff_prompt="Inline detached handoff, no source file.",
+    )
+    assert result["dry_run"] is True
+    assert result["handoff_valid"] is True
+    advisory = result["handoff_surface_preview"]
+    assert advisory is not None
+    assert advisory["flag"] == "unverified"
+    assert advisory["derivation"] == DERIVATION_DETACHED_STRING
+    assert advisory["verified"] is False
+
+
 def test_unresolved_does_not_keep_stale_prompt(
     handoff_close_env: dict[str, Path],
 ) -> None:
@@ -190,11 +223,11 @@ def test_unresolved_does_not_keep_stale_prompt(
         agent="web",
         session_summary_md=_session_summary(summary),
         summary=summary,
-        transcript_depth="none",
+        transcript_depth="light",
         handoff_source_path=rel,
         handoff_prompt="stale caller prompt must not persist",
     )
-    assert "error" not in result
+    assert "error" not in result, result
     db_path = handoff_close_env["db_path"]
     row = (
         sqlite3.connect(db_path)
@@ -214,7 +247,10 @@ def test_unresolved_does_not_keep_stale_prompt(
         )
         .fetchone()
     )
-    assert entity is None  # depth=none
+    # depth=light creates a transcript entity, but stale prompt must not appear in it
+    assert entity is not None
+    attrs = json.loads(entity[0]) if entity[0] else {}
+    assert "handoff_prompt" not in attrs
 
 
 def test_detached_string_derivation(tmp_path: Path) -> None:
@@ -246,6 +282,7 @@ def test_dry_run_preview_helper(tmp_path: Path) -> None:
     assert preview["handoff_valid"] is True
     assert preview["derived_handoff_prompt"] == "x"
     assert preview["handoff_provenance_preview"]["derivation"] == DERIVATION_SECTION
+    assert preview["handoff_surface_preview"] is None  # verified → no advisory
 
 
 def test_unresolved_derivation_constant() -> None:

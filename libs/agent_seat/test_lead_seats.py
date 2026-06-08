@@ -16,5 +16,4 @@ def test_is_lead_agent_normalizes_aliases() -> None:
     assert is_lead_agent("web")
     assert is_lead_agent("gpt-cursor")
     assert is_lead_agent("gpt_cursor")
-    assert not is_lead_agent("grok-direct")
     assert not is_lead_agent("gemini-cursor")
