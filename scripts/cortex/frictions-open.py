@@ -55,10 +55,14 @@ def main() -> int:
         by = row.get("seeded_by") or "?"
         print(f"  [{aid}] {eid} ({by}) {claim}")
     print(
-        '\nClose: cortex(tool="friction_close", '
+        "\nFix cycle (two-phase): Phase 1 investigate (cursor-consult / web-consult) "
+        "→ dense spec; Phase 2 execute (cursor-implement against spec / web inline). "
+        "Default Phase 1 unless mechanical-only — see friction-review skill."
+    )
+    print(
+        'Close: cortex(tool="friction_close", '
         'arguments=\'{"assertion_id": ID, "resolution_kind": "agent_skill:slug"}\')'
     )
-    print("Bus queue: agent_bus list_threads with tags=[type:bug]")
     return 0
 
 

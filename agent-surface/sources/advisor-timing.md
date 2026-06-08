@@ -42,6 +42,15 @@ second opinion, hand off reasoning, **or hand off a bound implementation**.
 4. **`agent_bus(reply)`** on an existing thread = **iteration/follow-up only** — not the
    standard opener for a substantive review consult. Thread continuity does not override
    handoff routing.
+5. **Bug/friction tickets (two-phase)**: an actionable defect needing a fix cycle routes
+   in **two phases** — **Phase 1 investigate + decide** (`role=cursor-consult` from the IDE,
+   or `role=web-consult` from web) to trace root cause, inventory touch points, and resolve
+   design choice into a dense spec; **Phase 2 execute** (`role=cursor-implement` against that
+   spec, or web inline fix) only once a spec exists or the operator confirms mechanical-only.
+   **Default:** a filed bug/friction → assume Phase 1 unless the operator says mechanical-only
+   or a dense implement spec already exists — do **not** make `cursor-implement` the first hop
+   on a bug whose root cause or design is still open. `friction()` is the observation log only —
+   it records a defect, it does NOT submit a ticket. See `consult-routing.md` § Codified bug reports.
 
 ### 1. Before Substantive Work
 
@@ -140,8 +149,10 @@ bouncing between two incompatible approaches.
 | Use handoff for thin implement ping | `agent_bus(post, to=claude-cursor, …)` + spec/tags |
 | Poll `pipeline(op=result)` after handoff | `agent_bus(wait)` from `poll_hint` — handoff has no `execution_id` |
 | Override operator `team_dispatch` with `agent_bus`, citing the thin-ping row | Operator-named transport wins; obey it or stop and ask — never silently substitute |
+| `cursor-implement` as the first hop on a bug with open root cause / design (friction 13571 → thread 1377) | Phase 1 `cursor-consult`/`web-consult` to produce a spec → Phase 2 `cursor-implement` against it |
 | Open a codified bug report with redesign / graph-walk before investigate/fix/report | Run the bug cycle first; secondary findings belong in the closeout |
 | Treat a codified bug report as file+friction only (no fix) | Bound implement: investigate, fix, verify, report |
+| Submit a bug ticket via `friction()` (observation log) | `team_dispatch(op=handoff)` + implement packet; `friction()` only as grounding |
 
 ## Relationship to Other Rules
 

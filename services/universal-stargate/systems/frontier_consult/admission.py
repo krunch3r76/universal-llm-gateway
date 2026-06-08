@@ -13,6 +13,7 @@ from agent_seat.profiles import (
     client_side_mcp_tool_loop_admitted,
     get_profile,
     load_roles,
+    seat_to_family,
 )
 from agent_seat.registry import normalize_agent_slug
 from model_id import ModelId
@@ -110,15 +111,16 @@ def _resolve_role_or_seat_profile(
         family: str = role_profile.default_family
         platform: str = role_profile.default_platform
     else:
+        family = seat_to_family(canonical)
         parts = canonical.split("-", 1)
-        if len(parts) != 2 or parts[0] not in {"claude", "gpt", "grok", "gemini"}:
+        if family is None or len(parts) != 2:
             raise FrontierEndpointError(
                 request_id=request_id,
                 field="role",
                 reason=f"Unknown role or seat {role!r}",
                 status_code=422,
             )
-        family, platform = parts[0], parts[1]
+        platform = parts[1]
 
     try:
         profile = get_profile(family, platform)
@@ -214,7 +216,7 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
 
 
 _HANDOFF_ROSTER: frozenset[str] = frozenset(
-    {"web-consult", "cursor-consult", "cursor-implement"}
+    {"web-consult", "web-implement", "cursor-consult", "cursor-implement"}
 )
 
 
@@ -225,8 +227,9 @@ def resolve_handoff_target(
 ) -> tuple[str, str, str, str]:
     """Resolve a handoff target seat from ``role``.
 
-    Only handoff roster slugs (``web-consult``, ``cursor-consult``, ``cursor-implement``) are
-    admitted — seat aliases (``claude-web``, ``web``, …) are rejected.
+    Only handoff roster slugs (``web-consult``, ``web-implement``, ``cursor-consult``,
+    ``cursor-implement``) are admitted — seat aliases (``claude-web``, ``web``, …)
+    are rejected.
 
     Returns ``(to_agent, family, platform, resolved_model)`` where
     ``resolved_model`` is the canonical synthetic seat slug.
@@ -238,8 +241,9 @@ def resolve_handoff_target(
             field="role",
             reason=(
                 f"handoff role {role!r} is not a roster slug; use web-consult "
-                f"(→ claude-web), cursor-consult (→ claude-cursor), or "
-                f"cursor-implement (bound implement → claude-cursor)"
+                f"(→ claude-web), web-implement (bound implement → claude-web), "
+                f"cursor-consult (→ claude-cursor), or cursor-implement "
+                f"(bound implement → claude-cursor)"
             ),
             status_code=422,
             code="handoff_role_invalid",
@@ -255,7 +259,9 @@ def resolve_handoff_contract(
 ) -> tuple[str, str]:
     """Resolve handoff work-intent from ``role`` only.
 
-    ``cursor-implement`` → ``implement``; consult roles → ``consult``.
+    ``cursor-implement`` and ``web-implement`` → ``implement``; consult roles →
+    ``consult``. The intent is derived from the roster slug's ``default_contract``
+    ({platform}-{contract} naming) — there is no request-side override.
     """
     _ = request_id
     canonical = normalize_agent_slug(role)

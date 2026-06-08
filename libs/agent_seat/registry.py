@@ -9,7 +9,7 @@ and the resolve_agent_* / check_agent_* helpers used by admission gates.
 
 from __future__ import annotations
 
-from .profiles import get_profile, load_lead_agent_slugs, load_roles
+from .profiles import get_profile, load_lead_agent_slugs, load_roles, seat_to_family
 
 # Legacy seat spellings → canonical {family}-{platform} slug.
 # Shared by dispatch normalization and agent-bus recipient matching.
@@ -39,13 +39,12 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "grok_cursor": "grok-cursor",
     "grok_api": "grok-api",
     "grok_api_multi": "grok-api-multi",
-    "grok_direct": "grok-direct",
-    "grok_build_dispatch": "grok-build-dispatch",
     "grok_web": "grok-web",
     "gemini_api": "gemini-api",
     "gemini_cursor": "gemini-cursor",
     # Handoff roster + API functional roles
     "web_consult": "web-consult",
+    "web_implement": "web-implement",
     "cursor_consult": "cursor-consult",
     "cursor_implement": "cursor-implement",
     "reviewer": "reviewer",
@@ -55,6 +54,7 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "skeptic": "skeptic",
     "investigator": "investigator",
 }
+
 
 def _normalize_agent_key(slug: str) -> str:
     return slug.strip().lower().replace("-", "_").replace(" ", "_")
@@ -119,12 +119,14 @@ def resolve_agent_provider(role_or_seat: str) -> str | None:
     if role is not None:
         return get_profile(role.default_family, role.default_platform).provider
 
-    parts = canonical.split("-", 1)
-    if len(parts) == 2 and parts[0] in {"claude", "gpt", "grok", "gemini"}:
-        try:
-            return get_profile(parts[0], parts[1]).provider
-        except KeyError:
-            pass
+    family = seat_to_family(canonical)
+    if family is not None:
+        parts = canonical.split("-", 1)
+        if len(parts) == 2:
+            try:
+                return get_profile(family, parts[1]).provider
+            except KeyError:
+                pass
     return None
 
 
@@ -139,14 +141,16 @@ def resolve_agent_model(role_or_seat: str) -> str:
     if role is not None and role.default_model:
         return role.default_model
 
-    parts = canonical.split("-", 1)
-    if len(parts) == 2:
-        try:
-            profile = get_profile(parts[0], parts[1])
-            if profile.default_model:
-                return profile.default_model
-        except KeyError:
-            pass
+    family = seat_to_family(canonical)
+    if family is not None:
+        parts = canonical.split("-", 1)
+        if len(parts) == 2:
+            try:
+                profile = get_profile(family, parts[1])
+                if profile.default_model:
+                    return profile.default_model
+            except KeyError:
+                pass
 
     raise ValueError(
         f"Unknown dispatch role or seat {role_or_seat!r} (normalized: {canonical!r}). "
@@ -168,12 +172,14 @@ def resolve_agent_valid_family(role_or_seat: str) -> list[str]:
         )
         return list(allowed)
 
-    parts = canonical.split("-", 1)
-    if len(parts) == 2:
-        try:
-            return list(get_profile(parts[0], parts[1]).allowed_models)
-        except KeyError:
-            pass
+    family = seat_to_family(canonical)
+    if family is not None:
+        parts = canonical.split("-", 1)
+        if len(parts) == 2:
+            try:
+                return list(get_profile(family, parts[1]).allowed_models)
+            except KeyError:
+                pass
     return []
 
 
@@ -189,12 +195,14 @@ def resolve_agent_model_requirement(role_or_seat: str) -> str | None:
     if role is not None:
         return get_profile(role.default_family, role.default_platform).model_requirement
 
-    parts = canonical.split("-", 1)
-    if len(parts) == 2:
-        try:
-            return get_profile(parts[0], parts[1]).model_requirement
-        except KeyError:
-            pass
+    family = seat_to_family(canonical)
+    if family is not None:
+        parts = canonical.split("-", 1)
+        if len(parts) == 2:
+            try:
+                return get_profile(family, parts[1]).model_requirement
+            except KeyError:
+                pass
     return None
 
 

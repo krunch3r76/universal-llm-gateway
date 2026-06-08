@@ -160,43 +160,6 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
 
-  grok/direct:
-    provider: xai
-    default_model: xai/grok-4.20-0309-reasoning
-    tool_surface: mcp
-    delivery: manual
-    include_deadlines: true
-    include_review_queue: true
-    confirm_and_proceed: true
-    dispatchable: false
-    addenda:
-      - session-close-pointer-grok-direct
-      - session-close-markdown-audit
-      - session-close-transcript
-    allowed_models:
-      - xai/grok-4.20-0309-reasoning
-      - xai/grok-4.3
-
-  grok/build-dispatch:
-    # Subprocess seat for grokbuild dispatches. The grok CLI subprocess spawned
-    # by the grokbuild runner connects to /mcp/grok with a distinct bearer token
-    # (MCP_GROK_BUILD_DISPATCH_TOKEN) and X-Grokbuild-Dispatch-Id header so
-    # inner MCP traffic is attributed to seat=grok-build-dispatch rather than
-    # to grok-direct. Verified seat per four-layer criterion (assertion 10991):
-    # promoted from candidate once cortex(tool='assert') succeeds under this slug.
-    provider: xai
-    default_model: xai/grok-4.20-0309-reasoning
-    tool_surface: mcp
-    delivery: auto
-    include_deadlines: false
-    include_review_queue: false
-    confirm_and_proceed: false
-    dispatchable: false
-    addenda: []
-    allowed_models:
-      - xai/grok-4.20-0309-reasoning
-      - xai/grok-4.3
-
   gemini/api:
     # CANDIDATE SEAT — declared tool_surface=mcp. MCP tool loop verified by
     # smoke (catalog=15, cortex round-trip) but seat-attributed wiring not
@@ -274,8 +237,12 @@ profiles:
 # Role dispatch policy (handoff roster: {platform}-{contract}):
 #   Web consult: team_dispatch(op="handoff", role="web-consult") → claude-web + operator push.
 #   Cursor consult: team_dispatch(op="handoff", role="cursor-consult") → claude-cursor IDE.
-#   Bound implement: team_dispatch(op="handoff", role="cursor-implement") →
+#   Bound implement (Cursor): team_dispatch(op="handoff", role="cursor-implement") →
 #     claude-cursor from any dispatching seat; packet + acceptance criteria required.
+#   Bound implement (Web): team_dispatch(op="handoff", role="web-implement") →
+#     claude-web + operator push; packet + acceptance criteria required. Symmetric
+#     with cursor-implement — web's path to the implement contract (web-consult is
+#     consult-only; it cannot raise the implement guardrails).
 #   Review / MCP writes (automated): team_dispatch role=reviewer → gpt-5.5.
 #   Analysis (no substrate writes): role=synthesizer → gemini-3.1-pro-preview (MCP tool loop).
 #   Reliable MCP writers: claude-web, gpt-5.5, anthropic API. Anthropic API last (cost).
@@ -288,6 +255,13 @@ roles:
     default_platform: web
     default_model: null
     default_contract: consult
+
+  web-implement:
+    description: "Web bound-implement handoff — packet-bound implementation on claude-web with acceptance criteria and quality gates; operator pushes agent-bus. Symmetric with cursor-implement; distinct from web-consult."
+    default_family: claude
+    default_platform: web
+    default_model: null
+    default_contract: implement
 
   cursor-consult:
     description: "Cursor consult handoff — fresh packet context + operator tier (Opus); reviews, projects, exploration, architecture"

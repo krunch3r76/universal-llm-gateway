@@ -131,19 +131,37 @@ _WORKFLOW_HINTS: dict[str, str] = {
     ),
 }
 
+_FRICTION_TICKET_NEXT = (
+    "Actionable friction = codified bug ticket (NOT friction() alone), routed in TWO phases: "
+    "Phase 1 investigate+decide (cursor: role=cursor-consult; web: role=web-consult) → dense spec; "
+    "Phase 2 execute (cursor: role=cursor-implement against the spec; web: inline fix). "
+    "DEFAULT to Phase 1 unless operator says mechanical-only or a dense implement spec exists — "
+    "do NOT make cursor-implement the first hop on a bug with open root cause/design. "
+    "Lifecycle: investigate → fix → report; secondary findings in closeout. "
+    "Read: fs(cortex, agent-skills/consult-routing.md) § Codified bug reports or "
+    "fs(workspaces, universal-llm-gateway/docs/agent-guides/skills/friction-review.md)."
+)
+
 _FRICTION_HINT = (
     "If this failure was unexpected, log friction: "
     'cortex(tool="friction", arguments=\'{"service": "...", '
     '"category": "tool_error", "note": "...", "agent": "..."}\'). '
     "Review open tickets: frictions (cross-service) or assertions on service:{name} "
-    'with filter="tool_error"; bus queue: agent_bus list_threads tags=[type:bug].'
+    'with filter="tool_error"; bus queue: agent_bus list_threads tags=[type:bug]. '
+    + _FRICTION_TICKET_NEXT
+)
+
+_WORKFLOW_HINTS["friction"] = (
+    "Logged observation only — to open a fix cycle use "
+    + _FRICTION_TICKET_NEXT
 )
 
 _WORKFLOW_HINTS["frictions"] = (
     "tip: defaults to open assertions on service:* entities. "
     "Narrow with service, category (tool_error, schema_gap, …), or seeded_by. "
     "Per-service lookup: assertions(entity_id='service:mcp-server', filter='tool_error'). "
-    "Close via friction_close; actionable queue via agent_bus type:bug threads."
+    "Close via friction_close after fix. "
+    + _FRICTION_TICKET_NEXT
 )
 
 _CORTEX_FORMAT_HINT = (

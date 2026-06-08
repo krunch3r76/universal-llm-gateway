@@ -6,9 +6,41 @@ go missing under task pressure (incident threads 1296/1297). Authority for the
 block contract: project `.cursor/rules/architecture-handoff-protocol.mdc`
 § "The Six Required Blocks".
 
+## Dispatch lifecycle (when to author which packet)
+
+Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
+
+| `dispatch_lane` | Who authors | Packet type | Typical seat |
+|---|---|---|---|
+| `web-implement-packet` | web-claude | six-block **implement** packet (Composer density) | `team_dispatch(web-implement)` |
+| `web-spec` | web-claude | six-block **consult** packet (findings) | `team_dispatch(web-consult)` |
+| `cursor-mechanical` | cursor IDE | skeleton or full packet on disk; **no web** when spec is sufficient | IDE or `cursor-implement` |
+| `cursor-implement` | cursor (handoff) | bound implement packet with acceptance criteria | `team_dispatch(cursor-implement)` |
+| `operator-gate` | operator | assert template / export — not a handoff packet | — |
+
+**Canonical pipeline:** reasoning upstream (web consult or plan author) → dense artifact
+(implement packet or phase doc) → mechanical downstream (`composer-2.5` / cursor-only).
+
+**Counter-pattern:** mechanical work with a dense todo spec (e.g. corpus export) —
+`dispatch_lane: cursor-mechanical`, `density: mechanical`; skip web entirely.
+
+**Codified bug tickets bind to this same pipeline (two-phase):** a filed bug/friction
+defaults to **Phase 1 investigate + decide** (`cursor-consult` / `web-consult` — the
+reasoning-upstream hop that produces the dense spec) → **Phase 2 execute**
+(`cursor-implement` against that spec, or web inline fix — the mechanical-downstream hop).
+Do not author a `cursor-implement` packet as the first hop on a bug whose root cause or
+design is still open; that collapses the upstream → dense-artifact → downstream pipeline
+into a single mechanical step with no spec. Full model: `agent-skills/consult-routing.md`
+§ Codified bug reports.
+
+Upstream gates (falsifier, operator assert) must close before `web-implement-packet`
+dispatch — set `workflow_state: blocked` + `block_reason` on the blocked leaf.
+
+Full attribute table: `universal-llm-gateway/.cursor/rules/todo_ws.mdc` §Dispatch metadata.
+
 ## Preflight (mandatory — before writing a packet)
 
-Complete for a **consult** AND a bound **implement** (`role=cursor-implement` handoff):
+Complete for a **consult** AND a bound **implement** (`role=cursor-implement` or `role=web-implement` handoff):
 
 ```
 fs(cortex,     agent-skills/consult-routing.md)                         # transport + authority map
@@ -95,5 +127,6 @@ You have MCP. Investigate before forming findings. Cite every tool call.
 |---|---|
 | Six-block contract | project `.cursor/rules/architecture-handoff-protocol.mdc` |
 | Dispatcher matrix | project `.cursor/rules/handoff-dispatchers.mdc` |
-| Transport routing | `agent-skills/consult-routing.md` (cortex) |
+| Transport routing | `agent-skills/consult-routing.md` (cortex) — §Dispatch lane |
+| Dispatch metadata on todos | `universal-llm-gateway/.cursor/rules/todo_ws.mdc` §Dispatch metadata |
 | Admission lint | `services/universal-stargate/systems/frontier_consult/handoff.py` |

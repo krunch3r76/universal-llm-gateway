@@ -31,6 +31,7 @@ from .handoff import (
     create_handoff_thread,
     validate_packet,
 )
+from .implement_admission_bridge import BridgeResult
 from .route import TeamHandoffBody, team_router
 
 # ---------------------------------------------------------------------------
@@ -139,7 +140,9 @@ def _handoff_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FastAPI:
 
 
 @pytest.mark.asyncio
-async def test_h1_web_consult_admitted_thread_created(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_h1_web_consult_admitted_thread_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-thread-42"))
 
@@ -410,6 +413,97 @@ def test_h1c_route_cursor_implement_push_reminder_mentions_cursor(
     body = resp.json()
     assert body["to_agent"] == "claude-cursor"
     assert "cursor" in body["push_reminder"].lower()
+
+
+# ---------------------------------------------------------------------------
+# H1d — web-implement role (claude/web manual seat, implement contract)
+#
+# Symmetric completion of the {platform}-{contract} roster (friction 13571).
+# Web bound-implement previously had to route through web-consult, which derives
+# the *consult* contract — so the implement guardrails (acceptance-criteria
+# packet lint, implement pointer line, contract:implement tag) never fired for
+# web. web-implement gives web a role-derived path to the implement contract.
+# ---------------------------------------------------------------------------
+
+
+def test_h1d_web_implement_resolves_claude_web() -> None:
+    """web-implement: admitted handoff, resolves to claude-web."""
+    to_agent, _family, platform = resolve_web_handoff_seat(
+        "web-implement", request_id="req-wi1"
+    )
+    assert to_agent == "claude-web"
+    assert platform == "web"
+
+
+def test_h1d_web_implement_target_resolves() -> None:
+    to_agent, _f, platform, resolved = resolve_handoff_target(
+        role="web-implement",
+        request_id="req-wi-target",
+    )
+    assert to_agent == "claude-web"
+    assert resolved == "claude-web"
+    assert platform == "web"
+
+
+def test_h1d_web_implement_defaults_implement() -> None:
+    """role=web-implement → implement (RoleProfile.default_contract)."""
+    contract, source = resolve_handoff_contract(
+        role="web-implement", request_id="req-wi-c"
+    )
+    assert contract == "implement"
+    assert source == "role_default"
+
+
+def test_h1d_route_web_implement_seat_and_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """role=web-implement → claude-web + implement contract (role_default)."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-wi"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-implement",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["to_agent"] == "claude-web"
+    assert body["resolved_handoff_seat"] == "claude-web"
+    assert body["handoff_contract"] == "implement"
+    assert body["handoff_contract_source"] == "role_default"
+    assert "push" in body["push_reminder"].lower()
+    assert body["poll_hint"]["arguments"]["from_agent"] == "claude-web"
+
+
+def test_h1d_route_web_implement_pointer_and_tag(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """web-implement posts the implement pointer line + contract:implement tag."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    captured: dict[str, Any] = {}
+    _patch_bus(monkeypatch, _capturing_bus_transport(captured, thread_id="bus-wi-t"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-implement",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert "Contract: bound implementation" in captured["payload"]["body"]
+    assert "contract:implement" in captured["payload"]["tags"]
 
 
 # ---------------------------------------------------------------------------
@@ -712,14 +806,18 @@ def test_hc2b_model_field_rejected(
 
 def test_hc3_cursor_implement_defaults_implement() -> None:
     """role=cursor-implement → implement (RoleProfile)."""
-    contract, source = resolve_handoff_contract(role="cursor-implement", request_id="req-c3")
+    contract, source = resolve_handoff_contract(
+        role="cursor-implement", request_id="req-c3"
+    )
     assert contract == "implement"
     assert source == "role_default"
 
 
 def test_hc4b_web_consult_consult() -> None:
     """role=web-consult → consult."""
-    contract, source = resolve_handoff_contract(role="web-consult", request_id="req-c4b")
+    contract, source = resolve_handoff_contract(
+        role="web-consult", request_id="req-c4b"
+    )
     assert contract == "consult"
     assert source == "role_default"
 
@@ -970,6 +1068,29 @@ def test_pv_implement_with_acceptance_passes(tmp_path: Path) -> None:
     )
 
 
+def test_pv_web_implement_without_acceptance_rejected(tmp_path: Path) -> None:
+    """web-implement (→ claude-web, contract=implement) enforces acceptance criteria.
+
+    Locks in that the implement packet lint keys on the contract value + seat,
+    not on a cursor-only role name — so web-implement gets the same guardrail.
+    """
+    packet = _CONFORMANT_PACKET.replace(
+        "## Acceptance criteria\n1. It works.", "Just do the work."
+    )
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv-wi",
+            packet_path=_PV_REL,
+            to_agent="claude-web",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+        )
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_packet_missing_acceptance"
+
+
 def test_pv_traversal_rejected(tmp_path: Path) -> None:
     with pytest.raises(FrontierEndpointError) as exc_info:
         validate_packet(
@@ -1002,3 +1123,531 @@ def test_pv_route_missing_packet_returns_422(
     )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "handoff_packet_missing"
+
+
+# ---------------------------------------------------------------------------
+# P2 — Phase 2 unified implement admission (source_ref wire)
+# ---------------------------------------------------------------------------
+
+
+class _Phase2StubCortex:
+    """Stub cortex reader for source_ref handoff tests."""
+
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        if entity_id == "decision:unified-implement-admission":
+            return {
+                "id": entity_id,
+                "assertions": [
+                    {
+                        "confidence": "confirmed",
+                        "superseded": False,
+                        "superseded_by": None,
+                    },
+                ],
+            }
+        attrs: dict[str, Any] = {
+            "content_hash": "sha256:fixture",
+            "acceptance_criteria": ["AC1", "AC2"],
+            "files_expected": ["a.py", "b.py"],
+        }
+        return {"id": entity_id, "name": entity_id, "attributes": attrs}
+
+
+class _Phase2BelievedOnlyCortex(_Phase2StubCortex):
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        if entity_id == "decision:unified-implement-admission":
+            return {
+                "id": entity_id,
+                "assertions": [
+                    {
+                        "confidence": "believed",
+                        "superseded": False,
+                        "superseded_by": None,
+                    },
+                ],
+            }
+        return super().entity_get(entity_id, **kwargs)
+
+
+def _patch_phase2_reader(
+    monkeypatch: pytest.MonkeyPatch, cortex: _Phase2StubCortex | None = None
+) -> None:
+    stub = cortex or _Phase2StubCortex()
+
+    class _Reader:
+        def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003
+            return stub.entity_get(entity_id, **kwargs)
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.StargateCortexReader",
+        _Reader,
+    )
+
+
+def _packet_with_hash(tmp_path: Path, rel: str, source_ref: str) -> str:
+    """Write a packet whose frontmatter hash matches a fresh normalize() call."""
+    from implement_admission.materialize import materialize
+    from implement_admission.normalize import normalize
+    from implement_admission.spec import implement_spec_hash
+
+    cortex = _Phase2StubCortex()
+    spec = normalize(source_ref, cortex=cortex, workspaces_root=tmp_path)
+    out_dir = tmp_path / "tmp" / "reviews"
+    mp = materialize(spec, out_dir=out_dir)
+    dest = tmp_path / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(Path(mp.path).read_text(encoding="utf-8"), encoding="utf-8")
+    return spec.provenance.implement_spec_hash or implement_spec_hash(spec)
+
+
+def test_p2_handoff_input_underspecified(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "handoff_input_underspecified"
+
+
+def test_p2_source_ref_admits_and_creates_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-admit"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:relay-bounded-single",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread_id"] == "bus-p2-admit"
+    assert body["source_ref"] == "todo:relay-bounded-single"
+    assert body["implement_spec_hash"]
+
+
+def test_p2_gated_source_ref_no_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch)
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "agent-bus:1351",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "gated"
+    assert body["thread_id"] is None
+    assert body["gated_reason"]
+    assert body["source_ref"] == "agent-bus:1351"
+
+
+def test_p2_decision_not_asserted_on_source_ref_path(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch, _Phase2BelievedOnlyCortex())
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:relay-bounded-single",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "decision_not_asserted"
+
+
+def test_p2_legacy_packet_path_unaffected_without_source_ref(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """packet_path-only handoff does not require decision lookup."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-legacy"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["thread_id"] == "bus-p2-legacy"
+
+
+def test_p2_both_present_hash_match_admits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    rel = "universal-llm-gateway/tmp/reviews/hash-match.md"
+    source_ref = "todo:relay-bounded-single"
+    _packet_with_hash(tmp_path, rel, source_ref)
+    _patch_phase2_reader(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-hash"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": source_ref,
+            "packet_path": rel,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["thread_id"] == "bus-p2-hash"
+
+
+def test_p2_both_present_hash_mismatch_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    rel = "universal-llm-gateway/tmp/reviews/hash-mismatch.md"
+    _write_packet(
+        tmp_path,
+        rel,
+        "---\nimplement_spec_hash: deadbeef\n---\n" + _CONFORMANT_PACKET,
+    )
+    _patch_phase2_reader(monkeypatch)
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:relay-bounded-single",
+            "packet_path": rel,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "implement_spec_hash_mismatch"
+
+
+def test_p2_materialized_dual_root_projects_parent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Materialized packet resolves when PROJECT_ROOT is the projects parent."""
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-dual"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:relay-bounded-single",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["thread_id"] == "bus-p2-dual"
+
+
+def test_p2_materialized_dual_root_repo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Materialized packet resolves when PROJECT_ROOT is the ULG repo root."""
+    repo_root = tmp_path / "universal-llm-gateway"
+    repo_root.mkdir()
+    monkeypatch.setenv("PROJECT_ROOT", str(repo_root))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-repo"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:relay-bounded-single",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["thread_id"] == "bus-p2-repo"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — unified implement admission live wire
+# ---------------------------------------------------------------------------
+
+
+def _noop_decision(**kwargs: object) -> None:  # noqa: ARG001
+    return None
+
+
+def test_phase2_underspecified_neither_field(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={"op": "handoff", "role": "web-consult", "subject": _GOOD_SUBJECT},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "handoff_input_underspecified"
+
+
+def test_phase2_source_ref_admits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _handoff_app: FastAPI,
+) -> None:
+    materialized_rel = "universal-llm-gateway/tmp/implement-admission/materialized/x.md"
+    _write_packet(tmp_path, materialized_rel, _CONFORMANT_PACKET)
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _noop_decision,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.resolve_source_ref_to_packet",
+        lambda source_ref, **kwargs: BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=materialized_rel,
+            implement_spec_hash="abc123",
+        ),
+    )
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-phase2"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:unified-admission-phase2-implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread_id"] == "bus-phase2"
+    assert body["source_ref"] == "todo:unified-admission-phase2-implement"
+    assert body["implement_spec_hash"] == "abc123"
+
+
+def test_phase2_gated_no_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _noop_decision,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.resolve_source_ref_to_packet",
+        lambda source_ref, **kwargs: BridgeResult(
+            gated=True,
+            gated_reason="agent-bus thread ambiguous",
+            source_ref=source_ref,
+        ),
+    )
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "agent-bus:999",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "gated"
+    assert body["thread_id"] is None
+    assert body["gated_reason"]
+
+
+def test_phase2_decision_not_asserted(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    from implement_admission.preflight import DecisionNotAssertedError
+
+    def _fail(**kwargs: object) -> None:  # noqa: ARG001
+        raise DecisionNotAssertedError()
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _fail,
+    )
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:unified-admission-phase2-implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "decision_not_asserted"
+
+
+def test_phase2_legacy_packet_path_unaffected(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """packet_path-only handoff does not invoke the decision gate."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+
+    def _fail_decision(**kwargs: object) -> None:  # noqa: ARG001
+        raise AssertionError("decision gate must not run on legacy path")
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _fail_decision,
+    )
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-legacy"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["thread_id"] == "bus-legacy"
+
+
+def test_phase2_hash_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _noop_decision,
+    )
+
+    def _hash_fail(**kwargs: object) -> str:
+        raise FrontierEndpointError(
+            request_id="req-hash",
+            field="source_ref",
+            reason="mismatch",
+            status_code=422,
+            code="implement_spec_hash_mismatch",
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.verify_both_present_hash",
+        _hash_fail,
+    )
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:slug",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "implement_spec_hash_mismatch"

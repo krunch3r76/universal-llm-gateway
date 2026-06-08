@@ -11,19 +11,21 @@ Sole agent-facing dispatch MCP tool. `frontier_generate`, `team_generate`,
 (Phase 4/5) — use `team_dispatch` only.
 
 For `op="generate"` and `op="to_thread"`, admission is async: returns
-`{execution_id, pipeline, status, started_at}`; poll with `pipeline(op="result")`.
+`{execution_id, pipeline, status, started_at, knob_resolution}`; poll with
+`pipeline(op="result")`. Reasoning transparency is returned as `knob_resolution`;
+inspect `status`, `parity`, and `notes`.
 For `team_dispatch(op="handoff")` only: returns synchronously with
 `{thread_id, to_agent, push_reminder, result_handle, poll_hint}` — **no**
 `execution_id`; poll with `agent_bus(tool="wait", …)` from `poll_hint`.
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `cursor-consult`, `cursor-implement` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 
 `op` values (`team_dispatch`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
 - `"to_thread"` — bus mode; Stargate posts the model's reply to `thread` on its behalf after dispatch completes.
-- `"handoff"` (**team_dispatch only**) — manual-seat consult (`web-consult` → `claude-web`, `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
+- `"handoff"` (**team_dispatch only**) — manual-seat handoff (`web-consult` → `claude-web`, `web-implement` → `claude-web` (bound implement), `cursor-consult` / `cursor-implement` → `claude-cursor`). Creates an agent-bus thread with a packet pointer synchronously. Returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract, handoff_contract_source, push_reminder, result_handle, handoff_status, poll_hint}`. No model dispatch; web seats need operator push; Cursor seats need opening the thread in the IDE.
 
 See `agent-skills/frontier-dispatch.md` § "Choosing direct vs bus mode" for decision rules.
 
@@ -36,14 +38,14 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | Arg | Type | Description |
 |---|---|---|
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
-| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`) |
+| `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `{platform}-{contract}` roster slug (seat aliases like `claude-web` → 422 `handoff_role_invalid`). **`skeptic`**: default `xai/grok-4.20-multi-agent-0309` is inline-only (no client-side MCP) — pre-stage context in `messages`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
 | `messages` | `list[dict]` | Latest user turn only — prior turns assembled from server-owned thread. Unused by `op="handoff"`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
 | `subject` | `str\|None` | Bus reply subject (`to_thread`); required packet subject (`handoff`) |
 | `model` | `str\|None` | Optional override; must be in persona's allowed set. Unused by `op="handoff"`. |
 | `system` | `str\|None` | Extra caller-supplied system text appended during persona assembly |
-| `reasoning_effort` | `str\|None` | Provider-native reasoning effort. Accepted values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Provider support varies (see `docs/thirdparty/{provider}/upstream` for the documented surface — e.g. OpenAI accepts `none/low/medium/high/xhigh`; Anthropic adaptive accepts `low/medium/high/xhigh/max`; Gemini 3 accepts `minimal/low/medium/high`). Unsupported values for the chosen model are dropped at the adapter layer with an INFO log. |
+| `reasoning_effort` | `str\|None` | Provider-native reasoning effort. Accepted values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Provider support varies (see `docs/thirdparty/{provider}/upstream` for the documented surface — e.g. OpenAI accepts `none/low/medium/high/xhigh`; Anthropic adaptive accepts `low/medium/high/xhigh/max`; Gemini 3 accepts `minimal/low/medium/high`). reasoning_effort is a portable intent label, not cross-provider semantic parity: the same value resolves to different provider-native shapes per value_kind. Unsupported-at-model values raise a ProtocolError (G9 reject-loudly) before dispatch — they are never silently dropped. Inspect the actual native resolution via the dispatch-envelope knob_resolution / member_knob_resolution echo (or resolve_dispatch()). |
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
 | `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to the pre-written six-block packet |
@@ -57,7 +59,7 @@ e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
 `web_seat_not_generate_target` — including when `model=` is supplied explicitly.
 Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 `synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
-web-default roles (`web-consult`, `investigator` (legacy)), and Cursor handoff-only roles
+web-default roles (`web-consult`, `web-implement`, `investigator` (legacy)), and Cursor handoff-only roles
 (`cursor-consult`, `cursor-implement`). Web Claude doing local file work should
 use `fs` directly; peer consult → `team_dispatch(op=generate, role=…)` with optional `model=`.
 
@@ -77,19 +79,23 @@ only handoff on `team_dispatch` (not `generate`).
 |--------|------|------|----------|
 | Web consult / dialectic | `web-consult` | `claude-web` | push bus message |
 | Cursor consult / architecture | `cursor-consult` | `claude-cursor` | open IDE thread |
-| **Bound implement** (from any seat) | `cursor-implement` | `claude-cursor` | open IDE thread |
+| **Bound implement** (→ Cursor) | `cursor-implement` | `claude-cursor` | open IDE thread |
+| **Bound implement** (→ Web) | `web-implement` | `claude-web` | push bus message |
 
-**Bound implement is unified on Cursor:** `team_dispatch(op=handoff, role=cursor-implement, …)`
-from any seat — always targets `claude-cursor` (`handoff_contract=implement` in the
-response, derived from role). Distinct from `cursor-consult` (reasoning consult). Packet
-must include acceptance criteria in `<task_guidance>`. `model` and `handoff_contract`
-are not accepted on the handoff request. Web-native bound work without cross-seat
-handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
+**Bound implement has two seats** (contract derived from the role slug; `handoff_contract=implement`
+in the response): `role=cursor-implement` → `claude-cursor` (open IDE thread), and
+`role=web-implement` → `claude-web` (operator push). Both require acceptance criteria in
+`<task_guidance>`; the implement guardrails (acceptance-criteria lint, implement pointer line,
+`contract:implement` tag) key on the derived contract + seat, not on a role name. Distinct from
+the `*-consult` reasoning roles (which derive `consult` — they cannot raise the implement
+guardrails). `model` and `handoff_contract` are not accepted on the handoff request — pick the
+slug whose `{platform}-{contract}` encodes your intent. Web-native bound work without a
+fresh-thread handoff: `Pick up todo:{slug}` (loads `implement-todo` skill).
 
 See `projects/.cursor/rules/handoff-dispatchers.mdc` (§ web-claude for `role=web-consult`, §
 `cursor-claude` for `role=cursor-consult`); consult index `agent-skills/consult-routing.md`.
 
-Creates an agent-bus thread (e.g. `web-consult` → `claude-web`,
+Creates an agent-bus thread (e.g. `web-consult` / `web-implement` → `claude-web`,
 `cursor-consult` / `cursor-implement` → `claude-cursor`)
 and returns `{thread_id, subject, to_agent, resolved_handoff_seat, handoff_contract,
 handoff_contract_source, push_reminder, result_handle, handoff_status,
@@ -108,7 +114,7 @@ endpoint enforces that the role resolves to a manual, non-dispatchable seat
 are rejected with `handoff_requires_web_seat` 422.
 
 **Self-handoff:** a manual seat may call `op="handoff"` with the matching roster
-role (`claude-web` → `role=web-consult`; `claude-cursor` → `role=cursor-consult`) to open
+role (`claude-web` → `role=web-consult` or `role=web-implement`; `claude-cursor` → `role=cursor-consult` or `role=cursor-implement`) to open
 a new agent-bus thread with packet-booted context. This is **supported** — distinct
 from `op="generate"` to the same seat (422 `web_seat_not_generate_target`).
 Authority: `projects/.cursor/rules/handoff-dispatchers.mdc` § Self-handoff;
@@ -190,11 +196,17 @@ team_dispatch(op="handoff", role="cursor-consult",
               subject="<Task> handoff — <subject>")
 # → {to_agent: "claude-cursor", push_reminder mentions Cursor / agent-bus}
 
-# Bound implement — unified path (any dispatching seat → claude-cursor)
+# Bound implement (→ Cursor) — open IDE thread
 team_dispatch(op="handoff", role="cursor-implement",
               packet_path="universal-llm-gateway/tmp/prompts/<task>-implement-packet.md",
               subject="Implement <task>")
 # → {to_agent: "claude-cursor", handoff_contract: "implement", push_reminder mentions Cursor}
+
+# Bound implement (→ Web) — operator push; claude-web implements via fs
+team_dispatch(op="handoff", role="web-implement",
+              packet_path="universal-llm-gateway/tmp/prompts/<task>-implement-packet.md",
+              subject="Implement <task>")
+# → {to_agent: "claude-web", handoff_contract: "implement", push_reminder mentions web push}
 ```
 
 Chat-Completions-only OpenAI search models (`openai/*-search-api`) are rejected
@@ -234,19 +246,56 @@ material gate fires — not only on explicit operator request. Read
 | `wait_seconds` | `int` | Per-member poll wait when `poll=true` (capped at 60) |
 | `caller_agent` | `str\|None` | Dispatch provenance (forwarded to each member) |
 | `system` | `str\|None` | Extra caller-supplied system text for all members |
-| `reasoning_effort` | `str\|None` | Uniform pass-through to each `team_dispatch(op=generate)` member |
+| `reasoning_effort` | `str\|None` | Requested reasoning knob; actual resolution is reported in `member_knob_resolution`. No parity claim by default. |
 | `generation_options` | `dict\|None` | Uniform provider pass-through; use only cross-provider-safe keys |
 | `max_tool_turns` | `int\|None` | Tool-loop cap per member |
 | `transcript_id` | `str\|None` | Provenance-only session id per member (not forwarded to models) |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap per member |
+| `source_ref` | `str\|None` | Workspaces-relative packet path or URI; read at admission and inlined into the first user message |
+| `panel_request_id` | `str\|None` | Opt-in idempotency key; same id + equivalent inputs within dedupe window returns prior envelope without a second paid fan-out |
+
+**Idempotency (`panel_request_id`):**
+- Optional opt-in key. A repeat call with the same `panel_request_id` and equivalent inputs within the dedupe window (default 10 min) returns the prior dispatch envelope (`idempotency_hit: true`) without a second paid member fan-out. Omit it to force a fresh dispatch — the panel is stochastic, so intentional reruns require a new/rotated id (or no id).
+- Equivalent inputs = `messages`, `dispatch_thread_id`, `disposition`, `include_synthesizer`, `system`, `source_ref`, `reasoning_effort`, `generation_options`, `max_tool_turns`, `timeout_seconds`. `poll`, `wait_seconds`, `caller_agent`, `transcript_id` do **not** affect dedupe identity.
+- Reusing a `panel_request_id` with **changed** inputs returns `validation_error` (`idempotency_conflict`).
+- On a hit with `poll=true`, the stored execution_ids are polled fresh (re-attach), so a client that lost the original response can recover live status without re-paying.
+- Usage: have your client wrapper set a stable `panel_request_id` (e.g. derived from `dispatch_thread_id` + a task hash) so its own retries dedupe.
+
+**Returns:** `submission_plan` (role, model, execution_id, dispatch_key per member);
+reasoning transparency as `member_knob_resolution` per panel member;
+`status` ∈ `{dispatched, partial, complete, failed}` — `dispatched` when `poll=false`
+(members admitted, caller polls via `pipeline(op=result, ...)`); when `poll=true`:
+`partial` if any member still running (includes `do_not_resubmit: true` and
+`in_flight_execution_ids`), `complete` when all members succeeded, `failed` when
+all terminal but ≥1 member failed — never bare pipeline `running`;
+`member_status` maps each role to `{complete, running, failed}`;
+aggregate `tokens_in` / `tokens_out` summed across polled members;
+inspect `member_knob_resolution[*].status`, `parity`, and `notes`.
 
 **Wire shape:** each member relay is a `team_dispatch(op=generate)` body. `model` is
 omitted for role-default members (`skeptic`, `synthesizer`); `reviewer` carries an
 explicit override. Auditability is via the returned `member_models` / `panel_families`
 envelope and Menu D assert stamp — not wire-pinned models.
 
+**Capability envelope:** `panel_capabilities` maps each member role to effective
+`inline_only`, `mcp_enabled`, `tool_surface`, and `resolved_model` (mixed tiers:
+skeptic inline-only, reviewer MCP-capable). Each member `dispatches` entry may also
+carry `capabilities` from team_dispatch admission.
+
 **Generate-only by design:** no `op=to_thread` or `op=handoff` fan-out — member outputs
 must be polled and lead-adjudicated (Guard 2) before any bus delivery or conclusion.
+
+**Timeout stack (4 layers — team-dispatch pipeline):**
+
+| Layer | Knob | Default | Scope |
+|-------|------|---------|-------|
+| pipeline overall | `options.timeout_seconds` (= body `timeout_seconds` pass-through) | 14400 | whole pipeline |
+| SSE overall (remote MCP) | `context.options.timeout_seconds`; fallback `REMOTE_MCP_OVERALL_TIMEOUT_S` | 300 | one provider SSE call |
+| respond step | `steps.respond.timeout_seconds` | **1200** | the `respond` step |
+| concurrency lock | `concurrency.timeout_seconds` on `dispatch:{dispatch_thread_id}` | **1200** | lock wait per member key |
+
+Panel defaults: per-member `dispatch_thread_id` suffix (`{base}:{role}`) for true parallelism;
+failure detection is event-based (observability), not timeout fast-fail.
 
 `extra_members` is a **library-only** hook on `agent_seat.panel_dispatch.resolve_panel_members`;
 the MCP `panel_dispatch` tool intentionally does not expose it — the MCP surface stays a
@@ -352,17 +401,17 @@ Cortex knowledge system — entities, assertions, relationships, edges, journals
 | `entity_get` | entity_id, include_edges?, edge_limit? | Get entity with assertions + relationships. Pass `include_edges=true` to also return `reasoning_edges` (active session edges). `edge_limit` defaults to 20. |
 | `entity_create` | id, type, name, description?, workflow_state?, notes?, aliases?, attributes?, source_uri?, content_hash? | Create entity (409 if exists). Option-C traits (`confidence_band`, `lifecycle`, `adoption`) are derived at birth — set via `entity_update` after create (422 if passed on create). |
 | `entity_update` | entity_id, name?, description?, workflow_state?, confidence_band?, lifecycle?, adoption?, notes?, aliases?, attributes?, source_uri?, content_hash? | Update mutable fields. Trait write surface: `confidence_band`, `lifecycle`, `adoption`. null clears; omit leaves untouched. |
-| `assertions` | entity_id?, confidence?, review_status?, superseded?, limit? | List assertions. review_status: committed/flagged/staged/rejected |
-| `assert` | entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id? | Direct write. confidence: confirmed/believed/suspected/hypothesized. derivation_type: quotation/compression/inference/other |
+| `assertions` | entity_id?, entity_id_prefix?, filter?, seeded_by?, confidence?, review_status?, superseded?, limit? | List assertions. `seeded_by` filters stored provenance (post-projection family or passthrough pipeline id). review_status: committed/flagged/staged/rejected |
+| `assert` | entity_id, claim, confidence, evidence, evidence_uris?, seeded_by?, derivation_type?, confidence_score?, observed_at?, valid_from?, chunk_id? | Direct write. `seeded_by` write: server projects seat→family; bare family unchanged; pipeline/unrecognized pass through (never rejected). Response adds `seeded_by_input`, `seeded_by`, `seeded_by_projection` (`seat_to_family`\|`identity`\|`passthrough_unrecognized`). confidence: confirmed/believed/suspected/hypothesized. derivation_type: quotation/compression/inference/other |
 | `assertion_update` | assertion_id, superseded_by?, valid_until?, confidence?, confidence_score?, review_status?, reviewer?, reviewed_at? | Update assertion metadata |
-| `supersede` | old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent, evidence_uris?, valid_from?, derivation_type? | Atomic close-old + create-new. Also auto-creates the `supersedes` edge in the same transaction. |
+| `supersede` | old_assertion_id, entity_id, claim, confidence, evidence, session_id, agent, evidence_uris?, valid_from?, derivation_type?, seeded_by? | Atomic close-old + create-new. Optional `seeded_by` uses the same projection as `assert`. Also auto-creates the `supersedes` edge in the same transaction. |
 | `relationships` | entity_id?, type_id?, limit? | List with names, strength |
 | `relationship_create` | source_id, target_id, type_id, role?, strength?, evidence?, chunk_id?, valid_from?, valid_until?, source_uri?, session_id?, agent? | Create structural relationship. Pass `session_id` + `agent` for provenance (nullable; recommended for new writes). |
 | `stats` | — | Dashboard counts |
 | `search` | query, limit?, superseded?, entity_type?, intent? | FTS5 hybrid search over assertions. `intent`=`summary` (default): compact hits; `intent`=`full`: detail rows with enrichment fields. Prefer over `assertions` for natural-language queries |
 | `impact` | entity_id, depth? | Transitive reverse-dependency BFS from entity. Returns `{seed_entity, depth, impacted_entities: [{entity_id, entity_name, hop_distance, path_trace, assertion_count, edge_types, substrates}], total_impacted_assertions}`. Walks both substrates via `_DEPENDENCY_EDGE_TYPES` (`requires`, `depends_on`, `derived_from`, `evidence_for`, `extends`). |
 | `activate` | entity_ids, depth?, max_results?, exclude_ids?, suppress_hubs?, decay_factor? | Spreading activation from seed entities. Returns `{seed_entities, depth, hub_suppression, count, activated: [{assertion_id, entity_id, claim, confidence, entrenchment_score, activation_score, hop_distance, activation_path, edge_types_traversed, substrates_traversed}]}`. Walks both substrates via the full 15-type association set. `entity_ids` is comma-separated. |
-| `journal_read` | limit? | Recent session journals |
+| `journal_read` | limit?, agent? | Recent session journals; `agent` filters by seat-level operational identity |
 | `journal_write` | timestamp, agent, summary, domains?, decisions?, open_items?, entity_ids?, file_path? | Write journal |
 | `review_queue` | limit? | Provisional entities + flagged assertions + low-confidence + thin descriptions |
 | `edge_create` | session_id, agent, from_node, to_node, edge_type, strength?, edge_source?, context?, prompt?, seeded_by?, metadata? | Seed reasoning connection |

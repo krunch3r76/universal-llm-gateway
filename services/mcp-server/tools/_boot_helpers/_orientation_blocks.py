@@ -18,15 +18,13 @@ Block text is operator-approved (2026-05-31); the grok model string is
 
 from __future__ import annotations
 
-# Surface-aware Dispatch & Consult blocks (operator-approved override 2026-06-01,
-# thread 1167). Lead seats (config/agents.yaml lead_seats) use the
-# claude-form block on /mcp (mcp_claude). team_dispatch (+ panel_dispatch) are
-# PRIMARY/direct-call on lead surfaces after the standalone-domain re-land:
+# Dispatch & Consult block (operator-approved 2026-06-01, thread 1167).
+# Lead seats (config/agents.yaml lead_seats) use this claude-form block on /mcp
+# (mcp_claude). team_dispatch (+ panel_dispatch) are PRIMARY/direct-call on lead
+# surfaces after the standalone-domain re-land:
 #
 #   - claude /mcp + gpt /mcp (mcp, mcp_claude): standalone `team_dispatch`
 #     DOMAIN → _PRIMARY_TOOLS — direct call; advisor/pipeline_consult overflow.
-#   - grok /mcp/grok (mcp_grok): flat catalog for grok-direct/build worker only
-#     — consult/infrastructure surface, not an operator lead seat.
 #
 # NOTE: `cache_priority` in canonical.yaml is INERT (not consumed by derivation,
 # per _derive.py). The lever that makes these primary on claude is the standalone
@@ -60,37 +58,29 @@ _DISPATCH_CONSULT_BLOCK_CLAUDE = """\
 ## Dispatch & Consult — pick by CAPABILITY, not model family
 To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly (if unbound, see MCP binding block above). Model strings = provider/model on optional model= override (bare name = 404).
-- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id; poll pipeline(op="result", execution_id=…)
+- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id + capabilities; poll pipeline(op="result", execution_id=…)
+- role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus in messages (¬ expect Cortex/fs writes from skeptic)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, role=web-consult|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
+- manual seat handoff → team_dispatch (op=handoff, role=web-consult|web-implement|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push, consult); web-implement (push, bound implement → claude-web); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
-- close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
+- close-to-code build (multi-writer) → cursorbuild (forward harness)
 - run a named pipeline              → pipeline (op=run|async)
 ⚠ A build harness is not a model picker. "Want a grok answer" → team_dispatch(op=generate, role=artisan, model="xai/grok-4.3", …), never a build harness.
-Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
-
-_DISPATCH_CONSULT_BLOCK_GROK = """\
-## Dispatch & Consult — pick by CAPABILITY, not model family
-To consult a MODEL (any provider, incl. grok) you do NOT use a build harness.
-On THIS surface (/mcp/grok, flat catalog) team_dispatch is PRIMARY — call directly, no dispatch step. Model strings = provider/model on optional model= (bare name = 404).
-- API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?)
-- by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, role=web-consult|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
-- claude-web handoff → operator push; claude-cursor handoff → open IDE thread
-- consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")
-- stronger-model strategic advice   → advisor (problem)                       [overflow]
-- RAG advice inside a pipeline      → pipeline_consult (execution_id, step_name, problem)  [overflow]
-- close-to-code build (multi-writer) → cursorbuild (forward harness; grokbuild retired 11588)
-- run a named pipeline              → pipeline (op=run|async)
-⚠ "Want a grok answer" → team_dispatch role=artisan model=xai/grok-4.3, never a build harness.
 Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-decision-table.md"""
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
 # 1289): 3-question redirect + salience line kept inline; substrate table collapsed
 # to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc.
+_ENTITY_HIERARCHY_BLOCK = """\
+## Entity granularity — seed the right type
+- **plan:** → **plan_phase:** children — ordered, numbered multi-phase roadmap.
+- **task:** → **todo:** children via `child_of`; umbrella `project:` via `related_to` — a bounded, phase-free arc of ≥2 leaf todos.
+- **todo:** → steps inline in the body — one unit of work. Do NOT cram "PHASE 1/2/3" into a todo (that's a plan).
+Seed with generic primitives (`entity_create` + `relationship_create` `child_of`); refs: `agent-skills/entity-lifecycle-discipline.md` §task:X."""
+
 _LIVENESS_BLOCK = """\
 ## Liveness — the running process is the source of truth (commit-decoupled)
 A change is LIVE only when LOADED into the running process at its last deploy/restart. Git commit/master is neither necessary nor sufficient.
@@ -109,13 +99,14 @@ read `agent-skills/consult-routing.md` BEFORE choosing transport (full playbook;
 Three traps that cost a round-trip:
 - team_dispatch(op=generate) with synthetic seat model (claude-web|claude-cursor) → 422; manual seats take op=handoff with role=.
 - "Want a grok answer" is not a build harness → team_dispatch(role=artisan, model="xai/grok-4.3").
+- role=skeptic is inline-only/no-MCP (default multi-agent grok) → pre-stage corpus in messages; read admission `capabilities` / `panel_capabilities`.
 - Wrong rules tree: the handoff protocol is NOT under `universal-llm-gateway/.cursor/rules/`. It lives at PROJECT `.cursor/rules/architecture-handoff-protocol.mdc` + `handoff-dispatchers.mdc` (no repo prefix).
 Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — implement (role=cursor-implement) is NOT exempt:
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Surface axis: team_dispatch handoff = role (web-consult/cursor-consult/cursor-implement); team_dispatch generate = API role + optional model= override within allowed_models.
-Codified bug report (operator directs report bug/friction to cursor) = bound implement → team_dispatch(op=handoff, role=cursor-implement), lifecycle investigate→fix→report; an operator-named transport wins (never silently substitute agent_bus). See skill § Codified bug reports."""
+Surface axis: team_dispatch handoff = role (web-consult/web-implement/cursor-consult/cursor-implement); team_dispatch generate = API role + optional model= override within allowed_models.
+Codified bug/friction ticket (any initiator, any surface) = actionable defect needing a fix cycle, routed in TWO phases → Phase 1 investigate+decide (role=cursor-consult from IDE / role=web-consult from web) to trace root cause + produce a dense spec → Phase 2 execute (role=cursor-implement against the spec / web inline fix). DEFAULT: a filed bug → assume the investigation tier unless operator says mechanical-only or a dense implement spec already exists; do NOT make cursor-implement the first hop on a bug with open root cause/design (friction 13571 → thread 1377). friction() is the observation log only, NOT the ticket channel; an operator-named transport wins (never silently substitute agent_bus). Read fs(workspaces, universal-llm-gateway/docs/agent-guides/skills/friction-review.md) or skill § Codified bug reports."""
 
 
 def _render_server_primary_manifest_line() -> str:
@@ -183,39 +174,25 @@ def render_orientation_blocks(
 ) -> list[str]:
     """Return the capability-axis + liveness orientation blocks as card parts.
 
-    Surface-aware: the Dispatch & Consult block's callable shape depends on the
-    rendering seat's catalog (thread 1167, 2026-06-01 re-land):
+    All seats use the claude direct-call form (``team_dispatch`` in
+    ``_PRIMARY_TOOLS`` direct-call form; ``panel_dispatch`` is primary on
+    claude-web; overflow via ``dispatch(tool="…")`` for advisor/pipeline_consult).
 
-    - ``family == "grok"`` → grok-direct/build-worker flat /mcp/grok block
-      (infrastructure surface — not a lead seat).
-    - any other family on ``mcp``/``mcp_claude`` (claude, gpt leads; gemini
-      pending) → ``team_dispatch`` in ``_PRIMARY_TOOLS`` direct-call form.
-      ``panel_dispatch`` is primary on claude-web; overflow via
-      ``dispatch(tool="…")`` for advisor/pipeline_consult.
-
-    Default (``family is None``) renders the claude direct-call form, matching
-    the default ``(claude, cursor)`` seat.
+    Default (``family is None``) renders the same form, matching the default
+    ``(claude, cursor)`` seat.
 
     Emitted above the skills list by ``render_briefing_card()``. Each element
     carries a leading newline so the card's ``"\\n".join(parts)`` produces a
     blank-line separator consistent with the other sections.
     """
     session_close_block = _session_close_orientation_for_agent(agent)
-    if family == "grok":
-        blocks = [
-            f"\n{_DISPATCH_CONSULT_BLOCK_GROK}",
-            f"\n{_CONSULT_ROUTING_GATE}",
-            f"\n{_LIVENESS_BLOCK}",
-        ]
-        if session_close_block:
-            blocks.insert(1, session_close_block)
-        return blocks
     blocks = [
         f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
         _render_server_primary_manifest_line(),
         f"\n{_DISPATCH_CONSULT_BLOCK_CLAUDE}",
         f"\n{_CONSULT_ROUTING_GATE}",
         f"\n{_LIVENESS_BLOCK}",
+        f"\n{_ENTITY_HIERARCHY_BLOCK}",
     ]
     if session_close_block:
         blocks.insert(3, session_close_block)

@@ -16,11 +16,23 @@ from typing import TYPE_CHECKING, Any, Literal
 from agent_seat.panel_dispatch import (
     PanelAdmissionPlan,
     admit_panel_plan,
+    build_panel_poll_summary,
     build_team_dispatch_body,
     effective_model_for_member,
+    lint_panel_messages,
+    member_dispatch_thread_id,
     panel_provider_families,
     panel_result_envelope,
 )
+from agent_seat.panel_idempotency import (
+    build_panel_request_fingerprint,
+    check_or_reserve,
+    commit,
+    disabled as panel_idem_disabled,
+    release,
+)
+from implement_admission.admission_read import read_packet
+from implement_admission.source_ref import SourceRefError
 from mcp_events import record
 from universal_logging import get_logger
 
@@ -46,6 +58,48 @@ def _poll_execution(execution_id: str, wait_seconds: float) -> dict[str, Any]:
     return _pipeline_result(execution_id, wait_seconds)
 
 
+async def _poll_dispatches(
+    dispatches: dict[str, Any],
+    wait_seconds: int,
+) -> dict[str, Any]:
+    """Block-poll each execution_id in *dispatches*."""
+    poll_results: dict[str, Any] = {}
+    wait = float(max(0, min(wait_seconds, 60)))
+    for role, payload in dispatches.items():
+        eid = payload.get("execution_id") if isinstance(payload, dict) else None
+        if not eid:
+            poll_results[role] = {
+                "error": "no execution_id",
+                "dispatch": payload,
+            }
+            continue
+        poll_results[role] = await asyncio.to_thread(_poll_execution, eid, wait)
+    return poll_results
+
+
+def _apply_source_ref(
+    messages: list[dict[str, Any]],
+    source_ref: str,
+) -> list[dict[str, Any]]:
+    packet = read_packet(source_ref)
+    prefix = (
+        f"--- source_ref: {source_ref} ---\n{packet.text}\n--- end source_ref ---\n\n"
+    )
+    out = [dict(m) for m in messages]
+    for message in out:
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            message["content"] = prefix + message["content"]
+            return out
+    out.insert(0, {"role": "user", "content": prefix.strip()})
+    return out
+
+
+_SOURCE_REF_GUIDANCE = (
+    "Packet content is inlined in the user message; do not re-read it via fs "
+    "in your first member turn."
+)
+
+
 def register_panel_dispatch_tools(mcp: FastMCP) -> None:
     """Register ``panel_dispatch`` on the MCP server."""
 
@@ -64,6 +118,8 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         max_tool_turns: int | None = None,
         transcript_id: str | None = None,
         timeout_seconds: int | None = None,
+        source_ref: str | None = None,
+        panel_request_id: str | None = None,
     ) -> dict[str, Any]:
         """Run the consensus-steelman panel member dispatches (Phase 2 helper).
 
@@ -73,8 +129,13 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         Optional ``include_synthesizer`` adds the gemini tiebreaker (inline-only).
 
         Returns ``panel_executions`` (role → ``execution_id``),
-        ``panel_families``, and per-role ``dispatches``. Poll member content with
-        ``pipeline(op="result", execution_id=...)`` unless ``poll=True``.
+        ``panel_capabilities`` (per-member ``inline_only`` / ``mcp_enabled`` /
+        ``tool_surface`` / ``resolved_model``), ``panel_families``, and per-role
+        ``dispatches``. Returns ``member_knob_resolution`` per panel member for reasoning knob
+        transparency: ``value_kind``, ``reasoning_native``, ``status``,
+        ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.
+        Poll member content with ``pipeline(op="result", execution_id=...)``
+        unless ``poll=True``.
 
         **NON-offloadable (Guard 2):** steelman, falsifier adjudication, and the
         ``panel_adjudication_artifact`` are authored by the **adjudicating
@@ -104,12 +165,17 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             wait_seconds: Per-member poll wait (capped by pipeline tool).
             caller_agent: Provenance slug for Stargate execution records.
             system: Optional extra system prefix for all panel members.
-            reasoning_effort: Passed through to each ``team_dispatch`` member
-                (same semantics as ``team_dispatch(op=generate)``).
+            reasoning_effort: Requested reasoning knob; actual resolution is
+                reported in ``member_knob_resolution``. No parity claim by default.
             generation_options: Provider generation pass-through per member.
             max_tool_turns: Tool-loop cap per member.
             transcript_id: Provenance-only session id per member dispatch.
             timeout_seconds: Pipeline wall-clock cap per member.
+            source_ref: Workspaces-relative packet path or URI; read at admission
+                and inlined into the first user message (no fs-read in member turn).
+            panel_request_id: Opt-in idempotency key; same id + equivalent inputs
+                within the dedupe window returns the prior envelope without a
+                second paid member fan-out.
         """
         admitted = admit_panel_plan(
             disposition=disposition,
@@ -120,8 +186,109 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
             return admitted
 
         plan: PanelAdmissionPlan = admitted
+
+        lint_err = lint_panel_messages(messages)
+        if lint_err is not None:
+            record("mcp.panel.dispatch.rejected", reason="block_content")
+            return lint_err
+
+        reserved = False
+        if panel_request_id and not panel_idem_disabled():
+            fingerprint = build_panel_request_fingerprint(
+                messages=messages,
+                dispatch_thread_id=dispatch_thread_id,
+                disposition=disposition,
+                include_synthesizer=include_synthesizer,
+                system=system,
+                source_ref=source_ref,
+                reasoning_effort=reasoning_effort,
+                generation_options=generation_options,
+                max_tool_turns=max_tool_turns,
+                timeout_seconds=timeout_seconds,
+            )
+            idem = check_or_reserve(panel_request_id, fingerprint)
+            if idem.kind == "conflict":
+                record(
+                    "mcp.panel.dispatch.rejected",
+                    reason="idempotency_conflict",
+                )
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            f"panel_request_id {panel_request_id} reused with "
+                            "non-equivalent inputs"
+                        ),
+                    }
+                }
+            if idem.kind == "in_flight":
+                record(
+                    "mcp.panel.dispatch.deduped",
+                    panel_request_id=panel_request_id,
+                    age_s=round(idem.age_s, 1),
+                    repolled=False,
+                )
+                return {
+                    "idempotency_hit": True,
+                    "status": "in_flight",
+                    "panel_request_id": panel_request_id,
+                    "_note": (
+                        "prior identical panel_dispatch is admitting; not "
+                        "resubmitted — re-call shortly for the full envelope"
+                    ),
+                }
+            if idem.kind == "hit":
+                stored = dict(idem.envelope or {})
+                stored["idempotency_hit"] = True
+                stored["panel_request_id"] = panel_request_id
+                if poll:
+                    synthetic = {
+                        role: {"execution_id": eid}
+                        for role, eid in stored.get("panel_executions", {}).items()
+                    }
+                    poll_results = await _poll_dispatches(synthetic, wait_seconds)
+                    poll_summary = build_panel_poll_summary(
+                        dispatches=synthetic,
+                        poll_results=poll_results,
+                        polled=True,
+                    )
+                    stored.update(poll_summary)
+                record(
+                    "mcp.panel.dispatch.deduped",
+                    panel_request_id=panel_request_id,
+                    age_s=round(idem.age_s, 1),
+                    repolled=bool(poll),
+                )
+                return stored
+            reserved = True
+
+        member_messages = list(messages)
+        member_system = system
+        if source_ref:
+            try:
+                member_messages = _apply_source_ref(member_messages, source_ref)
+            except SourceRefError as exc:
+                if reserved and panel_request_id:
+                    release(panel_request_id)
+                record("mcp.panel.dispatch.rejected", reason="source_ref")
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": str(exc),
+                    }
+                }
+            member_system = (
+                f"{member_system}\n\n{_SOURCE_REF_GUIDANCE}".strip()
+                if member_system
+                else _SOURCE_REF_GUIDANCE
+            )
+
         member_models = {
             spec.role: effective_model_for_member(spec) for spec in plan.members
+        }
+        member_keys = {
+            spec.role: member_dispatch_thread_id(dispatch_thread_id, spec.role)
+            for spec in plan.members
         }
 
         record(
@@ -141,10 +308,10 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
                 spec.role,
                 build_team_dispatch_body(
                     spec=spec,
-                    messages=messages,
-                    dispatch_thread_id=dispatch_thread_id,
+                    messages=member_messages,
+                    dispatch_thread_id=member_keys[spec.role],
                     caller_agent=caller_agent,
-                    system=system,
+                    system=member_system,
                     reasoning_effort=reasoning_effort,
                     generation_options=generation_options,
                     max_tool_turns=max_tool_turns,
@@ -157,19 +324,83 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
         pairs = await asyncio.gather(*[_one(role, body) for role, body in bodies])
         dispatches = dict(pairs)
 
+        for role, payload in dispatches.items():
+            if isinstance(payload, dict) and payload.get("execution_id"):
+                record(
+                    "mcp.panel.member.admitted",
+                    role=role,
+                    model=member_models[role],
+                    execution_id=str(payload["execution_id"]),
+                    dispatch_key=member_keys[role],
+                )
+            elif isinstance(payload, dict) and "error" in payload:
+                err = payload.get("error")
+                reason = (
+                    err.get("code", "dispatch_error")
+                    if isinstance(err, dict)
+                    else "dispatch_error"
+                )
+                record(
+                    "mcp.panel.member.failed",
+                    role=role,
+                    reason=str(reason),
+                    elapsed_s=0,
+                )
+
+        submission_plan = [
+            {
+                "role": role,
+                "model": member_models[role],
+                "execution_id": (
+                    dispatches[role].get("execution_id")
+                    if isinstance(dispatches[role], dict)
+                    else None
+                ),
+                "dispatch_key": member_keys[role],
+            }
+            for role in member_models
+        ]
+
         poll_results: dict[str, Any] | None = None
         if poll:
-            poll_results = {}
-            wait = float(max(0, min(wait_seconds, 60)))
-            for role, payload in dispatches.items():
-                eid = payload.get("execution_id") if isinstance(payload, dict) else None
-                if not eid:
-                    poll_results[role] = {
-                        "error": "no execution_id",
-                        "dispatch": payload,
-                    }
+            poll_results = await _poll_dispatches(dispatches, wait_seconds)
+
+        poll_summary = build_panel_poll_summary(
+            dispatches=dispatches,
+            poll_results=poll_results,
+            polled=poll,
+        )
+
+        if poll and poll_summary.get("status") == "partial":
+            record(
+                "mcp.panel.partial",
+                in_flight_count=len(poll_summary.get("in_flight_execution_ids", [])),
+            )
+
+        if poll and poll_results:
+            for role, poll_result in poll_results.items():
+                if poll_summary["member_status"].get(role) != "failed":
                     continue
-                poll_results[role] = await asyncio.to_thread(_poll_execution, eid, wait)
+                if not isinstance(poll_result, dict):
+                    continue
+                if poll_result.get("status") != "failed":
+                    continue
+                err = poll_result.get("error")
+                reason = (
+                    err.get("code", "pipeline_failed")
+                    if isinstance(err, dict)
+                    else "pipeline_failed"
+                )
+                result = poll_result.get("result")
+                elapsed_s = (
+                    result.get("duration_s", 0) if isinstance(result, dict) else 0
+                )
+                record(
+                    "mcp.panel.member.failed",
+                    role=role,
+                    reason=str(reason),
+                    elapsed_s=elapsed_s,
+                )
 
         record(
             "mcp.panel.dispatch.dispatched",
@@ -179,9 +410,26 @@ def register_panel_dispatch_tools(mcp: FastMCP) -> None:
                 if isinstance(p, dict)
             ),
         )
-        return panel_result_envelope(
+        envelope = panel_result_envelope(
             plan=plan,
             dispatches=dispatches,
             member_models=member_models,
             poll_results=poll_results,
+            submission_plan=submission_plan,
+            poll_summary=poll_summary,
+            reasoning_effort=reasoning_effort,
+            requested_max_output=(
+                (generation_options or {}).get("max_tokens")
+                if isinstance((generation_options or {}).get("max_tokens"), int)
+                else None
+            ),
         )
+        if panel_request_id:
+            envelope["panel_request_id"] = panel_request_id
+            envelope["idempotency_hit"] = False
+        if reserved and panel_request_id:
+            if envelope.get("panel_executions"):
+                commit(panel_request_id, envelope)
+            else:
+                release(panel_request_id)
+        return envelope
