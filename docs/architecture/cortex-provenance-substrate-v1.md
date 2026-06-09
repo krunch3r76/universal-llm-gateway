@@ -1,28 +1,34 @@
-# Cortex Provenance Substrate — Architecture Spec v1
+# Cortex Provenance Substrate — Architecture Spec v1.3
 
-**Version:** v1.2
-**Audience:** spec readers without Cortex internals; Cortex agents (all seats, all platforms)
+## Version history
+
+| Version | Date | Changes | Anchor |
+|---|---|---|---|
+| v1.0 | 2026-05-13 | Initial spec drafted in `transcript:web-2026-05-13-0438`. §0–§11 + Appendix A,B + Resume/promote checklist. SuperHeavy Pass A/B review begins. | `document:cortex-provenance-substrate-spec-v1.0` |
+| v1.1 | 2026-05-13 | Write-time discipline tightening absorbed from Pass A/B feedback: §4.7 forward-looking provenance (`prospective_summary`, `events_json`, `artifact_uri`) added; §3.4 derivation×confidence interaction clarified; §5 auditor-validatability pre-write checklist + tooling backstop subsections. | `document:cortex-provenance-substrate-spec-v1.1` |
+| v1.2 | 2026-05-14 | Pass A/B audit findings absorbed: Appendix A "Lineage and belief-revision lineages" subsection added (covering provenance semirings, Datalog/TMS, CRDT-KGs, bitemporal property graphs, AGM/Hansson belief-revision); §7.3 field-preservation contract extended to cover forward-provenance fields. | `document:cortex-provenance-substrate-spec-v1.2` |
+| v1.3 | 2026-05-17 | Field-grade artifact handling (§3.1 mixed-grade extension), dependency tracking (§3.5 NEW covering internal derived fields AND agent-authored fs artifacts via `derives_from` frontmatter), skill-router scope extension to derived-artifact-authoring (§8 extension), consumer obligations (§12 NEW), enforcement layer split (§13 NEW, substrate-primary + audit-backstop + reader-defense-in-depth), implementation prerequisites (§14 NEW, predicate_form backfill + pairwise supersedence-candidate detection). §7.5 redirect-to-active primitive (frictions 10156, 10158). Appendix C (Boot-time provenance surface, closes §11.7). Appendix D (Agent-time-of-use injection patterns). | `document:cortex-provenance-substrate-spec-v1.3` |
+| v1.3.2 | 2026-05-17 | Appendix D wire-up amendments: (a) D.5 invariant 2 reference corrected (§12.9 → §12.13); (b) D.5 invariants 4 (admission-gated truncation) and 5 (content-hash integrity) added; (c) D.2 template extended with pagination/selection/integrity metadata (included_count, total_active_count, truncated, selection_strategy, selection_params, cursor, content_hash); (d) new §12.13 output citation grammar `[assertion:NNNN]`, multi-bracket for multi-source, and enforcement contract; (e) §8.2 extended to 18 finding kinds incl. output_citation_missing_assertion, grade_laundering_in_output, temporal_qualification_omitted, bibliography_orphan, output_citation_semantic_mismatch; (f) §3.1 adds `aggregation` derivation type + §1.1 set-entity convention; (g) §10.1 adds mandatory §6-independent adversarial review pass for brief-domain artifacts. Full verbatim amendment text in `cortex://notes/system/specs/appendix-d-v1-3-2-release-package.md`. Grammar choice and prior-art grounding panel-resolved 2026-05-17 (anthropic/claude-opus-4-7 + openai/gpt-5.5 + xai/grok-superheavy; §6 three-family independence). Phase 1.0 implementation target: `libs/cortex_store/agent_injection/`. | `document:cortex-provenance-substrate-spec-v1.3` |
+
+Note on versioning convention: minor-version bumps (v1.x) stay in `cortex-provenance-substrate-v1.md` and update this block. Major-version bumps move the filename (`cortex-provenance-substrate-v2.md`). The `document:cortex-provenance-substrate-spec-v<version>` entities in cortex carry `supersedes`-relationships to their predecessors so the version chain is a primary-source artifact in the graph, not only in this prose.
+
+**Retroactive anchoring:** the v1.0 / v1.1 / v1.2 entities listed above are created as part of the v1.3 ship to backfill the version chain. Their `source_uri` references the same file at the prior content hash where available; for prior versions where no content-hash anchor was kept, the entity description carries the change summary verbatim from this table.
+
+
+**Status:** draft (session `claude-web-2026-05-13-1806`, continuing from `claude-web-2026-05-13-1728`; v1.2 revision continuing from audit session `claude-web-2026-05-13-1921`; v1.3.2 amendments fully applied session `claude-web-2026-05-17-0928` (continuation `claude-web-2026-05-17-1113`))
+**Version:** v1.3.2
+**Audience:** Cortex agents (all seats, all platforms); spec readers without Cortex internals
 **Scope:** Universal write-time provenance discipline for the Cortex epistemic substrate
-**Read model:** [`docs/cortex-spec.md`](../cortex-spec.md) — the entity/assertion/edge schema this spec layers discipline on top of
-**Companion spec:** [`entity-backed-claim-provenance.md`](entity-backed-claim-provenance.md) — first domain instantiation (authored artifacts)
+**Companion artifacts:**
+- `document:entity-backed-claim-provenance-v1` — first domain instantiation (legal briefs / authored artifacts)
+- `artifact:epistemic-substrate-paper-draft` — public-narrative research paper (Memory + Provenance + Consensus)
+- `artifact:goose-grant-packet-v3` — Goose AAIF grant application narrative
 
 **Changelog:**
-- v1.2 — Adds Appendix A subsection "Lineage and belief-revision lineages," clarifying Cortex's relationship to provenance semirings, Datalog / TMS lineage models, CRDT-based knowledge graphs, bitemporal property graphs, and AGM / Hansson belief-revision substrates. Descriptive related work; no normative protocol changes.
-- v1.1 — Post-initial-draft refinements ahead of external substrate review.
-- v1.0 — Initial draft.
-
----
-
-> **Note on citations.** This spec is self-contained: every architectural claim
-> stands on its own argument. Inline tokens such as `service:cortex assertion N`,
-> `transcript:<session>`, `agent-bus:<thread>`, `todo:<slug>`, and `cortex://...`
-> resource IDs are durable references into the project's private Cortex knowledge
-> graph — they form a provenance trail for the maintainers, not load-bearing
-> reading for an outside audience, and can be skipped. (Worked `cortex://` URIs
-> shown as *examples of the URI grammar* are illustrative and self-explanatory.)
-> The empirical figure cited throughout — long-horizon recall accuracy rising
-> from 61.6% (similarity-only) to 93.3% (prospective-indexed) — is from the
-> Kumiho LoCoMo-Plus benchmark.
+- v1.3.2 — Appendix D wire-up amendments fully applied. Full text: `cortex://notes/system/specs/appendix-d-v1-3-2-release-package.md`.
+- v1.2 — Adds Appendix A subsection "Lineage and belief-revision lineages," clarifying Cortex's relationship to provenance semirings, Datalog / TMS lineage models, CRDT-based knowledge graphs, bitemporal property graphs, and AGM / Hansson belief-revision substrates. Descriptive related work; no normative protocol changes. Triggered by the Q6 finding in the SuperHeavy substrate-review audit (`notes/system/threads/979-grok-superheavy-substrate-review-AUDIT.md`).
+- v1.1 — Post-initial-draft refinements ahead of SuperHeavy review dispatch.
+- v1.0 — Initial draft (session `claude-web-2026-05-13-1806`).
 
 ---
 
@@ -71,6 +77,18 @@ An **entity** is a typed, named node in the graph with a stable URI. Each entity
 - `workflow_state` — typed per-type column (e.g. `todo: open | in_progress | blocked | done | deferred | cancelled`).
 - `attributes` — typed attribute dict. Each value is data the entity card surfaces to readers; each load-bearing attribute on a `status: confirmed` entity must carry ≥1 backing assertion at `confidence: confirmed` (see §5.1).
 - `source_uri` — optional pointer to a canonical file or URL the entity reflects. Auto-recomputes `content_hash` on update.
+
+**Set entities — convention.** Entities with type prefix `set:` (e.g.,
+`set:admin-fees-2025`, `set:exhibits-boe19p`) carry no description on
+their own; they exist as the target of §1.3 `has_member` relationships
+from member assertions or member entities. A `set:` entity's "content"
+is the union of its member-relationships. Set entities can themselves
+be the subject of assertions (a `set:` is a first-class entity), and
+can be aggregated over by `aggregation`-derived assertions (§3.1) that
+compute totals, counts, or summaries over their members. Inline citation
+of a set's aggregate result uses the standard `[assertion:NNNN]`
+grammar (§12.13) pointing at the aggregating assertion, not at the
+set entity directly.
 
 ### 1.2 Assertion
 
@@ -168,24 +186,82 @@ The `derivation_type` field is a structured signal about HOW the evidence was ob
 | `agent_observation` | Agent received the claim from a tool whose output mediated the source (web_fetch, file read, API). The source was not directly inspected by the agent's own reasoning; the tool's output was. | `evidence_uris` non-empty; `evidence` string names the tool and the run. |
 | `inference` | Agent synthesized the claim from prior context, sibling sources, or pattern-completion. | `evidence` string names the reasoning path. `evidence_uris` may point at supporting entities or transcripts but does not claim to be the source of the inferred fact. |
 | `user_statement` | The user told the agent the claim directly. | `evidence` string identifies the user message (turn / session); `evidence_uris` typically `transcript:<session>` or `agent-bus:<thread>/<turn>`. |
-| `quotation` | Verbatim quote of source text at chunk granularity. | `chunk_id` required (RAG-deterministic ID `{content_hash_prefix}-{i}`, resolved via `libs/cortex_store/rag_resolver.py`); `evidence_uris` MUST contain the URI of the chunk's parent source. |
+| `quotation` | Verbatim quote of source text at chunk granularity. | `chunk_id` required (resolved via `ingest_document` → `assert_from_chunk`); `evidence_uris` MUST contain the URI of the chunk's parent source. |
 | `compression` | Compression of a chunk into a derived claim that summarizes or paraphrases. | `chunk_id` required; `evidence_uris` MUST contain the parent source URI. |
 | `commitment` | Agent commitment to do something in the future — the claim is performative, not descriptive. | `evidence` string identifies the commitment context. |
 | `stated` | Generic stated claim with no narrower derivation_type fit; rare. | `evidence` string supplied. |
 | `other` | Reserved escape hatch. | `evidence` string MUST justify why none of the above fit. |
+| `aggregation` | Assertion enumerates and computes over a named `set:` entity's members, producing a derived total, count, or summary. Snapshot semantics at `computed_at`. Distinct from `compression` (lossy summary) and `quotation` (verbatim text). | `set:` entity bound via §1.3 `has_member`; claim-text MUST enumerate member assertion_ids OR a `set:` entity_id; `content_hash` covers member-id list + aggregate result. |
 
 The taxonomy is derived from TROVE (quotation / compression / inference / other) — already Cortex's foundation per `service:cortex` assertion 101 — extended with the observation types (`direct_observation`, `agent_observation`, `user_statement`) required to handle agent-tool-mediated evidence and direct user input, plus `commitment` for performative claims and `stated`/`other` as escape hatches.
 
+
+**`aggregation`** — assertion enumerates and computes over a named set
+of other assertions, producing a derived total, count, or summary. Uses
+§1.3 `has_member` relationships from a `set:` entity to bind members.
+Distinct from `compression` (lossy summary) and `quotation` (verbatim
+text). Aggregation is a SNAPSHOT at `computed_at`; member supersedence
+after computation does not auto-supersede the aggregate. The member
+provenance chain remains queryable via the §1.3 relationship traversal,
+so a downstream consumer can detect stale aggregates by walking from
+the aggregate's member list to current-controlling assertions and
+diff-ing.
+
+Required claim-text structure: aggregate claims MUST enumerate either
+(a) member assertion_ids explicitly in the claim text, OR (b) a `set:`
+entity_id that the consumer can resolve to members via §1.3 relationship
+lookup. The aggregate's `content_hash` covers the member-id list +
+aggregate result computed at `computed_at`.
+
+### 3.1.1 Mixed-grade artifacts and inline assertion anchors
+
+Most artifacts are uniformly graded — a `quotation` chunk is wholly evidence-grade; a session journal is wholly orientation-grade. A growing class of artifacts is **mixed**: orientation-grade as a whole but containing evidence-grade rows that make specific factual claims about substrate state. Canonical examples:
+
+- **Case document indexes** (e.g. `legal/uber/document-index.md`) — orientation-grade table of contents with evidence-grade rows like "Authoritative source (text, current): `…reconstructed-for-docx.md`" that quote specific assertion content.
+- **Master TODO descriptions** — orientation-grade goal narrative with evidence-grade rows like "Phase 0 complete per assertion 7800/7805/7807."
+- **Skill documents** — orientation-grade discipline prose with evidence-grade rows like "deadline 2026-05-17 (assertion 7918)."
+
+Without per-row grading, the supersession discipline cannot localize what is stale: the entire artifact is treated as orientation-grade and exempt from staleness propagation, or the entire artifact is treated as evidence-grade and a single stale row stales the whole document.
+
+**Declaration mechanism — inline assertion anchors.** Evidence-grade rows in agent-authored fs artifacts carry an HTML-style comment binding the row to a specific assertion:
+
+```markdown
+- **Authoritative source (text, current):** `…reconstructed-for-docx.md` <!-- assertion:9023 -->
+```
+
+Anchors parse into the freshness check defined in §3.5. Rows without anchors are treated as orientation-grade and excluded from staleness propagation. Anchors carrying `assertion:<id>` participate in dependency tracking; if assertion 9023 is later superseded, the artifact containing the anchor is flagged stale.
+
+**Anchor variants:**
+- `<!-- assertion:9023 -->` — single load-bearing assertion
+- `<!-- assertion:9023,9089 -->` — multiple assertions both supporting the row
+- `<!-- assertion:9023 valid_until:2026-12-31 -->` — temporally-scoped row, auto-stales after the date
+- `<!-- evidence-grade -->` (no assertion id) — row is evidence-grade but the supporting assertion has not yet been wired; flagged for completion by the author or session-close audit
+
+**Canonical failure anchor:** the Uber security-incident-report document-index supersedence failure of 2026-05-14 (assertion 9767, file `notes/system/threads/v1.3-candidate-input-fs-artifact-supersedence-2026-05-14.md`). The "Authoritative source (text)" row quoted the older of two competing assertions (9020) when a newer assertion (9023) had already established the authoritative source three days prior. Without the inline anchor mechanism this section adds, the substrate had no way to localize which row depended on which assertion.
+
 ### 3.2 Chunk binding for `quotation` and `compression`
 
-A `chunk_id` resolves to a contiguous span of a previously-ingested document. After Phase E (master @ 25a2260a), RAG is the authoritative chunk store; cortex assertions reference chunks by RAG-deterministic ID. The ingestion path is:
+A `chunk_id` resolves to a contiguous span of a previously-ingested document. The ingestion path is:
 
-1. RAG ingest writes the source and returns chunk IDs of the form `{content_hash_prefix}-{i}`.
-2. Write an assertion with `chunk_id` (the RAG-deterministic ID) + `evidence_uris[0]` (the source URI RAG indexed). The cortex resolver — `libs/cortex_store/rag_resolver.py::resolve_assertion_chunk` — fetches the exact span by calling `POST /api/v1/rag/chunks_by_index`.
+1. `ingest_document(source_uri, content, observer?, source_date?)` — chunks the document at structure boundaries (headings, paragraphs, sections) and returns chunk IDs.
+2. `assert_from_chunk(chunk_id, entity_id, claim, confidence, evidence, ...)` — writes an assertion bound to a specific chunk.
 
 For `derivation_type: quotation`, the claim text contains the literal verbatim from the chunk, in quote marks, and the chunk-id binding gives an auditor a deterministic way to fetch the exact passage the claim is quoting. For `derivation_type: compression`, the claim text summarizes/paraphrases the chunk and the chunk-id binding gives the auditor the source span the compression must be faithful to.
 
 A `quotation` assertion whose claim text does not actually contain the quoted span is a structural-field-vs-claim-text mismatch and is the §5.2 audit failure mode rendered at the structured-field level. A `compression` assertion whose claim asserts facts beyond what the chunk supports is the §5.5 failure mode rendered at the structured-field level.
+
+
+> **v1.4 erratum (recorded 2026-05-22, plan:cortex-v3-completion Phase A):**
+>
+> The two-step ingestion path above (`ingest_document` → `assert_from_chunk`) is **superseded** by Cortex decision #10504 + user-statement assertion #10750 (session `claude-web-2026-05-22-2209` turn 3, three-way reviewed on bus thread 1051). The **architectural requirement** of this section — chunk-bound auditor fetch for `quotation` and `compression` claims — is preserved and now fulfilled by **RAG-deterministic chunk IDs** of the form `{content_hash_prefix}-{i}` (see `services/rag/chunkers.py` and `services/rag/rag_service/_indexing_embed.py:75`; auditor-fetch primitive lives at `services/rag/rag_service/api.py:120-180` as `POST /chunks_by_index`).
+>
+> What survives: `assertions.chunk_id` column (redefined semantics — references RAG-deterministic IDs); §3.2's auditor-fetch contract; the chunk-bound discipline for `derivation_type: quotation` and `derivation_type: compression`.
+>
+> What is retired (plan:cortex-v3-completion Phase E executes the drop): cortex-internal `chunks` table; `cortex(tool=ingest_document)` op; `cortex(tool=assert_from_chunk)` op; `routes/ingest.py`; `ingest_chunker` module.
+>
+> Read-time discipline until Phase E lands: agents writing `quotation` / `compression` assertions should treat `chunk_id` as a RAG-deterministic ID and cite the parent source via `evidence_uris` per §4.2's URI-pair mandate. Resolver hook is Phase E scope (cortex-side; uses existing RAG `/chunks_by_index`).
+>
+> Erratum recorded ahead of v1.4 promotion (precedent: §7.5.4 "Optional v1.4 candidate" pattern). Canonical record: assertion seeded on this entity in Phase A; tracking entity: `plan:cortex-v3-completion`.
 
 ### 3.3 Field-vs-prose consistency contract
 
@@ -215,6 +291,56 @@ The matrix is normative for the §5 pre-write checklist: a write at `confidence:
 
 
 ---
+
+
+### 3.5 Dependency tracking on derived artifacts
+
+The derivation-type taxonomy in §3.1–§3.4 governs the **write** of each assertion — at the moment of write, what kind of derivation was performed and what evidence backs it. This section defines the complementary discipline for **read** and **re-read** of artifacts that summarize or quote assertion content over time. Without this discipline, an artifact can survive correctly through the moment of authoring and silently go stale as the underlying assertions are superseded.
+
+**Scope.** Dependency tracking applies to any artifact that quotes or summarizes substrate content, regardless of storage location:
+
+- **Internal derived fields** — `summary_row`, `journal prose`, `prospective_summary`, the boot card's `Last Session` summary. The 2026-05-15 scrubbed-claim-survives-in-summary_row regression (assertion 9761, §X consumer-obligations input) is the canonical failure of this surface.
+- **Search and RAG outputs** — already covered in §7 by retrieval-time recomputation. Listed here for completeness; §7 is the operational spec.
+- **Agent-authored fs files** — case document indexes, master-TODO descriptions, skill documents, system specs that quote substrate assertions. The 2026-05-14 Uber security-incident-report doc-index supersedence failure (assertion 9767) is the canonical failure of this surface.
+- **Outbound artifacts** — email drafts, message-bus turn bodies, generated reports, slide content that quotes substrate state. v2 scope; the v1.3 enforcement targets the first three.
+
+**Declaration mechanism — `derives_from` frontmatter and inline anchors.** Artifacts declare their dependencies in one of two compatible ways:
+
+1. **Whole-artifact declaration** — frontmatter block at the top of the file:
+
+```yaml
+---
+derives_from:
+  - assertion: 9023
+    fact: authoritative_source_for_docx_security_incident_2026-05-07
+    last_verified: 2026-05-14T13:48:00Z
+  - assertion: 9089
+    fact: submission_status_security_incident_report
+    last_verified: 2026-05-14T13:48:00Z
+---
+```
+
+2. **Per-row declaration** — inline anchors per §3.1.1, for mixed-grade artifacts where dependency is localized to specific rows rather than the whole document.
+
+Both are normalized into the same internal representation: a set of `(artifact_uri, assertion_id, anchor_locator, last_verified)` tuples.
+
+**Freshness check.** A walk-and-flag pass over the dependency tuples:
+
+1. For each `(artifact_uri, assertion_id, …)` tuple:
+   - If `assertions[assertion_id].superseded_by IS NOT NULL` → artifact carries a stale dependency.
+   - If `assertions[assertion_id].valid_until IS NOT NULL AND valid_until < now()` → artifact carries an expired dependency.
+   - Else → tuple is fresh.
+2. Flag artifacts with ≥1 stale or expired dependency as `freshness: stale`.
+3. Surface stale artifacts to readers (boot card, retrieval skill, consuming agent) before the artifact's content is acted on.
+
+**Re-verification.** When a reader updates an artifact's row to reflect new substrate state, the `last_verified` timestamp updates and the anchor or frontmatter entry rebinds to the current (non-superseded) assertion id. The supersession chain itself remains intact in the substrate — only the artifact's pointer moves.
+
+**Enforcement layer:** see §13 for the substrate-primary / audit-backstop / reader-defense-in-depth split. §3.5 defines the contract; §13 defines which layer enforces it.
+
+**Anti-patterns:**
+- *Implicit dependency.* Quoting assertion content without an anchor or frontmatter entry. The discipline is observability — un-anchored quotes cannot participate in staleness propagation.
+- *Stale-tolerant artifact.* Marking the whole artifact `freshness_check: false` to suppress the walk. Permitted only for artifacts that are intentionally time-locked (archived correspondence, point-in-time snapshots) — these declare `point_in_time: <ISO>` so the freshness pass treats them as canonically frozen.
+- *Anchor without `last_verified`.* The anchor is incomplete — the reader has no way to know whether the binding was made before or after the cited assertion's most recent supersession event.
 
 ## § 4. Evidence semantics
 
@@ -576,6 +702,41 @@ A supersede that only changes review_status is wasteful; an assertion_update tha
 
 ---
 
+
+### 7.5.1 The third pattern — redirect to a pre-existing active row
+
+Beyond the two cases the original §7.5 defines (assertion_update for metadata-only patches; supersede for claim/evidence revisions producing a NEW row), there is a third structural case the original prose did not surface:
+
+**Redirect-to-active.** The "supersedor" row already exists in the corpus as an active assertion. The operation is purely a pointer update: set `old.superseded_by = existing_new.id`. No new row, no claim revision, no evidence path change. The substrate primitive for this is **`assertion_update(assertion_id=<old>, superseded_by=<new>, valid_until=<now>)`**, not `supersede(...)`.
+
+This pattern is the dominant shape in:
+- §14.2(a) **literal-match pair supersedes** — both rows already exist; verdict identifies which is older.
+- §14.2(b) **semantic-similarity pair supersedes** — same: both rows exist; verdict picks ordering.
+- §14.2(c) **cluster_merge retirements** — N members of a cluster, one elected canonical; the other N−1 redirect to canonical.
+
+In all three cases, calling `supersede(old, claim=new.claim, entity_id=new.entity_id, ...)` is **wrong** because supersede creates a NEW row Z carrying `new.claim` and points `old.superseded_by → Z`. The active `new` row remains untouched, and Z becomes a literal duplicate of `new` on the same entity. The supersession chain is intact but the corpus carries a stranded duplicate that must be cleaned up with a second supersede (Z → new), a Class 1 chain rewrite, or a Class 5 fallback recovery — friction 10156 surfaced this 4× in a single §14.2(b) §A wave-1 application and 2× as residual from prior §14.2(a) reruns.
+
+### 7.5.2 Decision matrix (replaces the §7.5 prose chart)
+
+| Case | Primitive | Notes |
+|---|---|---|
+| Metadata-only patch on a row (review_status, valid_until, reviewer, review_notes, predicate_form patch, etc.) — claim unchanged | `assertion_update` | Original §7.5 case. |
+| Claim or evidence revision; "new" row does NOT exist yet | `supersede` | Original §7.5 case. Creates the new row atomically with the redirect. |
+| Redirect to a row that ALREADY exists active in the corpus (pair supersede, cluster retirement) | `assertion_update(old, superseded_by=existing_new.id, valid_until=now)` | The third pattern, friction 10156. The substrate has no separate "redirect" primitive — `assertion_update.superseded_by` IS the redirect primitive. |
+
+### 7.5.3 Per-write provenance on retirement writes (friction 10158 resolution)
+
+`assertion_update` accepts `review_notes` but **does not accept `reasoning_summary`**. Work orders that template per-write provenance as `reasoning_summary='...'` on retirement writes fail silently (the field is dropped server-side) and ship retirement writes with zero per-write provenance — only the inherited reasoning_summary on the original row.
+
+The discipline:
+- Per-write retirement provenance goes in **`review_notes`** (mutable, audit-trail-preserved, accepted by `assertion_update`).
+- Batch-level provenance (work-order section reference, cluster-discovery method, canonical-selection reasoning) goes in the **§14.2(c) ledger entry** referencing the work order.
+- `reasoning_summary` is reserved for the row's original derivation reasoning, written via `cortex.assert` or `cortex.supersede` at creation. It is intentionally immutable post-creation: a retirement is not a new derivation event; the source row's reasoning still applies.
+
+### 7.5.4 Optional v1.4 candidate — `supersede_redirect` sugar primitive
+
+A future `cortex.supersede_redirect(old, new)` primitive would wrap `assertion_update(old, superseded_by=new, valid_until=now())` with semantically clearer naming and would emit a distinct `cortex.redirect` event (separable from generic metadata patches in observability). The current `assertion_update` path is functionally complete; the new primitive is **NOT required for v1.3 sign-off** and is deferred to v1.4 scope. If added, it composes onto §7.5.2 row 3 with the same semantics.
+
 ## § 8. Universal gap-detection primitive
 
 The universal gap-detection primitive generalizes the brief-spec §7.1 structural-gap detector from citation-token surfaces (Bibliographic-Index refs, italicized case names, "Exhibit N" labels) to ANY relationship between a drafted artifact (or seeded entity set) and the backing entities it references.
@@ -595,9 +756,9 @@ It returns a list of `GapFinding` records, each with:
 - `severity` — `critical` | `high` | `medium` | `low` from §8.3 ordering.
 - `evidence` — the structured rationale for the finding (what was expected; what was found; pointers to remediating action).
 
-### 8.2 The eleven finding kinds
+### 8.2 The eighteen finding kinds
 
-The detector classifies gaps along three axes: **claim-layer** (artifact-to-graph), **seed-data-layer** (entity-to-backward-evidence), and **forward-provenance-layer** (assertion-to-forward-projection). The eleven kinds:
+The detector classifies gaps along three axes: **claim-layer** (artifact-to-graph), **seed-data-layer** (entity-to-backward-evidence), and **forward-provenance-layer** (assertion-to-forward-projection). The eighteen kinds:
 
 **Claim-layer (artifact references the graph):**
 
@@ -605,7 +766,10 @@ The detector classifies gaps along three axes: **claim-layer** (artifact-to-grap
 2. `unverified_entity` — token resolves to an entity, but the entity has zero assertions. The shell exists; the substance does not. **Severity: medium.**
 3. `unverified_claim` — token resolves to an entity with assertions, but no `corroborates` reasoning edge from an independent verifier exists for the specific claim being made. **Severity: low.**
 4. `contradicted_claim` — token resolves and assertions exist, but a `contradicts` reasoning edge from an independent verifier flags the specific claim. **Severity: critical.**
-5. `verbatim_check_failed` — token's quotation in the artifact does not match the chunk_id-bound assertion's claim text (after §4.3 normalization). **Severity: high.**
+5. `verbatim_check_failed` — (EXTENDED in v1.3.2) triggers in TWO contexts:
+   (a) artifact-side (existing): token's quotation in the artifact does not match the chunk_id-bound assertion's claim text after §4.3 normalization.
+   (b) output-side (NEW): a consumer response makes a quoted statement attributed to a cited assertion (via §12.13 grammar) and the quoted text does not match the chunk_id-bound assertion's claim text after §4.3 normalization.
+   **Severity: high** (both contexts).
 
 **Seed-data-layer (entity references backward evidence):**
 
@@ -618,6 +782,59 @@ The detector classifies gaps along three axes: **claim-layer** (artifact-to-grap
 
 10. `missing_prospective_summary` — assertion at `confidence: confirmed` has `prospective_summary: null` (§4.7.1). **Severity: low** — the claim is verifiable backward but unindexed for future cue-trigger retrieval; not blocking but degrades future-recall quality. The cortex write surface auto-generates `prospective_summary` by default, so this finding flags either (a) pre-v3 assertions not backfilled, or (b) write-time auto-generation failures.
 11. `events_json_invalid` — assertion's `events_json` is either (a) `null` when the claim text describes a temporally-located event, or (b) populated but with a triple inconsistent with the claim text (event doesn't match; consequence contradicts the claim; temporal off by more than the assertion's `valid_from`/`valid_until` window). **Severity: medium** — invalid event structure compromises downstream causal-reasoning over the supersede chain.
+
+**Claim-layer (consumer output references the graph) — v1.3.2 additions:**
+
+13. `output_citation_missing_assertion` — a consumer response (per §12.5 ledger) contains a load-bearing claim whose inline citation either is absent, does not resolve to any assertion, or resolves to a superseded/retired assertion. Detected by the §12.13 output validator. **Severity: high** when on a structural-grade claim; **medium** when on a belief-grade claim with envelope-resolvable downgrade.
+
+14. `output_citation_high_cardinality` — a single claim in §12.5 ledger has ≥ N supporting_assertion_id rows (default N=8, configurable per domain). Surface as authoring-smell warning; does not block dispatch. Suggests decomposition (per PaperTrail atomic principle, Appendix A) or sampling with explicit "e.g." framing, or migration to set-citation via the §3.1 `aggregation` derivation type if the claim is genuinely cumulative. **Severity: low.**
+
+15. `grade_laundering_in_output` — a structural-grade output claim cites a belief-grade or `user_statement`-derived assertion without the §12.3 permitted-language framing ("One inference is X" / "User stated X"). Detected by the §12.13 output validator comparing the cited assertion's grade/derivation_type to the output prose's grade. **Severity: high.**
+
+16. `temporal_qualification_omitted` — an output claim about a dated event cites an assertion carrying `valid_from` but the output prose omits the date binding (e.g., "the notice was timely" instead of "the notice issued YYYY-MM-DD [assertion:N] was timely"). Detected by the §12.13 output validator when cited assertion has `valid_from` and output paragraph contains no normalized date. **Severity: medium.**
+
+17. `bibliography_orphan` — for derived-artifact-authoring domains (currently §10.1 legal briefs; extends to scientific papers and regulatory filings in v2 scope), an artifact's bibliography contains entries not referenced in body text, OR body text references bibliography indices not present in the bibliography. Detected by the §12.13 output validator running a bibliography-to-body cross-reference pass. **Severity: medium.**
+
+18. `output_citation_semantic_mismatch` — a consumer response cites an assertion via §12.13 grammar, the citation resolves to an active assertion, but a semantic-similarity check (via §14.2(b) embedding infrastructure) between the brief's claim text and the cited assertion's `claim` text falls below the configured threshold (default 0.65, tunable per domain). Catches the "cited authority does not substantively support the proposition" failure class (BOE-19-P v5 examples: *Williams & Fickett* cited for due-process when the case is about exhaustion; R&T § 5142 cited as interest authority when § 5151 is the interest statute; BOE Annotations 190.0014 / 625.0036 cited for relation-back when neither holds that). **Severity: high.**
+
+    Implementation: requires §14.2(b) semantic-similarity infrastructure on the cited assertion + the output claim text. Computed at output-validation time per §12.13. Threshold tuning is a Phase 1.5 deliverable using the BOE-19-P v5→v6 correction ledger as labeled training data.
+
+    Honesty contract: this finding kind is a probabilistic check. False-positive on legitimate paraphrase and false-negative on semantically-similar-but-doctrinally-distinct citations are both possible. The §10.1 mandatory adversarial review pass is the deterministic backstop; finding 18 reduces the review pass's workload, not its necessity.
+
+### 8.2.12 Mixed-grade artifact authored without inline anchors
+
+**Finding kind:** `mixed_grade_no_anchors`
+**Trigger:** An agent writes an fs artifact that contains rows pattern-matching the evidence-grade signature (specific factual claims about substrate state — entity IDs, assertion IDs, timestamps, deltas) without inline `<!-- assertion:<id> -->` anchors per §3.1.1 or whole-artifact `derives_from:` frontmatter per §3.5.
+**Severity:** medium. Stale-dependency risk is high but containment is per-artifact, not graph-wide.
+**Detector:** matches against patterns including:
+- "Authoritative source (current/text/canonical)" with a filesystem path
+- "as of YYYY-MM-DD" or "as of <timestamp>" with a state claim
+- Numbered "Phase N complete" / "Step N done" with no anchor
+- Quoted substrate fields ("`status: done`", "`workflow_state: open`") without anchor
+
+**Routing — skill triggers:** the skill-router scope extends beyond file-ingest patterns (e.g. `agent-skills/document-lifecycle-tracking.md` Layer 2, per assertion 9766) to **derived-artifact-authoring** patterns. When an agent is about to write an fs file containing substrate quotes or summaries, the skill should fire a §3.5 freshness scan over the assertions the agent intends to quote, BEFORE the write completes.
+
+**Peer cases:**
+- Dropbox-ingest scope failure (assertion 9766 Layer 2): `cortex://dropbox/` URI failed to fire `document-lifecycle-tracking` because the trigger vocabulary was abstract. The skill was updated to match URI patterns explicitly.
+- Uber doc-index authoring failure (assertion 9767): `document-lifecycle-tracking` did not fire on "author canonical retrieval index for case-evidence-retrieval skill consumption" because the trigger vocabulary covered file-ingest only, not file-authoring. Same fix shape — extend trigger vocabulary to cover both directions.
+
+**Detector pseudocode** (extension to §8.4):
+
+```
+for artifact in fs.list(sandbox=cortex, pattern="**/*.md"):
+    content = fs.read(artifact)
+    if not has_frontmatter(content, key="derives_from"):
+        rows = extract_rows_matching_evidence_signature(content)
+        unanchored = [r for r in rows if not has_inline_anchor(r)]
+        if len(unanchored) > 0:
+            emit_finding(
+                kind="mixed_grade_no_anchors",
+                artifact_uri=artifact.uri,
+                row_count=len(unanchored),
+                severity="medium",
+                suggested_action="add inline anchors per §3.1.1 or whole-artifact derives_from per §3.5",
+            )
+```
 
 ### 8.3 Severity ordering
 
@@ -769,6 +986,77 @@ This section catalogs the domains this universal spec instantiates, with pointer
 
 Per the restructure of 2026-05-13T17:58Z (session `claude-web-2026-05-13-1728`), the brief-spec's § 9.2.5 amendment (which originated the auditor-validatability principle) was hoisted to this spec's § 5 + § 6 rather than being instantiated domain-locally. The brief-spec's § 9.2.5 is now a thin pointer to this spec's § 5 + § 6 (landed v1.2). The brief-spec is therefore a pure domain instantiation, with cross-domain discipline carried by this spec.
 
+**Mandatory adversarial review pass before filing.**
+
+A brief-domain artifact (e.g., property-tax appeal brief, demand letter,
+regulatory filing draft) MUST receive a §6-independent adversarial
+review pass before it is filed with a tribunal, opposing party, or
+regulatory authority.
+
+**Minimum independence:** the reviewer's family/version (per §6.2
+granularity) MUST be distinct from every authoring model that produced
+load-bearing content in the brief. Different version of the same family
+is INSUFFICIENT per §6.5 (same-family-non-independence).
+
+**Recommended panel composition:** for maximum rigor under §6.2,
+dispatch a two-family review panel. Example compositions:
+- Brief authored by openai/gpt-5.5 → review by anthropic/claude-opus-4-x
+  AND xai/grok-* (two-family).
+- Brief authored by anthropic/claude-opus-4-7 → review by openai/gpt-5.x
+  AND xai/grok-* (two-family).
+- Brief authored by mixed dispatch (multiple families) → review by the
+  family least represented in authoring, plus a context-breadth pass
+  via xai/grok-superheavy.
+
+Single-reviewer minimum is acceptable but is the weaker form of the
+gate.
+
+**Review-pass task definition:** the reviewer's prompt MUST direct the
+review to:
+(a) **Proposition-fit** — does the cited authority actually support the
+    specific proposition the sentence makes, or only an adjacent one?
+(b) **Remedy-fit** — for each item in Relief Requested, does the cited
+    statute/regulation actually authorize that remedy?
+(c) **Citation drift** — are reporter, page, jurisdiction, court level,
+    and amendment date all accurate against the primary source?
+(d) **Quote fidelity** — are quoted strings verbatim against the
+    primary source file?
+(e) **Factual support** — does each load-bearing date, address,
+    recipient, value, and chronology trace to an exhibit, OCR sidecar,
+    or confirmed Cortex assertion?
+(f) **Internal consistency** — does the bibliography match the in-text
+    citations? Does the relief sequence match the argument structure?
+
+The BOE-19-P v6 handoff packet
+(`dropbox/cortex_legal/2026-05-03/boe-filing/handoff-packet-extra-high-review.md`)
+is the CANONICAL REFERENCE TEMPLATE for this prompt structure. When
+adapting to non-cursor dispatch surfaces, the substantive criteria
+(a)–(f) and the corpus-bound source-verification requirement are
+preserved; the cursor-specific framing is replaced with the dispatch
+target's framing.
+
+**Dispatch surface:** review passes are dispatched via the substrate's
+standard dispatch infrastructure (the `_dispatch` tool family, or
+grok-build for build-coupled review). External review surfaces (cursor,
+others) are ACCEPTABLE but NOT REQUIRED.
+
+**Audit anchor:** each review pass produces a findings document keyed
+to the brief version under review. The findings document SHOULD be
+ingested as a `document:` entity with assertions backing each finding,
+so subsequent brief versions inherit the audit trail via the supersede
+chain.
+
+**Honesty contract:** this requirement codifies the v5→v6 BOE-19-P
+correction pattern. Without an independent review pass, the dominant
+failure mode (wrong-assertion semantic-mismatch — see §8.2 finding 18)
+is uncaught by deterministic automation. With the review pass + the
+finding 18 probabilistic check (Phase 1.5), the same pattern that
+closed v5→v6 closes future brief cycles.
+
+Filing without an independent review pass is a §8 finding kind
+`brief_filed_without_independent_review` (added separately if needed;
+treated as policy violation rather than detector finding for v1.3.2).
+
 ### 10.2 Scientific papers (v2 scope)
 
 The expected v2 domain instantiation for scientific papers:
@@ -837,6 +1125,8 @@ The §6.2 family/version normalization treats `claude-opus-4-7` as a single iden
 
 ### 11.7 Boot continuity surface for handoff prompts
 
+**Resolved by Appendix C — see C.5.** The boot card's `continuity.tail` carries only `prior_session_id` + `continues_edge_id`; handoff prose is referenced via `handoff_uri` but never inlined. Inlining handoff prose would launder its orientation-grade status per §12.1. This closes the open issue — the bootstrap-only principle in §12.10 and Appendix C.5 is the resolution.
+
 Handoff prompts are captured by `session_close(handoff_prompt=...)` but are NOT auto-surfaced at boot (per assertion 8384). The user copy-pastes them. v2 may surface specific handoff prompts on user request via the boot manifest's existing `continuity` section (`GET /boot-continuity`) — exposed but not defaulted. The default remains: boot is lean; handoffs are explicit-recall artifacts.
 
 ### 11.8 Phase-closure-spine gap as §8 finding kind
@@ -862,6 +1152,326 @@ The §7.3 field-preservation contract specifies that `prospective_summary` auto-
 ### 11.12 `events_json` schema versioning
 
 The `events_json` schema currently serializes as a JSON array of `{event, consequence, temporal}` triples (per §4.7.2). v2 will formalize the schema with a version field and enumerate additional optional fields: `actors` (entity IDs of the agents/principals involved); `preconditions` (causal antecedents); `confidence_per_event` (granular confidence on each triple when the overall assertion's confidence is aggregate). Schema versioning enables backward-compatible evolution without invalidating the existing event corpus.
+
+
+## § 12. Consumer obligations
+
+The read-time discipline. §5 governs claim entry; §12 governs claim citation. Together they close the loop: a correctly-graded claim cannot be silently re-graded by a consumer that paraphrases the orientation surface or strips the evidence envelope.
+
+### 12.0 Canonical failure anchor
+
+Session `claude-web-2026-05-15-0310` (5 AM boot, web Claude). Three simultaneous failures across substrate write, substrate read, and consumer reasoning:
+
+1. **Scrubbed claim survived as `summary_row`.** Assertion 9004 (`confidence: confirmed`, entrenchment 0.92) recorded that the "phishing actor had insider-level knowledge of his 5 AM Uber selfie verification" formulation had been inference-scrubbed from the security-incident report on 2026-05-11. The scrubbed text nevertheless persisted in `case:uber-driver-harassment-2026.summary_row`, which the boot card inlined and the consumer then quoted to Kaywan as fact.
+
+2. **Inference-derived assertion cited as reassurance.** Assertion 9205 ("The Wallet information has been unedited") was retrieved and cited to reassure Kaywan that direct-deposit routing was intact. Its `derivation_type` was `inference`, not `direct_observation`. The grade was visible in the payload. The consumer ignored it.
+
+3. **Model priors substituted for substrate consultation.** Consumer recommended Kaywan "call your bank to flag the May 18 ACH origination before it processes." ACH mechanics make this impossible — a receiving bank cannot see an originator's transfer before it arrives. No substrate citation; model-priors hallucination presented as procedural advice.
+
+| Layer | What failed | §12 control |
+|---|---|---|
+| Substrate-derived field | Scrubbed claim survived in `summary_row` | §12.6 (links §3.5) |
+| Substrate read | Inference grade not surfaced at cite time | §12.2, §12.3 |
+| Consumer reasoning | Domain advice given without authority gate | §12.8 |
+
+All three are spec-layer gaps. A higher-capability model running the same boot against the same substrate would have hit the same surface and fallen into the same trap. §12 is the spec-layer fix; model capability is not.
+
+### 12.1 Field-grade taxonomy
+
+Every field on a substrate entity is one of:
+
+- **`evidence-grade`** — usable as the basis for a user-facing factual claim. Examples: assertion `claim` with full envelope; `evidence_uris` resolving to primary source; verbatim quotation chunks.
+- **`orientation-grade`** — usable for routing, navigation, and intent recognition only. Never the basis for a user-facing factual claim. Examples: `summary_row`, entity `name`, journal prose, handoff prose, boot card descriptive prose, RAG snippet text, compressed open-item sentences.
+- **`structural`** — pure metadata. IDs, timestamps, counts, edge types, `workflow_state`. Safe to cite as system state ("entity has 4 active assertions") but never as substantive case fact.
+
+Every entity-type schema declares the grade of each field. Consumers MUST check the grade before citing. Citing an `orientation-grade` field as substantive fact is a spec violation.
+
+§12.1 is the read-time companion to §3.1.1's mixed-grade artifact handling. §3.1.1 defines how artifacts declare per-row grading via inline anchors at write; §12.1 defines what consumers do with the grade at read. Both surfaces use the same three-value taxonomy.
+
+### 12.2 Read-time evidence envelope
+
+Every assertion returned by substrate read tools carries the envelope:
+
+```
+assertion_id
+claim
+confidence                       # confirmed / believed / suspected / hypothesized
+derivation_type                  # per §3.1 taxonomy
+observed_at
+valid_from / valid_until
+superseded_by                    # null or assertion_id
+conflicts_with                   # list or null
+is_current_controlling           # bool
+can_support_deliverable_claim    # yes / qualified / no
+permitted_language_class         # per §12.3
+evidence_uris
+```
+
+The two consumer-facing computed fields:
+
+- **`can_support_deliverable_claim`** — substrate's read-time judgment on whether the assertion is fit to ground a user-facing factual claim. Missing or null defaults to `qualified`, never to `yes`.
+- **`permitted_language_class`** — substrate's classification of the evidence state. Consumers translate via §12.3.
+
+Consumers MUST honor these fields. Default substrate read returns only current-controlling assertions; historical and superseded require explicit `include_history=true`.
+
+### 12.3 Permitted-language mapping
+
+Hard mapping from evidence state to permitted consumer language. The substrate computes `permitted_language_class` at read time and consumers translate via this table:
+
+| Evidence state | Permitted language |
+|---|---|
+| `confirmed` + non-inference derivation + current + unconflicted + `evidence_uris` present | "X occurred" / "X is the case" |
+| `confirmed` + `user_statement` derivation | "User stated X" — NOT "X happened" |
+| `confirmed` + `quotation` derivation | "The source says X" / "The document records X" |
+| `confirmed` + `inference` derivation | "One inference is X" / "This is consistent with X" — flagged as inference |
+| `believed` (any derivation) | "Believed: X" / "It appears that X" |
+| `suspected` | "Suspected: X" |
+| `hypothesized` | "Hypothesis: X" |
+| `compression` / orientation-grade summary | Insufficient for substantive claim. Use only to route to evidence. |
+| `superseded` | Do not present as current. May reference as history when explicitly relevant. |
+| `conflicted` | State the conflict or withhold. Never silently pick one side. |
+
+The 5 AM cascade's second failure — citing assertion 9205 (`derivation_type: inference`) as reassurance — is the canonical violation of this table's `confirmed + inference` row. The grade was visible; the consumer applied the wrong language class.
+
+### 12.4 User-statement-vs-event proposition distinction
+
+The single most-common laundering vector. A `confirmed` `user_statement` confirms only that the user *said something*, not that the underlying event occurred. The substrate records the proposition correctly:
+
+- ✅ `confirmed`: user said "X happened"
+- ❌ `confirmed`: X happened
+
+The auditor-validatability gate (§5) extends to enforce this distinction at write. Consumers reading a `user_statement` assertion MUST apply the §12.3 "User stated X" language class, never the unqualified "X occurred" class.
+
+### 12.5 Per-response claim ledger
+
+Before any substantive consumer response, the consumer constructs (internally; not user-visible by default) a ledger of every material claim it intends to assert:
+
+```
+claim_text → supporting_assertion_id → evidence_state → permitted_language → decision
+```
+
+Any claim with `can_support_deliverable_claim != yes` either gets reframed under §12.3 or is dropped from the response. The ledger is the consumer-side parallel to §5.3's pre-write checklist and to the Boot Execution Discipline write-ledger.
+
+### 12.6 Dependency tracking on derived fields
+
+The consumer-side counterpart to §3.5. When retrieving content from an orientation-grade derived field (`summary_row`, journal prose, search snippet, boot-card prose), the consumer MUST check the field's `freshness` status before quoting. A `freshness: stale` field is not quotable as current state.
+
+### 12.7 Search and RAG grade hygiene
+
+Embedding indexes and full-text search distinguish evidence-grade from orientation-grade content. Snippets in retrieval responses carry field-grade in the response payload. A consumer that mixes grades without honoring the markers is in violation.
+
+### 12.8 Domain authority gate
+
+For claims outside the Cortex evidence corpus — legal procedure, financial mechanics, medical, safety, security operations, regulatory mechanics — the consumer MUST identify the relevant skill or authoritative reference and either cite it or explicitly state the claim is from model priors and unverified. Every domain-bearing claim declares its source class: `substrate-cited`, `skill-cited`, or `unverified-priors`.
+
+### 12.9 Runtime gating handshake — `boot_discipline_ack`
+
+The consumer's first substantive response in a session is gated behind a tool-level acknowledgment confirming §12.1 field-grade, §12.2 evidence envelope, §12.3 permitted language, §12.5 claim ledger, §12.6 dependency tracking, and §12.8 domain authority. Prompt-only instruction has been demonstrated to fail (§12.0 anchor). The fix is a runtime gate, not stricter prose.
+
+### 12.10 Boot as reference consumer
+
+The boot is the first and most-trusted consumer of substrate data. **Bootstrap-only principle.** The boot bootstrap contains discipline + structural state + manifest. No orientation-grade prose. No `summary_row` content. No descriptive case names that encode case theory. No journal summary text. All such content is retrievable on demand under §12.6 + §12.7. See Appendix C for the complete boot-time provenance surface schema.
+
+### 12.11 Anti-patterns
+
+- *Quoting orientation-grade content as evidence.* Always check field-grade before quoting.
+- *Treating `confirmed + inference` as `confirmed + direct_observation`.* The 5 AM cascade's second failure.
+- *Substituting model priors for domain authority.* The 5 AM cascade's third failure.
+- *Skipping the claim ledger.* Without §12.5, no observable record of which claims were grounded in evidence.
+- *Treating `boot_discipline_ack` as performative.* Acknowledging obligations and then violating them is a worse failure than declining to acknowledge.
+
+### 12.12 Origin and open-questions disposition
+
+Drafted from assertion 9761. Five open questions from 9761 resolved: (1) scope split across §3.1.1 + §12; (2) enforcement layer → §13; (3) migration path → §3.5 + §14; (4) field-grade declaration → §3.1.1 + §3.5; (5) skill-router scope → §8.2.12.
+
+
+### 12.13 Output citation grammar and enforcement
+
+When a consumer's response makes a material claim grounded in a
+substrate assertion (per §12.5 ledger), the response MUST emit an
+inline citation anchor adjacent to the claim. Canonical grammar:
+
+    [assertion:NNNN]   where NNNN is the integer assertion_id.
+
+Examples (single source):
+    The notice was mailed 2025-08-27 [assertion:9847].
+    Beneficial ownership transferred 2025-05-02 [assertion:9612].
+
+**Multiple supporting assertions.** A claim backed by multiple
+assertions emits one bracket per supporting assertion, adjacent and
+unspaced:
+
+    The notice was timely mailed [assertion:9847][assertion:9851][assertion:9852].
+
+Each bracket is an independent citation and registers as a separate
+§12.5 ledger row (sharing `claim_text` but with distinct
+`supporting_assertion_id`). The validator parses each `[assertion:NNNN]`
+occurrence independently; adjacency carries no additional semantic.
+
+Authors SHOULD prefer atomic decomposition (per PaperTrail's
+atomic-claim principle, Appendix A) when a fused claim can be split
+without semantic loss. Multi-bracket citation is the fallback for
+genuinely fused claims. Citation density ≥ N=8 triggers §8.2 finding 14
+`output_citation_high_cardinality` as an authoring-smell warning. For
+genuinely cumulative claims (e.g., "total fees paid: $X" backed by
+every invoice), authors SHOULD use a set-aggregating assertion (§3.1
+`aggregation` derivation type) with a single inline citation to the
+aggregate.
+
+**Scope (when required):**
+
+1. Required for structural-grade claims (§12.1) in human-consumed
+   output (legal-brief domain, derived-artifact authoring, dispatch
+   outputs that feed downstream agents).
+2. Required for belief-grade claims (§12.1) when the claim is
+   load-bearing for a deliverable. Grade/derivation is resolved from
+   the §12.2 envelope by lookup; the inline anchor does not encode
+   grade.
+3. NOT required for orientation-grade prose (§12.1) or for non-load-
+   bearing conversational text.
+
+**Read-time enforcement (Phase 1.0 / Phase 1.5):**
+
+The output validator parses `\[assertion:(\d+)\]` occurrences,
+resolves each to an assertion via cortex.assertion_get, and emits §8
+finding kinds when mismatches arise:
+
+  - Finding 13 (`output_citation_missing_assertion`): citation does
+    not resolve, OR resolves to a superseded/retired assertion, OR
+    absent on a load-bearing ledger entry. Phase 1.0.
+  - Finding 5 ext (`verbatim_check_failed` output-side): quoted text
+    does not match chunk_id-bound assertion claim text after §4.3
+    normalization. Phase 1.0.
+  - Finding 14 (`output_citation_high_cardinality`): claim has ≥ 8
+    supporting_assertion_id rows. Phase 1.0.
+  - Finding 15 (`grade_laundering_in_output`): structural-grade output
+    cites belief-grade / user_statement assertion without §12.3
+    framing. Phase 1.0.
+  - Finding 16 (`temporal_qualification_omitted`): date claim cites
+    assertion with valid_from but output omits date binding. Phase 1.0.
+  - Finding 17 (`bibliography_orphan`): bibliography ↔ body cross-ref
+    mismatch in derived-artifact authoring. Phase 1.0.
+  - Finding 18 (`output_citation_semantic_mismatch`): citation resolves
+    correctly but §14.2(b) semantic-similarity between claim text and
+    cited assertion's claim text falls below threshold. Phase 1.5.
+
+**Brief-domain `review_required` signal.** When the validator runs
+against a brief-domain artifact (detected by domain tag in dispatch
+metadata), it emits a `review_required: True` signal to the
+dispatcher. The dispatcher MUST route to a §10.1-compliant
+adversarial review pass before publish/file. This is the bridge
+between automated validation (this section) and the deterministic
+human/independent-model backstop (§10.1).
+
+**Note on what this grammar does NOT enforce deterministically:**
+
+The form `[assertion:NNNN]` validates that a citation is present and
+resolves to an active assertion. It does not deterministically validate
+that the cited assertion semantically backs the specific claim it
+accompanies. Wrong-assertion citation (citing assertion X to back
+claim Y where X does not support Y) is detected probabilistically by
+finding 18 (semantic-similarity check) AND deterministically by the
+§10.1 mandatory adversarial review pass for brief-domain artifacts.
+
+Per §13.7 and §14.4, the residual class after finding 18 + §10.1
+review is documented, not eliminated: doctrinal-reasoning errors
+(theory reframes, overclaims as legal doctrine — e.g., BOE-19-P v5
+Findings 6, 10, R2, R3) are out of citation-validation scope entirely
+and remain dependent on the §10.1 review pass's substantive
+proposition-fit / remedy-fit criteria.
+
+## § 13. Enforcement layer split
+
+Defense-in-depth for supersession and freshness. Three layers, all required:
+
+| Layer | When it fires | What it catches | What it misses |
+|---|---|---|---|
+| **13.3 Substrate-primary** | On assertion write | Same-`(entity_id, predicate_form)` supersessions; retroactive once §14.1 completes | Different-`predicate_form` same-fact pairs (the 9020/9023 class — caught by §13.4 + §14.2(b) semantic similarity) |
+| **13.4 Audit-backstop** | session_close + §14.2 retroactive pass | What §13.3 missed: predicate_form-NULL pairs, semantic-overlap pairs crossing `predicate_form` boundaries, substrate-layer write-window races | Cross-session supersessions that span the audit window |
+| **13.5 Reader-defense-in-depth** | At read / quote time | Whatever §13.3 + §13.4 missed; protects the moment of consumer citation | Pure model-discipline layer — fails when discipline is implicit |
+
+### 13.1 Canonical failure anchor — 2026-05-14 Uber doc-index supersedence failure
+
+Peer to §5.6's *Mata v. Avianca* anchor. In session `claude-web-2026-05-14-1301`, the agent authored `legal/uber/document-index.md`. The "Authoritative source (text)" row for the Uber security-incident report quoted assertion 9020 three days after assertion 9023 had established `…reconstructed-for-docx.md` as the authoritative source. Both assertions had `superseded_by: NULL` and `predicate_form: NULL`. The substrate had no structural marker indicating supersession; the reader selected on filename heuristics rather than temporal ordering. Kaywan caught it by human-eye scan.
+
+The incident is direct evidence that **only the reader-side layer was in effect, and the reader-side layer failed** because the discipline was implicit — not enforced by tooling. §13 fixes this by specifying all three layers, with the reader-side layer as defense-in-depth rather than primary.
+
+### 13.2 Why all three layers
+
+- *Substrate-primary alone*: forward-protected from the day it ships, but the historical corpus stays exposed until §14.1 backfills `predicate_form`. Even after §14.1, literal `predicate_form` equality misses the 9020/9023-class false negative.
+- *Audit-backstop alone*: catches the literal-miss and semantic classes via §14.2(b), but only at session close.
+- *Reader-defense-in-depth alone*: 2026-05-14 demonstrated the failure mode.
+
+### 13.3 Substrate-primary layer
+
+**Trigger:** every `cortex(tool='assert', ...)` call. On assertion write, query for same-`(entity_id, predicate_form)` active rows. If matches exist, fire auto-supersede (when new assertion is stronger), propose-supersede (ambiguous comparison), or block (would silently contradict higher-confidence assertion). **Retroactive protection gated on §14.1 predicate_form backfill.**
+
+### 13.4 Audit-backstop layer
+
+**Trigger:** session_close + §14.2 retroactive passes. Walk all session-written assertions; run literal-match + semantic-similarity comparison (§14.2(b)); pipe into two-pass dispatch (§14.2(c)); auto-apply high-confidence supersessions; queue mid-confidence for review. Every action lands in `notes/system/threads/v1.3-supersedence-backfill-ledger.md`.
+
+### 13.5 Reader-defense-in-depth layer
+
+**Trigger:** every consumer read that quotes assertion content. Before quoting assertion A: check `A.superseded_by`; query newer same-predicate active rows; emit freshness warning if successors exist. **Why still required:** with §13.3 + §13.4 in place, the substrate carries supersession state structurally — but the reader still has to *check* the state before quoting. §13.5 is the moment-of-citation enforcement that turns substrate state into consumer behavior. Skill-router scope extends to derived-artifact-authoring per §8.2.12.
+
+### 13.6 Sequencing and dependencies
+
+§13.3 substrate-primary requires §14.1 predicate_form backfill for retroactive corpus coverage. §13.4 audit-backstop requires §14.2(a) literal-match + §14.2(b) semantic-similarity passes; the semantic layer is load-bearing for §13.4, not optional (the 9020/9023 canonical case is caught by §14.2(b) only). §13.5 reader-defense-in-depth requires no prerequisite passes.
+
+### 13.7 Honesty contract
+
+The three-layer combination reduces supersession failure to a documented residual rate per §14.4. The spec does not claim 100% detection — naming the residual class is the minimum honest position.
+
+
+## § 14. Implementation prerequisites
+
+The supersession discipline of §7, the dependency tracking of §3.5, and the enforcement layer split of §13 protect **forward** by construction: any assertion written under v1.3 carries the structural fields (predicate_form, derives_from, anchors) that the discipline operates on. Retroactive protection — applying the same discipline to assertions already in the corpus — is GATED on two prerequisite passes over the existing graph.
+
+**Without these prerequisites, v1.3 documents protection it does not provide for the existing corpus.** This section makes the gating explicit and tracks completion as a primary-source anchor.
+
+### 14.1 Predicate_form backfill
+
+**Problem.** The supersedence-detection contract in §13 keys on `(entity_id, predicate_form)` pairs. Any assertion with `predicate_form IS NULL` is invisible to detection. The 2026-05-14 Uber doc-index failure is the canonical case: both assertions 9020 and 9023 had NULL `predicate_form`.
+
+**Sign-off.** Backfill is complete when `SELECT COUNT(*) FROM assertions WHERE superseded_by IS NULL AND predicate_form IS NULL AND entity_id NOT LIKE 'test:%'` returns 0.
+
+**Status (2026-05-17):** ✅ COMPLETE — thread 1013 verified 139/139 rows backfilled, 0 factual errors. The literal-match layer (§13.3) is now retroactively active over the full corpus.
+
+### 14.2 Pairwise supersedence-candidate detection
+
+**Problem.** Even with predicate_form fully backfilled, the corpus contains assertion pairs where a newer assertion has implicitly superseded an older one but no `supersede()` call was ever made. Two detection classes are required: literal predicate-match (§14.2(a)) and semantic-similarity backstop (§14.2(b)).
+
+#### 14.2(a) Literal predicate-match layer
+
+SQL pass: group by `(entity_id, predicate_form)` filtered to active non-test assertions with non-NULL predicate_form; emit groups with count ≥2. Each group emits C(n,2) candidate pairs; pass to two-pass dispatch (§14.2(c)).
+
+**Known false-negative class.** Pairs where the same load-bearing fact gets different predicate_form judgments (canonical case: assertions 9020 vs 9023 on `document:uber-security-incident-report-2026-05-07`). The semantic layer below exists specifically to catch this class.
+
+**Status (2026-05-17):** ✅ COMPLETE — §14.2(a) + (b) passes ran via thread 1013 / §14.2 arc; §14.2(c) two-pass dispatch applied; supersession chain closed. `normalize_predicate_domain()` implemented and write-time wired (assertions 10251 + 10335).
+
+#### 14.2(b) Semantic-similarity backstop layer
+
+For each entity with ≥2 non-superseded assertions, compute pairwise cosine similarity over claim text for pairs not already captured by §14.2(a). Pairs with cosine_similarity ≥ T (starting threshold T = 0.75; tunable) enter the candidate set. Pass to §14.2(c).
+
+#### 14.2(c) Two-pass dispatch over candidates from (a) and (b)
+
+1. **First pass:** `gpt-5.4-mini` reviews each pair, emits `{verdict, confidence, reasoning, source_layer}`. 2. **Second pass:** `gpt-5.4` (full) reviews uncertain or low-confidence pairs. 3. Auto-apply tier: confidence ≥0.85 → auto-supersede; 0.5–0.85 → human review queue; <0.5 or non-supersedes → decision-made record.
+
+#### 14.2(d) Path B programmatic re-run (v4 §10.4 acceptance gate)
+
+Run `normalize_predicate_domain()` from `libs/predicate_form/` over the active corpus; generate cluster set keyed by `(entity_id, canonical_form)` with cardinality ≥2; compare to baseline.
+
+**Status (2026-05-17):** ✅ COMPLETE — re-run via thread 1016 returned SUPERSET result (158 clusters across full corpus vs 34-cluster baseline over 45 entities). All 34 baseline clusters dissolved legitimately: §14.2(a) pairs applied 2026-05-16 superseded the cluster members, collapsing each to a single canonical. C6/C7 (mortgage payments) expired via temporal `valid_until` bounds. Python function correctly identifies current-corpus redundancy. Criterion (a) PASSES.
+
+### 14.3 Sequencing and dependency
+
+§14.1 MUST complete before §14.2(a). §14.2(b) does NOT structurally depend on §14.1 but practically sequences after for clean ledger ordering. The canonical **9020/9023** pair is caught by §14.2(b), not §14.2(a) — the semantic layer is load-bearing.
+
+### 14.4 Honesty contract
+
+Retroactive-protection language in §3.5 and §13 is **effective only after §14.1 AND §14.2(a) AND §14.2(b) complete**. Both are now complete as of 2026-05-17. Residual false-negative class remains documented: pairs that escape literal-match detection, semantic-similarity detection at the converged threshold, AND the reader-side scan. The spec does not claim 100% detection.
+
+`document:cortex-provenance-substrate-spec-v1.3` ships with `status: draft` pending formal Cortex v3.0 close stamp; consumer-facing retroactive guarantees in §3.5 and §13 are now effective over the full corpus.
 
 ## Appendix A — Prior art
 
@@ -941,6 +1551,153 @@ Pending entries:
 Reviewer-independence classification at write time will use §6.2's `family/version` normalization. Same-model reviewers will be explicitly disclosed as non-independent per §6.5.
 
 ---
+
+
+## Appendix C — Boot-time provenance surface
+
+The boot card is the most-trusted consumer of substrate data and the first surface every session reads. §12.10 specifies the principle; Appendix C specifies the contract.
+
+### C.1 The grade-and-manifest invariant
+
+Every byte the boot inlines is either **structural** or **discipline**. No orientation-grade prose. Substrate content lives behind a section manifest with retrieval hints; orientation-grade prose is fetched on demand under §12.6 + §12.7.
+
+The grade-and-manifest invariant restated as a single rule: **if a reader could quote a boot-card field directly as a substantive factual claim about the world, the field is spec-violating.**
+
+### C.2 Bootstrap content schema (exhaustive)
+
+The boot card MUST contain exactly: `session` (session_id, utc_now, agent, family, platform, role), `continuity.tail` (prior_session_id + continues_edge_id only; no prose summary), `structural_state` (deadlines with source_assertion_id, bus.unread_count + thread_ids, staging.pending_count, review_queue counts, recent_mentions as IDs + structural delta only), `critical_alerts` (all counts; never inlined prose), `discipline` (boot_precedence_ladder inline, consumer_obligations_ref pointer, write_verify_report_loop inline, boot_discipline_ack_required), `section_manifest` (opaque; no inlined content; hint per section), `skill_index` ({skill_id, tags, priority, version_hash} per entry; no description prose).
+
+### C.3 What the boot card MUST NOT contain
+
+Spec-violating boot content (exhaustive, enforceable): `entity.summary_row` content inlined; `entity.description` content inlined; last-session journal prose inlined; open-item compressed sentences inlined; recent-mention descriptive prose; plan-phase prose descriptions; todo descriptions beyond `{id, tags, priority, workflow_state}`; descriptive entity slugs that encode case theory; inline rendering of bus turn bodies; inline rendering of staging review-queue rows.
+
+### C.4 Section manifest — retrieval API contract
+
+Each section in `section_manifest` carries a `hint` string naming the retrieval API call the agent executes to fetch the section. Every retrieval endpoint: (1) returns evidence-envelope-bearing content per §12.2; (2) honors §13.5 freshness pre-application; (3) carries §12.1 field-grade tagging on every response value.
+
+### C.5 The continuity tail — no inlined prose
+
+The boot card's `continuity.tail` carries only `prior_session_id` and `continues_edge_id`. Handoff prose, if any, is referenced via `handoff_uri` but never inlined.
+
+**This is the §11.7 (open issue v2) resolution.** Handoff prose is an orientation-grade field by §12.1; inlining it would launder the grade and break §12.10's bootstrap-only principle. The handoff prose remains accessible via explicit-fetch; the default boot doesn't surface it.
+
+### C.6 Critical alerts surface — counts, not content
+
+The `critical_alerts` block reports every counter even when zero. A non-zero counter triggers a default fetch obligation on the consumer's first substantive response.
+
+### C.7 Skill discovery — tool-router, not boot inlining
+
+The `skill_index` carries `{skill_id, tags, priority, version_hash}` per entry, never description prose. Trigger resolution is the tool-router's job. The 5 AM cascade demonstrated that model-side scanning of long descriptive trigger lists is unreliable.
+
+### C.8 Operational context file — the durable read-time surface
+
+The boot returns a small inline card (~5-10 KB) AND writes a larger operational-context file to `notes/system/shared/operational-context-<agent>-<role>.md` (~20-30 KB). Both honor the grade-and-manifest invariant.
+
+### C.9 Canonical failure anchor — claude-web-2026-05-15-0310 (5 AM cascade)
+
+Peer to §5.6's *Mata v. Avianca* anchor and §13.1's 2026-05-14 Uber doc-index anchor. In session `claude-web-2026-05-15-0310`, the boot card inlined `case:uber-driver-harassment-2026.summary_row` containing a scrubbed-claim phrase, and the entity slug encoded case theory. Both are spec-violating under C.3. A spec-compliant boot would have surfaced `case:uber-driver-harassment-2026` (structural slug only), zero inlined prose, and `critical_alerts.scrubbed_summaries_pending_regeneration: N`.
+
+### C.10 Migration from non-compliant boot cards
+
+Migration sequence: (1) Inventory phase — classify every `render_briefing_card()` field per §12.1; (2) Schema phase — replace orientation-grade fields with structural counterparts + retrieval hints; (3) Critical-alerts phase — implement all counters; (4) Skill-index phase — replace prose trigger lists with {skill_id, tags, priority, version_hash}; (5) Continuity-tail phase — surface only prior_session_id + continues_edge_id. Migration sequenced behind §3.5 + §14.1.
+
+### C.11 Open questions
+
+Should the boot card carry an explicit `boot_card_version` hash for §13.4 audit-backstop scope? Should `critical_alerts` carry per-counter `last_changed_at` timestamps? Should the section manifest carry per-section `freshness`? All deferred to v1.4 polish pass.
+
+
+## Appendix D — Agent-time-of-use injection patterns
+
+This appendix specifies concrete patterns for writing §12-compliant prompts. The four templates cover the main injection scenarios; all are reusable across agents and platforms. Each template names the grade it carries (§12.1), the evidence envelope it wraps (§12.2), and the citation anchor it must emit (§12.9).
+
+### D.1 Lookup / retrieval (structural-grade)
+
+**When to use:** retrieving a document path, URL, date, identifier, or any fact where the assertion is the only source.
+
+**Template:**
+```
+[STRUCTURED_LOOKUP | source: assertion {assertion_id} | confidence: {confidence_score} | valid_from: {valid_from} | checked: {utc_now}]
+Field: {field_name}
+Value: {assertion.claim_value}
+[/STRUCTURED_LOOKUP]
+```
+
+**Grade annotation:** `structural-grade` per §12.1. Carry-through obligation: any derived artifact that quotes this field inherits the structural grade and must cite assertion_id per §12.9.
+
+### D.2 Context provision (structural-grade)
+
+**When to use:** providing a batch of structural context — active assertions on an entity — before a reasoning task.
+
+**Template:**
+```
+[CONTEXT_PROVISION
+  | entity: {entity_id}
+  | included_count: {n}
+  | total_active_count: {m}
+  | truncated: {true|false}
+  | selection_strategy: {strategy}
+  | selection_params: {params_json | none}
+  | pulled_at: {utc_now}
+  | cursor: {cursor_token | none}
+  | content_hash: sha256:{hex}
+]
+{for each assertion in selected_assertions(entity_id, strategy, params):}
+  assertion_id={id} predicate={predicate_form} claim={claim} confidence={confidence_score} valid_from={valid_from}
+{end for}
+[/CONTEXT_PROVISION]
+```
+
+**Grade annotation:** `structural-grade` per §12.1. Batch context never implies a synthesis; the agent must not generate orientation-grade prose from this block without an explicit synthesis step.
+
+### D.3 Temporal qualification (structural-grade with freshness flag)
+
+**When to use:** any fact with `valid_until` or `valid_from` that is time-sensitive for the task at hand.
+
+**Template:**
+```
+[TEMPORAL_QUALIFIED | assertion_id: {id} | valid_from: {valid_from} | valid_until: {valid_until} | now: {utc_now} | freshness: {CURRENT|STALE|EXPIRED}]
+Claim: {claim}
+[/TEMPORAL_QUALIFIED]
+```
+
+**When freshness=STALE or EXPIRED:** the consuming agent MUST NOT quote the claim as current-state without a re-fetch or explicit temporal caveat.
+
+### D.4 Uncertainty injection (belief-grade)
+
+**When to use:** injecting an agent-believed claim (confidence < confirmed) or a hypothesis into a prompt chain.
+
+**Template:**
+```
+[BELIEF_INJECTION | assertion_id: {id} | confidence: {confidence_score} | derivation: {derivation_type} | seeded_by: {seeded_by} | seeded_at: {created_at}]
+Claim: {claim}
+Reasoning: {reasoning_summary}
+[/BELIEF_INJECTION]
+```
+
+**Grade annotation:** `belief-grade` per §12.1. Downstream agents receiving this block MUST treat its content as provisional; belief-grade content must not propagate into structural-grade derivations without a re-confirmation step.
+
+### D.5 Injection-at-agent-time contract
+
+All four templates share five invariants:
+
+1. **Evidence envelope first.** The metadata block (`[...]`) MUST precede the claim content; the consumer processes the grade and freshness before reading the claim.
+2. **Citation anchor mandatory.** Every injected assertion carries `assertion_id` so the consumer can emit a citation per §12.13 without a re-fetch.
+3. **No prose laundering.** The template text is structural syntax; descriptive gloss that converts a structural field into orientation-grade prose violates §12.3's aggregation constraint.
+4. **Admission-gated truncation.** Materializers MUST enforce both per-entity (D.2 `included_count`) and per-packet aggregate (sum across all D.* blocks in one dispatch) size limits. Overflow without an explicit `selection_strategy` raises rather than silently truncates. This is the §13 fail-closed posture applied to D.2. Truncated blocks MUST set `truncated: true` and provide a non-`none` `cursor`.
+5. **Content-hash integrity.** D.2 blocks carry a `content_hash` over the canonicalized block body. Downstream consumers MAY verify the hash to detect mutation between materialization and consumption. This does not establish that a cited assertion backs a specific claim; it establishes only that the D.2 block has not been tampered with in transit.
+
+### D.6 Anti-patterns
+
+| Anti-pattern | Spec violation | Correct approach |
+|---|---|---|
+| `"The Uber case file is at /path"` (no assertion_id, no grade) | §12.2: missing evidence envelope; §12.9: missing citation anchor | Use D.1 template |
+| `"Here is what we know about the Uber case: [orientation prose]"` from CONTEXT_PROVISION block | §12.1: grade laundering | Emit structural fields; separate synthesis step if needed |
+| `"As of last session, ..."` without `valid_from` / `checked` | §12.7: temporal qualification omitted | Add temporal block; use D.3 template |
+| Injecting a high-confidence structural assertion into a belief-grade context chain without flagging the downgrade | §12.1: implicit grade downgrade | Flag explicitly in the injection block |
+
+### D.7 Relationship to skill-router scope
+
+§8.2.12 adds derived-artifact-authoring to the skill-router trigger set. Templates in Appendix D are the canonical injection patterns for the skill-router's `source_injection` step in derived-artifact authoring. The skill-router MUST use D.1–D.4 templates for all substrate lookups during authoring.
 
 ## Resume / promote checklist
 
