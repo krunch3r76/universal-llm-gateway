@@ -40,7 +40,7 @@ from .assertions import _ASSERTION_COLS
 logger = get_logger("cortex-api.entity_status")
 router = APIRouter(tags=["entity_status"])
 
-_ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
+_ASSERTION_JSON_FIELDS = frozenset({"evidence_uris", "attributes"})
 
 _STALENESS_THRESHOLDS: list[tuple[float, str]] = [
     (1, "active"),

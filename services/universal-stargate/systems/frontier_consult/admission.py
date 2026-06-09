@@ -257,18 +257,24 @@ def resolve_handoff_contract(
     role: str,
     request_id: str,
 ) -> tuple[str, str]:
-    """Resolve handoff work-intent from ``role`` only.
-
-    ``cursor-implement`` and ``web-implement`` → ``implement``; consult roles →
-    ``consult``. The intent is derived from the roster slug's ``default_contract``
-    ({platform}-{contract} naming) — there is no request-side override.
-    """
+    """Resolve handoff work-intent from ``role`` only (roster-slug fallback path)."""
     _ = request_id
-    canonical = normalize_agent_slug(role)
-    role_profile = load_roles().get(canonical)
-    if role_profile is not None and role_profile.default_contract is not None:
-        return role_profile.default_contract, "role_default"
+    from .contract_derivation import contract_from_role
+
+    from_role = contract_from_role(role)
+    if from_role is not None:
+        return from_role
     return "consult", "role_default"
+
+
+def resolve_handoff_seat(
+    *,
+    seat: str,
+    request_id: str,
+) -> tuple[str, str, str, str]:
+    """Resolve handoff target from a manual seat slug (``claude-web``, ``web``, …)."""
+    to_agent, family, platform = resolve_web_handoff_seat(seat, request_id=request_id)
+    return to_agent, family, platform, to_agent
 
 
 async def verify_thread_writable(

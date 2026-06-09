@@ -51,19 +51,28 @@ def write_file_impl(path: str, content: str) -> dict[str, str]:
     return {"status": "written", "path": str(dest)}
 
 
-def read_file_impl(path: str, binary: bool = False) -> dict[str, Any]:
+def read_file_impl(
+    path: str, binary: bool = False, offset: int = 0, limit: int = 0
+) -> dict[str, Any]:
     """Read and return the contents of *path* from the sandboxed directory."""
-    result = read_file_result(path, binary=binary)
+    result = read_file_result(path, binary=binary, offset=offset, limit=limit)
     auto_binary = bool(result.get("auto_binary"))
-    record(
-        "mcp.tool.file.read",
-        path=path,
-        resolved=result["path"],
-        binary=binary or auto_binary,
-        auto_binary=auto_binary,
-        chars=len(result["content"]) if "content" in result else 0,
-        bytes=result.get("bytes", 0),
-    )
+    range_requested = offset > 0 or limit > 0
+    event_payload: dict[str, Any] = {
+        "path": path,
+        "resolved": result["path"],
+        "binary": binary or auto_binary,
+        "auto_binary": auto_binary,
+        "chars": len(result["content"]) if "content" in result else 0,
+        "bytes": result.get("bytes", 0),
+    }
+    if range_requested:
+        line_range = result.get("line_range", {})
+        event_payload["offset"] = offset
+        event_payload["limit"] = limit
+        event_payload["returned_lines"] = line_range.get("returned", 0)
+        event_payload["total_lines"] = result.get("total_lines", 0)
+    record("mcp.tool.file.read", **event_payload)
     logger.debug(
         "read_file: read %s (%s)",
         result["path"],

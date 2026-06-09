@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
-from .admission import resolve_handoff_contract, resolve_handoff_target
+from .admission import resolve_handoff_seat, resolve_handoff_target
+from .contract_derivation import derive_contract
 from .events import FrontierHandoffCreated, FrontierHandoffRequested
 from .handoff import (
     _workspaces_root,
@@ -27,6 +28,7 @@ from .handoff import (
     validate_packet,
 )
 from .handoff_response import build_handoff_result, build_push_reminder
+from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .implement_admission_bridge import (
     BridgeResult,
     StargateCortexReader,
@@ -41,6 +43,7 @@ from .service import (
 
 team_router = APIRouter(prefix="/api/v1/team", tags=["team"])
 frontier_router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])
+implement_router = APIRouter(prefix="/api/v1/implement", tags=["implement"])
 logger = get_logger(__name__)
 
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
@@ -291,9 +294,10 @@ async def frontier_dispatch(
 class TeamHandoffBody(BaseModel):
     """``POST /api/v1/team/handoff`` — create an agent-bus thread for a manual seat.
 
-    ``role`` — handoff roster slug (``web-consult``, ``cursor-consult``,
-    ``cursor-implement``) resolved via ``RoleProfile``. Contract is derived from
-    the role ({platform}-{contract} naming).
+    ``seat`` — manual seat slug (``claude-web``, ``claude-cursor``, roster aliases).
+    ``role`` — handoff roster slug (``web-consult``, ``cursor-implement``, …).
+    At least one of ``seat`` or ``role`` is required. Contract is derived server-side
+    (F1: ``source_ref`` dispatch_lane → packet front-matter → role default → consult).
 
     At least one of ``source_ref`` or ``packet_path`` must be present.
     ``source_ref`` triggers normalize→materialize (Phase 2 unified admission).
@@ -302,7 +306,8 @@ class TeamHandoffBody(BaseModel):
     model_config = {"extra": "forbid"}
 
     op: Literal["handoff"]
-    role: str
+    role: str | None = None
+    seat: str | None = None
     packet_path: str | None = None
     source_ref: str | None = None
     subject: str
@@ -335,6 +340,18 @@ async def team_handoff(
                 ),
                 status_code=422,
                 code="handoff_input_underspecified",
+            ).to_dict(),
+        )
+
+    if body.seat is None and body.role is None:
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="seat",
+                reason="At least one of seat or role is required for handoff admission",
+                status_code=422,
+                code="handoff_seat_underspecified",
             ).to_dict(),
         )
 
@@ -397,14 +414,26 @@ async def team_handoff(
                 return
             event_bus.publish_from_sync(event)
 
-        to_agent, _family, platform, resolved_model = resolve_handoff_target(
-            role=body.role,
-            request_id=request_id,
-        )
+        if body.seat is not None:
+            to_agent, _family, platform, resolved_model = resolve_handoff_seat(
+                seat=body.seat,
+                request_id=request_id,
+            )
+        else:
+            to_agent, _family, platform, resolved_model = resolve_handoff_target(
+                role=body.role or "",
+                request_id=request_id,
+            )
 
-        handoff_contract, contract_source = resolve_handoff_contract(
-            role=body.role,
-            request_id=request_id,
+        handoff_contract, contract_source = await loop.run_in_executor(
+            None,
+            lambda: derive_contract(
+                source_ref=body.source_ref,
+                packet_path=packet_path,
+                role=body.role,
+                cortex=reader,
+                workspaces_root=workspaces_root,
+            ),
         )
 
         validate_packet(
@@ -495,4 +524,54 @@ async def team_handoff(
         result["implement_spec_hash"] = implement_spec_hash_value
     if warnings:
         result["warnings"] = warnings
+    return result
+
+
+class ImplementCloseoutBody(BaseModel):
+    """Dispatched implement closeout — triggers pipeline:implement-closeout."""
+
+    model_config = {"extra": "forbid"}
+
+    closeout: dict[str, Any]
+    source_ref: str | None = None
+
+
+@implement_router.post("/closeout", status_code=200, response_model=None)
+async def implement_closeout(body: ImplementCloseoutBody) -> dict[str, Any] | JSONResponse:
+    """Apply ImplementCloseout via pipeline:implement-closeout (Step 4)."""
+    request_id = uuid.uuid4().hex[:12]
+    payload = parse_closeout_payload(body.closeout)
+    if payload is None:
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="closeout",
+                reason="closeout must be a valid ImplementCloseout object",
+                status_code=422,
+                code="closeout_invalid",
+            ).to_dict(),
+        )
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            None,
+            lambda: run_implement_closeout_pipeline(
+                payload, source_ref=body.source_ref
+            ),
+        )
+    except Exception as exc:
+        logger.warning("implement closeout failed: request_id=%s %s", request_id, exc)
+        return JSONResponse(
+            status_code=502,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="closeout",
+                reason=str(exc),
+                status_code=502,
+                code="closeout_pipeline_error",
+            ).to_dict(),
+        )
+    if not result.get("ok", True) and result.get("error"):
+        return JSONResponse(status_code=502, content=result)
     return result

@@ -125,7 +125,7 @@ def _enforce_role_entity_lint(
         ) from exc
 
 
-ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
+ASSERTION_JSON_FIELDS = frozenset({"evidence_uris", "attributes"})
 JSON_COLUMNS = frozenset({"aliases", "attributes"})
 
 # Base columns selectable directly; everything else resolves from the

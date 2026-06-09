@@ -31,4 +31,20 @@ plan-authoring friction. Bind once; reuse everywhere.
 
 Multi-todo deliverable arcs use a `project:` entity + spec rather than a master
 todo entity.
+
+## Steps vs phases
+
+A `task:` arc orders its leaf `todo:` members by **steps** (the spec Steps table
+and/or `depends_on` edges) — `step` is not an entity type and has no slug. A
+`plan:` arc orders its shipping units by **phases**
+(`plan_phase:{slug}/phase-N` + `tmp/prompts/{slug}/phase-N.md`, `/implement-plan`).
+Canonical definition and collision disambiguation: `entity-lifecycle-discipline`
+§Vocabulary — step vs phase.
+
+## Promotion ladder
+
+The full architecture→implementation funnel this slug rides — decision / spec /
+handoff-packet → `todo:` → shape (`plan:` phases vs `task:` steps) → decompose →
+execute, plus where provenance attaches (`source_uri`, `derived_from`, `references`,
+`evidence_uris`, `source_ref`): `agent-skills/planning-promotion-ladder.md`.
 <!-- /target:* -->

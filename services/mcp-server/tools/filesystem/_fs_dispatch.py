@@ -45,7 +45,10 @@ def sandbox_op_names(sandbox: str) -> str:
 
 # Per-op descriptor metadata. Keys MUST match OP_SANDBOXES exactly (enforced by test).
 OP_DOC: dict[str, tuple[str, str]] = {
-    "read": ("(path)", "read file (text or PDF/DOCX/ODT/EML/HTML)"),
+    "read": (
+        "(path, offset?, limit?)",
+        "read file (text or PDF/DOCX/ODT/EML/HTML)",
+    ),
     "read_multi": ("(paths: list)", "read multiple files"),
     "write": ("(path, content)", "write/create file"),
     "append": ("(path, content)", "append to file"),
@@ -117,6 +120,8 @@ def dispatch_workspaces_op(
     include_untracked: bool,
     binary: bool,
     max_depth: int,
+    offset: int,
+    limit: int,
     overflow_registry: dict[str, Callable[..., Any]],
     workflow_hints: dict[str, Any],
 ) -> dict[str, Any]:
@@ -135,7 +140,7 @@ def dispatch_workspaces_op(
         fn = overflow_registry.get("read_project_file")
         if fn is None:
             return {"error": "read_project_file tool not available"}
-        return fn(path, binary=binary)
+        return fn(path, binary=binary, offset=offset, limit=limit)
 
     if op == "read_multi":
         if not paths:

@@ -12,7 +12,7 @@ Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 
 | `dispatch_lane` | Who authors | Packet type | Typical seat |
 |---|---|---|---|
-| `web-implement-packet` | web-claude | six-block **implement** packet (Composer density) | `team_dispatch(web-implement)` |
+| `web-implement-packet` | web-claude | six-block **consult** packet that authors an implement packet | `team_dispatch(op=handoff, seat=claude-web)` (shorthand `web-consult`) |
 | `web-spec` | web-claude | six-block **consult** packet (findings) | `team_dispatch(web-consult)` |
 | `cursor-mechanical` | cursor IDE | skeleton or full packet on disk; **no web** when spec is sufficient | IDE or `cursor-implement` |
 | `cursor-implement` | cursor (handoff) | bound implement packet with acceptance criteria | `team_dispatch(cursor-implement)` |

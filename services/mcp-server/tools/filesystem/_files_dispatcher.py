@@ -34,6 +34,8 @@ def register_files_tool(mcp: FastMCP) -> None:
         line: int = 0,
         all_occurrences: bool = False,
         binary: bool = False,
+        offset: int = 0,
+        limit: int = 0,
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
@@ -55,7 +57,8 @@ def register_files_tool(mcp: FastMCP) -> None:
         `view_image` when the task is visual inspection rather than moving bytes onward.
 
         Ops:
-          read   — read file contents (path required)
+          read   — read file contents (path required; optional offset/limit
+              for line-range slice — 0-based offset, max lines in limit)
           read_multi — batch read multiple files (paths required)
           write  — create/overwrite file (path, content required)
           write_binary — write base64-encoded binary data (path required,
@@ -103,6 +106,8 @@ def register_files_tool(mcp: FastMCP) -> None:
             line: 1-indexed line number — required for insert_at_line.
             all_occurrences: For replace: replace all matches (default false).
             binary: For read/read_multi, return base64 bytes instead of decoded text.
+            offset: For read, 0-based line offset to skip (default 0 = from start).
+            limit: For read, max lines to return (default 0 = no cap).
 
         Returns:
             Operation-dependent result dict.
@@ -112,7 +117,7 @@ def register_files_tool(mcp: FastMCP) -> None:
         if op == "read":
             if not path:
                 raise ValueError("'path' is required for read")
-            result = read_file_impl(path, binary=binary)
+            result = read_file_impl(path, binary=binary, offset=offset, limit=limit)
             if path.startswith("dropbox/"):
                 result["_next"] = DROPBOX_READ_HINT
             return result

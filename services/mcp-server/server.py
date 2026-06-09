@@ -366,7 +366,11 @@ def _build_server() -> tuple[
         "File I/O across sandboxes (cortex, workspaces). Both sandbox and op are REQUIRED.\n\n"
         "`read` is unified across sandboxes: source files plus text-oriented\n"
         "document formats such as PDF, DOCX, ODT, EML, and HTML can be read in\n"
-        "text mode from `cortex` or `workspaces`. Image files, archives, and other\n"
+        "text mode from `cortex` or `workspaces`. Optional `offset` (0-based lines\n"
+        "to skip) and `limit` (max lines) return a bounded line window on decoded\n"
+        "text — response adds `line_range`, `total_lines`, and `truncated` when\n"
+        "either param is non-zero; binary reads ignore the range and set\n"
+        "`line_range_applied: false`. Image files, archives, and other\n"
         "binary formats auto-route to base64 even without `binary=True` — reading a\n"
         "`.png`, `.jpg`, or archive returns {content_base64, auto_binary: true}\n"
         "rather than corrupted text. Pass `binary=True` explicitly when you need base64\n"
@@ -425,6 +429,8 @@ def _build_server() -> tuple[
         include_untracked: bool = True,
         binary: bool = False,
         max_depth: int = 3,
+        offset: int = 0,
+        limit: int = 0,
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -442,6 +448,8 @@ def _build_server() -> tuple[
                 include_untracked,
                 binary,
                 max_depth,
+                offset,
+                limit,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)
@@ -460,6 +468,8 @@ def _build_server() -> tuple[
         include_untracked: bool,
         binary: bool,
         max_depth: int,
+        offset: int,
+        limit: int,
     ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
@@ -513,6 +523,8 @@ def _build_server() -> tuple[
                 include_untracked,
                 binary,
                 max_depth,
+                offset,
+                limit,
                 overflow_registry,
                 FS_WORKFLOW_HINTS,
             )
@@ -534,6 +546,8 @@ def _build_server() -> tuple[
                 line=line,
                 all_occurrences=all_occurrences,
                 binary=binary,
+                offset=offset,
+                limit=limit,
             )
         except ValueError as exc:
             return {"error": str(exc)}

@@ -107,6 +107,7 @@ class PipelineCallHandler(AbstractStepHandler):
             k: v
             for k, v in context.options.items()
             if k.startswith(("rag_", "scope_", "rerank_"))
+            or k == "include_retrieval_metadata"
         }
         merged_options = {**step_options, **forwarded}
         if pipeline_id == "rag-context":
@@ -206,8 +207,16 @@ class PipelineCallHandler(AbstractStepHandler):
             latency_ms,
         )
 
+        step_json: dict[str, Any] = {}
+        pipeline_block = data.get("pipeline")
+        if isinstance(pipeline_block, dict):
+            retrieval = pipeline_block.get("retrieval")
+            if isinstance(retrieval, dict) and retrieval:
+                step_json["retrieval"] = retrieval
+
         return StepOutput(
             raw=content,
+            json=step_json or None,
             prompt_tokens=usage.get("prompt_tokens", 0),
             completion_tokens=usage.get("completion_tokens", 0),
             latency_ms=latency_ms,

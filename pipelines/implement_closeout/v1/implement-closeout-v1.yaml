@@ -1,0 +1,32 @@
+# implement-closeout — dispatched implement completion pipeline
+#
+# Per unified admission Step 4 (decision:unified-implement-admission):
+#   Dispatched closeout reply → pipeline:implement-closeout → run_adapters
+#
+# Anchor assertions:
+#   - 220: cortex-api is pure data layer
+#   - 221: pipelines are the named home for compound operations
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="implement-closeout",
+#            messages=[{"role":"user","content":"closeout"}],
+#            options={
+#              "closeout": { ... ImplementCloseout ... },
+#              "source_ref": "todo:...",
+#            })
+
+schema_version: 6
+id: implement-closeout
+version: "1.0"
+type: implement_closeout
+description: >
+  Apply ImplementCloseout source-specific lifecycle adapters. Resolves
+  source_ref via parse_source_ref, runs run_adapters, reconciles status.
+output: apply
+
+options:
+  timeout_seconds: 120
+
+steps:
+  - name: apply
+    type: implement_closeout_apply_v1

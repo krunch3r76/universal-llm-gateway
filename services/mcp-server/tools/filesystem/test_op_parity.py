@@ -78,6 +78,8 @@ def _call(op: str) -> dict:
         include_untracked=False,
         binary=False,
         max_depth=3,
+        offset=kwargs.get("offset", 0),
+        limit=kwargs.get("limit", 0),
         overflow_registry=_STUB_REGISTRY,
         workflow_hints=_WF_HINTS,
     )
@@ -121,6 +123,28 @@ def test_search_available_on_both_sandboxes() -> None:
 def test_advertised_ops_match_table() -> None:
     """advertised_standard_ops() must mirror OP_SANDBOXES."""
     assert advertised_standard_ops() == frozenset(OP_SANDBOXES)
+
+
+def test_ranged_read_does_not_return_unknown_op_error() -> None:
+    """Ranged read must dispatch through workspaces without unknown_op_error."""
+    result = dispatch_workspaces_op(
+        op="read",
+        path="a.md",
+        paths=None,
+        content="",
+        target="",
+        line=0,
+        all_occurrences=False,
+        include_untracked=False,
+        binary=False,
+        max_depth=3,
+        offset=1,
+        limit=1,
+        overflow_registry=_STUB_REGISTRY,
+        workflow_hints=_WF_HINTS,
+    )
+    err = result.get("error", "")
+    assert "Unknown" not in err, f"ranged read dispatch failed: {result}"
 
 
 def test_descriptor_doc_lists_exactly_table_ops() -> None:

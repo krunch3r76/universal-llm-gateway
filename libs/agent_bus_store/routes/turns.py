@@ -101,12 +101,30 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    try:
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(
+            None,
+            lambda: _maybe_trigger_implement_closeout(
+                thread=turn.thread, body=turn.body
+            ),
+        )
+    except Exception:
+        pass
     return TurnCreated(
         id=turn_id,
         thread=turn.thread,
         turn_number=turn_number,
         created_at=datetime.fromisoformat(ts),
     )
+
+
+def _maybe_trigger_implement_closeout(*, thread: str, body: str | None) -> None:
+    from agent_bus_store.closeout_trigger import maybe_trigger_closeout
+
+    maybe_trigger_closeout(thread=thread, body=body)
 
 
 @router.get(

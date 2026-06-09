@@ -176,6 +176,7 @@ class PipelineExecutor:
             outcome.step_outputs,
             outcome.backtranslation,
             execution_order=outcome.execution_order,
+            steps=prepared.steps,
         )
 
     async def execute(self, context: _PipelineRequestContextProtocol) -> Response:

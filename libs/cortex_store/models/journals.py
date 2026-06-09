@@ -41,6 +41,7 @@ class _SessionJournalCommon(BaseModel):
     session_id: str | None = None
     prior_session_id: str | None = None
     handoff_prompt: str | None = None
+    source_ref: str | None = None
 
 
 class SessionJournalCreate(_SessionJournalCommon):
@@ -123,6 +124,11 @@ class SessionCloseRequest(BaseModel):
         expected_source_file_sha256: assertion / TOCTOU guards after ``dry_run``.
       assistant_label:    H3 heading label for assistant blocks in the
         assembled verbatim layer (default ``"Assistant"``).
+      source_ref:         optional canonical admission ref (``todo:|plan:|plan_phase:``
+        grammar); canonicalized server-side via ``parse_source_ref``; stamped on
+        ``transcript:{session_id}.attributes.source_ref`` and the journal row.
+      source_ref_derivation: optional provenance tag from the IDE capture door
+        (e.g. ``ide-todo-pickup``, ``ide-implement-plan-executor``).
     """
 
     session_id: str
@@ -144,6 +150,8 @@ class SessionCloseRequest(BaseModel):
     expected_derived_handoff_prompt_sha256: str | None = None
     expected_source_file_sha256: str | None = None
     assistant_label: str | None = None
+    source_ref: str | None = None
+    source_ref_derivation: str | None = None
 
 
 class SessionCloseResponse(BaseModel):

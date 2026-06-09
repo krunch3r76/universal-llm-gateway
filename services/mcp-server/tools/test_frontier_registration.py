@@ -91,15 +91,17 @@ def test_team_dispatch_op_accepts_handoff() -> None:
 
 
 def test_team_dispatch_handoff_params_present() -> None:
-    """Handoff-only params packet_path, source_ref, and subject are on the signature."""
+    """Handoff-only params packet_path, source_ref, seat, and subject are on the signature."""
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
 
     sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "seat" in sig.parameters, "seat missing from team_dispatch"
     assert "packet_path" in sig.parameters, "packet_path missing from team_dispatch"
     assert "source_ref" in sig.parameters, "source_ref missing from team_dispatch"
     assert "subject" in sig.parameters, "subject missing from team_dispatch"
     # All optional (default None) — handoff callers provide at least one input path
+    assert sig.parameters["seat"].default is None
     assert sig.parameters["packet_path"].default is None
     assert sig.parameters["source_ref"].default is None
     assert sig.parameters["subject"].default is None
@@ -243,6 +245,32 @@ def test_team_dispatch_handoff_both_present() -> None:
     body = relay_calls[0]["body"]
     assert body["source_ref"] == "todo:example"
     assert body["packet_path"] == "universal-llm-gateway/tmp/prompts/example-packet.md"
+
+
+def test_team_dispatch_handoff_seat_only() -> None:
+    """AC1 — seat-only handoff relays seat without role."""
+    relay_calls, error = _run_handoff_relay(
+        seat="claude-web",
+        packet_path="universal-llm-gateway/tmp/test-packet.md",
+        subject="Seat-only handoff",
+    )
+    assert error is None
+    body = relay_calls[0]["body"]
+    assert body["seat"] == "claude-web"
+    assert "role" not in body
+
+
+def test_team_dispatch_handoff_missing_seat_and_role() -> None:
+    """AC2 — neither seat nor role returns validation_error without relay."""
+    relay_calls, error = _run_handoff_relay(
+        packet_path="universal-llm-gateway/tmp/test-packet.md",
+        subject="Missing seat and role",
+    )
+    assert len(relay_calls) == 0
+    assert error is not None
+    assert error["error"]["code"] == "validation_error"
+    assert "seat" in error["error"]["message"]
+    assert "role" in error["error"]["message"]
 
 
 def test_team_dispatch_handoff_underspecified() -> None:

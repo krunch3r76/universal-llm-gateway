@@ -8,7 +8,7 @@ execution contract in Cortex. Optional ``model=`` overrides within
 ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
   generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
-  handoff roles: web-consult, cursor-consult, cursor-implement, investigator (legacy)
+  handoff roles: web-consult, web-implement, cursor-consult, cursor-implement, investigator (legacy)
 
 Op enum: "generate" (returns content via tracker), "to_thread" (reply lands on
 ``thread``), or "handoff" (manual-seat agent-bus thread via ``role=``).
@@ -158,6 +158,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     async def team_dispatch(
         op: Literal["generate", "to_thread", "handoff"],
         role: str | None = None,
+        seat: str | None = None,
         messages: list[dict[str, Any]] = [],  # noqa: B006
         dispatch_thread_id: str = "",
         model: str | None = None,
@@ -177,15 +178,19 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
-        **``op="handoff"``** — manual seats via ``{platform}-{contract}`` roster:
+        **``op="handoff"``** — manual seats; select ``seat``:
 
-        - ``role="web-consult"`` → ``claude-web``; operator pushes bus message
-        - ``role="cursor-consult"`` → ``claude-cursor``; open IDE thread
-        - ``role="cursor-implement"`` → ``claude-cursor`` bound implement
-        Seat aliases (``claude-web``, ``web``, …) → 422 ``handoff_role_invalid``
+        - ``seat="claude-web"`` → operator pushes bus message
+        - ``seat="claude-cursor"`` → open IDE thread
+        Contract is derived server-side (``source_ref`` dispatch_lane → packet
+        front-matter ``contract:`` → default ``consult``). The
+        ``{platform}-{contract}`` shorthands (``web-consult``/``web-implement`` →
+        claude-web; ``cursor-consult``/``cursor-implement`` → claude-cursor)
+        remain accepted and encode (seat, contract).
 
-        Requires ``role``, ``subject``, and at least one of ``packet_path`` |
-        ``source_ref``. Returns ``{thread_id, resolved_model, to_agent, …}``.
+        Requires ``subject``, at least one of ``seat`` | ``role``, and at least
+        one of ``packet_path`` | ``source_ref``. Returns
+        ``{thread_id, resolved_model, to_agent, …}``.
 
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
@@ -214,7 +219,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           (system-on-behalf delivery). Tracker terminal status reflects
           the POST outcome. ``thread`` is required. ``subject`` is
           optional (defaults to ``"{role} reply — execution {short_id}"``).
-        - ``op="handoff"``: ``role`` selects seat + contract (slug encodes both).
+        - ``op="handoff"``: ``seat`` selects the destination; contract is derived server-side (the shorthand slugs still encode (seat, contract)).
           Returns
           ``{thread_id, subject, to_agent, resolved_model, push_reminder,
           result_handle, handoff_status, poll_hint}``. Poll via
@@ -259,13 +264,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                         ),
                     }
                 }
-            if not role:
+            if not seat and not role:
                 return {
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "role (web-consult, cursor-consult, cursor-implement) "
-                            "is required when op='handoff'"
+                            "at least one of seat (claude-web, claude-cursor) or "
+                            "role (web-consult, web-implement, cursor-consult, "
+                            "cursor-implement) is required when op='handoff'"
                         ),
                     }
                 }
@@ -281,9 +287,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 }
             handoff_body: dict[str, Any] = {
                 "op": "handoff",
-                "role": role,
                 "subject": subject,
             }
+            if seat is not None:
+                handoff_body["seat"] = seat
+            if role is not None:
+                handoff_body["role"] = role
             if packet_path is not None:
                 handoff_body["packet_path"] = packet_path
             if source_ref is not None:
@@ -297,7 +306,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     handoff_body[key] = val
             record(
                 "mcp.team.handoff.called",
-                role=role,
+                role=role or "",
+                seat=seat or "",
                 model="",
                 to_agent="",
             )

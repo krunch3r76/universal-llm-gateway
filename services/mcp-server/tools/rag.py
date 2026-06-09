@@ -26,6 +26,10 @@ from ._rag_http import (
 from ._rag_http import (
     rag_post as _rag_post_http,
 )
+from ._rag_retrieval_metadata import (
+    envelope_retrieval_fields,
+    retrieval_metadata_from_response,
+)
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -136,6 +140,29 @@ def _extract_content(response: dict[str, Any]) -> str:
     if not choices:
         return ""
     return choices[0].get("message", {}).get("content", "")
+
+
+_SCOPE_NOTE_CLASSIFIER = (
+    "Auto-scope-classified search (no scope= given). ~68 scopes exist. "
+    "Before concluding absence-of-evidence, call rag(op='list_scopes') and "
+    "re-search with an explicit scope= over relevant domains."
+)
+_SCOPE_NOTE_DEFAULT = (
+    "Broad default-scope search (no scope= given). ~68 scopes exist. "
+    "Before concluding absence-of-evidence, call rag(op='list_scopes') and "
+    "re-search with an explicit scope= over relevant domains."
+)
+
+
+def _unscoped_scope_note(retrieval_fields: dict[str, Any]) -> str | None:
+    """Return scope advisory text for unscoped calls based on ``scope_source``."""
+    retrieval = retrieval_fields.get("retrieval", {})
+    scope_source = retrieval.get("scope_source", "default_scope")
+    if scope_source == "classifier":
+        return _SCOPE_NOTE_CLASSIFIER
+    if scope_source == "default_scope":
+        return _SCOPE_NOTE_DEFAULT
+    return None
 
 
 def _normalize_scope_override(
@@ -384,6 +411,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
         degrade dense retrieval — use parallel calls per concept instead.
 
         Call rag_list_scopes() for the current set of valid scope names.
+        Scope-first discipline: unscoped searches use the direct pipeline's
+        default scope (`scope_source=default_scope`) unless a classifier path is
+        active — do NOT read an empty/thin result as 'absent from corpus' without
+        re-searching explicit scopes.
 
         Full docs: fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="rag_search")
 
@@ -403,8 +434,13 @@ def register_rag_tools(mcp: FastMCP) -> None:
         Returns:
             On success: {"status": "ok", "pipeline": "rag-context",
                          "content_length": <int>, "duration_s": <float>,
-                         "context": "<assembled context with source labels>"}
-            On error:   {"error": "<message>"}
+                         "context": "<assembled context with source labels>",
+                         "retrieval": {resolved_scope, scope_confidence,
+                                       chunks_found, scope_rejected,
+                                       scope_source, auto_classified, ...}}
+            Unscoped calls also include ``scope_note`` when scope_source is
+            ``default_scope`` or ``classifier``.
+            On error:   {"error": "<message>"} (+ ``scope_note`` when unscoped)
         """
         pipeline_options: dict[str, Any] = {}
         scope_override, scope_error = _normalize_scope_override(scope)
@@ -415,6 +451,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
             return {"error": prefix_error}
         if scope_override is not None and prefixes is not None:
             return {"error": "scope and prefix are mutually exclusive; set only one."}
+
+        unscoped = scope_override is None and prefixes is None
 
         # Parameter ergonomics: limit alias for top_k (Finding 3). Covers
         # both rag(op=...) router and dispatch(tool="rag_search") paths.
@@ -428,6 +466,7 @@ def register_rag_tools(mcp: FastMCP) -> None:
             pipeline_options["rag_source_prefixes"] = prefixes
         if top_k != 20:
             pipeline_options["rag_max_chunks"] = top_k
+        pipeline_options["include_retrieval_metadata"] = True
 
         record_args: dict[str, Any] = {
             "pipeline": "rag-context",
@@ -467,6 +506,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         content = _extract_content(result) if result else ""
         duration = monotonic_now() - t0
+        retrieval_fields = envelope_retrieval_fields(
+            retrieval_metadata_from_response(result),
+        )
+        scope_note = _unscoped_scope_note(retrieval_fields) if unscoped else None
 
         if not content:
             record(
@@ -478,7 +521,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 scope=scope,
                 prefix=prefixes,
             )
-            return {"error": "Pipeline returned empty results."}
+            return {
+                "error": "Pipeline returned empty results.",
+                **({"scope_note": scope_note} if scope_note else {}),
+                **retrieval_fields,
+            }
 
         logger.info(
             "rag_search: query=%r scope=%s prefix=%s → %d chars in %.1fs",
@@ -502,6 +549,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
             "content_length": len(content),
             "duration_s": round(duration, 3),
             "context": content,
+            **({"scope_note": scope_note} if scope_note else {}),
+            **retrieval_fields,
         }
 
     @mcp.tool(title="RAG: Answer (DEBUG ONLY)")
@@ -536,8 +585,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
         Returns:
             On success: {"status": "ok", "pipeline": "<pipeline used>",
                          "content_length": <int>, "duration_s": <float>,
-                         "answer": "<grounded answer>"}
-            On error:   {"error": "<message>"}
+                         "answer": "<grounded answer>",
+                         "retrieval": {resolved_scope, scope_confidence, ...}}
+            Unscoped calls also include ``scope_note`` when scope_source is
+            ``default_scope`` or ``classifier``.
+            On error:   {"error": "<message>"} (+ ``scope_note`` / ``retrieval`` when available)
         """
         pipeline = "rag-answer-deep" if deep else "rag-answer"
         pipeline_options: dict[str, Any] = {}
@@ -549,10 +601,12 @@ def register_rag_tools(mcp: FastMCP) -> None:
             return {"error": prefix_error}
         if scope_override is not None and prefixes is not None:
             return {"error": "scope and prefix are mutually exclusive; set only one."}
+        unscoped = scope_override is None and prefixes is None
         if scope_override is not None:
             pipeline_options["scope_override"] = scope_override
         if prefixes is not None:
             pipeline_options["rag_source_prefixes"] = prefixes
+        pipeline_options["include_retrieval_metadata"] = True
 
         t0 = monotonic_now()
         record_args: dict[str, Any] = {
@@ -596,6 +650,10 @@ def register_rag_tools(mcp: FastMCP) -> None:
 
         content = _extract_content(result) if result else ""
         duration = monotonic_now() - t0
+        retrieval_fields = envelope_retrieval_fields(
+            retrieval_metadata_from_response(result),
+        )
+        scope_note = _unscoped_scope_note(retrieval_fields) if unscoped else None
 
         if not content:
             record(
@@ -608,7 +666,11 @@ def register_rag_tools(mcp: FastMCP) -> None:
                 prefix=prefixes,
                 deep=deep,
             )
-            return {"error": "Pipeline returned empty results."}
+            return {
+                "error": "Pipeline returned empty results.",
+                **({"scope_note": scope_note} if scope_note else {}),
+                **retrieval_fields,
+            }
 
         logger.info(
             "rag_answer: question=%r pipeline=%s scope=%s prefix=%s → %d chars in %.1fs",
@@ -634,6 +696,8 @@ def register_rag_tools(mcp: FastMCP) -> None:
             "content_length": len(content),
             "duration_s": round(duration, 3),
             "answer": content,
+            **({"scope_note": scope_note} if scope_note else {}),
+            **retrieval_fields,
         }
 
     @mcp.tool(title="RAG: Search Preview")

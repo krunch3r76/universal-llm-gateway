@@ -61,7 +61,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id + capabilities; poll pipeline(op="result", execution_id=…)
 - role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus in messages (¬ expect Cortex/fs writes from skeptic)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
-- manual seat handoff → team_dispatch (op=handoff, role=web-consult|web-implement|cursor-consult|cursor-implement, packet_path=…, subject=…) — web-consult (push, consult); web-implement (push, bound implement → claude-web); cursor-consult (IDE); cursor-implement (bound → claude-cursor)
+- manual seat handoff → team_dispatch (op=handoff, seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — contract derived server-side (source_ref dispatch_lane → packet front-matter → default consult); claude-web → operator push, claude-cursor → IDE thread. (seat,contract) shorthands accepted: web-consult/web-implement → claude-web, cursor-consult/cursor-implement → claude-cursor.
 - claude-web handoff → operator push; claude-cursor handoff → open IDE thread
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
@@ -76,10 +76,10 @@ Full shapes: reference:claude-web-lead-seat-surface → claude-web-dispatch-deci
 # to prose — it is reference-density, recoverable from commit-and-git-scope_ws.mdc.
 _ENTITY_HIERARCHY_BLOCK = """\
 ## Entity granularity — seed the right type
-- **plan:** → **plan_phase:** children — ordered, numbered multi-phase roadmap.
-- **task:** → **todo:** children via `child_of`; umbrella `project:` via `related_to` — a bounded, phase-free arc of ≥2 leaf todos.
+- **plan:** → **plan_phase:** children — ordered **phases** ("phase" is reserved for plan: / plan_phase: / /implement-plan).
+- **task:** → **todo:** children via `child_of`; umbrella `project:` via `related_to` — bounded arc of ≥2 leaf todos ordered by **steps** (todo ordering / `depends_on`), NOT plan_phase.
 - **todo:** → steps inline in the body — one unit of work. Do NOT cram "PHASE 1/2/3" into a todo (that's a plan).
-Seed with generic primitives (`entity_create` + `relationship_create` `child_of`); refs: `agent-skills/entity-lifecycle-discipline.md` §task:X."""
+Seed with generic primitives (`entity_create` + `relationship_create` `child_of`); refs: `agent-skills/entity-lifecycle-discipline.md` §Vocabulary / §task:X."""
 
 _LIVENESS_BLOCK = """\
 ## Liveness — the running process is the source of truth (commit-decoupled)
@@ -105,8 +105,13 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Surface axis: team_dispatch handoff = role (web-consult/web-implement/cursor-consult/cursor-implement); team_dispatch generate = API role + optional model= override within allowed_models.
+Surface axis: team_dispatch handoff = seat (claude-web/claude-cursor) + packet_path|source_ref, contract derived server-side; the (seat,contract) shorthands (web-consult/web-implement/cursor-consult/cursor-implement) remain accepted. team_dispatch generate = API role + optional model= override within allowed_models.
 Codified bug/friction ticket (any initiator, any surface) = actionable defect needing a fix cycle, routed in TWO phases → Phase 1 investigate+decide (role=cursor-consult from IDE / role=web-consult from web) to trace root cause + produce a dense spec → Phase 2 execute (role=cursor-implement against the spec / web inline fix). DEFAULT: a filed bug → assume the investigation tier unless operator says mechanical-only or a dense implement spec already exists; do NOT make cursor-implement the first hop on a bug with open root cause/design (friction 13571 → thread 1377). friction() is the observation log only, NOT the ticket channel; an operator-named transport wins (never silently substitute agent_bus). Read fs(workspaces, universal-llm-gateway/docs/agent-guides/skills/friction-review.md) or skill § Codified bug reports."""
+
+_RAG_SCOPE_AWARENESS_BLOCK = """\
+## RAG scope-awareness — default search is auto-scoped, not corpus-wide
+`rag(op="search")` runs an LLM scope-classifier (default), then searches only the predicted scope(s) — ~68 scopes exist (`software_agents`, `workflows`, `agent_skills_research`, `temporal_provenance`, …).
+Before concluding "no prior art / nothing exists / not in the corpus": run `rag(op="list_scopes")` (or `coverage`) and re-search with an explicit `scope=` over the relevant domains. A single default search is necessary-but-not-sufficient for an absence claim."""
 
 
 def _render_server_primary_manifest_line() -> str:
@@ -191,6 +196,7 @@ def render_orientation_blocks(
         _render_server_primary_manifest_line(),
         f"\n{_DISPATCH_CONSULT_BLOCK_CLAUDE}",
         f"\n{_CONSULT_ROUTING_GATE}",
+        f"\n{_RAG_SCOPE_AWARENESS_BLOCK}",
         f"\n{_LIVENESS_BLOCK}",
         f"\n{_ENTITY_HIERARCHY_BLOCK}",
     ]

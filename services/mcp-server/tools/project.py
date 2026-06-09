@@ -319,7 +319,9 @@ def register_project_tools(mcp: FastMCP) -> None:
     """Register project directory tools on *mcp*."""
 
     @mcp.tool(title="Read Project File")
-    def read_project_file(path: str, binary: bool = False) -> dict[str, Any]:
+    def read_project_file(
+        path: str, binary: bool = False, offset: int = 0, limit: int = 0
+    ) -> dict[str, Any]:
         """Read a file from the project directory.
 
         Use the default text mode for source files, Markdown, and supported
@@ -346,7 +348,9 @@ def register_project_tools(mcp: FastMCP) -> None:
         if not src.is_file():
             raise ValueError(f"Path is not a file: {path!r}")
 
-        result = read_file_result(rel_path, root=_PROJECT_ROOT, binary=binary)
+        result = read_file_result(
+            rel_path, root=_PROJECT_ROOT, binary=binary, offset=offset, limit=limit
+        )
         result["path"] = rel_path
         if rel_path != path.lstrip("/"):
             result["resolved_from"] = path

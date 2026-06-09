@@ -39,7 +39,7 @@ from .status_trait_read import apply_option_c_read_projection
 
 logger = get_logger("cortex-api.entity_read")
 
-ASSERTION_JSON_FIELDS = frozenset({"evidence_uris"})
+ASSERTION_JSON_FIELDS = frozenset({"evidence_uris", "attributes"})
 ENTITY_JSON_FIELDS = frozenset({"aliases", "attributes"})
 
 

@@ -310,6 +310,8 @@ def _op_session_close(
     expected_derived_handoff_prompt_sha256: str | None = None,
     expected_source_file_sha256: str | None = None,
     assistant_label: str | None = None,
+    source_ref: str | None = None,
+    source_ref_derivation: str | None = None,
     defer_gaps: dict[str, str] | None = None,
     dry_run: bool = False,
     **_: object,
@@ -452,6 +454,8 @@ def _op_session_close(
         ),
         ("expected_source_file_sha256", expected_source_file_sha256),
         ("assistant_label", assistant_label),
+        ("source_ref", source_ref),
+        ("source_ref_derivation", source_ref_derivation),
     ]:
         if val is not None:
             body[key] = val

@@ -234,9 +234,13 @@ profiles:
       - session-close-pointer-subagent
 
 
-# Role dispatch policy (handoff roster: {platform}-{contract}):
-#   Web consult: team_dispatch(op="handoff", role="web-consult") → claude-web + operator push.
-#   Cursor consult: team_dispatch(op="handoff", role="cursor-consult") → claude-cursor IDE.
+# Role dispatch policy — permanent (seat, contract) shorthands (option b):
+#   Primary handoff surface: team_dispatch(op="handoff", seat="claude-web"|"claude-cursor", …).
+#   Contract is derived server-side (source_ref dispatch_lane → packet front-matter → default consult).
+#   The four roster slugs below remain accepted shorthands encoding (seat, contract):
+#   web-consult / web-implement → claude-web; cursor-consult / cursor-implement → claude-cursor.
+#   Web consult shorthand: team_dispatch(op="handoff", role="web-consult") → claude-web + operator push.
+#   Cursor consult shorthand: team_dispatch(op="handoff", role="cursor-consult") → claude-cursor IDE.
 #   Bound implement (Cursor): team_dispatch(op="handoff", role="cursor-implement") →
 #     claude-cursor from any dispatching seat; packet + acceptance criteria required.
 #   Bound implement (Web): team_dispatch(op="handoff", role="web-implement") →

@@ -9,6 +9,7 @@ from typing import Any
 
 from mcp_events import record
 
+from ._line_range import apply_line_range
 from ._pdf_read import (
     PDF_LAYOUT_MAX_BYTES,
     PDF_METHOD_LAYOUT,
@@ -237,8 +238,16 @@ def read_file_result(
     root: Path = FILES_ROOT,
     *,
     binary: bool = False,
+    offset: int = 0,
+    limit: int = 0,
 ) -> dict[str, Any]:
     """Read one sandboxed file and return the standard MCP payload shape."""
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    range_requested = offset > 0 or limit > 0
+
     src = resolve_files_path(path, root=root)
     if not src.exists():
         raise FileNotFoundError(f"File not found: {path!r}")
@@ -246,7 +255,10 @@ def read_file_result(
         raise ValueError(f"Path is not a file: {path!r}")
 
     if binary:
-        return build_binary_read_result(src)
+        result = build_binary_read_result(src)
+        if range_requested:
+            result["line_range_applied"] = False
+        return result
 
     suffix = src.suffix.lower()
 
@@ -265,6 +277,8 @@ def read_file_result(
         auto_result = None
 
     if auto_result is not None:
+        if range_requested:
+            auto_result["line_range_applied"] = False
         if auto_result.get("mime_type", "").startswith("image/"):
             auto_result["_next"] = (
                 f'For text extraction: dispatch(tool="extract_document", '
@@ -341,6 +355,10 @@ def read_file_result(
                 f'arguments=\'{{"path": "{rel_path}"}}\') '
                 f"to OCR and persist as a reusable markdown sidecar."
             )
+    if range_requested:
+        content, range_meta = apply_line_range(content, offset, limit)
+        result["content"] = content
+        result.update(range_meta)
     return result
 
 

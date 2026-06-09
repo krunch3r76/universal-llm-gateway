@@ -21,8 +21,7 @@ from systems.federation.common.middleware import (
 )
 from systems.frontier_consult.route import (
     frontier_router as frontier_consult_frontier_router,
-)
-from systems.frontier_consult.route import (
+    implement_router as frontier_consult_implement_router,
     team_router as frontier_consult_team_router,
 )
 
@@ -493,6 +492,7 @@ app.include_router(v1.router)  # /v1/* endpoints (OpenAI API compatible)
 app.include_router(api.router)  # /api/v1/* endpoints (administrative)
 app.include_router(frontier_consult_team_router)  # /api/v1/team/generate
 app.include_router(frontier_consult_frontier_router)  # /api/v1/frontier/generate
+app.include_router(frontier_consult_implement_router)  # /api/v1/implement/closeout
 app.include_router(
     cloud_passthrough.router
 )  # /api/models, /api/select, /api/refresh (cloud passthrough)

@@ -2349,17 +2349,20 @@ tools:
     tool: team_dispatch_handoff
     substrate_qualified: user-vortex__team_dispatch_handoff
   fol_descriptor: |-
-    ∀ role ∈ HandoffRole ∧ (packet_path ∈ WorkspacesPath ∨ source_ref ∈ SourceRef) ∧ subject ∈ Str:
-      team_dispatch(op=handoff, role, packet_path|source_ref, subject) ⟹
-        thread_id ∈ AgentBus ∧ resolved_model = seat(role) ∧ to_agent = seat(role)
-        ∧ handoff_contract = contract(role) ∧ result_handle.kind = agent_bus_thread
+    ∀ seat ∈ HandoffSeat ∧ (packet_path ∈ WorkspacesPath ∨ source_ref ∈ SourceRef) ∧ subject ∈ Str:
+      team_dispatch(op=handoff, seat, packet_path|source_ref, subject) ⟹
+        thread_id ∈ AgentBus ∧ resolved_model = seat(seat) ∧ to_agent = seat(seat)
+        ∧ handoff_contract = derive(source_ref, packet_path, role) ∧ result_handle.kind = agent_bus_thread
         ∧ ¬execution_id.
     At least one of packet_path | source_ref; source_ref triggers normalize→materialize and the
     confirmed-decision gate (source_ref path only). Stargate owns resolution — relay pass-through only.
-    HandoffRole = web-consult | cursor-consult | cursor-implement.
-    web-consult → claude-web | cursor-consult → claude-cursor | cursor-implement → claude-cursor (implement contract).
-    ¬model on handoff. ¬handoff_contract on request (derived from role).
-    seat aliases (claude-web, web, …) → 422 handoff_role_invalid; use roster slug.
+    HandoffSeat = claude-web | claude-cursor. Contract derived server-side (source_ref dispatch_lane →
+    packet front-matter contract: → role default_contract → consult).
+    The {platform}-{contract} shorthands (web-consult, web-implement, cursor-consult,
+    cursor-implement) remain accepted and encode (seat, contract).
+    handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor; investigator → grok-web (legacy).
+    Operator-only overrides (hidden from default agent guidance): role=, op=, contract=.
+    ¬model on handoff. ¬handoff_contract on request (derived server-side).
     API roles (reviewer, …) → 422 handoff_requires_web_seat.
     Poll via agent_bus(tool=wait, …) from poll_hint — not pipeline(op=result).
   json_schema:

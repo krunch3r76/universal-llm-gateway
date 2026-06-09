@@ -36,6 +36,7 @@ from typing import Any
 
 from _derive import get_claude_manifest
 from fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from mcp_events import record
 from tool_search_manifest import (
     ManifestEntry,
@@ -79,7 +80,10 @@ def register_tool_search_tool(
     global _MANIFEST
     _MANIFEST = build_manifest_from_metadata(overflow_metadata)
 
-    @mcp.tool(title="Tool Search (Discovery)")
+    @mcp.tool(
+        title="Tool Search (Discovery)",
+        annotations=ToolAnnotations(readOnlyHint=True),
+    )
     def tool_search(query: str, limit: int = 5) -> dict[str, Any]:
         """Search the overflow tool catalog (tools pruned from ``tools/list``).
 

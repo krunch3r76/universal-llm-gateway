@@ -128,6 +128,12 @@ def _query_event_service(body: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Event service query failed: {exc}"}
 
 
+def _pipeline_metadata_from_response(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Return Stargate ``pipeline`` block when present (e.g. ``retrieval`` metadata)."""
+    pipeline = data.get("pipeline")
+    return pipeline if isinstance(pipeline, dict) and pipeline else None
+
+
 def _validate_error(pipeline_id: str, message: str) -> dict[str, Any]:
     """Build a consistent error shape for validate-op failures."""
     return {
@@ -183,6 +189,9 @@ def _pipeline_run(
             result["execution_id"] = tp_exec_id
         if "usage" in data:
             result["usage"] = data["usage"]
+        pipeline_meta = _pipeline_metadata_from_response(data)
+        if pipeline_meta is not None:
+            result["pipeline"] = pipeline_meta
 
         record(
             "mcp.pipeline.run.completed",
@@ -443,10 +452,12 @@ def register_pipeline_tools(mcp: FastMCP) -> None:
         Ops:
 
         - ``"run"`` — sync block until pipeline completes. Returns
-          ``{content, model, duration_s, execution_id?, usage?}``.
-          Required: ``pipeline_id``, ``messages``. Optional: ``options``,
-          ``timeout`` (auto-detected from pipeline config when omitted).
-          Hot-reload: YAML/prompts/models reload on file change.
+          ``{content, model, duration_s, execution_id?, usage?, pipeline?}``.
+          ``pipeline`` mirrors Stargate when present (e.g. ``retrieval`` when
+          ``options.include_retrieval_metadata`` is set). Required:
+          ``pipeline_id``, ``messages``. Optional: ``options``, ``timeout``
+          (auto-detected from pipeline config when omitted). Hot-reload:
+          YAML/prompts/models reload on file change.
 
         - ``"async"`` — async dispatch; returns ``execution_id`` immediately.
           Required: ``pipeline_id``, ``messages``. Optional: ``options``,

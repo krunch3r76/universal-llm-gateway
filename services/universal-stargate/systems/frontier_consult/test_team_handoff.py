@@ -22,9 +22,11 @@ from pydantic import ValidationError
 from .admission import (
     FrontierEndpointError,
     resolve_handoff_contract,
+    resolve_handoff_seat,
     resolve_handoff_target,
     resolve_web_handoff_seat,
 )
+from .contract_derivation import derive_contract
 from .handoff import (
     _slug_from_subject,
     build_pointer_body,
@@ -1651,3 +1653,174 @@ def test_phase2_hash_mismatch(
     )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "implement_spec_hash_mismatch"
+
+
+# ---------------------------------------------------------------------------
+# V2 Step 1 — F1 contract derivation + seat admission
+# ---------------------------------------------------------------------------
+
+_V2_REL = "universal-llm-gateway/tmp/reviews/v2-step1-packet.md"
+
+
+class _V2LaneCortex:
+    def __init__(self, *, dispatch_lane: str) -> None:
+        self._lane = dispatch_lane
+
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        return {
+            "id": entity_id,
+            "attributes": {"dispatch_lane": self._lane},
+        }
+
+
+def test_v2_seat_claude_cursor_admits(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """seat=claude-cursor admits without roster role slug."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-v2-seat"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "claude-cursor",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["to_agent"] == "claude-cursor"
+    assert body["handoff_contract"] == "consult"
+    assert body["handoff_contract_source"] == "default"
+
+
+def test_v2_f1_acceptance_shape_does_not_set_contract(tmp_path: Path) -> None:
+    """Packet with acceptance criteria but consult lane → consult, not implement."""
+    _write_packet(tmp_path, _V2_REL, _CONFORMANT_PACKET)
+    cortex = _V2LaneCortex(dispatch_lane="web-implement-packet")
+    contract, source = derive_contract(
+        source_ref="todo:team-dispatch-surface-v2",
+        packet_path=_V2_REL,
+        role=None,
+        cortex=cortex,
+        workspaces_root=tmp_path,
+    )
+    assert contract == "consult"
+    assert source == "source_ref_dispatch_lane"
+
+
+def test_v2_web_implement_packet_lane_consult_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _V2_REL, _CONFORMANT_PACKET)
+    _patch_phase2_reader(
+        monkeypatch, _V2LaneCortex(dispatch_lane="web-implement-packet")
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _noop_decision,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.resolve_source_ref_to_packet",
+        lambda source_ref, **kwargs: BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=_V2_REL,
+            implement_spec_hash="abc123",
+        ),
+    )
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-v2-wip"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "claude-cursor",
+            "source_ref": "todo:team-dispatch-surface-v2",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["handoff_contract"] == "consult"
+    assert body["handoff_contract_source"] == "source_ref_dispatch_lane"
+
+
+def test_v2_cursor_implement_lane_implement_and_acceptance_lint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    packet_no_acceptance = _CONFORMANT_PACKET.replace(
+        "## Acceptance criteria\n1. It works.", "Just do the work."
+    )
+    _write_packet(tmp_path, _V2_REL, packet_no_acceptance)
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch, _V2LaneCortex(dispatch_lane="cursor-implement"))
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _noop_decision,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.resolve_source_ref_to_packet",
+        lambda source_ref, **kwargs: BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=_V2_REL,
+            implement_spec_hash="abc123",
+        ),
+    )
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-v2-impl"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "claude-cursor",
+            "source_ref": "todo:team-dispatch-surface-v2",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "handoff_packet_missing_acceptance"
+
+
+def test_v2_resolve_handoff_seat_alias() -> None:
+    to_agent, _f, platform, resolved = resolve_handoff_seat(
+        seat="claude-web",
+        request_id="req-v2-seat",
+    )
+    assert to_agent == "claude-web"
+    assert resolved == "claude-web"
+    assert platform == "web"

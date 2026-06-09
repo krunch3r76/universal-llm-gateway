@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from universal_logging import get_logger
 
 from .core.execution.map_reduce import MapOutputCollection
+from .core.executor.output_resolution import extract_retrieval_metadata
 from .core.handlers.protocol import StepOutput
 from .schemas import PipelineSpec
 
@@ -56,6 +57,8 @@ class ResponseBuilder:
         step_outputs: dict[str, str],
         backtranslation: dict[str, Any] | None,
         execution_order: list[str] | None = None,
+        *,
+        steps: list[Any] | None = None,
     ) -> Response:
         """
         Build strictly OpenAI-compliant response from pipeline execution result.
@@ -230,6 +233,11 @@ class ResponseBuilder:
             if "pipeline" not in body:
                 body["pipeline"] = {}
             body["pipeline"]["step_stats"] = step_stats
+
+        if pipeline_context.options.get("include_retrieval_metadata") and steps:
+            retrieval = extract_retrieval_metadata(pipeline_context, steps)
+            if retrieval:
+                body.setdefault("pipeline", {})["retrieval"] = retrieval
 
         return Response(
             content=json.dumps(body),

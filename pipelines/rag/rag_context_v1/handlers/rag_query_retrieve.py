@@ -98,6 +98,37 @@ from urllib.parse import urlparse
 from systems.pipeline.core.constants import (
     RAG_NO_RESULTS_SENTINEL as _NO_RESULTS_SENTINEL,
 )
+
+_SCOPE_SOURCE_PREFIX_OVERRIDE = "prefix_override"
+_SCOPE_SOURCE_USER_OVERRIDE = "user_override"
+_SCOPE_SOURCE_DEFAULT_SCOPE = "default_scope"
+_SCOPE_SOURCE_CLASSIFIER = "classifier"
+
+
+def _scope_value_from_rewrite_data(rewrite_data: dict[str, Any]) -> str | list[str]:
+    scopes = rewrite_data.get("scopes", ["unknown"])
+    if not isinstance(scopes, list) or not scopes:
+        return "unknown"
+    if len(scopes) == 1:
+        return scopes[0]
+    return scopes
+
+
+def _scope_source_for_retrieval(
+    *,
+    has_scope_override: bool,
+    has_prefix_override: bool,
+    rewrite_enabled: bool,
+) -> str:
+    if has_prefix_override:
+        return _SCOPE_SOURCE_PREFIX_OVERRIDE
+    if has_scope_override:
+        return _SCOPE_SOURCE_USER_OVERRIDE
+    if not rewrite_enabled:
+        return _SCOPE_SOURCE_DEFAULT_SCOPE
+    return _SCOPE_SOURCE_CLASSIFIER
+
+
 from systems.pipeline.core.constants import (
     RAG_NO_RETRIEVAL_SENTINEL as _NO_RETRIEVAL_SENTINEL,
 )
@@ -446,7 +477,17 @@ class RagMultiRetrieveHandler(BaseHandler):
             )
             return StepOutput(
                 raw=_NO_RETRIEVAL_SENTINEL,
-                json={"chunks_found": 0, "queries_executed": 0, "chunks": []},
+                json={
+                    "chunks_found": 0,
+                    "queries_executed": 0,
+                    "chunks": [],
+                    "scope": _scope_value_from_rewrite_data(rewrite_data),
+                    "scope_confidence": float(
+                        rewrite_data.get("scope_confidence", 1.0)
+                    ),
+                    "scope_rejected": False,
+                    "scope_source": _SCOPE_SOURCE_CLASSIFIER,
+                },
             )
 
         out_of_scope_reason: str = rewrite_data.get("out_of_scope_reason", "")
@@ -478,6 +519,12 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "out_of_scope": True,
                     "out_of_scope_reason": out_of_scope_reason,
                     "chunks": [],
+                    "scope": _scope_value_from_rewrite_data(rewrite_data),
+                    "scope_confidence": float(
+                        rewrite_data.get("scope_confidence", 1.0)
+                    ),
+                    "scope_rejected": False,
+                    "scope_source": _SCOPE_SOURCE_CLASSIFIER,
                 },
             )
 
@@ -548,9 +595,20 @@ class RagMultiRetrieveHandler(BaseHandler):
         source_prefixes: list[str] | None = None
         scope: str | list[str]
         search_scope: str | list[str] | None
-        if isinstance(explicit_prefixes_raw, list) and all(
+        has_prefix_override = isinstance(explicit_prefixes_raw, list) and all(
             isinstance(x, str) for x in explicit_prefixes_raw
-        ):
+        )
+        scope_override_raw = effective.get("scope_override", "")
+        has_scope_override = bool(
+            (isinstance(scope_override_raw, list) and len(scope_override_raw) > 0)
+            or (isinstance(scope_override_raw, str) and scope_override_raw.strip())
+        )
+        scope_source = _scope_source_for_retrieval(
+            has_scope_override=has_scope_override,
+            has_prefix_override=has_prefix_override,
+            rewrite_enabled=rewrite_enabled,
+        )
+        if has_prefix_override:
             source_prefixes = explicit_prefixes_raw
             scope = "custom"
             search_scope = None
@@ -562,7 +620,6 @@ class RagMultiRetrieveHandler(BaseHandler):
                     step.id,
                 )
             catalog = await fetch_valid_scopes(base_url)
-            scope_override_raw = effective.get("scope_override", "")
 
             if isinstance(scope_override_raw, list) and len(scope_override_raw) > 0:
                 scope = scope_override_raw
@@ -573,6 +630,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                         "scope_catalog_unavailable",
                         scope,
                         "RAG /scopes unreachable; fail-closed with explicit list override",
+                        scope_source=scope_source,
                     )
                 invalid = [s for s in scope if s not in catalog]
                 if invalid:
@@ -582,6 +640,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                         "invalid_scope_override",
                         scope,
                         f"Unknown scope(s): {invalid}",
+                        scope_source=scope_source,
                     )
                 source_prefixes = None
                 search_scope = scope
@@ -596,6 +655,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                         "scope_catalog_unavailable",
                         scope,
                         "RAG /scopes unreachable; fail-closed with explicit string override",
+                        scope_source=scope_source,
                     )
                 if scope not in catalog:
                     return self._scope_rejection_output(
@@ -604,6 +664,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                         "invalid_scope_override",
                         scope,
                         f"Unknown scope: {scope!r}",
+                        scope_source=scope_source,
                     )
                 source_prefixes = None
                 search_scope = scope
@@ -635,6 +696,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                         "scope_catalog_unavailable",
                         resolved_scopes,
                         "RAG /scopes unreachable; fail-closed",
+                        scope_source=scope_source,
                     )
                 invalid = [s for s in resolved_scopes if s not in catalog]
                 if invalid:
@@ -646,6 +708,7 @@ class RagMultiRetrieveHandler(BaseHandler):
                             "invalid_predicted_scope",
                             resolved_scopes,
                             f"No valid predicted scopes (invalid: {invalid})",
+                            scope_source=scope_source,
                         )
                     logger.warning(
                         "Step '%s': dropping invalid predicted scopes %s, keeping %s",
@@ -662,6 +725,8 @@ class RagMultiRetrieveHandler(BaseHandler):
                         "scope_confidence_below_threshold",
                         resolved_scopes,
                         f"confidence={scope_confidence:.2f} < threshold={confidence_threshold:.2f}",
+                        scope_confidence=scope_confidence,
+                        scope_source=scope_source,
                     )
                 # Extend with synthetic scope if provided and not already predicted.
                 if (
@@ -1100,6 +1165,10 @@ class RagMultiRetrieveHandler(BaseHandler):
                     "chunks_found": 0,
                     "queries_executed": len(queries),
                     "chunks": [],
+                    "scope": scope,
+                    "scope_confidence": float(
+                        rewrite_data.get("scope_confidence", 1.0)
+                    ),
                 },
             )
 
@@ -1551,6 +1620,8 @@ class RagMultiRetrieveHandler(BaseHandler):
                 "queries_succeeded": len(successful),
                 "raw_chunks_total": total_raw,
                 "scope": scope,
+                "scope_confidence": float(rewrite_data.get("scope_confidence", 1.0)),
+                "scope_source": scope_source,
                 "rewritten_queries": queries,
                 "facet_pool_queries": [q for _, q in facet_pool] or None,
                 "facets": computed_facets or None,
@@ -1598,6 +1669,9 @@ class RagMultiRetrieveHandler(BaseHandler):
         reason: str,
         scope: str | list[str],
         details: str,
+        *,
+        scope_confidence: float | None = None,
+        scope_source: str | None = None,
     ) -> StepOutput:
         """Emit scope rejection event and return fail-closed no-results output.
 
@@ -1633,15 +1707,21 @@ class RagMultiRetrieveHandler(BaseHandler):
                 details=details,
             ),
         )
+        rejection_json: dict[str, Any] = {
+            "chunks_found": 0,
+            "queries_executed": 0,
+            "chunks": [],
+            "scope": scope,
+            "scope_rejected": True,
+            "scope_rejection_reason": reason,
+        }
+        if scope_confidence is not None:
+            rejection_json["scope_confidence"] = scope_confidence
+        if scope_source is not None:
+            rejection_json["scope_source"] = scope_source
         return StepOutput(
             raw=_NO_RESULTS_SENTINEL,
-            json={
-                "chunks_found": 0,
-                "queries_executed": 0,
-                "chunks": [],
-                "scope_rejected": True,
-                "scope_rejection_reason": reason,
-            },
+            json=rejection_json,
         )
 
     @override

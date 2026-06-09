@@ -377,17 +377,66 @@ muddled average that degrades the primary retrieval signal.
 
 ### Returns
 
+On success:
+
 ```
 {"status": "ok", "pipeline": "rag-context", "content_length": <int>,
- "duration_s": <float>, "context": "<assembled context with source labels>"}
+ "duration_s": <float>, "context": "<assembled context with source labels>",
+ "retrieval": {
+   "resolved_scope": "...",
+   "scope_confidence": 1.0,
+   "chunks_found": <int>,
+   "scope_rejected": false,
+   "scope_source": "default_scope" | "classifier" | "user_override" | "prefix_override",
+   "auto_classified": false,
+   "scope_key": "...",
+   ...
+ }}
 ```
-On error: `{"error": "<message>"}`
 
+- **`retrieval`**: compact scope metadata from the rag-context retrieve step.
+  `auto_classified` is `true` only when `scope_source=classifier` (LLM scope
+  prediction ran). The MCP primary path uses the direct pipeline
+  (`scope_source=default_scope` for unscoped calls).
+- **`scope_note`**: present on unscoped success/empty paths when
+  `scope_source` is `default_scope` or `classifier` (static advisory).
+
+On error: `{"error": "<message>"}` plus optional `scope_note` and `retrieval`
+when the pipeline completed with metadata before failing content assembly.
+
+### Direct pipeline callers
+
+When calling Stargate `/v1/chat/completions` with `model=rag-context`, pass
+`pipeline_options.include_retrieval_metadata: true` to receive the same fields
+under top-level `pipeline.retrieval` (MCP `rag_search` maps this to
+top-level `retrieval`).
+
+## rag_answer
+
+**DEBUG ONLY** — buried MCP surface for exercising the `rag-answer` /
+`rag-answer-deep` pipelines. Agents must use `rag_search` for retrieval work.
+
+Delegates retrieval to `rag-context` via an internal `pipeline_call_v1` step,
+then runs relevance gating and answer generation.
 
 ### Args
 
 | Arg | Type | Description |
 |---|---|---|
+| `question` | str | Natural language question — REQUIRED |
+| `scope` | str\|list\|None | Same semantics as `rag_search` |
+| `prefix` | str\|list\|None | Source path prefix; mutually exclusive with `scope` |
+| `deep` | bool | Use `rag-answer-deep` iterative retrieval (default false) |
+
+### Returns
+
+On success: same `retrieval` + optional `scope_note` shape as `rag_search`,
+with grounded text in `answer` instead of raw `context`:
+
+```
+{"status": "ok", "pipeline": "rag-answer", "content_length": <int>,
+ "duration_s": <float>, "answer": "<grounded answer>", "retrieval": {...}}
+```
 
 ## cortex
 
@@ -586,7 +635,7 @@ timeout is auto-detected from the pipeline's configured `timeout_seconds`.
 
 | Op | Required | Returns |
 |---|---|---|
-| `run` | `pipeline_id`, `messages` | `{content, model, duration_s, execution_id?, usage?}` — blocks until pipeline completes |
+| `run` | `pipeline_id`, `messages` | `{content, model, duration_s, execution_id?, usage?, pipeline?}` — blocks until pipeline completes; `pipeline` mirrors Stargate when present (e.g. `retrieval` when `options.include_retrieval_metadata=true`) |
 | `async` | `pipeline_id`, `messages` | `{execution_id, pipeline, started_at, status}` — fire-and-forget; use for calls expected to exceed the MCP 300s read-timeout ceiling |
 | `result` | `execution_id` | Tracker record: `{execution_id, pipeline, status, started_at, completed_at, result, error}` |
 | `validate` | `pipeline_id` | `{valid, pipeline, steps, models, domain, errors}` — no inference compute consumed |
@@ -596,7 +645,8 @@ timeout is auto-detected from the pipeline's configured `timeout_seconds`.
 ```
 pipeline(op="validate", pipeline_id="gatherer-dispatch")
 pipeline(op="run", pipeline_id="rag-context",
-         messages=[{"role":"user","content":"..."}])
+         messages=[{"role":"user","content":"..."}],
+         options={"include_retrieval_metadata": true})
 pipeline(op="async", pipeline_id="gatherer-dispatch",
          messages=[{"role":"user","content":"..."}])
 pipeline(op="result", execution_id="<id>", wait_seconds=60)

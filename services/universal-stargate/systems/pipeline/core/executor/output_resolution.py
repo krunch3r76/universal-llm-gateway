@@ -148,6 +148,63 @@ def get_final_result(
     return ""
 
 
+def extract_retrieval_metadata(
+    context: PipelineContext,
+    steps: list[StepConfig],
+) -> dict[str, Any] | None:
+    """Compact retrieval scope metadata from the rag_multi_retrieve step.
+
+    Surfaces resolved scope, confidence, and chunk count for MCP consumers
+    when ``include_retrieval_metadata`` is set in pipeline options.
+    """
+    retrieve_step_id: str | None = None
+    pipeline_call_step_id: str | None = None
+    for step in steps:
+        if step.type == "rag_multi_retrieve_v1":
+            retrieve_step_id = step.id
+            break
+        if step.type == "pipeline_call_v1" and pipeline_call_step_id is None:
+            pipeline_call_step_id = step.id
+
+    if retrieve_step_id is not None:
+        output = context.get_output(retrieve_step_id)
+    elif pipeline_call_step_id is not None:
+        output = context.get_output(pipeline_call_step_id)
+        if isinstance(output, StepOutput) and isinstance(output.json, dict):
+            nested = output.json.get("retrieval")
+            if isinstance(nested, dict) and nested:
+                return dict(nested)
+        return None
+    else:
+        return None
+
+    if not isinstance(output, StepOutput) or not isinstance(output.json, dict):
+        return None
+
+    step_json = output.json
+    effective = step_json.get("effective_params")
+    scope_key = effective.get("scope_key") if isinstance(effective, dict) else None
+
+    metadata: dict[str, Any] = {
+        "resolved_scope": step_json.get("scope"),
+        "chunks_found": step_json.get("chunks_found", 0),
+        "scope_rejected": bool(step_json.get("scope_rejected", False)),
+    }
+    if "scope_confidence" in step_json:
+        metadata["scope_confidence"] = step_json["scope_confidence"]
+    if scope_key is not None:
+        metadata["scope_key"] = scope_key
+    rejection_reason = step_json.get("scope_rejection_reason")
+    if isinstance(rejection_reason, str) and rejection_reason:
+        metadata["scope_rejection_reason"] = rejection_reason
+    scope_source = step_json.get("scope_source")
+    if isinstance(scope_source, str) and scope_source:
+        metadata["scope_source"] = scope_source
+    if metadata["resolved_scope"] is None and not metadata["scope_rejected"]:
+        return None
+    return metadata
+
+
 def extract_backtranslation_data(
     steps: list[StepConfig],
     context: PipelineContext,

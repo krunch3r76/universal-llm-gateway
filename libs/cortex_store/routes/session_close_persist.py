@@ -25,6 +25,10 @@ from ..session_handoff import (
     handoff_post_close_findings,
     resolve_handoff_for_write,
 )
+from ..source_ref_resolution import (
+    resolve_source_ref_for_close,
+    source_ref_depth_advisory,
+)
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 from ..transcript_assembly import compute_text_content_hash
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
@@ -158,6 +162,11 @@ def persist_session_close(
     )
     handoff_prompt = handoff_resolution.handoff_prompt
     handoff_provenance = handoff_resolution.provenance
+    source_ref_resolution = resolve_source_ref_for_close(
+        body.source_ref,
+        derivation=body.source_ref_derivation,
+        captured_at=ctx.now,
+    )
 
     enforce_handoff_transcript_anchor(
         session_id=body.session_id,
@@ -219,6 +228,11 @@ def persist_session_close(
                 tx_attributes["handoff_prompt"] = handoff_prompt
             if handoff_provenance is not None:
                 tx_attributes["handoff_provenance"] = handoff_provenance
+            if source_ref_resolution is not None:
+                tx_attributes["source_ref"] = source_ref_resolution.stamped_ref
+                tx_attributes["source_ref_provenance"] = (
+                    source_ref_resolution.provenance
+                )
             tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 ctx.transcript_entity_id,
@@ -242,11 +256,15 @@ def persist_session_close(
                 "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",
                 (tx_attributes_json, ctx.now, ctx.transcript_entity_id),
             )
+        journal_source_ref = (
+            source_ref_resolution.stamped_ref if source_ref_resolution else None
+        )
         cur = conn.execute(
             "INSERT INTO session_journals "
             "(timestamp, agent, summary, domains, decisions, open_items, "
-            "entity_ids, file_path, session_id, prior_session_id, handoff_prompt) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "entity_ids, file_path, session_id, prior_session_id, handoff_prompt, "
+            "source_ref) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 ctx.now,
                 body.agent,
@@ -259,6 +277,7 @@ def persist_session_close(
                 body.session_id,
                 body.prior_session_id,
                 handoff_prompt,
+                journal_source_ref,
             ),
         )
         journal_row_id = cur.lastrowid or 0
@@ -281,6 +300,12 @@ def persist_session_close(
         ]
         if ctx.heading_warning is not None:
             findings = [*findings, ctx.heading_warning]
+        depth_advisory = source_ref_depth_advisory(
+            transcript_depth=body.transcript_depth,
+            has_source_ref=source_ref_resolution is not None,
+        )
+        if depth_advisory is not None:
+            findings = [*findings, depth_advisory]
         audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()
