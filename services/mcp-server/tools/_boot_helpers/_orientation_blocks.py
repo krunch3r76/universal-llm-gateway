@@ -106,7 +106,7 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Spec tier invariant: reasoning upstream (web-consult / cursor-consult / Opus) authors dispatch-ready specs (tasks/specs/{slug}.md + todo seed); mechanical downstream (cursor-implement / Composer) executes them — never the reverse.
+Executor-tier policy (R1/R2/R3 — spec authorship, Composer acceptance, widened-discovery): `consult-routing.md` § Executor tier & handoff mechanics → Canonical routing policy (¬ restate here).
 Codified bug ticket = TWO phases (investigate→dense spec, then execute) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\

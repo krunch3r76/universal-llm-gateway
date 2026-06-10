@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Any
 
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
+from implement_admission.drift_gates import check_packet_hash_drift
 from implement_admission.spec import ReadinessState, implement_spec_hash
 from admission_common.tree_probe import probe_working_tree
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
@@ -97,6 +99,32 @@ def _read_frontmatter_implement_spec_hash(text: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return f"sha256:{digest}"
+
+
+def _enforce_gate_b_or_warn(
+    *,
+    request_id: str,
+    spec: Any,
+    packet_sha256: str | None,
+) -> None:
+    gate_b = check_packet_hash_drift(spec, on_disk_sha256=packet_sha256)
+    if gate_b.action != "reject":
+        return
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="packet_path",
+        reason=(
+            "packet hash drift detected: stored "
+            f"{gate_b.stored!r} vs recomputed {gate_b.recomputed!r}"
+        ),
+        status_code=422,
+        code="handoff_packet_hash_drift",
+    )
+
+
 def verify_both_present_hash(
     *,
     request_id: str,
@@ -146,6 +174,11 @@ def verify_both_present_hash(
             status_code=422,
             code="implement_spec_hash_mismatch",
         )
+    _enforce_gate_b_or_warn(
+        request_id=request_id,
+        spec=spec,
+        packet_sha256=_sha256_file(candidate),
+    )
     return expected
 
 
@@ -156,6 +189,7 @@ def resolve_source_ref_to_packet(
     workspaces_root: Path | None = None,
     enable_dirty_tree_risk: bool = False,
     cwd: str | None = None,
+    request_id: str | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
@@ -181,6 +215,14 @@ def resolve_source_ref_to_packet(
     mp = materialize(spec, out_dir=out_dir)
     rel_path = _path_relative_to_workspaces(Path(mp.path), root)
     spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
+    if request_id is not None:
+        _enforce_gate_b_or_warn(
+            request_id=request_id,
+            spec=spec,
+            packet_sha256=mp.packet_sha256,
+        )
+    else:
+        check_packet_hash_drift(spec, on_disk_sha256=mp.packet_sha256)
     return BridgeResult(
         gated=False,
         source_ref=source_ref,

@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from fastapi import HTTPException, status
 
 from .db import query
+from .trait_vocabulary import NON_LIVE_LIFECYCLE as _NON_LIVE_LIFECYCLE
 
-# Lifecycle values that exclude an entity from the alias index.
-# NULL lifecycle is the live default (Option-C trait backfill) and is treated as active.
-_NON_LIVE_LIFECYCLE = frozenset({"merged", "deprecated", "reaped"})
-
+# ``_NON_LIVE_LIFECYCLE`` (imported above) is the canonical non-live lifecycle
+# set; a NULL lifecycle is the live default (Option-C trait backfill) and is
+# treated as active. The SQL mirror below is table-qualified for the
+# alias-index JOIN context.
 _LIVE_LIFECYCLE_SQL = (
     "(entities.lifecycle IS NULL"
     " OR entities.lifecycle NOT IN ('merged','deprecated','reaped'))"

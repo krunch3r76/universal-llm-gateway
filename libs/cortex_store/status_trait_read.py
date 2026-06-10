@@ -10,12 +10,13 @@ from __future__ import annotations
 import sqlite3
 
 from .trait_vocabulary import (
-    ADOPTION_VALUES,
     CONFIDENCE_BAND_VALUES,
     LIFECYCLE_VALUES,
+    NON_LIVE_LIFECYCLE,
 )
 
-_LIFECYCLE_LEGACY_STATUS = frozenset({"merged", "deprecated", "reaped"})
+# Canonical non-live lifecycle set (alias preserves the local name used below).
+_LIFECYCLE_LEGACY_STATUS = NON_LIVE_LIFECYCLE
 
 
 def entity_has_trait_columns(conn: sqlite3.Connection) -> bool:

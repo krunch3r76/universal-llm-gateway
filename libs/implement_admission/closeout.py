@@ -149,6 +149,13 @@ def run_adapters(closeout: ImplementCloseout, source: Source) -> list[AdapterRes
 
 
 def apply_closeout(closeout: ImplementCloseout) -> ImplementCloseout:
+    from implement_admission.drift_gates import (
+        apply_closeout_gate_b,
+        apply_closeout_gate_c,
+    )
+
     source = source_from_ref(closeout.source_ref)
     results = run_adapters(closeout, source)
-    return reconcile_closeout(closeout, results)
+    reconciled = reconcile_closeout(closeout, results)
+    gated = apply_closeout_gate_c(reconciled, results, source=source)
+    return apply_closeout_gate_b(gated)

@@ -360,8 +360,10 @@ async def team_handoff(
     reader = StargateCortexReader()
 
     packet_path = body.packet_path
+    caller_packet_path = body.packet_path
     implement_spec_hash_value: str | None = None
     warnings: list[str] = []
+    frontmatter_source_ref: str | None = None
 
     try:
         if body.source_ref is not None:
@@ -390,6 +392,7 @@ async def team_handoff(
                         body.source_ref,
                         cortex=reader,
                         workspaces_root=workspaces_root,
+                        request_id=request_id,
                     ),
                 )
                 if bridge_result.gated:
@@ -436,13 +439,16 @@ async def team_handoff(
             ),
         )
 
-        validate_packet(
+        validation = validate_packet(
             request_id=request_id,
             packet_path=packet_path,
             to_agent=to_agent,
             handoff_contract=handoff_contract,
             workspaces_root=workspaces_root,
+            source_ref=body.source_ref,
         )
+        warnings.extend(validation.warnings)
+        frontmatter_source_ref = validation.frontmatter_source_ref
 
         _publish(
             FrontierHandoffRequested(
@@ -522,6 +528,15 @@ async def team_handoff(
         result["source_ref"] = body.source_ref
     if implement_spec_hash_value is not None:
         result["implement_spec_hash"] = implement_spec_hash_value
+    if body.source_ref is not None and caller_packet_path is None:
+        materialization_mode = "auto"
+    elif caller_packet_path is not None and (
+        body.source_ref is not None or frontmatter_source_ref is not None
+    ):
+        materialization_mode = "hand_authored_traced"
+    else:
+        materialization_mode = "hand_authored"
+    result["materialization_mode"] = materialization_mode
     if warnings:
         result["warnings"] = warnings
     return result
@@ -537,7 +552,9 @@ class ImplementCloseoutBody(BaseModel):
 
 
 @implement_router.post("/closeout", status_code=200, response_model=None)
-async def implement_closeout(body: ImplementCloseoutBody) -> dict[str, Any] | JSONResponse:
+async def implement_closeout(
+    body: ImplementCloseoutBody,
+) -> dict[str, Any] | JSONResponse:
     """Apply ImplementCloseout via pipeline:implement-closeout (Step 4)."""
     request_id = uuid.uuid4().hex[:12]
     payload = parse_closeout_payload(body.closeout)

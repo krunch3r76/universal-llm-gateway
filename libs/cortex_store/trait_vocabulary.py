@@ -18,6 +18,12 @@ LIFECYCLE_VALUES = frozenset(
     }
 )
 
+# Non-live subset of LIFECYCLE_VALUES: a lifecycle in this set tombstones an
+# entity (excluded from alias binding / bare-token resolution). NULL lifecycle
+# is the live default and is NOT in this set. Canonical SOT for the cortex_store
+# consumers and the predicate_form documented local mirror.
+NON_LIVE_LIFECYCLE = frozenset({"merged", "deprecated", "reaped"})
+
 ADOPTION_VALUES = frozenset({"proposed", "adopted", "superseded"})
 
 PROVISIONAL_BIRTH_TYPES = frozenset({"decision"})
@@ -58,6 +64,7 @@ __all__ = [
     "ADOPTION_VALUES",
     "CONFIDENCE_BAND_VALUES",
     "LIFECYCLE_VALUES",
+    "NON_LIVE_LIFECYCLE",
     "PROVISIONAL_BIRTH_TYPES",
     "TraitBackfillCounts",
     "TraitCompletenessCounts",

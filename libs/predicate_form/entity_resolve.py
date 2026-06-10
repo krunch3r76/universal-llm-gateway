@@ -23,9 +23,10 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 # Lifecycle values that make an entity a non-live tombstone: it must NOT be
 # bound by bare-token resolution (binding a merged slug returns the tombstone
 # instead of its survivor — agent-bus 1474 / migration 057 lifecycle review).
-# Mirrors cortex_store.entity_aliases._NON_LIVE_LIFECYCLE and
-# status_trait_read._LIFECYCLE_LEGACY_STATUS; duplicated here to keep
-# predicate_form free of a hard cortex_store dependency (see module docstring).
+# Canonical SOT: cortex_store.trait_vocabulary.NON_LIVE_LIFECYCLE. This is a
+# deliberate documented local mirror — predicate_form stays free of any hard
+# cortex_store dependency (see module docstring), so the set is duplicated here
+# rather than imported. Keep in sync with trait_vocabulary if the set changes.
 _NON_LIVE_LIFECYCLE = frozenset({"merged", "deprecated", "reaped"})
 
 _LIVE_LIFECYCLE_SQL = (

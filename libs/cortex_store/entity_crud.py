@@ -51,6 +51,7 @@ from .status_trait_write import (
     resolve_birth_traits,
     trait_insert_extras,
 )
+from .trait_vocabulary import NON_LIVE_LIFECYCLE
 from .type_schemas import validate_required_attributes
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
@@ -72,10 +73,12 @@ _PROVISIONAL_BIRTH_TYPES = frozenset({"decision"})
 # assertions, not hand-set. Birth default flips confirmed→unsubstantiated and
 # hand-set confidence-axis writes are frozen (ignored, not rejected, to avoid
 # 422-ing the many existing callers that still pass status='confirmed'). The
-# lifecycle axis remains caller-settable. Kept local to dodge a circular import
-# with dispatch_ops._shared (which imports this module's impls).
+# lifecycle axis remains caller-settable. ``_CONFIDENCE_AXIS_STATUS`` is kept
+# local to dodge a circular import with dispatch_ops._shared (which imports
+# this module's impls); ``_LIFECYCLE_AXIS_STATUS`` sources the non-live set from
+# the trait_vocabulary leaf (no cycle — trait_vocabulary imports nothing internal).
 _CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
-_LIFECYCLE_AXIS_STATUS = frozenset({"merged", "deprecated", "reaped"})
+_LIFECYCLE_AXIS_STATUS = NON_LIVE_LIFECYCLE
 # Full valid status enum (mirrors models.EntityStatus). A caller-supplied status
 # outside this set must be rejected at the write path: writing it corrupts the
 # row so the EntityDetail read-back 500s and the row becomes unrepairable.

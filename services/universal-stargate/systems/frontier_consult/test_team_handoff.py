@@ -7,17 +7,20 @@ Agent-bus is mocked at the handoff.py import site.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+
+from implement_admission.drift_gates import DriftGateState
 
 from .admission import (
     FrontierEndpointError,
@@ -1140,6 +1143,67 @@ def test_pv_traversal_rejected(tmp_path: Path) -> None:
     assert exc_info.value.code == "handoff_packet_invalid"
 
 
+def test_drift_gate_a_consult_exempt(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-dga-consult",
+        packet_path=_PV_REL,
+        to_agent="claude-web",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+        source_ref=None,
+    )
+
+
+def test_drift_gate_a_present_admits(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-dga-present",
+        packet_path=_PV_REL,
+        to_agent="claude-cursor",
+        handoff_contract="implement",
+        workspaces_root=tmp_path,
+        source_ref="todo:foo",
+    )
+
+
+def test_drift_gate_a_enforce_missing_source_ref(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        side_effect=lambda gate_id: {
+            "a": DriftGateState.ENFORCE,
+            "a2": DriftGateState.OFF,
+        }.get(gate_id, DriftGateState.WARN),
+    ):
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            validate_packet(
+                request_id="req-dga-enforce",
+                packet_path=_PV_REL,
+                to_agent="claude-cursor",
+                handoff_contract="implement",
+                workspaces_root=tmp_path,
+                source_ref=None,
+            )
+    assert exc_info.value.code == "handoff_missing_source_ref"
+
+
+def test_drift_gate_a_warn_missing_source_ref(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    with patch.dict(os.environ, {"UA_DRIFT_GATE_A": "warn"}, clear=False):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        validate_packet(
+            request_id="req-dga-warn",
+            packet_path=_PV_REL,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+            source_ref=None,
+        )
+
+
 def test_pv_route_missing_packet_returns_422(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
@@ -1859,3 +1923,108 @@ def test_v2_resolve_handoff_seat_alias() -> None:
     assert to_agent == "claude-web"
     assert resolved == "claude-web"
     assert platform == "web"
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — gate_a2, widened gate_a, materialization_mode
+# ---------------------------------------------------------------------------
+
+_IMPLEMENT_PACKET_FM = """\
+---
+source_ref: todo:traced
+---
+<scope>Goal: x.</scope>
+<invariants>x</invariants>
+<task_guidance>## Acceptance criteria
+1. It works.</task_guidance>
+<corpus>the artifact</corpus>
+<mcp_capabilities>You have MCP.</mcp_capabilities>
+<output_format>Reply.</output_format>
+"""
+
+
+def test_gate_a2_consult_exempt(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    validate_packet(
+        request_id="req-a2-consult",
+        packet_path=_PV_REL,
+        to_agent="claude-cursor",
+        handoff_contract="consult",
+        workspaces_root=tmp_path,
+    )
+
+
+def test_gate_a2_warn_missing_frontmatter(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    with patch.dict(os.environ, {"UA_DRIFT_GATE_A2": "warn"}, clear=False):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        result = validate_packet(
+            request_id="req-a2-warn",
+            packet_path=_PV_REL,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+            source_ref="todo:foo",
+        )
+    assert any("drift_gate.a2.miss" in w for w in result.warnings)
+
+
+def test_gate_a2_enforce_missing_frontmatter(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
+    with patch.dict(os.environ, {"UA_DRIFT_GATE_A2": "enforce"}, clear=False):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            validate_packet(
+                request_id="req-a2-enforce",
+                packet_path=_PV_REL,
+                to_agent="claude-cursor",
+                handoff_contract="implement",
+                workspaces_root=tmp_path,
+                source_ref="todo:foo",
+            )
+    assert exc_info.value.code == "handoff_packet_missing_source_ref"
+
+
+def test_gate_a_frontmatter_only_admits(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _PV_REL, _IMPLEMENT_PACKET_FM)
+    with patch.dict(os.environ, {"UA_DRIFT_GATE_A": "enforce"}, clear=False):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        result = validate_packet(
+            request_id="req-a-fm-only",
+            packet_path=_PV_REL,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+            source_ref=None,
+        )
+    assert result.frontmatter_source_ref == "todo:traced"
+
+
+def test_gate_a2_malformed_ref_treated_absent(tmp_path: Path) -> None:
+    bad_fm = _CONFORMANT_PACKET.replace(
+        "<scope>",
+        "---\nsource_ref: not a real ref!!\n---\n<scope>",
+        1,
+    )
+    _write_packet(tmp_path, _PV_REL, bad_fm)
+    with patch.dict(os.environ, {"UA_DRIFT_GATE_A2": "enforce"}, clear=False):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        with pytest.raises(FrontierEndpointError) as exc_info:
+            validate_packet(
+                request_id="req-a2-bad",
+                packet_path=_PV_REL,
+                to_agent="claude-cursor",
+                handoff_contract="implement",
+                workspaces_root=tmp_path,
+                source_ref="todo:foo",
+            )
+    assert exc_info.value.code == "handoff_packet_missing_source_ref"
+

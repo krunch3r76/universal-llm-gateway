@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,13 @@ from .admission import FrontierEndpointError
 logger = get_logger(__name__)
 
 _POINTER_MAX_LINES = 25
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatePacketResult:
+    warnings: list[str]
+    frontmatter_source_ref: str | None = None
+
 
 # Packet admission lint (incident threads 1296/1297 — non-conformant packets
 # accepted because handoff did not validate on-disk structure). Canonical
@@ -105,7 +113,8 @@ def validate_packet(
     to_agent: str,
     handoff_contract: str,
     workspaces_root: Path | None = None,
-) -> None:
+    source_ref: str | None = None,
+) -> ValidatePacketResult:
     """Reject a handoff whose on-disk packet is missing or non-conformant.
 
     Admission predicate (FOL):
@@ -117,6 +126,7 @@ def validate_packet(
     Every rejection cites the missing element(s) and the canonical protocol
     paths — never a bare 422. ``workspaces_root`` is injectable for tests.
     """
+    warnings: list[str] = []
     root = (workspaces_root or _workspaces_root()).resolve()
     for variant in _packet_path_variants(packet_path):
         probe = (root / variant).resolve()
@@ -177,6 +187,55 @@ def validate_packet(
                 status_code=422,
                 code="handoff_packet_missing_acceptance",
             )
+
+        from implement_admission.admission_read import frontmatter_value
+        from implement_admission.drift_gates import (
+            check_bound_source_ref,
+            check_frontmatter_source_ref,
+        )
+        from implement_admission.source_ref import SourceRefError, parse_source_ref
+
+        fm_ref = frontmatter_value(text, "source_ref")
+        if fm_ref is not None:
+            try:
+                parse_source_ref(fm_ref)
+            except SourceRefError:
+                fm_ref = None
+
+        gate_a = check_bound_source_ref(
+            source_ref=source_ref,
+            packet_frontmatter_source_ref=fm_ref,
+        )
+        if gate_a.action == "reject":
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="source_ref",
+                reason=(
+                    "implement handoff requires a bound source_ref per unified "
+                    f"admission §8 wire. {_PROTOCOL_HINT}"
+                ),
+                status_code=422,
+                code="handoff_missing_source_ref",
+            )
+
+        gate_a2 = check_frontmatter_source_ref(packet_frontmatter_source_ref=fm_ref)
+        if gate_a2.action == "reject":
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=(
+                    "implement handoff packet must declare source_ref in frontmatter "
+                    f"per unified admission §8. {_PROTOCOL_HINT}"
+                ),
+                status_code=422,
+                code="handoff_packet_missing_source_ref",
+            )
+        if gate_a2.action == "warn":
+            warnings.append("drift_gate.a2.miss: packet frontmatter lacks source_ref")
+
+        return ValidatePacketResult(warnings=warnings, frontmatter_source_ref=fm_ref)
+
+    return ValidatePacketResult(warnings=warnings)
 
 
 def _extract_block(text: str, tag: str) -> str | None:

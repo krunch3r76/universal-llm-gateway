@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -97,8 +98,7 @@ def test_todo_adapter_closes_in_process() -> None:
     assert calls[1][1]["entity_id"] == "todo:my-todo"
     assert calls[2][1] == {"entity_id": "todo:my-todo", "workflow_state": "done"}
     assert (
-        "cortex://notes/system/todos/my-todo-closure.md"
-        in calls[1][1]["evidence_uris"]
+        "cortex://notes/system/todos/my-todo-closure.md" in calls[1][1]["evidence_uris"]
     )
     assert results[0].status == "complete"
 
@@ -281,6 +281,25 @@ def test_apply_returns_list_and_status_reconcile() -> None:
     reconciled = reconcile_closeout(closeout, results)
     assert reconciled.status == CloseoutStatus.PARTIAL
     assert len(reconciled.adapter_results) == 2
+
+
+def test_drift_gate_c_enforce_empty_results() -> None:
+    from implement_admission.drift_gates import clear_gate_state_cache
+
+    class EmptyAdapter:
+        def apply(self, closeout, *, source):  # noqa: ANN001
+            return []
+
+    ADAPTERS["todo"] = EmptyAdapter()
+    with patch.dict(os.environ, {"UA_DRIFT_GATE_C": "enforce"}, clear=False):
+        clear_gate_state_cache()
+        closeout = ImplementCloseout(
+            status=CloseoutStatus.COMPLETE,
+            summary="x",
+            source_ref="todo:foo",
+        )
+        out = apply_closeout(closeout)
+    assert out.status == CloseoutStatus.FAILED
 
 
 def test_mixed_not_reachable_via_sourcekind() -> None:

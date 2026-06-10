@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from implement_admission.source_ref import SourceRefError
 
 _ULG_REPO_DIRNAME = "universal-llm-gateway"
+_FRONTMATTER_KEY = re.compile(r"^({key}):\s*(\S+)", re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,45 @@ def _sha256_bytes(data: bytes) -> str:
     return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
+def _frontmatter_region(text: str) -> str | None:
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None
+    return text[3:end]
+
+
+def frontmatter_value(text: str, key: str) -> str | None:
+    """Return a YAML frontmatter scalar value, or None if absent."""
+    region = _frontmatter_region(text)
+    if region is None:
+        return None
+    match = re.search(rf"^{re.escape(key)}:\s*(\S+)", region, flags=re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def replace_frontmatter_value(text: str, key: str, value: str) -> str:
+    """Replace a frontmatter key's value; append the key if missing."""
+    region = _frontmatter_region(text)
+    if region is None:
+        return text
+    pattern = rf"^({re.escape(key)}):\s*\S+"
+    replacement = f"{key}: {value}"
+    if re.search(pattern, region, flags=re.MULTILINE):
+        new_region = re.sub(pattern, replacement, region, count=1, flags=re.MULTILINE)
+    else:
+        new_region = f"{region.rstrip()}\n{replacement}"
+    end = text.find("\n---", 3)
+    return text[:3] + new_region + text[end:]
+
+
+def compute_packet_sha256(text: str) -> str:
+    """SHA256 with frontmatter packet_sha256 canonicalized to PENDING."""
+    elided = replace_frontmatter_value(text, "packet_sha256", "PENDING")
+    return _sha256_bytes(elided.encode("utf-8"))
+
+
 def _normalize_packet_path(path_or_uri: str) -> str:
     raw = path_or_uri.strip()
     for prefix in ("packet:", "ws://", "cortex://"):
@@ -91,6 +132,6 @@ def read_packet(path_or_uri: str, *, workspaces_root: Path | None = None) -> Pac
     text = data.decode("utf-8", errors="replace")
     return PacketRead(
         text=text,
-        packet_sha256=_sha256_bytes(data),
+        packet_sha256=compute_packet_sha256(text),
         resolved_path=str(candidate),
     )
