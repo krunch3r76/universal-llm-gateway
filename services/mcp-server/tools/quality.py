@@ -26,6 +26,7 @@ _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 _TIMEOUT = 30
 _TEST_TIMEOUT = 120
 _OFFLINE_CLOSURE = ("/libs/llm_adapters/", "/libs/model_id/")
+_OFFLINE_TEST_PATHS = ("libs/llm_adapters", "libs/model_id")
 
 
 def register_quality_tools(mcp: FastMCP) -> None:
@@ -151,12 +152,23 @@ def _run_import_check(files: list[str]) -> dict[str, bool | str]:
         return {"passed": False, "output": "check-imports timed out"}
 
 
+def _offline_repo_root(files: list[str]) -> Path | None:
+    for path in files:
+        for segment in _OFFLINE_CLOSURE:
+            if segment in path:
+                return Path(path.split(segment, 1)[0])
+    return None
+
+
 def _run_offline_tests(
     files: list[str], *, run_tests: bool = True
 ) -> dict[str, bool | str]:
     if not run_tests or not any(
         any(seg in f for seg in _OFFLINE_CLOSURE) for f in files
     ):
+        return {"passed": True, "output": "no offline-closure files touched; skipped"}
+    repo_root = _offline_repo_root(files)
+    if repo_root is None:
         return {"passed": True, "output": "no offline-closure files touched; skipped"}
     try:
         probe = subprocess.run(
@@ -167,14 +179,16 @@ def _run_offline_tests(
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return {
-            "passed": True,
-            "output": "pytest probe failed; offline tests skipped (ops rebuild pending)",
+            "passed": False,
+            "output": "pytest probe failed; offline tests unavailable",
         }
     if probe.returncode != 0:
         return {
-            "passed": True,
-            "output": "pytest unavailable in image; offline tests skipped (ops rebuild pending)",
+            "passed": False,
+            "output": "pytest unavailable in image; offline tests blocked",
         }
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root / "libs")
     try:
         result = subprocess.run(
             [
@@ -187,12 +201,13 @@ def _run_offline_tests(
                 "--no-header",
                 "-p",
                 "no:cacheprovider",
-                "libs",
+                *_OFFLINE_TEST_PATHS,
             ],
             capture_output=True,
             text=True,
             timeout=_TEST_TIMEOUT,
-            cwd=str(_PROJECT_ROOT),
+            cwd=str(repo_root),
+            env=env,
         )
         out = (result.stdout + result.stderr).strip()
         return {

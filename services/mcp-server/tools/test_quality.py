@@ -121,7 +121,8 @@ def test_run_offline_tests_uses_marker_selection(monkeypatch: Any) -> None:
             "--no-header",
             "-p",
             "no:cacheprovider",
-            "libs",
+            "libs/llm_adapters",
+            "libs/model_id",
         ],
     ]
 
@@ -144,7 +145,7 @@ def test_run_offline_tests_skips_without_closure_path(monkeypatch: Any) -> None:
     assert commands == []
 
 
-def test_run_offline_tests_fail_soft_when_pytest_absent(monkeypatch: Any) -> None:
+def test_run_offline_tests_fail_closed_when_pytest_absent(monkeypatch: Any) -> None:
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -162,7 +163,7 @@ def test_run_offline_tests_fail_soft_when_pytest_absent(monkeypatch: Any) -> Non
         ["/data/project/libs/llm_adapters/test_max_output_parity.py"]
     )
 
-    assert result["passed"] is True
+    assert result["passed"] is False
     assert "pytest unavailable" in str(result["output"])
     assert len(commands) == 1
     assert commands[0] == [sys.executable, "-c", "import pytest"]
