@@ -66,8 +66,6 @@ prompts:
       - Preserve AUTHORED sections verbatim when present in the draft.
       - Preserve GENERATED marker wrappers.
       - Keep HUMAN markers for information that requires manual synthesis.
-      - If the existing document contains an AUTHORED region or a HUMAN marker
-        that is absent from the draft, restore it verbatim from existing_doc.
 
       Rules:
       - Keep supported content.
@@ -86,9 +84,6 @@ prompts:
 
       ## Extracted inventory JSON
       {inventory_json}
-
-      ## Existing document (authored source; may be empty)
-      {existing_doc}
 
       ## Draft document
       {draft_doc}

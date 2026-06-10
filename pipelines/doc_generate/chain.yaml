@@ -71,7 +71,6 @@ steps:
       inventory_json: extract.raw
       draft_doc: draft.json.doc_markdown
       existing_doc: extract.json.existing_doc
-      existing_doc: extract.json.existing_doc
     output_declarations:
       doc_markdown:
         binding: json.doc_markdown
