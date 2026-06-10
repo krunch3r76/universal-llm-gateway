@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -58,3 +59,21 @@ def test_g2_head_schema_template_matches_live_modulo_allowlist() -> None:
         replay, load_canonical_live_snapshot(), load_benign_allowlist()
     )
     assert issues == [], "head-template-vs-live schema drift:\n" + "\n".join(issues)
+
+
+def test_g2_guard_trips_on_unlisted_divergence() -> None:
+    """Prove G2 is not vacuously green — unlisted drift must fail."""
+    with tempfile.NamedTemporaryFile(suffix=".db") as handle:
+        conn = sqlite3.connect(handle.name)
+        conn.execute("PRAGMA foreign_keys=ON")
+        run_migrations(conn)
+        replay = dump_sqlite_schema(conn)
+        conn.close()
+
+    perturbed = copy.deepcopy(replay)
+    del perturbed["tables"]["entities"]
+
+    issues = diff_schemas(
+        perturbed, load_canonical_live_snapshot(), load_benign_allowlist()
+    )
+    assert issues == ["table missing from replay: entities"]

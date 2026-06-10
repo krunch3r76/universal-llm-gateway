@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,9 @@ from typing import Any
 _FIXTURES_DIR = Path(__file__).parent / "fixtures"
 LIVE_SNAPSHOT_PATH = _FIXTURES_DIR / "live_schema_snapshot.json"
 ALLOWLIST_PATH = _FIXTURES_DIR / "schema_benign_allowlist.json"
+DEFAULT_LIVE_DB_PATH = Path(
+    os.environ.get("CORTEX_DB_PATH", str(Path.home() / ".cortex" / "cortex.db"))
+)
 
 
 def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -43,6 +47,34 @@ def load_canonical_live_snapshot() -> dict[str, Any]:
 
 def load_benign_allowlist() -> dict[str, Any]:
     return json.loads(ALLOWLIST_PATH.read_text())
+
+
+def open_live_db_readonly(db_path: Path | None = None) -> sqlite3.Connection:
+    """Read-only connection to the live cortex DB (never mutates)."""
+    path = db_path or DEFAULT_LIVE_DB_PATH
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+
+
+def refresh_live_schema_snapshot(
+    *,
+    db_path: Path | None = None,
+    dest: Path | None = None,
+) -> Path:
+    """Dump live ``sqlite_master`` to the canonical snapshot fixture (read-only).
+
+    Run after a legitimate migration changes the live schema::
+
+        python -m cortex_store.schema_snapshot --refresh
+    """
+    target = dest or LIVE_SNAPSHOT_PATH
+    conn = open_live_db_readonly(db_path)
+    try:
+        schema = dump_sqlite_schema(conn)
+    finally:
+        conn.close()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(schema, indent=2, sort_keys=True) + "\n")
+    return target
 
 
 def _column_tuple(column: list[Any] | tuple[Any, ...]) -> tuple[Any, ...]:
@@ -122,3 +154,26 @@ def find_numbered_migrations_outside_canonical_tree(
             continue
         offenders.append(path)
     return sorted(offenders)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Cortex schema snapshot utilities")
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Re-dump ~/.cortex/cortex.db into fixtures/live_schema_snapshot.json",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Override live DB path (default: CORTEX_DB_PATH or ~/.cortex/cortex.db)",
+    )
+    args = parser.parse_args()
+    if args.refresh:
+        path = refresh_live_schema_snapshot(db_path=args.db)
+        print(f"Wrote {path}")
+    else:
+        parser.print_help()

@@ -9,7 +9,6 @@
     ]
   },
   "replay_only_indexes": [
-    "idx_assertions_review",
     "idx_chunks_observer",
     "idx_chunks_source",
     "idx_entities_type",
@@ -18,5 +17,5 @@
     "idx_staging_source",
     "idx_staging_status"
   ],
-  "notes": "Replay applies the full lib migration chain on empty SQLite; live DB predates some 003 artifacts and uses v3_-prefixed indexes from 005 instead of legacy 002/003 index names. idx_assertions_review (003) vs idx_v3_assertions_review (005) is the documented benign index-name variant from thread 1451."
+  "notes": "Replay applies the full lib migration chain on empty SQLite; live DB predates 003-era artifacts (extraction_staging table, chunks observer columns) and dropped legacy 002/003 index names when 005 v3 clean-slate ran. Post thread-1450 empty-DB replay, idx_v3_assertions_review converged on both sides — the thread-1451 idx_assertions_review name variant no longer manifests."
 }
