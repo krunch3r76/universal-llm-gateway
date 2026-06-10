@@ -159,7 +159,7 @@ def run_cortex_boot(
         family       — model family: claude / gpt / grok / gemini (default: claude)
         platform     — platform surface: cursor / api / web (default: cursor)
         role         — optional functional team seat: lead / reviewer / gatherer /
-                       synthesizer / artisan / skeptic / investigator (legacy)
+                       synthesizer / artisan / skeptic
         transcript_id — if provided, loads continuation context for that transcript
         mode         — LIVE (default) writes op-context to disk; INSPECT is side-effect-free
         views        — optional list of entity IDs to materialize as subgraph views

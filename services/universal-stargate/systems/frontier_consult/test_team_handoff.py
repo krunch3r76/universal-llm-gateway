@@ -320,6 +320,20 @@ def test_h1b_claude_cursor_seat_slug_profile_resolves() -> None:
     assert platform == "cursor"
 
 
+def test_handoff_enforcement_roster_matches_declared_catalog() -> None:
+    """Admission accept-set ≡ non-legacy declarative handoff roster (single SOT).
+
+    Falsifier for roster-advertisement drift (friction 13744): any divergence
+    between admission._HANDOFF_ROSTER and the agents.yaml-derived catalog fails
+    here, forcing the two SOTs back into lockstep.
+    """
+    from agent_seat.dispatch_role_catalog import handoff_roles, is_legacy_role
+    from systems.frontier_consult.admission import _HANDOFF_ROSTER
+
+    declared_non_legacy = {r for r in handoff_roles() if not is_legacy_role(r)}
+    assert _HANDOFF_ROSTER == declared_non_legacy
+
+
 @pytest.mark.parametrize("role", ["lead", "cursor-lead", "implementer"])
 def test_retired_handoff_roster_slug_rejected(role: str) -> None:
     with pytest.raises(FrontierEndpointError) as exc_info:

@@ -52,7 +52,6 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "synthesizer": "synthesizer",
     "artisan": "artisan",
     "skeptic": "skeptic",
-    "investigator": "investigator",
 }
 
 

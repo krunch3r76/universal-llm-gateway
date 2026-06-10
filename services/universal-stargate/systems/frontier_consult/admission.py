@@ -15,6 +15,7 @@ from agent_seat.profiles import (
     load_roles,
     seat_to_family,
 )
+from agent_seat.dispatch_role_catalog import handoff_roles, is_legacy_role
 from agent_seat.registry import normalize_agent_slug
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -148,7 +149,7 @@ def enforce_team_dispatch_generate_admit(
       admit_generate(role) ⟺ profile.dispatchable is True
 
     Web/manual seats (``claude/web``, ``grok/web``, …) and roles whose default
-    platform is non-dispatchable (``web-consult``, ``investigator``) raise 422 with
+    platform is non-dispatchable (``web-consult``, ``web-implement``, …) raise 422 with
     code ``web_seat_not_generate_target``. Explicit ``model=`` does not bypass.
     """
     to_agent, _family, _platform, profile = _resolve_role_or_seat_profile(
@@ -215,9 +216,11 @@ def resolve_web_handoff_seat(role: str, *, request_id: str) -> tuple[str, str, s
     return to_agent, family, platform
 
 
-_HANDOFF_ROSTER: frozenset[str] = frozenset(
-    {"web-consult", "web-implement", "cursor-consult", "cursor-implement"}
-)
+def _admitted_handoff_roster() -> frozenset[str]:
+    return frozenset(r for r in handoff_roles() if not is_legacy_role(r))
+
+
+_HANDOFF_ROSTER = _admitted_handoff_roster()
 
 
 def resolve_handoff_target(
@@ -235,7 +238,7 @@ def resolve_handoff_target(
     ``resolved_model`` is the canonical synthetic seat slug.
     """
     canonical = normalize_agent_slug(role)
-    if canonical not in _HANDOFF_ROSTER:
+    if canonical not in _admitted_handoff_roster():
         raise FrontierEndpointError(
             request_id=request_id,
             field="role",

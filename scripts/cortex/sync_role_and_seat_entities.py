@@ -9,7 +9,6 @@ and load_roles(). This script generates and upserts:
 
   role:web-consult / role:cursor-consult / role:cursor-implement
   role:reviewer / role:gatherer / role:synthesizer / role:artisan / role:skeptic
-  role:investigator (legacy)
     — functional team seats; type=role
 
 Old persona role:* entities (role:oppie, role:forge, etc.) are retired in

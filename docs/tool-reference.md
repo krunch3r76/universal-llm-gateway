@@ -20,7 +20,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` — runtime-valid legacy `investigator` omitted here (see § below) | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 
 `op` values (`team_dispatch`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
@@ -59,16 +59,9 @@ e.g. `claude/web`, `grok/web`) are rejected **before** dispatch with 422
 `web_seat_not_generate_target` — including when `model=` is supplied explicitly.
 Valid generate roles: API-default roster slots (`reviewer`, `gatherer`,
 `synthesizer`, `artisan`, `skeptic`). Invalid: seat slugs (`claude-web`, `web`),
-web-default roles (`web-consult`, `web-implement`, `investigator` (legacy)), and Cursor handoff-only roles
+web-default roles (`web-consult`, `web-implement`), and Cursor handoff-only roles
 (`cursor-consult`, `cursor-implement`). Web Claude doing local file work should
 use `fs` directly; peer consult → `team_dispatch(op=generate, role=…)` with optional `model=`.
-
-**`investigator` is legacy** (`role=investigator` → `grok-web`): a deep manual
-grok-web research handoff, NOT the SuperGrok Heavy dispatch path. SuperHeavy uses
-its own operator-driven workflow (`agent_skill:grok-web-dispatch` + connector
-canary), not `team_dispatch(op=handoff, role=investigator)`. Do not list
-`investigator` alongside `web-consult` / `cursor-consult` / `cursor-implement` as a recommended
-handoff target without the `(legacy)` marker.
 
 **`op="handoff"` — manual-seat handoff primitive** (dispatching agent → web or Cursor IDE):
 

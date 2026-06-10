@@ -18,11 +18,9 @@ from __future__ import annotations
 
 from .profiles import CapabilityProfile, get_profile, load_roles
 
-# Roles documented as legacy in agent-facing docs (operator decision, thread 1268
-# op-4): ``investigator`` is the legacy grok-web deep-research handoff — NOT the
-# SuperGrok Heavy dispatch path (that uses the operator workflow + grok-web-dispatch
-# skill / connector canary). Legacy roles render with a "(legacy)" suffix.
-_LEGACY_ROLES: frozenset[str] = frozenset({"investigator"})
+# Roles documented as legacy in agent-facing docs. Currently empty — machinery
+# retained so future legacy roles can render with a "(legacy)" suffix.
+_LEGACY_ROLES: frozenset[str] = frozenset()
 
 
 def is_legacy_role(role: str) -> bool:
@@ -71,7 +69,7 @@ def generate_comma_clause() -> str:
 
 def handoff_comma_clause() -> str:
     """Comma-joined handoff roster with legacy suffixes, e.g.
-    ``web-consult, cursor-consult, cursor-implement, investigator (legacy)``."""
+    ``web-consult, web-implement, cursor-consult, cursor-implement``."""
     return ", ".join(
         f"{r} (legacy)" if is_legacy_role(r) else r for r in handoff_roles()
     )
@@ -79,7 +77,7 @@ def handoff_comma_clause() -> str:
 
 def handoff_seat_map_clause() -> str:
     """Seat-grouped handoff map, e.g.
-    ``web-consult → claude-web; cursor-consult, cursor-implement → claude-cursor; investigator → grok-web (legacy)``.
+    ``web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor``.
 
     Roles are grouped by resolved seat (first-seen order); a group is marked
     ``(legacy)`` when every role in it is legacy.

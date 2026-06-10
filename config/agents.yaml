@@ -332,9 +332,3 @@ roles:
     default_model: xai/grok-4.20-multi-agent-0309
     allowed_models:
       - xai/grok-4.20-multi-agent-0309
-
-  investigator:
-    description: "Deep manual research; heavy thinking on operator-driven web sessions"
-    default_family: grok
-    default_platform: web
-    default_model: null

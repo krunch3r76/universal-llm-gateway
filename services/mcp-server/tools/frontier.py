@@ -8,7 +8,7 @@ execution contract in Cortex. Optional ``model=`` overrides within
 ``scripts/gen-mcp-dispatch-role-docs`` — do not hand-edit the two lines below):
 
   generate/to_thread roles: reviewer, gatherer, synthesizer, artisan, skeptic
-  handoff roles: web-consult, web-implement, cursor-consult, cursor-implement, investigator (legacy)
+  handoff roles: web-consult, web-implement, cursor-consult, cursor-implement
 
 Op enum: "generate" (returns content via tracker), "to_thread" (reply lands on
 ``thread``), or "handoff" (manual-seat agent-bus thread via ``role=``).
