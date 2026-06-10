@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 _PROJECT_ROOT = Path(os.environ.get("PROJECT_ROOT", "/data/project"))
 _TIMEOUT = 30
+_TEST_TIMEOUT = 120
+_OFFLINE_CLOSURE = ("/libs/llm_adapters/", "/libs/model_id/")
 
 
 def register_quality_tools(mcp: FastMCP) -> None:
@@ -42,11 +44,13 @@ def register_quality_tools(mcp: FastMCP) -> None:
         ruff_result = _run_ruff(existing)
         compile_result = _run_compileall(existing)
         import_result = _run_import_check(existing)
+        tests_result = _run_offline_tests(existing)
 
         passed = (
             ruff_result["passed"]
             and compile_result["passed"]
             and import_result["passed"]
+            and tests_result["passed"]
         )
         duration = monotonic_now() - t0
 
@@ -61,6 +65,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
             "ruff": ruff_result,
             "compile": compile_result,
             "imports": import_result,
+            "tests": tests_result,
         }
 
 
@@ -144,3 +149,57 @@ def _run_import_check(files: list[str]) -> dict[str, bool | str]:
         }
     except subprocess.TimeoutExpired:
         return {"passed": False, "output": "check-imports timed out"}
+
+
+def _run_offline_tests(
+    files: list[str], *, run_tests: bool = True
+) -> dict[str, bool | str]:
+    if not run_tests or not any(
+        any(seg in f for seg in _OFFLINE_CLOSURE) for f in files
+    ):
+        return {"passed": True, "output": "no offline-closure files touched; skipped"}
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c", "import pytest"],
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {
+            "passed": True,
+            "output": "pytest probe failed; offline tests skipped (ops rebuild pending)",
+        }
+    if probe.returncode != 0:
+        return {
+            "passed": True,
+            "output": "pytest unavailable in image; offline tests skipped (ops rebuild pending)",
+        }
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-m",
+                "offline",
+                "-q",
+                "--no-header",
+                "-p",
+                "no:cacheprovider",
+                "libs",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_TEST_TIMEOUT,
+            cwd=str(_PROJECT_ROOT),
+        )
+        out = (result.stdout + result.stderr).strip()
+        return {
+            "passed": result.returncode == 0,
+            "output": out[:4000] if out else "(no output)",
+        }
+    except FileNotFoundError:
+        return {"passed": False, "output": "python executable not found in PATH"}
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "output": "offline tests timed out"}

@@ -52,6 +52,11 @@ ignore = ["E501"]  # line-too-long
 quote-style = "double"
 indent-style = "space"
 
+[tool.pytest.ini_options]
+markers = [
+    "offline: hermetic Lane A test (no network/services; stdlib + pytest + llm_adapters only)",
+]
+
 [tool.pyright]
 # Add paths for pipeline handlers in pipelines.local/
 extraPaths = [

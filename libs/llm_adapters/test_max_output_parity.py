@@ -29,6 +29,8 @@ from typing import Any
 
 import pytest
 
+pytestmark = pytest.mark.offline
+
 from llm_adapters.capability_dispatch import (
     default_reasoning_effort,
     openai_supports_reasoning_effort,
@@ -52,7 +54,9 @@ _ANTHROPIC_FRONTIER_MODELS: tuple[str, ...] = (
     "claude-opus-4-8",  # ceiling 128000
     "claude-sonnet-4-6",  # ceiling 64000
     "claude-3-5-sonnet",  # ceiling 8192
-    "claude-unknown-xyz",  # unknown → 8192 fallback
+    "claude-fable-5",  # ceiling 128000 (newly carded — F1 root cause)
+    "claude-mythos-5",  # ceiling 128000 (newly carded)
+    "claude-mythos-preview",  # ceiling 128000 (newly carded)
 )
 _THINKING_VARIANTS: dict[str, dict[str, Any] | None] = {
     "none": None,

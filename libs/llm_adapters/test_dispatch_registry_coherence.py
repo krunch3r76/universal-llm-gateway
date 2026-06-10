@@ -9,7 +9,8 @@ Coverage:
 - Every ``_PROVIDER_SURFACE`` provider resolves to a ``CapabilityDispatch``.
 - A provider-uninferable model id raises ``CatalogMissError`` (G13).
 - Every ``_ANTHROPIC_MAX_OUTPUT_CEILINGS`` marker resolves to its declared ceiling.
-- An unknown-claude bare id → fail-closed 8192 ceiling (NOT a CatalogMissError).
+- An uncarded Anthropic family → ``CatalogMissError`` (no_capability_card), and
+  ``claude-fable-5`` is carded (128000 ceiling + adaptive).
 - Reasoning ``value_kind`` ⇔ surface: adaptive families → ``adaptive``;
   pre-adaptive anthropic → ``token_budget`` with non-empty ``budget_map``;
   Responses / Google → ``effort_string``.
@@ -22,6 +23,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.offline
+
 from llm_adapters.capability_dispatch import (
     CatalogMissError,
     ProtocolError,
@@ -31,7 +34,6 @@ from llm_adapters.capability_dispatch import (
 from llm_adapters.capability_dispatch.registry import (
     _ANTHROPIC_ADAPTIVE_FAMILIES,
     _ANTHROPIC_MAX_OUTPUT_CEILINGS,
-    _ANTHROPIC_UNKNOWN_CEILING,
     _PROVIDER_SURFACE,
     SURFACE_ANTHROPIC,
     resolve,
@@ -91,22 +93,28 @@ def test_anthropic_ceiling_marker_resolves(marker: str, expected_ceiling: int) -
     assert dispatch.max_output.ceiling == expected_ceiling
 
 
-# ── §3.4: unknown-claude → fail-closed 8192 (NOT CatalogMissError) ───────────
+# ── §3.4: uncarded Anthropic family → CatalogMissError (no_capability_card) ───
 
 
-def test_unknown_claude_uses_fail_closed_ceiling() -> None:
-    """Unknown claude bare id resolves to within-surface 8192 ceiling, not miss."""
-    dispatch = resolve("anthropic/claude-unknown-xyz-model")
-    assert dispatch.max_output.ceiling == _ANTHROPIC_UNKNOWN_CEILING
+def test_uncarded_anthropic_family_raises_card_miss() -> None:
+    """An Anthropic family matching no capability card must fail loudly.
+
+    F4 reversal: the deleted 8192 within-surface fallback is gone — an uncarded
+    Anthropic family is now a structural catalog-miss carrying
+    ``miss_reason="no_capability_card"``, never a guessed ceiling.
+    """
+    with pytest.raises(CatalogMissError) as exc_info:
+        resolve("anthropic/claude-fictional-99")
+    assert exc_info.value.miss_reason == "no_capability_card"
+
+
+def test_fable_5_is_carded_adaptive_128k() -> None:
+    """Root-cause model claude-fable-5 is now carded: 128000 ceiling + adaptive."""
+    dispatch = resolve("anthropic/claude-fable-5")
     assert dispatch.api_surface == SURFACE_ANTHROPIC
-
-
-def test_unknown_claude_does_not_raise() -> None:
-    """Confirms unknown-claude is not a CatalogMissError (within-surface fallback)."""
-    try:
-        resolve("anthropic/claude-totally-unknown-9999")
-    except CatalogMissError:
-        pytest.fail("unknown-claude must not raise CatalogMissError")
+    assert dispatch.max_output.ceiling == 128000
+    assert dispatch.reasoning is not None
+    assert dispatch.reasoning.value_kind == "adaptive"
 
 
 # ── §3.5: reasoning value_kind ⇔ surface ─────────────────────────────────────

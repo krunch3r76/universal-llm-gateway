@@ -16,4 +16,5 @@ pymupdf4llm>=0.0.17
 html2text>=2024.2
 Pillow>=10.0
 filetype>=1.2
+pytest
 ruff

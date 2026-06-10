@@ -93,3 +93,76 @@ def test_run_ruff_uses_python_module(monkeypatch: Any) -> None:
 
     assert result == {"passed": True, "output": "ok\n"}
     assert commands == [[sys.executable, "-m", "ruff", "check", "example.py"]]
+
+
+def test_run_offline_tests_uses_marker_selection(monkeypatch: Any) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="74 passed\n", stderr="")
+
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
+
+    result = quality._run_offline_tests(
+        ["/data/project/libs/llm_adapters/test_dispatch_registry_coherence.py"]
+    )
+
+    assert result == {"passed": True, "output": "74 passed"}
+    assert commands == [
+        [sys.executable, "-c", "import pytest"],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-m",
+            "offline",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+            "libs",
+        ],
+    ]
+
+
+def test_run_offline_tests_skips_without_closure_path(monkeypatch: Any) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
+
+    result = quality._run_offline_tests(["/data/project/services/mcp-server/server.py"])
+
+    assert result == {
+        "passed": True,
+        "output": "no offline-closure files touched; skipped",
+    }
+    assert commands == []
+
+
+def test_run_offline_tests_fail_soft_when_pytest_absent(monkeypatch: Any) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr="ModuleNotFoundError: No module named 'pytest'",
+        )
+
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
+
+    result = quality._run_offline_tests(
+        ["/data/project/libs/llm_adapters/test_max_output_parity.py"]
+    )
+
+    assert result["passed"] is True
+    assert "pytest unavailable" in str(result["output"])
+    assert len(commands) == 1
+    assert commands[0] == [sys.executable, "-c", "import pytest"]
