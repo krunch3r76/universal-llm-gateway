@@ -57,16 +57,28 @@ def build_poll_hint_wait(*, thread_id: str, from_agent: str) -> dict[str, Any]:
 
 
 def build_push_reminder(*, thread_id: str, to_agent: str, platform: str) -> str:
-    """Operator-facing reminder; web seats need a bus push, cursor seats need IDE attendance."""
+    """Operator-facing reminder.
+
+    Web seats need a bus push; cursor seats need IDE attendance.
+    """
+    seat_obligation = (
+        " Dispatching seat: translate this for the operator in your reply — "
+        "what was dispatched and to whom, what runs autonomously, exactly what "
+        "the operator must do, and how results return. Do not paste this "
+        "reminder verbatim."
+    )
     if platform == "cursor":
         return (
             f"**Action needed — attend agent-bus in Cursor**: handoff posted to thread "
             f"{thread_id}. Open the thread in Cursor (Multitask or /agent-bus) as "
-            f"{to_agent}; switch to Opus in the model picker when this handoff needs it."
+            f"{to_agent}; switch to Opus in the model picker when this handoff "
+            f"needs it."
+            f"{seat_obligation}"
         )
     return (
         f"**Action needed — push to web claude**: handoff posted to thread "
         f"{thread_id}. Push the agent-bus message to trigger {to_agent}'s turn."
+        f"{seat_obligation}"
     )
 
 

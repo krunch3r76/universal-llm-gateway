@@ -23,19 +23,36 @@ def register_individual_tools(mcp: FastMCP) -> None:
     """Register individual named filesystem tools on *mcp*."""
 
     @mcp.tool(title="Write File")
-    def write_file(path: str, content: str) -> dict[str, str]:
+    def write_file(
+        path: str,
+        content: str,
+        expected_sha256: str = "",
+        if_absent: bool = False,
+    ) -> dict[str, Any]:
         """Write *content* to *path* inside the sandboxed files directory.
 
         Intermediate directories are created automatically.
 
+        Optional CAS guards:
+          expected_sha256 — overwrite only when the current file hash matches.
+          if_absent — create-only; refuse when the path already exists.
+
         Args:
             path: Relative file path, e.g. "documents/resume.md".
             content: Text content to write.
+            expected_sha256: Optional ``sha256:<hex>`` guard for safe overwrite.
+            if_absent: When True, write only if the file does not exist.
 
         Returns:
-            {"status": "written", "path": "<resolved path>"}
+            {"status": "written", "path": "<resolved path>"} on success, or a
+            structured rejection dict with ``reason`` on guard failure.
         """
-        return write_file_impl(path, content)
+        return write_file_impl(
+            path,
+            content,
+            expected_sha256=expected_sha256 or None,
+            if_absent=if_absent,
+        )
 
     @mcp.tool(title="Read File")
     def read_file(path: str, binary: bool = False) -> dict[str, Any]:

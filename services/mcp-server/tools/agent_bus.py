@@ -70,6 +70,27 @@ def _format_agent_bus_error(result: dict[str, Any], *, op: str) -> str:
     return f"agent-bus error: {result.get('error', 'unknown error')}"
 
 
+def _structured_relay_error(
+    result: dict[str, Any], *, op: str
+) -> dict[str, Any] | None:
+    """Preserve relay ``status_code`` and structured ``detail`` for MCP callers."""
+    status_code = result.get("status_code")
+    detail = _relay_detail(result)
+    if status_code is None and detail is None:
+        return None
+    reason = detail.get("error") if isinstance(detail, dict) else None
+    base_error = result.get("error", "request failed")
+    message = f"{op}: {base_error}"
+    if reason:
+        message = f"{message} ({reason})"
+    return {
+        "error": message,
+        "status_code": status_code,
+        "reason": reason,
+        "detail": detail,
+    }
+
+
 def _structured_body_too_large(
     result: dict[str, Any], *, op: str
 ) -> dict[str, Any] | None:
@@ -147,6 +168,9 @@ def _post_impl(
         guard = structured_route_guard(result)
         if guard is not None:
             return guard
+        structured = _structured_relay_error(result, op="post")
+        if structured is not None:
+            return structured
         return {"error": _format_agent_bus_error(result, op="post")}
 
     thread_data = result.get("thread", {})
@@ -209,6 +233,9 @@ def _reply_impl(
 
     if "error" in result:
         structured = _structured_body_too_large(result, op="reply")
+        if structured is not None:
+            return structured
+        structured = _structured_relay_error(result, op="reply")
         if structured is not None:
             return structured
         return {"error": _format_agent_bus_error(result, op="reply")}

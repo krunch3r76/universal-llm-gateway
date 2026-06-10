@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 from typing import Any
 
 from mcp_events import record
@@ -14,37 +16,117 @@ from ._paths import (
     EDITABLE_SUFFIXES,
     SANDBOX_ROOT,
     SHARED_IMAGE_DIR,
+    path_write_lock,
     safe_path,
+    sha256_of_file,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def write_file_impl(path: str, content: str) -> dict[str, str]:
+def _write_rejection(
+    *,
+    path: str,
+    resolved: Path,
+    reason: str,
+    message: str,
+    expected_sha256: str | None = None,
+    actual_sha256: str | None = None,
+) -> dict[str, Any]:
+    record(
+        "mcp.tool.file.write_rejected",
+        path=path,
+        resolved=str(resolved),
+        reason=reason,
+        expected_sha256=expected_sha256,
+        actual_sha256=actual_sha256,
+    )
+    payload: dict[str, Any] = {
+        "error": message,
+        "reason": reason,
+        "path": str(resolved),
+    }
+    if expected_sha256 is not None:
+        payload["expected_sha256"] = expected_sha256
+    if actual_sha256 is not None:
+        payload["actual_sha256"] = actual_sha256
+    return payload
+
+
+def _atomic_write(dest: Path, content: str) -> None:
+    suffix = dest.suffix.lower()
+    write_handlers = {
+        ".docx": write_docx,
+        ".pdf": write_pdf,
+    }
+    write_handler = write_handlers.get(suffix, write_plain)
+    temp_path = dest.with_suffix(
+        dest.suffix + f".tmp-{os.getpid()}-{secrets.token_hex(4)}"
+    )
+    try:
+        write_handler(temp_path, content)
+        os.replace(temp_path, dest)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
+def write_file_impl(
+    path: str,
+    content: str,
+    *,
+    expected_sha256: str | None = None,
+    if_absent: bool = False,
+) -> dict[str, Any]:
     """Write *content* to *path* inside the sandboxed files directory.
 
     Intermediate directories are created automatically.
+
+    CAS semantics (cortex sandbox; see friction-13695 sidecar):
+      - ``expected_sha256`` absent → legacy create-or-overwrite.
+      - ``expected_sha256`` present → file must exist and hash must match.
+      - ``if_absent=True`` → create-only; fails when the path already exists.
+      - Both guard params together → ``ValueError``.
     """
+    if expected_sha256 is not None and if_absent:
+        raise ValueError("expected_sha256 and if_absent are mutually exclusive")
+
     dest = safe_path(path)
-    suffix = dest.suffix.lower()
-    try:
-        write_handlers = {
-            ".docx": write_docx,
-            ".pdf": write_pdf,
-        }
-        write_handler = write_handlers.get(suffix, write_plain)
-        write_handler(dest, content)
-    except OSError as exc:
-        record(
-            "mcp.tool.file.write_failed",
-            path=path,
-            resolved=str(dest),
-            reason="os_error",
-            error=str(exc),
-            error_type=type(exc).__name__,
-        )
-        logger.exception("write_file: OS error writing %s", dest)
-        raise
+    with path_write_lock(dest):
+        actual_sha256 = sha256_of_file(dest)
+        if if_absent and dest.exists():
+            return _write_rejection(
+                path=path,
+                resolved=dest,
+                reason="file_exists",
+                message=f"Refusing to overwrite existing file: {path!r}",
+            )
+        if expected_sha256 is not None and actual_sha256 != expected_sha256:
+            return _write_rejection(
+                path=path,
+                resolved=dest,
+                reason="file_sha256.mismatch",
+                message=(
+                    f"Refusing write to {path!r}: current file hash "
+                    f"{actual_sha256!r} does not match expected {expected_sha256!r}"
+                ),
+                expected_sha256=expected_sha256,
+                actual_sha256=actual_sha256,
+            )
+        try:
+            _atomic_write(dest, content)
+        except OSError as exc:
+            record(
+                "mcp.tool.file.write_failed",
+                path=path,
+                resolved=str(dest),
+                reason="os_error",
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            logger.exception("write_file: OS error writing %s", dest)
+            raise
 
     record("mcp.tool.file.written", path=path, resolved=str(dest), chars=len(content))
     logger.debug("write_file: wrote %s (%d chars)", dest, len(content))

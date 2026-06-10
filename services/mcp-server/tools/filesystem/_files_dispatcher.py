@@ -36,6 +36,8 @@ def register_files_tool(mcp: FastMCP) -> None:
         binary: bool = False,
         offset: int = 0,
         limit: int = 0,
+        expected_sha256: str = "",
+        if_absent: bool = False,
     ) -> dict[str, Any]:
         """Unified file operations for the sandboxed /data/files directory.
 
@@ -60,7 +62,9 @@ def register_files_tool(mcp: FastMCP) -> None:
           read   — read file contents (path required; optional offset/limit
               for line-range slice — 0-based offset, max lines in limit)
           read_multi — batch read multiple files (paths required)
-          write  — create/overwrite file (path, content required)
+          write  — create/overwrite file (path, content required; optional
+              expected_sha256 for concurrent-safe overwrite, if_absent for
+              create-only — see friction-13695 sidecar)
           write_binary — write base64-encoded binary data (path required,
               content = base64 string). Use to stage PDFs, images, or other
               binary files for downstream tools like extract_document.
@@ -130,7 +134,12 @@ def register_files_tool(mcp: FastMCP) -> None:
                 raise ValueError("'path' is required for write")
             if not content:
                 raise ValueError("'content' is required for write")
-            result = write_file_impl(path, content)
+            result = write_file_impl(
+                path,
+                content,
+                expected_sha256=expected_sha256 or None,
+                if_absent=if_absent,
+            )
             result["_next"] = FS_WORKFLOW_HINTS["write"]
             return result
         if op == "write_binary":

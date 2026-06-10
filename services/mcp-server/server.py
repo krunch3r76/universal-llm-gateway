@@ -431,6 +431,8 @@ def _build_server() -> tuple[
         max_depth: int = 3,
         offset: int = 0,
         limit: int = 0,
+        expected_sha256: str = "",
+        if_absent: bool = False,
     ) -> dict[str, Any]:
         """Sandboxed file I/O (cortex, workspaces). Full catalog in tool description."""
         try:
@@ -450,6 +452,8 @@ def _build_server() -> tuple[
                 max_depth,
                 offset,
                 limit,
+                expected_sha256,
+                if_absent,
             )
         except Exception as exc:
             return _tool_error_envelope("fs", op, exc)
@@ -470,6 +474,8 @@ def _build_server() -> tuple[
         max_depth: int,
         offset: int,
         limit: int,
+        expected_sha256: str,
+        if_absent: bool,
     ) -> dict[str, Any]:
         if not op:
             return {"error": "'op' is required"}
@@ -548,6 +554,8 @@ def _build_server() -> tuple[
                 binary=binary,
                 offset=offset,
                 limit=limit,
+                expected_sha256=expected_sha256,
+                if_absent=if_absent,
             )
         except ValueError as exc:
             return {"error": str(exc)}

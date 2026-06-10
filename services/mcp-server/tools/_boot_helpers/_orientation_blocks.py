@@ -106,7 +106,7 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
 Surface axis: team_dispatch handoff = seat (claude-web/claude-cursor) + packet_path|source_ref, contract derived server-side; the (seat,contract) shorthands (web-consult/web-implement/cursor-consult/cursor-implement) remain accepted. team_dispatch generate = API role + optional model= override within allowed_models.
-Codified bug/friction ticket (any initiator, any surface) = actionable defect needing a fix cycle, routed in TWO phases → Phase 1 investigate+decide (role=cursor-consult from IDE / role=web-consult from web) to trace root cause + produce a dense spec → Phase 2 execute (role=cursor-implement against the spec / web inline fix). DEFAULT: a filed bug → assume the investigation tier unless operator says mechanical-only or a dense implement spec already exists; do NOT make cursor-implement the first hop on a bug with open root cause/design (friction 13571 → thread 1377). friction() is the observation log only, NOT the ticket channel; an operator-named transport wins (never silently substitute agent_bus). Read fs(workspaces, universal-llm-gateway/docs/agent-guides/skills/friction-review.md) or skill § Codified bug reports."""
+Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG scope-awareness — default search is auto-scoped, not corpus-wide
@@ -173,6 +173,17 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
     return None
 
 
+_OPERATOR_POSTURE_BLOCK = """\
+## Operator posture — binding default (web + cursor seats)
+You are the operator's orchestrator and committed teammate. Drive the endeavor; keep him oriented. Full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
+1. **Every substantive operator reply** opens with plain-language orientation — where we've been / where we are / where we're going — and closes with **What I need from you**: recommendations with stated reasoning, not bare questions. Slugs/thread numbers only where the operator must act on them. Artifacts, bus turns, and sidecars stay agent-facing; the chat reply translates them, never mirrors them.
+2. **Dispatch briefing** — any turn that fires team_dispatch (any op) or authors a handoff closes by translating: what was dispatched, to whom/which model; what proceeds autonomously vs exactly what the operator must do (push web thread N / open IDE thread N + pick executor tier per consult-routing §Executor tier / nothing — runs itself); how and when results return. Echoing push_reminder verbatim is insufficient.
+3. **Pickup orientation** — a session opening from a pasted handoff or resuming after session_close leads its first reply with the in-flight inventory: each pending dispatch annotated with the operator action it awaits, decisions awaiting the operator, this seat's next moves. Verify the handoff against primary artifacts before relaying its framing.
+4. **Ambiguous operator proposal** ("perhaps we should…") → advise with stated reasoning, then confirm-or-execute. Never silently comply; never litigate.
+5. **Verification on request is default duty** — operator asks for steelman / panel / consult / friction ticket → fire it. Adversarial verification of the operator's own position at his request is standard service, never suspicion. Exhaust the true, lawful reading of the facts before any fallback or refusal; if a missing fact would change the answer, ask for it.
+Full register + anti-patterns (derived home — edit agent-skills/operator-posture.md first): fs(cortex, agent-skills/operator-posture.md)"""
+
+
 def render_orientation_blocks(
     family: str | None = None,
     agent: str | None = None,
@@ -192,6 +203,7 @@ def render_orientation_blocks(
     """
     session_close_block = _session_close_orientation_for_agent(agent)
     blocks = [
+        f"\n{_OPERATOR_POSTURE_BLOCK}",
         f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
         _render_server_primary_manifest_line(),
         f"\n{_DISPATCH_CONSULT_BLOCK_CLAUDE}",

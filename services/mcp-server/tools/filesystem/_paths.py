@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
+import threading
+from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Iterator
 
 SANDBOX_ROOT = Path("/data/files")
 TRASH_ROOT = SANDBOX_ROOT / "trash"
@@ -84,6 +88,31 @@ DROPBOX_COPY_WARNING = (
 def normalize_files_reference(path: str) -> str:
     """Accept either a relative sandbox path or a `files://` URI."""
     return path.removeprefix("files://")
+
+
+_PATH_LOCKS: dict[str, threading.Lock] = {}
+_PATH_LOCKS_MUTEX = threading.Lock()
+
+
+def sha256_of_file(path: Path) -> str | None:
+    """Return ``sha256:<hex>`` of file bytes, or None when *path* is absent."""
+    if not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
+
+
+@contextmanager
+def path_write_lock(resolved: Path) -> Iterator[None]:
+    """Serialize compare-and-write for one resolved sandbox path (in-process)."""
+    key = str(resolved.resolve())
+    with _PATH_LOCKS_MUTEX:
+        lock = _PATH_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        yield
 
 
 def safe_path(relative: str) -> Path:
