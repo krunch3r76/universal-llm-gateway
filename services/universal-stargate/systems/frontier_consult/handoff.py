@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from agent_seat.profiles import load_profiles
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 from universal_logging import get_logger
 
@@ -35,7 +36,18 @@ _REQUIRED_PACKET_TAGS: tuple[str, ...] = (
 # MCP-capable manual seats must additionally carry <mcp_capabilities> — they
 # investigate via tools, not the inlined corpus alone (Block 5).
 _MCP_CAPABILITIES_TAG = "<mcp_capabilities>"
-_MCP_PACKET_SEATS: frozenset[str] = frozenset({"claude-web", "claude-cursor"})
+
+
+def _mcp_packet_seats() -> frozenset[str]:
+    """Manual, non-dispatchable seats with an MCP tool surface — packets to
+    these seats must carry <mcp_capabilities> (they investigate via tools)."""
+    return frozenset(
+        f"{family}-{platform}"
+        for (family, platform), profile in load_profiles().items()
+        if profile.delivery == "manual"
+        and not profile.dispatchable
+        and profile.tool_surface == "mcp"
+    )
 _PROTOCOL_HINT = (
     "Author per project .cursor/rules/architecture-handoff-protocol.mdc "
     "§ The Six Required Blocks (skeleton: "
@@ -97,7 +109,7 @@ def validate_packet(
     Admission predicate (FOL):
       admit(packet) ⟺ file_exists(packet)
                       ∧ _REQUIRED_PACKET_TAGS ⊆ tags(packet)
-                      ∧ (to_agent ∈ _MCP_PACKET_SEATS ⟹ <mcp_capabilities> ∈ packet)
+                      ∧ (to_agent ∈ _mcp_packet_seats() ⟹ <mcp_capabilities> ∈ packet)
                       ∧ (handoff_contract == "implement" ⟹ acceptance ∈ <task_guidance>)
 
     Every rejection cites the missing element(s) and the canonical protocol
@@ -134,7 +146,7 @@ def validate_packet(
     text = candidate.read_text(encoding="utf-8", errors="replace")
 
     missing = [tag for tag in _REQUIRED_PACKET_TAGS if tag not in text]
-    if to_agent in _MCP_PACKET_SEATS and _MCP_CAPABILITIES_TAG not in text:
+    if to_agent in _mcp_packet_seats() and _MCP_CAPABILITIES_TAG not in text:
         missing.append(_MCP_CAPABILITIES_TAG)
     if missing:
         raise FrontierEndpointError(

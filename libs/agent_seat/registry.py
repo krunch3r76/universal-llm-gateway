@@ -9,12 +9,27 @@ and the resolve_agent_* / check_agent_* helpers used by admission gates.
 
 from __future__ import annotations
 
-from .profiles import get_profile, load_lead_agent_slugs, load_roles, seat_to_family
+import functools
 
-# Legacy seat spellings → canonical {family}-{platform} slug.
-# Shared by dispatch normalization and agent-bus recipient matching.
-_DISPATCH_ALIASES: dict[str, str] = {
-    # Legacy seat slugs → new seat slugs
+from .profiles import (
+    get_profile,
+    load_lead_agent_slugs,
+    load_profiles,
+    load_roles,
+    seat_to_family,
+)
+
+
+def _normalize_agent_key(slug: str) -> str:
+    return slug.strip().lower().replace("-", "_").replace(" ", "_")
+
+
+# Legacy seat spellings → canonical {family}-{platform} slug. HAND-MAINTAINED
+# residue: ONLY spellings that cannot be derived from config/agents.yaml
+# (historical nicknames). Underscore forms of canonical seat/role slugs are
+# derived in _dispatch_aliases(); adding a derivable key here raises at import
+# and fails test_legacy_residue_not_derivable.
+_LEGACY_ALIASES: dict[str, str] = {
     "cursor": "claude-cursor",
     "cursor_claude": "claude-cursor",
     "web": "claude-web",
@@ -28,35 +43,30 @@ _DISPATCH_ALIASES: dict[str, str] = {
     "cursor_gemini": "gemini-cursor",
     "gemini": "gemini-cursor",
     "web_gemini": "gemini-web",
-    "gemini_web": "gemini-web",
-    # New canonical seat slugs (hyphen form stored under underscore key
-    # since norm replaces hyphens with underscores above)
-    "claude_cursor": "claude-cursor",
-    "claude_api": "claude-api",
-    "claude_web": "claude-web",
-    "gpt_cursor": "gpt-cursor",
-    "gpt_api": "gpt-api",
-    "grok_cursor": "grok-cursor",
-    "grok_api": "grok-api",
-    "grok_api_multi": "grok-api-multi",
-    "grok_web": "grok-web",
-    "gemini_api": "gemini-api",
-    "gemini_cursor": "gemini-cursor",
-    # Handoff roster + API functional roles
-    "web_consult": "web-consult",
-    "web_implement": "web-implement",
-    "cursor_consult": "cursor-consult",
-    "cursor_implement": "cursor-implement",
-    "reviewer": "reviewer",
-    "gatherer": "gatherer",
-    "synthesizer": "synthesizer",
-    "artisan": "artisan",
-    "skeptic": "skeptic",
 }
 
 
-def _normalize_agent_key(slug: str) -> str:
-    return slug.strip().lower().replace("-", "_").replace(" ", "_")
+@functools.cache
+def _dispatch_aliases() -> dict[str, str]:
+    """Merged alias map — legacy residue + spellings derived from agents.yaml.
+
+    Derived entries: underscore normalization of every canonical seat slug
+    ({family}-{platform} profile cell) and every role slug. New seats/roles
+    resolve without touching any hand-maintained list (assertion 13585 class).
+    """
+    derived: dict[str, str] = {}
+    for family, platform in load_profiles():
+        slug = f"{family}-{platform}"
+        derived[_normalize_agent_key(slug)] = slug
+    for role_slug in load_roles():
+        derived[_normalize_agent_key(role_slug)] = role_slug
+    overlap = _LEGACY_ALIASES.keys() & derived.keys()
+    if overlap:
+        raise RuntimeError(
+            f"_LEGACY_ALIASES shadows derivable spellings: {sorted(overlap)} — "
+            "remove them; derivation owns these keys."
+        )
+    return {**_LEGACY_ALIASES, **derived}
 
 
 def normalize_agent_slug(slug: str) -> str:
@@ -75,7 +85,7 @@ def normalize_agent_slug(slug: str) -> str:
     if not isinstance(slug, str):
         slug = str(slug)
     norm = _normalize_agent_key(slug)
-    return _DISPATCH_ALIASES.get(norm, norm)
+    return _dispatch_aliases().get(norm, norm)
 
 
 def is_lead_agent(slug: str) -> bool:
@@ -96,7 +106,7 @@ def expand_recipient_slugs(slug: str) -> list[str]:
     if raw:
         values.add(raw)
     values.add(canonical.replace("-", "_"))
-    for alias_norm, target in _DISPATCH_ALIASES.items():
+    for alias_norm, target in _dispatch_aliases().items():
         if target != canonical:
             continue
         values.add(alias_norm)

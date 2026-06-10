@@ -320,18 +320,21 @@ def test_h1b_claude_cursor_seat_slug_profile_resolves() -> None:
     assert platform == "cursor"
 
 
-def test_handoff_enforcement_roster_matches_declared_catalog() -> None:
-    """Admission accept-set ≡ non-legacy declarative handoff roster (single SOT).
+def test_handoff_enforcement_roster_advertises_derived_seat_map() -> None:
+    """Invalid handoff role rejection carries the catalog-derived seat-map clause.
 
-    Falsifier for roster-advertisement drift (friction 13744): any divergence
-    between admission._HANDOFF_ROSTER and the agents.yaml-derived catalog fails
-    here, forcing the two SOTs back into lockstep.
+    Falsifier for roster-advertisement drift (friction 13744): the 422 reason
+    must contain the live ``handoff_seat_map_clause()`` output — not a tautological
+    derived==derived comparison.
     """
-    from agent_seat.dispatch_role_catalog import handoff_roles, is_legacy_role
-    from systems.frontier_consult.admission import _HANDOFF_ROSTER
+    from agent_seat.dispatch_role_catalog import handoff_seat_map_clause
 
-    declared_non_legacy = {r for r in handoff_roles() if not is_legacy_role(r)}
-    assert _HANDOFF_ROSTER == declared_non_legacy
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        resolve_handoff_target(role="not-a-role", request_id="req-roster-map")
+    err = exc_info.value
+    assert err.status_code == 422
+    assert err.code == "handoff_role_invalid"
+    assert handoff_seat_map_clause() in err.reason
 
 
 @pytest.mark.parametrize("role", ["lead", "cursor-lead", "implementer"])
@@ -1048,6 +1051,24 @@ def test_pv_mcp_capabilities_required_for_web_seat(tmp_path: Path) -> None:
             request_id="req-pv4",
             packet_path=_PV_REL,
             to_agent="claude-web",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    assert exc_info.value.code == "handoff_packet_invalid"
+    assert "<mcp_capabilities>" in exc_info.value.reason
+
+
+def test_pv_mcp_capabilities_required_for_grok_web_seat(tmp_path: Path) -> None:
+    """Predicate-derived MCP seats include grok-web — packet lint applies."""
+    packet = _CONFORMANT_PACKET.replace(
+        "<mcp_capabilities>You have MCP. Cite tool calls.</mcp_capabilities>\n", ""
+    )
+    _write_packet(tmp_path, _PV_REL, packet)
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-pv-grok",
+            packet_path=_PV_REL,
+            to_agent="grok-web",
             handoff_contract="consult",
             workspaces_root=tmp_path,
         )

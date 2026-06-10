@@ -8,6 +8,11 @@ from typing import Any
 
 import httpx
 from agent_seat import AgentMeta
+from agent_seat.dispatch_role_catalog import (
+    handoff_roles,
+    handoff_seat_map_clause,
+    is_legacy_role,
+)
 from agent_seat.profiles import (
     CapabilityProfile,
     client_side_mcp_tool_loop_admitted,
@@ -15,7 +20,6 @@ from agent_seat.profiles import (
     load_roles,
     seat_to_family,
 )
-from agent_seat.dispatch_role_catalog import handoff_roles, is_legacy_role
 from agent_seat.registry import normalize_agent_slug
 from model_id import ModelId
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
@@ -220,9 +224,6 @@ def _admitted_handoff_roster() -> frozenset[str]:
     return frozenset(r for r in handoff_roles() if not is_legacy_role(r))
 
 
-_HANDOFF_ROSTER = _admitted_handoff_roster()
-
-
 def resolve_handoff_target(
     *,
     role: str,
@@ -243,10 +244,8 @@ def resolve_handoff_target(
             request_id=request_id,
             field="role",
             reason=(
-                f"handoff role {role!r} is not a roster slug; use web-consult "
-                f"(→ claude-web), web-implement (bound implement → claude-web), "
-                f"cursor-consult (→ claude-cursor), or cursor-implement "
-                f"(bound implement → claude-cursor)"
+                f"handoff role {role!r} is not a roster slug; handoff seat-map: "
+                f"{handoff_seat_map_clause()}"
             ),
             status_code=422,
             code="handoff_role_invalid",

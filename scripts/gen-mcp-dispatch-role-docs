@@ -123,6 +123,14 @@ def _render_canonical(text: str) -> str:
         1,
         "canonical handoff role enum",
     )
+    seat_enum = ", ".join(handoff_seats())
+    text = _sub(
+        r"(?m)^(\s*)seat: \{type: string, enum: \[[^\]]*\]\}$",
+        lambda m: f"{m.group(1)}seat: {{type: string, enum: [{seat_enum}]}}",
+        text,
+        1,
+        "canonical handoff seat enum",
+    )
     return text
 
 
@@ -166,6 +174,7 @@ def _render_frontier(text: str) -> str:
 def _render_oc_templates(text: str) -> str:
     bare = handoff_bare_comma_clause()
     seat_map = handoff_seat_map_clause()
+    seats = ", ".join(handoff_seats())
 
     text = _sub(
         r"(?m)^- handoff roles: .*$",
@@ -180,6 +189,13 @@ def _render_oc_templates(text: str) -> str:
         text,
         1,
         "oc_templates handoff seat-map",
+    )
+    text = _sub(
+        r"synthetic seat models \([^)]*\)",
+        f"synthetic seat models ({seats})",
+        text,
+        1,
+        "oc_templates synthetic seat models",
     )
     return text
 
