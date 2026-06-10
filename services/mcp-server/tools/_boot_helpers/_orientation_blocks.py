@@ -62,7 +62,7 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus in messages (¬ expect Cortex/fs writes from skeptic)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
 **Delivering an authored packet to a seat IS `team_dispatch(op=handoff)` — the default, not an option.** It posts the pointer + returns `push_reminder`/`poll_hint`.
-- manual seat handoff → team_dispatch (op=handoff, seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — contract derived server-side (source_ref dispatch_lane → packet front-matter → default consult); claude-web → operator push, claude-cursor → IDE thread. (seat,contract) shorthands accepted: web-consult/web-implement → claude-web, cursor-consult/cursor-implement → claude-cursor.
+- manual seat handoff → team_dispatch (op=handoff, seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — contract derived server-side (source_ref dispatch_lane → packet front-matter → default consult); claude-web → operator push, claude-cursor → IDE thread. (seat,contract) shorthands accepted; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
   ⚠ ANTI-PATTERN: never offer "paste the packet manually OR fire the handoff" / never instruct a hand copy-paste — the handoff IS the delivery.
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]

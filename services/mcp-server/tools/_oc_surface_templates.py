@@ -136,10 +136,10 @@ overflow relay templates only; they require bound `dispatch`.
 Pick by CAPABILITY, not model family. To consult a MODEL (any provider, incl. grok) you do NOT use a build harness (cursorbuild).
 When connector-bound: team_dispatch + panel_dispatch are server-primary — call directly.
 - local file/entity work (you ARE claude-web) → fs / cortex / agent_bus directly — ¬ team_dispatch(op="generate"|"to_thread", model="claude-web") (422)
-- manual seat handoff → team_dispatch(op="handoff", role="web-consult"|"cursor-consult"|"cursor-implement", packet_path=…, subject=…) — {platform}-{contract} roster; self-handoff on claude-web uses role=web-consult (operator push)
+- manual seat handoff → team_dispatch(op="handoff", seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — shorthands accepted; handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
 - API consult (any provider) → team_dispatch(op="generate", role="reviewer"|"artisan"|…, dispatch_thread_id="…", model="provider/model"?, messages=[…]) → execution_id; poll pipeline(op="result", execution_id=…)
 - forbidden on generate → synthetic seat models (claude-web, claude-cursor) — use op="handoff" with role= instead
-- handoff roles: web-consult, cursor-consult, cursor-implement (only these three)
+- handoff roles: web-consult, web-implement, cursor-consult, cursor-implement (complete roster)
 - consensus panel → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel") → panel_executions; lead adjudication NON-offloadable
 - strategic advice / in-pipeline RAG → dispatch(tool="advisor" | "pipeline_consult", …)  [overflow]
 - close-to-code build → cursorbuild (forward harness)
@@ -227,7 +227,7 @@ with a structured error envelope **before** dispatch.
 
 **Output channel (`op` parameter)**:
 - `team_dispatch`: `op="generate"` (poll result), `op="to_thread"` (bus delivery),
-  or `op="handoff"` — `role=web-consult|cursor-consult|cursor-implement`; handoff
+  or `op="handoff"` — `seat=` (or `{platform}-{contract}` shorthand role; roster above); handoff
   returns `{thread_id, resolved_model, push_reminder}`; no provider dispatch.
   See `agent-skills/consult-routing.md`.
 

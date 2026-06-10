@@ -2358,8 +2358,7 @@ tools:
     confirmed-decision gate (source_ref path only). Stargate owns resolution — relay pass-through only.
     HandoffSeat = claude-web | claude-cursor. Contract derived server-side (source_ref dispatch_lane →
     packet front-matter contract: → role default_contract → consult).
-    The {platform}-{contract} shorthands (web-consult, web-implement, cursor-consult,
-    cursor-implement) remain accepted and encode (seat, contract).
+    The {platform}-{contract} shorthands (web-consult, web-implement, cursor-consult, cursor-implement) remain accepted and encode (seat, contract).
     handoff seat-map: web-consult, web-implement → claude-web; cursor-consult, cursor-implement → claude-cursor.
     Operator-only overrides (hidden from default agent guidance): role=, op=, contract=.
     ¬model on handoff. ¬handoff_contract on request (derived server-side).
@@ -2369,14 +2368,15 @@ tools:
     type: object
     properties:
       op: {type: string, enum: [handoff]}
-      role: {type: string, enum: [web-consult, cursor-consult, cursor-implement]}
+      seat: {type: string, enum: [claude-web, claude-cursor]}
+      role: {type: string, enum: [web-consult, web-implement, cursor-consult, cursor-implement]}
       packet_path: {type: string}
       source_ref: {type: string}
       subject: {type: string}
       pointer_body: {type: string}
       tags: {type: array, items: {type: string}}
       caller_agent: {type: string}
-    required: [op, role, subject]
+    required: [op, subject]
   skill_uri: agent_skill:dispatch
   seat_visibility: [mcp, mcp_claude]
   mandate_safety: write

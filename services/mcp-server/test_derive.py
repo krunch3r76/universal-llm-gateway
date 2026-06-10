@@ -1,8 +1,4 @@
-"""Snapshot test for derive_claude_manifest (Phase D).
-
-Golden file:
-  testdata/golden_claude_manifest.json
-"""
+"""Derivation tests for derive_claude_manifest (Phase D) against live canonical.yaml."""
 
 from __future__ import annotations
 

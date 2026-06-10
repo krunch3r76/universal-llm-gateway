@@ -9,9 +9,9 @@ and partitions the roster by dispatch op:
   ``¬dispatchable`` (valid for ``team_dispatch(op="handoff")`` only).
 
 The render helpers produce the exact agent-facing clause strings embedded in
-``config/mcp/canonical.yaml`` and the ``services/mcp-server/tools/frontier.py``
-dispatch docstrings. ``scripts/gen-mcp-dispatch-role-docs`` regenerates those
-clauses from here so docs stay in lockstep with the role roster.
+``config/mcp/canonical.yaml``, ``services/mcp-server/tools/frontier.py``,
+``_oc_surface_templates.py``, and ``_orientation_blocks.py``. ``scripts/gen-mcp-dispatch-role-docs``
+regenerates those clauses from here so docs stay in lockstep with the role roster.
 """
 
 from __future__ import annotations
@@ -98,3 +98,28 @@ def handoff_seat_map_clause() -> str:
             clause += " (legacy)"
         parts.append(clause)
     return "; ".join(parts)
+
+
+def admitted_handoff_roles() -> list[str]:
+    """Handoff roles admission accepts (non-legacy). Advertised roster everywhere."""
+    return [r for r in handoff_roles() if not is_legacy_role(r)]
+
+
+def handoff_slash_clause() -> str:
+    """Slash-joined admitted handoff roster, e.g. ``web-consult/web-implement/...``."""
+    return "/".join(admitted_handoff_roles())
+
+
+def handoff_bare_comma_clause() -> str:
+    """Comma-joined admitted handoff roster, no legacy suffix (enums, shorthand lists)."""
+    return ", ".join(admitted_handoff_roles())
+
+
+def handoff_seats() -> list[str]:
+    """Distinct resolved handoff seats, first-seen roster order."""
+    seats: list[str] = []
+    for role in handoff_roles():
+        seat = handoff_role_seat(role)
+        if seat not in seats:
+            seats.append(seat)
+    return seats

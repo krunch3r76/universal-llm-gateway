@@ -7,10 +7,14 @@ the canonical role-clause strings and writes them into the agent-facing docs
 that would otherwise drift:
 
   - ``config/mcp/canonical.yaml`` — team_dispatch generate / to_thread / handoff
-    fol_descriptor role clauses (``generate/to_thread roles (...)`` and the
-    handoff ``handoff seat-map: ...`` line).
+    fol_descriptor role clauses (``generate/to_thread roles (...)``,
+    ``handoff seat-map: ...``, negation line, shorthands, HandoffSeat, enum).
   - ``services/mcp-server/tools/frontier.py`` — module + tool docstring roster
-    lines (``generate/to_thread roles: ...`` and ``handoff roles: ...``).
+    lines and gen-gated ``_HANDOFF_*_ROSTER`` constants.
+  - ``services/mcp-server/tools/_oc_surface_templates.py`` — operational-context
+    roster lines.
+  - ``services/mcp-server/tools/_boot_helpers/_orientation_blocks.py`` — boot-card
+    ``handoff seat-map:`` line.
 
 Usage:
   scripts/gen-mcp-dispatch-role-docs            # rewrite docs in place
@@ -33,26 +37,91 @@ sys.path.insert(0, str(_REPO_ROOT / "libs"))
 from agent_seat.dispatch_role_catalog import (  # noqa: E402
     generate_comma_clause,
     generate_slash_clause,
+    handoff_bare_comma_clause,
     handoff_comma_clause,
     handoff_seat_map_clause,
+    handoff_seats,
+    handoff_slash_clause,
 )
 
 _CANONICAL = _REPO_ROOT / "config" / "mcp" / "canonical.yaml"
 _FRONTIER = _REPO_ROOT / "services" / "mcp-server" / "tools" / "frontier.py"
+_OC_TEMPLATES = (
+    _REPO_ROOT / "services" / "mcp-server" / "tools" / "_oc_surface_templates.py"
+)
+_ORIENTATION = (
+    _REPO_ROOT
+    / "services"
+    / "mcp-server"
+    / "tools"
+    / "_boot_helpers"
+    / "_orientation_blocks.py"
+)
+
+
+def _sub(
+    pattern: str, repl, text: str, expected: int, label: str, flags: int = 0
+) -> str:
+    out, n = re.subn(pattern, repl, text, flags=flags)
+    if n != expected:
+        raise SystemExit(
+            f"FAIL gen-mcp-dispatch-role-docs: anchor {label!r} matched {n}x "
+            f"(expected {expected}) — advertised line missing or reworded."
+        )
+    return out
 
 
 def _render_canonical(text: str) -> str:
     slash = generate_slash_clause()
     seat_map = handoff_seat_map_clause()
-    text = re.sub(
+    negation = handoff_slash_clause()
+    bare = handoff_bare_comma_clause()
+    seats = " | ".join(handoff_seats())
+
+    text = _sub(
         r"generate/to_thread roles \([^)]*\)",
         f"generate/to_thread roles ({slash})",
         text,
+        2,
+        "canonical generate/to_thread roles",
     )
-    text = re.sub(
+    text = _sub(
         r"(?m)^(\s*)handoff seat-map: .*$",
         lambda m: f"{m.group(1)}handoff seat-map: {seat_map}.",
         text,
+        1,
+        "canonical handoff seat-map",
+    )
+    text = _sub(
+        r"(?m)^(\s*)¬ \S+ \(handoff-only\)\.",
+        lambda m: f"{m.group(1)}¬ {negation} (handoff-only).",
+        text,
+        1,
+        "canonical negation roster",
+    )
+    text = _sub(
+        r"(?m)^(\s*)The \{platform\}-\{contract\} shorthands \([^)]*\) remain accepted and encode \(seat, contract\)\.$",
+        lambda m: (
+            f"{m.group(1)}The {{platform}}-{{contract}} shorthands "
+            f"({bare}) remain accepted and encode (seat, contract)."
+        ),
+        text,
+        1,
+        "canonical shorthands sentence",
+    )
+    text = _sub(
+        r"(?m)^(\s*)HandoffSeat = [^.]+\.",
+        lambda m: f"{m.group(1)}HandoffSeat = {seats}.",
+        text,
+        1,
+        "canonical HandoffSeat roster",
+    )
+    text = _sub(
+        r"(?m)^(\s*)role: \{type: string, enum: \[[^\]]*\]\}$",
+        lambda m: f"{m.group(1)}role: {{type: string, enum: [{bare}]}}",
+        text,
+        1,
+        "canonical handoff role enum",
     )
     return text
 
@@ -60,18 +129,77 @@ def _render_canonical(text: str) -> str:
 def _render_frontier(text: str) -> str:
     comma = generate_comma_clause()
     handoff = handoff_comma_clause()
-    text = re.sub(
+    bare = handoff_bare_comma_clause()
+    seat_roster = ", ".join(handoff_seats())
+
+    text = _sub(
         r"generate/to_thread roles: [^\n]*",
         f"generate/to_thread roles: {comma}",
         text,
+        2,
+        "frontier generate/to_thread roles",
     )
-    text = re.sub(r"handoff roles: [^\n]*", f"handoff roles: {handoff}", text)
+    text = _sub(
+        r"handoff roles: [^\n]*",
+        f"handoff roles: {handoff}",
+        text,
+        1,
+        "frontier handoff roles",
+    )
+    text = _sub(
+        r"(?m)^_HANDOFF_ROLE_ROSTER = \".*\"$",
+        f'_HANDOFF_ROLE_ROSTER = "{bare}"',
+        text,
+        1,
+        "frontier _HANDOFF_ROLE_ROSTER",
+    )
+    text = _sub(
+        r"(?m)^_HANDOFF_SEAT_ROSTER = \".*\"$",
+        f'_HANDOFF_SEAT_ROSTER = "{seat_roster}"',
+        text,
+        1,
+        "frontier _HANDOFF_SEAT_ROSTER",
+    )
     return text
+
+
+def _render_oc_templates(text: str) -> str:
+    bare = handoff_bare_comma_clause()
+    seat_map = handoff_seat_map_clause()
+
+    text = _sub(
+        r"(?m)^- handoff roles: .*$",
+        f"- handoff roles: {bare} (complete roster)",
+        text,
+        1,
+        "oc_templates handoff roles",
+    )
+    text = _sub(
+        r"handoff seat-map: [^.\n]*\.",
+        f"handoff seat-map: {seat_map}.",
+        text,
+        1,
+        "oc_templates handoff seat-map",
+    )
+    return text
+
+
+def _render_orientation_blocks(text: str) -> str:
+    seat_map = handoff_seat_map_clause()
+    return _sub(
+        r"handoff seat-map: [^.\n]*\.",
+        f"handoff seat-map: {seat_map}.",
+        text,
+        1,
+        "orientation_blocks handoff seat-map",
+    )
 
 
 _TARGETS: tuple[tuple[Path, object], ...] = (
     (_CANONICAL, _render_canonical),
     (_FRONTIER, _render_frontier),
+    (_OC_TEMPLATES, _render_oc_templates),
+    (_ORIENTATION, _render_orientation_blocks),
 )
 
 

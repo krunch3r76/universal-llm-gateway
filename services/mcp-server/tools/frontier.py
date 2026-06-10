@@ -42,6 +42,11 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Gen-gated roster constants — regenerate via scripts/gen-mcp-dispatch-role-docs;
+# do not hand-edit the two lines below.
+_HANDOFF_ROLE_ROSTER = "web-consult, web-implement, cursor-consult, cursor-implement"
+_HANDOFF_SEAT_ROSTER = "claude-web, claude-cursor"
+
 # Relay only handles admission (role contract + model admission at Stargate).
 # Long-poll blocking is the caller's responsibility via pipeline(op="result").
 _RELAY_TIMEOUT = 20.0
@@ -184,9 +189,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``seat="claude-cursor"`` → open IDE thread
         Contract is derived server-side (``source_ref`` dispatch_lane → packet
         front-matter ``contract:`` → default ``consult``). The
-        ``{platform}-{contract}`` shorthands (``web-consult``/``web-implement`` →
-        claude-web; ``cursor-consult``/``cursor-implement`` → claude-cursor)
-        remain accepted and encode (seat, contract).
+        ``{platform}-{contract}`` shorthand slugs remain accepted and encode
+        (seat, contract) — roster in the module docstring above.
 
         Requires ``subject``, at least one of ``seat`` | ``role``, and at least
         one of ``packet_path`` | ``source_ref``. Returns
@@ -269,9 +273,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "at least one of seat (claude-web, claude-cursor) or "
-                            "role (web-consult, web-implement, cursor-consult, "
-                            "cursor-implement) is required when op='handoff'"
+                            f"at least one of seat ({_HANDOFF_SEAT_ROSTER}) or "
+                            f"role ({_HANDOFF_ROLE_ROSTER}) is required "
+                            "when op='handoff'"
                         ),
                     }
                 }
@@ -280,8 +284,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "model is not accepted when op='handoff'; use role="
-                            "'web-consult', 'cursor-consult', or 'cursor-implement'"
+                            f"model is not accepted when op='handoff'; select "
+                            f"seat ({_HANDOFF_SEAT_ROSTER}) or shorthand role "
+                            f"({_HANDOFF_ROLE_ROSTER})"
                         ),
                     }
                 }
