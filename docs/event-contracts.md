@@ -1122,62 +1122,132 @@ Crash evidence: `/tmp/logs/tui/tui.log` (append-mode, traceback on unhandled exc
 
 ### Request Events
 
+<!-- GENERATED:START region=capacity inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `request.routed` | `request_id`, `model_id`, `routing_reason` | `correlation_id`, `target_gateway` |
-| `request.gateway.trace` | `request_id`, `model_id`, `phase`, `invariant_status` | `selected_gateway`, `capacity_gateway`, `sticky_gateway`, `final_gateway`, `forwarded_gateway`, `remote_id`, `gateway_url`, `reason` |
-| `request.queued` | `request_id` | `correlation_id`, `queue_position` |
-| `request.processing` | `request_id` | `correlation_id` |
-| `request.inference.started` | `request_id`, `model_id`, `gateway_url` | `correlation_id` |
-| `request.completed` | `request_id` | `correlation_id`, `tokens`, `duration_ms` |
-| `request.failed` | `request_id`, `error` | `correlation_id`, `error_code`, `error_source`, `error_data` (incl. `topology_snapshot` for `MODEL_NOT_FOUND`), `caller_hint` |
-| `request.timed.out` | `request_id` | `correlation_id`, `timeout_ms` |
-| `request.deadline.exceeded` | `request_id`, `model_id`, `gateway_id`, `deadline_s`, `elapsed_ms` | Client-supplied X-Request-Timeout deadline exceeded mid-inference. Distinct from `request.timed.out` (queue TTL). role=observation. |
-| `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
-| `request.client.disconnected` | `request_id`, `model_id`, `hop` | `correlation_id`, `gateway_url`, `duration` |
-| `scheduler.routing.failed` | `model_id`, `candidate_count`, `evaluation_time_ms`, `timestamp`, `reason` | `original_model_id`, `request_id` |
-| `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `timestamp` | `gateway_id` |
-| `scheduler.routing.dequeued` | `request_id`, `model_id`, `gateway_id`, `wait_ms`, `timestamp` | - |
-| `scheduler.routing.timeout` | `request_id`, `model_id`, `constraint`, `wait_ms`, `timestamp` | - |
-| `routing.resource.data.missing` | `request_id`, `model_id`, `gateway_ids` | - |
-| `routing.model.infeasible` | `request_id`, `model_id`, `gateway_constraints`, `excluded_gateway_ids` | - |
-| `routing.eviction.blocked.busy` | `request_id`, `model_id`, `gateway_id`, `loaded_count`, `busy_count`, `vram_free`, `candidate_breakdown` | - |
-| `routing.eviction.insufficient.permanent` | `request_id`, `model_id`, `gateway_id`, `reason`, `failed_constraints` | - |
-| `routing.eviction.wait.started` | `request_id`, `model_id`, `timeout_s`, `queue_depth` | - |
-| `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
-| `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms`, `exit_reason`, `exit_constraint_summary` | - |
-| `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | - |
-| `routing.eviction.execute.failed` | `request_id`, `model_id`, `gateway_id`, `selection_tier`, `selection_reason`, `models_to_evict`, `freed_vram_mb`, `freed_ram_mb`, `estimated_cost`, `cooldown_protected_count`, `demand_protected_count`, `candidate_breakdown`, `timestamp` | - |
-| `routing.startup.queued` | `request_id`, `model_id`, `uptime_s`, `timeout_s` | - |
-| `routing.startup.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms`, `uptime_s` | - |
-| `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | - |
-| `routing.model.grace.queued` | `request_id`, `model_id`, `timeout_s`, `unhealthy_gateway_ids` | - |
-| `routing.model.grace.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | - |
-| `routing.model.grace.timeout` | `request_id`, `model_id`, `waited_ms` | - |
-| `routing.inference.oom.recovery.started` | `request_id`, `model_id`, `gateway_id`, `evicting_count`, `evicting_models` | - |
-| `routing.inference.oom.recovery.succeeded` | `request_id`, `model_id`, `gateway_id`, `evicted_count` | - |
-| `routing.inference.oom.recovery.failed` | `request_id`, `model_id`, `gateway_id` | - |
-| `routing.inference.oom.banned` | `model_id`, `gateway_id` | - |
-| `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | - |
-| `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | - |
-| `routing.capacity.preseeded` | `request_id`, `model_id`, `gateway_id`, `placeholder_capacity`, `catalog_capacity` | Cold-load loading placeholder capacity applied before `model.loaded` |
-| `token.count.precondition` | `request_id`, `model_id`, `target_gateway`, `sticky`, `loaded_on_gateway`, `known_to_gateway`, `skip_requested`, `legal_reason`, `tools_count` | `selected_gateway`, `gateway_url`, `remote_id`, `content_type` |
-| `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | - |
-| `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways` | - |
-| `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | - |
-| `capacity.pool.admitted` | `request_id`, `model_id`, `gateway_id`, `wait_ms` | - |
-| `capacity.pool.full` | `request_id`, `model_id`, `current_depth`, `max_depth` | - |
-| `capacity.pool.cancelled` | `request_id`, `model_id`, `wait_ms`, `reason` | - |
-| `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | - |
-| `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | - |
-| `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | - |
-| `model.capacity.overflow.assigned` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `depth_before` | - |
+| `capacity.admission.paused` | `model_id`, `duration_s`, `reason` | Admission for model_id suspended for duration_s seconds. |
+| `capacity.admission.resumed` | `model_id`, `reason` | Admission pause cleared for model_id; queued waiters may be admitted. |
+| `capacity.pool.admitted` | `request_id`, `model_id`, `gateway_id`, `wait_ms` | Queued request assigned a slot after waiting in FIFO queue. |
+| `capacity.pool.cancelled` | `request_id`, `model_id`, `wait_ms`, `reason` | Queued request removed before admission due to explicit cancellation. |
+| `capacity.pool.full` | `request_id`, `model_id`, `current_depth`, `max_depth` | Queue at max depth — request rejected immediately (overload protection). |
+| `capacity.pool.queued` | `request_id`, `model_id`, `queue_position`, `allowed_gateways` | Request entered per-model FIFO admission queue in CapacityPool. |
+| `capacity.pool.waiting` | `request_id`, `model_id`, `wait_ms`, `queue_position`, `queue_depth` | Request is still queued in CapacityPool; waiting remains non-terminal. |
+| `capacity.slot.leak.recovered` | `request_id`, `gateway_id`, `model_id`, `snapshot` | Create CAPACITY_SLOT_LEAK_RECOVERED event. |
+<!-- GENERATED:END region=capacity -->
+<!-- GENERATED:START region=federated inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
 | `federated.request.prompt.transformation.applied` | `request_id`, `model_id`, `gateway_id`, `prompt_chars` | — |
-| `federated.request.prompt.transformation.failed`  | `request_id`, `model_id`, `gateway_id`, `error` | — |
+| `federated.request.prompt.transformation.failed` | `request_id`, `model_id`, `gateway_id`, `error` | — |
 | `federated.request.prompt.transformation.skipped` | `request_id`, `model_id`, `gateway_id`, `reason` | — |
-| `scheduler.eviction.cooldown.blocked` | `model_id`, `gateway_id`, `evicted_model_id`, `escape_reason`, `timestamp` | `request_id`, `cooldown_remaining_s`, `candidates_in_cooldown`, `candidates_demand_protected` |
+<!-- GENERATED:END region=federated -->
+<!-- GENERATED:START region=model inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `model.available` | `model_id` | Publish aggregate routing availability for a model ID at Stargate scope. |
+| `model.capacity.freed` | `url`, `model_id` | Create model.capacity.freed event (wake-only, no slot release). |
+| `model.capacity.overflow.assigned` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `depth_before` | Admission moved to overflow gateway |
+| `model.execution.completed` | `url`, `model_id`, `request_id`, `gateway_id` | Create model.execution.completed event (request-scoped slot release). |
+| `model.execution.failed` | `url`, `model_id`, `request_id`, `gateway_id`, `error` | Create model.execution.failed event (request-scoped slot release). |
+| `model.execution.started` | `url`, `model_id` | Create model.execution.started event. |
+| `model.load.blocked` | `model_id`, `reason`, `required_vram_mb`, `available_vram_mb`, `required_ram_mb`, `available_ram_mb`, `bypassed_margin` | Create MODEL_LOAD_BLOCKED event (Recommendation #7: Observability). |
+| `model.load.completed` | `model_id`, `gateway_url`, `gateway_name`, `timestamp`, `success`, `load_time_ms`, `error`, `request_id?` | `correlation_id` |
+| `model.load.context.mismatch` | `model_id`, `requested_context`, `actual_context`, `reason` | Create MODEL_LOAD_CONTEXT_MISMATCH event. |
+| `model.load.failed` | `worker_snapshot?`, _dynamic_ | Create MODEL_LOAD_FAILED event. |
+| `model.load.failed` | `url`, `model_id`, `error`, `gateway_name`, `gateway_state_snapshot`, `worker_snapshot` | Create MODEL_LOAD_FAILED event. |
+| `model.load.initiated` | `model_id`, `gateway_url`, `gateway_name`, `timestamp`, `already_loaded`, `request_id?` | `correlation_id` |
+| `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | Overflow gateway cold-load initiated |
+| `model.loaded` | `model_id`, `vram_usage_mb`, `ram_usage_mb`, `process_pid` | `ram_mb`, `vram_mb` |
+| `model.loaded` | `gateway_id`, `model_id` | `ram_mb`, `vram_mb` |
+| `model.loaded` | `url`, `model_id`, `gateway_name`, `vram_mb`, `ram_mb` | `ram_mb`, `vram_mb` |
+| `model.loading.started` | `model_id` | `role=coordination`, `scope=global` — bridged from gateway WebSocket telemetry; opens cold-load window for batch coordinators |
+| `model.loading.started` | `url`, `model_id` | `role=coordination`, `scope=global` — bridged from gateway WebSocket telemetry; opens cold-load window for batch coordinators |
+| `model.loading.stuck` | `url`, `model_id`, `elapsed_s`, `ttl_s` | Signal that model load exceeded stuck TTL; reservation cleared. |
+| `model.selection.health.observation` | `quality_score?`, `tokens_per_second?`, _dynamic_ | `quality_score`, `tokens_per_second` |
+| `model.selection.rank.computed` | `task`, `candidates`, `selection_path` | `avoid_models` |
+| `model.selection.score.updated` | `task`, `model_id`, `final_score`, `components` | — |
+| `model.selection.switch.allowed` | `task`, `sticky_key`, `previous_model_id`, `new_model_id`, `delta` | — |
+| `model.selection.switch.suppressed` | `task`, `sticky_key`, `current_model_id`, `contender_model_id`, `delta`, `reason` | — |
+| `model.unavailable` | `model_id` | Publish aggregate routing loss for a model ID at Stargate scope. |
+| `model.unloaded` | `model_id` | `reason` |
+| `model.unloaded` | `gateway_id`, `model_id` | `reason` |
+| `model.unloaded` | `url`, `model_id`, `gateway_name` | `reason` |
+| `model.unloading.started` | `model_id` | Create MODEL_UNLOADING_STARTED event. |
+<!-- GENERATED:END region=model -->
+<!-- GENERATED:START region=request inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `request.alias.resolved` | `request_id`, `alias_id`, `backing_model_id` | Create REQUEST_ALIAS_RESOLVED event. |
+| `request.client.disconnected` | `gateway_url?`, `duration?`, _dynamic_ | `correlation_id`, `gateway_url`, `duration` |
+| `request.completed` | `request_id`, `gateway_url`, `model_id`, `duration` | `correlation_id`, `tokens`, `duration_ms` |
+| `request.deadline.exceeded` | `request_id`, `model_id`, `gateway_id`, `deadline_s`, `elapsed_ms` | Client-supplied X-Request-Timeout deadline exceeded mid-inference. Distinct from `request.timed.out` (queue TTL). role=observation. |
+| `request.failed` | `request_id`, `gateway_url`, `model_id`, `error`, `error_code`, `error_source`, `error_data`, `caller_hint` | `correlation_id`, `error_code`, `error_source`, `error_data` (incl. `topology_snapshot` for `MODEL_NOT_FOUND`), `caller_hint` |
+| `request.gateway.trace` | `request_id`, `model_id`, `phase`, `selected_gateway`, `capacity_gateway`, `sticky_gateway`, `final_gateway`, `forwarded_gateway`, `remote_id`, `gateway_url`, `invariant_status`, `reason` | `selected_gateway`, `capacity_gateway`, `sticky_gateway`, `final_gateway`, `forwarded_gateway`, `remote_id`, `gateway_url`, `reason` |
+| `request.inference.started` | `request_id`, `model_id`, `gateway_url`, `correlation_id` | `correlation_id` |
+| `request.inference.started` | `request_id`, `model_id`, `gateway_url`, `correlation_id` | `correlation_id` |
+| `request.processing` | `request_id`, `gateway_url`, `model_id` | `correlation_id` |
+| `request.profile.resolved` | `request_id`, `model_id`, `profile_name` | `correlation_id` |
+| `request.queued` | `model_id`, `request_id`, `messages`, `parameters`, `stream` | `correlation_id`, `queue_position` |
+| `request.queued` | `request_id`, `model_id`, `priority` | `correlation_id`, `queue_position` |
+| `request.removed` | `request_id`, `reason`, `model_id`, `age_seconds` | Create REQUEST_REMOVED event. |
+| `request.routed` | `request_id`, `model_id`, `gateway_url`, `gateway_name`, `timestamp`, `routing_time_ms`, `queue_position`, `immediate_route` | `correlation_id`, `target_gateway` |
+| `request.snapshot.completed` | `request_id`, `model_id`, `gateway_id`, `content`, `usage`, `duration_s`, `phase` | Snapshot the completed response (non-streaming only). |
+| `request.snapshot.failed` | `request_id`, `model_id`, `error`, `error_code`, `error_source`, `error_data`, `caller_hint`, `phase` | Snapshot a request failure. |
+| `request.snapshot.received` | `request_id`, `model_id`, `messages`, `is_pipeline`, `phase` | Snapshot the raw incoming request before routing. |
+| `request.snapshot.routed` | `request_id`, `model_id`, `gateway_id`, `profile_name`, `phase` | Snapshot the routing decision (model, gateway, profile). |
+| `request.timed.out` | `request_id`, `gateway_url`, `model_id`, `timeout_seconds` | `correlation_id`, `timeout_ms` |
+<!-- GENERATED:END region=request -->
+<!-- GENERATED:START region=routing inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `routing.capacity.divergence` | `request_id`, `model_id`, `gateway_id`, `busy_models_state`, `capacity_pool_available`, `capacity_pool_in_flight`, `capacity_pool_max` | Create ROUTING_CAPACITY_DIVERGENCE event. |
+| `routing.capacity.preseeded` | `request_id`, `model_id`, `gateway_id`, `placeholder_capacity`, `catalog_capacity` | Cold-load loading placeholder capacity applied before `model.loaded` |
+| `routing.debug.gateway.dropout` | `model_id`, `stage`, `all_gateway_ids`, `surviving_gateway_ids`, `dropped_gateway_ids`, `detail` | Emitted when one or more gateways are dropped by the health filter. |
+| `routing.debug.gateway.registered` | `gateway_id`, `remote_stargate_id`, `node_id`, `catalog_size`, `is_http_polling` | Emitted when a new gateway is registered (initial or reconnect). |
+| `routing.debug.gateway.removed` | `remote_stargate_id`, `removed_gateway_ids`, `remaining_gateway_ids` | Emitted when gateways are removed on edge/remote disconnect. |
+| `routing.drain.initiated` | `request_id`, `target_model_id`, `gateway_ids`, `drained_model_ids`, `duration_s`, `starved_for_ms` | Emit when starvation-triggered admission drain begins. |
+| `routing.eviction.blocked.busy` | `request_id`, `model_id`, `gateway_id`, `loaded_count`, `busy_count`, `vram_free`, `candidate_breakdown` | Create ROUTING_EVICTION_BLOCKED_BUSY event. |
+| `routing.eviction.execute.failed` | `request_id`, `model_id`, `gateway_id`, `selection_tier`, `selection_reason`, `models_to_evict`, `freed_vram_mb`, `freed_ram_mb`, `estimated_cost`, `cooldown_protected_count`, `demand_protected_count`, `candidate_breakdown`, `timestamp` | Emit when T2 finalize-time eviction execution failed. |
+| `routing.eviction.insufficient.permanent` | `request_id`, `model_id`, `gateway_id`, `reason`, `failed_constraints` | Create ROUTING_EVICTION_INSUFFICIENT_PERMANENT event. |
+| `routing.eviction.wait.cancelled` | `request_id`, `model_id`, `waited_ms` | Emit when eviction wait was cancelled (client disconnect / task cancel). |
+| `routing.eviction.wait.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | Emit when eviction wait completed and selection succeeded. |
+| `routing.eviction.wait.started` | `request_id`, `model_id`, `timeout_s`, `queue_depth` | Emit when request enters eviction wait queue (transient eviction blocked). |
+| `routing.eviction.wait.timeout` | `request_id`, `model_id`, `waited_ms`, `exit_reason`, `exit_constraint_summary` | Emit when the eviction wait exits without a resolved placement. |
+| `routing.inference.oom.recovery.started` | `request_id`, `model_id`, `gateway_id`, `evicting_count`, `evicting_models` | Emit when OOM recovery begins (evicting idle models). |
+| `routing.inference.oom.recovery.succeeded` | `request_id`, `model_id`, `gateway_id`, `evicted_count` | Emit when retry after OOM recovery succeeds. |
+| `routing.model.grace.queued` | `request_id`, `model_id`, `timeout_s`, `unhealthy_gateway_ids` | Emit when a request enters model-scoped grace waiting. |
+| `routing.model.grace.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms` | Emit when model-scoped grace unblocks after model gateway recovery. |
+| `routing.model.grace.timeout` | `request_id`, `model_id`, `waited_ms` | Emit when model-scoped grace expires without model gateway recovery. |
+| `routing.model.infeasible` | `request_id`, `model_id`, `gateway_constraints`, `excluded_gateway_ids` | Create ROUTING_MODEL_INFEASIBLE event. |
+| `routing.overflow.failed` | `request_id`, `model_id`, `tried_gateways`, `reason` | No feasible spillover path |
+| `routing.overflow.failed` | `request_id`, `model_id`, `from_gateway`, `reason` | No feasible spillover path |
+| `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | Spillover branch selected |
+| `routing.overflow.triggered` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `reason` | Spillover branch selected |
+| `routing.resource.data.missing` | `request_id`, `model_id`, `gateway_ids` | Create ROUTING_RESOURCE_DATA_MISSING event. |
+| `routing.startup.queued` | `request_id`, `model_id`, `uptime_s`, `timeout_s` | Emit when a request is held during startup window (no gateways yet). |
+| `routing.startup.resolved` | `request_id`, `model_id`, `gateway_id`, `waited_ms`, `uptime_s` | Emit when startup-queued request unblocks after a gateway connects. |
+| `routing.startup.timeout` | `request_id`, `model_id`, `waited_ms`, `uptime_s` | Emit when startup queue window exhausted with no gateway connecting. |
+| `routing.upstream.all.excluded` | `request_id`, `model_id`, `excluded_gateway_ids` | Create ROUTING_UPSTREAM_ALL_EXCLUDED event. |
+<!-- GENERATED:END region=routing -->
+<!-- GENERATED:START region=scheduler inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
 | `scheduler.eviction.cooldown.applied` | `model_id`, `gateway_id`, `protected_count`, `cooldown_s`, `timestamp` | — |
+| `scheduler.eviction.cooldown.blocked` | `request_id`, `model_id`, `gateway_id`, `evicted_model_id`, `escape_reason`, `cooldown_remaining_s`, `candidates_in_cooldown`, `candidates_demand_protected`, `timestamp` | `request_id`, `cooldown_remaining_s`, `candidates_in_cooldown`, `candidates_demand_protected` |
 | `scheduler.eviction.demand.applied` | `model_id`, `gateway_id`, `protected_count`, `waiter_counts`, `timestamp` | — |
+| `scheduler.routing.decided` | `model_id`, `original_model_id`, `selected_gateway`, `selection_reason`, `selection_tier`, `candidate_count`, `feasible_count`, `evaluation_time_ms`, `request_id`, `timestamp`, `candidates` | Create ROUTING_DECISION event. |
+| `scheduler.routing.dequeued` | `request_id`, `model_id`, `gateway_id`, `wait_ms`, `timestamp` | Emit when a queued request is dequeued and assigned to a gateway. |
+| `scheduler.routing.failed` | `model_id`, `original_model_id`, `candidate_count`, `evaluation_time_ms`, `request_id`, `timestamp`, `reason` | `original_model_id`, `request_id` |
+| `scheduler.routing.queued` | `request_id`, `model_id`, `constraint`, `gateway_id`, `timestamp` | `gateway_id` |
+| `scheduler.routing.timeout` | `request_id`, `model_id`, `constraint`, `wait_ms`, `timestamp` | Emit when a queued request exceeds wait timeout for its constraint. |
+<!-- GENERATED:END region=scheduler -->
+<!-- GENERATED:START region=token inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `token.count.completed` | `request_id`, `model_id`, `gateway_url`, `timestamp`, `success`, `count_time_ms`, `input_tokens`, `context_limit`, `allocated_max_tokens`, `error` | Create TOKEN_COUNT_COMPLETED event. |
+| `token.count.precondition` | `request_id`, `model_id`, `target_gateway`, `selected_gateway`, `gateway_url`, `remote_id`, `sticky`, `loaded_on_gateway`, `known_to_gateway`, `skip_requested`, `legal_reason`, `content_type`, `tools_count` | `selected_gateway`, `gateway_url`, `remote_id`, `content_type` |
+| `token.counting.failed` | `request_id`, `model_id`, `gateway_id`, `error` | Create TOKEN_COUNTING_FAILED event. |
+<!-- GENERATED:END region=token -->
 
 ### scheduler.eviction.cooldown.blocked / cooldown.applied / demand.applied
 
@@ -1555,52 +1625,83 @@ signal.
 
 ### Model Events
 
+<!-- GENERATED:START region=model inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `model.loaded` | `model_id` | `ram_mb`, `vram_mb` |
-| `model.unloaded` | `model_id` | `reason` |
+| `model.available` | `model_id` | Publish aggregate routing availability for a model ID at Stargate scope. |
+| `model.capacity.freed` | `url`, `model_id` | Create model.capacity.freed event (wake-only, no slot release). |
+| `model.capacity.overflow.assigned` | `request_id`, `model_id`, `from_gateway`, `to_gateway`, `depth_before` | Admission moved to overflow gateway |
+| `model.execution.completed` | `url`, `model_id`, `request_id`, `gateway_id` | Create model.execution.completed event (request-scoped slot release). |
+| `model.execution.failed` | `url`, `model_id`, `request_id`, `gateway_id`, `error` | Create model.execution.failed event (request-scoped slot release). |
+| `model.execution.started` | `url`, `model_id` | Create model.execution.started event. |
+| `model.load.blocked` | `model_id`, `reason`, `required_vram_mb`, `available_vram_mb`, `required_ram_mb`, `available_ram_mb`, `bypassed_margin` | Create MODEL_LOAD_BLOCKED event (Recommendation #7: Observability). |
+| `model.load.completed` | `model_id`, `gateway_url`, `gateway_name`, `timestamp`, `success`, `load_time_ms`, `error`, `request_id?` | `correlation_id` |
+| `model.load.context.mismatch` | `model_id`, `requested_context`, `actual_context`, `reason` | Create MODEL_LOAD_CONTEXT_MISMATCH event. |
+| `model.load.failed` | `worker_snapshot?`, _dynamic_ | Create MODEL_LOAD_FAILED event. |
+| `model.load.failed` | `url`, `model_id`, `error`, `gateway_name`, `gateway_state_snapshot`, `worker_snapshot` | Create MODEL_LOAD_FAILED event. |
+| `model.load.initiated` | `model_id`, `gateway_url`, `gateway_name`, `timestamp`, `already_loaded`, `request_id?` | `correlation_id` |
+| `model.load.overflow.started` | `request_id`, `model_id`, `gateway_id`, `reason` | Overflow gateway cold-load initiated |
+| `model.loaded` | `model_id`, `vram_usage_mb`, `ram_usage_mb`, `process_pid` | `ram_mb`, `vram_mb` |
+| `model.loaded` | `gateway_id`, `model_id` | `ram_mb`, `vram_mb` |
+| `model.loaded` | `url`, `model_id`, `gateway_name`, `vram_mb`, `ram_mb` | `ram_mb`, `vram_mb` |
+| `model.loading.started` | `model_id` | `role=coordination`, `scope=global` — bridged from gateway WebSocket telemetry; opens cold-load window for batch coordinators |
 | `model.loading.started` | `url`, `model_id` | `role=coordination`, `scope=global` — bridged from gateway WebSocket telemetry; opens cold-load window for batch coordinators |
-| `model.load.initiated` | `request_id`, `model_id` | `correlation_id` |
-| `model.load.completed` | `request_id`, `model_id`, `duration_ms` | `correlation_id` |
-| `model.loading.stuck` | `url`, `model_id`, `elapsed_s`, `ttl_s` | - |
-| `model.load.context.mismatch` | `model_id`, `requested_context`, `actual_context`, `reason` | - |
-| `model.state.changed` | `model_id`, `from`, `to`, `error` | `role=observation`, `scope=node` — every `ModelStatus` transition in ResourceTracker via `set_model_status` (loading, loaded, busy, unloading, error, not_loaded) |
+| `model.loading.stuck` | `url`, `model_id`, `elapsed_s`, `ttl_s` | Signal that model load exceeded stuck TTL; reservation cleared. |
+| `model.selection.health.observation` | `quality_score?`, `tokens_per_second?`, _dynamic_ | `quality_score`, `tokens_per_second` |
+| `model.selection.rank.computed` | `task`, `candidates`, `selection_path` | `avoid_models` |
+| `model.selection.score.updated` | `task`, `model_id`, `final_score`, `components` | — |
+| `model.selection.switch.allowed` | `task`, `sticky_key`, `previous_model_id`, `new_model_id`, `delta` | — |
+| `model.selection.switch.suppressed` | `task`, `sticky_key`, `current_model_id`, `contender_model_id`, `delta`, `reason` | — |
+| `model.unavailable` | `model_id` | Publish aggregate routing loss for a model ID at Stargate scope. |
+| `model.unloaded` | `model_id` | `reason` |
+| `model.unloaded` | `gateway_id`, `model_id` | `reason` |
+| `model.unloaded` | `url`, `model_id`, `gateway_name` | `reason` |
+| `model.unloading.started` | `model_id` | Create MODEL_UNLOADING_STARTED event. |
+<!-- GENERATED:END region=model -->
 
 **Note**: Execution-capacity signals (`model.execution.*` and
 `model.capacity.freed`) are documented under **Capacity & Slot Lifecycle**.
 
 ### Federation Events
 
+<!-- GENERATED:START region=federation inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
+| `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
+| `federation.catalog.changed` | `gateway_id`, `old_model_count`, `new_model_count`, `event_type`, `models` | Create FEDERATION_GATEWAY_CATALOG_CHANGED event. |
+| `federation.catalog.vram.drift` | `gateway_id`, `model_id`, `measured_mb`, `catalog_mb`, `drift_pct` | — |
+| `federation.circuit.breaker.rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
+| `federation.connection.authenticated` | `remote_id`, `method` | Remote Stargate authenticated with Master. |
 | `federation.connection.established` | `remote_id`, `transport` | `latency_ms` |
-| `federation.connection.authenticated` | `remote_id`, `method` | - |
-| `federation.connection.lost` | `remote_id`, `reason` | - |
+| `federation.connection.lost` | `remote_id`, `reason` | Remote Stargate disconnected from Master. |
+| `federation.gateway.degraded` | `gateway_id`, `consecutive_timeouts`, `first_error_code` | Gateway crossed timeout threshold (REQUEST_TIMEOUT/INFERENCE_TIMEOUT/LOAD_TIMEOUT). Coordination signal only — routing is NOT excluded. Cleared by `federation.gateway.recovered` with `kind=degradation`. role=coordination. |
+| `federation.gateway.reachability.restored` | `gateway_id`, `offline_duration_ms`, `model_count` | Create FEDERATION_GATEWAY_REACHABILITY_RESTORED event. |
+| `federation.gateway.recovered` | `gateway_id`, `kind`, `reason` | Previously DEGRADED or UNHEALTHY gateway recovered. `kind` ∈ {`degradation`, `reachability`}; `reason` ∈ {`first_success`, `probe_succeeded`}. role=coordination. |
+| `federation.gateway.removed` | `gateway_id`, `remote_id` | Record remote disconnect teardown after gateway removal from manager state. |
+| `federation.gateway.unhealthy` | `gateway_id`, `consecutive_disconnects`, `first_error_code`, `cooldown_s` | Gateway crossed disconnect threshold (GATEWAY_DISCONNECTED/EDGE_UNREACHABLE). Routing excludes for `cooldown_s`. Cleared by `federation.gateway.recovered` with `kind=reachability`. role=coordination. |
 | `federation.link.timeout` | `link_role`, `peer_id`, `close_code`, `close_reason`, `cause` | Native WS keepalive ping missed pong (`websockets` 1011 + reason contains `keepalive ping timeout`). `link_role` ∈ `remote_to_master`, `master_to_edge`. `cause` = `keepalive_ping`. role=observation, scope=node. |
-| `federation.snapshot.sent` | `gateway_id`, `all_models_count`, `available_models_count`, `gap_count`, `trigger` | `trigger`: `"initial"` (wiring) or `"periodic"` (reconciliation timer) |
-| `federation.telemetry.received` | `remote_id`, `model_count` | `resource_summary`, `telemetry_age_ms`, `msg_type`, `catalog_model_count`, `loaded_model_count`, `count_source` |
-| `federation.telemetry.applied` | `remote_id`, `changes` | - |
-| `federation.telemetry.marked.stale` | `remote_id`, `age_seconds`, `threshold_seconds` | - |
-| `federation.routing.delegated` | `request_id`, `target_remote`, `model_id` | `correlation_id`, `reason` |
-| `federation.routing.routed.local` | `request_id`, `model_id`, `reason` | `correlation_id` |
-| `federation.routing.rejected` | `request_id`, `model_id`, `reason` | `correlation_id` |
-| `federation.load.requested` | `request_id`, `target_remote`, `model_id` | `correlation_id` |
 | `federation.load.confirmed` | `request_id`, `remote_id`, `model_id`, `duration_ms` | `correlation_id` |
 | `federation.load.failed` | `request_id`, `remote_id`, `model_id`, `error` | `correlation_id` |
-| `federation.orchestrator.decided` | `request_id`, `decision_type`, `target`, `reason` | `correlation_id`, `alternatives_considered` |
-| `federation.orchestrator.evicted` | `target_remote`, `model_id`, `reason` | - |
+| `federation.load.requested` | `request_id`, `target_remote`, `model_id` | `correlation_id` |
+| `federation.model.lifecycle` | `gateway_id`, `msg_type`, `model_id` | master applied federated model lifecycle telemetry |
+| `federation.orchestrator.decided` | `request_id`, `decision_type`, `target`, `reason`, `alternatives_considered` | `correlation_id`, `alternatives_considered` |
+| `federation.orchestrator.evicted` | `target_remote`, `model_id`, `reason` | Orchestrator evicted a model from a remote. |
 | `federation.peer.auth.failed` | `peer_id`, `reason` | edge peer auth failed (unknown_peer, invalid_api_key) |
 | `federation.peer.disconnected` | `peer_id`, `remaining_peers` | authenticated peer disconnected from edge |
-| `federation.telemetry.wired` | `gateway_url`, `gateway_id` | edge finished wiring local gateway telemetry |
 | `federation.request.inference.forwarded` | `request_id`, `peer_count` | edge forwarded request.inference.started to peers |
-| `federation.model.lifecycle` | `gateway_id`, `msg_type`, `model_id` | master applied federated model lifecycle telemetry |
 | `federation.resource.updated` | `gateway_id`, `vram_free_mb`, `ram_free_mb` | master applied RESOURCE_UPDATE from edge |
-| `federation.activation.filtered.empty` | `gateway_id`, `available_count`, `activated_count` | gateway has available models but activated_models is explicitly empty — all hidden from /v1/models |
-| `federation.circuit.breaker.rejected` | `gateway_id`, `model_id`, `reason` | request rejected (gateway_wide_open, model_circuit_open, half_open_limit_reached) |
-| `federation.gateway.degraded` | `gateway_id`, `consecutive_timeouts`, `first_error_code` | Gateway crossed timeout threshold (REQUEST_TIMEOUT/INFERENCE_TIMEOUT/LOAD_TIMEOUT). Coordination signal only — routing is NOT excluded. Cleared by `federation.gateway.recovered` with `kind=degradation`. role=coordination. |
-| `federation.gateway.unhealthy` | `gateway_id`, `consecutive_disconnects`, `first_error_code`, `cooldown_s` | Gateway crossed disconnect threshold (GATEWAY_DISCONNECTED/EDGE_UNREACHABLE). Routing excludes for `cooldown_s`. Cleared by `federation.gateway.recovered` with `kind=reachability`. role=coordination. |
-| `federation.gateway.recovered` | `gateway_id`, `kind`, `reason` | Previously DEGRADED or UNHEALTHY gateway recovered. `kind` ∈ {`degradation`, `reachability`}; `reason` ∈ {`first_success`, `probe_succeeded`}. role=coordination. |
-| `federation.capacity.fallback.applied` | `gateway_id`, `model_id`, `fallback_max_concurrent`, `reason` | capacity seeded from fallback (no model_resources from GATEWAY_SNAPSHOT); corrected when snapshot arrives |
+| `federation.routing.delegated` | `request_id`, `target_remote`, `model_id` | `correlation_id`, `reason` |
+| `federation.routing.rejected` | `request_id`, `model_id`, `reason` | `correlation_id` |
+| `federation.routing.routed.local` | `request_id`, `model_id`, `reason` | `correlation_id` |
+| `federation.snapshot.sent` | `gateway_id`, `all_models_count`, `available_models_count`, `gap_count`, `trigger` | `trigger`: `"initial"` (wiring) or `"periodic"` (reconciliation timer) |
+| `federation.telemetry.applied` | `remote_id`, `changes` | Telemetry applied to Master state. |
+| `federation.telemetry.marked.stale` | `remote_id`, `age_seconds`, `threshold_seconds` | Telemetry from Remote exceeded staleness threshold. |
+| `federation.telemetry.received` | `remote_id`, `model_count`, `resource_summary` | `resource_summary`, `telemetry_age_ms`, `msg_type`, `catalog_model_count`, `loaded_model_count`, `count_source` |
+| `federation.telemetry.wired` | `gateway_url`, `gateway_id` | edge finished wiring local gateway telemetry |
+| `federation.vram.request.failed` | `request_id`, `reason` | Record VRAM probe dispatch failure with explicit operational reason. |
+| `federation.vram.request.sent` | `request_id`, `peer_id`, `device_index` | Track outbound VRAM probe dispatch to peer/device pairing for correlation. |
+| `federation.vram.response.received` | `request_id`, `matched` | Capture VRAM probe response correlation success or orphaned-response mismatch. |
+<!-- GENERATED:END region=federation -->
 
 **`federation.telemetry.received` disambiguation fields**: `model_count` is the
 backward-compatible count scoped by message type. The optional fields clarify its
@@ -1617,96 +1718,152 @@ this means all models are hidden from `/v1/models` for that gateway.
 
 ### Gateway Events
 
+<!-- GENERATED:START region=gateway inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `gateway.state.changed` | `url`, `connectivity`, `health` | `previous_connectivity`, `previous_health` |
-| `gateway.resource.updated` | `gateway_name`, `resources` | - | `loaded_models` derived from discrete MODEL_LOADED/MODEL_UNLOADED events, NOT from RESOURCE_UPDATE wire payload |
-| `gateway.snapshot.resource.gap` | `all_models_count`, `resource_models_count`, `gap_count`, `gap_cause` | `sample_missing` |
+| `gateway.draining` | `gateway_id`, `reason`, `timeout`, `timestamp` | Create GATEWAY_DRAINING event. |
+| `gateway.model.ghost.cleaned` | `model_id`, `success`, `vram_freed_mb` | `vram_freed_mb` |
+| `gateway.model.phantom.cleaned` | `model_id`, `success`, `vram_freed_mb` | `vram_freed_mb` |
+| `gateway.model.phantom.detected` | `model_id`, `process_status`, `tracker_status` | `tracker_status` |
+| `gateway.resource.updated` | `gateway_id`, `source` | Create GATEWAY_RESOURCE_UPDATE wake-up signal for federation. |
+| `gateway.resource.updated` | `url`, `total_vram_mb`, `available_vram_mb`, `total_ram_mb`, `available_ram_mb`, `loaded_models`, `busy_models` | Signal an update to a gateway's resource info (VRAM/RAM/models). |
+| `gateway.retry.attempted` | `gateway_url`, `method`, `path`, `attempt`, `max_retries`, `error_type`, `error_message`, `backoff_delay_ms` | Signal that a gateway request retry was attempted. |
+| `gateway.shutdown` | `gateway_id`, `reason`, `timestamp` | Create GATEWAY_SHUTDOWN event. |
+| `gateway.snapshot.resource.gap` | `sample_missing?`, _dynamic_ | `sample_missing` |
+| `gateway.state.changed` | `url`, `connectivity`, `health`, `previous_connectivity`, `previous_health`, `transition_type`, `check_duration_ms` | `previous_connectivity`, `previous_health` |
 | `gateway.vram.orphan.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | positive discrepancy (hardware > tracked) |
 | `gateway.vram.staleness.detected` | `hardware_used_mb`, `catalog_used_mb`, `discrepancy_mb`, `tracked_models` | negative discrepancy (tracked > hardware) |
-| `gateway.model.phantom.detected` | `model_id`, `process_status` | `tracker_status` |
-| `gateway.model.phantom.cleaned` | `model_id`, `success` | `vram_freed_mb` |
-| `gateway.model.ghost.cleaned` | `model_id`, `success` | `vram_freed_mb` |
+<!-- GENERATED:END region=gateway -->
 
 ### RAG Events
 
+<!-- GENERATED:START region=rag inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `rag.started` | - | emitted after core boot (event bus, config, property index, registry load attempt) completes |
-| `rag.start.degraded` | `waiting_on`, `error` | first transition from core boot into dependency-waiting mode |
-| `rag.dependency.retry.scheduled` | `waiting_on`, `attempt`, `delay_seconds`, `error` | emitted once per retry while Stargate-backed activation is still blocked |
+| `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
+| `rag.admission.io.failed` | `operation`, `model_id`, `error` | Emitted by `services/rag/admission_gate/_io.py` when an HTTP call to Stargate fails during snapshot startup or burst queue-depth fetch. `operation`: `"snapshot"` or `"burst_fetch"`. `model_id`: routing key of the queried model. `error`: exception string. |
+| `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | Indexing created a skeletal article row for a source that had no article record |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | Indexing detected a file move by content hash and migrated the SQLite article row and/or Chroma chunk metadata to the new source path |
+| `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
+| `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
+| `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
+| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash`, `pipeline_stage`, `queue_state`, `queue_depth`, `frontier_status` | article metadata upsert completed; `created=true` for insert, `created=false` for update; `pipeline_stage` ∈ {`registered`, `queued`, `chunked`, `contextualized`}; `queue_state` is precise extraction_queue state when `pipeline_stage == "queued"` (values: `ready`, `in_flight`, `cooling_off`, `capacity_blocked`, `exhausted`), else `null`; `queue_depth` is global extraction_queue count; `frontier_status` ∈ {`reachable`, `unreachable`, `unknown`} |
+| `rag.chroma.upsert.completed` | `operation?`, `batch_index?`, `batch_total?`, _dynamic_ | Emitted after chunk rows are persisted to ChromaDB. |
+| `rag.chroma.upsert.started` | `operation?`, `batch_index?`, `batch_total?`, _dynamic_ | Emitted immediately before chunk rows are upserted into ChromaDB. |
+| `rag.chunk.contextualization.completed` | `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization request returned a non-empty context prefix. Optional: `operation_id`, `operation`. |
+| `rag.chunk.contextualization.failed` | `request_id?`, `duration_seconds?`, `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization LLM call failed or was tail-abandoned for this chunk position. `error` is `repr(exc)[:200]` or `ContextualizationTailAbandoned(...)`. Optional: `request_id`, `duration_seconds`, `operation_id`, `operation`. |
+| `rag.chunk.contextualization.started` | `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization request submitted to Stargate. `request_id` is propagated as `X-Internal-Request-ID` for request-trace correlation. Optional: `operation_id`, `operation`. |
+| `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
+| `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
+| `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency`, _dynamic_ | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.exception.record.failed` | `operation_id?`, `operation?`, _dynamic_ | RAG attempted to persist degraded contextualization diagnostics but the property index write failed. Indexing continues. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.exception.recorded` | `operation_id?`, `operation?`, _dynamic_ | Durable diagnostic row was stored in `contextualization_exceptions` for a successful-but-degraded contextualization attempt. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.partial` | `operation_id?`, `operation?`, _dynamic_ | Contextualization completed with `failed_chunks > 0`; file still indexed (failed chunks embedded prefix-free). Optional: `operation_id`, `operation`. |
+| `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency`, _dynamic_ | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.tail.abandoned` | `operation_id?`, `operation?`, _dynamic_ | RAG stopped waiting for straggler contextualization chunks after enough chunks had already succeeded and no further progress occurred for the tail-idle budget. This is an exception path: file still indexes, abandoned chunks remain cache misses. Optional: `operation_id`, `operation`. |
+| `rag.contextualize.cache.evaluated` | `operation_id?`, `operation?`, _dynamic_ | per-file cache plan summary; `cache_hits + cache_misses == total_chunks`; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.gc.completed` | `deleted_rows` | startup orphan sweep succeeded |
+| `rag.contextualize.cache.gc.failed` | `error` | startup orphan sweep failed non-fatally — readiness not blocked |
+| `rag.contextualize.cache.lookup.failed` | `operation_id?`, `operation?`, _dynamic_ | cache lookup degraded to full recompute (indexing continues); optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.completed` | `operation_id?`, `operation?`, _dynamic_ | cache rows persisted after successful upsert + source commit; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.failed` | `operation_id?`, `operation?`, _dynamic_ | index succeeded but cache persistence failed (best-effort); optional: `operation_id`, `operation` |
+| `rag.corpus.hints.filter.failed` | `error` | Emitted when co-occurrence hint filtering fails. |
+| `rag.corpus.hints.load.failed` | `path`, `error` | Emitted when corpus_hints.yaml cannot be loaded. |
+| `rag.corpus.hints.skipped` | `reason` | Emitted when corpus-hints generation is intentionally skipped. |
+| `rag.corpus.hints.update.failed` | `path`, `error` | Emitted when corpus_hints.yaml update fails after indexing. |
+| `rag.corpus.hints.updated` | `path`, `scopes_updated`, `timestamp` | Emitted after corpus_hints.yaml is written following aggregation from the property index. |
 | `rag.dependencies.activated` | `dependencies` | emitted when Stargate readiness, embedding readiness, and extraction runtime startup have succeeded, before optional watcher registration begins. |
-| `rag.shutdown` | - | - |
-| `rag.watch.directory.missing` | `path` | - |
-| `rag.watch.started` | `path`, `extensions`, `recursive` | - |
-| `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
-| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted approximately every 10% of total_files during startup sweep; `processed` is monotonic; invariant: `processed = reindexed + unchanged + errors` |
-| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` includes errored files |
-| `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | - |
-| `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
-| `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | - |
-| `rag.watch.stopped` | `watchers` | - |
+| `rag.dependency.retry.scheduled` | `waiting_on`, `attempt`, `delay_seconds`, `error` | emitted once per retry while Stargate-backed activation is still blocked |
+| `rag.directory.cleared` | `path`, `sources_cleared`, `chunks_cleared` | Emitted after all chunks for sources under a directory are deleted. |
+| `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | Emitted after all files in a directory index/reindex have been processed. |
+| `rag.directory.index.started` | `path`, `total_files` | Emitted before concurrent directory indexing dispatch begins. |
+| `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
+| `rag.embed.completed` | `file`, `operation_id`, `chunk_count`, _dynamic_ | Emitted after chunk embeddings return for indexing. |
+| `rag.embed.started` | `file`, `operation_id`, `chunk_count`, _dynamic_ | Emitted immediately before chunk embeddings are requested for indexing. |
+| `rag.embedding.chunk.fallback` | `model`, `text_len`, `dim` | Emitted when a single-item embedding batch fails all retries and a zero vector is substituted. |
+| `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | Emitted when query embedding retries are exhausted. |
+| `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | Emitted when a query embedding call succeeds. |
+| `rag.embeddings.unavailable` | `error` | Emitted when the watcher is not started because the embedding endpoint is unhealthy. |
+| `rag.entity.gate.io.failed` | `operation`, `error` | Emitted by `services/rag/entity_admission/_io.py` when cortex-api source-paths refresh or Event Service subscribe fails. `operation`: `"refresh"` or `"subscribe"`. `error`: exception string. Prior admitted set is retained (fail-safe). |
+| `rag.exclusion.purged` | `files`, `chunks`, `sources?` | Indexed sources matching exclusion patterns purged during startup |
+| `rag.extraction.admission.closed` | `pipeline_id`, `reason`, `active_reasons`, `signal` | Gate transitioned OPEN → CLOSED. `reason` ∈ {`iteration-timeout-burst`, `step-failure-ratio`, `gateway:<gateway_id>`, `model:<model_id>`}. `signal` is the upstream Stargate signal that drove the transition. |
+| `rag.extraction.admission.opened` | `pipeline_id`, `cleared_reason`, `signal`, `closed_seconds` | Last active close-reason cleared; gate reopened. `closed_seconds` measures the wall-clock window between the matching `closed` and this `opened`. |
+| `rag.extraction.admission.timeout` | `pipeline_id`, `waited_seconds`, `active_reasons` | The extraction worker's pre-dequeue wait timed out and the worker proceeded optimistically. Each occurrence is a tuning datum, not a failure. |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds`, _dynamic_ | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`, `finish_reason` (present when pipeline stop reason ≠ "stop", e.g. `"length"` = max_tokens truncation). |
+| `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
+| `rag.extraction.batch.started` | `file`, `chunk_count` | Batch extraction initiated for a file |
+| `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | Extraction batch exceeded dynamic timeout budget; all chunks recorded as transient failures |
+| `rag.extraction.claim.recovered` | `source`, `claimed_at`, `claimed_age_seconds` | RAG startup cleared a claim left by a previous process before starting the worker |
+| `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
+| `rag.extraction.failed` | `chunk_id`, `error`, _dynamic_ | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
+| `rag.extraction.infrastructure.degraded` | `model_id`, `consecutive_timeouts` | Emitted when the extraction model tracker enters DEGRADED state. |
+| `rag.extraction.infrastructure.recovered` | `model_id` | Emitted when the extraction model tracker exits DEGRADED state. |
+| `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | Re-extraction triggered because existing chunks have different or missing extraction_model. |
+| `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
+| `rag.extraction.queue.woken` | `pipeline_id`, `reset_count` | Emit when extraction model availability wakes cooling-off queue items. |
+| `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
+| `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
+| `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
 | `rag.extraction.source.claimed` | `source`, `attempts`, `queued_at`, `claimed_at` | source row atomically claimed from `extraction_queue`; row remains in-flight until completion, failure, or startup claim recovery |
 | `rag.extraction.source.completed` | `source`, `duration_seconds` | source extraction completed and the queue row was deleted |
 | `rag.extraction.source.failed` | `source`, `failure_category`, `error_type`, `increment_attempt` | source extraction failed and the row remains queued for backoff or exhaustion; `increment_attempt=false` means capacity-class failure did not consume source defect budget |
-| `rag.extraction.claim.recovered` | `source`, `claimed_at`, `claimed_age_seconds` | RAG startup cleared a claim left by a previous process before starting the worker |
-| `rag.extraction.batch.started` | `file`, `chunk_count` | - |
-| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds` | `extraction_model`, `finish_reason` (both optional; `finish_reason` present when stop ≠ "stop", e.g. `"length"`) |
-| `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | re-extraction due to model mismatch |
-| `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | dynamic per-batch timeout exceeded |
-| `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | all chunks exceeded max_attempts; no pipeline call |
-| `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
-| `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
-| `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
-| `rag.extraction.unavailable` | `pipeline`, `error` | extraction pipeline not routable at watcher start; watcher not started |
-| `rag.extraction.structurally.unavailable` | `model_id`, `reason`, `detail` | extraction model not in catalog; permanent failure path |
-| `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
-| `rag.extraction.failed` | `chunk_id`, `error` | - |
-| `rag.property.index.rebuilt` | `collection`, `count` | - |
-| `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | emitted once at startup if interrupted files found |
-| `rag.orphan.purged` | `files`, `chunks`, `sources`? | emitted once at startup; `files` counts watched sources reconciled to filesystem truth; `sources` lists filenames when files > 0 |
-| `rag.exclusion.purged` | `files`, `chunks`, `sources`? | emitted once at startup; `files` counts indexed sources matching exclusion patterns that were purged; `sources` lists filenames when files > 0 |
-| `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
-| `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
-| `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
-| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash`, `pipeline_stage`, `queue_state`, `queue_depth`, `frontier_status` | article metadata upsert completed; `created=true` for insert, `created=false` for update; `pipeline_stage` ∈ {`registered`, `queued`, `chunked`, `contextualized`}; `queue_state` is precise extraction_queue state when `pipeline_stage == "queued"` (values: `ready`, `in_flight`, `cooling_off`, `capacity_blocked`, `exhausted`), else `null`; `queue_depth` is global extraction_queue count; `frontier_status` ∈ {`reachable`, `unreachable`, `unknown`} |
-| `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | emitted when indexing creates a minimal article row for a source that had no row before |
-| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | indexing detected a file move by content hash and migrated the SQLite article row and/or Chroma chunk metadata to the new source path; emitted once per move detection even when only Chroma chunks required updating |
-| `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
-| `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
-| `rag.chunk.contextualization.started` | `file`, `chunk_index`, `model`, `request_id`, `timeout_s` | Per-chunk: contextualization request submitted to Stargate. `request_id` is propagated as `X-Internal-Request-ID` for request-trace correlation. Optional: `operation_id`, `operation`. |
-| `rag.chunk.contextualization.completed` | `file`, `chunk_index`, `model`, `request_id`, `duration_seconds`, `output_chars` | Per-chunk: contextualization request returned a non-empty context prefix. Optional: `operation_id`, `operation`. |
-| `rag.chunk.contextualization.failed` | `file`, `chunk_index`, `model`, `error` | Per-chunk: contextualization LLM call failed or was tail-abandoned for this chunk position. `error` is `repr(exc)[:200]` or `ContextualizationTailAbandoned(...)`. Optional: `request_id`, `duration_seconds`, `operation_id`, `operation`. |
-| `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
-| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds` | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file), `operation_id` (per-attempt correlation handle), `operation` (`index`/`reindex` when route-originated) |
-| `rag.file.deleted` | `file`, `deleted` | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
-| `rag.file.skipped` | `file`, `reason` | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
-| `rag.file.indexing.failed` | `file`, `error`, `model`? | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
-| `rag.file.indexing.failure.recorded` | `file`, `failure_category`, `failure_reason`, `attempt_count` | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. Optional: `error_type` (`type(exc).__qualname__` of the underlying exception), `error_head` (first ~200 chars of `str(exc)`) — both let `query-events --signal rag.file.indexing.failure.recorded` reveal the actual exception without consulting RAG logs. role=coordination. |
+| `rag.extraction.structurally.unavailable` | `model_id`, `reason`, `detail` | Extraction model ID has no Stargate catalog entry; failures are marked permanent (no retry loop). |
+| `rag.extraction.unavailable` | `pipeline`, `error` | Extraction pipeline not routable via Stargate at watcher start. Watcher is not started; RAG serves queries but does not index until restart. |
+| `rag.file.deleted` | `file`, `deleted`, _dynamic_ | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
+| `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds`, _dynamic_ | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file), `operation_id` (per-attempt correlation handle), `operation` (`index`/`reindex` when route-originated) |
+| `rag.file.indexing.failed` | `model?`, `operation_id?`, `operation?`, _dynamic_ | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
+| `rag.file.indexing.failure.cleared` | `file`, `reason` | row removed from `indexing_failures`. `reason` ∈ {`indexed_successfully`, `source_deleted`, `operator_cleared`}. Emitted only when a row actually existed. role=coordination. |
+| `rag.file.indexing.failure.recorded` | `error_type?`, `error_head?`, _dynamic_ | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. Optional: `error_type` (`type(exc).__qualname__` of the underlying exception), `error_head` (first ~200 chars of `str(exc)`) — both let `query-events --signal rag.file.indexing.failure.recorded` reveal the actual exception without consulting RAG logs. role=coordination. |
+| `rag.file.indexing.failure.retry.requested` | `file`, `scheduled` | operator requested a retry via admin API. `scheduled` reflects whether the watcher accepted the admission. role=coordination. |
 | `rag.file.indexing.failure.skipped` | `file`, `failure_reason`, `attempt_count` | reconcile/initial-reindex skipped the file because a permanent row exists with unchanged mtime/size, or a transient row is inside its backoff window. role=coordination. |
 | `rag.file.indexing.gated` | `file`, `layer` | file in an entity-gated watch root skipped because no cortex entity backs it via `source_uri`. `layer` ∈ {`watcher_sweep`, `index_funnel`}. role=coordination. **Not** a failure row. Distinct from `rag.entity.gate.io.failed` (upstream refresh/subscribe outage). |
-| `rag.file.indexing.failure.cleared` | `file`, `reason` | row removed from `indexing_failures`. `reason` ∈ {`indexed_successfully`, `source_deleted`, `operator_cleared`}. Emitted only when a row actually existed. role=coordination. |
-| `rag.file.indexing.failure.retry.requested` | `file`, `scheduled` | operator requested a retry via admin API. `scheduled` reflects whether the watcher accepted the admission. role=coordination. |
-| `rag.file.retry.deferred` | `file`, `reason` | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. Optional: `operation_id`, `operation`. |
-| `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
-| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.file.retry.deferred` | `file`, `reason`, _dynamic_ | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. Optional: `operation_id`, `operation`. |
+| `rag.file.skipped` | `file`, `reason`, _dynamic_ | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
+| `rag.hints.gaps.repaired` | `scopes`, `trigger` | Corpus hints were refreshed for scopes whose indexed file-set hash drifted. |
+| `rag.hints.update.completed` | `file`, `operation_id`, _dynamic_ | Emitted after post-index corpus-hints refresh returns. |
+| `rag.hints.update.started` | `file`, `operation_id`, _dynamic_ | Emitted before post-index corpus-hints refresh begins. |
+| `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalized to markdown successfully |
+| `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted |
+| `rag.html.normalization.started` | `file` | HTML/HTM normalization started before chunking |
+| `rag.indexing.failure.persist.failed` | `file`, `error` | Emitted when the attempt to persist an indexing failure record itself |
+| `rag.orphan.purged` | `files`, `chunks`, `sources?` | Missing watched sources reconciled during startup; `chunks` counts only Chroma deletions |
+| `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | Startup reconciliation of files interrupted mid-index |
+| `rag.post.index.stale` | `stale_steps` | Emitted on startup when post-index enrichment steps are older than the last reindex. |
+| `rag.property.index.rebuilt` | `collection`, `count` | - |
 | `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
-| `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency` | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
-| `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency` | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
-| `rag.contextualization.partial` | `file`, `total_chunks`, `failed_chunks`, `successful_chunks`, `model`, `first_failure` | Contextualization completed with `failed_chunks > 0`; file still indexed (failed chunks embedded prefix-free). Optional: `operation_id`, `operation`. |
-| `rag.contextualization.tail.abandoned` | `file`, `total_chunks`, `completed_chunks`, `abandoned_chunks`, `successful_chunks`, `failed_chunks`, `model`, `idle_seconds`, `tail_idle_timeout_s` | RAG stopped waiting for straggler contextualization chunks after enough chunks had already succeeded and no further progress occurred for the tail-idle budget. This is an exception path: file still indexes, abandoned chunks remain cache misses. Optional: `operation_id`, `operation`. |
-| `rag.contextualization.exception.recorded` | `file`, `exception_id`, `total_chunks`, `cache_miss_chunks`, `successful_chunks`, `failed_chunks`, `abandoned_chunks`, `model`, `first_failure` | Durable diagnostic row was stored in `contextualization_exceptions` for a successful-but-degraded contextualization attempt. Optional: `operation_id`, `operation`. |
-| `rag.contextualization.exception.record.failed` | `file`, `model`, `error` | RAG attempted to persist degraded contextualization diagnostics but the property index write failed. Indexing continues. Optional: `operation_id`, `operation`. |
-| `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
-| `rag.contextualize.cache.evaluated` | `file`, `total_chunks`, `cache_hits`, `cache_misses`, `contextualize_model` | per-file cache plan summary; `cache_hits + cache_misses == total_chunks`; optional: `operation_id`, `operation` |
-| `rag.contextualize.cache.lookup.failed` | `file`, `requested_chunks`, `contextualize_model`, `error` | cache lookup degraded to full recompute (indexing continues); optional: `operation_id`, `operation` |
-| `rag.contextualize.cache.store.completed` | `file`, `stored`, `requested`, `contextualize_model` | cache rows persisted after successful upsert + source commit; optional: `operation_id`, `operation` |
-| `rag.contextualize.cache.store.failed` | `file`, `requested`, `contextualize_model`, `error` | index succeeded but cache persistence failed (best-effort); optional: `operation_id`, `operation` |
-| `rag.contextualize.cache.gc.completed` | `deleted_rows` | startup orphan sweep succeeded |
-| `rag.contextualize.cache.gc.failed` | `error` | startup orphan sweep failed non-fatally — readiness not blocked |
+| `rag.property.write.completed` | `file`, `operation_id`, `chunk_count`, `property_entries`, _dynamic_ | Emitted after SQLite-backed FTS and property metadata writes finish. |
+| `rag.property.write.started` | `file`, `operation_id`, `chunk_count`, `property_entries`, _dynamic_ | Emitted before SQLite-backed FTS and property metadata writes begin. |
+| `rag.scope.rejected` | `scope`, `reason`, `available` | - |
+| `rag.scope.resolved` | `scope`, `prefix_count` | - |
+| `rag.scope.vocabulary.load.failed` | `path`, `error` | Emitted when scope_vocabulary.yaml cannot be loaded. |
+| `rag.scopes.listed` | `count` | - |
+| `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | Emitted when embed_query retries are exhausted during a search request. |
+| `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | Emitted after a search query completes. |
+| `rag.search.no.results` | `query_len`, `scope` | Emitted when a search returns zero results. |
+| `rag.search.tier.applied` | `tier_hits`, `scope` | Emitted when tier_weight is applied to a search request and at least one chunk matched. |
+| `rag.shutdown` | - | Emit shutdown start for the RAG service process. |
+| `rag.source.commit.completed` | `file`, `operation_id`, `chunk_count`, `stale_chunks`, _dynamic_ | Emitted after final source-level metadata commit and stale cleanup finish. |
+| `rag.source.commit.started` | `file`, `operation_id`, `chunk_count`, `stale_chunks`, _dynamic_ | Emitted before final source-level metadata commit and stale cleanup begin. |
+| `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
+| `rag.start.degraded` | `waiting_on`, `error` | first transition from core boot into dependency-waiting mode |
+| `rag.started` | - | emitted after core boot (event bus, config, property index, registry load attempt) completes |
+| `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM classification failed for one or more scopes; `reasons` is a `{scope: reason_string}` map; `trigger` is the repair trigger source |
 | `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary could not be filled for one or more scopes; `reason` ∈ {`no_model_available`, `no_terms`, `non_latin_terms`} |
 | `rag.vocabulary.gaps.repaired` | `scopes`, `model` | vocabulary rows successfully written after LLM classification; `model` is the local Stargate model ID used |
-| `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM classification failed for one or more scopes; `reasons` is a `{scope: reason_string}` map; `trigger` is the repair trigger source |
+| `rag.watch.directory.missing` | `path` | Emit startup warning when a configured watch directory is missing. |
+| `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
+| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` includes errored files |
+| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted approximately every 10% of total_files during startup sweep; `processed` is monotonic; invariant: `processed = reindexed + unchanged + errors` |
+| `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
+| `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | Emitted after a reconciliation sweep indexes files absent from the store. |
+| `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | Emit per-file reindex outcome from watcher or startup sweep. |
+| `rag.watch.started` | `path`, `extensions`, `recursive` | Emit watcher activation for a configured watch directory. |
+| `rag.watch.stopped` | `watchers` | Emit watcher shutdown with the count of stopped observers. |
+| `rag.watchers.registered` | `count`, `paths` | Emitted when all inotify watchers are registered (fast path, before initial reindex). |
+<!-- GENERATED:END region=rag -->
 
 Note: `rag.contextualization.started` / `.completed` `chunk_count` now reports
 **cache misses only** (actual LLM work), not total chunks. Use
@@ -1724,11 +1881,133 @@ requests to Stargate before `model.loading.started` arrived and closed the gate.
 See `todo:rag-admission-gate-first-burst-measurement` and Worst-Case Cold-Load
 Timing in `tmp/prompts/coordination-overhaul/phase4.md`.
 
-| Signal | Required Payload | Description |
-|--------|-----------------|-------------|
+<!-- GENERATED:START region=rag inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
 | `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
 | `rag.admission.io.failed` | `operation`, `model_id`, `error` | Emitted by `services/rag/admission_gate/_io.py` when an HTTP call to Stargate fails during snapshot startup or burst queue-depth fetch. `operation`: `"snapshot"` or `"burst_fetch"`. `model_id`: routing key of the queried model. `error`: exception string. |
+| `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | Indexing created a skeletal article row for a source that had no article record |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | Indexing detected a file move by content hash and migrated the SQLite article row and/or Chroma chunk metadata to the new source path |
+| `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
+| `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
+| `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
+| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash`, `pipeline_stage`, `queue_state`, `queue_depth`, `frontier_status` | article metadata upsert completed; `created=true` for insert, `created=false` for update; `pipeline_stage` ∈ {`registered`, `queued`, `chunked`, `contextualized`}; `queue_state` is precise extraction_queue state when `pipeline_stage == "queued"` (values: `ready`, `in_flight`, `cooling_off`, `capacity_blocked`, `exhausted`), else `null`; `queue_depth` is global extraction_queue count; `frontier_status` ∈ {`reachable`, `unreachable`, `unknown`} |
+| `rag.chroma.upsert.completed` | `operation?`, `batch_index?`, `batch_total?`, _dynamic_ | Emitted after chunk rows are persisted to ChromaDB. |
+| `rag.chroma.upsert.started` | `operation?`, `batch_index?`, `batch_total?`, _dynamic_ | Emitted immediately before chunk rows are upserted into ChromaDB. |
+| `rag.chunk.contextualization.completed` | `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization request returned a non-empty context prefix. Optional: `operation_id`, `operation`. |
+| `rag.chunk.contextualization.failed` | `request_id?`, `duration_seconds?`, `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization LLM call failed or was tail-abandoned for this chunk position. `error` is `repr(exc)[:200]` or `ContextualizationTailAbandoned(...)`. Optional: `request_id`, `duration_seconds`, `operation_id`, `operation`. |
+| `rag.chunk.contextualization.started` | `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization request submitted to Stargate. `request_id` is propagated as `X-Internal-Request-ID` for request-trace correlation. Optional: `operation_id`, `operation`. |
+| `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
+| `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
+| `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency`, _dynamic_ | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.exception.record.failed` | `operation_id?`, `operation?`, _dynamic_ | RAG attempted to persist degraded contextualization diagnostics but the property index write failed. Indexing continues. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.exception.recorded` | `operation_id?`, `operation?`, _dynamic_ | Durable diagnostic row was stored in `contextualization_exceptions` for a successful-but-degraded contextualization attempt. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.partial` | `operation_id?`, `operation?`, _dynamic_ | Contextualization completed with `failed_chunks > 0`; file still indexed (failed chunks embedded prefix-free). Optional: `operation_id`, `operation`. |
+| `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency`, _dynamic_ | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.tail.abandoned` | `operation_id?`, `operation?`, _dynamic_ | RAG stopped waiting for straggler contextualization chunks after enough chunks had already succeeded and no further progress occurred for the tail-idle budget. This is an exception path: file still indexes, abandoned chunks remain cache misses. Optional: `operation_id`, `operation`. |
+| `rag.contextualize.cache.evaluated` | `operation_id?`, `operation?`, _dynamic_ | per-file cache plan summary; `cache_hits + cache_misses == total_chunks`; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.gc.completed` | `deleted_rows` | startup orphan sweep succeeded |
+| `rag.contextualize.cache.gc.failed` | `error` | startup orphan sweep failed non-fatally — readiness not blocked |
+| `rag.contextualize.cache.lookup.failed` | `operation_id?`, `operation?`, _dynamic_ | cache lookup degraded to full recompute (indexing continues); optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.completed` | `operation_id?`, `operation?`, _dynamic_ | cache rows persisted after successful upsert + source commit; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.failed` | `operation_id?`, `operation?`, _dynamic_ | index succeeded but cache persistence failed (best-effort); optional: `operation_id`, `operation` |
+| `rag.corpus.hints.filter.failed` | `error` | Emitted when co-occurrence hint filtering fails. |
+| `rag.corpus.hints.load.failed` | `path`, `error` | Emitted when corpus_hints.yaml cannot be loaded. |
+| `rag.corpus.hints.skipped` | `reason` | Emitted when corpus-hints generation is intentionally skipped. |
+| `rag.corpus.hints.update.failed` | `path`, `error` | Emitted when corpus_hints.yaml update fails after indexing. |
+| `rag.corpus.hints.updated` | `path`, `scopes_updated`, `timestamp` | Emitted after corpus_hints.yaml is written following aggregation from the property index. |
+| `rag.dependencies.activated` | `dependencies` | emitted when Stargate readiness, embedding readiness, and extraction runtime startup have succeeded, before optional watcher registration begins. |
+| `rag.dependency.retry.scheduled` | `waiting_on`, `attempt`, `delay_seconds`, `error` | emitted once per retry while Stargate-backed activation is still blocked |
+| `rag.directory.cleared` | `path`, `sources_cleared`, `chunks_cleared` | Emitted after all chunks for sources under a directory are deleted. |
+| `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | Emitted after all files in a directory index/reindex have been processed. |
+| `rag.directory.index.started` | `path`, `total_files` | Emitted before concurrent directory indexing dispatch begins. |
+| `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
+| `rag.embed.completed` | `file`, `operation_id`, `chunk_count`, _dynamic_ | Emitted after chunk embeddings return for indexing. |
+| `rag.embed.started` | `file`, `operation_id`, `chunk_count`, _dynamic_ | Emitted immediately before chunk embeddings are requested for indexing. |
+| `rag.embedding.chunk.fallback` | `model`, `text_len`, `dim` | Emitted when a single-item embedding batch fails all retries and a zero vector is substituted. |
+| `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | Emitted when query embedding retries are exhausted. |
+| `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | Emitted when a query embedding call succeeds. |
+| `rag.embeddings.unavailable` | `error` | Emitted when the watcher is not started because the embedding endpoint is unhealthy. |
 | `rag.entity.gate.io.failed` | `operation`, `error` | Emitted by `services/rag/entity_admission/_io.py` when cortex-api source-paths refresh or Event Service subscribe fails. `operation`: `"refresh"` or `"subscribe"`. `error`: exception string. Prior admitted set is retained (fail-safe). |
+| `rag.exclusion.purged` | `files`, `chunks`, `sources?` | Indexed sources matching exclusion patterns purged during startup |
+| `rag.extraction.admission.closed` | `pipeline_id`, `reason`, `active_reasons`, `signal` | Gate transitioned OPEN → CLOSED. `reason` ∈ {`iteration-timeout-burst`, `step-failure-ratio`, `gateway:<gateway_id>`, `model:<model_id>`}. `signal` is the upstream Stargate signal that drove the transition. |
+| `rag.extraction.admission.opened` | `pipeline_id`, `cleared_reason`, `signal`, `closed_seconds` | Last active close-reason cleared; gate reopened. `closed_seconds` measures the wall-clock window between the matching `closed` and this `opened`. |
+| `rag.extraction.admission.timeout` | `pipeline_id`, `waited_seconds`, `active_reasons` | The extraction worker's pre-dequeue wait timed out and the worker proceeded optimistically. Each occurrence is a tuning datum, not a failure. |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds`, _dynamic_ | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`, `finish_reason` (present when pipeline stop reason ≠ "stop", e.g. `"length"` = max_tokens truncation). |
+| `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
+| `rag.extraction.batch.started` | `file`, `chunk_count` | Batch extraction initiated for a file |
+| `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | Extraction batch exceeded dynamic timeout budget; all chunks recorded as transient failures |
+| `rag.extraction.claim.recovered` | `source`, `claimed_at`, `claimed_age_seconds` | RAG startup cleared a claim left by a previous process before starting the worker |
+| `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
+| `rag.extraction.failed` | `chunk_id`, `error`, _dynamic_ | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
+| `rag.extraction.infrastructure.degraded` | `model_id`, `consecutive_timeouts` | Emitted when the extraction model tracker enters DEGRADED state. |
+| `rag.extraction.infrastructure.recovered` | `model_id` | Emitted when the extraction model tracker exits DEGRADED state. |
+| `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | Re-extraction triggered because existing chunks have different or missing extraction_model. |
+| `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
+| `rag.extraction.queue.woken` | `pipeline_id`, `reset_count` | Emit when extraction model availability wakes cooling-off queue items. |
+| `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
+| `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
+| `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
+| `rag.extraction.source.claimed` | `source`, `attempts`, `queued_at`, `claimed_at` | source row atomically claimed from `extraction_queue`; row remains in-flight until completion, failure, or startup claim recovery |
+| `rag.extraction.source.completed` | `source`, `duration_seconds` | source extraction completed and the queue row was deleted |
+| `rag.extraction.source.failed` | `source`, `failure_category`, `error_type`, `increment_attempt` | source extraction failed and the row remains queued for backoff or exhaustion; `increment_attempt=false` means capacity-class failure did not consume source defect budget |
+| `rag.extraction.structurally.unavailable` | `model_id`, `reason`, `detail` | Extraction model ID has no Stargate catalog entry; failures are marked permanent (no retry loop). |
+| `rag.extraction.unavailable` | `pipeline`, `error` | Extraction pipeline not routable via Stargate at watcher start. Watcher is not started; RAG serves queries but does not index until restart. |
+| `rag.file.deleted` | `file`, `deleted`, _dynamic_ | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
+| `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds`, _dynamic_ | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file), `operation_id` (per-attempt correlation handle), `operation` (`index`/`reindex` when route-originated) |
+| `rag.file.indexing.failed` | `model?`, `operation_id?`, `operation?`, _dynamic_ | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
+| `rag.file.indexing.failure.cleared` | `file`, `reason` | row removed from `indexing_failures`. `reason` ∈ {`indexed_successfully`, `source_deleted`, `operator_cleared`}. Emitted only when a row actually existed. role=coordination. |
+| `rag.file.indexing.failure.recorded` | `error_type?`, `error_head?`, _dynamic_ | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. Optional: `error_type` (`type(exc).__qualname__` of the underlying exception), `error_head` (first ~200 chars of `str(exc)`) — both let `query-events --signal rag.file.indexing.failure.recorded` reveal the actual exception without consulting RAG logs. role=coordination. |
+| `rag.file.indexing.failure.retry.requested` | `file`, `scheduled` | operator requested a retry via admin API. `scheduled` reflects whether the watcher accepted the admission. role=coordination. |
+| `rag.file.indexing.failure.skipped` | `file`, `failure_reason`, `attempt_count` | reconcile/initial-reindex skipped the file because a permanent row exists with unchanged mtime/size, or a transient row is inside its backoff window. role=coordination. |
+| `rag.file.indexing.gated` | `file`, `layer` | file in an entity-gated watch root skipped because no cortex entity backs it via `source_uri`. `layer` ∈ {`watcher_sweep`, `index_funnel`}. role=coordination. **Not** a failure row. Distinct from `rag.entity.gate.io.failed` (upstream refresh/subscribe outage). |
+| `rag.file.retry.deferred` | `file`, `reason`, _dynamic_ | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. Optional: `operation_id`, `operation`. |
+| `rag.file.skipped` | `file`, `reason`, _dynamic_ | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
+| `rag.hints.gaps.repaired` | `scopes`, `trigger` | Corpus hints were refreshed for scopes whose indexed file-set hash drifted. |
+| `rag.hints.update.completed` | `file`, `operation_id`, _dynamic_ | Emitted after post-index corpus-hints refresh returns. |
+| `rag.hints.update.started` | `file`, `operation_id`, _dynamic_ | Emitted before post-index corpus-hints refresh begins. |
+| `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalized to markdown successfully |
+| `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted |
+| `rag.html.normalization.started` | `file` | HTML/HTM normalization started before chunking |
+| `rag.indexing.failure.persist.failed` | `file`, `error` | Emitted when the attempt to persist an indexing failure record itself |
+| `rag.orphan.purged` | `files`, `chunks`, `sources?` | Missing watched sources reconciled during startup; `chunks` counts only Chroma deletions |
+| `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | Startup reconciliation of files interrupted mid-index |
+| `rag.post.index.stale` | `stale_steps` | Emitted on startup when post-index enrichment steps are older than the last reindex. |
+| `rag.property.index.rebuilt` | `collection`, `count` | - |
+| `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
+| `rag.property.write.completed` | `file`, `operation_id`, `chunk_count`, `property_entries`, _dynamic_ | Emitted after SQLite-backed FTS and property metadata writes finish. |
+| `rag.property.write.started` | `file`, `operation_id`, `chunk_count`, `property_entries`, _dynamic_ | Emitted before SQLite-backed FTS and property metadata writes begin. |
+| `rag.scope.rejected` | `scope`, `reason`, `available` | - |
+| `rag.scope.resolved` | `scope`, `prefix_count` | - |
+| `rag.scope.vocabulary.load.failed` | `path`, `error` | Emitted when scope_vocabulary.yaml cannot be loaded. |
+| `rag.scopes.listed` | `count` | - |
+| `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | Emitted when embed_query retries are exhausted during a search request. |
+| `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | Emitted after a search query completes. |
+| `rag.search.no.results` | `query_len`, `scope` | Emitted when a search returns zero results. |
+| `rag.search.tier.applied` | `tier_hits`, `scope` | Emitted when tier_weight is applied to a search request and at least one chunk matched. |
+| `rag.shutdown` | - | Emit shutdown start for the RAG service process. |
+| `rag.source.commit.completed` | `file`, `operation_id`, `chunk_count`, `stale_chunks`, _dynamic_ | Emitted after final source-level metadata commit and stale cleanup finish. |
+| `rag.source.commit.started` | `file`, `operation_id`, `chunk_count`, `stale_chunks`, _dynamic_ | Emitted before final source-level metadata commit and stale cleanup begin. |
+| `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
+| `rag.start.degraded` | `waiting_on`, `error` | first transition from core boot into dependency-waiting mode |
+| `rag.started` | - | emitted after core boot (event bus, config, property index, registry load attempt) completes |
+| `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM classification failed for one or more scopes; `reasons` is a `{scope: reason_string}` map; `trigger` is the repair trigger source |
+| `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary could not be filled for one or more scopes; `reason` ∈ {`no_model_available`, `no_terms`, `non_latin_terms`} |
+| `rag.vocabulary.gaps.repaired` | `scopes`, `model` | vocabulary rows successfully written after LLM classification; `model` is the local Stargate model ID used |
+| `rag.watch.directory.missing` | `path` | Emit startup warning when a configured watch directory is missing. |
+| `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
+| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` includes errored files |
+| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted approximately every 10% of total_files during startup sweep; `processed` is monotonic; invariant: `processed = reindexed + unchanged + errors` |
+| `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
+| `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | Emitted after a reconciliation sweep indexes files absent from the store. |
+| `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | Emit per-file reindex outcome from watcher or startup sweep. |
+| `rag.watch.started` | `path`, `extensions`, `recursive` | Emit watcher activation for a configured watch directory. |
+| `rag.watch.stopped` | `watchers` | Emit watcher shutdown with the count of stopped observers. |
+| `rag.watchers.registered` | `count`, `paths` | Emitted when all inotify watchers are registered (fast path, before initial reindex). |
+<!-- GENERATED:END region=rag -->
 
 **Closure criteria** (from todo): if P95 `stargate_queue_depth` across ≥ 2 weeks
 of production indexing is below `max_queue_depth`, close
@@ -1777,121 +2056,278 @@ singleflight hold proposal.
 
 ### RAG Article Metadata Lifecycle
 
-| Signal | Required Payload | Description |
-|---|---|---|
+<!-- GENERATED:START region=rag inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `rag.admission.first.burst.observed` | `model_id`, `workers_in_flight`, `stargate_queue_depth` | First OPEN→CLOSED cold-load transition. `workers_in_flight`: count of `wait_for_admission()` calls that allowed a worker through (returned True or timed out to proceed) since the gate was last OPEN or since startup. `stargate_queue_depth`: value from `GET /api/v1/admission/state` at transition time; `null` if Stargate unreachable. |
+| `rag.admission.io.failed` | `operation`, `model_id`, `error` | Emitted by `services/rag/admission_gate/_io.py` when an HTTP call to Stargate fails during snapshot startup or burst queue-depth fetch. `operation`: `"snapshot"` or `"burst_fetch"`. `model_id`: routing key of the queried model. `error`: exception string. |
 | `rag.article.auto.created` | `source_path`, `content_hash`, `scope` | Indexing created a skeletal article row for a source that had no article record |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
+| `rag.article.content.hash.mismatch` | `file`, `expected_hash`, `actual_hash` | source bytes diverged from article registry hash |
 | `rag.article.path.moved` | `old_path`, `new_path`, `content_hash` | Indexing detected a file move by content hash and migrated the SQLite article row and/or Chroma chunk metadata to the new source path |
+| `rag.article.registry.failed` | `path`, `error` | article registry load failed at startup |
+| `rag.article.registry.loaded` | `path`, `article_count` | article registry successfully loaded at startup |
+| `rag.article.registry.write.failed` | `path`, `filename`, `error` | writing entry to article registry failed during ingest |
+| `rag.article.upserted` | `source_path`, `created`, `title`, `content_hash`, `pipeline_stage`, `queue_state`, `queue_depth`, `frontier_status` | article metadata upsert completed; `created=true` for insert, `created=false` for update; `pipeline_stage` ∈ {`registered`, `queued`, `chunked`, `contextualized`}; `queue_state` is precise extraction_queue state when `pipeline_stage == "queued"` (values: `ready`, `in_flight`, `cooling_off`, `capacity_blocked`, `exhausted`), else `null`; `queue_depth` is global extraction_queue count; `frontier_status` ∈ {`reachable`, `unreachable`, `unknown`} |
+| `rag.chroma.upsert.completed` | `operation?`, `batch_index?`, `batch_total?`, _dynamic_ | Emitted after chunk rows are persisted to ChromaDB. |
+| `rag.chroma.upsert.started` | `operation?`, `batch_index?`, `batch_total?`, _dynamic_ | Emitted immediately before chunk rows are upserted into ChromaDB. |
+| `rag.chunk.contextualization.completed` | `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization request returned a non-empty context prefix. Optional: `operation_id`, `operation`. |
+| `rag.chunk.contextualization.failed` | `request_id?`, `duration_seconds?`, `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization LLM call failed or was tail-abandoned for this chunk position. `error` is `repr(exc)[:200]` or `ContextualizationTailAbandoned(...)`. Optional: `request_id`, `duration_seconds`, `operation_id`, `operation`. |
+| `rag.chunk.contextualization.started` | `operation_id?`, `operation?`, _dynamic_ | Per-chunk: contextualization request submitted to Stargate. `request_id` is propagated as `X-Internal-Request-ID` for request-trace correlation. Optional: `operation_id`, `operation`. |
+| `rag.chunk.noise.tagged` | `chunk_id`, `source`, `noise_reason` | per-chunk: heuristic tagged chunk as noise at index time. `noise_reason` ∈ {`citation_block`, `dense_table`, `garbled_extraction`, `boilerplate`, `legacy_bibliography`, `unspecified_noise`} |
+| `rag.contextualization.applied` | `file`, `chunk_count`, `model` | contextual prefixes were applied before embedding |
+| `rag.contextualization.completed` | `file`, `chunk_count`, `successful`, `failed`, `duration_seconds`, `model`, `max_concurrency`, _dynamic_ | all contextualization requests settled for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.exception.record.failed` | `operation_id?`, `operation?`, _dynamic_ | RAG attempted to persist degraded contextualization diagnostics but the property index write failed. Indexing continues. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.exception.recorded` | `operation_id?`, `operation?`, _dynamic_ | Durable diagnostic row was stored in `contextualization_exceptions` for a successful-but-degraded contextualization attempt. Optional: `operation_id`, `operation`. |
+| `rag.contextualization.partial` | `operation_id?`, `operation?`, _dynamic_ | Contextualization completed with `failed_chunks > 0`; file still indexed (failed chunks embedded prefix-free). Optional: `operation_id`, `operation`. |
+| `rag.contextualization.started` | `file`, `chunk_count`, `model`, `max_concurrency`, _dynamic_ | contextualization dispatch started for this file before embedding; optional: `operation_id`, `operation` |
+| `rag.contextualization.tail.abandoned` | `operation_id?`, `operation?`, _dynamic_ | RAG stopped waiting for straggler contextualization chunks after enough chunks had already succeeded and no further progress occurred for the tail-idle budget. This is an exception path: file still indexes, abandoned chunks remain cache misses. Optional: `operation_id`, `operation`. |
+| `rag.contextualize.cache.evaluated` | `operation_id?`, `operation?`, _dynamic_ | per-file cache plan summary; `cache_hits + cache_misses == total_chunks`; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.gc.completed` | `deleted_rows` | startup orphan sweep succeeded |
+| `rag.contextualize.cache.gc.failed` | `error` | startup orphan sweep failed non-fatally — readiness not blocked |
+| `rag.contextualize.cache.lookup.failed` | `operation_id?`, `operation?`, _dynamic_ | cache lookup degraded to full recompute (indexing continues); optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.completed` | `operation_id?`, `operation?`, _dynamic_ | cache rows persisted after successful upsert + source commit; optional: `operation_id`, `operation` |
+| `rag.contextualize.cache.store.failed` | `operation_id?`, `operation?`, _dynamic_ | index succeeded but cache persistence failed (best-effort); optional: `operation_id`, `operation` |
+| `rag.corpus.hints.filter.failed` | `error` | Emitted when co-occurrence hint filtering fails. |
+| `rag.corpus.hints.load.failed` | `path`, `error` | Emitted when corpus_hints.yaml cannot be loaded. |
+| `rag.corpus.hints.skipped` | `reason` | Emitted when corpus-hints generation is intentionally skipped. |
+| `rag.corpus.hints.update.failed` | `path`, `error` | Emitted when corpus_hints.yaml update fails after indexing. |
+| `rag.corpus.hints.updated` | `path`, `scopes_updated`, `timestamp` | Emitted after corpus_hints.yaml is written following aggregation from the property index. |
+| `rag.dependencies.activated` | `dependencies` | emitted when Stargate readiness, embedding readiness, and extraction runtime startup have succeeded, before optional watcher registration begins. |
+| `rag.dependency.retry.scheduled` | `waiting_on`, `attempt`, `delay_seconds`, `error` | emitted once per retry while Stargate-backed activation is still blocked |
+| `rag.directory.cleared` | `path`, `sources_cleared`, `chunks_cleared` | Emitted after all chunks for sources under a directory are deleted. |
+| `rag.directory.index.completed` | `path`, `total_files`, `indexed`, `deleted`, `unchanged`, `duplicates`, `errors` | Emitted after all files in a directory index/reindex have been processed. |
+| `rag.directory.index.started` | `path`, `total_files` | Emitted before concurrent directory indexing dispatch begins. |
+| `rag.directory.sources.deleted` | `path`, `sources_deleted`, `chunks_deleted`, `articles_deleted` | directory-level delete completed across vector index and article metadata |
+| `rag.embed.completed` | `file`, `operation_id`, `chunk_count`, _dynamic_ | Emitted after chunk embeddings return for indexing. |
+| `rag.embed.started` | `file`, `operation_id`, `chunk_count`, _dynamic_ | Emitted immediately before chunk embeddings are requested for indexing. |
+| `rag.embedding.chunk.fallback` | `model`, `text_len`, `dim` | Emitted when a single-item embedding batch fails all retries and a zero vector is substituted. |
+| `rag.embedding.query.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | Emitted when query embedding retries are exhausted. |
+| `rag.embedding.query.success` | `model_id`, `query_len`, `scope` | Emitted when a query embedding call succeeds. |
+| `rag.embeddings.unavailable` | `error` | Emitted when the watcher is not started because the embedding endpoint is unhealthy. |
+| `rag.entity.gate.io.failed` | `operation`, `error` | Emitted by `services/rag/entity_admission/_io.py` when cortex-api source-paths refresh or Event Service subscribe fails. `operation`: `"refresh"` or `"subscribe"`. `error`: exception string. Prior admitted set is retained (fail-safe). |
+| `rag.exclusion.purged` | `files`, `chunks`, `sources?` | Indexed sources matching exclusion patterns purged during startup |
+| `rag.extraction.admission.closed` | `pipeline_id`, `reason`, `active_reasons`, `signal` | Gate transitioned OPEN → CLOSED. `reason` ∈ {`iteration-timeout-burst`, `step-failure-ratio`, `gateway:<gateway_id>`, `model:<model_id>`}. `signal` is the upstream Stargate signal that drove the transition. |
+| `rag.extraction.admission.opened` | `pipeline_id`, `cleared_reason`, `signal`, `closed_seconds` | Last active close-reason cleared; gate reopened. `closed_seconds` measures the wall-clock window between the matching `closed` and this `opened`. |
+| `rag.extraction.admission.timeout` | `pipeline_id`, `waited_seconds`, `active_reasons` | The extraction worker's pre-dequeue wait timed out and the worker proceeded optimistically. Each occurrence is a tuning datum, not a failure. |
+| `rag.extraction.batch.completed` | `file`, `chunk_count`, `successful`, `written`, `duration_seconds`, _dynamic_ | Batch extraction finished (successful ≤ chunk_count; written = 0 on partial failure). Optional payload: `extraction_model`, `finish_reason` (present when pipeline stop reason ≠ "stop", e.g. `"length"` = max_tokens truncation). |
+| `rag.extraction.batch.skipped` | `file`, `chunk_count`, `skipped_count`, `max_attempts` | All chunks permanently failed — no pipeline call made |
+| `rag.extraction.batch.started` | `file`, `chunk_count` | Batch extraction initiated for a file |
+| `rag.extraction.batch.timed.out` | `file`, `chunk_count`, `timeout_seconds`, `duration_seconds` | Extraction batch exceeded dynamic timeout budget; all chunks recorded as transient failures |
+| `rag.extraction.claim.recovered` | `source`, `claimed_at`, `claimed_age_seconds` | RAG startup cleared a claim left by a previous process before starting the worker |
+| `rag.extraction.completed` | `chunk_id`, `entities`, `topics` | - |
+| `rag.extraction.failed` | `chunk_id`, `error`, _dynamic_ | Per-chunk extraction failure (expected iteration result missing or invalid after batch parsing) |
+| `rag.extraction.infrastructure.degraded` | `model_id`, `consecutive_timeouts` | Emitted when the extraction model tracker enters DEGRADED state. |
+| `rag.extraction.infrastructure.recovered` | `model_id` | Emitted when the extraction model tracker exits DEGRADED state. |
+| `rag.extraction.model.mismatch` | `file`, `expected_model`, `chunk_count` | Re-extraction triggered because existing chunks have different or missing extraction_model. |
+| `rag.extraction.permanently.skipped` | `chunk_id`, `source`, `attempt_count` | Chunk crossed `max_extraction_attempts`; permanently abandoned. Persisted as `permanent=1` in `failed_extractions`. Emitted exactly once per chunk. |
+| `rag.extraction.queue.woken` | `pipeline_id`, `reset_count` | Emit when extraction model availability wakes cooling-off queue items. |
+| `rag.extraction.recovery.completed` | `file`, `entities`, `topics` | recovery pass for missing extraction metadata completed successfully |
+| `rag.extraction.recovery.failed` | `file`, `reason` | recovery attempted but extraction metadata could not be committed |
+| `rag.extraction.recovery.skipped` | `file`, `reason` | recovery skipped (e.g. no documents in ChromaDB, all chunks permanently failed) |
+| `rag.extraction.source.claimed` | `source`, `attempts`, `queued_at`, `claimed_at` | source row atomically claimed from `extraction_queue`; row remains in-flight until completion, failure, or startup claim recovery |
+| `rag.extraction.source.completed` | `source`, `duration_seconds` | source extraction completed and the queue row was deleted |
+| `rag.extraction.source.failed` | `source`, `failure_category`, `error_type`, `increment_attempt` | source extraction failed and the row remains queued for backoff or exhaustion; `increment_attempt=false` means capacity-class failure did not consume source defect budget |
+| `rag.extraction.structurally.unavailable` | `model_id`, `reason`, `detail` | Extraction model ID has no Stargate catalog entry; failures are marked permanent (no retry loop). |
+| `rag.extraction.unavailable` | `pipeline`, `error` | Extraction pipeline not routable via Stargate at watcher start. Watcher is not started; RAG serves queries but does not index until restart. |
+| `rag.file.deleted` | `file`, `deleted`, _dynamic_ | all chunks deleted, no replacement (file now empty); optional: `operation_id`, `operation` |
+| `rag.file.deletion.failed` | `file`, `error` | watcher-triggered delete cleanup failed; indexed rows may still exist |
+| `rag.file.indexed` | `file`, `deleted`, `indexed`, `duration_seconds`, _dynamic_ | file fully indexed; `duration_seconds` = wall-clock time to index this file; optional: `batch_start_ts` (ISO-8601), `processing_seconds` (Stargate-derived post-queue work time), `queue_wait_seconds` (time from pipeline step start to first inference started), `document_metadata` (dict — e.g. `article_title`, `article_authors`, `article_venue`, `published_date`, `article_doi` when file is in registry), `noise_chunks` (int — count of chunks tagged `is_noise` / legacy `is_bibliography` for this file), `operation_id` (per-attempt correlation handle), `operation` (`index`/`reindex` when route-originated) |
+| `rag.file.indexing.failed` | `model?`, `operation_id?`, `operation?`, _dynamic_ | terminal indexing failure from unhandled exception. ¬emitted for retriable extraction failures (see `rag.file.retry.deferred`). Optional: `operation_id`, `operation`. |
+| `rag.file.indexing.failure.cleared` | `file`, `reason` | row removed from `indexing_failures`. `reason` ∈ {`indexed_successfully`, `source_deleted`, `operator_cleared`}. Emitted only when a row actually existed. role=coordination. |
+| `rag.file.indexing.failure.recorded` | `error_type?`, `error_head?`, _dynamic_ | file-level failure persisted to `indexing_failures` table. `failure_category` ∈ {`permanent`, `transient`}. Optional: `error_type` (`type(exc).__qualname__` of the underlying exception), `error_head` (first ~200 chars of `str(exc)`) — both let `query-events --signal rag.file.indexing.failure.recorded` reveal the actual exception without consulting RAG logs. role=coordination. |
+| `rag.file.indexing.failure.retry.requested` | `file`, `scheduled` | operator requested a retry via admin API. `scheduled` reflects whether the watcher accepted the admission. role=coordination. |
+| `rag.file.indexing.failure.skipped` | `file`, `failure_reason`, `attempt_count` | reconcile/initial-reindex skipped the file because a permanent row exists with unchanged mtime/size, or a transient row is inside its backoff window. role=coordination. |
+| `rag.file.indexing.gated` | `file`, `layer` | file in an entity-gated watch root skipped because no cortex entity backs it via `source_uri`. `layer` ∈ {`watcher_sweep`, `index_funnel`}. role=coordination. **Not** a failure row. Distinct from `rag.entity.gate.io.failed` (upstream refresh/subscribe outage). |
+| `rag.file.retry.deferred` | `file`, `reason`, _dynamic_ | extraction incomplete but file NOT marked indexed — watcher will re-attempt on next sweep. reasons: `extraction_incomplete`, `infrastructure_unavailable`. Optional: `operation_id`, `operation`. |
+| `rag.file.skipped` | `file`, `reason`, _dynamic_ | file skipped; `reason` ∈ {`unchanged`, `duplicate_pdf`}; optional: `operation_id`, `operation` |
+| `rag.hints.gaps.repaired` | `scopes`, `trigger` | Corpus hints were refreshed for scopes whose indexed file-set hash drifted. |
+| `rag.hints.update.completed` | `file`, `operation_id`, _dynamic_ | Emitted after post-index corpus-hints refresh returns. |
+| `rag.hints.update.started` | `file`, `operation_id`, _dynamic_ | Emitted before post-index corpus-hints refresh begins. |
+| `rag.html.normalization.completed` | `file`, `output_chars` | HTML normalized to markdown successfully |
+| `rag.html.normalization.failed` | `file`, `error` | HTML normalization failed; file indexing aborted |
+| `rag.html.normalization.started` | `file` | HTML/HTM normalization started before chunking |
+| `rag.indexing.failure.persist.failed` | `file`, `error` | Emitted when the attempt to persist an indexing failure record itself |
+| `rag.orphan.purged` | `files`, `chunks`, `sources?` | Missing watched sources reconciled during startup; `chunks` counts only Chroma deletions |
+| `rag.pending.reconciled` | `reconciled`, `cleared`, `failed_transient`, `failed_permanent` | Startup reconciliation of files interrupted mid-index |
+| `rag.post.index.stale` | `stale_steps` | Emitted on startup when post-index enrichment steps are older than the last reindex. |
+| `rag.property.index.rebuilt` | `collection`, `count` | - |
+| `rag.property.index.unavailable` | `file` | indexing proceeded without property index availability |
+| `rag.property.write.completed` | `file`, `operation_id`, `chunk_count`, `property_entries`, _dynamic_ | Emitted after SQLite-backed FTS and property metadata writes finish. |
+| `rag.property.write.started` | `file`, `operation_id`, `chunk_count`, `property_entries`, _dynamic_ | Emitted before SQLite-backed FTS and property metadata writes begin. |
+| `rag.scope.rejected` | `scope`, `reason`, `available` | - |
+| `rag.scope.resolved` | `scope`, `prefix_count` | - |
+| `rag.scope.vocabulary.load.failed` | `path`, `error` | Emitted when scope_vocabulary.yaml cannot be loaded. |
+| `rag.scopes.listed` | `count` | - |
+| `rag.search.embedding.failed` | `model_id`, `attempts`, `last_status`, `query_len`, `scope` | Emitted when embed_query retries are exhausted during a search request. |
+| `rag.search.executed` | `query_len`, `top_k`, `results`, `scope` | Emitted after a search query completes. |
+| `rag.search.no.results` | `query_len`, `scope` | Emitted when a search returns zero results. |
+| `rag.search.tier.applied` | `tier_hits`, `scope` | Emitted when tier_weight is applied to a search request and at least one chunk matched. |
+| `rag.shutdown` | - | Emit shutdown start for the RAG service process. |
+| `rag.source.commit.completed` | `file`, `operation_id`, `chunk_count`, `stale_chunks`, _dynamic_ | Emitted after final source-level metadata commit and stale cleanup finish. |
+| `rag.source.commit.started` | `file`, `operation_id`, `chunk_count`, `stale_chunks`, _dynamic_ | Emitted before final source-level metadata commit and stale cleanup begin. |
+| `rag.source.deleted` | `source`, `chunks_deleted`, `article_deleted` | source-level delete completed across vector index and article metadata |
+| `rag.start.degraded` | `waiting_on`, `error` | first transition from core boot into dependency-waiting mode |
+| `rag.started` | - | emitted after core boot (event bus, config, property index, registry load attempt) completes |
+| `rag.vocabulary.classification.failed` | `scopes`, `model`, `trigger`, `reasons` | LLM classification failed for one or more scopes; `reasons` is a `{scope: reason_string}` map; `trigger` is the repair trigger source |
+| `rag.vocabulary.gaps.detected` | `scopes`, `reason` | vocabulary could not be filled for one or more scopes; `reason` ∈ {`no_model_available`, `no_terms`, `non_latin_terms`} |
+| `rag.vocabulary.gaps.repaired` | `scopes`, `model` | vocabulary rows successfully written after LLM classification; `model` is the local Stargate model ID used |
+| `rag.watch.directory.missing` | `path` | Emit startup warning when a configured watch directory is missing. |
+| `rag.watch.file.deleted` | `file`, `deleted` | watcher deleted all chunks for a source file removed from disk |
+| `rag.watch.initial.complete` | `path`, `files`, `reindexed`, `unchanged`, `errors` | emitted once per watch path at end of startup sweep; invariant: total_files == reindexed + unchanged + errors; `files` includes errored files |
+| `rag.watch.initial.progress` | `path`, `total_files`, `processed`, `reindexed`, `unchanged`, `errors` | emitted approximately every 10% of total_files during startup sweep; `processed` is monotonic; invariant: `processed = reindexed + unchanged + errors` |
+| `rag.watch.initial.started` | `path`, `total_files` | emitted once per watch path when startup sweep candidate list is finalized |
+| `rag.watch.reconcile.complete` | `path`, `recovered`, `unchanged` | Emitted after a reconciliation sweep indexes files absent from the store. |
+| `rag.watch.reindex.complete` | `file`, `deleted`, `indexed`, `unchanged` | Emit per-file reindex outcome from watcher or startup sweep. |
+| `rag.watch.started` | `path`, `extensions`, `recursive` | Emit watcher activation for a configured watch directory. |
+| `rag.watch.stopped` | `watchers` | Emit watcher shutdown with the count of stopped observers. |
+| `rag.watchers.registered` | `count`, `paths` | Emitted when all inotify watchers are registered (fast path, before initial reindex). |
+<!-- GENERATED:END region=rag -->
 
 ### RAG Boot Fetch
 
 Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state`) when a per-endpoint or total fetch of RAG pipeline state fails during `cortex_boot`. Boot continues; the stanza is omitted or shows `unreachable` depending on which endpoint failed.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.rag.boot.fetch.failed` | `endpoint`, `error` | RAG pipeline state fetch failed during cortex_boot; `endpoint` ∈ {`extraction/queue`, `indexing/status`, `all`}; `all` means the outer httpx.Client context failed |
-| `mcp.cortex.boot.manifest.assembled` | `agent`, `artifact_count`, `total_bytes` | Injected-artifacts manifest assembled after cortex_boot fetch + render; `total_bytes` sums bytes across all artifacts where `bytes >= 0` (excludes `manifest_only` and `BYTES_UNAVAILABLE` entries) |
-| `mcp.cortex.boot.fetch.failed` | `error`, `error_type` | Boot fetch recorder could not serialize a fetch result to JSON; the corresponding `FetchRecord.bytes` is set to `-1` (`BYTES_UNAVAILABLE`); distinct from `bytes=0` (legitimately empty payload) |
-| `mcp.cortex.boot.dump.written` | `session_id`, `path`, `bytes` | Per-boot audit dump written successfully to `/data/files/notes/system/audit/boots/`; `path` is the full dump file path (second-resolution filename decoupled from `session_id`); `bytes` is the UTF-8 byte count of the written file |
-| `mcp.cortex.boot.dump.failed` | `session_id`, `error`, `error_type`, `stage`, `path`? | Audit dump write failed; `stage` ∈ {`mkdir`, `write_text`}; `path` present for `write_text` stage only; boot itself succeeds (dump is best-effort) |
-| `mcp.cortex.boot.card.overbudget` | `agent`, `bytes`, `ceiling` | Delivered briefing card UTF-8 byte count exceeded per-seat ceiling (`web`: 19_000; `default`: 15_500); breach line appended to card before manifest assembly; per-block ledger in audit dump |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Doc Generate Events
 
+<!-- GENERATED:START region=doc inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `doc.generate.extract.success` | `execution_id`, `step_id`, `subsystem_path`, `file_count`, `class_count`, `function_count` | - |
-| `doc.generate.extract.failed` | `execution_id`, `step_id`, `reason`, `error` | `subsystem_path` |
-| `doc.generate.architecture.found` | `execution_id`, `step_id`, `architecture_doc_path` | - |
-| `doc.generate.architecture.notfound` | `execution_id`, `step_id`, `architecture_doc_path` | - |
-| `doc.generate.python.empty` | `execution_id`, `step_id`, `subsystem_path` | - |
-| `doc.generate.enforce.success` | `execution_id`, `step_id`, `authored_loss_count`, `missing_coverage_count`, `inventory_sha` | - |
-| `doc.generate.authored.loss` | `execution_id`, `step_id`, `lost_count` | - |
+
+<!-- GENERATED:END region=doc -->
 
 ### Pipeline Events
 
 Pipeline events are persisted to the Event Service and can be queried with
 `scripts/query-events --op pipeline-trace --execution-id ID`.
 
+<!-- GENERATED:START region=frontier inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `pipeline.started` | `pipeline_id`, `execution_id`, `domain`, `step_count`, `timeout_seconds` | - |
-| `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | - |
-| `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | - |
-| `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | - |
-| `pipeline.dispatch.async` | `pipeline_id`, `execution_id`, `has_delivery_hook` | `caller_agent` | async tracker admitted a new execution (POST /api/v1/pipelines/dispatch) |
-| `pipeline.dispatch.completed` | `pipeline_id`, `execution_id`, `status`, `duration_s` | `caller_agent` | terminal tracker transition (`status` ∈ {`completed`, `failed`}) |
-| `pipeline.dispatch.cancelled` | `pipeline_id`, `execution_id`, `source` | - | explicit operator cancellation of async dispatch (`DELETE /api/v1/pipelines/executions/{id}`) |
-| `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | - | admission refused (e.g. `capacity_exhausted`) |
-| `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | - | terminal record TTL-pruned from the in-process tracker |
-| `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent`, `op`, `output_contract` | - | agent-bus turn posted successfully for a terminal dispatch record; `op` ∈ {`generate`, `to_thread`, ``}; `output_contract` ∈ {`inline`, `thread`} (node-scoped) |
-| `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview`, `op`, `output_contract` | - | agent-bus POST returned non-2xx or transport error; tracker record unchanged (node-scoped) |
-| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason`, `op`, `output_contract` | - | delivery not attempted — `reason ∈ {no_delivery_config, incomplete_delivery_config, no_target_thread, empty_content}` (node-scoped) |
-| `pipeline.dispatch.delivery.close.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | - | ephemeral thread close failed after successful delivery; delivery itself is unaffected — alert on this without false-positiving on the delivery channel (node-scoped) |
-| `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | - | terminal dispatch record persisted to sqlite journal (node-scoped) |
-| `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | - | tracker miss served from sqlite journal fallback (node-scoped) |
-| `pipeline.dispatch.journal.pruned` | `records_deleted` | `oldest_deleted_age_seconds` | hourly retention prune summary for sqlite journal (node-scoped) |
-| `frontier.endpoint.requested` | `request_id` | `agent` (nullable), `model` (nullable) | endpoint admission request observed before persona enforcement and dispatch forwarding. Distinguish team-vs-raw by `agent IS NOT NULL`; the historical caller-facing `boot` and `tools` fields are removed. (node-scoped) |
-| `frontier.endpoint.persona.resolved` | `request_id`, `agent`, `allowed_models_count` | `frontier_kind`, `default_model`, `allowed_options_count` | persona contract resolved from hydrated `ai_agent:{slug}` metadata (node-scoped). `tools_count` retired per todo:retire-tools-allowlist-as-caller-concern |
-| `frontier.endpoint.option.rejected` | `request_id`, `field`, `reason` | `agent` (nullable) | endpoint rejected request before dispatch admission; `field` ∈ {`model`, `tools`, `generation_options`} — covers persona violations (disallowed model/tools/options) and structural surface mismatches (Chat-Completions-only model on Responses API path) (node-scoped) |
-| `frontier.handoff.requested` | `request_id`, `role`, `to_agent` | `handoff_contract` (`consult` \| `implement`) — derived from role at admission (`cursor-implement` / `web-implement` → implement; `*-consult` → consult). | handoff admission — seat resolved from role, agent-bus thread creation pending (node-scoped) |
-| `frontier.handoff.created` | `request_id`, `to_agent`, `thread_id` | - | handoff thread created on agent-bus (node-scoped) |
-| `pipeline.frontier.dispatch.hydrated` | `agent`, `execution_id`, `briefing_bytes`, `section_counts`, `continuation_id` | `frontier_dispatch_v1` team-seat step loaded dispatched-agent Cortex boot; omitted in persona-free mode (node-scoped) |
-| `pipeline.frontier.dispatch.capability.resolved` | `execution_id`, `event_name`, `model`, `model_entity_id`, `provider`, `api_surface`, `max_output_requested`, `max_output_resolved`, `max_output_decision`, `max_output_floor`, `max_output_ceiling`, `reasoning_budget`, `reasoning_effort`, `reasoning_native`, `reasoning_value_kind` | adaptive-only: `reasoning_output_config_effort`. Pinned cross-stack name in `event_name` is `capability_dispatch.resolved` (node-scoped) |
-| `pipeline.frontier.dispatch.tool.requested` | `agent` (nullable), `execution_id`, `tool_name`, `provider`, `tool_call_id` (nullable) | fired when the model begins generating a `tool_use` block in the streaming response (`content_block_start`), before tool execution; `tool_call_id` correlates with subsequent `.tool.called`/`.tool.failed` events — Anthropic: `content_block.id`; OpenAI/xAI: `item.id` or `item.call_id`; Google: `null` (no native id); emitted by `frontier_dispatch` handler `on_event` callback (node-scoped) |
-| `pipeline.frontier.dispatch.tool.called` | `agent` (nullable), `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `provider` | tool executed successfully inside native-endpoint tool-use loop (node-scoped) |
-| `pipeline.frontier.dispatch.tool.failed` | `agent` (nullable), `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `error`, `provider`, `arguments` (nullable dict), `full_error` (nullable dict), `retry_count` | tool call returned error envelope or raised inside loop; `arguments` / `full_error` / `retry_count` aid observability and deterministic-retry policy (node-scoped) |
-| `pipeline.frontier.dispatch.completed` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `reasoning_present`, `prompt_tokens`, `completion_tokens`, `provider`, `model_entity_id`, `op` | native-endpoint loop returned terminal content; `model_entity_id` is the canonical Cortex `model:<slug>` for the admitted model; `op` ∈ {`generate`, `to_thread`, ``} (node-scoped) |
-| `pipeline.frontier.dispatch.empty.completion` | `execution_id`, `agent` (nullable), `model`, `model_entity_id`, `provider`, `turns_used`, `tool_calls_made`, `finish_reason`, `block_reason` | Fires when `frontier_dispatch_v1` returns empty/whitespace-only content on the non-exhausted branch. Distinct from `.exhausted` (intentional no-content on max-turns). Emitted immediately before `EmptyCompletionError` is raised so terminal state converts from `completed` to `failed`. (node-scoped) |
-| `pipeline.frontier.dispatch.exhausted` | `agent` (nullable), `execution_id`, `turns_used`, `tool_calls_made`, `provider`, `model_entity_id`, `op` | native-endpoint loop hit `max_tool_turns` without terminal content; `model_entity_id` is the canonical Cortex `model:<slug>` for the admitted model; `op` ∈ {`generate`, `to_thread`, ``} (node-scoped) |
-| `pipeline.frontier.dispatch.mismatch` | `execution_id`, `agent`, `requested_model`, `model_entity_id`, `valid_family`, `mismatch_kind` | Emitted when `frontier_dispatch_v1` rejects an agent + model combination. `mismatch_kind="provider"` — model's provider doesn't match the agent's identity-bound provider family (e.g. oppie + anthropic model); suggests typo or wrong family. `mismatch_kind="variant"` — provider matches but model fails the agent's variant requirement (e.g. oppie + non-multi-agent xAI model); suggests stale model pin or missing beta-gate access. Precedes `pipeline_execution_failed` with `code=agent_model_mismatch`. `model_entity_id` is the canonical Cortex `model:<slug>` for the requested model — present here (not only on `.started`) so correlators can recover it on the rejection path where `.started` never fires (node-scoped) |
-| `pipeline.frontier.dispatch.tool.suppressed` | `execution_id`, `agent`, `model`, `provider`, `reason` | Emitted when the agent-tier gate forces the tool surface to empty (`reason="capability_tier_inline_only"`). Sole callsite: `capability_tier == "inline-only"` branch in `resolve_dispatch_tool_set`. The xAI multi-agent coercion (`elif provider == "xai" and "multi-agent" in model`) does NOT emit this event. `CORTEX_TOOL_QUICKREF` suppression follows automatically (`include_cortex_quickref=bool(tools)` → False when tools empty). If xAI multi-agent observability is needed, a separate `reason="xai_multi_agent_client_tools_unsupported"` callsite must be added. (node-scoped) |
-| `pipeline.frontier.dispatch.remotemcp.enabled` | `execution_id`, `agent` (nullable), `model`, `model_entity_id`, `provider` | remote-MCP path selected for this execution; adapter attached provider-native MCP descriptor before the native call; implies client-side tool loop disabled (node-scoped) |
-| `pipeline.frontier.dispatch.remotemcp.misconfigured` | `execution_id`, `agent` (nullable), `model`, `model_entity_id`, `reason` | `resolve_mcp_env()` raised because `MCP_PUBLIC_URL`/`MCP_AUTH_TOKEN` is unset in the Stargate container env; precedes `pipeline_execution_failed`. `model_entity_id` is the canonical Cortex `model:<slug>` — present here (not only on `.started`) so correlators can recover it on the race where misconfigured fires before `.started` (env resolution fails during admission) (node-scoped) |
-| `pipeline.frontier.dispatch.remotemcp.unsupported` | `execution_id`, `agent` (nullable), `model`, `model_entity_id`, `provider`, `requested`, `reason` | Step handler rejected `remote_mcp=True` as structurally unsupported. Fires when (a) `mcp=False` (remote_mcp requires client-side mcp tooling to be enabled) or (b) provider is not anthropic (remote MCP via server-side `mcp_toolset` is anthropic-only). Precedes `pipeline_execution_failed` carrying `code=remote_mcp_unsupported`. `model_entity_id` is the canonical Cortex `model:<slug>` — present here (not only on `.started`) so correlators can recover it on the rejection path where `.started` never fires (node-scoped) |
-| `pipeline.frontier.dispatch.started` | `execution_id`, `agent` (nullable), `model`, `model_entity_id`, `provider`, `boot_level`, `remote_mcp`, `op` | Fires once per `frontier_dispatch_v1` execution, after hydration (if persona) and before the native call. `model` is the wire/provider-routed id; `model_entity_id` is the canonical Cortex `model:<slug>`. `boot_level` is internal observability vocabulary derived from agent presence, not a caller-facing parameter. `op` ∈ {`generate`, `to_thread`, ``}. MCP callers reach this via `team_dispatch` relay (node-scoped) |
-| `pipeline.frontier.dispatch.output.short` | `agent` (nullable), `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview` | Team/full `frontier_dispatch_v1` dispatch returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. Emission is detector-gated on `boot_level ∈ {team, full}`; persona-free dispatches pass `boot_level='none'` and are filtered. Replaces the deprecated `mcp.frontier.output.short` signal as of Task-7 Phase 1 (node-scoped) |
-| `pipeline.frontier.dispatch.termination.shadow` | `agent` (nullable), `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `generate_id`, `detector` ({`mode`, `version`, `provider`, `adapter`}), `reason`, `confidence`, `evidence` (list of {`kind`, `score`, `excerpt`}), `suggested_next_action`, `trace_visibility` | Advisory post-`pipeline.frontier.dispatch.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion) in the model's reasoning trace. v1 scope: provider=`google` + team-seat dispatch + thought summaries available. `.shadow` topic suffix marks v1 as NOT production-consumable during the calibration window — orchestrators MUST filter on suffix, not on a shadow boolean. Never replaces `.completed`, never fires on `.exhausted`. Replaces the deprecated `mcp.frontier.thought.termination.shadow` signal as of Task-7 Phase 1 (node-scoped) |
-| `pipeline.frontier.dispatch.refusal.suspected` | `agent` (nullable), `execution_id`, `model`, `provider`, `output_tokens`, `tool_calls_made`, `content_preview` (≤240 chars), `reason` | Post-loop heuristic fires when an inline-contract dispatch returns a short refusal-shaped completion after the model already made tool calls — gated on `output_tokens < 80` AND `tool_calls_made > 0` AND a refusal-marker hit on the lowercase content ("i can't continue", "cannot comply", "i'm sorry", etc.). Distinct from `.output.short` (broad short-output heuristic) and `.termination.shadow` (provider=google thought-trace pattern). Emitted alongside `pipeline.frontier.dispatch.completed`; consumers should retry on a higher-capability model or shorten the write loop. Not gated on `boot_level` — refusal detection runs on persona-free dispatches too. (node-scoped) |
-| `pipeline.execution.timed.out` | `pipeline_id`, `execution_id`, `timeout_seconds`, `incomplete_steps` | emitted before timeout failure raise |
-| `pipeline.deadlock.detected` | `pipeline_id`, `execution_id`, `incomplete_steps`, `pending_task_count` | emitted before deadlock failure raise |
-| `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
-| `pipeline.step.started` | `pipeline_id`, `execution_id`, `step_name`, `step_type`, `model_id`, `is_map_step` | - |
-| `pipeline.step.completed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `output_length`, `prompt_tokens`, `completion_tokens`, `model_call_count` | `exit_code` (shell steps only) |
-| `pipeline.step.failed` | `pipeline_id`, `execution_id`, `step_name`, `duration_seconds`, `error`, `exc_type`, `prompt_tokens`, `completion_tokens`, `model_call_count` | `exc_type`: exception class name (e.g. `RemoteProtocolError`); always non-empty, primary diagnostic key when `error` is empty |
-| `pipeline.step.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | - |
-| `pipeline.step.condition.evaluated` | `pipeline_id`, `execution_id`, `step_name`, `condition`, `result`, `available_outputs` | - |
-| `pipeline.step.model.deferred` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `reason` | deferral due to model admission gate |
-| `pipeline.model.gate.claimed` | `pipeline_id`, `execution_id`, `step_id`, `model_id` | step acquired model gate; `model_id` is resolved target model identity |
-| `pipeline.model.gate.released` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `outcome` | gate released (`success`\|`failure`\|`cancelled`) |
-| `pipeline.model.gate.failure.release` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `error_type` | explicit failure-boundary release marker |
-| `pipeline.model.registry.lookup.failed` | `pipeline_id`, `execution_id`, `step_id`, `model_ref`, `error` | model_ref lookup failure |
-| `pipeline.dag.execution.completed` | `pipeline_id`, `execution_id`, `completed_count`, `skipped_count`, `failed_count`, `total_steps` | terminal DAG summary |
-| `pipeline.step.model.fallback` | `pipeline_id`, `execution_id`, `step_name`, `primary_model`, `fallback_model`, `primary_error_type`, `fallback_attempt`, `total_fallbacks`, `succeeded` | emitted only for fallback-eligible failures |
-| `pipeline.step.model.fallback.suppressed` | `pipeline_id`, `execution_id`, `step_name`, `primary_error_type`, `suppression_reason` | fallback intentionally not attempted due to deterministic local error |
-| `pipeline.generation.params.filtered` | `step_name`, `model_id`, `removed_keys`, `allowed_keys` | - |
-| `pipeline.estimate.requested` | `pipeline_id`, `item_count`, `total_chars` | - |
-| `pipeline.estimate.completed` | `pipeline_id`, `item_count`, `batch_count`, `total_source_tokens`, `budget_tokens` | `estimated_validate_tokens` |
-| `pipeline.estimate.failed` | `pipeline_id`, `error`, `retryable` | - |
+| `frontier.endpoint.option.rejected` | `request_id`, `agent`, `field`, `reason` | `agent` (nullable) |
+| `frontier.endpoint.persona.resolved` | `request_id`, `agent`, `frontier_kind`, `default_model`, `allowed_models_count`, `allowed_options_count` | `frontier_kind`, `default_model`, `allowed_options_count` |
+| `frontier.endpoint.requested` | `request_id`, `agent`, `model` | `agent` (nullable), `model` (nullable) |
+| `frontier.handoff.created` | `request_id`, `to_agent`, `thread_id` | Handoff thread created on agent-bus. |
+| `frontier.handoff.requested` | `model?`, _dynamic_ | `handoff_contract` (`consult` \ |
+<!-- GENERATED:END region=frontier -->
+<!-- GENERATED:START region=pipeline inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | Emitted when pipeline execution is cancelled (e.g., client disconnect). |
+| `pipeline.checkpoint.failed` | `pipeline_id`, `execution_id`, `step_name`, `operation`, `error` | Emitted when checkpoint operation fails. |
+| `pipeline.checkpoint.loaded` | `pipeline_id`, `execution_id`, `step_name`, `checkpoint_key`, `storage_backend`, `saved_at` | Emitted when step resumed from checkpoint. |
+| `pipeline.checkpoint.saved` | `pipeline_id`, `execution_id`, `step_name`, `checkpoint_key`, `storage_backend` | Emitted after checkpoint successfully saved. |
 | `pipeline.compaction.archived` | `execution_id`, `chat_id`, `anchor_id`, `turn_index`, `role`, `artifact_uri`, `assertion_id`, `tool_calls_count`, `synthesized` | Emitted when `archive_*_turn_v1` persists a turn to cortex (node-scoped) |
+| `pipeline.compaction.artifact_load_skipped` | `skip_reasons?`, `sample_uri?`, _dynamic_ | Emitted when summarize loads collapse-set artifacts and one or more URIs fail (`missing`, `read_error`, `invalid_json` buckets in `skip_reasons`) (node-scoped) |
 | `pipeline.compaction.assembled` | `execution_id`, `chat_id`, `anchor_id`, `turn_index`, `window_size`, `messages_count`, `total_turn_pairs` | Emitted when `assemble_thread_v1` builds the referential prefix (node-scoped) |
 | `pipeline.compaction.summarized` | `execution_id`, `chat_id`, `anchor_id`, `turns_summarized`, `summary_assertion_id` | Emitted when chat summarization collapses older turns (Phase C) (node-scoped) |
-| `pipeline.compaction.artifact_load_skipped` | `execution_id`, `chat_id`, `anchor_id`, `attempted`, `loaded`, `skipped`, `skip_reasons`, `sample_uri` | Emitted when summarize loads collapse-set artifacts and one or more URIs fail (`missing`, `read_error`, `invalid_json` buckets in `skip_reasons`) (node-scoped) |
 | `pipeline.compaction.supersede.failed` | `execution_id`, `chat_id`, `anchor_id`, `summary_assertion_id`, `collapse_up_to`, `superseded_count`, `collapse_set_size`, `error` | Emitted when `supersede_collapsed=true` and a supersede call fails after the summary assertion is written (node-scoped) |
-| `pipeline.rag.query.analysis.completed` | `pipeline_id`, `execution_id`, `step_name`, `needs_retrieval`, `scope`, `scope_confidence`, `out_of_scope_reason` | - |
-| `pipeline.rag.query.rewrite.completed` | `pipeline_id`, `execution_id`, `step_name`, `rewrite_count`, `hyde_present` | - |
-| `pipeline.rag.query.rewrite.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | reasons: `rewrite_disabled`, `needs_retrieval_false`, `step_condition_false` |
-| `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | fail-closed scope rejection (0 chunks); reasons: `invalid_scope_override`, `invalid_predicted_scope`, `scope_confidence_below_threshold`, `scope_catalog_unavailable` |
-| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | - |
-| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes`, `pool_b_enabled` | `scope` may be string or array of strings (multiscope) |
-| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added`, `coverage_bias_applied`, `coverage_bias_query_class`, `coverage_bias_anchor_source`, `coverage_bias_boosted_chunks` | `neighbor_expansion_added` defaults to 0 when expansion disabled; `fallback_triggered` reflects alias normalization only; coverage-bias fields observe enumeration-query section boosting |
-| `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | - |
-| `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | - |
-| `pipeline.rag.retrieval.source.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | - |
-| `pipeline.rag.neighbor.expansion.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | - |
-| `pipeline.rag.coverage.selection.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `applied`, `chunks_before`, `chunks_after` | - |
-| `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | - |
-| `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | - |
-| `pipeline.rag.generation.context.refined` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scopes`, `original_must_include`, `enriched_must_include`, `scope_anchors_added`, `flat_hint_count`, `register_scopes_included`, `register_scopes_total` | - |
+| `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | Emitted when pipeline completes successfully. |
+| `pipeline.consensus.combine.completed` | `pipeline_id`, `execution_id`, `step_name`, `fact_count`, `chunk_count`, `cited_count`, `uncited_count`, `coverage_pct` | Emitted after verified facts are synthesised into a combined answer. |
+| `pipeline.consensus.coverage.completed` | `pipeline_id`, `execution_id`, `step_name`, `total_facts`, `covered_count`, `uncovered_count`, `mean_score`, `coverage_pct`, `threshold` | Emitted after embedding-based fact coverage audit completes. |
+| `pipeline.consensus.organize.completed` | `pipeline_id`, `execution_id`, `step_name`, `total_facts`, `sections_created`, `facts_assigned`, `valid_json` | Emitted after organize_facts generates and validates an outline. |
+| `pipeline.dag.execution.completed` | `pipeline_id`, `execution_id`, `completed_count`, `skipped_count`, `failed_count`, `total_steps` | terminal DAG summary |
+| `pipeline.deadlock.detected` | `pipeline_id`, `execution_id`, `incomplete_steps`, `pending_task_count` | emitted before deadlock failure raise |
+| `pipeline.dispatch.async` | `pipeline_id`, `execution_id`, `has_delivery_hook`, `caller_agent`, `op`, `output_contract` | `caller_agent` |
+| `pipeline.dispatch.cancelled` | `pipeline_id`, `execution_id`, `source` | Emitted when a running dispatch is cancelled by an explicit DELETE. |
+| `pipeline.dispatch.completed` | `pipeline_id`, `execution_id`, `status`, `duration_s`, `caller_agent`, `op`, `output_contract` | `caller_agent` |
+| `pipeline.dispatch.delivery.close.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | Emitted when ephemeral thread close failed after a successful delivery. |
+| `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview`, `op`, `output_contract` | Emitted when the agent-bus POST returned non-2xx or failed transport. |
+| `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent`, `op`, `output_contract` | Emitted when a terminal-state turn has been posted successfully. |
+| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason`, `op`, `output_contract` | Emitted when delivery was not attempted. |
+| `pipeline.dispatch.journal.pruned` | `records_deleted`, `oldest_deleted_age_seconds` | `oldest_deleted_age_seconds` |
+| `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | Emitted when tracker fallback serves a terminal record from sqlite. |
+| `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | Emitted when a terminal dispatch record is persisted to sqlite. |
+| `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | Emitted when the async tracker refuses to admit a new execution. |
+| `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | Emitted when a terminal tracker record is pruned by TTL. |
+| `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
+| `pipeline.execution.timed.out` | `pipeline_id`, `execution_id`, `timeout_seconds`, `incomplete_steps` | emitted before timeout failure raise |
+| `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | Emitted when pipeline execution fails. |
+| `pipeline.frontier.dispatch.capability.miss` | `execution_id`, `event_name`, `model`, `model_entity_id`, `miss_key`, `miss_reason` | Emitted when ``resolve_dispatch`` cannot infer the provider/surface (G13). |
+| `pipeline.frontier.dispatch.capability.rejected` | `execution_id`, `event_name`, `model`, `model_entity_id`, `provider`, `knob`, `reject_code`, `reason` | Emitted once per rejected knob in the G9 ``ProtocolError`` envelope. |
+| `pipeline.frontier.dispatch.capability.resolved` | `execution_id`, `event_name`, `model`, `model_entity_id`, `provider`, `api_surface`, _dynamic_ | adaptive-only: `reasoning_output_config_effort`. Pinned cross-stack name in `event_name` is `capability_dispatch.resolved` (node-scoped) |
+| `pipeline.frontier.dispatch.completed` | `agent`, `execution_id`, `turns_used`, `tool_calls_made`, `reasoning_present`, `prompt_tokens`, `completion_tokens`, `provider`, `model_entity_id`, `op`, `finish_reason`, `block_reason` | native-endpoint loop returned terminal content; `model_entity_id` is the canonical Cortex `model:<slug>` for the admitted model; `op` ∈ {`generate`, `to_thread`, ``} (node-scoped) |
+| `pipeline.frontier.dispatch.empty.completion` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider`, `turns_used`, `tool_calls_made`, `finish_reason`, `block_reason` | Fires when `frontier_dispatch_v1` returns empty/whitespace-only content on the non-exhausted branch. Distinct from `.exhausted` (intentional no-content on max-turns). Emitted immediately before `EmptyCompletionError` is raised so terminal state converts from `completed` to `failed`. (node-scoped) |
+| `pipeline.frontier.dispatch.exhausted` | `agent`, `execution_id`, `turns_used`, `tool_calls_made`, `provider`, `model_entity_id`, `op`, `finish_reason`, `block_reason`, `enforcement`, `exhaustion_summary` | native-endpoint loop hit `max_tool_turns` without terminal content; `model_entity_id` is the canonical Cortex `model:<slug>` for the admitted model; `op` ∈ {`generate`, `to_thread`, ``} (node-scoped) |
+| `pipeline.frontier.dispatch.hydrated` | `agent`, `execution_id`, `briefing_bytes`, `section_counts`, `continuation_id` | `frontier_dispatch_v1` team-seat step loaded dispatched-agent Cortex boot; omitted in persona-free mode (node-scoped) |
+| `pipeline.frontier.dispatch.mismatch` | `execution_id`, `agent`, `requested_model`, `model_entity_id`, `valid_family`, `mismatch_kind` | Emitted when `frontier_dispatch_v1` rejects an agent + model combination. `mismatch_kind="provider"` — model's provider doesn't match the agent's identity-bound provider family (e.g. oppie + anthropic model); suggests typo or wrong family. `mismatch_kind="variant"` — provider matches but model fails the agent's variant requirement (e.g. oppie + non-multi-agent xAI model); suggests stale model pin or missing beta-gate access. Precedes `pipeline_execution_failed` with `code=agent_model_mismatch`. `model_entity_id` is the canonical Cortex `model:<slug>` for the requested model — present here (not only on `.started`) so correlators can recover it on the rejection path where `.started` never fires (node-scoped) |
+| `pipeline.frontier.dispatch.output.short` | `agent`, `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview`, `op`, `output_contract` | Team/full `frontier_dispatch_v1` dispatch returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. Emission is detector-gated on `boot_level ∈ {team, full}`; persona-free dispatches pass `boot_level='none'` and are filtered. Replaces the deprecated `mcp.frontier.output.short` signal as of Task-7 Phase 1 (node-scoped) |
+| `pipeline.frontier.dispatch.refusal.suspected` | `agent`, `execution_id`, `model`, `provider`, `output_tokens`, `tool_calls_made`, `content_preview`, `reason` | Post-loop heuristic fires when an inline-contract dispatch returns a short refusal-shaped completion after the model already made tool calls — gated on `output_tokens < 80` AND `tool_calls_made > 0` AND a refusal-marker hit on the lowercase content ("i can't continue", "cannot comply", "i'm sorry", etc.). Distinct from `.output.short` (broad short-output heuristic) and `.termination.shadow` (provider=google thought-trace pattern). Emitted alongside `pipeline.frontier.dispatch.completed`; consumers should retry on a higher-capability model or shorten the write loop. Not gated on `boot_level` — refusal detection runs on persona-free dispatches too. (node-scoped) |
+| `pipeline.frontier.dispatch.remotemcp.enabled` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider` | remote-MCP path selected for this execution; adapter attached provider-native MCP descriptor before the native call; implies client-side tool loop disabled (node-scoped) |
+| `pipeline.frontier.dispatch.remotemcp.misconfigured` | `execution_id`, `agent`, `model`, `model_entity_id`, `reason` | `resolve_mcp_env()` raised because `MCP_PUBLIC_URL`/`MCP_AUTH_TOKEN` is unset in the Stargate container env; precedes `pipeline_execution_failed`. `model_entity_id` is the canonical Cortex `model:<slug>` — present here (not only on `.started`) so correlators can recover it on the race where misconfigured fires before `.started` (env resolution fails during admission) (node-scoped) |
+| `pipeline.frontier.dispatch.remotemcp.unsupported` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider`, `requested`, `reason` | Step handler rejected `remote_mcp=True` as structurally unsupported. Fires when (a) `mcp=False` (remote_mcp requires client-side mcp tooling to be enabled) or (b) provider is not anthropic (remote MCP via server-side `mcp_toolset` is anthropic-only). Precedes `pipeline_execution_failed` carrying `code=remote_mcp_unsupported`. `model_entity_id` is the canonical Cortex `model:<slug>` — present here (not only on `.started`) so correlators can recover it on the rejection path where `.started` never fires (node-scoped) |
+| `pipeline.frontier.dispatch.started` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider`, `boot_level`, `remote_mcp`, `op` | Fires once per `frontier_dispatch_v1` execution, after hydration (if persona) and before the native call. `model` is the wire/provider-routed id; `model_entity_id` is the canonical Cortex `model:<slug>`. `boot_level` is internal observability vocabulary derived from agent presence, not a caller-facing parameter. `op` ∈ {`generate`, `to_thread`, ``}. MCP callers reach this via `team_dispatch` relay (node-scoped) |
+| `pipeline.frontier.dispatch.termination.shadow` | `agent`, `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `reason`, `confidence`, `evidence`, `suggested_next_action`, `trace_visibility`, `generate_id`, `detector` | Advisory post-`pipeline.frontier.dispatch.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion) in the model's reasoning trace. v1 scope: provider=`google` + team-seat dispatch + thought summaries available. `.shadow` topic suffix marks v1 as NOT production-consumable during the calibration window — orchestrators MUST filter on suffix, not on a shadow boolean. Never replaces `.completed`, never fires on `.exhausted`. Replaces the deprecated `mcp.frontier.thought.termination.shadow` signal as of Task-7 Phase 1 (node-scoped) |
+| `pipeline.frontier.dispatch.tool.called` | `agent`, `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `provider` | tool executed successfully inside native-endpoint tool-use loop (node-scoped) |
+| `pipeline.frontier.dispatch.tool.failed` | `agent`, `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `error`, `provider`, `arguments`, `full_error`, `retry_count` | tool call returned error envelope or raised inside loop; `arguments` / `full_error` / `retry_count` aid observability and deterministic-retry policy (node-scoped) |
+| `pipeline.frontier.dispatch.tool.requested` | `agent`, `execution_id`, `tool_name`, `provider`, `tool_call_id` | fired when the model begins generating a `tool_use` block in the streaming response (`content_block_start`), before tool execution; `tool_call_id` correlates with subsequent `.tool.called`/`.tool.failed` events — Anthropic: `content_block.id`; OpenAI/xAI: `item.id` or `item.call_id`; Google: `null` (no native id); emitted by `frontier_dispatch` handler `on_event` callback (node-scoped) |
+| `pipeline.frontier.dispatch.tool.suppressed` | `execution_id`, `agent`, `model`, `provider`, `reason` | Emitted when the agent-tier gate forces the tool surface to empty (`reason="capability_tier_inline_only"`). Sole callsite: `capability_tier == "inline-only"` branch in `resolve_dispatch_tool_set`. The xAI multi-agent coercion (`elif provider == "xai" and "multi-agent" in model`) does NOT emit this event. `CORTEX_TOOL_QUICKREF` suppression follows automatically (`include_cortex_quickref=bool(tools)` → False when tools empty). If xAI multi-agent observability is needed, a separate `reason="xai_multi_agent_client_tools_unsupported"` callsite must be added. (node-scoped) |
+| `pipeline.frontier.dispatch.tools.supplied` | `execution_id`, `agent`, `model`, `provider`, `tool_count`, `tool_names` | Emitted when a caller passes an explicit ``pipeline_options.tools`` list. |
+| `pipeline.map.completed` | `pipeline_id`, `execution_id`, `step_name`, `succeeded_count`, `failed_count`, `total_count`, `duration_seconds`, `met_threshold` | Event factory for when a map step finishes (success or failure). |
+| `pipeline.map.iteration.completed` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `elapsed_seconds`, `inference_seconds`, `prompt_tokens`, `completion_tokens` | Event factory for when one map iteration completes successfully. |
+| `pipeline.map.iteration.failed` | `truncated_response_path?`, `truncation_tokens?`, _dynamic_ | Event factory for when one map iteration fails. |
+| `pipeline.map.iteration.inference.fallback` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `fallback_signal`, `reason` | Event factory for when fallback inference boundary timing is used. |
+| `pipeline.map.iteration.inference.lost` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id` | Event factory for when no inference boundary signal was observed. |
+| `pipeline.map.iteration.inference.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `model_id`, `queue_wait_seconds` | Event factory for when inference begins for a map iteration. |
+| `pipeline.map.iteration.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `model_id`, `gateway_id`, `request_id` | `request_id` |
+| `pipeline.map.started` | `pipeline_id`, `execution_id`, `step_name`, `total_iterations`, `timeout_seconds`, `threshold` | Event factory for when a map step begins execution. |
+| `pipeline.map.step.empty.iterations` | `pipeline_id`, `execution_id`, `step_name` | emitted when map_over resolves to empty collection (0 iterations); no iterations run |
+| `pipeline.map.timeout.warning` | `pipeline_id`, `execution_id`, `step_name`, `elapsed_seconds`, `timeout_seconds`, `pending_iterations`, `completed_iterations`, `percent_elapsed` | Event factory for when a map step approaches timeout. |
+| `pipeline.model.gate.claimed` | `pipeline_id`, `execution_id`, `step_id`, `model_id` | step acquired model gate; `model_id` is resolved target model identity |
+| `pipeline.model.gate.failure.release` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `error_type` | explicit failure-boundary release marker |
+| `pipeline.model.gate.released` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `outcome` | gate released (`success`\ |
+| `pipeline.model.registry.lookup.failed` | `pipeline_id`, `execution_id`, `step_id`, `model_ref`, `error` | model_ref lookup failure |
+| `pipeline.rag.coverage.selection.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `applied`, `chunks_before`, `chunks_after` | Coverage-aware selection outcome after metadata boost scoring (only emitted when coverage selection is enabled) |
+| `pipeline.rag.generation.context.refined` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scopes`, `original_must_include`, `enriched_must_include`, `scope_anchors_added`, `flat_hint_count`, `register_scopes_included`, `register_scopes_total` | Emitted after generation context is refined with scope-filtered vocabulary. |
+| `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | Emitted after corpus hints are filtered by co-occurrence with query terms. |
+| `pipeline.rag.metadata.boost.applied` | `pipeline_id`, `execution_id`, `step_name`, `metadata_hit_count`, `avg_metadata_score`, `applied`, `chunks_after_boost` | Emitted after post-RRF metadata boost is applied (or skipped). |
+| `pipeline.rag.neighbor.expansion.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
+| `pipeline.rag.query.analysis.completed` | `pipeline_id`, `execution_id`, `step_name`, `needs_retrieval`, `scope`, `scope_confidence`, `out_of_scope_reason` | Scope-analysis decision consumed by retrieval |
+| `pipeline.rag.query.rewrite.completed` | `pipeline_id`, `execution_id`, `step_name`, `rewrite_count`, `hyde_present` | Rewrite generation completed and available to retrieval |
+| `pipeline.rag.query.rewrite.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | Rewrite generation bypassed (`rewrite_disabled`, `needs_retrieval_false`, `step_condition_false`) |
+| `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | Post-reranking: LLM reranking metrics or skip confirmation |
+| `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added`, `coverage_bias_applied`, `coverage_bias_query_class`, `coverage_bias_anchor_source`, `coverage_bias_boosted_chunks` | Post-retrieval: scope prediction + quality metrics; coverage-bias fields default when query-class bias is off (`coverage_bias_applied=false`, `coverage_bias_query_class=default`, `coverage_bias_anchor_source=null`, `coverage_bias_boosted_chunks=0`) |
+| `pipeline.rag.retrieval.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | Emitted when source-diversity cap removes chunks from a dominant source. |
+| `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
+| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes`, `pool_b_enabled` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope); `pool_b_enabled` indicates sparse facet/IDF pool (Pool B) active |
+| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped by semantic no-retrieval gate (query/corpus mismatch with no user prefix override) |
+| `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | Scope validation rejected — fail-closed, 0 chunks returned |
+| `pipeline.registry.unavailable` | `pipeline_id`, `missing_models` | Pipeline permanently skipped after deferred retry — model deps unresolvable. |
+| `pipeline.started` | `pipeline_id`, `execution_id`, `domain`, `step_count`, `timeout_seconds` | Emitted when pipeline execution begins. |
+| `pipeline.step.completed` | `model_id?`, `exit_code?`, `json_output_keys?`, _dynamic_ | `exit_code` (shell steps only) |
+| `pipeline.step.condition.evaluated` | `pipeline_id`, `execution_id`, `step_name`, `condition`, `result`, `available_outputs` | Emitted when a step's condition expression is evaluated. |
+| `pipeline.step.context.exceeded` | `pipeline_id`, `execution_id`, `step_name`, `model_id`, `estimated_tokens`, `context_length`, `effective_context_per_slot`, `prompt_chars` | Emitted when estimated prompt tokens exceed the model's context window. |
+| `pipeline.step.domain.verification.completed` | `execution_id`, `step_id`, `domain`, `model_id`, `statement_count`, `passed_count`, `failed_count`, `duration_ms` | Create PIPELINE_STEP_DOMAIN_VERIFICATION_COMPLETED event. |
+| `pipeline.step.domain.verification.started` | `execution_id`, `step_id`, `domain`, `model_id`, `statement_count` | Create PIPELINE_STEP_DOMAIN_VERIFICATION_STARTED event. |
+| `pipeline.step.embedding.completed` | `execution_id`, `step_id`, `model_id`, `input_count`, `duration_ms`, `embedding_dim` | Create PIPELINE_STEP_EMBEDDING_COMPLETED event. |
+| `pipeline.step.embedding.failed` | `execution_id`, `step_id`, `model_id`, `input_count`, `duration_ms`, `error`, `status_code` | Create PIPELINE_STEP_EMBEDDING_FAILED event. |
+| `pipeline.step.embedding.started` | `execution_id`, `step_id`, `model_id`, `input_count` | Create PIPELINE_STEP_EMBEDDING_STARTED event. |
+| `pipeline.step.failed` | `duration_seconds?`, `traceback?`, _dynamic_ | `exc_type`: exception class name (e.g. `RemoteProtocolError`); always non-empty, primary diagnostic key when `error` is empty |
+| `pipeline.step.model.deferred` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `reason` | deferral due to model admission gate |
+| `pipeline.step.model.fallback` | `pipeline_id`, `execution_id`, `step_name`, `primary_model`, `fallback_model`, `primary_error_type`, `fallback_attempt`, `total_fallbacks`, `succeeded` | Executor-level fallback attempt outcome for eligible failures only |
+| `pipeline.step.model.fallback.suppressed` | `pipeline_id`, `execution_id`, `step_name`, `primary_error_type`, `suppression_reason` | Explicit suppression boundary for deterministic local errors |
+| `pipeline.step.model.resolved` | `pipeline_id`, `execution_id`, `step_name`, `model_id`, `selection_source` | Emitted immediately after model selection, before inference begins. |
+| `pipeline.step.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | Emitted when step is skipped due to condition evaluation. |
+| `pipeline.step.started` | `pipeline_id`, `execution_id`, `step_name`, `step_type`, `model_id`, `is_map_step` | Emitted when step execution begins (includes both regular and map steps). |
+| `pipeline.subpipeline.expanded` | `pipeline_id`, `execution_id`, `parent_step_name`, `resolved_output_step`, `expanded_step_count` | Emitted when a ``sub_pipeline`` step is expanded into namespaced steps. |
+<!-- GENERATED:END region=pipeline -->
 
 **Note on `pipeline.step.failed` partial progress**: `prompt_tokens`, `completion_tokens`,
 and `model_call_count` are populated from all model calls completed before the failure,
@@ -1919,17 +2355,108 @@ tracking across long-running map steps. Failed/timeout/cancelled iterations emit
 **INVARIANT**: If no boundary signal is seen,
 `pipeline.map.iteration.inference.lost` is emitted.
 
+<!-- GENERATED:START region=pipeline inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `pipeline.map.started` | `pipeline_id`, `execution_id`, `step_name`, `total_iterations`, `timeout_seconds`, `threshold` | - |
+| `pipeline.cancelled` | `pipeline_id`, `execution_id`, `duration_seconds`, `reason`, `completed_steps`, `pending_steps` | Emitted when pipeline execution is cancelled (e.g., client disconnect). |
+| `pipeline.checkpoint.failed` | `pipeline_id`, `execution_id`, `step_name`, `operation`, `error` | Emitted when checkpoint operation fails. |
+| `pipeline.checkpoint.loaded` | `pipeline_id`, `execution_id`, `step_name`, `checkpoint_key`, `storage_backend`, `saved_at` | Emitted when step resumed from checkpoint. |
+| `pipeline.checkpoint.saved` | `pipeline_id`, `execution_id`, `step_name`, `checkpoint_key`, `storage_backend` | Emitted after checkpoint successfully saved. |
+| `pipeline.compaction.archived` | `execution_id`, `chat_id`, `anchor_id`, `turn_index`, `role`, `artifact_uri`, `assertion_id`, `tool_calls_count`, `synthesized` | Emitted when `archive_*_turn_v1` persists a turn to cortex (node-scoped) |
+| `pipeline.compaction.artifact_load_skipped` | `skip_reasons?`, `sample_uri?`, _dynamic_ | Emitted when summarize loads collapse-set artifacts and one or more URIs fail (`missing`, `read_error`, `invalid_json` buckets in `skip_reasons`) (node-scoped) |
+| `pipeline.compaction.assembled` | `execution_id`, `chat_id`, `anchor_id`, `turn_index`, `window_size`, `messages_count`, `total_turn_pairs` | Emitted when `assemble_thread_v1` builds the referential prefix (node-scoped) |
+| `pipeline.compaction.summarized` | `execution_id`, `chat_id`, `anchor_id`, `turns_summarized`, `summary_assertion_id` | Emitted when chat summarization collapses older turns (Phase C) (node-scoped) |
+| `pipeline.compaction.supersede.failed` | `execution_id`, `chat_id`, `anchor_id`, `summary_assertion_id`, `collapse_up_to`, `superseded_count`, `collapse_set_size`, `error` | Emitted when `supersede_collapsed=true` and a supersede call fails after the summary assertion is written (node-scoped) |
+| `pipeline.completed` | `pipeline_id`, `execution_id`, `duration_seconds`, `step_count`, `output_step` | Emitted when pipeline completes successfully. |
+| `pipeline.consensus.combine.completed` | `pipeline_id`, `execution_id`, `step_name`, `fact_count`, `chunk_count`, `cited_count`, `uncited_count`, `coverage_pct` | Emitted after verified facts are synthesised into a combined answer. |
+| `pipeline.consensus.coverage.completed` | `pipeline_id`, `execution_id`, `step_name`, `total_facts`, `covered_count`, `uncovered_count`, `mean_score`, `coverage_pct`, `threshold` | Emitted after embedding-based fact coverage audit completes. |
+| `pipeline.consensus.organize.completed` | `pipeline_id`, `execution_id`, `step_name`, `total_facts`, `sections_created`, `facts_assigned`, `valid_json` | Emitted after organize_facts generates and validates an outline. |
+| `pipeline.dag.execution.completed` | `pipeline_id`, `execution_id`, `completed_count`, `skipped_count`, `failed_count`, `total_steps` | terminal DAG summary |
+| `pipeline.deadlock.detected` | `pipeline_id`, `execution_id`, `incomplete_steps`, `pending_task_count` | emitted before deadlock failure raise |
+| `pipeline.dispatch.async` | `pipeline_id`, `execution_id`, `has_delivery_hook`, `caller_agent`, `op`, `output_contract` | `caller_agent` |
+| `pipeline.dispatch.cancelled` | `pipeline_id`, `execution_id`, `source` | Emitted when a running dispatch is cancelled by an explicit DELETE. |
+| `pipeline.dispatch.completed` | `pipeline_id`, `execution_id`, `status`, `duration_s`, `caller_agent`, `op`, `output_contract` | `caller_agent` |
+| `pipeline.dispatch.delivery.close.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview` | Emitted when ephemeral thread close failed after a successful delivery. |
+| `pipeline.dispatch.delivery.failed` | `pipeline_id`, `execution_id`, `thread`, `status_code`, `error_preview`, `op`, `output_contract` | Emitted when the agent-bus POST returned non-2xx or failed transport. |
+| `pipeline.dispatch.delivery.sent` | `pipeline_id`, `execution_id`, `thread`, `to_agent`, `from_agent`, `op`, `output_contract` | Emitted when a terminal-state turn has been posted successfully. |
+| `pipeline.dispatch.delivery.skipped` | `pipeline_id`, `execution_id`, `reason`, `op`, `output_contract` | Emitted when delivery was not attempted. |
+| `pipeline.dispatch.journal.pruned` | `records_deleted`, `oldest_deleted_age_seconds` | `oldest_deleted_age_seconds` |
+| `pipeline.dispatch.journal.read` | `execution_id`, `age_seconds` | Emitted when tracker fallback serves a terminal record from sqlite. |
+| `pipeline.dispatch.journal.written` | `execution_id`, `status`, `bytes` | Emitted when a terminal dispatch record is persisted to sqlite. |
+| `pipeline.dispatch.rejected` | `pipeline_id`, `reason` | Emitted when the async tracker refuses to admit a new execution. |
+| `pipeline.dispatch.tracker.expired` | `pipeline_id`, `execution_id`, `status`, `age_seconds` | Emitted when a terminal tracker record is pruned by TTL. |
+| `pipeline.execution.cancelled` | `pipeline_id`, `execution_id`, `cancelled_steps` | external cancellation summary |
+| `pipeline.execution.timed.out` | `pipeline_id`, `execution_id`, `timeout_seconds`, `incomplete_steps` | emitted before timeout failure raise |
+| `pipeline.failed` | `pipeline_id`, `execution_id`, `duration_seconds`, `error`, `failed_step` | Emitted when pipeline execution fails. |
+| `pipeline.frontier.dispatch.capability.miss` | `execution_id`, `event_name`, `model`, `model_entity_id`, `miss_key`, `miss_reason` | Emitted when ``resolve_dispatch`` cannot infer the provider/surface (G13). |
+| `pipeline.frontier.dispatch.capability.rejected` | `execution_id`, `event_name`, `model`, `model_entity_id`, `provider`, `knob`, `reject_code`, `reason` | Emitted once per rejected knob in the G9 ``ProtocolError`` envelope. |
+| `pipeline.frontier.dispatch.capability.resolved` | `execution_id`, `event_name`, `model`, `model_entity_id`, `provider`, `api_surface`, _dynamic_ | adaptive-only: `reasoning_output_config_effort`. Pinned cross-stack name in `event_name` is `capability_dispatch.resolved` (node-scoped) |
+| `pipeline.frontier.dispatch.completed` | `agent`, `execution_id`, `turns_used`, `tool_calls_made`, `reasoning_present`, `prompt_tokens`, `completion_tokens`, `provider`, `model_entity_id`, `op`, `finish_reason`, `block_reason` | native-endpoint loop returned terminal content; `model_entity_id` is the canonical Cortex `model:<slug>` for the admitted model; `op` ∈ {`generate`, `to_thread`, ``} (node-scoped) |
+| `pipeline.frontier.dispatch.empty.completion` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider`, `turns_used`, `tool_calls_made`, `finish_reason`, `block_reason` | Fires when `frontier_dispatch_v1` returns empty/whitespace-only content on the non-exhausted branch. Distinct from `.exhausted` (intentional no-content on max-turns). Emitted immediately before `EmptyCompletionError` is raised so terminal state converts from `completed` to `failed`. (node-scoped) |
+| `pipeline.frontier.dispatch.exhausted` | `agent`, `execution_id`, `turns_used`, `tool_calls_made`, `provider`, `model_entity_id`, `op`, `finish_reason`, `block_reason`, `enforcement`, `exhaustion_summary` | native-endpoint loop hit `max_tool_turns` without terminal content; `model_entity_id` is the canonical Cortex `model:<slug>` for the admitted model; `op` ∈ {`generate`, `to_thread`, ``} (node-scoped) |
+| `pipeline.frontier.dispatch.hydrated` | `agent`, `execution_id`, `briefing_bytes`, `section_counts`, `continuation_id` | `frontier_dispatch_v1` team-seat step loaded dispatched-agent Cortex boot; omitted in persona-free mode (node-scoped) |
+| `pipeline.frontier.dispatch.mismatch` | `execution_id`, `agent`, `requested_model`, `model_entity_id`, `valid_family`, `mismatch_kind` | Emitted when `frontier_dispatch_v1` rejects an agent + model combination. `mismatch_kind="provider"` — model's provider doesn't match the agent's identity-bound provider family (e.g. oppie + anthropic model); suggests typo or wrong family. `mismatch_kind="variant"` — provider matches but model fails the agent's variant requirement (e.g. oppie + non-multi-agent xAI model); suggests stale model pin or missing beta-gate access. Precedes `pipeline_execution_failed` with `code=agent_model_mismatch`. `model_entity_id` is the canonical Cortex `model:<slug>` for the requested model — present here (not only on `.started`) so correlators can recover it on the rejection path where `.started` never fires (node-scoped) |
+| `pipeline.frontier.dispatch.output.short` | `agent`, `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `tool_calls_made`, `finish_reason`, `block_reason`, `content_preview`, `op`, `output_contract` | Team/full `frontier_dispatch_v1` dispatch returned <500 output tokens — captures first ~500 chars of content for triage of thinking-budget starvation, model confusion, or tool-loop misrouting. Emission is detector-gated on `boot_level ∈ {team, full}`; persona-free dispatches pass `boot_level='none'` and are filtered. Replaces the deprecated `mcp.frontier.output.short` signal as of Task-7 Phase 1 (node-scoped) |
+| `pipeline.frontier.dispatch.refusal.suspected` | `agent`, `execution_id`, `model`, `provider`, `output_tokens`, `tool_calls_made`, `content_preview`, `reason` | Post-loop heuristic fires when an inline-contract dispatch returns a short refusal-shaped completion after the model already made tool calls — gated on `output_tokens < 80` AND `tool_calls_made > 0` AND a refusal-marker hit on the lowercase content ("i can't continue", "cannot comply", "i'm sorry", etc.). Distinct from `.output.short` (broad short-output heuristic) and `.termination.shadow` (provider=google thought-trace pattern). Emitted alongside `pipeline.frontier.dispatch.completed`; consumers should retry on a higher-capability model or shorten the write loop. Not gated on `boot_level` — refusal detection runs on persona-free dispatches too. (node-scoped) |
+| `pipeline.frontier.dispatch.remotemcp.enabled` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider` | remote-MCP path selected for this execution; adapter attached provider-native MCP descriptor before the native call; implies client-side tool loop disabled (node-scoped) |
+| `pipeline.frontier.dispatch.remotemcp.misconfigured` | `execution_id`, `agent`, `model`, `model_entity_id`, `reason` | `resolve_mcp_env()` raised because `MCP_PUBLIC_URL`/`MCP_AUTH_TOKEN` is unset in the Stargate container env; precedes `pipeline_execution_failed`. `model_entity_id` is the canonical Cortex `model:<slug>` — present here (not only on `.started`) so correlators can recover it on the race where misconfigured fires before `.started` (env resolution fails during admission) (node-scoped) |
+| `pipeline.frontier.dispatch.remotemcp.unsupported` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider`, `requested`, `reason` | Step handler rejected `remote_mcp=True` as structurally unsupported. Fires when (a) `mcp=False` (remote_mcp requires client-side mcp tooling to be enabled) or (b) provider is not anthropic (remote MCP via server-side `mcp_toolset` is anthropic-only). Precedes `pipeline_execution_failed` carrying `code=remote_mcp_unsupported`. `model_entity_id` is the canonical Cortex `model:<slug>` — present here (not only on `.started`) so correlators can recover it on the rejection path where `.started` never fires (node-scoped) |
+| `pipeline.frontier.dispatch.started` | `execution_id`, `agent`, `model`, `model_entity_id`, `provider`, `boot_level`, `remote_mcp`, `op` | Fires once per `frontier_dispatch_v1` execution, after hydration (if persona) and before the native call. `model` is the wire/provider-routed id; `model_entity_id` is the canonical Cortex `model:<slug>`. `boot_level` is internal observability vocabulary derived from agent presence, not a caller-facing parameter. `op` ∈ {`generate`, `to_thread`, ``}. MCP callers reach this via `team_dispatch` relay (node-scoped) |
+| `pipeline.frontier.dispatch.termination.shadow` | `agent`, `execution_id`, `model`, `provider`, `boot_level`, `output_tokens`, `finish_reason`, `block_reason`, `reason`, `confidence`, `evidence`, `suggested_next_action`, `trace_visibility`, `generate_id`, `detector` | Advisory post-`pipeline.frontier.dispatch.completed` detection of likely silent-termination patterns (refusal / incapacity / policy / scope / loop / token_exhaustion) in the model's reasoning trace. v1 scope: provider=`google` + team-seat dispatch + thought summaries available. `.shadow` topic suffix marks v1 as NOT production-consumable during the calibration window — orchestrators MUST filter on suffix, not on a shadow boolean. Never replaces `.completed`, never fires on `.exhausted`. Replaces the deprecated `mcp.frontier.thought.termination.shadow` signal as of Task-7 Phase 1 (node-scoped) |
+| `pipeline.frontier.dispatch.tool.called` | `agent`, `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `provider` | tool executed successfully inside native-endpoint tool-use loop (node-scoped) |
+| `pipeline.frontier.dispatch.tool.failed` | `agent`, `execution_id`, `tool_name`, `turn`, `elapsed_ms`, `error`, `provider`, `arguments`, `full_error`, `retry_count` | tool call returned error envelope or raised inside loop; `arguments` / `full_error` / `retry_count` aid observability and deterministic-retry policy (node-scoped) |
+| `pipeline.frontier.dispatch.tool.requested` | `agent`, `execution_id`, `tool_name`, `provider`, `tool_call_id` | fired when the model begins generating a `tool_use` block in the streaming response (`content_block_start`), before tool execution; `tool_call_id` correlates with subsequent `.tool.called`/`.tool.failed` events — Anthropic: `content_block.id`; OpenAI/xAI: `item.id` or `item.call_id`; Google: `null` (no native id); emitted by `frontier_dispatch` handler `on_event` callback (node-scoped) |
+| `pipeline.frontier.dispatch.tool.suppressed` | `execution_id`, `agent`, `model`, `provider`, `reason` | Emitted when the agent-tier gate forces the tool surface to empty (`reason="capability_tier_inline_only"`). Sole callsite: `capability_tier == "inline-only"` branch in `resolve_dispatch_tool_set`. The xAI multi-agent coercion (`elif provider == "xai" and "multi-agent" in model`) does NOT emit this event. `CORTEX_TOOL_QUICKREF` suppression follows automatically (`include_cortex_quickref=bool(tools)` → False when tools empty). If xAI multi-agent observability is needed, a separate `reason="xai_multi_agent_client_tools_unsupported"` callsite must be added. (node-scoped) |
+| `pipeline.frontier.dispatch.tools.supplied` | `execution_id`, `agent`, `model`, `provider`, `tool_count`, `tool_names` | Emitted when a caller passes an explicit ``pipeline_options.tools`` list. |
+| `pipeline.map.completed` | `pipeline_id`, `execution_id`, `step_name`, `succeeded_count`, `failed_count`, `total_count`, `duration_seconds`, `met_threshold` | Event factory for when a map step finishes (success or failure). |
+| `pipeline.map.iteration.completed` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `elapsed_seconds`, `inference_seconds`, `prompt_tokens`, `completion_tokens` | Event factory for when one map iteration completes successfully. |
+| `pipeline.map.iteration.failed` | `truncated_response_path?`, `truncation_tokens?`, _dynamic_ | Event factory for when one map iteration fails. |
+| `pipeline.map.iteration.inference.fallback` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `fallback_signal`, `reason` | Event factory for when fallback inference boundary timing is used. |
+| `pipeline.map.iteration.inference.lost` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id` | Event factory for when no inference boundary signal was observed. |
+| `pipeline.map.iteration.inference.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `model_id`, `queue_wait_seconds` | Event factory for when inference begins for a map iteration. |
+| `pipeline.map.iteration.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `model_id`, `gateway_id`, `request_id` | `request_id` |
+| `pipeline.map.started` | `pipeline_id`, `execution_id`, `step_name`, `total_iterations`, `timeout_seconds`, `threshold` | Event factory for when a map step begins execution. |
 | `pipeline.map.step.empty.iterations` | `pipeline_id`, `execution_id`, `step_name` | emitted when map_over resolves to empty collection (0 iterations); no iterations run |
-| `pipeline.map.iteration.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `model_id`, `gateway_id` | `request_id` |
-| `pipeline.map.iteration.inference.started` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `model_id`, `queue_wait_seconds` | - |
-| `pipeline.map.iteration.inference.fallback` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id`, `fallback_signal`, `reason` | - |
-| `pipeline.map.iteration.inference.lost` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `request_id` | - |
-| `pipeline.map.iteration.completed` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `duration_seconds` | - |
-| `pipeline.map.iteration.failed` | `pipeline_id`, `execution_id`, `step_name`, `iteration_index`, `error`, `duration_seconds`, `failure_type` | - |
-| `pipeline.map.completed` | `pipeline_id`, `execution_id`, `step_name`, `succeeded_count`, `failed_count`, `total_count`, `duration_seconds`, `met_threshold` | - |
+| `pipeline.map.timeout.warning` | `pipeline_id`, `execution_id`, `step_name`, `elapsed_seconds`, `timeout_seconds`, `pending_iterations`, `completed_iterations`, `percent_elapsed` | Event factory for when a map step approaches timeout. |
+| `pipeline.model.gate.claimed` | `pipeline_id`, `execution_id`, `step_id`, `model_id` | step acquired model gate; `model_id` is resolved target model identity |
+| `pipeline.model.gate.failure.release` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `error_type` | explicit failure-boundary release marker |
+| `pipeline.model.gate.released` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `outcome` | gate released (`success`\ |
+| `pipeline.model.registry.lookup.failed` | `pipeline_id`, `execution_id`, `step_id`, `model_ref`, `error` | model_ref lookup failure |
+| `pipeline.rag.coverage.selection.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `applied`, `chunks_before`, `chunks_after` | Coverage-aware selection outcome after metadata boost scoring (only emitted when coverage selection is enabled) |
+| `pipeline.rag.generation.context.refined` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scopes`, `original_must_include`, `enriched_must_include`, `scope_anchors_added`, `flat_hint_count`, `register_scopes_included`, `register_scopes_total` | Emitted after generation context is refined with scope-filtered vocabulary. |
+| `pipeline.rag.hints.filtered` | `pipeline_id`, `execution_id`, `step_name`, `query_terms`, `original_hint_count`, `filtered_hint_count`, `filtered_hints`, `fallback`, `scoring_mode`, `min_threshold`, `capped`, `cap_limit` | Emitted after corpus hints are filtered by co-occurrence with query terms. |
+| `pipeline.rag.metadata.boost.applied` | `pipeline_id`, `execution_id`, `step_name`, `metadata_hit_count`, `avg_metadata_score`, `applied`, `chunks_after_boost` | Emitted after post-RRF metadata boost is applied (or skipped). |
+| `pipeline.rag.neighbor.expansion.applied` | `pipeline_id`, `execution_id`, `step_name`, `enabled`, `neighbors_added`, `neighbors_fetched`, `sources_expanded`, `expansion_n`, `max_chunks`, `expansion_seconds` | Neighbor chunk expansion result — emitted when expansion is enabled, even if zero neighbors were added |
+| `pipeline.rag.query.analysis.completed` | `pipeline_id`, `execution_id`, `step_name`, `needs_retrieval`, `scope`, `scope_confidence`, `out_of_scope_reason` | Scope-analysis decision consumed by retrieval |
+| `pipeline.rag.query.rewrite.completed` | `pipeline_id`, `execution_id`, `step_name`, `rewrite_count`, `hyde_present` | Rewrite generation completed and available to retrieval |
+| `pipeline.rag.query.rewrite.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | Rewrite generation bypassed (`rewrite_disabled`, `needs_retrieval_false`, `step_condition_false`) |
+| `pipeline.rag.rerank.completed` | `pipeline_id`, `execution_id`, `step_name`, `rerank_enabled`, `model_id`, `chunks_input`, `chunks_output`, `windows_evaluated`, `max_rank_movement_observed`, `total_rerank_seconds` | Post-reranking: LLM reranking metrics or skip confirmation |
+| `pipeline.rag.retrieval.bibliography.filtered` | `pipeline_id`, `execution_id`, `step_name`, `chunks_dropped` | Emitted when post-RRF junk/bibliography filter removes one or more chunks |
+| `pipeline.rag.retrieval.completed` | `pipeline_id`, `execution_id`, `step_name`, `predicted_scope`, `scope_confidence`, `fallback_triggered`, `chunks_per_query`, `zero_result_queries`, `rrf_score_min`, `rrf_score_max`, `rrf_score_mean`, `chunks_after_merge`, `total_retrieval_seconds`, `neighbor_expansion_added`, `coverage_bias_applied`, `coverage_bias_query_class`, `coverage_bias_anchor_source`, `coverage_bias_boosted_chunks` | Post-retrieval: scope prediction + quality metrics; coverage-bias fields default when query-class bias is off (`coverage_bias_applied=false`, `coverage_bias_query_class=default`, `coverage_bias_anchor_source=null`, `coverage_bias_boosted_chunks=0`) |
+| `pipeline.rag.retrieval.diversity.limited` | `pipeline_id`, `execution_id`, `step_name`, `per_source_limit`, `chunks_dropped`, `chunks_before`, `chunks_after` | Emitted when source-diversity cap removes chunks from a dominant source. |
+| `pipeline.rag.retrieval.failed` | `pipeline_id`, `execution_id`, `step_name`, `error`, `total_retrieval_seconds` | All queries failed — no chunks to merge |
+| `pipeline.rag.retrieval.params.resolved` | `pipeline_id`, `execution_id`, `step_name`, `consumer_model`, `consumer_tier`, `profile_class`, `max_chunks`, `top_k_per_query`, `rrf_k`, `scope`, `retrieval_mode`, `uses_explicit_prefixes`, `pool_b_enabled` | Pre-retrieval: effective parameters after three-tier merge; `scope` may be string or array of strings (multiscope); `pool_b_enabled` indicates sparse facet/IDF pool (Pool B) active |
+| `pipeline.rag.retrieval.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `out_of_scope_reason` | Retrieval skipped by semantic no-retrieval gate (query/corpus mismatch with no user prefix override) |
+| `pipeline.rag.scope.rejected` | `pipeline_id`, `execution_id`, `step_name`, `reason`, `scope`, `details` | Scope validation rejected — fail-closed, 0 chunks returned |
+| `pipeline.registry.unavailable` | `pipeline_id`, `missing_models` | Pipeline permanently skipped after deferred retry — model deps unresolvable. |
+| `pipeline.started` | `pipeline_id`, `execution_id`, `domain`, `step_count`, `timeout_seconds` | Emitted when pipeline execution begins. |
+| `pipeline.step.completed` | `model_id?`, `exit_code?`, `json_output_keys?`, _dynamic_ | `exit_code` (shell steps only) |
+| `pipeline.step.condition.evaluated` | `pipeline_id`, `execution_id`, `step_name`, `condition`, `result`, `available_outputs` | Emitted when a step's condition expression is evaluated. |
+| `pipeline.step.context.exceeded` | `pipeline_id`, `execution_id`, `step_name`, `model_id`, `estimated_tokens`, `context_length`, `effective_context_per_slot`, `prompt_chars` | Emitted when estimated prompt tokens exceed the model's context window. |
+| `pipeline.step.domain.verification.completed` | `execution_id`, `step_id`, `domain`, `model_id`, `statement_count`, `passed_count`, `failed_count`, `duration_ms` | Create PIPELINE_STEP_DOMAIN_VERIFICATION_COMPLETED event. |
+| `pipeline.step.domain.verification.started` | `execution_id`, `step_id`, `domain`, `model_id`, `statement_count` | Create PIPELINE_STEP_DOMAIN_VERIFICATION_STARTED event. |
+| `pipeline.step.embedding.completed` | `execution_id`, `step_id`, `model_id`, `input_count`, `duration_ms`, `embedding_dim` | Create PIPELINE_STEP_EMBEDDING_COMPLETED event. |
+| `pipeline.step.embedding.failed` | `execution_id`, `step_id`, `model_id`, `input_count`, `duration_ms`, `error`, `status_code` | Create PIPELINE_STEP_EMBEDDING_FAILED event. |
+| `pipeline.step.embedding.started` | `execution_id`, `step_id`, `model_id`, `input_count` | Create PIPELINE_STEP_EMBEDDING_STARTED event. |
+| `pipeline.step.failed` | `duration_seconds?`, `traceback?`, _dynamic_ | `exc_type`: exception class name (e.g. `RemoteProtocolError`); always non-empty, primary diagnostic key when `error` is empty |
+| `pipeline.step.model.deferred` | `pipeline_id`, `execution_id`, `step_id`, `model_id`, `reason` | deferral due to model admission gate |
+| `pipeline.step.model.fallback` | `pipeline_id`, `execution_id`, `step_name`, `primary_model`, `fallback_model`, `primary_error_type`, `fallback_attempt`, `total_fallbacks`, `succeeded` | Executor-level fallback attempt outcome for eligible failures only |
+| `pipeline.step.model.fallback.suppressed` | `pipeline_id`, `execution_id`, `step_name`, `primary_error_type`, `suppression_reason` | Explicit suppression boundary for deterministic local errors |
+| `pipeline.step.model.resolved` | `pipeline_id`, `execution_id`, `step_name`, `model_id`, `selection_source` | Emitted immediately after model selection, before inference begins. |
+| `pipeline.step.skipped` | `pipeline_id`, `execution_id`, `step_name`, `reason` | Emitted when step is skipped due to condition evaluation. |
+| `pipeline.step.started` | `pipeline_id`, `execution_id`, `step_name`, `step_type`, `model_id`, `is_map_step` | Emitted when step execution begins (includes both regular and map steps). |
+| `pipeline.subpipeline.expanded` | `pipeline_id`, `execution_id`, `parent_step_name`, `resolved_output_step`, `expanded_step_count` | Emitted when a ``sub_pipeline`` step is expanded into namespaced steps. |
+<!-- GENERATED:END region=pipeline -->
 
 **`pipeline.map.iteration.inference.started`**: Bridges Stargate request runtime-start
 signals into pipeline observability using a primary-preferred stamp model:
@@ -1970,10 +2497,11 @@ consult.call.started
       └─> consult.call.finished (success=true | success=false)
 ```
 
+<!-- GENERATED:START region=consult inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
 | Signal | Required Payload | Optional Payload |
 |--------|------------------|------------------|
-| `consult.call.started` | `call_id`, `role`, `mode`, `question_preview`, `selected_models`, `pipeline_id`, `context_files`, `context_file_count`, `cloud_only` | `execution_id`, `artifact_dir` |
-| `consult.call.finished` | `call_id`, `role`, `mode`, `question_preview`, `selected_models`, `used_models`, `selection_path`, `pipeline_id`, `context_files`, `context_file_count`, `output_file`, `cloud_only`, `success`, `error`, `duration_seconds` | `execution_id`, `status`, `artifact_dir`, `partial_output_available`, `chain_phase_count`, `failure_kind` |
+
+<!-- GENERATED:END region=consult -->
 
 **Correlation**: `call_id` (UUID) links started→finished pairs. `execution_id`
 (from `X-Pipeline-Execution-Id` response header) correlates with
@@ -2047,16 +2575,21 @@ mcp.oauth.server.started
   └─> mcp.oauth.token.rejected (request terminates)
 ```
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.oauth.server.started` | `issuer`, `token_endpoint`, `authorization_endpoint` | OAuth initialized; metadata endpoints active |
-| `mcp.oauth.authorization.validated` | `client_id`, `scope` | Authorization request passed validation |
-| `mcp.oauth.code.issued` | `client_id`, `scope`, `ttl_seconds` | Authorization code created after user consent |
-| `mcp.oauth.code.expired` | `client_id` | Authorization code expired before token exchange |
-| `mcp.oauth.token.issued` | `client_id`, `scope`, `expires_in` | Access token minted from valid code + PKCE |
-| `mcp.oauth.token.exchange.failed` | `client_id`, `reason` | Token exchange rejected (expired, mismatch, PKCE failure) |
-| `mcp.oauth.token.accepted` | `client_id` | OAuth bearer token accepted for resource access |
-| `mcp.oauth.token.rejected` | `reason` | OAuth bearer token rejected (unknown or expired) |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### MCP Request Auth Mode
 
@@ -2087,95 +2620,37 @@ event bus debug broadcaster). Join to MCP server `mcp.transport.*` / `mcp.reques
 using `correlation_id` and timestamp; optional header `X-Cloudproxy-Correlation-Id`
 is sent upstream and may appear on MCP ingress when the provider forwards it.
 
-| Signal | Payload fields | Description |
-|---|---|---|
+<!-- GENERATED:START region=cloudproxy inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
 | `cloudproxy.mcp.correlation.assigned` | `correlation_id`, `provider` | UUID assigned for one Messages request |
-| `cloudproxy.mcp.request.started` | `correlation_id`, `provider`, `model`, `has_mcp_servers`, `streaming` | About to POST to Anthropic |
-| `cloudproxy.mcp.request.completed` | `correlation_id`, `provider`, `duration_s`, `outcome` | Adapter finished (`outcome`: `success` \| `error` \| `cancelled`) |
 | `cloudproxy.mcp.path.failed` | `correlation_id`, `provider`, `error`, `exc_type` | Exception during forward/stream |
-| `cloudproxy.mcp.stream.heartbeat` | `correlation_id`, `provider`, `model`, `idle_s` | Idle keepalive emitted while waiting for Anthropic stream output |
+| `cloudproxy.mcp.request.completed` | `correlation_id`, `provider`, `duration_s`, `outcome` | `cancelled`) |
+| `cloudproxy.mcp.request.started` | `correlation_id`, `provider`, `model`, `has_mcp_servers`, `streaming` | About to POST to Anthropic |
 | `cloudproxy.mcp.stream.cancelled` | `correlation_id`, `provider`, `model`, `duration_s`, `stage`, `reason` | Downstream cancelled/disconnected before stream completion |
+| `cloudproxy.mcp.stream.heartbeat` | `correlation_id`, `provider`, `model`, `idle_s` | Idle keepalive emitted while waiting for Anthropic stream output |
+<!-- GENERATED:END region=cloudproxy -->
 
 ## MCP Server Signals
 
 The internet-facing MCP server (`source: "mcp-server"`) publishes to the
 event service over the same `/tmp/universal-protocol/events.sock` socket.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `mcp.auth.admitted` | `client_ip`, `client_port`, `auth_mode`, `path`, `user_agent`, optional `oauth_client_id` | Request passed auth — source IP for firewall auditing |
-| `mcp.request.unauthorized` | `client_ip`, `client_port`, `path`, `user_agent`, `reason` | Request rejected by auth — rejected source IP |
-| `mcp.request.started` | `method`, `client_ip`, `mcp_method`, `auth_mode` | HTTP request received at `/mcp` |
-| `mcp.request.completed` | `method`, `client_ip`, `duration_s`, `auth_mode` | Request completed normally |
-| `mcp.request.failed` | `method`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode` | Request raised an exception |
-| `mcp.transport.request.started` | `transport` (`https`\|`stdio`), `method`, `client_ip`, `mcp_method`, `auth_mode`, optional `cloudproxy_correlation_id`, `jsonrpc_id`, `tool_name` | Transport-level request start |
-| `mcp.transport.stream.opened` | `transport`, `client_ip`, optional `cloudproxy_correlation_id`, `jsonrpc_id`, `tool_name`, `mcp_method`, `auth_mode` | First response body bytes sent (HTTPS) |
-| `mcp.transport.request.completed` | `transport`, `client_ip`, `duration_s`, `auth_mode`, `response_bytes`, optional `cloudproxy_correlation_id`, `jsonrpc_id`, `tool_name` | Transport-level normal completion |
-| `mcp.transport.request.failed` | `transport`, `client_ip`, `duration_s`, `error`, `exc_type`, `auth_mode`, `response_bytes`, optional fields as above | Transport-level failure |
-| `mcp.transport.sse.session.started` | `transport`, `channel` | SSE worker began streaming |
-| `mcp.transport.sse.session.ended` | `transport`, `channel`, `duration_s` | SSE stream finished cleanly |
-| `mcp.transport.sse.session.aborted` | `transport`, `channel`, `duration_s`, `error`, `exc_type` | SSE stream aborted |
-| `mcp.toolprogress.started` | `tool_name`, context fields (`pipeline`, `op`, `inner_tool`, …) | Long-running tool entered |
-| `mcp.toolprogress.phase` | `tool_name`, `phase`, … | Milestone within a tool |
-| `mcp.toolprogress.heartbeat` | `tool_name`, `phase`, … | Mid-flight still-alive (timer) |
-| `mcp.toolprogress.completed` | `tool_name`, `duration_s`, … | Tool finished successfully |
-| `mcp.toolprogress.failed` | `tool_name`, `duration_s`, `error`, … | Tool failed |
-| `mcp.profile.bound` | `profile`, `auth_mode` | Auth middleware mapped request token to profile |
-| `mcp.profile.rejected` | `reason` | Profile admission rejected token/profile mapping |
-| `mcp.profile.tool.denied` | `profile`, `tool`, `entrypoint`, `reason` | Profile policy denied a direct or dispatch tool |
-| `mcp.profile.dispatch.routed` | `profile`, `tool` | Dispatch accepted subtool under active profile |
-| `mcp.sse.stream.started` | — | SSE stream opened |
-| `mcp.sse.stream.ended` | `duration_s`, `reason` | SSE stream closed cleanly |
-| `mcp.sse.stream.aborted` | `duration_s`, `reason`, `exc_type` | SSE stream dropped on error |
-| `mcp.grokbuild.bearer.context.rejected` | `reason`, `path`, optional `caller_identity` | Build-dispatch bearer context admission rejected (missing or forbidden `X-Grokbuild-Dispatch-Id`) |
-| `mcp.tool.private.import.failed` | `module` | Private tool module import failed during server boot |
-| `mcp.tool.private.register.failed` | `module`, `attr` | Private tool `register_*_tools` hook failed during server boot |
-| `mcp.tool.dispatch.success` | `tool` | `dispatch` completed successfully |
-| `mcp.tool.file.read` | `path`, `resolved`, `binary`, `auto_binary`, `chars`, `bytes`, `batched` (optional), `offset`, `limit`, `returned_lines`, `total_lines` (optional — present when a line-range read was requested) | File read completed; `auto_binary=True` when a binary-extension file was silently routed to binary mode despite `binary=False`; `batched=True` when emitted from a `read_multi` batch operation; `offset`/`limit`/`returned_lines`/`total_lines` emitted when `offset>0` or `limit>0` |
-| `mcp.fs.binary.magic.match` | `path` | Magic-byte probe (`filetype.guess`, 261-byte read) identified a file as binary when its extension was absent or unrecognised by `BINARY_EXTENSIONS`; file was auto-routed to base64 |
-| `mcp.fs.binary.detect.failed` | `path`, `error` | `filetype.guess()` raised `OSError`/`ValueError` during the magic-byte probe; file falls through to text-mode read (silent binary may still corrupt if extension is also unrecognised) |
-| `mcp.fs.html.parse.failed` | `path`, `error` | `html2text.handle()` raised while converting an HTML file to markdown in `_read_html`; exception re-raised |
-| `mcp.tool.file.edited` | `sandbox`, `path`, `operation`, `content_chars` | `edit_file` completed |
-| `mcp.tool.file.edit_failed` | `sandbox`, `path`, `operation`, `reason`, `error_message` | `edit_file` failed |
-| `mcp.tool.file.trashed` | `sandbox`, `path`, `trash_path` | `delete_file` soft-deleted to trash/ (conflict resolved as `<stem>-NN.<ext>`) |
-| `mcp.tool.markdown.sections.listed` | `path`, `sandbox`, `count` | `markdown` list_sections completed |
-| `mcp.tool.markdown.section.read` | `path`, `sandbox`, `section`, `chars` | `markdown` read_section completed |
-| `mcp.tool.markdown.section.replaced` | `path`, `sandbox`, `section` | `markdown` replace_section completed |
-| `mcp.tool.markdown.section.appended` | `path`, `sandbox`, `section` | `markdown` append_section completed |
-| `mcp.tool.markdown.section.deleted` | `path`, `sandbox`, `section` | `markdown` delete_section completed |
-| `mcp.tool.markdown.converted.to.dict` | `path`, `sandbox`, `keys` | `markdown` to_dict completed |
-| `mcp.tool.markdown.converted.from.dict` | `path`, `sandbox`, `keys` | `markdown` from_dict completed |
-| `mcp.manage.service.called` | `action`, `service` | manage tool invoked |
-| `mcp.manage.service.completed` | `action`, `service`, `duration_s` | manage completed successfully |
-| `mcp.manage.service.failed` | `action`, `service`, `error`, `duration_s` | manage returned error |
-| `mcp.server.claude.manifest.boot` | `domain_count`, `names_sha256` | Claude dispatcher manifest derived at MCP boot; `names_sha256 = sha256(json.dumps(sorted(tool_names)))` for drift detection |
-| `mcp.server.grok.manifest.boot` | `tool_count`, `total_bytes`, `names_sha256` | Grok flat manifest derived at MCP boot; `names_sha256 = sha256(json.dumps(sorted(canonical_names)))` for drift detection |
-| `mcp.response.guarded` | `tool_name`, `profile`, `original_bytes`, `threshold_bytes`, `ref_id`, `store_count` | Tool response exceeded profile threshold; stored in memory, reference returned |
-| `mcp.response.retrieved` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Consumer retrieved a stored oversized response via `retrieve` tool |
-| `mcp.response.expired` | `tool_name`, `ref_id`, `profile`, `size_bytes`, `age_s` | Stored response expired or was evicted before retrieval |
-| `mcp.response.guard.init_failed` | `error` | Response size guard middleware failed to initialize at startup |
-| `mcp.response.encoding.rejected` | `tool_name` | Tool response rejected before size check: content contained invalid UTF-8 sequences (lone surrogates) that would corrupt MCP wire transport |
-| `mcp.panel.dispatch.called` | `roles`, `families` | `panel_dispatch` MCP tool admitted a panel plan; emitted before relaying member dispatches. `roles` = comma-joined role→model map keys/values; `families` = comma-joined provider display labels from `panel_provider_families` |
-| `mcp.panel.dispatch.rejected` | `reason` | Panel admission failed before dispatch (`reason=admission` for disposition/plan rejection; `reason=idempotency_conflict` when a supplied `panel_request_id` is reused with non-equivalent inputs (idempotency-key collision); relay may also emit with structured `field`/`request_id` on Stargate 4xx) |
-| `mcp.panel.dispatch.deduped` | `panel_request_id`, `age_s`, `repolled` | `panel_dispatch` short-circuited a duplicate call: a prior admission under the same `panel_request_id` with equivalent inputs was found within the idempotency window, so no member `team_dispatch` relay was issued. `age_s` = seconds since the original admission; `repolled` = true when the duplicate passed `poll=true` and the stored execution_ids were polled fresh |
-| `mcp.panel.dispatch.dispatched` | `execution_ids` | All panel member `team_dispatch` relays returned 2xx; `execution_ids` = comma-joined execution IDs |
-| `mcp.panel.dispatch.failed` | `error`, optional `field`, `request_id`, `status_code` | Relay transport/upstream failure or Stargate 5xx on a panel member dispatch (via shared `_relay` with `record_prefix=mcp.panel.dispatch`) |
-| `mcp.panel.member.admitted` | `role`, `model`, `execution_id`, `dispatch_key` | Per-member admission after successful `team_dispatch` relay; `dispatch_key` is the suffixed `dispatch_thread_id` for the role |
-| `mcp.panel.member.failed` | `role`, `reason`, `elapsed_s` | Per-member failure at admission (`reason` = dispatch error code) or after `poll=true` when pipeline status is `failed` (`elapsed_s` from poll result when available) |
-| `mcp.panel.partial` | `in_flight_count` | `panel_dispatch(poll=true)` returned `status: partial` — ≥1 member still `running`; pairs with envelope `do_not_resubmit` |
-| ~~`mcp.frontier.generate.called`~~ | _(retired Phase 4 — `frontier_generate` tool deleted; `team_generate` tool deleted)_ | Was emitted by `frontier.py` `record()` at the start of each `frontier_generate` MCP call. Replaced by `pipeline.frontier.dispatch.started` on the pipeline surface |
-| ~~`mcp.team.generate.called`~~ | _(retired Phase 4 — `team_generate` tool deleted)_ | Was emitted by `frontier.py` `record()` at the start of each `team_generate` MCP call. Replaced by `pipeline.frontier.dispatch.started` on the pipeline surface |
-| ~~`mcp.team.generate.dispatched`~~ | _(retired Phase 4)_ | Was emitted from `_relay` when Stargate `/api/v1/team/generate` returned 2xx. Route deleted |
-| ~~`mcp.team.generate.rejected`~~ | _(retired Phase 4)_ | Was emitted from `_relay` when Stargate returned a 4xx for the team generate door. Route deleted |
-| ~~`mcp.team.generate.failed`~~ | _(retired Phase 4)_ | Was emitted from `_relay` for non-caller failures on the team generate door. Route deleted |
-| ~~`mcp.frontier.generate.dispatched`~~ | _(retired Phase 4)_ | Was emitted from `_relay` when Stargate `/api/v1/frontier/generate` returned 2xx. Route deleted |
-| ~~`mcp.frontier.generate.rejected`~~ | _(retired Phase 4)_ | Was emitted from `_relay` for 4xx on the frontier generate door. Route deleted |
-| ~~`mcp.frontier.generate.failed`~~ | _(retired Phase 4)_ | Was emitted from `_relay` for non-caller failures on the frontier generate door. Route deleted |
-| ~~`mcp.frontier.generate.completed`~~ | _(removed Phase 3-D — replaced by `pipeline.frontier.dispatch.completed` / `.exhausted` on the pipeline surface)_ | Emission removed when `frontier_generate` collapsed onto the pipeline path. Direct MCP callers see terminal outcome via `pipeline(op="result", execution_id=...)` polling against the unified pipeline events |
-| ~~`mcp.frontier.generate.error`~~ | _(removed Phase 3-D — replaced by the `.rejected`/`.failed` namespace on the MCP relay surface and `pipeline.frontier.dispatch.failed` on the pipeline surface)_ | Emission removed when `frontier_generate` collapsed onto the pipeline path. Caller-side errors now bucket as `mcp.{team,frontier}.generate.{rejected,failed}`; pipeline-side execution failures surface on the pipeline namespace |
-| ~~`mcp.frontier.tool.executed`~~ | _(removed Phase 3-D — replaced by `pipeline.frontier.dispatch.tool.called` / `.tool.failed`)_ | Emission removed when `frontier_generate` collapsed onto the pipeline path. Per-tool-call observability now flows through pipeline dispatch handler events |
-| ~~`mcp.frontier.output.short`~~ | _(deprecated Task-7 Phase 1 — hoisted to `pipeline.frontier.dispatch.output.short`)_ | Emission removed from `services/mcp-server/tools/_frontier_core.py` at Phase 1. Direct `frontier_generate` MCP callers lose this anomaly until Phase 2+ collapses the MCP surface onto the pipeline; pipeline-originated team dispatches (including async `pipeline(op='async', pipeline_id='frontier-dispatch', ...)`) emit the replacement signal transparently |
-| ~~`mcp.frontier.thought.termination.shadow`~~ | _(deprecated Task-7 Phase 1 — hoisted to `pipeline.frontier.dispatch.termination.shadow`)_ | Emission removed from `services/mcp-server/tools/_frontier_core.py` at Phase 1. Same transition semantics as `output.short` — pipeline-originated dispatches keep the signal; direct `frontier_generate` MCP callers regain it after the Phase 2+ collapse |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Generation Quality Signal Family
 
@@ -2213,23 +2688,16 @@ semantic layer ships; target milestone is post-calibration-window close.
 
 Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detectors.py` via `record()` shim. All signals use `role="observation"`, `scope="global"` per existing shim defaults. Introduced in Phase 1b of `todo:cortex-graph-projection-and-audit-primitives`.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `cortex.composite.registered` | `composite`, `entity_ids`, `status` (`"created"` \| `"existing"`) | Emitted on successful `register_skill_substrate` composite op. Phase 1a. |
-| `cortex.audit.completed` | `subject`, `gap_count`, `criticals`, `warnings`, `infos`, `kinds_run`, `duration_ms`, `include_filesystem` | Emitted at end of every `audit` / `case_audit` / `session_audit` run. `subject` is entity_id or `"all"`. |
-| `cortex.audit.gap.detected` | `kind`, `subject`, `severity`, `detail`, `audit_id` | One emission per finding. `kind` is in payload (never baked into signal name per C2). `audit_id` is a 12-char MD5 correlation key stable across runs for the same `kind:subject` pair. Auditor kinds include `attributes_json_parse_failed` (confirmed-attribute scan skipped because entity `attributes` JSON is malformed). |
-| `cortex.assertion.deserialize_skipped` | `entity_id`, `assertion_id`, `reason` | Telemetry when an assertion row fails Pydantic decode on `entity_get` / entity detail read; API still omits the row (no response-shape change). |
-| `cortex.audit.budget.exceeded` | `duration_ms`, `budget_ms`, `subject` | Emitted when a run exceeds budget (`100ms` graph-only, `2000ms` with filesystem). |
-| `cortex.session.audit.degraded` | `session_id`, `error`, `agent?`, `message?` | Session-close audit degraded so close is not blocked. Graph-only detector path (`ops_review_gate`): findings suppressed (empty list). Outer wrapper (`ops_session_close._safe_run_audit`): entire gate raised; includes `agent` and `message` when present. |
-| `cortex.session.audit.gaps.observed` | `session_id`, `gap_count`, `criticals` (list of `{kind, subject}`) | WARN mode (Phase 2.0): session_close completed despite findings. |
-| `cortex.session.audit.blocked` | `session_id`, `criticals` (list of `{kind, subject, detail}`) | BLOCK mode (Phase 2.1) only: critical gap with no `defer_gaps` reason caused session_close to abort. `role="coordination"`. **Not yet emitted — Phase 2.1 pending.** |
-| `cortex.render.applied` | `view`, `subject`, `path`, `bytes_written` | Phase 4 (deferred): `render_into` success. Not yet emitted. |
-| `cortex.subgraph.render.called` | `render_id, root, hops, edge_types_count, top_k_assertions, include_superseded` | Entry to shared renderer (both REST and dispatch paths). `render_id` (uuid4 hex) correlates with `.completed` / `.failed` for the same call. |
-| `cortex.subgraph.render.completed` | `render_id, root, hops, entity_count, edge_count, duration_ms, rendered_bytes` | Successful render; `rendered_bytes` is UTF-8 length of markdown (generated_at excluded). |
-| `cortex.subgraph.render.failed` | `render_id, root, reason, hops` (reason ∈ `root_missing`, `hops_out_of_range`, `top_k_out_of_range`, `unknown_edge_type`, `entity_not_found`, `entity_cap_exceeded`, `card_build_failed`) | Error path inside renderer; emitted before structured envelope return. Reason enum widened from V1.1 spec to field-level granularity. |
-| `cortex.entity.source.changed` | `entity_id`, `change`, `source_uri`? | Entity `source_uri` set/changed/dropped on create/update. `change` ∈ {`set`, `changed`, `dropped`}. Drives RAG EntityAdmissionGate debounced refresh. role=observation. |
+<!-- GENERATED:START region=cortex inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `cortex.entity.source.changed` | `entity_id`, `change`, _dynamic_ | Entity `source_uri` set/changed/dropped on create/update. `change` ∈ {`set`, `changed`, `dropped`}. Drives RAG EntityAdmissionGate debounced refresh. role=observation. |
 | `cortex.search.failed` | `exc_type`, `detail`, `q_len`, `intent` | Search boundary exception before re-raise; names real cause before generic client error. |
 | `cortex.search.vector.degraded` | `reason`, `exc_type`, `q_len`, `duration_s` | Vector branch failed; hybrid search degraded to FTS-only. `reason` ∈ {`vector_embed_timeout`, `vector_unavailable`, `vector_error`}. |
+| `cortex.subgraph.render.called` | `render_id`, `root`, `hops`, `edge_types_count`, `top_k_assertions`, `include_superseded` | Entry to shared renderer (both REST and dispatch paths). `render_id` (uuid4 hex) correlates with `.completed` / `.failed` for the same call. |
+| `cortex.subgraph.render.completed` | `render_id`, `root`, `hops`, `entity_count`, `edge_count`, `duration_ms`, `rendered_bytes` | Successful render; `rendered_bytes` is UTF-8 length of markdown (generated_at excluded). |
+| `cortex.subgraph.render.failed` | `render_id`, `root`, `reason`, `hops` | Error path inside renderer; emitted before structured envelope return. Reason enum widened from V1.1 spec to field-level granularity. |
+<!-- GENERATED:END region=cortex -->
 
 **Implementation note:** `cortex.session.audit.blocked` is the only `coordination`-role signal in this family. The `record()` shim defaults to `role="observation"` — confirm shim supports per-call role override before Phase 2.1 BLOCK-mode flip; if not, surface as a precondition.
 
@@ -2239,28 +2707,21 @@ The consolidated `agent_bus(tool=...)` tool emits operation-level signals.
 With atomic server-side endpoints, partial-failure and stage signals are
 unnecessary — each operation succeeds or fails atomically.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.agentbus.thread.created` | `thread`, `slug`, `to`, `turn_number` | Atomic thread+turn creation succeeded |
-| `mcp.agentbus.post.failed` | `slug`, `to`, `error` | Atomic thread+turn creation failed |
-| `mcp.agentbus.turn.posted` | `thread`, `to`, `turn_number` | Reply turn posted to existing thread |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
 | `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
 | `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
-| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
-| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
-| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
 | `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
-| `mcp.agentbus.turns.fetched` | `to`, `thread`, `count`, `mark_read` | Turns fetched (inbox or thread) |
-| `mcp.agentbus.turn.detail.fetched` | `thread`, `turn_number` | Single turn fetched by number |
-| `mcp.agentbus.threads.listed` | `status`, `count` | Thread listing retrieved |
-| `mcp.agentbus.thread.updated` | `thread`, `status` | Thread status/summary updated (non-close) |
-| `mcp.agentbus.turn.updated` | `thread`, `turn_number`, `has_append` | Turn body/subject updated |
-| `mcp.agentbus.thread.deleted` | `thread`, `force`, `deleted_turns` | Thread and all turns deleted |
-| `mcp.agentbus.turn.deleted` | `thread`, `turn_number`, `force` | Single turn deleted |
-| `mcp.agentbus.body.rejected` | `size_bytes`, `limit_bytes`, `field` | Inline body/append exceeded MCP inline limit |
-| `mcp.agentbus.body.file.resolved` | `body_file`, `op` | body_file read; manifest built for post/reply |
-| `mcp.agentbus.wait.called` | `thread`, `completion` | MCP wait relay invoked (server-side block) |
-| `mcp.agentbus.wait.completed` | `thread`, `status` | MCP wait relay returned |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 All signals: `role="observation"`, `scope="global"`.
 
@@ -2270,22 +2731,41 @@ All signals: `role="observation"`, `scope="global"`.
 
 Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_entities.py` and `ops_bulk_relationships.py` via the `record()` shim. Bulk writes are atomic at the transaction boundary — either every item in the batch persists, or none do. All signals: `role="observation"`, `scope="global"`.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.cortex.entities.bulk.upserted` | `count` | Entities bulk-upsert transaction committed. `count` is the total number of items in the batch (sum of `created` + `updated` + `skipped`). Fired AFTER `conn.commit()` so consumers do not see false signals on a rolled-back batch. |
-| `mcp.cortex.relationships.bulk.upserted` | `count` | Relationships bulk-upsert transaction committed. Same post-commit ordering guarantee as the entities counterpart. |
-| `mcp.cortex.bulk.rolled.back` | `op`, `failed_index`, `reason` | A bulk dispatch op rolled back the transaction at item `failed_index` and returned a structured error to the caller. `op` ∈ {`entities_bulk_upsert`, `relationships_bulk_upsert`}. `reason` ∈ {`item_not_object`, `http_exception`, `integrity_error`}. `status_code` is also present on `http_exception` rollbacks. Symmetric counterpart to the post-commit `*.bulk.upserted` event — emit-and-return on the rollback path keeps the failure observable on the event bus, not just in the caller's response body. |
-| `mcp.cortex.dispatch.arguments.invalid` | `tool`, `error` | Cortex dispatch handler rejected the `arguments` string because JSON parsing failed. Replaces the prior bare `logger.warning` carve-out; the dispatch response carries `_CORTEX_FORMAT_HINT` so callers see the structural error, while consumers see this signal on the bus for population-level monitoring. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Cortex Relay Signals
 
 Emitted by `services/mcp-server/tools/_cortex_relay.py::cx` via bare `mcp_events.record()` (mirrors `relay()` idiom). Makes every cortex-api REST relay observable. A `mcp.cortex.relay.called` with no terminal sibling within the relay budget indicates a connector-side abort. All signals: `role="observation"`, `scope="global"`.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.cortex.relay.called` | `method`, `path`, `timeout_s` | Entry to cortex-api UDS relay before HTTP request. |
-| `mcp.cortex.relay.completed` | `method`, `path`, `status_code`, `duration_s`, `timeout_s` | Successful relay (`status_code < 400`). |
-| `mcp.cortex.relay.failed` | `method`, `path`, `error`, `duration_s`, `timeout_s`, `status_code`?, `detail`? | Relay failure: `error` ∈ {`request_error`, `http_error`, `invalid_json`}; `status_code` present on HTTP errors. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Email Bridge Ingest Signals
 
@@ -2295,20 +2775,11 @@ deadline: if `mcp.local.api.failed` reports `/ingest` timeout, the
 `email.ingest.*` and `email.pipeline.*` events show which message and stage was
 still running or failed. All signals: `role="observation"`, `scope="global"`.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `email.ingest.started` | `run_id`, `run_type`, `staged`, `requested_message_count` | Ingest run row created and request accepted. |
-| `email.ingest.selected` | `run_id`, `selected_count`, `requested_message_count` | Requested message IDs or pending queue resolved to DB rows. |
-| `email.ingest.message.started` | `run_id`, `message_id`, `has_eml_path` | Per-message ingest work began. |
-| `email.ingest.rendered.loaded` | `run_id`, `message_id`, `rendered_path`, `text_bytes` | Rendered markdown file loaded before pipeline submission. |
-| `email.capture.entity_created` | `message_id`, `entity_id`, `profile` | Sparse correspondence entity created at capture. |
-| `email.ingest.message.captured` | `run_id`, `message_id`, `entity_id`, `profile`, `duration_s` | Capture-only ingest succeeded. |
-| `email.pipeline.started` | `run_id`, `message_id`, `text_bytes`, `email_date`, `eml_path` | `probate-eml-extract` pipeline request submitted to Stargate (`pipeline_options.eml_path` required). |
-| `email.pipeline.completed` | `run_id`, `message_id`, `duration_s`, `entity_count`, `claim_count`, `relationship_count`, `edge_count` | Pipeline returned parseable proposal JSON. |
-| `email.pipeline.failed` | `run_id`, `message_id`, `error_type`, `duration_s` | Pipeline transport, HTTP, JSON, or unexpected failure. May also carry `status_code` and `error`. |
-| `email.ingest.message.committed` | `run_id`, `message_id`, `duration_s`, `pipeline_version`, `new_entities`, `assertions_seeded`, `assertion_conflicts`, `relationships_seeded`, `reasoning_edges_seeded` | Reviewer commit seeded Cortex successfully. |
-| `email.ingest.message.failed` | `run_id`, `message_id`, `stage`, `error`, `duration_s` | Per-message terminal failure. `stage` identifies the failing boundary (`eml_path`, `capture`, `extract_email`, `pipeline_result`, or `review_extract`). |
-| `email.ingest.completed` | `run_id`, `run_type`, `selected_count`, `emails_succeeded`, `emails_failed`, `duration_s` | Batch finished and `ingest_runs` was updated. |
+<!-- GENERATED:START region=email inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+
+<!-- GENERATED:END region=email -->
 
 
 ### Document OCR Signals
@@ -2322,13 +2793,21 @@ are emitted by ``libs/cortex_store/routes/documents.py`` — the cortex-api endp
 the MCP ``extract_directory`` tool relays to. All signals:
 ``role="observation"``, ``scope="global"``.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.document.ocr.called` | `path` | Single-file OCR endpoint invoked; path relative to `/data/files/`. Emitted by cortex-api. |
-| `mcp.document.ocr.completed` | `path`, `pages`, `total_tokens`, `duration_s` | Single-file OCR finished. Emitted by cortex-api. |
-| `mcp.document.ocr.directory.called` | `directory` | `extract_directory` MCP tool invoked, relay reached cortex-api. Directory path relative to `CORTEX_FILES_ROOT`. Emitted by cortex-api. |
-| `mcp.document.ocr.directory.completed` | `directory`, `file_count`, `success_count`, `error_count`, `duration_s` | Directory OCR batch finished. `file_count` is total scannable files discovered; `success_count`/`error_count` reflect per-file outcomes. Always emitted — even when `error_count > 0` (partial success is not a failure at the batch level). Emitted by cortex-api. |
-| `mcp.document.ocr.file.failed` | `path`, `error` | One file in an `extract_directory` batch failed to OCR. `path` is relative to `CORTEX_FILES_ROOT`. Emitted once per failed file before the batch-level signal. Emitted by cortex-api. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Document Extraction Signals
 
@@ -2336,23 +2815,42 @@ Emitted by ``services/mcp-server/tools/extract_document.py`` (the ``extract_docu
 MCP tool, renamed from ``ingest_document`` in phase-c). All signals:
 ``role="observation"``, ``scope="global"``.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.document.extract.called` | `path` | `extract_document` invoked; path relative to `/data/files/`. |
-| `mcp.document.extract.idempotent` | `path`, `sidecar_path` | Existing sidecar found with matching source SHA, page spec, and args hash — extraction skipped, cached sidecar returned. `sidecar_path` is relative to `/data/files/`. |
-| `mcp.document.extract.empty` | `path`, `format` | Extraction succeeded but returned empty text; no sidecar written. `format` is the detected document format (e.g. `pdf`, `docx`, `image`). |
-| `mcp.document.extract.completed` | `path`, `format`, `sidecar_path`, `canonical`, `duration_s`, `total_tokens` | Extraction finished and sidecar written. `canonical=true` when full-file extraction with default args (no page spec, no args override). `total_tokens` is `null` for deterministic-parser paths (text PDFs, DOCX, ODT, EML, plain text). `sidecar_path` relative to `/data/files/`. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Structured Document Extraction Signals
 
 Emitted by ``services/mcp-server/tools/local/extract_document_structured.py``.
 All signals: ``role="observation"``, ``scope="global"``.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.document.extract.structured.called` | `path`, `statement_type` | `extract_document_structured` invoked; path relative to `/data/files/`. |
-| `mcp.document.extract.structured.completed` | `path`, `statement_type`, `duration_s` | Structured JSON extraction finished. |
-| `mcp.document.extract.structured.error` | `path`, `statement_type`, `duration_s`, `error` | Structured extraction failed (JSON parse, vision error, etc.). |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 **Documentation Contract Audit (2026-05-24, phase-f):** Added structured extraction rows above; retired `mcp.document.ocr.structured.*` vocabulary (phase-e rename to `mcp.document.extract.structured.*`).
 
@@ -2363,26 +2861,51 @@ Emitted by ``services/mcp-server/tools/promote_document_to_evidence.py`` (the
 ``promote_document_to_evidence`` MCP tool, phase-d of the document ingestion
 redesign). All signals: ``role="observation"``, ``scope="global"``.
 
-| Signal | Required Payload | Description |
-|---|---|---|
-| `mcp.evidence.promote.called` | `path`, `entity_id` | `promote_document_to_evidence` invoked; `path` relative to `/data/files/`, `entity_id` is the target `document:` entity. |
-| `mcp.evidence.promote.failed` | `path`, `entity_id`, `code` | Promotion aborted with a structured `PromoteError`. `code` is the stable machine-readable failure reason (e.g. `entity_conflict`, `duplicate_evidence`, `source_sha_mismatch`, `sidecar_invalid`). Files remain in staging. |
-| `mcp.evidence.promote.completed` | `path`, `entity_id`, `bundle_path`, `entity_created`, `duration_s` | Source + sidecar atomically moved into `evidence/<date>_<hash>_<name>/` with `manifest.json`. `entity_created=true` when the `document:` entity was freshly created (idempotent re-promotion sets `false`). `bundle_path` is the evidence bundle directory relative to `/data/files/`. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### Cortex Session Close Signals
 
 Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_close` via `record()`. All signals: `role="observation"`, `scope="global"`.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `mcp.session.close.atomic` | `agent`, `session_id`, `transcript_path`, `content_hash`, `turn_count`, `byte_count` | Session closed successfully — transcript assembled, written to disk, and journal row + entity created atomically. Fires once per successful `session_close` op. `content_hash` is the SHA-256 of the on-disk markdown (`sha256:<hex>`); `turn_count` and `byte_count` come from the verbatim assembly. |
-| `mcp.session.close.write.failed` | `session_id`, `agent`, `error` | `OSError` raised while writing the transcript file to `notes/system/transcripts/{session_id}.md`. Session close aborted at this point — no DB mutations have occurred. `error` is `str(exc)`. |
-| `mcp.session.close.cleanup.failed` | `session_id`, `agent` | `OSError` raised while unlinking the transcript file during rollback (post-DB error). The DB write failed first (surfaced as an error in the response); this signal indicates the rollback cleanup also failed, leaving an orphaned transcript file at `notes/system/transcripts/{session_id}.md`. Warrants manual inspection. |
-| `mcp.session.close.rejected` | `session_id`, `agent`, `reason`, `detail` | Session close rejected at the validation gate — no file written, no DB mutations, no transcript entity. Returned to the caller as HTTP 422. Emitted by both the route handler (`libs/cortex_store/routes/session_journals.py:close_session`) and the dispatch handler (`_op_session_close`) — whichever fails first; the dispatch handler's check fires before file write to avoid orphaned files. `reason` is one of the four enumerated values below. `detail` carries the human-readable message for the agent's retry path. |
-| `mcp.session.close.depth_decode.fallback` | `session_id`, `error_type` | Idempotent re-close could not JSON-decode prior transcript `attributes`; `transcript_depth` falls back to `verbatim`. `error_type` is the exception class name (`JSONDecodeError`, `AttributeError`). |
-| `mcp.session.close.debrief.failed` | `session_id`, `agent`, `stage`, `detail`, `status_code` (optional) | Best-effort thread-480 debrief failed after a successful close. `stage` ∈ `dedupe_scan`, `post`, `unhandled`. Close outcome is unchanged. |
-| `cortex.entity_get.access_log.failed` | `entity_id`, `agent` | `entity_get` access-log insert failed; read still returns 200. |
-| `cortex.entity_get.archives_to_lookup.failed` | `entity_id` | `archives_to` relationship lookup failed during compaction projection; read still returns 200. |
+<!-- GENERATED:START region=cortex inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `cortex.entity.source.changed` | `entity_id`, `change`, _dynamic_ | Entity `source_uri` set/changed/dropped on create/update. `change` ∈ {`set`, `changed`, `dropped`}. Drives RAG EntityAdmissionGate debounced refresh. role=observation. |
+| `cortex.search.failed` | `exc_type`, `detail`, `q_len`, `intent` | Search boundary exception before re-raise; names real cause before generic client error. |
+| `cortex.search.vector.degraded` | `reason`, `exc_type`, `q_len`, `duration_s` | Vector branch failed; hybrid search degraded to FTS-only. `reason` ∈ {`vector_embed_timeout`, `vector_unavailable`, `vector_error`}. |
+| `cortex.subgraph.render.called` | `render_id`, `root`, `hops`, `edge_types_count`, `top_k_assertions`, `include_superseded` | Entry to shared renderer (both REST and dispatch paths). `render_id` (uuid4 hex) correlates with `.completed` / `.failed` for the same call. |
+| `cortex.subgraph.render.completed` | `render_id`, `root`, `hops`, `entity_count`, `edge_count`, `duration_ms`, `rendered_bytes` | Successful render; `rendered_bytes` is UTF-8 length of markdown (generated_at excluded). |
+| `cortex.subgraph.render.failed` | `render_id`, `root`, `reason`, `hops` | Error path inside renderer; emitted before structured envelope return. Reason enum widened from V1.1 spec to field-level granularity. |
+<!-- GENERATED:END region=cortex -->
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### `mcp.session.close.rejected` reason enum
 
@@ -2481,11 +3004,21 @@ Emitted by `services/mcp-server/middleware/drain.py` during graceful restart. Tr
 
 All signals: `role="observation"`, `scope="global"`. Source: `mcp-server`.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `mcp.maintenance.drain.started` | `reason` (str — `signal:<NAME>` e.g. `signal:SIGTERM`), `timeout_s` (float — uvicorn `timeout_graceful_shutdown`), `in_flight` (int — count of admitted requests at drain begin) | Drain flag flipped; new `tools/call` requests will receive `-32099 server_restarting` with `Retry-After: 30`. In-flight requests run to completion under the graceful-shutdown budget. |
-| `mcp.maintenance.drain.completed` | `timed_out` (bool — true iff requests were still in flight when uvicorn exited, indicating graceful-shutdown timeout fired), `in_flight_at_timeout` (int) | Drain finished. `timed_out=true` is the signal that `_GRACEFUL_SHUTDOWN_TIMEOUT_S` is too short for current workload. |
-| `mcp.maintenance.request.rejected` | `mcp_method` (str — JSON-RPC method, `""` if unparseable), `tool_name` (str — for tools/call), `jsonrpc_id` (any — request id from body, may be null), `retry_after_s` (int — Retry-After header value) | One request was rejected with the restart error envelope. Emitted for every `POST /mcp` during drain. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 **Wire shape — restart error envelope** (also returned by proxies after exhausting retries):
 
@@ -2538,34 +3071,21 @@ All signals: `role="observation"`, `scope="global"`.
 
 **Lib signals (`mcp.grokbuild.*`).** Source: `mcp-server` in V1; `grokbuild-worker` in V2 (via the UDS publisher hook). Payload contracts unchanged across versions.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `mcp.grokbuild.dispatch.called` | `dispatch_id` (str — uuid4), `mode` (str — `read_only` \| `edit`), `op` (str — `build`), `session_id` (str), `model` (str) | Handler entered and dispatch admitted. Emitted AFTER validator and registry acquire pass; rejected dispatches emit only `.rejected`. |
-| `mcp.grokbuild.dispatch.completed` | `dispatch_id`, `duration_s` (float), `exit_code` (int), `truncated` (bool), `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation` (bool), `audit_incomplete` (bool), `sidecar_gaps` (int) | Dispatch completed with `exit_code == 0`. |
-| `mcp.grokbuild.dispatch.failed` | Same as `.completed` plus `error` (str, ≤200 chars) and `reason_code` (str — `spawn_failed` \| `sidecar_unwritable` \| `grok_nonzero_exit`) instead of `truncated` | Dispatch completed with non-zero exit OR sidecar `started`-write failed before subprocess spawn. |
-| `mcp.grokbuild.dispatch.timeout` | `dispatch_id`, `timeout_seconds`, `git_status_pre`, `git_status_post`, `git_diff_stat`, `read_only_violation`, `audit_incomplete`, `sidecar_gaps` | Subprocess exceeded `timeout_seconds`; SIGTERM → 5s → SIGKILL via `os.killpg`. |
-| `mcp.grokbuild.dispatch.rejected` | `dispatch_id`, `reason_code` (str enum), `reason` (str), `mode`, `op`, `cwd`, `model` | Validator or registry rejected admission. No subprocess spawned. Correlation fields travel inline so no `.called` join required (admission-phase contract). |
-| `mcp.grokbuild.dispatch.toolcalls` | `dispatch_id`, `tool_count` (int), `tool_names` (list[str]) | C.1(ii) sidecar parse summary. Emitted after every dispatch that produced stdout (completed or non-zero exit). `tool_count == len(tool_names)`. JOIN with `mcp.request.completed` on `dispatch_id` to detect header-vs-sidecar discrepancy. Empty (tool_count=0) on spawn-failed/timeout — those paths never reach `communicate()`. |
-| `mcp.grokbuild.dispatch.zerotoolcalls` | `dispatch_id`, `mode` (str) | C.1(ii) anomaly. Fires when `tool_count == 0` AND `mode == 'edit'` AND `status == 'completed'`. In edit mode the grok subprocess is expected to call MCP tools; zero calls may indicate a silent HOME-override failure, the grok subprocess ignoring MCP, or a trivially-answerable task. Always co-emitted with `.toolcalls`. |
-| `mcp.grokbuild.apidispatch.called` | `dispatch_id` (str — uuid4), `cwd` (str), `model` (str — effective model id after tier-default resolution), `tier` (str — `quick` \| `balanced` \| `thorough` \| `max`), `session_id` (str) | Api-path (`mcp=False`) dispatch admitted. Emitted AFTER tier validation passes, BEFORE the Stargate `/v1/chat/completions` POST. No subprocess, no MCP tooling inside dispatch; no git audit fields. Lifecycle counterpart to `mcp.grokbuild.dispatch.called` for the direct-API path. |
-| `mcp.grokbuild.apidispatch.completed` | `dispatch_id`, `duration_s` (float), `cwd`, `model`, `tier`, `session_id`, `prompt_tokens` (int), `completion_tokens` (int), `total_tokens` (int), `reasoning_tokens` (int — 0 when the backing model does not surface reasoning-token accounting; non-zero indicates an xAI Responses-API-style reasoning trace was billed) | Api-path dispatch succeeded; Stargate returned HTTP 2xx and the response JSON parsed cleanly. Usage fields parsed from the OpenAI-compatible `usage` block; ALL default to 0 when absent so downstream JOINs are safe. |
-| `mcp.grokbuild.apidispatch.failed` | `dispatch_id`, `duration_s`, `cwd`, `reason_code` (str — `bad_tier` \| `api_unreachable` \| `api_error` \| `invalid_response`), `reason` (str), `tier`, `model` (str — empty `""` on `bad_tier` because resolution happens AFTER tier validation), `session_id` | Api-path dispatch failed. Covers all four failure modes: admission-phase `bad_tier`, transport `api_unreachable` (httpx.RequestError), upstream `api_error` (Stargate returned HTTP ≥400), and parse-phase `invalid_response` (response JSON missing `choices[0].message.content`). No CLI-side `.rejected` counterpart — api-path admission failures use the unified `.failed` signal. |
-| `mcp.grokbuild.create.called` | `dispatch_id`, `name`, `branch`, `source_repo`, `create_branch` (bool), `start_point` (str) | `worktree_create_op` admitted (V2: emits **after** name/branch/source-repo validation, review W9). |
-| `mcp.grokbuild.create.completed` | `dispatch_id`, `duration_s`, `exit_code` (0), `name`, `branch`, `source_repo`, `worktree_path`, `create_branch`, `start_point` | `git worktree add` succeeded. |
-| `mcp.grokbuild.create.failed` | Same as `.completed` plus `error` (str ≤200) | `git worktree add` non-zero exit OR setup OSError. |
-| `mcp.grokbuild.create.rejected` | `dispatch_id`, `reason_code` (str — `name_invalid` \| `source_repo_invalid` \| `branch_not_found` \| `branch_exists` \| `start_point_not_found` \| `worktree_exists` \| `branch_checked_out_elsewhere`), `reason`, `name`, `branch`, `source_repo`, `create_branch`, `start_point` | Admission failed. |
-| `mcp.grokbuild.remove.called` | `dispatch_id`, `name` | `worktree_remove_op` admitted (V2: emits **after** name validation + in-flight-cwd check, review W9). |
-| `mcp.grokbuild.remove.completed` | `dispatch_id`, `duration_s`, `exit_code` (0), `name`, `worktree_path` | `git worktree remove` succeeded. |
-| `mcp.grokbuild.remove.failed` | Same as `.completed` plus `error` (str ≤200) | `git worktree remove` non-zero exit OR setup OSError; also fires on timeout (review W14). |
-| `mcp.grokbuild.remove.rejected` | `dispatch_id`, `reason_code` (str — `name_invalid` \| `worktree_not_found` \| `worktree_dirty` \| `worktree_busy`), `reason`, `name`, `worktree_path` | Admission failed. |
-| `mcp.grokbuild.list.called` | `dispatch_id`, `worktree_root` | `worktree_list_op` admitted (V2: emits after root-existence check; fires whether root is missing or present, review W9). |
-| `mcp.grokbuild.list.completed` | `dispatch_id`, `duration_s`, `worktree_root`, `count` (int) | Enumeration succeeded. `count=0` is valid (missing or empty root). |
-| `mcp.grokbuild.list.failed` | `dispatch_id`, `duration_s`, `error` (str ≤200), `worktree_root` | `os.listdir` raised OSError. |
-| `mcp.grokbuild.snapshot.called` | `dispatch_id`, `source_repo`, `slug`, `branch`, `reset_main` (bool) | `snapshot_op` admitted after slug/source_repo validation. |
-| `mcp.grokbuild.snapshot.completed` | `dispatch_id`, `duration_s`, `source_repo`, `slug`, `branch`, `worktree_path`, `snapshot_sha`, `main_reset` (str — `skipped` \| `ok` \| `failed`) | Snapshot commit + arc worktree created. |
-| `mcp.grokbuild.snapshot.failed` | `dispatch_id`, `duration_s`, `error` (str ≤200), `source_repo`, `slug`, `branch` | Capture or worktree-create failed after admission. |
-| `mcp.grokbuild.snapshot.rejected` | `dispatch_id`, `reason_code` (str — `slug_invalid` \| `source_repo_invalid` \| `clean_tree` \| …), `reason`, `source_repo`, `slug`, `branch` | Admission failed (clean tree, invalid slug/source_repo, branch exists). |
-| `mcp.grokbuild.registry.recovered` | `entries_recovered` (int), `entries_pruned` (int — see sentinel below), `schema_version` (int) | Persistent-registry load at module import. `entries_pruned=N` (N≥0) means the previous writer PID was dead and N stale entries were dropped. **Sentinel: `entries_pruned=-1` means a registry write failed at runtime** (review W12 — replaces the prior silent `except OSError: pass`); operator should investigate `GROKBUILD_REGISTRY_PATH` permissions / disk pressure. |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 `.rejected` `reason_code` enum (validator side, unchanged from V1; V2 added `capacity_exhausted` on the worker-side `grokbuild.dispatch.rejected`, see below): `retired_op`, `retired_output_format`, `retired_param`, `unknown_op`, `bad_tier`, `bad_reasoning_effort`, `bad_effort`, `bad_max_turns`, `bad_best_of_n`, `bad_timeout_seconds`, `bad_resume_strict_without_session_id`, `bad_output_format`, `cwd_missing`, `not_a_git_repo`, `git_unreachable`, `working_tree_dirty`, `grok_not_in_path`, `missing_grok_auth`, `sidecar_unavailable`, `dispatch_conflict`.
 
@@ -2592,43 +3112,31 @@ only via `grokbuild.auth.required` and the `checks.grok_auth` field, never as wo
 
 All signals: `role="observation"`, `scope="global"`.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `git.integrate.requested` | `integration_id` (str — uuid4), `arc` (str — plan slug), `phase` (str — phase label), `worktree_path` (str), `diff_sha256` (str — sha256 of approved unified diff) | Integration admitted past validation; retry loop entered. Emitted by `integrate_op` after admission succeeds. |
-| `git.integrate.completed` | `integration_id`, `arc`, `phase`, `merge_commit` (str — arc-branch tip after merge), `master_sha` (str — master ref after CAS advance), `duration_s` (float) | Master advanced at ref level; optional worktree teardown follows. Emitted by `integrate_op` on success. |
-| `git.integrate.rejected` | `integration_id`, `reason_code` (str enum), `reason` (str), `arc`, `phase` | Admission or merge-phase refusal. No master advance. Correlation fields inline so no `.requested` join required for admission rejects. Emitted by `validate_integrate` / `integrate_op`. |
-| `git.integrate.gate.failed` | `integration_id`, `arc`, `phase`, `gate_cmd` (str — joined server-configured command), `gate_exit` (int), `duration_s` (float) | Green-gate returned non-zero on the integrated tree; arc worktree reset to pre-merge tip. Emitted by `integrate_op`. |
-| `git.integrate.retried` | `integration_id`, `arc`, `attempt` (int — 1-based loop index), `reason` (str — typically `master_advanced_mid_span`) | Non-ff CAS advance; optimistic retry loop continues. Emitted by `integrate_op`. |
-| `git.status.read` | `worktree_path` (str), `dirty` (bool), `branch` (str) | Read-only status probe served (MCP `git_status` path). Emitted by `status_op`. |
-| `git.path.commit.completed` | `commit_id` (str — uuid4), `branch` (str), `commit_sha` (str), `path_count` (int), `duration_s` (float) | Gated path-scoped commit succeeded. Emitted by `commit_op` after `commit_paths` advances the branch. |
-| `git.path.commit.rejected` | `commit_id`, `reason_code` (str enum), `reason` (str), `branch` (str) | Gated path-scoped commit refused (validation or commit failure). No branch advance. Emitted by `commit_op`. |
+<!-- GENERATED:START region=git inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `git.commit.created` | `integration_id`, `arc`, `commit_sha` | - |
+| `git.integrate.completed` | `integration_id`, `arc`, `phase`, `merge_commit`, `master_sha`, `duration_s` | Master advanced at ref level; optional worktree teardown follows. Emitted by `integrate_op` on success. |
+| `git.integrate.gate.failed` | `integration_id`, `arc`, `phase`, `gate_cmd`, `gate_exit`, `duration_s` | Green-gate returned non-zero on the integrated tree; arc worktree reset to pre-merge tip. Emitted by `integrate_op`. |
+| `git.integrate.rejected` | `integration_id`, `reason_code`, `reason`, `arc`, `phase` | Admission or merge-phase refusal. No master advance. Correlation fields inline so no `.requested` join required for admission rejects. Emitted by `validate_integrate` / `integrate_op`. |
+| `git.integrate.requested` | `integration_id`, `arc`, `phase`, `worktree_path`, `diff_sha256` | Integration admitted past validation; retry loop entered. Emitted by `integrate_op` after admission succeeds. |
+| `git.integrate.retried` | `integration_id`, `arc`, `attempt`, `reason` | Non-ff CAS advance; optimistic retry loop continues. Emitted by `integrate_op`. |
+| `git.land.completed` | `integration_id`, `arc`, `phase`, `merge_commit`, `master_sha`, `committed`, `commit_sha`, `duration_s` | - |
+| `git.land.requested` | `integration_id`, `arc`, `phase`, `worktree_path`, `diff_sha256`, `committed` | - |
+| `git.path.commit.completed` | `commit_id`, `branch`, `commit_sha`, `path_count`, `duration_s` | Gated path-scoped commit succeeded. Emitted by `commit_op` after `commit_paths` advances the branch. |
+| `git.path.commit.rejected` | `commit_id`, `reason_code`, `reason`, `branch` | Gated path-scoped commit refused (validation or commit failure). No branch advance. Emitted by `commit_op`. |
+| `git.status.read` | `worktree_path`, `dirty`, `branch` | Read-only status probe served (MCP `git_status` path). Emitted by `status_op`. |
+<!-- GENERATED:END region=git -->
 
 `.rejected` `reason_code` enum (Phase 3): `arc_branch_mismatch`, `approval_missing`, `diff_mismatch`, `integrate_conflict`, `gate_failed`, `max_attempts_exhausted`, `worktree_not_found`, `not_a_git_repo`.
 
 **Worker signals (`grokbuild.*`).** Source: `grokbuild-worker`. Added V2. SSE-friendly tracker vocabulary plus per-op tracking events; does NOT carry the lib's audit fields (those live on the parallel `mcp.grokbuild.dispatch.completed`).
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `grokbuild.worker.started` | `version` (str — git short SHA or `unknown`), `deploy_shape` (str — `bare-metal-systemd` \| `container`), `port` (int — 8090 default), `degraded_checks` (list[str] — `grok_binary` \| `auth_dir` \| `sidecar_dir` \| `registry` if any failed) | Lifespan startup completed. `degraded_checks` empty on clean boot. |
-| `grokbuild.worker.stopped` | `reason` (str — `lifespan_exit` typical), `uptime_s` (float) | Lifespan shutdown. |
-| `grokbuild.worker.degraded` | `checks` (list[str]) | One or more health checks failed at startup. Worker boots regardless (operator may be inspecting). |
-| `grokbuild.dispatch.accepted` | `dispatch_id`, `model` (str), `worktree` (str — cwd), `requested_by` (str — `api`) | Async build admitted by tracker; HTTP 202 emitted. |
-| `grokbuild.dispatch.started` | `dispatch_id` | Tracker entry transitioned `pending → running`. |
-| `grokbuild.dispatch.progress` | `dispatch_id`, `summary` (str) | Progress update from runner (currently unused; reserved for grok-side step events). |
-| `grokbuild.dispatch.completed` | `dispatch_id`, `outcome` (str — `success` \| `external_failure` \| `cancelled` \| `timeout` \| `server_error`), `duration_s`, `exit_code` (int \| null) | Tracker reached terminal state. The audit-rich `git_diff_stat` / `read_only_violation` live on the parallel `mcp.grokbuild.dispatch.completed`. |
-| `grokbuild.dispatch.cancelled` | `dispatch_id`, `reason` (str — `operator_cancel`), `signal_used` (str — `SIGTERM` \| `SIGKILL` \| `task_cancel` \| `noop`) | Operator-driven cancel via `DELETE /dispatches/{id}`. `noop` means the entry was already terminal at cancel time. |
-| `grokbuild.dispatch.rejected` | `dispatch_id` (rejection uuid), `reason_code` (str — currently only `capacity_exhausted`), `reason` (str), `running` (int), `capacity` (int) | Admission-phase rejection by the tracker (V2 added per review C3). The only current reason is concurrent-build cap exhaustion (operator answer 1c: cap=4); HTTP 429 with `Retry-After: 30` is emitted alongside. |
-| `grokbuild.dispatch.fetched` | `dispatch_id`, `outcome` (str), `duration_s`, `result_size_bytes` (int) | `GET /dispatches/{id}/result` succeeded — fetch-result envelope returned. |
-| `grokbuild.worktree.created` | `name`, `branch`, `duration_s`, `outcome` (str) | `POST /worktrees` succeeded; the lib also emits its own `mcp.grokbuild.create.*` signals with full audit fields. |
-| `grokbuild.worktree.listed` | `count` (int), `duration_s` | `GET /worktrees` succeeded. |
-| `grokbuild.worktree.removed` | `name`, `duration_s`, `outcome` | `DELETE /worktrees/{name}` succeeded. |
-| `grokbuild.push.completed` | `name`, `branch`, `duration_s`, `outcome`, `commits_pushed` (int — **typed**, no longer hardcoded 0 per review W10; computed via `git rev-list --count @{u}..HEAD`) | `POST /worktrees/{name}/push` succeeded. |
-| `grokbuild.snapshot.created` | `slug`, `branch`, `worktree_path`, `snapshot_sha`, `duration_s`, `outcome` | `POST /snapshots` succeeded; lib also emits `mcp.grokbuild.snapshot.*` audit signals. |
-| `grokbuild.snapshot.main_reset` | `slug`, `source_repo` | Main tree reset clean after snapshot (`reset_main=True` and reset succeeded). |
-| `grokbuild.pr.created` | `name`, `pr_number` (int \| null — **typed**, surfaced from envelope metadata per review W8), `duration_s`, `outcome` | `POST /worktrees/{name}/pull-requests` succeeded. |
-| `grokbuild.models.listed` | `count` (int), `duration_s` | `GET /models` succeeded. |
-| `grokbuild.tracker.orphan.cleaned` | `count` (int), `dispatch_ids` (list[str]) | Lifespan startup hook (`cleanup_orphans`) purged tracker entries whose subprocess PID is dead. With pure-in-memory storage this is usually a no-op; test harnesses pre-seed dead entries to exercise the path. |
-| `grokbuild.result.spooled` | `dispatch_id` (str), `status` (str — terminal envelope status), `failure_count` (int — from computed signals) | Worker wrote the build-result spool at terminal (`ulg-build-results/{dispatch_id}/`). Emitted after `write_spool` in `tracker_runner._finalize`. |
+<!-- GENERATED:START region=grokbuild inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+
+<!-- GENERATED:END region=grokbuild -->
 
 **Spool prune (log-only).** Startup `prune_spool()` removes aged dispatch dirs by mtime; it logs `removed_count` only — no `grokbuild.result.pruned` event (Phase 2 chose log-only over UDS publish).
 
@@ -2775,33 +3283,42 @@ quality before disabling the lean partition.
 Fallback-only stdio proxy (`source: "mcp-stdio-proxy"`) emits `mcp.transport.*`
 signals (`transport=stdio`). Supersedes legacy `proxy.*` names.
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `mcp.transport.stdio.started` | `transport`, `watchdog_s`, `socket_s`, `max_inflight`, `mcp_url` | Proxy process initialized |
-| `mcp.transport.request.started` | `transport`, `msg_id`, `mcp_method`, `is_notification` | JSON-RPC message accepted for relay |
-| `mcp.transport.stream.opened` | `transport`, `msg_id`, `mcp_method`, `http_status` | Upstream HTTP response opened |
-| `mcp.transport.request.completed` | `transport`, `msg_id`, `mcp_method`, `duration_s` | Request relay completed |
-| `mcp.transport.request.failed` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type` | Request relay failed |
-| `mcp.transport.request.timedout` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `watchdog_s` | Watchdog timeout fired |
-| `mcp.transport.heartbeat.forwarded` | `transport`, `msg_id`, `mcp_method`, `count` | SSE heartbeat forwarded as progress |
-| `mcp.transport.response.large` | `transport`, `msg_id`, `mcp_method`, `response_bytes`, `threshold_bytes` | Response exceeded large-payload threshold |
-| `mcp.transport.proxy.restart.detected` | `transport`, `msg_id`, `mcp_method`, `duration_s`, `error`, `error_type`, `attempt` | Proxy observed MCP restart (503 with `server_restarting` payload, or connection-class error); will retry per `_RESTART_RETRY_DELAYS_S` |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 ### OAuth Signals
 
 OAuth signals are emitted by the auth admission middleware and OAuth service
 when OAuth is enabled (`MCP_OAUTH_ENABLED=true` with a valid HTTPS issuer).
 
-| Signal | Payload fields | Description |
-|---|---|---|
-| `mcp.oauth.server.started` | `issuer`, `token_endpoint`, `authorization_endpoint` | OAuth server initialized at startup |
-| `mcp.oauth.authorization.validated` | `client_id`, `scope` | Authorization request validated |
-| `mcp.oauth.code.issued` | `client_id`, `scope`, `ttl_seconds` | Authorization code issued after consent |
-| `mcp.oauth.code.expired` | `client_id` | Authorization code expired before exchange |
-| `mcp.oauth.token.issued` | `client_id`, `scope`, `expires_in` | Access token minted from code exchange |
-| `mcp.oauth.token.exchange.failed` | `client_id`, `reason` | Token exchange failed (bad code/PKCE/mismatch) |
-| `mcp.oauth.token.accepted` | `client_id` | OAuth bearer token accepted for request |
-| `mcp.oauth.token.rejected` | `reason` | OAuth bearer token rejected (expired/unknown) |
+<!-- GENERATED:START region=mcp inventory_sha=aa5afdf565b7 generated=2026-06-10T12:42:27Z -->
+| Signal | Required Payload | Optional Payload |
+|--------|------------------|------------------|
+| `mcp.adapter.request.shape` | `provider`, `model`, `mcp_version`, `tool_count`, `mcp_tool_count`, `has_tool_search` | Every MCP request — shape summary for v1/v2 migration tracking. |
+| `mcp.adapter.search.seen` | `correlation_id?`, _dynamic_ | Response contained a tool_search_tool_result block. |
+| `mcp.adapter.tool.seen` | `correlation_id?`, _dynamic_ | Response contained an mcp_tool_use block (Anthropic-executed MCP tool). |
+| `mcp.adapter.v2.configured` | `provider`, `server_name`, `always_loaded_count`, `deferred_count` | First request with mcp_v2=true built the toolset payload. |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.dispatch.admit.failed` | `execution_id`, `thread`, `status_code`, `error_preview` | POST /threads/{id}/dispatch-admit failed (non-2xx or transport error). Tracker state is unchanged; fire-and-forget path is observable but non-fatal |
+| `mcp.agentbus.thread.abandoned` | `thread`, `reason`, `link_count`, `terminal_count`, `delivered_count` | Thread reaped by watchdog after TTL expiry or all-terminal-no-delivery condition. `reason` values: `pending_ttl_exceeded`, `admitted_ttl_exceeded`, `all_terminal_no_delivery`, `tracker_expired` |
+| `mcp.agentbus.thread.closed` | `thread`, `via` | Atomic close completed (marks all turns read + status=closed). `via` values: `"reply"` (reply-with-close), `"ephemeral_delivery"` (auto-close from pipeline `bus_lifecycle: ephemeral`), `"watchdog_reaper"` (watchdog-initiated close); field may be absent for plain manual closes |
+| `mcp.agentbus.thread.lifecycle.transitioned` | `thread`, `from_state`, `to_state`, `trigger` | Thread lifecycle state machine transition. `role=coordination`. `trigger` values: `create`, `admit`, `turn_posted`, `delivery_sent`, `delivery_failed`, `watchdog_reap`, `reopen`. Emitted from `_transition_lifecycle_state` — single point of correctness for all callers |
+| `mcp.agentbus.thread.reopened` | `thread`, `from_state`, `to_state` | Emitted alongside `mcp.agentbus.thread.lifecycle.transitioned` when a turn POST transitions a thread out of a terminal state (completed, abandoned, or failed) back to active |
+| `mcp.agentbus.watchdog.sweep.failed` | `error` | Watchdog sweep pass raised an unhandled exception. Repeated occurrences indicate a persistent failure in the reap path. |
+<!-- GENERATED:END region=mcp -->
 
 Query example — all tool calls in last 5 minutes:
 ```

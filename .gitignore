@@ -124,6 +124,9 @@ README_REVISED.md
 *.svg
 *.png
 
+# Generated event-catalog sidecar — derived, regenerate via scripts/gen-event-catalog (not a SOT)
+/docs/event-contracts.catalog.json
+
 # Documentation — root and selected scoped READMEs + architecture are public
 **/*.md
 !/AGENTS.md

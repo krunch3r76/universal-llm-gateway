@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# CLI entry: scripts/gen-event-catalog {generate|check|migrate-overlay|wrap-markers}
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+exec "${HOME}/.venvs/universal/bin/python3" -m scripts.gen_event_catalog "$@"

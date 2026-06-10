@@ -1,0 +1,6 @@
+# Escape hatch for factories whose signal/payload are not statically extractable.
+# Key = "<repo-relative-source>::<factory_name>"; prefer the inline
+# `# event-catalog: signal=...` annotation over an entry here.
+# ["services/foo/events.py::weird_factory"]
+# signal = "foo.weird"
+# required = ["a", "b"]

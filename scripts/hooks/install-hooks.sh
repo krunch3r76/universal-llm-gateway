@@ -20,6 +20,7 @@ cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 # Installed by scripts/hooks/install-hooks.sh
 
 python scripts/hooks/validate_catalog.py --staged || exit 1
+python -m scripts.gen_event_catalog check --staged || exit 1
 python scripts/check-event-contracts-sync.py --staged || exit 1
 python scripts/lint-fastapi-annotations.py --staged
 exit $?
