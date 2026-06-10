@@ -20,6 +20,36 @@ from typing import NamedTuple, Protocol
 import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
+# Lifecycle values that make an entity a non-live tombstone: it must NOT be
+# bound by bare-token resolution (binding a merged slug returns the tombstone
+# instead of its survivor — agent-bus 1474 / migration 057 lifecycle review).
+# Mirrors cortex_store.entity_aliases._NON_LIVE_LIFECYCLE and
+# status_trait_read._LIFECYCLE_LEGACY_STATUS; duplicated here to keep
+# predicate_form free of a hard cortex_store dependency (see module docstring).
+_NON_LIVE_LIFECYCLE = frozenset({"merged", "deprecated", "reaped"})
+
+_LIVE_LIFECYCLE_SQL = (
+    "(lifecycle IS NULL OR lifecycle NOT IN ('merged','deprecated','reaped'))"
+)
+
+
+def _response_is_live(resp: httpx.Response) -> bool:
+    """True when a 200 entity payload is live (not a merged/deprecated/reaped tombstone).
+
+    Reads the ``lifecycle`` trait from the entity payload. NULL/absent lifecycle
+    is the live default; only the explicit non-live values exclude the entity.
+    A malformed body is treated as live (fail-open to prior behavior) rather
+    than silently dropping an otherwise-valid hit.
+    """
+    try:
+        payload = resp.json()
+    except ValueError:
+        return True
+    if not isinstance(payload, dict):
+        return True
+    lifecycle = payload.get("lifecycle")
+    return lifecycle not in _NON_LIVE_LIFECYCLE
+
 
 def bare_token_to_slug(token: str) -> str:
     """Convert a bare predicate-form arg to its slug form.
@@ -136,6 +166,10 @@ class CortexEntityResolver:
     lookup tries each known type prefix in order; first 200 wins.
     Returns None when no candidate prefix yields a hit.
 
+    Non-live tombstones (``lifecycle`` in {merged, deprecated, reaped}) are
+    skipped even on a 200, mirroring DBEntityResolver, so a bare token never
+    binds a merged slug.
+
     Caching is a future concern; v1.3 acceptance does not require it.
     """
 
@@ -155,7 +189,7 @@ class CortexEntityResolver:
                     resp = client.get(f"/entities/{candidate}")
                 except httpx.HTTPError:
                     continue
-                if resp.status_code == 200:
+                if resp.status_code == 200 and _response_is_live(resp):
                     return candidate
         return None
 
@@ -173,7 +207,7 @@ class CortexEntityResolver:
                     resp = client.get(f"/entities/{candidate}")
                 except httpx.HTTPError:
                     continue
-                if resp.status_code == 200:
+                if resp.status_code == 200 and _response_is_live(resp):
                     candidates.append(candidate)
         cands = tuple(sorted(candidates))
         fp = _candidate_fingerprint(cands)
@@ -199,6 +233,11 @@ class DBEntityResolver:
     ``entities.id`` exactly. No alias lookup — identical semantics to the
     HTTP resolver's GET-by-ID path.
 
+    Non-live tombstones (``lifecycle`` in {merged, deprecated, reaped}) are
+    excluded from the SQL match so a bare token never binds a merged slug; the
+    token resolves to a live survivor under a different prefix or fails to
+    resolve (no survivor pointer exists today — agent-bus 1474).
+
     Per Q5.3 decision (b): this resolver is for in-process use only.
     External callers (agents, pipelines) continue to use CortexEntityResolver.
 
@@ -219,7 +258,8 @@ class DBEntityResolver:
         for prefix in self._type_prefixes:
             candidate = f"{prefix}:{slug}"
             row = self._conn.execute(
-                "SELECT id FROM entities WHERE id = ?", (candidate,)
+                f"SELECT id FROM entities WHERE id = ? AND {_LIVE_LIFECYCLE_SQL}",
+                (candidate,),
             ).fetchone()
             if row:
                 return candidate
@@ -231,7 +271,8 @@ class DBEntityResolver:
         for prefix in self._type_prefixes:
             candidate = f"{prefix}:{slug}"
             row = self._conn.execute(
-                "SELECT id FROM entities WHERE id = ?", (candidate,)
+                f"SELECT id FROM entities WHERE id = ? AND {_LIVE_LIFECYCLE_SQL}",
+                (candidate,),
             ).fetchone()
             if row:
                 candidates.append(candidate)

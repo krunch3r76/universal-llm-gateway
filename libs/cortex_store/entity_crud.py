@@ -21,6 +21,10 @@ from collections.abc import Callable
 from fastapi import HTTPException, status
 from universal_logging import get_logger
 
+from .assertion_deserialize_telemetry import (
+    assertion_deserialize_skip_reason,
+    emit_assertion_deserialize_skipped,
+)
 from .db import cortex_conn, decode_row, json_encode
 from .db import query as db_query
 from .entity_aliases import sync_entity_aliases
@@ -36,7 +40,6 @@ from .models import (
     EntitySummary,
 )
 from .routes.assertions import _ASSERTION_COLS
-from .type_schemas import validate_required_attributes
 from .status_trait_read import (
     apply_option_c_read_projection,
     entity_has_trait_columns,
@@ -48,10 +51,7 @@ from .status_trait_write import (
     resolve_birth_traits,
     trait_insert_extras,
 )
-from .assertion_deserialize_telemetry import (
-    assertion_deserialize_skip_reason,
-    emit_assertion_deserialize_skipped,
-)
+from .type_schemas import validate_required_attributes
 from .workflow_state import (
     emit_todo_closure_gap_if_needed,
     validate_workflow_state,
@@ -424,13 +424,19 @@ def update_entity_impl(
     params.append(entity_id)
     conn.execute(f"UPDATE entities SET {', '.join(sets)} WHERE id = ?", tuple(params))
 
-    if "aliases" in updates:
-        aliases = updates["aliases"]
+    # Re-sync alias rows when aliases change OR when lifecycle changes. A
+    # lifecycle-only transition to a non-live value (merged/deprecated/reaped)
+    # must evict the entity's existing alias rows even with no "aliases" key in
+    # the update; sync_entity_aliases owns the live/non-live decision (the single
+    # shared rule per [universal:no-bc]).
+    if "aliases" in updates or "lifecycle" in updates:
+        aliases = updates["aliases"] if "aliases" in updates else prior.get("aliases")
         sync_entity_aliases(
             conn,
             entity_id=entity_id,
             entity_type=str(prior["type"]),
             aliases=aliases if isinstance(aliases, list) else None,
+            lifecycle=updates.get("lifecycle", prior.get("lifecycle")),
         )
 
     new_workflow_state = updates.get("workflow_state")

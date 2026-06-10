@@ -4,6 +4,11 @@
 Migrates assertions, relationships, session_edges, tags, and surface_forms from
 dup → survivor; unions aliases on survivor; sets dup lifecycle=merged.
 
+On ``--apply`` the ``entity_aliases`` lookup table is rebuilt once at the end of
+the run (after all pairs commit-ready) so merged tombstones release their alias
+rows and survivor unions are re-homed with deterministic first-wins collision
+handling.
+
 Default dry-run. Agent-bus 1219 / mansubi-canonical-head-cleanup.md.
 
 Usage::
@@ -21,14 +26,16 @@ import sqlite3
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 
 _SCRIPTS_CORTEX = os.path.dirname(os.path.abspath(__file__))
 _REPO_LIBS = os.path.join(_SCRIPTS_CORTEX, "..", "..", "libs")
 if _REPO_LIBS not in sys.path:
     sys.path.insert(0, _REPO_LIBS)
 
-from cortex_store.substantiation_sync import recompute_entity_substantiation_status  # noqa: E402
+from cortex_store.entity_aliases import rebuild_entity_aliases  # noqa: E402
+from cortex_store.substantiation_sync import (  # noqa: E402
+    recompute_entity_substantiation_status,
+)
 
 _DEFAULT_DB = os.path.expanduser("~/.cortex/cortex.db")
 
@@ -384,6 +391,15 @@ def main() -> int:
                 dangling = scan_dangling(conn, dup_id)
                 print(f"  dangling on dup after merge: {dangling}")
         if not dry_run:
+            alias_report = rebuild_entity_aliases(conn)
+            print(
+                f"\n## entity_aliases rebuilt: {alias_report.row_count} rows"
+            )
+            if alias_report.residual_collisions:
+                print(
+                    f"  residual cross-entity collisions (first-wins): "
+                    f"{alias_report.residual_collisions}"
+                )
             conn.commit()
             print("\n## committed")
         else:

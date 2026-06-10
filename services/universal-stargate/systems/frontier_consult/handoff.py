@@ -48,6 +48,8 @@ def _mcp_packet_seats() -> frozenset[str]:
         and not profile.dispatchable
         and profile.tool_surface == "mcp"
     )
+
+
 _PROTOCOL_HINT = (
     "Author per project .cursor/rules/architecture-handoff-protocol.mdc "
     "§ The Six Required Blocks (skeleton: "
