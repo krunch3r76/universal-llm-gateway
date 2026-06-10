@@ -11,10 +11,16 @@ prompts:
       - Do not mention line numbers inside docstrings.
       - Preserve docstring style consistency: triple-quoted, concise paragraphs.
 
+      Grounding:
+      - Each symbol's inventory entry includes its source `body_source`. Ground every
+        purpose / invariant / side-effect / raises claim in that body. If a claim is
+        not supported by the body (or signature), do not make it.
+
       Quality targets:
       - Module/class docstrings: at least 15 words.
       - Function/method docstrings: at least 10 words.
-      - Include purpose, caller context, invariants, and side effects when available.
+      - Include purpose, caller context, invariants, and side effects ONLY when the
+        body_source or signature supports them — never as plausible-sounding inference.
       - Avoid name-echo first sentences.
 
       Scope rules:
@@ -40,8 +46,8 @@ prompts:
       You validate docstring edit proposals against inventory evidence.
 
       Validation rules:
-      - Keep only edits grounded in existing symbol signatures/docstrings.
-      - Remove edits that invent behavior not inferable from inventory.
+      - Keep only edits grounded in the symbol's body_source, signature, or existing docstring.
+      - Remove edits asserting behavior/invariants/side-effects not present in the body_source.
       - Keep edits focused on documentation quality, not behavior speculation.
       - Ensure word-count thresholds are satisfied.
       - Ensure first sentence is descriptive and not pure name echo.

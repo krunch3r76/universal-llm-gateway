@@ -142,6 +142,7 @@ README_REVISED.md
 !/docs/agent-guides/skills/*.md
 !/docs/tool-reference.md
 !/docs/cortex-spec.md
+!/docs/event-contracts.md
 !/docs/cursor/cortex-registry.md
 !services/rag/README.md
 !services/universal_cloud_proxy/README.md

@@ -681,6 +681,21 @@ doc.generate.architecture.found | doc.generate.architecture.notfound
       └─> doc.generate.extract.success
 ```
 
+### Doc Generate Enforce Lifecycle
+
+**INVARIANT**: `doc.generate.enforce.success` ⟹ no `doc.generate.authored.loss`
+for the same `execution_id` and `step_id` (AUTHORED loss aborts the run).
+
+**INVARIANT**: `doc.generate.authored.loss` is emitted only when an AUTHORED region
+from `existing_doc` is absent from the reviewed doc; the step then raises and the
+pipeline does not emit final output.
+
+```
+review (LLM) ─> enforce (deterministic)
+  ├─> doc.generate.authored.loss? (blocking — run aborts)
+  └─> doc.generate.enforce.success
+```
+
 ### Cancel Groups
 
 Cancel groups enable iteration-level cancellation of federated requests.
@@ -1789,6 +1804,8 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 | `doc.generate.architecture.found` | `execution_id`, `step_id`, `architecture_doc_path` | - |
 | `doc.generate.architecture.notfound` | `execution_id`, `step_id`, `architecture_doc_path` | - |
 | `doc.generate.python.empty` | `execution_id`, `step_id`, `subsystem_path` | - |
+| `doc.generate.enforce.success` | `execution_id`, `step_id`, `authored_loss_count`, `missing_coverage_count`, `inventory_sha` | - |
+| `doc.generate.authored.loss` | `execution_id`, `step_id`, `lost_count` | - |
 
 ### Pipeline Events
 

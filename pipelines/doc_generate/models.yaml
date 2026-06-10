@@ -4,6 +4,9 @@ models:
   # todo:subsystem-baseline-tracking when docstring-quality is green.
   draft_model:
     model: anthropic/claude-sonnet-4-6
-  # Kept on Claude-family for consistency with draft quality during bootstrap.
+  # Cross-family verifier (F4): a different family from draft_model breaks shared
+  # blind spots — the drafter's mis-reading of the inventory is less likely to be
+  # mirrored by an independent family. The bootstrap "consistency" rationale was
+  # draft-navigation-specific and does not transfer to review.
   review_model:
-    model: anthropic/claude-sonnet-4-6
+    model: google/gemini-2.5-pro

@@ -7,11 +7,15 @@ prompts:
 
       Shared marker policy (keep synchronized with prompts.review):
       - Preserve authored content from existing_doc verbatim when marked with
-        <!-- AUTHORED -->.
+        <!-- AUTHORED --> (or an explicit <!-- AUTHORED:START --> /
+        <!-- AUTHORED:END --> pair).
       - Generated content must be wrapped in:
         <!-- GENERATED:START -->
         ... generated section ...
         <!-- GENERATED:END -->
+      - Emit the bare opening marker <!-- GENERATED:START --> only. Do NOT add an
+        inventory hash, date, or any provenance disclaimer line yourself — a
+        deterministic post-step stamps provenance and injects the disclaimer.
       - If a critical cross-cutting flow cannot be derived from docstrings, add:
         <!-- HUMAN: describe <topic> -->
 
@@ -62,11 +66,17 @@ prompts:
       - Preserve AUTHORED sections verbatim when present in the draft.
       - Preserve GENERATED marker wrappers.
       - Keep HUMAN markers for information that requires manual synthesis.
+      - If the existing document contains an AUTHORED region or a HUMAN marker
+        that is absent from the draft, restore it verbatim from existing_doc.
 
       Rules:
       - Keep supported content.
       - Remove or rewrite unsupported claims.
-      - Ensure every discovered module, class, and top-level function is covered.
+      - Preserve all <!-- GENERATED:START --> / <!-- GENERATED:END --> wrappers and
+        <!-- AUTHORED --> regions verbatim; do not add a provenance stamp yourself.
+      - For each retained substantive claim, add a claim_evidence row citing the
+        inventory record it traces to: {claim, path, line}. A claim with no citable
+        inventory record must be removed, not retained.
       - Return valid JSON matching schema.
     template: |
       Verify and correct this architecture document draft.
@@ -76,6 +86,9 @@ prompts:
 
       ## Extracted inventory JSON
       {inventory_json}
+
+      ## Existing document (authored source; may be empty)
+      {existing_doc}
 
       ## Draft document
       {draft_doc}

@@ -235,14 +235,18 @@ class CollectInventoryHandler(BaseHandler):
 
         inventory: dict[str, Any]
         if target.is_dir():
-            inventory = extract_subsystem_inventory(target, workspace_root)
+            inventory = extract_subsystem_inventory(
+                target, workspace_root, include_bodies=True
+            )
             inventory["target_kind"] = "directory"
         else:
             if target.suffix != ".py":
                 return _error_output(
                     step.id, "target_path must be a .py file or directory"
                 )
-            file_inv = extract_file_inventory(target, workspace_root)
+            file_inv = extract_file_inventory(
+                target, workspace_root, include_bodies=True
+            )
             inventory = {
                 "subsystem_path": target.as_posix(),
                 "subsystem_name": target.stem,

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from .enforce_grounding import EnforceGroundingHandler
 from .extract_docstrings import ExtractDocstringsHandler
 
 if TYPE_CHECKING:
@@ -18,4 +19,9 @@ def register_handlers(router: DomainRouter) -> None:
         "doc_generate",
         "doc_generate_extract_docstrings",
         ExtractDocstringsHandler,
+    )
+    router.register_domain_handler_class(
+        "doc_generate",
+        "doc_generate_enforce_grounding",
+        EnforceGroundingHandler,
     )

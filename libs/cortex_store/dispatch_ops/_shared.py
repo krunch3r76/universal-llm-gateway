@@ -4,16 +4,23 @@ Centralizes constants and utilities used across dispatch_ops/ modules so the
 FastAPI routes and dispatch handlers share one source of truth.
 """
 
-from __future__ import annotations
+from __future__ import annotations  # noqa: I001 — re-export pattern: _SESSION_ID_{RE,RE_SOURCE,EXAMPLES} are intentionally imported for session_close_validation.py
 
 import hashlib
 import os
 import re
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_seat.session_id import (
+    SESSION_ID_EXAMPLES as _SESSION_ID_EXAMPLES,  # noqa: F401
+    SESSION_ID_RE as _SESSION_ID_RE,  # noqa: F401
+    SESSION_ID_RE_SOURCE as _SESSION_ID_RE_SOURCE,  # noqa: F401
+    derive_session_id_from_timestamp,
+)
 from universal_logging import get_logger
+
+from ..trait_vocabulary import NON_LIVE_LIFECYCLE
 
 logger = get_logger(__name__)
 
@@ -36,20 +43,15 @@ else:
     )
 _DEFAULT_USER_ENTITY = os.getenv("CORTEX_DEFAULT_USER_ENTITY", "")
 
-_VALID_STATUS = frozenset(
-    {"unsubstantiated", "confirmed", "provisional", "merged", "deprecated"}
-)
 # Confidence-axis status is DERIVED (Fork D, G1 thread 1173): frozen from
 # hand-set writes at entity_create/update. Lifecycle-axis status stays settable.
+# ``_LIFECYCLE_AXIS_STATUS`` sources the non-live set from the trait_vocabulary
+# canonical SOT (leaf module — no import cycle). ``_VALID_STATUS`` is derived
+# from both axis sets so the union can never drift (previously omitted 'reaped').
 _CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
-_LIFECYCLE_AXIS_STATUS = frozenset({"merged", "deprecated", "reaped"})
+_LIFECYCLE_AXIS_STATUS = NON_LIVE_LIFECYCLE
+_VALID_STATUS = _CONFIDENCE_AXIS_STATUS | _LIFECYCLE_AXIS_STATUS
 _VALID_CONFIDENCE = frozenset({"confirmed", "believed", "suspected", "hypothesized"})
-from agent_seat.session_id import (
-    SESSION_ID_EXAMPLES as _SESSION_ID_EXAMPLES,
-    SESSION_ID_RE as _SESSION_ID_RE,
-    SESSION_ID_RE_SOURCE as _SESSION_ID_RE_SOURCE,
-    derive_session_id_from_timestamp,
-)
 
 # Agent slug: lowercase alnum + hyphens, must start with a letter.  Used as a
 # permissive shape check (no allowlist — agent is a routing/metadata hint).

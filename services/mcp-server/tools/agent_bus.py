@@ -34,6 +34,23 @@ logger = logging.getLogger(__name__)
 _FETCH_CONTEXT_CAP = max(1, int(os.getenv("MCP_AGENT_BUS_CONTEXT_CAP", "50")))
 _VALID_TURN_STATUSES = ("open", "resolved", "superseded", "waiting")
 
+# Common wrong keys → canonical accepted key. Surfaced as a "did you mean"
+# hint on the unknown-argument gate so callers do not have to discover the
+# rename by trial (friction 16615: thread_id→thread, agent→from_agent).
+_ARG_ALIASES: dict[str, str] = {
+    "thread_id": "thread",
+    "threadid": "thread",
+    "agent": "from_agent",
+    "from": "from_agent",
+    "author": "from_agent",
+    "message": "body",
+    "msg": "body",
+    "text": "body",
+    "content": "body",
+    "turn": "turn_number",
+    "title": "subject",
+}
+
 
 def _relay_detail(result: dict[str, Any]) -> Any:
     """Extract FastAPI ``detail`` from a relay error envelope."""
@@ -70,6 +87,57 @@ def _format_agent_bus_error(result: dict[str, Any], *, op: str) -> str:
     return f"agent-bus error: {result.get('error', 'unknown error')}"
 
 
+def _unknown_arg_error(
+    *, tool: str, unknown: list[str], accepted: set[str]
+) -> dict[str, Any]:
+    """Build the unsupported-argument rejection, with canonical-alias hints.
+
+    Maps common wrong keys (``thread_id``, ``agent`` …) to the accepted key so
+    callers fix the rename in one shot rather than by trial (friction 16615).
+    """
+    ordered = sorted(unknown)
+    hints = [
+        f"{k!r} → {_ARG_ALIASES[k]!r}"
+        for k in ordered
+        if _ARG_ALIASES.get(k) in accepted
+    ]
+    hint_suffix = f" Did you mean: {', '.join(hints)}." if hints else ""
+    return {
+        "error": (
+            f"{tool}: unsupported argument(s): {', '.join(ordered)}. "
+            f"Accepted: {sorted(accepted)}.{hint_suffix}"
+        )
+    }
+
+
+def _unread_turns_remediation(detail: dict[str, Any]) -> str:
+    """Build the actionable mark-read remediation for a 409 unread_turns_exist.
+
+    The REST 409 body carries ``unread_turns`` (list of {thread, turn_number})
+    but no remediation verb — callers previously had to discover the
+    get+mark_read flow by trial (friction 16615). Name the exact op and turns.
+    """
+    unread = detail.get("unread_turns") or []
+    pairs = [
+        (str(t.get("thread")), t.get("turn_number"))
+        for t in unread
+        if isinstance(t, dict) and t.get("turn_number") is not None
+    ]
+    if not pairs:
+        return (
+            "Remediation: mark the turns addressed to you read first — "
+            "fetch_unread(to=<you>, mark_read=true), or mark_read(thread, "
+            "turn_number) per turn — then retry."
+        )
+    calls = "; ".join(
+        f'mark_read(thread="{thread}", turn_number={n})' for thread, n in pairs
+    )
+    return (
+        "Remediation: mark each blocking turn read first, then retry — "
+        f"{calls}. (Or fetch_unread(to=<you>, mark_read=true) to clear all.)"
+    )
+
+
 def _structured_relay_error(
     result: dict[str, Any], *, op: str
 ) -> dict[str, Any] | None:
@@ -83,12 +151,17 @@ def _structured_relay_error(
     message = f"{op}: {base_error}"
     if reason:
         message = f"{message} ({reason})"
-    return {
+    envelope: dict[str, Any] = {
         "error": message,
         "status_code": status_code,
         "reason": reason,
         "detail": detail,
     }
+    if reason == "unread_turns_exist" and isinstance(detail, dict):
+        remediation = _unread_turns_remediation(detail)
+        envelope["error"] = f"{message}. {remediation}"
+        envelope["remediation"] = remediation
+    return envelope
 
 
 def _structured_body_too_large(
@@ -1077,13 +1150,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
                     tool=tool,
                     unknown=",".join(sorted(unknown)),
                 )
-                return {
-                    "error": (
-                        f"{tool}: unsupported argument(s): "
-                        f"{', '.join(sorted(unknown))}. "
-                        f"Accepted: {sorted(accepted)}"
-                    )
-                }
+                return _unknown_arg_error(tool=tool, unknown=unknown, accepted=accepted)
             record("mcp.agentbus.dispatch", tool=tool)
             result = handler(**parsed)
             if (

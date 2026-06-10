@@ -70,6 +70,8 @@ steps:
       subsystem_path: sourceNs.text
       inventory_json: extract.raw
       draft_doc: draft.json.doc_markdown
+      existing_doc: extract.json.existing_doc
+      existing_doc: extract.json.existing_doc
     output_declarations:
       doc_markdown:
         binding: json.doc_markdown
@@ -79,10 +81,10 @@ steps:
         binding: json.unsupported_claims
         type: list
         description: "Claims in draft not supported by extracted inventory"
-      missing_coverage:
-        binding: json.missing_coverage
+      claim_evidence:
+        binding: json.claim_evidence
         type: list
-        description: "Modules/functions/classes that should be documented"
+        description: "Per retained substantive claim: {claim, path, line} evidence rows"
       human_markers:
         binding: json.human_markers
         type: list
@@ -106,11 +108,19 @@ steps:
               items:
                 type: string
               description: "Claims in draft_doc not supported by extracted inventory"
-            missing_coverage:
+            claim_evidence:
               type: array
               items:
-                type: string
-              description: "Missing modules/functions/classes that should be documented"
+                type: object
+                properties:
+                  claim:
+                    type: string
+                  path:
+                    type: string
+                  line:
+                    type: integer
+                required: [claim, path]
+              description: "Evidence rows mapping each retained substantive claim to an inventory record"
             human_markers:
               type: array
               items:
@@ -124,7 +134,7 @@ steps:
           required:
             - doc_markdown
             - unsupported_claims
-            - missing_coverage
+            - claim_evidence
             - human_markers
             - review_notes
     timeout_seconds: 240
@@ -135,11 +145,67 @@ steps:
       max_interval_seconds: 15.0
       retry_on: ["ProxyClientError"]
 
+  - name: enforce
+    type: doc_generate_enforce_grounding
+    condition: "extract.json.get('error') is None"
+    handler_inputs:
+      reviewed_doc: review.json.doc_markdown
+      existing_doc: extract.json.existing_doc
+      inventory_json: extract.raw
+      unsupported_claims: review.json.unsupported_claims
+      human_markers: review.json.human_markers
+      review_notes: review.json.review_notes
+      claim_evidence: review.json.claim_evidence
+    output_declarations:
+      doc_markdown:
+        binding: json.doc_markdown
+        type: str
+        description: "Final doc with provenance stamp + disclaimer injected"
+      authored_loss:
+        binding: json.authored_loss
+        type: list
+        description: "AUTHORED regions in existing_doc absent/altered in final doc (blocking)"
+      missing_coverage:
+        binding: json.missing_coverage
+        type: list
+        description: "Inventory symbols not mentioned in final doc (deterministic)"
+      divergence:
+        binding: json.divergence
+        type: list
+        description: "Signature<->docstring divergence findings (deterministic, body-free)"
+      human_markers_dropped:
+        binding: json.human_markers_dropped
+        type: list
+        description: "HUMAN markers from existing_doc not present in final doc (advisory)"
+      unsupported_claims:
+        binding: json.unsupported_claims
+        type: list
+        description: "Passthrough of review's unsupported_claims (consumed by overhaul step 10)"
+      human_markers:
+        binding: json.human_markers
+        type: list
+        description: "Passthrough of review's HUMAN markers (consumed by overhaul step 10)"
+      review_notes:
+        binding: json.review_notes
+        type: list
+        description: "Passthrough of review's verifier notes"
+      claim_evidence:
+        binding: json.claim_evidence
+        type: list
+        description: "Passthrough of review's claim->evidence table (kept in final output for step-10 audit)"
+      inventory_sha:
+        binding: json.inventory_sha
+        type: str
+        description: "sha256 of the inventory the doc was generated from"
+    timeout_seconds: 30
+
   - name: result
     type: select_output
     candidates:
+      - enforce
       - review
       - extract
     handler_inputs:
+      enforce_out: enforce.raw
       review_out: review.raw
       extract_out: extract.raw

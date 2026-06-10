@@ -97,3 +97,41 @@ def doc_generate_python_empty(
             "subsystem_path": subsystem_path,
         },
     )
+
+
+@event_factory
+def doc_generate_enforce_success(
+    *,
+    execution_id: str,
+    step_id: str,
+    authored_loss_count: int,
+    missing_coverage_count: int,
+    inventory_sha: str,
+) -> Event:
+    return Event(
+        signal="doc.generate.enforce.success",
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "authored_loss_count": authored_loss_count,
+            "missing_coverage_count": missing_coverage_count,
+            "inventory_sha": inventory_sha,
+        },
+    )
+
+
+@event_factory
+def doc_generate_authored_loss(
+    *,
+    execution_id: str,
+    step_id: str,
+    lost_count: int,
+) -> Event:
+    return Event(
+        signal="doc.generate.authored.loss",
+        payload={
+            "execution_id": execution_id,
+            "step_id": step_id,
+            "lost_count": lost_count,
+        },
+    )

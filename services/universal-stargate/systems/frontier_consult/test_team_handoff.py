@@ -1409,7 +1409,9 @@ def test_p2_legacy_packet_path_unaffected_without_source_ref(
         },
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["thread_id"] == "bus-p2-legacy"
+    body = resp.json()
+    assert body["thread_id"] == "bus-p2-legacy"
+    assert body["materialization_mode"] == "hand_authored"
 
 
 def test_p2_both_present_hash_match_admits(
@@ -1447,7 +1449,9 @@ def test_p2_both_present_hash_match_admits(
         },
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["thread_id"] == "bus-p2-hash"
+    body = resp.json()
+    assert body["thread_id"] == "bus-p2-hash"
+    assert body["materialization_mode"] == "hand_authored_traced"
 
 
 def test_p2_both_present_hash_mismatch_rejected(
@@ -1522,7 +1526,9 @@ def test_p2_materialized_dual_root_projects_parent(
         },
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["thread_id"] == "bus-p2-dual"
+    body = resp.json()
+    assert body["thread_id"] == "bus-p2-dual"
+    assert body["materialization_mode"] == "auto"
 
 
 def test_p2_materialized_dual_root_repo(
@@ -1973,10 +1979,13 @@ def test_gate_a2_warn_missing_frontmatter(tmp_path: Path) -> None:
 
 def test_gate_a2_enforce_missing_frontmatter(tmp_path: Path) -> None:
     _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
-    with patch.dict(os.environ, {"UA_DRIFT_GATE_A2": "enforce"}, clear=False):
-        from implement_admission.drift_gates import clear_gate_state_cache
-
-        clear_gate_state_cache()
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        side_effect=lambda gate_id: {
+            "a2": DriftGateState.ENFORCE,
+            "a": DriftGateState.OFF,
+        }.get(gate_id, DriftGateState.WARN),
+    ):
         with pytest.raises(FrontierEndpointError) as exc_info:
             validate_packet(
                 request_id="req-a2-enforce",
@@ -2013,10 +2022,13 @@ def test_gate_a2_malformed_ref_treated_absent(tmp_path: Path) -> None:
         1,
     )
     _write_packet(tmp_path, _PV_REL, bad_fm)
-    with patch.dict(os.environ, {"UA_DRIFT_GATE_A2": "enforce"}, clear=False):
-        from implement_admission.drift_gates import clear_gate_state_cache
-
-        clear_gate_state_cache()
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        side_effect=lambda gate_id: {
+            "a2": DriftGateState.ENFORCE,
+            "a": DriftGateState.OFF,
+        }.get(gate_id, DriftGateState.WARN),
+    ):
         with pytest.raises(FrontierEndpointError) as exc_info:
             validate_packet(
                 request_id="req-a2-bad",
@@ -2027,4 +2039,39 @@ def test_gate_a2_malformed_ref_treated_absent(tmp_path: Path) -> None:
                 source_ref="todo:foo",
             )
     assert exc_info.value.code == "handoff_packet_missing_source_ref"
+
+
+def test_materialization_mode_packet_path_only_with_frontmatter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """packet_path-only with frontmatter source_ref → hand_authored_traced."""
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _PV_REL, _IMPLEMENT_PACKET_FM)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-mode-traced"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "packet_path": _PV_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["materialization_mode"] == "hand_authored_traced"
 

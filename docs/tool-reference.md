@@ -20,7 +20,7 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
 
 | Tool | Use for | Required args | Role injection |
 |---|---|---|---|
-| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `packet_path`, `subject` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
+| `team_dispatch` | **API consult** (`op=generate\|to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic` (+ optional `model=` within `allowed_models`). **Manual-seat handoff** (`op=handoff` only): `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | `op`, `role`; + `messages`, `dispatch_thread_id` for generate/to_thread; + `subject` and **at least one of** `source_ref` \| `packet_path` for handoff | yes (generate/to_thread); handoff resolves seat only — no model dispatch |
 
 `op` values (`team_dispatch`):
 - `"generate"` — direct mode; result content returned via `pipeline(op="result")`.
@@ -48,7 +48,8 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `reasoning_effort` | `str\|None` | Provider-native reasoning effort. Accepted values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Provider support varies (see `docs/thirdparty/{provider}/upstream` for the documented surface — e.g. OpenAI accepts `none/low/medium/high/xhigh`; Anthropic adaptive accepts `low/medium/high/xhigh/max`; Gemini 3 accepts `minimal/low/medium/high`). reasoning_effort is a portable intent label, not cross-provider semantic parity: the same value resolves to different provider-native shapes per value_kind. Unsupported-at-model values raise a ProtocolError (G9 reject-loudly) before dispatch — they are never silently dropped. Inspect the actual native resolution via the dispatch-envelope knob_resolution / member_knob_resolution echo (or resolve_dispatch()). |
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
-| `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to the pre-written six-block packet |
+| `source_ref` | `str\|None` | `op="handoff"` only — admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:…`, `packet:{path}`). Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's spec. **Preferred for the implement lane** (`cursor-implement` / `web-implement`). Relay pass-through — the MCP client does NOT resolve it. |
+| `packet_path` | `str\|None` | `op="handoff"` only — workspaces-relative path to a pre-written six-block packet. Hand-authored alternative to `source_ref`; both-present triggers the `implement_spec_hash` drift guard. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
 
@@ -189,15 +190,16 @@ team_dispatch(op="handoff", role="cursor-consult",
               subject="<Task> handoff — <subject>")
 # → {to_agent: "claude-cursor", push_reminder mentions Cursor / agent-bus}
 
-# Bound implement (→ Cursor) — open IDE thread
+# Bound implement (→ Cursor) — open IDE thread; PREFER source_ref (Stargate materializes the packet)
 team_dispatch(op="handoff", role="cursor-implement",
-              packet_path="universal-llm-gateway/tmp/prompts/<task>-implement-packet.md",
+              source_ref="todo:<slug>",   # primary; Stargate normalize→materialize from the todo spec
               subject="Implement <task>")
 # → {to_agent: "claude-cursor", handoff_contract: "implement", push_reminder mentions Cursor}
+# (Legacy hand-authored alternative: packet_path="…/<task>-implement-packet.md")
 
 # Bound implement (→ Web) — operator push; claude-web implements via fs
 team_dispatch(op="handoff", role="web-implement",
-              packet_path="universal-llm-gateway/tmp/prompts/<task>-implement-packet.md",
+              source_ref="todo:<slug>",
               subject="Implement <task>")
 # → {to_agent: "claude-web", handoff_contract: "implement", push_reminder mentions web push}
 ```
