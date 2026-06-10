@@ -2,8 +2,8 @@
 """Guard against deprecated monolithic services.rag.events imports.
 
 Usage:
-    python scripts/check-event-contracts-sync.py
-    python scripts/check-event-contracts-sync.py --staged
+    python scripts/check-rag-events-imports.py
+    python scripts/check-rag-events-imports.py --staged
 """
 
 from __future__ import annotations

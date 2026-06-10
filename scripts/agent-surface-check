@@ -19,9 +19,9 @@ scripts/gen-rules --target command-map --check
 scripts/gen-rules --target agent-guides-rules --check
 "${HOME}/.venvs/universal/bin/python3" scripts/registry-check
 "${HOME}/.venvs/universal/bin/python3" scripts/gen-mcp-dispatch-role-docs --check
-"${HOME}/.venvs/universal/bin/python3" scripts/check-workflow-doc-drift.py
 # Blocking catalog gate + import guard (parity logic retired Phase 2).
 "${HOME}/.venvs/universal/bin/python3" -m scripts.gen_event_catalog check || exit 1
-"${HOME}/.venvs/universal/bin/python3" scripts/check-event-contracts-sync.py --staged || exit 1
+"${HOME}/.venvs/universal/bin/python3" scripts/check-rag-events-imports.py --staged || exit 1
+"${HOME}/.venvs/universal/bin/python3" scripts/check-workflow-doc-drift.py
 
 echo "OK agent-surface-check: all gates passed"
