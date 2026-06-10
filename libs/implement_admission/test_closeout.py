@@ -63,17 +63,22 @@ def test_no_stub_not_implemented_in_closeout_py() -> None:
     assert "NotImplementedError" not in adapters_text
 
 
-def test_todo_adapter_delegates_to_pipeline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    captured: dict = {}
+def test_todo_adapter_closes_in_process() -> None:
+    calls: list[tuple[str, dict]] = []
 
-    def fake_pipeline(pipeline_id: str, options: dict) -> dict:
-        captured["pipeline_id"] = pipeline_id
-        captured["options"] = options
-        return {"ok": True, "todo_id": options["todo_id"]}
+    def fake_dispatch(tool: str, args: dict) -> dict:
+        calls.append((tool, args))
+        if tool == "todo_close_sidecar":
+            return {
+                "closure_summary_uri": "cortex://notes/system/todos/my-todo-closure.md"
+            }
+        if tool == "assert":
+            return {"id": 1}
+        if tool == "entity_update":
+            return {"workflow_state": "done"}
+        return {}
 
-    set_runtime(CloseoutRuntime(run_pipeline=fake_pipeline))
+    set_runtime(CloseoutRuntime(dispatch=fake_dispatch))
     closeout = ImplementCloseout(
         status=CloseoutStatus.COMPLETE,
         summary="closed",
@@ -85,9 +90,16 @@ def test_todo_adapter_delegates_to_pipeline(
         source_kind=SourceKind.TODO,
     )
     results = run_adapters(closeout, source)
-    assert captured["pipeline_id"] == "todo-close"
-    assert captured["options"]["todo_id"] == "todo:my-todo"
-    assert "evidence_uris" in captured["options"]
+    tools = [c[0] for c in calls]
+    # In-process closure via cortex-api (no Stargate re-entry): sidecar -> assert
+    # -> workflow_state=done, mirroring pipeline:todo-close's core sequence.
+    assert tools == ["todo_close_sidecar", "assert", "entity_update"]
+    assert calls[1][1]["entity_id"] == "todo:my-todo"
+    assert calls[2][1] == {"entity_id": "todo:my-todo", "workflow_state": "done"}
+    assert (
+        "cortex://notes/system/todos/my-todo-closure.md"
+        in calls[1][1]["evidence_uris"]
+    )
     assert results[0].status == "complete"
 
 
@@ -173,13 +185,19 @@ def test_composition_runs_embedded(
     packet.parent.mkdir(parents=True, exist_ok=True)
     packet.write_text("---\nsource_ref: todo:embedded\n---\n", encoding="utf-8")
 
-    captured: dict = {}
+    seen_todo_ids: list[str] = []
 
-    def fake_pipeline(pipeline_id: str, options: dict) -> dict:
-        captured["todo_id"] = options.get("todo_id")
-        return {"ok": True}
+    def fake_dispatch(tool: str, args: dict) -> dict:
+        if tool == "entity_update":
+            seen_todo_ids.append(args.get("entity_id"))
+            return {"workflow_state": "done"}
+        if tool == "todo_close_sidecar":
+            return {"closure_summary_uri": "cortex://x.md"}
+        if tool == "assert":
+            return {"id": 1}
+        return {}
 
-    set_runtime(CloseoutRuntime(run_pipeline=fake_pipeline))
+    set_runtime(CloseoutRuntime(dispatch=fake_dispatch))
     closeout = ImplementCloseout(
         status=CloseoutStatus.COMPLETE,
         summary="packet close",
@@ -191,7 +209,7 @@ def test_composition_runs_embedded(
         source_kind=SourceKind.PACKET,
     )
     results = run_adapters(closeout, source)
-    assert captured.get("todo_id") == "todo:embedded"
+    assert "todo:embedded" in seen_todo_ids
     adapters = {r.adapter for r in results}
     assert CloseoutAdapterKind.PACKET.value in adapters
     assert CloseoutAdapterKind.TODO.value in adapters
@@ -282,7 +300,11 @@ def test_mixed_not_reachable_via_sourcekind() -> None:
 
 
 def test_apply_closeout_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    set_runtime(CloseoutRuntime(run_pipeline=lambda _pid, _opts: {"ok": True}))
+    set_runtime(
+        CloseoutRuntime(
+            dispatch=lambda _tool, _args: {"id": 1, "workflow_state": "done"}
+        )
+    )
     closeout = ImplementCloseout(
         status=CloseoutStatus.COMPLETE,
         summary="done",

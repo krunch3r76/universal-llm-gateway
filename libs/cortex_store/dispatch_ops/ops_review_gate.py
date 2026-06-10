@@ -91,6 +91,12 @@ def _run_session_audit_or_block(
 ) -> dict[str, Any]:
     """Session audit gate — called as first substantive step in _op_session_close (C3).
 
+    Scope: the entities this session declares in ``entity_ids``. When ``entity_ids``
+    is empty the gate audits nothing and returns {} (no scan) — graph-wide auditing
+    is the user-callable ``session_audit`` / ``audit`` surface's job, not a per-close
+    block/warn input. Preview (dry_run/preflight) and the real close share this
+    scope, so a preview never diverges from the close it predicts (thread 1448).
+
     Returns {} on clean pass. In WARN mode with findings returns {"warning": {...}}.
     In BLOCK mode with unresolved criticals returns {"blocked": True, ...} — caller
     MUST return this without writing any file or DB row.
@@ -103,6 +109,22 @@ def _run_session_audit_or_block(
     confirm record() shim supports per-call role override before enabling BLOCK mode.
     """
     mode = os.environ.get(_AUDIT_MODE_ENV, "warn").lower()
+
+    # Gate scope = the entities this session declares responsibility for. With
+    # none declared, there is nothing for the *gate* to evaluate: the full-graph
+    # audit is a user-callable / cadence concern (_op_session_audit, the `audit`
+    # op), not a per-close block/warn input. Skip the scan — this also keeps
+    # preview (dry_run / preflight) and the real close on identical scope, so a
+    # preview never diverges from the close it predicts. See thread 1448.
+    if not entity_ids:
+        record(
+            "cortex.session.audit.unscoped",
+            session_id=session_id,
+            agent=agent,
+            reason="no_entity_ids",
+        )
+        return {}
+
     start = time.time()
 
     findings = _run_session_audit_graph_only(session_id, entity_ids)
@@ -168,7 +190,50 @@ def _run_session_audit_or_block(
     }
 
 
+def summarize_audit_outcome(
+    outcome: dict[str, Any], *, sample_cap: int = 50
+) -> dict[str, Any]:
+    """Project a (possibly huge) audit outcome into a bounded response shape.
+
+    Preserves block/warn semantics and counts; caps findings/criticals lists.
+    """
+    if not outcome:
+        return outcome
+    if outcome.get("blocked"):
+        criticals = outcome.get("criticals", []) or []
+        if len(criticals) <= sample_cap:
+            return outcome
+        return {
+            **{k: v for k, v in outcome.items() if k != "criticals"},
+            "criticals": criticals[:sample_cap],
+            "criticals_total": len(criticals),
+            "criticals_truncated": True,
+        }
+    if "warning" not in outcome:
+        return outcome
+    w = outcome["warning"]
+    findings = w.get("audit_findings", []) or []
+    by_severity: dict[str, int] = {}
+    by_kind: dict[str, int] = {}
+    for f in findings:
+        by_severity[f["severity"]] = by_severity.get(f["severity"], 0) + 1
+        by_kind[f["kind"]] = by_kind.get(f["kind"], 0) + 1
+    return {
+        "warning": {
+            "mode": w.get("mode"),
+            "gap_count": w.get("gap_count", len(findings)),
+            "deferred": w.get("deferred", []),
+            "by_severity": by_severity,
+            "by_kind": by_kind,
+            "findings_sample": findings[:sample_cap],
+            "findings_total": len(findings),
+            "findings_truncated": len(findings) > sample_cap,
+        }
+    }
+
+
 __all__ = [
     "_run_session_audit_graph_only",
     "_run_session_audit_or_block",
+    "summarize_audit_outcome",
 ]

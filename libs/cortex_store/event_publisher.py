@@ -211,6 +211,52 @@ def cortex_subgraph_render_failed(
 
 
 @event_factory
+def cortex_search_failed(
+    exc_type: str,
+    detail: str,
+    q_len: int,
+    intent: str,
+) -> Event:
+    """cortex.search.failed — emitted at search boundary before re-raise."""
+    ev = Event(
+        signal="cortex.search.failed",
+        role="observation",
+        scope="global",
+        payload={
+            "exc_type": exc_type,
+            "detail": detail,
+            "q_len": q_len,
+            "intent": intent,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def cortex_search_vector_degraded(
+    reason: str,
+    exc_type: str,
+    q_len: int,
+    duration_s: float,
+) -> Event:
+    """cortex.search.vector.degraded — vector branch failed; FTS-only degrade."""
+    ev = Event(
+        signal="cortex.search.vector.degraded",
+        role="observation",
+        scope="global",
+        payload={
+            "reason": reason,
+            "exc_type": exc_type,
+            "q_len": q_len,
+            "duration_s": duration_s,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def cortex_entity_source_changed(
     entity_id: str,
     change: str,

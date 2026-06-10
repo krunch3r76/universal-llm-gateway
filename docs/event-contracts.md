@@ -2211,6 +2211,8 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_audit.py` and `ops_audit_detector
 | `cortex.subgraph.render.completed` | `render_id, root, hops, entity_count, edge_count, duration_ms, rendered_bytes` | Successful render; `rendered_bytes` is UTF-8 length of markdown (generated_at excluded). |
 | `cortex.subgraph.render.failed` | `render_id, root, reason, hops` (reason ∈ `root_missing`, `hops_out_of_range`, `top_k_out_of_range`, `unknown_edge_type`, `entity_not_found`, `entity_cap_exceeded`, `card_build_failed`) | Error path inside renderer; emitted before structured envelope return. Reason enum widened from V1.1 spec to field-level granularity. |
 | `cortex.entity.source.changed` | `entity_id`, `change`, `source_uri`? | Entity `source_uri` set/changed/dropped on create/update. `change` ∈ {`set`, `changed`, `dropped`}. Drives RAG EntityAdmissionGate debounced refresh. role=observation. |
+| `cortex.search.failed` | `exc_type`, `detail`, `q_len`, `intent` | Search boundary exception before re-raise; names real cause before generic client error. |
+| `cortex.search.vector.degraded` | `reason`, `exc_type`, `q_len`, `duration_s` | Vector branch failed; hybrid search degraded to FTS-only. `reason` ∈ {`vector_embed_timeout`, `vector_unavailable`, `vector_error`}. |
 
 **Implementation note:** `cortex.session.audit.blocked` is the only `coordination`-role signal in this family. The `record()` shim defaults to `role="observation"` — confirm shim supports per-call role override before Phase 2.1 BLOCK-mode flip; if not, surface as a precondition.
 
@@ -2257,6 +2259,16 @@ Emitted by the bulk dispatch ops in `libs/cortex_store/dispatch_ops/ops_bulk_ent
 | `mcp.cortex.relationships.bulk.upserted` | `count` | Relationships bulk-upsert transaction committed. Same post-commit ordering guarantee as the entities counterpart. |
 | `mcp.cortex.bulk.rolled.back` | `op`, `failed_index`, `reason` | A bulk dispatch op rolled back the transaction at item `failed_index` and returned a structured error to the caller. `op` ∈ {`entities_bulk_upsert`, `relationships_bulk_upsert`}. `reason` ∈ {`item_not_object`, `http_exception`, `integrity_error`}. `status_code` is also present on `http_exception` rollbacks. Symmetric counterpart to the post-commit `*.bulk.upserted` event — emit-and-return on the rollback path keeps the failure observable on the event bus, not just in the caller's response body. |
 | `mcp.cortex.dispatch.arguments.invalid` | `tool`, `error` | Cortex dispatch handler rejected the `arguments` string because JSON parsing failed. Replaces the prior bare `logger.warning` carve-out; the dispatch response carries `_CORTEX_FORMAT_HINT` so callers see the structural error, while consumers see this signal on the bus for population-level monitoring. |
+
+### Cortex Relay Signals
+
+Emitted by `services/mcp-server/tools/_cortex_relay.py::cx` via bare `mcp_events.record()` (mirrors `relay()` idiom). Makes every cortex-api REST relay observable. A `mcp.cortex.relay.called` with no terminal sibling within the relay budget indicates a connector-side abort. All signals: `role="observation"`, `scope="global"`.
+
+| Signal | Required Payload | Description |
+|---|---|---|
+| `mcp.cortex.relay.called` | `method`, `path`, `timeout_s` | Entry to cortex-api UDS relay before HTTP request. |
+| `mcp.cortex.relay.completed` | `method`, `path`, `status_code`, `duration_s`, `timeout_s` | Successful relay (`status_code < 400`). |
+| `mcp.cortex.relay.failed` | `method`, `path`, `error`, `duration_s`, `timeout_s`, `status_code`?, `detail`? | Relay failure: `error` ∈ {`request_error`, `http_error`, `invalid_json`}; `status_code` present on HTTP errors. |
 
 ### Email Bridge Ingest Signals
 

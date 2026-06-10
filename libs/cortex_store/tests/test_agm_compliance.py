@@ -14,7 +14,6 @@ Origin: Agent bus thread 453, Phase A4 of cortex-v3-kumiho-complete.md
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,247 +22,17 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-# ---------------------------------------------------------------------------
-# Bootstrap schema for in-memory test DB
-# ---------------------------------------------------------------------------
-
-_BASE_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS schema_version (
-    version INTEGER PRIMARY KEY,
-    description TEXT,
-    applied_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS entities (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT,
-    aliases TEXT,
-    attributes TEXT,
-    notes TEXT,
-    source_uri TEXT,
-    content_hash TEXT,
-    status TEXT DEFAULT 'confirmed',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS assertions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_id TEXT NOT NULL REFERENCES entities(id),
-    claim TEXT NOT NULL,
-    confidence TEXT NOT NULL DEFAULT 'believed',
-    confidence_score REAL,
-    evidence TEXT,
-    evidence_uris TEXT,
-    seeded_by TEXT,
-    derivation_type TEXT DEFAULT 'inference',
-    chunk_id INTEGER,
-    reasoning_summary TEXT,
-    is_atomic INTEGER DEFAULT 1,
-    is_decontextualized INTEGER DEFAULT 1,
-    observed_at TEXT,
-    valid_from TEXT,
-    valid_until TEXT,
-    superseded_by INTEGER,
-    review_status TEXT DEFAULT 'committed',
-    reviewer TEXT,
-    reviewed_at TEXT,
-    review_notes TEXT,
-    resolution_status TEXT,
-    fulfillment_assertion_id INTEGER,
-    quality_score REAL,
-    claim_hash TEXT,
-    prospective_summary TEXT,
-    events_json TEXT,
-    artifact_uri TEXT,
-    artifact_storage TEXT DEFAULT 'inline',
-    entrenchment_score REAL,
-    updated_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(entity_id, claim_hash) ON CONFLICT IGNORE
-);
-
-CREATE TABLE IF NOT EXISTS relationships (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_id TEXT,
-    target_id TEXT,
-    from_entity TEXT,
-    to_entity TEXT,
-    type_id TEXT,
-    type TEXT,
-    role TEXT,
-    strength REAL,
-    evidence TEXT,
-    chunk_id INTEGER,
-    valid_from TEXT,
-    valid_until TEXT,
-    source_uri TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS session_edges (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    from_node TEXT NOT NULL,
-    to_node TEXT NOT NULL,
-    edge_type TEXT NOT NULL,
-    strength REAL DEFAULT 0.8,
-    edge_source TEXT DEFAULT 'explicit',
-    context TEXT,
-    prompt TEXT,
-    seeded_by TEXT,
-    valid_until TEXT,
-    metadata TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS session_journals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT,
-    agent TEXT,
-    summary TEXT,
-    decisions TEXT,
-    open_items TEXT,
-    domains TEXT,
-    entity_ids TEXT,
-    file_path TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS chunks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    content TEXT,
-    source_uri TEXT,
-    source_date TEXT,
-    observer TEXT DEFAULT 'web-claude',
-    chunk_index INTEGER DEFAULT 0,
-    extraction_run INTEGER,
-    token_count INTEGER,
-    source_hash TEXT,
-    model_version TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS surface_forms (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    mention TEXT,
-    entity_id TEXT,
-    chunk_id INTEGER,
-    resolution_confidence REAL,
-    resolution_reasoning TEXT,
-    context_hash TEXT,
-    mention_type TEXT,
-    span_start INTEGER,
-    span_end INTEGER,
-    entity_type_hint TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS entity_access_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_id TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    session_id TEXT,
-    source TEXT DEFAULT 'agent',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS entity_access_summary (
-    entity_id TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    week_start TEXT NOT NULL,
-    agent_access_count INTEGER DEFAULT 0,
-    boot_access_count INTEGER DEFAULT 0,
-    session_count INTEGER DEFAULT 0,
-    UNIQUE(entity_id, agent, week_start)
-);
-
-CREATE TABLE IF NOT EXISTS entity_salience_cache (
-    entity_id TEXT PRIMARY KEY,
-    salience_score REAL,
-    temporal_score REAL,
-    structural_score REAL,
-    contextual_score REAL,
-    frequency_score REAL,
-    fast_state_hash TEXT,
-    slow_state_hash TEXT,
-    last_surprise REAL,
-    fingerprint TEXT,
-    computed_at TEXT,
-    boot_section_cache TEXT
-);
-
-CREATE TABLE IF NOT EXISTS tag_assignments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    tag_name TEXT NOT NULL,
-    entity_id TEXT NOT NULL,
-    assertion_id INTEGER NOT NULL,
-    assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
-    assigned_by TEXT NOT NULL,
-    UNIQUE(tag_name, entity_id),
-    FOREIGN KEY (entity_id) REFERENCES entities(id),
-    FOREIGN KEY (assertion_id) REFERENCES assertions(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_tag_entity ON tag_assignments(entity_id);
-CREATE INDEX IF NOT EXISTS idx_tag_name ON tag_assignments(tag_name);
-
-CREATE TABLE IF NOT EXISTS near_duplicate_flags (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    assertion_id INTEGER NOT NULL,
-    existing_id INTEGER NOT NULL,
-    score REAL NOT NULL,
-    reviewed INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS assertions_fts USING fts5(
-    assertion_id UNINDEXED,
-    entity_id UNINDEXED,
-    indexed_text,
-    content='',
-    tokenize='unicode61'
-);
-"""
-
-
-def _bootstrap_db(db_path: str) -> None:
-    """Create a fresh test database with full Cortex schema."""
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.executescript(_BASE_SCHEMA)
-    # Mark all migrations as applied so the app doesn't re-run them
-    for v in range(1, 24):
-        conn.execute(
-            "INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)",
-            (v, f"test_bootstrap_{v:03d}"),
-        )
-    conn.commit()
-    conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
-def test_db(tmp_path: Path) -> str:
-    """Provide a fresh test database path for each test."""
-    db_path = str(tmp_path / "test_cortex.db")
-    _bootstrap_db(db_path)
-    return db_path
+def test_db(migrated_db_path: Path) -> str:
+    """Provide a fresh head-schema test database path for each test."""
+    return str(migrated_db_path)
 
 
 @pytest.fixture()
 def client(test_db: str) -> TestClient:
     """Create a TestClient against a fresh cortex-api app with isolated DB."""
     os.environ["CORTEX_DB_PATH"] = test_db
-    # Force module to pick up new env
     from cortex_store.main import create_app
 
     app = create_app(db_path=test_db)
@@ -751,7 +520,7 @@ class TestCoreRetainment:
         )
         assert r.status_code == 200
 
-        updated = r.json()
+        updated = r.json()["item"]
         assert updated["review_status"] == "staged"
         assert (updated["entrenchment_score"] or 0.0) < 0.5
 

@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from cortex_store import db
+from cortex_store._test_db_bootstrap import copy_template_db
 from cortex_store.dispatch_ops import ops_journals, ops_session_close
 from cortex_store.routes import (
     session_close_helpers,
@@ -26,7 +27,7 @@ from cortex_store.session_handoff import (
     read_handoff_source_file,
     resolve_handoff_for_write,
 )
-from cortex_store.test_session_close_handoff import _install_schema
+from cortex_store.test_session_close_handoff import _anchored_handoff
 
 
 def test_unlabeled_marker_extracts_literal_body() -> None:
@@ -127,14 +128,16 @@ def test_sandbox_escape_hard_fail(tmp_path: Path) -> None:
 
 @pytest.fixture()
 def handoff_close_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    migrated_db_template: Path,
 ) -> dict[str, Path]:
     db_path = tmp_path / "cortex.db"
     files_root = tmp_path / "files"
     files_root.mkdir(parents=True)
     transcripts_root = tmp_path / "agent-transcripts"
     transcripts_root.mkdir()
-    _install_schema(db_path)
+    copy_template_db(migrated_db_template, db_path)
     monkeypatch.setattr(db, "_CORTEX_DB", db_path)
     monkeypatch.setattr(ops_journals, "_FILES_ROOT", files_root)
     monkeypatch.setattr(ops_session_close, "_FILES_ROOT", files_root)
@@ -165,7 +168,7 @@ def test_dry_run_section_handoff_valid(handoff_close_env: dict[str, Path]) -> No
     )
     summary = "Dry-run validates marker-backed handoff without writes."
     result = ops_journals._op_session_close(
-        session_id="web-2026-06-03-1200",
+        session_id="web-2026-06-03-120000-a01",
         agent="web",
         session_summary_md=_session_summary(summary),
         summary=summary,
@@ -191,14 +194,17 @@ def test_dry_run_detached_string_surfaces_unverified(
     # depth="light" is the minimum handoff-compatible depth (none rejects a
     # handoff with handoff.requires_transcript_entity).
     summary = "Dry-run surfaces unverified advisory for detached handoff."
+    session_id = "web-2026-06-03-120200-a02"
     result = ops_journals._op_session_close(
-        session_id="web-2026-06-03-1202",
+        session_id=session_id,
         agent="web",
         session_summary_md=_session_summary(summary),
         summary=summary,
         transcript_depth="light",
         dry_run=True,
-        handoff_prompt="Inline detached handoff, no source file.",
+        handoff_prompt=_anchored_handoff(
+            session_id, "Inline detached handoff, no source file."
+        ),
     )
     assert result["dry_run"] is True
     assert result["handoff_valid"] is True
@@ -219,13 +225,12 @@ def test_unresolved_does_not_keep_stale_prompt(
     path.write_text("no marker region here\n", encoding="utf-8")
     summary = "Close with bad markers must not store caller prompt."
     result = ops_journals._op_session_close(
-        session_id="web-2026-06-03-1201",
+        session_id="web-2026-06-03-120100-a03",
         agent="web",
         session_summary_md=_session_summary(summary),
         summary=summary,
         transcript_depth="light",
         handoff_source_path=rel,
-        handoff_prompt="stale caller prompt must not persist",
     )
     assert "error" not in result, result
     db_path = handoff_close_env["db_path"]
@@ -233,7 +238,7 @@ def test_unresolved_does_not_keep_stale_prompt(
         sqlite3.connect(db_path)
         .execute(
             "SELECT handoff_prompt FROM session_journals WHERE session_id = ?",
-            ("web-2026-06-03-1201",),
+            ("web-2026-06-03-120100-a03",),
         )
         .fetchone()
     )
@@ -243,7 +248,7 @@ def test_unresolved_does_not_keep_stale_prompt(
         sqlite3.connect(db_path)
         .execute(
             "SELECT attributes FROM entities WHERE id = ?",
-            ("transcript:web-2026-06-03-1201",),
+            ("transcript:web-2026-06-03-120100-a03",),
         )
         .fetchone()
     )

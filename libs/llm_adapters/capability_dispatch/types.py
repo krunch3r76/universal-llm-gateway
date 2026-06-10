@@ -58,12 +58,14 @@ class ProtocolError(Exception):
 
 
 class CatalogMissError(Exception):
-    """G13: ModelId catalog-miss is a structural fail-fast, never a silent default.
+    """G13: a model that resolves to no capability card is a structural
+    fail-fast, never a silent default.
 
-    Raised only when the dispatch provider/surface cannot be determined at all
-    (provider-uninferable). The conservative in-surface fallback ceiling (e.g.
-    unknown-claude → 8192) is NOT a catalog-miss — it is a within-surface
-    fail-closed ceiling and resolves normally.
+    Raised when the dispatch provider/surface cannot be determined at all
+    (provider-uninferable) or when an Anthropic family matches no capability
+    card in the registry ceiling table (``miss_reason="no_capability_card"``).
+    The ``miss_reason`` field distinguishes the cases. Admission rejects rather
+    than dispatching on a guessed ceiling and an unguessable thinking surface.
     """
 
     def __init__(self, miss_key: str, miss_reason: str) -> None:
@@ -105,7 +107,7 @@ class CapabilityReasoningDispatch:
         (Anthropic ``{"type": "adaptive"}``).
       - ``token_budget``: subclass emits a budget object from ``budget_map``
         (Anthropic ``{"type": "enabled", "budget_tokens": N}``); efforts absent
-        from the map skip thinking.
+        from the map are rejected at the G9 boundary (422 with valid keys).
       - ``effort_string``: subclass emits the literal effort
         (OpenAI/xAI/Google ``{"effort": <e>}``).
 

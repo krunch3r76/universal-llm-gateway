@@ -93,6 +93,46 @@ async def test_build_dispatch_body_sets_knob_resolution_preview(
 
 
 @pytest.mark.asyncio
+async def test_build_dispatch_body_knob_resolution_preview_includes_max_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_hydrate(
+        agent: str, transcript_id: str | None = None, **_k: Any
+    ) -> HydrationBundle:
+        return _bundle(
+            AgentMeta(
+                default_model="openai/gpt-5.5",
+                allowed_models=["openai/gpt-5.5"],
+                allowed_options=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.service.hydrate_agent",
+        fake_hydrate,
+    )
+
+    req = FrontierGenerateRequest(
+        messages=[{"role": "user", "content": "hello"}],
+        role="gatherer",
+        dispatch_thread_id=_DISPATCH_THREAD,
+        reasoning_effort="high",
+        generation_options={"max_tokens": 4096},
+    )
+    body = await build_dispatch_body(req)
+    max_output = body["pipeline_options"]["_knob_resolution_preview"]["max_output"]
+    assert set(max_output) == {
+        "requested",
+        "resolved",
+        "decision",
+        "floor",
+        "ceiling",
+    }
+    assert max_output["requested"] == 4096
+    assert max_output["resolved"] == 16384
+
+
+@pytest.mark.asyncio
 async def test_explicit_model_override_can_fill_any_role(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -10,7 +10,7 @@ _SUBSCRIBE_PATH = EVENTS_SUBSCRIBE_PATH
 # cortex-api endpoint returning resolved absolute paths of all entities
 # carrying a source_uri (Task 8). RAG reaches cortex-api over UDS via
 # transport_utils.make_async_client(DEFAULT_CORTEX_URL) — never cortex.db.
-_SOURCE_PATHS_ENDPOINT = "/api/v1/entities/source-paths"
+_SOURCE_PATHS_ENDPOINT = "/entities/source-paths"
 
 _SNAPSHOT_TIMEOUT_S = 10.0
 # Steady-state backstop refresh interval (self-heals a missed event).

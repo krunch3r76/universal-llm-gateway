@@ -8,6 +8,10 @@ block contract: project `.cursor/rules/architecture-handoff-protocol.mdc`
 
 ## Dispatch lifecycle (when to author which packet)
 
+**Invariant:** Reasoning tier (`web-consult` / `cursor-consult` / Opus) authors
+dispatch-ready specs (`tasks/specs/{slug}.md` + todo seed); mechanical tier
+(`cursor-implement` / Composer) executes them — **never the reverse**.
+
 Read `attributes.dispatch_lane` on the leaf `todo:` before writing anything.
 
 | `dispatch_lane` | Who authors | Packet type | Typical seat |
@@ -30,8 +34,10 @@ reasoning-upstream hop that produces the dense spec) → **Phase 2 execute**
 (`cursor-implement` against that spec, or web inline fix — the mechanical-downstream hop).
 Do not author a `cursor-implement` packet as the first hop on a bug whose root cause or
 design is still open; that collapses the upstream → dense-artifact → downstream pipeline
-into a single mechanical step with no spec. Full model: `agent-skills/consult-routing.md`
-§ Codified bug reports.
+into a single mechanical step with no spec. **Pass zoom-out duty** binds every bug pickup:
+zoom out beyond the filed symptom (touch-point inventory, bug-class grep, labeled
+`## Secondary findings` in closeout). Full model: `agent-skills/consult-routing.md`
+§ Codified bug reports → Pass zoom-out duty.
 
 Upstream gates (falsifier, operator assert) must close before `web-implement-packet`
 dispatch — set `workflow_state: blocked` + `block_reason` on the blocked leaf.

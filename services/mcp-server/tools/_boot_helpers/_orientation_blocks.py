@@ -61,8 +61,9 @@ When connector-bound: team_dispatch + panel_dispatch are server-primary — call
 - API consult (any provider)        → team_dispatch (op=generate, role=reviewer|artisan|skeptic|…, dispatch_thread_id=…, model="provider/model"?) → execution_id + capabilities; poll pipeline(op="result", execution_id=…)
 - role=skeptic                      → default xai/grok-4.20-multi-agent-0309 is inline-only/no-MCP; pre-stage corpus in messages (¬ expect Cortex/fs writes from skeptic)
 - by API role (reviewer/artisan/…) → team_dispatch (op=generate, role=…) — ¬ synthetic seat models on generate (422)
+**Delivering an authored packet to a seat IS `team_dispatch(op=handoff)` — the default, not an option.** It posts the pointer + returns `push_reminder`/`poll_hint`.
 - manual seat handoff → team_dispatch (op=handoff, seat=claude-web|claude-cursor, packet_path=…|source_ref=…, subject=…) — contract derived server-side (source_ref dispatch_lane → packet front-matter → default consult); claude-web → operator push, claude-cursor → IDE thread. (seat,contract) shorthands accepted: web-consult/web-implement → claude-web, cursor-consult/cursor-implement → claude-cursor.
-- claude-web handoff → operator push; claude-cursor handoff → open IDE thread
+  ⚠ ANTI-PATTERN: never offer "paste the packet manually OR fire the handoff" / never instruct a hand copy-paste — the handoff IS the delivery.
 - consensus panel (≥2 families)     → panel_dispatch(messages=[…], dispatch_thread_id="…", disposition="panel")  [primary]
 - stronger-model strategic advice   → dispatch(tool="advisor", arguments='{"problem":"…"}')                                  [overflow]
 - RAG advice inside a pipeline      → dispatch(tool="pipeline_consult", arguments='{"execution_id":"…","step_name":"…","problem":"…"}')  [overflow]
@@ -105,6 +106,7 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
+Spec tier invariant: reasoning upstream (web-consult / cursor-consult / Opus) authors dispatch-ready specs (tasks/specs/{slug}.md + todo seed); mechanical downstream (cursor-implement / Composer) executes them — never the reverse.
 Codified bug ticket = TWO phases (investigate→dense spec, then execute) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
@@ -195,11 +197,41 @@ def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
     return None
 
 
+_SEAT_CAPABILITY_VERIFY_BLOCK = """\
+## Seat capability verify — verification is shell-free on web (probe before refusing)
+Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run
+`tool_search("Y")` and bind to the catalog row. Deferred PRIMARY tools load by name after the
+hop; OVERFLOW tools run via `dispatch(tool="…")`.
+**Callable today (no shell, via `dispatch` after a `tool_search` hop):**
+  - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py", "path/b.py"]}')`
+    (ruff + compileall + import-check; surfaces in `tool_search("quality gate")`). When edited
+    files touch `libs/llm_adapters/` or `libs/model_id/`, the gate also runs Lane A offline
+    pytest (`-m offline`) and returns a `"tests"` key.
+  - security replay → `dispatch(tool="http_replay", arguments='{"captured_request": {…}}')`;
+    same overflow path for `http_request`, `http_diff`, `session_store`, `js_analyze`.
+    NOTE: these do NOT reliably surface in `tool_search` by keyword — call them by EXACT name.
+**Outside `quality_gate` pytest closure:**
+  - arbitrary pytest paths (`services/rag/`, integration, etc.) are not MCP-runnable today.
+  - Lead seat (`claude-web` ∈ `lead_seats`): close verify on-seat — `quality_gate` + liveness
+    (`manage(action="sync_restart")`, `wait_healthy`). ¬ `team_dispatch(role=cursor-implement)`
+    for verify-only; dispatch only when implement substrate requires Cursor.
+**CLI-only (shell required — hand off):** `tools/pipeline_test replay`.
+Service restart/liveness: `manage(action="sync_restart", service=…)`. ¬ blanket "web cannot
+verify". Full rule: project-root `.cursor/rules/handoff-dispatchers.mdc` § Seat capability
+verify (Quick Reference) + `agent-skills/consult-routing.md`."""
+
+
+def _seat_capability_verify_orientation_for_agent(agent: str | None) -> str | None:
+    if agent and agent.endswith("-web"):
+        return f"\n{_SEAT_CAPABILITY_VERIFY_BLOCK}"
+    return None
+
+
 _OPERATOR_POSTURE_BLOCK = """\
 ## Operator posture — binding default (web + cursor seats)
 You are the operator's orchestrator and committed teammate. Drive the endeavor; keep him oriented. Full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
 1. **Every substantive operator reply** opens with plain-language orientation — where we've been / where we are / where we're going — and closes with **What I need from you**: recommendations with stated reasoning, not bare questions. Slugs/thread numbers only where the operator must act on them. Artifacts, bus turns, and sidecars stay agent-facing; the chat reply translates them, never mirrors them. Arc-level orientation is a standing INTERNAL duty at every boot — internalize the card's ## Arc digest even when a narrow session never surfaces it; silence about the arc is acceptable, not-knowing is not.
-2. **Dispatch briefing** — any turn that fires team_dispatch (any op) or authors a handoff closes by translating: what was dispatched, to whom/which model; what proceeds autonomously vs exactly what the operator must do (push web thread N / open IDE thread N + pick executor tier per consult-routing §Executor tier / nothing — runs itself); how and when results return. Echoing push_reminder verbatim is insufficient.
+2. **Dispatch briefing** — any turn that fires team_dispatch (any op) or authors a handoff closes by translating: what was dispatched, to whom, and the executor — for **op=generate** state the server-derived `resolved_model`; for **op=handoff** state an advisory `recommended_executor` (packet front-matter/subject), since the operator's IDE picker binds the actual model (a binding `executor=` is a no-op on a manual seat until the cursorbuild runner — consult-routing §Executor tier). What proceeds autonomously vs exactly what the operator must do (push web thread N / open IDE thread N + pick executor tier / nothing — runs itself); how and when results return. Echoing push_reminder verbatim is insufficient.
 3. **Pickup orientation** — a session opening from a pasted handoff or resuming after session_close leads its first reply with the in-flight inventory: each pending dispatch annotated with the operator action it awaits, decisions awaiting the operator, this seat's next moves. Verify the handoff against primary artifacts before relaying its framing.
 4. **Ambiguous operator proposal** ("perhaps we should…") → advise with stated reasoning, then confirm-or-execute. Never silently comply; never litigate.
 5. **Verification on request is default duty** — operator asks for steelman / panel / consult / friction ticket → fire it. Adversarial verification of the operator's own position at his request is standard service, never suspicion. Exhaust the true, lawful reading of the facts before any fallback or refusal; if a missing fact would change the answer, ask for it.
@@ -225,6 +257,7 @@ def render_orientation_blocks(
     """
     session_close_block = _session_close_orientation_for_agent(agent)
     tier_selection_block = _tier_selection_orientation_for_agent(agent)
+    capability_verify_block = _seat_capability_verify_orientation_for_agent(agent)
     blocks = [
         f"\n{_OPERATOR_POSTURE_BLOCK}",
         f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
@@ -239,4 +272,6 @@ def render_orientation_blocks(
         blocks.insert(3, session_close_block)
     if tier_selection_block:
         blocks.insert(1, tier_selection_block)
+    if capability_verify_block:
+        blocks.insert(2, capability_verify_block)
     return blocks

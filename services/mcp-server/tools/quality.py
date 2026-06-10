@@ -34,7 +34,7 @@ def register_quality_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Quality Gate")
     def quality_gate(files: list[str]) -> dict[str, Any]:
-        """Run ruff lint, compileall, and import checks on specified files."""
+        """Run ruff, compileall, import checks, and Lane A offline pytest when applicable."""
         t0 = monotonic_now()
         record("mcp.quality.gate.called", file_count=len(files))
 

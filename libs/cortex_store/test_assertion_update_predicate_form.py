@@ -7,9 +7,9 @@ Acceptance criteria §5 from todo:cortex-api-assertion-update-predicate-form:
   - validation: empty string rejected (422)
   - validation: >2000 chars rejected (422)
 
-Tests use an in-memory SQLite DB and patch cortex_conn in the route module,
-matching the fixture pattern in test_bulk_write_surface.py and
-_intent_card_test_fixtures.py.
+Tests use head-schema DB via conftest ``migrated_conn`` and patch cortex_conn
+in the route module, matching the fixture pattern in test_bulk_write_surface.py
+and _intent_card_test_fixtures.py.
 """
 
 from __future__ import annotations
@@ -21,69 +21,27 @@ from fastapi import HTTPException
 
 from cortex_store.routes.assertions import _update_assertion_impl
 
-# ---------------------------------------------------------------------------
-# Fixture helpers
-# ---------------------------------------------------------------------------
-
-_ASSERTIONS_DDL = """
-CREATE TABLE assertions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_id TEXT NOT NULL,
-    claim TEXT NOT NULL,
-    confidence TEXT NOT NULL,
-    confidence_score REAL,
-    evidence TEXT,
-    evidence_uris TEXT,
-    seeded_by TEXT,
-    derivation_type TEXT,
-    chunk_id INTEGER,
-    reasoning_summary TEXT,
-    is_atomic INTEGER DEFAULT 1,
-    is_decontextualized INTEGER DEFAULT 1,
-    observed_at TEXT,
-    valid_from TEXT,
-    valid_until TEXT,
-    superseded_by INTEGER,
-    review_status TEXT,
-    reviewer TEXT,
-    reviewed_at TEXT,
-    review_notes TEXT,
-    resolution_status TEXT,
-    fulfillment_assertion_id INTEGER,
-    quality_score REAL,
-    prospective_summary TEXT,
-    events_json TEXT,
-    artifact_uri TEXT,
-    artifact_storage TEXT DEFAULT 'inline',
-    entrenchment_score REAL,
-    predicate_form TEXT,
-    raw_predicate_form TEXT,
-    normalization_decision TEXT,
-    candidate_set_fingerprint TEXT,
-    normalizer_version TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT
-);
-"""
+_TEST_ENTITY = "test:entity"
 
 
-def _make_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_ASSERTIONS_DDL)
-    # Phase B Q5.4 always-re-normalize calls DBEntityResolver(conn) which
-    # reads `entities`; the table must exist even when these tests don't
-    # exercise Class 2 entity rewriting.
-    conn.executescript(
-        "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL);"
+def _seed_entity(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, 'test', ?)",
+        (_TEST_ENTITY, "test-entity"),
     )
-    return conn
+    conn.commit()
+
+
+@pytest.fixture()
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    _seed_entity(migrated_conn)
+    return migrated_conn
 
 
 def _insert_assertion(
     conn: sqlite3.Connection,
     *,
-    entity_id: str = "test:entity",
+    entity_id: str = _TEST_ENTITY,
     claim: str = "Test claim.",
     confidence: str = "believed",
     predicate_form: str | None = None,
@@ -115,8 +73,9 @@ def _patch(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_predicate_form_null_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _make_conn()
+def test_predicate_form_null_to_value(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form=None)
 
@@ -132,8 +91,9 @@ def test_predicate_form_null_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_predicate_form_value_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _make_conn()
+def test_predicate_form_value_to_value(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form="role(old, x, y)")
 
@@ -149,9 +109,9 @@ def test_predicate_form_value_to_value(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_predicate_form_clear_via_explicit_null(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    conn = _make_conn()
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form="role(to_be_cleared, x, y)")
 
@@ -167,8 +127,9 @@ def test_predicate_form_clear_via_explicit_null(
 # ---------------------------------------------------------------------------
 
 
-def test_predicate_form_untouched_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _make_conn()
+def test_predicate_form_untouched_when_absent(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form="role(preserved, x, y)")
 
@@ -183,8 +144,9 @@ def test_predicate_form_untouched_when_absent(monkeypatch: pytest.MonkeyPatch) -
 # ---------------------------------------------------------------------------
 
 
-def test_predicate_form_empty_string_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _make_conn()
+def test_predicate_form_empty_string_rejected(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn)
 
@@ -199,8 +161,9 @@ def test_predicate_form_empty_string_rejected(monkeypatch: pytest.MonkeyPatch) -
 # ---------------------------------------------------------------------------
 
 
-def test_predicate_form_too_long_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    conn = _make_conn()
+def test_predicate_form_too_long_rejected(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn)
 
@@ -220,11 +183,11 @@ def test_predicate_form_too_long_rejected(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_dispatch_op_clear_via_explicit_null(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
 
-    conn = _make_conn()
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form="to-be-cleared")
 
@@ -235,10 +198,11 @@ def test_dispatch_op_clear_via_explicit_null(
     assert _get_predicate_form(conn, aid) is None
 
 
-def test_dispatch_op_set_value(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dispatch_op_set_value(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
 
-    conn = _make_conn()
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form=None)
 
@@ -250,13 +214,13 @@ def test_dispatch_op_set_value(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_dispatch_op_predicate_form_absent_preserves_value(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Omitting predicate_form from kwargs (sentinel default) MUST NOT touch
     the column, even when other fields are being updated."""
     from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
 
-    conn = _make_conn()
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form="role(preserved, x, y)")
 
@@ -268,13 +232,13 @@ def test_dispatch_op_predicate_form_absent_preserves_value(
 
 
 def test_dispatch_op_only_predicate_form_clear_succeeds(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A dispatch call with predicate_form=None as the sole field MUST NOT
     return 'No fields to update' — clearing is a real update."""
     from cortex_store.dispatch_ops.ops_assertions import _op_assertion_update
 
-    conn = _make_conn()
     _patch(monkeypatch, conn)
     aid = _insert_assertion(conn, predicate_form="role(value, x, y)")
 

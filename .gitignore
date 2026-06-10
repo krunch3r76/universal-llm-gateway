@@ -87,7 +87,10 @@ tests/*
 *.pth
 *.onnx
 .cursorignore
-.github/
+# GitHub Actions workflows are tracked; other dot-github content stays local
+.github/*
+!.github/workflows/
+!.github/workflows/*.yml
 proposals/
 summaries/
 
@@ -175,3 +178,7 @@ libs/cortex_store/migrations/
 .*
 */.*
 */.*/
+# Track GitHub Actions workflows (overrides .* above)
+!.github/
+!.github/workflows/
+!.github/workflows/*.yml

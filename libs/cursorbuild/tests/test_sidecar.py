@@ -27,6 +27,11 @@ B3_TOOL_START = b'{"type":"tool_call","subtype":"started","call_id":"tool_90bb11
 B3_TOOL_COMPLETED = b'{"type":"tool_call","subtype":"completed","call_id":"tool_90bb1111-2222-3333-4444-555566667777","tool_call":{"mcpToolCall":{"args":{"name":"vortex-tool_search","args":{"query":"cortex"},"toolName":"tool_search","providerIdentifier":"vortex"},"result":{"success":{"content":[{"text":{"text":"ok"}}],"isError":false}}}},"session_id":"fcc7566c-1234-5678-90ab-cdef12345678"}'
 B3_RESULT_SUCCESS = b'{"type":"result","subtype":"success","duration_ms":2404,"is_error":false,"result":"5","session_id":"fcc7566c-1234-5678-90ab-cdef12345678","usage":{"inputTokens":14125,"outputTokens":111,"cacheReadTokens":28224,"cacheWriteTokens":0}}'
 B3_NON_JSON = b'plain text line that is not JSON at all, with "quotes" and \\escapes'
+# Live built-in tool_call shapes (cursor-agent 2026.05.28-a70ca7c, thread 1422).
+# Built-in variants carry NO toolName — the variant key is the identity.
+LIVE_READ = b'{"type":"tool_call","subtype":"started","call_id":"toolu_r1","tool_call":{"readToolCall":{"args":{"path":"/tmp/x/constants.py"}}},"session_id":"s","timestamp_ms":1}'
+LIVE_EDIT = b'{"type":"tool_call","subtype":"completed","call_id":"tool_e1","tool_call":{"editToolCall":{"args":{"path":"/tmp/x/probe.txt","streamContent":"ok"},"result":{"success":{}}}},"session_id":"s","timestamp_ms":2}'
+LIVE_SHELL = b'{"type":"tool_call","subtype":"started","call_id":"tool_s1","tool_call":{"shellToolCall":{"args":{"command":"echo hi","timeout":30000},"description":"echo"}},"session_id":"s","timestamp_ms":3}'
 B3_REJECTED = b'{"type":"tool_call","subtype":"completed","call_id":"tool_rej-001","tool_call":{"mcpToolCall":{"args":{"name":"vortex-foo","args":{},"toolName":"foo","providerIdentifier":"vortex"},"result":{"rejected":{"reason":"User rejected MCP: policy","isReadonly":false}}}},"session_id":"fcc7566c-1234-5678-90ab-cdef12345678"}'
 B3_RESULT_ERROR_WITH_USAGE = b'{"type":"result","subtype":"success","duration_ms":10,"is_error":true,"result":"boom","session_id":"fcc7566c-1234-5678-90ab-cdef12345678","usage":{"inputTokens":10,"outputTokens":1,"cacheReadTokens":0,"cacheWriteTokens":0}}'
 
@@ -57,6 +62,24 @@ def test_parse_tool_calls_nested_toolname_and_lifecycle() -> None:
     assert len(recs) == 2
     assert recs[0] == {"toolName": "tool_search", "subtype": "started"}
     assert recs[1] == {"toolName": "tool_search", "subtype": "completed"}
+
+
+def test_parse_tool_calls_builtin_variants_named_by_key() -> None:
+    """Built-in read/edit/shell variants (no toolName) yield the stripped key."""
+    blob = LIVE_READ + b"\n" + LIVE_EDIT + b"\n" + LIVE_SHELL
+    recs = parse_tool_calls(blob)
+    assert recs == [
+        {"toolName": "read", "subtype": "started"},
+        {"toolName": "edit", "subtype": "completed"},
+        {"toolName": "shell", "subtype": "started"},
+    ]
+
+
+def test_parse_tool_calls_mixed_builtin_and_mcp_order_preserved() -> None:
+    """Built-in and MCP calls interleave; bare MCP toolName still wins for mcp."""
+    blob = LIVE_READ + b"\n" + B3_TOOL_START + b"\n" + LIVE_EDIT
+    recs = parse_tool_calls(blob)
+    assert [r["toolName"] for r in recs] == ["read", "tool_search", "edit"]
 
 
 def test_parse_tool_calls_rejected_reason_no_raise() -> None:

@@ -235,7 +235,7 @@ def _query_one(
 def test_source_ref_param_accepts_optional(session_env: dict[str, Path]) -> None:
     result = ops_journals._op_session_close(
         **_payload(
-            session_id="cursor-2026-06-08-1000",
+            session_id="cursor-2026-06-08-100000-a01",
             transcripts_root=session_env["transcripts_root"],
         )
     )
@@ -243,7 +243,7 @@ def test_source_ref_param_accepts_optional(session_env: dict[str, Path]) -> None
 
 
 def test_stamp_transcript_attribute(session_env: dict[str, Path]) -> None:
-    session_id = "cursor-2026-06-08-1001"
+    session_id = "cursor-2026-06-08-100100-a02"
     result = ops_journals._op_session_close(
         **_payload(
             session_id=session_id,
@@ -264,7 +264,7 @@ def test_stamp_transcript_attribute(session_env: dict[str, Path]) -> None:
 
 
 def test_source_ref_provenance(session_env: dict[str, Path]) -> None:
-    session_id = "cursor-2026-06-08-1002"
+    session_id = "cursor-2026-06-08-100200-a03"
     ops_journals._op_session_close(
         **_payload(
             session_id=session_id,
@@ -300,7 +300,7 @@ def _payload_none(*, session_id: str, source_ref: str | None = None) -> dict[str
 
 
 def test_journal_row_mirror_depth_none(session_env: dict[str, Path]) -> None:
-    session_id = "cursor-2026-06-08-1003"
+    session_id = "cursor-2026-06-08-100300-a04"
     result = ops_journals._op_session_close(
         **_payload_none(session_id=session_id, source_ref="todo:flintridge-appeal")
     )
@@ -316,7 +316,7 @@ def test_journal_row_mirror_depth_none(session_env: dict[str, Path]) -> None:
 
 
 def test_source_ref_absent_parity(session_env: dict[str, Path]) -> None:
-    session_id = "cursor-2026-06-08-1004"
+    session_id = "cursor-2026-06-08-100400-a05"
     ops_journals._op_session_close(
         **_payload(
             session_id=session_id,
@@ -342,7 +342,7 @@ def test_source_ref_absent_parity(session_env: dict[str, Path]) -> None:
 
 
 def test_source_ref_unparseable_nonblocking(session_env: dict[str, Path]) -> None:
-    session_id = "cursor-2026-06-08-1005"
+    session_id = "cursor-2026-06-08-100500-a06"
     result = ops_journals._op_session_close(
         **_payload(
             session_id=session_id,
@@ -365,7 +365,7 @@ def test_source_ref_unparseable_nonblocking(session_env: dict[str, Path]) -> Non
 
 
 def test_plan_phase_shorthand_canonical(session_env: dict[str, Path]) -> None:
-    session_id = "cursor-2026-06-08-1006"
+    session_id = "cursor-2026-06-08-100600-a07"
     ops_journals._op_session_close(
         **_payload(
             session_id=session_id,
@@ -389,7 +389,9 @@ def test_plan_phase_shorthand_canonical(session_env: dict[str, Path]) -> None:
 
 def test_source_ref_depth_none_advisory(session_env: dict[str, Path]) -> None:
     result = ops_journals._op_session_close(
-        **_payload_none(session_id="cursor-2026-06-08-1007", source_ref="todo:example")
+        **_payload_none(
+            session_id="cursor-2026-06-08-100700-a08", source_ref="todo:example"
+        )
     )
     warnings = result.get("audit_warnings") or []
     assert any(w.get("kind") == "source_ref_depth_advisory" for w in warnings)

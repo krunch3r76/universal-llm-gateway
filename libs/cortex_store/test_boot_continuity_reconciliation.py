@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cortex_store.routes.boot import continuity
-from cortex_store.test_session_close_handoff import session_env  # noqa: F401
-
 
 def _ensure_workflow_state(db_path: Path) -> None:
     conn = sqlite3.connect(db_path)
@@ -84,7 +82,7 @@ def test_boot_continuity_omits_resolved_bare_todo_prefix(
     _insert_journal(
         db_path,
         agent="cursor",
-        session_id="cursor-2026-06-01-0900",
+        session_id="cursor-2026-06-01-090000-a01",
         open_items=[bare_item, untouched],
     )
 
@@ -104,7 +102,7 @@ def test_boot_continuity_tags_resolved_when_omit_false(
     _insert_journal(
         db_path,
         agent="cursor",
-        session_id="cursor-2026-06-01-1000",
+        session_id="cursor-2026-06-01-100000-a02",
         open_items=[bracketed],
     )
 

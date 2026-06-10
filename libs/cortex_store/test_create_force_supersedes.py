@@ -39,62 +39,15 @@ from fastapi import HTTPException
 
 from cortex_store.routes.assertions import _create_assertion_impl
 
-# Schema MUST include ``claim_hash`` — the _create route writes it on every
-# INSERT (used by the dedup-fallback SELECT when ``INSERT OR IGNORE`` no-ops).
-# test_superseded_by_overwrite_guards.py's DDL omits it because supersede
-# doesn't write through this column.
-_ASSERTIONS_DDL = """
-CREATE TABLE assertions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_id TEXT NOT NULL,
-    claim TEXT NOT NULL,
-    confidence TEXT NOT NULL,
-    confidence_score REAL,
-    evidence TEXT,
-    evidence_uris TEXT,
-    seeded_by TEXT,
-    derivation_type TEXT,
-    chunk_id TEXT,
-    chunk_id_schema TEXT,
-    reasoning_summary TEXT,
-    is_atomic INTEGER DEFAULT 1,
-    is_decontextualized INTEGER DEFAULT 1,
-    observed_at TEXT,
-    valid_from TEXT,
-    valid_until TEXT,
-    superseded_by INTEGER,
-    review_status TEXT,
-    reviewer TEXT,
-    reviewed_at TEXT,
-    review_notes TEXT,
-    resolution_status TEXT,
-    fulfillment_assertion_id INTEGER,
-    quality_score REAL,
-    prospective_summary TEXT,
-    events_json TEXT,
-    artifact_uri TEXT,
-    artifact_storage TEXT DEFAULT 'inline',
-    entrenchment_score REAL,
-    predicate_form TEXT,
-    raw_predicate_form TEXT,
-    normalization_decision TEXT,
-    candidate_set_fingerprint TEXT,
-    normalizer_version TEXT,
-    claim_hash TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT
-);
-CREATE TABLE entities (id TEXT PRIMARY KEY);
-"""
+_TEST_ENTITY = "test:entity"
 
 
-def _make_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_ASSERTIONS_DDL)
-    conn.execute("INSERT INTO entities (id) VALUES (?)", ("test:entity",))
+def _seed_entity(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, 'test', ?)",
+        (_TEST_ENTITY, "test-entity"),
+    )
     conn.commit()
-    return conn
 
 
 def _insert(
@@ -105,7 +58,7 @@ def _insert(
     cur = conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, superseded_by, claim_hash)"
         " VALUES (?, ?, ?, ?, ?)",
-        ("test:entity", "Seed claim.", "believed", superseded_by, "stub-hash-seed"),
+        (_TEST_ENTITY, "Seed claim.", "believed", superseded_by, "stub-hash-seed"),
     )
     conn.commit()
     return cur.lastrowid  # type: ignore[return-value]
@@ -166,9 +119,12 @@ class _NoOpThread:
 
 
 @pytest.fixture
-def conn(monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
-    """In-memory sqlite + stubbed side-effects in cortex_store.routes.assertions._create."""
-    c = _make_conn()
+def conn(
+    monkeypatch: pytest.MonkeyPatch, migrated_conn: sqlite3.Connection
+) -> Iterator[sqlite3.Connection]:
+    """Head-schema sqlite + stubbed side-effects in cortex_store.routes.assertions._create."""
+    _seed_entity(migrated_conn)
+    c = migrated_conn
     wrapper = _NoCloseConn(c)
 
     monkeypatch.setattr(
@@ -228,7 +184,7 @@ def conn(monkeypatch: pytest.MonkeyPatch) -> Iterator[sqlite3.Connection]:
 
 
 _BASE_CREATE_BODY: dict[str, object] = {
-    "entity_id": "test:entity",
+    "entity_id": _TEST_ENTITY,
     "claim": "Replacement claim via create+force.",
     "confidence": "believed",
     "evidence": "test evidence",

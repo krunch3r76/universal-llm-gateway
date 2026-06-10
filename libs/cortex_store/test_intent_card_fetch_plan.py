@@ -8,21 +8,21 @@ Split from ``test_intent_card.py`` (SLOC waiver assertion 8521 on
 
 from __future__ import annotations
 
-from cortex_store._intent_card_test_fixtures import (
-    insert_assertion,
-    insert_entity,
-    make_conn,
-)
+import sqlite3
+
+from cortex_store._intent_card_test_fixtures import insert_assertion, insert_entity
 from cortex_store.card import get_entity_card
 from cortex_store.entity_read import get_entity_impl
 
 
-def test_card_fetch_plan_row_volume_smaller_than_full() -> None:
+def test_card_fetch_plan_row_volume_smaller_than_full(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     """Seed >>top_k assertions so the difference is unambiguous: the full path
     materializes every assertion + every relationship + every edge; card
     materializes only the top_k assertions plus aggregate counts.
     """
-    conn = make_conn()
+    conn = migrated_conn
     insert_entity(conn, entity_id="todo:bulk", entity_type="todo")
     for i in range(40):
         insert_assertion(

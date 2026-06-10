@@ -24,6 +24,7 @@ CREATE TABLE assertions (
     confidence TEXT, superseded_by INTEGER, observed_at TEXT,
     entrenchment_score REAL, evidence TEXT, evidence_uris TEXT,
     derivation_type TEXT, valid_from TEXT, predicate_form TEXT,
+    prospective_summary TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE relationships (

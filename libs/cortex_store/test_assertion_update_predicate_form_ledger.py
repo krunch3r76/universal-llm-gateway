@@ -8,22 +8,27 @@ normalize_result in hand. Mirrors the extraction in _create.py:184-187.
 
 from __future__ import annotations
 
-import importlib.util
 import sqlite3
-from pathlib import Path
 
 import pytest
 
 from cortex_store.routes.assertions import _update_assertion_impl
 
+_ENTITY = "person:camelia-mahmoudi"
 
-def _load_migration():
-    path = Path(__file__).parent / "migrations" / "039_normalization_decision_ledger.py"
-    spec = importlib.util.spec_from_file_location("mig039", path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+
+def _seed_entities(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, ?, ?)",
+        (_ENTITY, "person", "camelia-mahmoudi"),
+    )
+    conn.commit()
+
+
+@pytest.fixture()
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    _seed_entities(migrated_conn)
+    return migrated_conn
 
 
 def _patch_cortex_conn(
@@ -35,58 +40,27 @@ def _patch_cortex_conn(
     )
 
 
-def _seed_entities(conn: sqlite3.Connection, ids: list[str]) -> None:
-    conn.executescript(
-        "CREATE TABLE IF NOT EXISTS entities (id TEXT PRIMARY KEY, type TEXT);"
-    )
-    conn.executemany(
-        "INSERT OR IGNORE INTO entities (id, type) VALUES (?, ?)",
-        [(i, i.split(":")[0]) for i in ids],
-    )
-    conn.commit()
-
-
 def test_assertion_update_populates_all_four_ledger_columns(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """PATCH with explicit predicate_form must write the 4 ledger columns computed by normalize.
 
-    Uses in-memory DB + migration 039 to ensure columns exist; calls the real
-    _update_assertion_impl (which exercises update_assertion + normalize + SET builder).
+    Uses head-schema DB via migrated_conn; calls the real _update_assertion_impl
+    (which exercises update_assertion + normalize + SET builder).
     """
-    mig = _load_migration()
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-
-    # Base table (pre-039 shape) + entities; migration will add the ledger cols
-    conn.executescript(
-        """
-        CREATE TABLE assertions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity_id TEXT NOT NULL,
-            claim TEXT NOT NULL,
-            confidence TEXT NOT NULL,
-            predicate_form TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT
-        );
-        """
-    )
-    _seed_entities(conn, ["person:camelia-mahmoudi"])
-    mig.migrate(conn)
-
-    # Insert a starter assertion (no ledger yet — pre-fix rows stay NULL, but we update it)
     conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, predicate_form) "
         "VALUES (?, ?, ?, ?)",
         (
-            "person:camelia-mahmoudi",
+            _ENTITY,
             "Phase D claim for ledger update test.",
             "confirmed",
             None,
         ),
     )
     aid = conn.execute("SELECT id FROM assertions").fetchone()["id"]
+    conn.commit()
 
     _patch_cortex_conn(monkeypatch, conn)
 
@@ -121,39 +95,16 @@ def test_assertion_update_populates_all_four_ledger_columns(
 
 
 def test_assertion_update_without_predicate_form_leaves_ledger_untouched(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Non-pf update must not touch (or nullify) ledger columns."""
-    mig = _load_migration()
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-
-    conn.executescript(
-        """
-        CREATE TABLE assertions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity_id TEXT NOT NULL,
-            claim TEXT NOT NULL,
-            confidence TEXT NOT NULL,
-            predicate_form TEXT,
-            raw_predicate_form TEXT,
-            normalization_decision TEXT,
-            candidate_set_fingerprint TEXT,
-            normalizer_version TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT
-        );
-        """
-    )
-    _seed_entities(conn, ["person:camelia-mahmoudi"])
-    mig.migrate(conn)  # idempotent
-
     conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
         "raw_predicate_form, normalization_decision, candidate_set_fingerprint, normalizer_version) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            "person:camelia-mahmoudi",
+            _ENTITY,
             "claim",
             "confirmed",
             "role(person:camelia-mahmoudi, filer, 24pr197054)",
@@ -164,6 +115,7 @@ def test_assertion_update_without_predicate_form_leaves_ledger_untouched(
         ),
     )
     aid = conn.execute("SELECT id FROM assertions").fetchone()["id"]
+    conn.commit()
 
     _patch_cortex_conn(monkeypatch, conn)
 

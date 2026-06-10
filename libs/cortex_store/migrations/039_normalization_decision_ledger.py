@@ -1,6 +1,7 @@
 """Migration 039: normalization-decision ledger (v1.3.1 instrumentation).
 
-Adds 4 columns to `assertions` for shadow-mode cardinality decision capture:
+Adds 5 columns to `assertions` for shadow-mode cardinality decision capture:
+  - predicate_form (TEXT, normalized predicate projection — peer column per v2.4 §6.7)
   - raw_predicate_form (TEXT, caller-supplied pre-normalize form)
   - normalization_decision (TEXT, enum: resolved_single | no_match | collision_refused | ...)
   - candidate_set_fingerprint (TEXT, SHA256 first-16 of sorted candidates)
@@ -43,6 +44,7 @@ def _add_normalization_ledger_columns(conn: sqlite3.Connection) -> None:
         return
 
     cols_to_add = [
+        ("predicate_form", "TEXT"),
         ("raw_predicate_form", "TEXT"),
         ("normalization_decision", "TEXT"),
         ("candidate_set_fingerprint", "TEXT"),

@@ -146,7 +146,7 @@ async def test_refresh_replaces_set_on_success() -> None:
             return None
 
         async def get(self, path: str) -> FakeResponse:
-            assert path == "/api/v1/entities/source-paths"
+            assert path == "/entities/source-paths"
             return FakeResponse()
 
     with patch(
@@ -242,3 +242,18 @@ def test_rag_file_indexing_gated_factory_shape() -> None:
     ev = rag_file_indexing_gated(file="/x", layer="watcher_sweep")
     assert ev.signal == "rag.file.indexing.gated"
     assert ev.role == "coordination"
+
+
+def test_source_paths_endpoint_constant_drift_guard() -> None:
+    """Drift-guard: RAG client endpoint must match cortex-api mount.
+
+    cortex-api mounts entities at bare /entities (no /api/v1 prefix).
+    If this test fails, the EntityAdmissionGate will 404 on every refresh.
+    Fix: update _SOURCE_PATHS_ENDPOINT in _constants.py to match the mount.
+    """
+    from services.rag.entity_admission._constants import _SOURCE_PATHS_ENDPOINT
+
+    assert _SOURCE_PATHS_ENDPOINT == "/entities/source-paths", (
+        f"_SOURCE_PATHS_ENDPOINT={_SOURCE_PATHS_ENDPOINT!r} does not match "
+        "cortex-api mount /entities/source-paths — path-prefix drift detected"
+    )

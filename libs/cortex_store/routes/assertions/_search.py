@@ -7,14 +7,17 @@ Compaction-pointer rows are stripped from results by default per
 
 from __future__ import annotations
 
+import time
 from typing import Annotated, Literal
 
+import httpx
 from fastapi import Query
 
 from ... import embeddings as cortex_embeddings
 from ... import vector_store
 from ...compaction import filter_compaction_pointers
 from ...db import cortex_conn, decode_row, query
+from ...event_publisher import cortex_search_failed, cortex_search_vector_degraded
 from ...models import (
     AssertionSearchItem,
     AssertionSearchResult,
@@ -90,11 +93,23 @@ def _vector_search(query_text: str, n_results: int) -> list[dict]:
     """Run the vector branch of hybrid search. Returns [] on failure."""
     if not cortex_embeddings.is_configured() or not vector_store.is_initialized():
         return []
+    t0 = time.monotonic()
     try:
         query_embedding = cortex_embeddings.embed_query(query_text)
         return vector_store.search_similar(query_embedding, n_results=n_results)
-    except Exception:
-        logger.warning("Vector search failed — degrading to FTS-only", exc_info=True)
+    except Exception as exc:
+        duration_s = round(time.monotonic() - t0, 3)
+        reason = (
+            "vector_embed_timeout"
+            if isinstance(exc, httpx.TimeoutException)
+            else "vector_error"
+        )
+        cortex_search_vector_degraded(
+            reason=reason,
+            exc_type=type(exc).__name__,
+            q_len=len(query_text),
+            duration_s=duration_s,
+        )
         return []
 
 
@@ -281,6 +296,34 @@ def search_assertions(
     ] = False,
 ) -> AssertionSearchResult:
     """Hybrid search: FTS5 + vector similarity with CombMAX score fusion."""
+    try:
+        return _search_assertions_impl(
+            q=q,
+            superseded=superseded,
+            entity_type=entity_type,
+            limit=limit,
+            intent=intent,
+            include_compaction_pointers=include_compaction_pointers,
+        )
+    except Exception as exc:
+        cortex_search_failed(
+            exc_type=type(exc).__name__,
+            detail=str(exc),
+            q_len=len(q),
+            intent=intent,
+        )
+        raise
+
+
+def _search_assertions_impl(
+    *,
+    q: str,
+    superseded: bool,
+    entity_type: str | None,
+    limit: int,
+    intent: Literal["summary", "full"],
+    include_compaction_pointers: bool,
+) -> AssertionSearchResult:
     sanitized = _sanitize_fts_query(q)
     if not sanitized:
         return AssertionSearchResult(

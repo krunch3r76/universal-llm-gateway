@@ -257,7 +257,7 @@ def register_security_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="HTTP Replay")
     def http_replay(
-        captured_request: dict[str, Any],
+        captured_request: dict[str, Any] | None = None,
         modifications: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Replay a captured request with modifications for parameter tampering.
@@ -265,6 +265,11 @@ def register_security_tools(mcp: FastMCP) -> None:
         captured_request: {method, url, headers, postData?} (CDP format).
         modifications: {headers?, url_params?, body_params? (dot-notation), session_profile?}.
         """
+        if not captured_request:
+            return {
+                "error": "http_replay requires 'captured_request' {method, url, headers, postData?}",
+                "error_type": "missing_argument",
+            }
         method = captured_request.get("method", "GET")
         url = captured_request.get("url", "")
         hdrs = dict(captured_request.get("headers", {}))

@@ -1,0 +1,2115 @@
+{
+  "tables": {
+    "assertions": {
+      "sql": "CREATE TABLE \"assertions\" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            entity_id TEXT NOT NULL REFERENCES entities(id),\n            claim TEXT NOT NULL,\n            confidence TEXT NOT NULL DEFAULT 'believed',\n            confidence_score REAL,\n            evidence TEXT,\n            evidence_uris TEXT,\n            derivation_type TEXT NOT NULL DEFAULT 'inference',\n            chunk_id TEXT,\n            chunk_id_schema TEXT,\n            reasoning_summary TEXT,\n            extraction_run INTEGER,\n            is_atomic BOOLEAN NOT NULL DEFAULT TRUE,\n            is_decontextualized BOOLEAN NOT NULL DEFAULT TRUE,\n            observed_at DATETIME,\n            valid_from DATETIME,\n            valid_until DATETIME,\n            superseded_by INTEGER REFERENCES \"assertions\"(id),\n            review_status TEXT DEFAULT 'committed',\n            reviewer TEXT,\n            reviewed_at DATETIME,\n            review_notes TEXT,\n            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n            seeded_by TEXT DEFAULT NULL,\n            claim_hash TEXT,\n            resolution_status TEXT\n                CHECK(resolution_status IN ('pending', 'fulfilled', 'breached', 'unknown')),\n            fulfillment_assertion_id INTEGER REFERENCES \"assertions\"(id),\n            quality_score REAL,\n            supersession_scope TEXT DEFAULT 'local',\n            prospective_summary TEXT,\n            events_json TEXT,\n            artifact_uri TEXT,\n            artifact_storage TEXT NOT NULL DEFAULT 'inline',\n            entrenchment_score REAL,\n            predicate_form TEXT,\n            raw_predicate_form TEXT,\n            normalization_decision TEXT,\n            candidate_set_fingerprint TEXT,\n            normalizer_version TEXT\n        , credibility TEXT, attributes TEXT)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "entity_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "claim",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "confidence",
+          "TEXT",
+          1,
+          "'believed'",
+          0
+        ],
+        [
+          "confidence_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "evidence",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "evidence_uris",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "derivation_type",
+          "TEXT",
+          1,
+          "'inference'",
+          0
+        ],
+        [
+          "chunk_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "chunk_id_schema",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "reasoning_summary",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "extraction_run",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "is_atomic",
+          "BOOLEAN",
+          1,
+          "TRUE",
+          0
+        ],
+        [
+          "is_decontextualized",
+          "BOOLEAN",
+          1,
+          "TRUE",
+          0
+        ],
+        [
+          "observed_at",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "valid_from",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "valid_until",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "superseded_by",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "review_status",
+          "TEXT",
+          0,
+          "'committed'",
+          0
+        ],
+        [
+          "reviewer",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "reviewed_at",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "review_notes",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "updated_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "seeded_by",
+          "TEXT",
+          0,
+          "NULL",
+          0
+        ],
+        [
+          "claim_hash",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "resolution_status",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "fulfillment_assertion_id",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "quality_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "supersession_scope",
+          "TEXT",
+          0,
+          "'local'",
+          0
+        ],
+        [
+          "prospective_summary",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "events_json",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "artifact_uri",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "artifact_storage",
+          "TEXT",
+          1,
+          "'inline'",
+          0
+        ],
+        [
+          "entrenchment_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "predicate_form",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "raw_predicate_form",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "normalization_decision",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "candidate_set_fingerprint",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "normalizer_version",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "credibility",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "attributes",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "assertions_fts": {
+      "sql": "CREATE VIRTUAL TABLE assertions_fts USING fts5(  indexed_text,  assertion_id UNINDEXED,  entity_id UNINDEXED,  tokenize='porter unicode61')",
+      "columns": [
+        [
+          "indexed_text",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "assertion_id",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "entity_id",
+          "",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "assertions_fts_config": {
+      "sql": "CREATE TABLE 'assertions_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID",
+      "columns": [
+        [
+          "k",
+          "",
+          1,
+          null,
+          1
+        ],
+        [
+          "v",
+          "",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "assertions_fts_content": {
+      "sql": "CREATE TABLE 'assertions_fts_content'(id INTEGER PRIMARY KEY, c0, c1, c2)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "c0",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c1",
+          "",
+          0,
+          null,
+          0
+        ],
+        [
+          "c2",
+          "",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "assertions_fts_data": {
+      "sql": "CREATE TABLE 'assertions_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "block",
+          "BLOB",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "assertions_fts_docsize": {
+      "sql": "CREATE TABLE 'assertions_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "sz",
+          "BLOB",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "assertions_fts_idx": {
+      "sql": "CREATE TABLE 'assertions_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
+      "columns": [
+        [
+          "segid",
+          "",
+          1,
+          null,
+          1
+        ],
+        [
+          "term",
+          "",
+          1,
+          null,
+          2
+        ],
+        [
+          "pgno",
+          "",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "chunks": {
+      "sql": "CREATE TABLE chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, source_uri TEXT NOT NULL, source_date DATETIME, observer TEXT NOT NULL DEFAULT 'web-claude', chunk_index INTEGER DEFAULT 0, extraction_run INTEGER, token_count INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, pinpoint TEXT)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "content",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "source_uri",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "source_date",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "observer",
+          "TEXT",
+          1,
+          "'web-claude'",
+          0
+        ],
+        [
+          "chunk_index",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "extraction_run",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "token_count",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "pinpoint",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "dream_state_cursor": {
+      "sql": "CREATE TABLE dream_state_cursor (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            last_processed_id INTEGER,\n            run_id TEXT NOT NULL,\n            started_at TEXT NOT NULL,\n            completed_at TEXT,\n            pipeline_version TEXT NOT NULL,\n            assertions_processed INTEGER NOT NULL DEFAULT 0,\n            actions_taken INTEGER NOT NULL DEFAULT 0\n        )",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "last_processed_id",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "run_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "started_at",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "completed_at",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "pipeline_version",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "assertions_processed",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ],
+        [
+          "actions_taken",
+          "INTEGER",
+          1,
+          "0",
+          0
+        ]
+      ]
+    },
+    "entities": {
+      "sql": "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, description TEXT, notes TEXT, aliases TEXT, attributes TEXT, source_uri TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP, content_hash TEXT, retention_policy TEXT NOT NULL DEFAULT 'permanent', retention_ttl_days INTEGER DEFAULT NULL, last_accessed_at TEXT DEFAULT NULL, workflow_state TEXT, lifecycle TEXT, confidence_band TEXT, confidence_score REAL, adoption TEXT)",
+      "columns": [
+        [
+          "id",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "type",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "name",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "description",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "notes",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "aliases",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "attributes",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "source_uri",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "updated_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "content_hash",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "retention_policy",
+          "TEXT",
+          1,
+          "'permanent'",
+          0
+        ],
+        [
+          "retention_ttl_days",
+          "INTEGER",
+          0,
+          "NULL",
+          0
+        ],
+        [
+          "last_accessed_at",
+          "TEXT",
+          0,
+          "NULL",
+          0
+        ],
+        [
+          "workflow_state",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "lifecycle",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "confidence_band",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "confidence_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "adoption",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "entity_access_log": {
+      "sql": "CREATE TABLE entity_access_log (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  entity_id TEXT NOT NULL,\n  agent TEXT NOT NULL,\n  operation TEXT NOT NULL,\n  source TEXT NOT NULL DEFAULT 'agent',\n  session_id TEXT,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "entity_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "agent",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "operation",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "source",
+          "TEXT",
+          1,
+          "'agent'",
+          0
+        ],
+        [
+          "session_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TIMESTAMP",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ]
+      ]
+    },
+    "entity_access_summary": {
+      "sql": "CREATE TABLE entity_access_summary (\n  entity_id TEXT NOT NULL,\n  agent TEXT NOT NULL,\n  week_start TEXT NOT NULL,\n  agent_access_count INTEGER DEFAULT 0,\n  boot_access_count INTEGER DEFAULT 0,\n  session_count INTEGER DEFAULT 0,\n  PRIMARY KEY (entity_id, agent, week_start)\n)",
+      "columns": [
+        [
+          "entity_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "agent",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          "week_start",
+          "TEXT",
+          1,
+          null,
+          3
+        ],
+        [
+          "agent_access_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "boot_access_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "session_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ]
+      ]
+    },
+    "entity_aliases": {
+      "sql": "CREATE TABLE entity_aliases (\n            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,\n            entity_type TEXT NOT NULL,\n            alias TEXT NOT NULL,\n            created_at TEXT NOT NULL DEFAULT (datetime('now')),\n            PRIMARY KEY (entity_id, alias),\n            UNIQUE (entity_type, alias)\n        )",
+      "columns": [
+        [
+          "entity_id",
+          "TEXT",
+          1,
+          null,
+          1
+        ],
+        [
+          "entity_type",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "alias",
+          "TEXT",
+          1,
+          null,
+          2
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          "datetime('now')",
+          0
+        ]
+      ]
+    },
+    "entity_salience_cache": {
+      "sql": "CREATE TABLE entity_salience_cache (\n  entity_id TEXT PRIMARY KEY REFERENCES entities(id),\n  salience_score REAL NOT NULL DEFAULT 0.0,\n  temporal_score REAL,\n  structural_score REAL,\n  contextual_score REAL,\n  frequency_score REAL,\n  fast_state_hash TEXT,\n  slow_state_hash TEXT,\n  last_surprise REAL,\n  fingerprint TEXT,\n  computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  boot_section_cache TEXT\n)",
+      "columns": [
+        [
+          "entity_id",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "salience_score",
+          "REAL",
+          1,
+          "0.0",
+          0
+        ],
+        [
+          "temporal_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "structural_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "contextual_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "frequency_score",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "fast_state_hash",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "slow_state_hash",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "last_surprise",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "fingerprint",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "computed_at",
+          "TIMESTAMP",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "boot_section_cache",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "event_chain_members": {
+      "sql": "CREATE TABLE event_chain_members (\n  chain_id INTEGER REFERENCES event_chains(id),\n  event_id TEXT REFERENCES entities(id),\n  position INTEGER NOT NULL,\n  PRIMARY KEY (chain_id, event_id)\n)",
+      "columns": [
+        [
+          "chain_id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "event_id",
+          "TEXT",
+          0,
+          null,
+          2
+        ],
+        [
+          "position",
+          "INTEGER",
+          1,
+          null,
+          0
+        ]
+      ]
+    },
+    "event_chains": {
+      "sql": "CREATE TABLE event_chains (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  chain_name TEXT NOT NULL,\n  root_event_id TEXT REFERENCES entities(id),\n  domain TEXT,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "chain_name",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "root_event_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "domain",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TIMESTAMP",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ]
+      ]
+    },
+    "extraction_runs": {
+      "sql": "CREATE TABLE extraction_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, source_uri TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'running', model TEXT NOT NULL, chunk_count INTEGER DEFAULT 0, entity_count INTEGER DEFAULT 0, assertion_count INTEGER DEFAULT 0, surface_form_count INTEGER DEFAULT 0, error_log TEXT, started_at DATETIME DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME, duration_ms INTEGER, content_hash TEXT)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "source_uri",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "status",
+          "TEXT",
+          1,
+          "'running'",
+          0
+        ],
+        [
+          "model",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "chunk_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "entity_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "assertion_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "surface_form_count",
+          "INTEGER",
+          0,
+          "0",
+          0
+        ],
+        [
+          "error_log",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "started_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "completed_at",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "duration_ms",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "content_hash",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "journal_links": {
+      "sql": "CREATE TABLE journal_links (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                from_entry INTEGER NOT NULL REFERENCES reflective_journal(id),\n                to_entry INTEGER REFERENCES reflective_journal(id),\n                to_entity TEXT,\n                link_type TEXT NOT NULL\n                    CHECK (link_type IN (\n                        'contradicts', 'refines', 'supersedes', 'reopens',\n                        'unresolved_with', 'continues', 'related', 'handoff_for'\n                    )),\n                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),\n                CHECK (to_entry IS NOT NULL OR to_entity IS NOT NULL)\n            )",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "from_entry",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "to_entry",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "to_entity",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "link_type",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+          0
+        ]
+      ]
+    },
+    "near_duplicate_flags": {
+      "sql": "CREATE TABLE near_duplicate_flags (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    assertion_id INTEGER NOT NULL REFERENCES assertions(id),\n    duplicate_of INTEGER NOT NULL REFERENCES assertions(id),\n    score REAL NOT NULL,\n    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))\n)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "assertion_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "duplicate_of",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "score",
+          "REAL",
+          1,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+          0
+        ]
+      ]
+    },
+    "reflective_journal": {
+      "sql": "CREATE TABLE reflective_journal (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                agent TEXT NOT NULL,\n                register TEXT NOT NULL,\n                entry TEXT NOT NULL,\n                kind TEXT NOT NULL DEFAULT 'entry'\n                    CHECK (kind IN (\n                        'entry', 'reflection', 'revision', 'consolidation', 'handoff'\n                    )),\n                session_id TEXT,\n                revises INTEGER REFERENCES reflective_journal(id),\n                consolidation_data TEXT,\n                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))\n            )",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "agent",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "register",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "entry",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "kind",
+          "TEXT",
+          1,
+          "'entry'",
+          0
+        ],
+        [
+          "session_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "revises",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "consolidation_data",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TEXT",
+          1,
+          "strftime('%Y-%m-%dT%H:%M:%SZ', 'now')",
+          0
+        ]
+      ]
+    },
+    "relationship_types": {
+      "sql": "CREATE TABLE relationship_types (type TEXT PRIMARY KEY, description TEXT, inverse TEXT REFERENCES relationship_types(type), is_transitive BOOLEAN DEFAULT FALSE, is_symmetric BOOLEAN DEFAULT FALSE, from_type TEXT, to_type TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)",
+      "columns": [
+        [
+          "type",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "description",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "inverse",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "is_transitive",
+          "BOOLEAN",
+          0,
+          "FALSE",
+          0
+        ],
+        [
+          "is_symmetric",
+          "BOOLEAN",
+          0,
+          "FALSE",
+          0
+        ],
+        [
+          "from_type",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "to_type",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ]
+      ]
+    },
+    "relationships": {
+      "sql": "CREATE TABLE \"relationships\" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            type TEXT NOT NULL REFERENCES relationship_types(type),\n            from_entity TEXT NOT NULL REFERENCES entities(id),\n            to_entity TEXT NOT NULL REFERENCES entities(id),\n            role TEXT,\n            strength REAL DEFAULT 1.0,\n            evidence TEXT,\n            chunk_id INTEGER,\n            valid_from DATETIME,\n            valid_until DATETIME,\n            source_uri TEXT,\n            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n            active BOOLEAN NOT NULL DEFAULT 1,\n            superseded_by INTEGER REFERENCES \"relationships\"(id),\n            session_id TEXT,\n            agent TEXT\n        )",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "type",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "from_entity",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "to_entity",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "role",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "strength",
+          "REAL",
+          0,
+          "1.0",
+          0
+        ],
+        [
+          "evidence",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "chunk_id",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "valid_from",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "valid_until",
+          "DATETIME",
+          0,
+          null,
+          0
+        ],
+        [
+          "source_uri",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "updated_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ],
+        [
+          "active",
+          "BOOLEAN",
+          1,
+          "1",
+          0
+        ],
+        [
+          "superseded_by",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "session_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "agent",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "schema_version": {
+      "sql": "CREATE TABLE schema_version (\n    version INTEGER PRIMARY KEY,\n    applied_at TEXT NOT NULL DEFAULT (datetime('now')),\n    description TEXT\n)",
+      "columns": [
+        [
+          "version",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "applied_at",
+          "TEXT",
+          1,
+          "datetime('now')",
+          0
+        ],
+        [
+          "description",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "session_edge_types": {
+      "sql": "CREATE TABLE session_edge_types (\n    type        TEXT    PRIMARY KEY,\n    description TEXT    NOT NULL,\n    directional BOOLEAN NOT NULL DEFAULT TRUE\n)",
+      "columns": [
+        [
+          "type",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "description",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "directional",
+          "BOOLEAN",
+          1,
+          "TRUE",
+          0
+        ]
+      ]
+    },
+    "session_edges": {
+      "sql": "CREATE TABLE session_edges (\n    id          INTEGER     PRIMARY KEY,\n    session_id  TEXT        NOT NULL,\n    agent       TEXT        NOT NULL,\n    from_node   TEXT        NOT NULL,\n    to_node     TEXT        NOT NULL,\n    edge_type   TEXT        NOT NULL    REFERENCES session_edge_types(type),\n    strength    REAL        NOT NULL    DEFAULT 0.8\n                            CHECK (strength >= 0.0 AND strength <= 1.0),\n    edge_source TEXT        NOT NULL    DEFAULT 'explicit',\n    context     TEXT,\n    prompt      TEXT,\n    seeded_by   TEXT,\n    valid_until TIMESTAMP,\n    metadata    TEXT,\n    created_at  TIMESTAMP   NOT NULL    DEFAULT CURRENT_TIMESTAMP\n)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "session_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "agent",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "from_node",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "to_node",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "edge_type",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "strength",
+          "REAL",
+          1,
+          "0.8",
+          0
+        ],
+        [
+          "edge_source",
+          "TEXT",
+          1,
+          "'explicit'",
+          0
+        ],
+        [
+          "context",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "prompt",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "seeded_by",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "valid_until",
+          "TIMESTAMP",
+          0,
+          null,
+          0
+        ],
+        [
+          "metadata",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "created_at",
+          "TIMESTAMP",
+          1,
+          "CURRENT_TIMESTAMP",
+          0
+        ]
+      ]
+    },
+    "session_journals": {
+      "sql": "CREATE TABLE session_journals (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, agent TEXT NOT NULL, summary TEXT NOT NULL, domains TEXT, decisions TEXT, open_items TEXT, file_path TEXT, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT)",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "timestamp",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "agent",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "summary",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "domains",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "decisions",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "open_items",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "file_path",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "entity_ids",
+          "TEXT",
+          0,
+          "'[]'",
+          0
+        ],
+        [
+          "session_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "prior_session_id",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "handoff_prompt",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "source_ref",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "surface_forms": {
+      "sql": "CREATE TABLE \"surface_forms\" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            mention TEXT NOT NULL,\n            entity_id TEXT NOT NULL REFERENCES entities(id),\n            chunk_id INTEGER,\n            resolution_confidence REAL,\n            resolution_reasoning TEXT,\n            context_hash TEXT,\n            mention_type TEXT DEFAULT 'name',\n            created_at DATETIME DEFAULT CURRENT_TIMESTAMP\n        )",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "mention",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "entity_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "chunk_id",
+          "INTEGER",
+          0,
+          null,
+          0
+        ],
+        [
+          "resolution_confidence",
+          "REAL",
+          0,
+          null,
+          0
+        ],
+        [
+          "resolution_reasoning",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "context_hash",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "mention_type",
+          "TEXT",
+          0,
+          "'name'",
+          0
+        ],
+        [
+          "created_at",
+          "DATETIME",
+          0,
+          "CURRENT_TIMESTAMP",
+          0
+        ]
+      ]
+    },
+    "tag_assignments": {
+      "sql": "CREATE TABLE tag_assignments (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            tag_name TEXT NOT NULL,\n            entity_id TEXT NOT NULL,\n            assertion_id INTEGER NOT NULL,\n            assigned_at TEXT NOT NULL DEFAULT (datetime('now')),\n            assigned_by TEXT NOT NULL,\n            UNIQUE(tag_name, entity_id),\n            FOREIGN KEY (entity_id) REFERENCES entities(id),\n            FOREIGN KEY (assertion_id) REFERENCES assertions(id)\n        )",
+      "columns": [
+        [
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1
+        ],
+        [
+          "tag_name",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "entity_id",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "assertion_id",
+          "INTEGER",
+          1,
+          null,
+          0
+        ],
+        [
+          "assigned_at",
+          "TEXT",
+          1,
+          "datetime('now')",
+          0
+        ],
+        [
+          "assigned_by",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ]
+    },
+    "type_attribute_schemas": {
+      "sql": "CREATE TABLE type_attribute_schemas (  entity_type        TEXT PRIMARY KEY,  required_keys      TEXT NOT NULL,  optional_keys      TEXT NOT NULL,  enum_constraints   TEXT NOT NULL,  notes              TEXT)",
+      "columns": [
+        [
+          "entity_type",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "required_keys",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "optional_keys",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "enum_constraints",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "notes",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    },
+    "type_confidence_fields": {
+      "sql": "CREATE TABLE type_confidence_fields (  entity_type      TEXT PRIMARY KEY,  confidence_field TEXT NOT NULL)",
+      "columns": [
+        [
+          "entity_type",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "confidence_field",
+          "TEXT",
+          1,
+          null,
+          0
+        ]
+      ]
+    },
+    "workflow_schemas": {
+      "sql": "CREATE TABLE workflow_schemas (  entity_type    TEXT PRIMARY KEY,  enum_values    TEXT NOT NULL,  initial_state  TEXT NOT NULL,  terminal_states TEXT,  notes          TEXT)",
+      "columns": [
+        [
+          "entity_type",
+          "TEXT",
+          0,
+          null,
+          1
+        ],
+        [
+          "enum_values",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "initial_state",
+          "TEXT",
+          1,
+          null,
+          0
+        ],
+        [
+          "terminal_states",
+          "TEXT",
+          0,
+          null,
+          0
+        ],
+        [
+          "notes",
+          "TEXT",
+          0,
+          null,
+          0
+        ]
+      ]
+    }
+  },
+  "indexes": {
+    "idx_assertions_artifact_storage": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_assertions_artifact_storage ON assertions(artifact_storage) WHERE artifact_storage != 'inline'"
+    },
+    "idx_assertions_chunk_schema": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_assertions_chunk_schema ON assertions(chunk_id_schema) WHERE chunk_id_schema IS NOT NULL"
+    },
+    "idx_assertions_claim_dedup": {
+      "table": "assertions",
+      "sql": "CREATE UNIQUE INDEX idx_assertions_claim_dedup ON assertions(entity_id, claim_hash) WHERE superseded_by IS NULL"
+    },
+    "idx_assertions_entity_seeded": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_assertions_entity_seeded ON assertions(entity_id, seeded_by)"
+    },
+    "idx_assertions_normalization_decision": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_assertions_normalization_decision ON assertions(normalization_decision) WHERE normalization_decision IS NOT NULL"
+    },
+    "idx_assertions_raw_predicate_form": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_assertions_raw_predicate_form ON assertions(raw_predicate_form) WHERE raw_predicate_form IS NOT NULL"
+    },
+    "idx_assertions_seeded_by": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_assertions_seeded_by ON assertions(seeded_by)"
+    },
+    "idx_chunks_source_pinpoint": {
+      "table": "chunks",
+      "sql": "CREATE INDEX idx_chunks_source_pinpoint ON chunks(source_uri, pinpoint)"
+    },
+    "idx_eal_created": {
+      "table": "entity_access_log",
+      "sql": "CREATE INDEX idx_eal_created ON entity_access_log(created_at)"
+    },
+    "idx_eal_entity_agent": {
+      "table": "entity_access_log",
+      "sql": "CREATE INDEX idx_eal_entity_agent ON entity_access_log(entity_id, agent)"
+    },
+    "idx_eal_session": {
+      "table": "entity_access_log",
+      "sql": "CREATE INDEX idx_eal_session ON entity_access_log(session_id)"
+    },
+    "idx_entities_content_hash": {
+      "table": "entities",
+      "sql": "CREATE INDEX idx_entities_content_hash ON entities(content_hash)"
+    },
+    "idx_entities_workflow_state": {
+      "table": "entities",
+      "sql": "CREATE INDEX idx_entities_workflow_state ON entities(type, workflow_state)"
+    },
+    "idx_entity_aliases_alias": {
+      "table": "entity_aliases",
+      "sql": "CREATE INDEX idx_entity_aliases_alias ON entity_aliases(alias)"
+    },
+    "idx_extraction_runs_source": {
+      "table": "extraction_runs",
+      "sql": "CREATE INDEX idx_extraction_runs_source ON extraction_runs(source_uri, content_hash)"
+    },
+    "idx_near_dup_assertion": {
+      "table": "near_duplicate_flags",
+      "sql": "CREATE INDEX idx_near_dup_assertion ON near_duplicate_flags(assertion_id)"
+    },
+    "idx_near_dup_of": {
+      "table": "near_duplicate_flags",
+      "sql": "CREATE INDEX idx_near_dup_of ON near_duplicate_flags(duplicate_of)"
+    },
+    "idx_relationships_active_dedup": {
+      "table": "relationships",
+      "sql": "CREATE UNIQUE INDEX idx_relationships_active_dedup ON relationships(from_entity, to_entity, type) WHERE active = 1"
+    },
+    "idx_se_agent": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_agent      ON session_edges(agent)"
+    },
+    "idx_se_from_type": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_from_type  ON session_edges(from_node, edge_type)"
+    },
+    "idx_se_retired": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_retired    ON session_edges(valid_until)\n    WHERE valid_until IS NOT NULL"
+    },
+    "idx_se_session": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_session    ON session_edges(session_id)"
+    },
+    "idx_se_source": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_source     ON session_edges(edge_source)"
+    },
+    "idx_se_strength": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_strength   ON session_edges(strength)"
+    },
+    "idx_se_to_type": {
+      "table": "session_edges",
+      "sql": "CREATE INDEX idx_se_to_type    ON session_edges(to_node, edge_type)"
+    },
+    "idx_session_journals_session_id_unique": {
+      "table": "session_journals",
+      "sql": "CREATE UNIQUE INDEX idx_session_journals_session_id_unique\n    ON session_journals(session_id)\n    WHERE session_id IS NOT NULL"
+    },
+    "idx_tag_entity": {
+      "table": "tag_assignments",
+      "sql": "CREATE INDEX idx_tag_entity ON tag_assignments(entity_id)"
+    },
+    "idx_tag_name": {
+      "table": "tag_assignments",
+      "sql": "CREATE INDEX idx_tag_name ON tag_assignments(tag_name)"
+    },
+    "idx_v3_assertions_chunk": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_chunk ON assertions(chunk_id)"
+    },
+    "idx_v3_assertions_confidence": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_confidence ON assertions(confidence)"
+    },
+    "idx_v3_assertions_confidence_score": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_confidence_score ON assertions(confidence_score)"
+    },
+    "idx_v3_assertions_derivation": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_derivation ON assertions(derivation_type)"
+    },
+    "idx_v3_assertions_entity": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_entity ON assertions(entity_id)"
+    },
+    "idx_v3_assertions_review": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_review ON assertions(review_status)"
+    },
+    "idx_v3_assertions_superseded": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_superseded ON assertions(superseded_by)"
+    },
+    "idx_v3_assertions_valid_from": {
+      "table": "assertions",
+      "sql": "CREATE INDEX idx_v3_assertions_valid_from ON assertions(valid_from)"
+    },
+    "idx_v3_chunks_observer": {
+      "table": "chunks",
+      "sql": "CREATE INDEX idx_v3_chunks_observer ON chunks(observer)"
+    },
+    "idx_v3_chunks_source": {
+      "table": "chunks",
+      "sql": "CREATE INDEX idx_v3_chunks_source ON chunks(source_uri)"
+    },
+    "idx_v3_entities_adoption": {
+      "table": "entities",
+      "sql": "CREATE INDEX idx_v3_entities_adoption ON entities(adoption)"
+    },
+    "idx_v3_entities_confidence_band": {
+      "table": "entities",
+      "sql": "CREATE INDEX idx_v3_entities_confidence_band ON entities(confidence_band)"
+    },
+    "idx_v3_entities_lifecycle": {
+      "table": "entities",
+      "sql": "CREATE INDEX idx_v3_entities_lifecycle ON entities(lifecycle)"
+    },
+    "idx_v3_entities_type": {
+      "table": "entities",
+      "sql": "CREATE INDEX idx_v3_entities_type ON entities(type)"
+    },
+    "idx_v3_extruns_source": {
+      "table": "extraction_runs",
+      "sql": "CREATE INDEX idx_v3_extruns_source ON extraction_runs(source_uri)"
+    },
+    "idx_v3_extruns_status": {
+      "table": "extraction_runs",
+      "sql": "CREATE INDEX idx_v3_extruns_status ON extraction_runs(status)"
+    },
+    "idx_v3_rel_source": {
+      "table": "relationships",
+      "sql": "CREATE INDEX idx_v3_rel_source ON relationships(from_entity)"
+    },
+    "idx_v3_rel_target": {
+      "table": "relationships",
+      "sql": "CREATE INDEX idx_v3_rel_target ON relationships(to_entity)"
+    },
+    "idx_v3_rel_type": {
+      "table": "relationships",
+      "sql": "CREATE INDEX idx_v3_rel_type ON relationships(type)"
+    },
+    "idx_v3_sf_cache": {
+      "table": "surface_forms",
+      "sql": "CREATE UNIQUE INDEX idx_v3_sf_cache ON surface_forms(mention, context_hash)"
+    },
+    "idx_v3_sf_context": {
+      "table": "surface_forms",
+      "sql": "CREATE INDEX idx_v3_sf_context ON surface_forms(context_hash)"
+    },
+    "idx_v3_sf_entity": {
+      "table": "surface_forms",
+      "sql": "CREATE INDEX idx_v3_sf_entity ON surface_forms(entity_id)"
+    },
+    "idx_v3_sf_mention": {
+      "table": "surface_forms",
+      "sql": "CREATE INDEX idx_v3_sf_mention ON surface_forms(mention)"
+    }
+  }
+}

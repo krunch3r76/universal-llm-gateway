@@ -343,8 +343,15 @@ def handoff_dry_run_preview(
     expected_handoff_prompt: str | None = None,
     expected_derived_handoff_prompt_sha256: str | None = None,
     expected_source_file_sha256: str | None = None,
+    session_id: str | None = None,
 ) -> dict[str, Any]:
-    """Non-writing handoff preview for ``session_close`` dry_run (2-A v2)."""
+    """Non-writing handoff preview for ``session_close`` dry_run (2-A v2).
+
+    When ``session_id`` is supplied the anchor check is included: if
+    ``handoff_prompt`` omits the closing-session transcript anchor the
+    finding is appended and ``handoff_valid`` is set to ``False`` so
+    ``dry_run=True`` returns ``would_fail`` instead of ``would_succeed``.
+    """
     written_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     resolution = resolve_handoff_for_write(
         files_root=files_root,
@@ -362,13 +369,25 @@ def handoff_dry_run_preview(
         handoff_source_path=handoff_source_path,
         files_root=files_root,
     )
+    handoff_valid = resolution.handoff_valid
+    if session_id:
+        from .handoff_audit import check_handoff_transcript_anchor
+
+        anchor_finding = check_handoff_transcript_anchor(
+            session_id=session_id,
+            handoff_prompt=handoff_prompt,
+            handoff_source_path=handoff_source_path,
+        )
+        if anchor_finding is not None:
+            findings = [*findings, anchor_finding]
+            handoff_valid = False
     return {
         "derived_handoff_prompt": resolution.derived_handoff_prompt,
         "handoff_provenance_preview": resolution.provenance,
         "handoff_surface_preview": build_handoff_surface_preview(
             resolution.handoff_prompt, resolution.provenance
         ),
-        "handoff_valid": resolution.handoff_valid,
+        "handoff_valid": handoff_valid,
         "findings": findings,
     }
 

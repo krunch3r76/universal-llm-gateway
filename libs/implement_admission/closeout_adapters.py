@@ -25,39 +25,77 @@ def _result(
     return AdapterResult(adapter=adapter, status=status, mutation=mutation, error=error)
 
 
-def _pipeline_status(resp: dict) -> str:
-    if resp.get("error"):
-        return CloseoutStatus.FAILED.value
-    if resp.get("ok") is False or resp.get("errors"):
-        return CloseoutStatus.PARTIAL.value
-    return CloseoutStatus.COMPLETE.value
-
-
 class TodoCloseoutAdapter:
     def apply(
         self, closeout: ImplementCloseout, *, source: Source
     ) -> list[AdapterResult]:
+        # Close the todo IN-PROCESS via cortex-api (the pure data layer), NOT by
+        # re-entering Stargate over HTTP through pipeline:todo-close. This adapter
+        # runs synchronously inside the async implement-closeout handler; a
+        # blocking HTTP re-entry into Stargate stalls the event loop and times out
+        # while the mutation still lands (false-negative closeout — see
+        # todo:unified-admission-closeout-adapters AC10). Mirrors the todo-close
+        # pipeline's core op sequence (sidecar -> assert -> workflow_state=done)
+        # over the same cortex tools; references/depends_on/edges are not carried
+        # on the ImplementCloseout envelope and are intentionally out of scope.
         rt = get_runtime()
         from implement_admission.closeout import flatten_evidence_uris
 
-        options = {
-            "todo_id": source.canonical_ref,
-            "summary": closeout.summary,
-            "evidence_uris": flatten_evidence_uris(closeout.evidence_uris),
-            "evidence_text": closeout.summary,
-            "reasoning_summary": closeout.summary,
-            "agent": "pipeline:implement-closeout",
+        todo_id = source.canonical_ref
+        errors: list[str] = []
+
+        sidecar = rt.dispatch(
+            "todo_close_sidecar",
+            {
+                "todo_id": todo_id,
+                "summary": closeout.summary,
+                "evidence": closeout.summary,
+                "agent": "pipeline:implement-closeout",
+            },
+        )
+        evidence_uris = flatten_evidence_uris(closeout.evidence_uris)
+        if sidecar.get("error"):
+            errors.append(f"sidecar: {sidecar['error']}")
+        else:
+            uri = sidecar.get("closure_summary_uri")
+            if uri and uri not in evidence_uris:
+                evidence_uris.append(uri)
+
+        assert_args: dict[str, object] = {
+            "entity_id": todo_id,
+            "claim": closeout.summary,
+            "confidence": "confirmed",
+            "evidence": closeout.summary,
+            "derivation_type": "agent_observation",
+            "confidence_score": 0.8,
+            "seeded_by": "pipeline:implement-closeout",
         }
-        resp = rt.run_pipeline("todo-close", options)
-        status = _pipeline_status(resp)
-        mutation = json_preview(resp)
-        error = resp.get("error") if status == CloseoutStatus.FAILED.value else None
+        if evidence_uris:
+            assert_args["evidence_uris"] = evidence_uris
+        assert_resp = rt.dispatch("assert", assert_args)
+        if assert_resp.get("error"):
+            errors.append(f"assert: {assert_resp['error']}")
+
+        wf = rt.dispatch(
+            "entity_update",
+            {"entity_id": todo_id, "workflow_state": "done"},
+        )
+        if wf.get("error"):
+            errors.append(f"workflow_update: {wf['error']}")
+
+        if wf.get("error"):
+            status = CloseoutStatus.FAILED.value
+        elif errors:
+            status = CloseoutStatus.PARTIAL.value
+        else:
+            status = CloseoutStatus.COMPLETE.value
+
         return [
             _result(
                 adapter=CloseoutAdapterKind.TODO.value,
                 status=status,
-                mutation=mutation,
-                error=error,
+                mutation=f"in-process todo-close: {todo_id} workflow_state=done",
+                error="; ".join(errors) or None,
             )
         ]
 
@@ -276,12 +314,6 @@ def _embedded_from_packet(packet_path: str) -> str | None:
     return extract_embedded_source_ref(
         candidate.read_text(encoding="utf-8", errors="replace")
     )
-
-
-def json_preview(data: dict) -> str:
-    import json
-
-    return json.dumps(data, default=str)[:500]
 
 
 ADAPTER_INSTANCES = {

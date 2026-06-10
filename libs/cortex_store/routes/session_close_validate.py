@@ -13,8 +13,8 @@ from ..dispatch_ops._shared import (
     _SESSION_ID_RE,
     _SESSION_ID_RE_SOURCE,
 )
-from ..models import SessionCloseRequest
 from ..handoff_audit import check_handoff_transcript_anchor
+from ..models import SessionCloseRequest
 from ..session_close_validation import (
     _USER_VOICE_RE,
     build_validation_error,
@@ -348,6 +348,18 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
     source_uri = f"files://{transcript_path}" if transcript_path else None
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     opened_at = _parse_opened_at(body.session_id)
+
+    # B — early-fail anchor gate: check raw handoff_prompt/handoff_source_path
+    # at validation time so both session_id and anchor errors surface together.
+    # The persist-time gate (persist_session_close.py) is retained as defense-
+    # in-depth: it checks the *resolved* prompt that may differ from the raw input.
+    if body.handoff_prompt or body.handoff_source_path:
+        enforce_handoff_transcript_anchor(
+            session_id=body.session_id,
+            agent=body.agent,
+            handoff_prompt=body.handoff_prompt,
+            handoff_source_path=body.handoff_source_path,
+        )
 
     return ValidatedCloseContext(
         transcript_md=transcript_md,

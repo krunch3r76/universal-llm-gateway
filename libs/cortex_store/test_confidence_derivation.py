@@ -28,39 +28,27 @@ from .confidence_shadow_diff import (
 )
 from .confidence_snapshot import SourceAssertion
 
-_SCHEMA = """
-CREATE TABLE entities (
-    id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL,
-    status TEXT, source_uri TEXT, confidence_band TEXT, confidence_score REAL
-);
-CREATE TABLE assertions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, entity_id TEXT NOT NULL, claim TEXT,
-    confidence TEXT, credibility TEXT, evidence_uris TEXT, seeded_by TEXT,
-    derivation_type TEXT, review_status TEXT, superseded_by INTEGER
-);
-CREATE TABLE relationships (
-    from_entity TEXT, to_entity TEXT, type TEXT, strength REAL,
-    active INTEGER DEFAULT 1, valid_until TEXT
-);
-CREATE TABLE session_edges (
-    from_node TEXT, to_node TEXT, edge_type TEXT, strength REAL, valid_until TEXT
-);
-"""
-
 
 @pytest.fixture()
-def conn() -> sqlite3.Connection:
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    c.executescript(_SCHEMA)
-    return c
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    return migrated_conn
 
 
-def _entity(c, eid, etype="person", status="unsubstantiated", source_uri=None):
+def _entity(
+    c,
+    eid,
+    etype="person",
+    *,
+    confidence_band="unsubstantiated",
+    lifecycle=None,
+    source_uri=None,
+):
     c.execute(
-        "INSERT INTO entities (id, type, name, status, source_uri) VALUES (?,?,?,?,?)",
-        (eid, etype, eid, status, source_uri),
+        "INSERT INTO entities (id, type, name, confidence_band, lifecycle, source_uri) "
+        "VALUES (?,?,?,?,?,?)",
+        (eid, etype, eid, confidence_band, lifecycle, source_uri),
     )
+    c.commit()
 
 
 def _assert(
@@ -76,6 +64,14 @@ def _assert(
     superseded_by=None,
 ):
     uris = json.dumps([f"https://{h}/x" for h in hosts]) if hosts else None
+    if derivation_type is None:
+        # D1 firewall: inference cannot satisfy §12 gate; stored external-KB /
+        # authority credibility fixtures need a qualifying derivation type.
+        derivation_type = (
+            "agent_observation"
+            if credibility in ("external-KB", "authority")
+            else "inference"
+        )
     c.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, credibility, "
         "evidence_uris, seeded_by, derivation_type, review_status, superseded_by) "
@@ -92,6 +88,7 @@ def _assert(
             superseded_by,
         ),
     )
+    c.commit()
 
 
 def _edge_struct(c, frm, to, etype="evidence_for", strength=1.0):
@@ -102,11 +99,19 @@ def _edge_struct(c, frm, to, etype="evidence_for", strength=1.0):
     )
 
 
-def _edge_session(c, frm, to, etype="contradicts", strength=1.0):
+def _edge_session(
+    c,
+    frm,
+    to,
+    etype="contradicts",
+    strength=1.0,
+    *,
+    session_id: str = "confidence-test-session",
+):
     c.execute(
-        "INSERT INTO session_edges (from_node, to_node, edge_type, strength) "
-        "VALUES (?,?,?,?)",
-        (frm, to, etype, strength),
+        "INSERT INTO session_edges (session_id, agent, from_node, to_node, edge_type, strength) "
+        "VALUES (?,?,?,?,?,?)",
+        (session_id, "confidence-test", frm, to, etype, strength),
     )
 
 
@@ -145,9 +150,15 @@ def test_prior_takes_max_over_clusters(conn):
         confidence="suspected",
         credibility="authority",
         hosts=["a.com"],
+        derivation_type="inference",
     )
     _assert(
-        conn, "person:x", confidence="confirmed", credibility="unrated", hosts=["b.com"]
+        conn,
+        "person:x",
+        confidence="confirmed",
+        credibility="unrated",
+        hosts=["b.com"],
+        derivation_type="inference",
     )
     run = run_shadow_derivation(conn)
     # cluster a: 0.5*1.0+0.5*0.4=0.7 ; cluster b: 0.5*0.3+0.5*1.0=0.65 ; max=0.7
@@ -338,6 +349,7 @@ def test_gov_host_resolves_authority_and_confirms(conn):
         confidence="confirmed",
         credibility=None,
         hosts=["leginfo.legislature.ca.gov"],
+        derivation_type="agent_observation",
     )
     r = run_shadow_derivation(conn).results["fact:gov"]
     assert r.gate_pass and r.gate_reason == "authority_cluster"
@@ -353,6 +365,7 @@ def test_manual_list_host_resolves_external_kb(conn):
         confidence="confirmed",
         credibility=None,
         hosts=["docs.anthropic.com"],
+        derivation_type="agent_observation",
     )
     r1 = run_shadow_derivation(conn).results["fact:kb1"]
     assert not r1.gate_pass and r1.final_band == "provisional"
@@ -365,6 +378,7 @@ def test_manual_list_host_resolves_external_kb(conn):
         credibility=None,
         hosts=["docs.anthropic.com"],
         seeded_by="a1",
+        derivation_type="agent_observation",
     )
     _assert(
         conn,
@@ -373,6 +387,7 @@ def test_manual_list_host_resolves_external_kb(conn):
         credibility=None,
         hosts=["cursor.com"],
         seeded_by="a2",
+        derivation_type="agent_observation",
     )
     r2 = run_shadow_derivation(conn).results["fact:kb2"]
     assert r2.gate_pass and r2.final_band == "confirmed"
@@ -496,6 +511,7 @@ def test_isolated_prior_only_resolves_to_b(conn):
         confidence="believed",
         credibility="recorded-history",
         hosts=["a.com"],
+        derivation_type="inference",
     )
     r = run_shadow_derivation(conn).results["person:i"]
     assert r.zero_edge
@@ -637,7 +653,7 @@ def test_internal_uri_excluded_from_cluster_count(conn):
             "external-KB",
             json.dumps(["cortex:notes/system/threads/1172-c-policy.md"]),
             None,
-            None,
+            "inference",
             None,
             None,
         ),
@@ -670,7 +686,7 @@ def test_mixed_internal_external_uris_only_external_counts(conn):
                 ]
             ),
             "ag1",
-            None,
+            "agent_observation",
             None,
             None,
         ),
@@ -685,8 +701,8 @@ def test_mixed_internal_external_uris_only_external_counts(conn):
 
 
 def test_persist_writes_only_in_scope_traits_no_status_flip(conn):
-    _entity(conn, "person:p", status="unsubstantiated")
-    _entity(conn, "decision:d", etype="decision", status="provisional")
+    _entity(conn, "person:p", confidence_band="unsubstantiated")
+    _entity(conn, "decision:d", etype="decision", confidence_band="provisional")
     _assert(
         conn,
         "person:p",
@@ -698,22 +714,22 @@ def test_persist_writes_only_in_scope_traits_no_status_flip(conn):
     written = persist_traits(conn, run)
     assert written == 1  # decision is out of scope
     prow = conn.execute(
-        "SELECT status, confidence_band, confidence_score FROM entities WHERE id='person:p'"
+        "SELECT lifecycle, confidence_band, confidence_score FROM entities WHERE id='person:p'"
     ).fetchone()
     drow = conn.execute(
-        "SELECT status, confidence_band FROM entities WHERE id='decision:d'"
+        "SELECT lifecycle, confidence_band FROM entities WHERE id='decision:d'"
     ).fetchone()
-    assert prow["status"] == "unsubstantiated"  # status untouched (no flip)
+    assert prow["lifecycle"] is None
     assert prow["confidence_band"] == "confirmed"
     assert prow["confidence_score"] is not None
-    assert drow["status"] == "provisional" and drow["confidence_band"] is None
+    assert drow["confidence_band"] == "provisional" and drow["lifecycle"] is None
 
 
 def test_shadow_diff_rule_vs_rule_labels_and_scope(conn):
-    _entity(conn, "person:hit", status="confirmed")
-    _entity(conn, "person:miss", status="confirmed")
-    _entity(conn, "person:lifecycle", status="merged")
-    _entity(conn, "decision:d", etype="decision", status="confirmed")
+    _entity(conn, "person:hit", confidence_band="confirmed")
+    _entity(conn, "person:miss", confidence_band="confirmed")
+    _entity(conn, "person:lifecycle", confidence_band=None, lifecycle="merged")
+    _entity(conn, "decision:d", etype="decision", confidence_band="confirmed")
     _assert(
         conn,
         "person:hit",

@@ -11,105 +11,36 @@ from cortex_store.dispatch_ops.ops_bulk import (
 )
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(
+def _seed_relationship_type(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO relationship_types (type, description) VALUES (?, ?)",
+        ("child_of", "Model belongs to family"),
+    )
+    conn.commit()
+
+
+def _ensure_entity_aliases_table(conn: sqlite3.Connection) -> None:
+    """Some substrate snapshots lack migration-036 ``entity_aliases`` — create for alias tests."""
+    conn.execute(
         """
-        CREATE TABLE entities (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT,
-            status TEXT DEFAULT 'confirmed',
-            workflow_state TEXT,
-            aliases TEXT,
-            attributes TEXT,
-            notes TEXT,
-            source_uri TEXT,
-            content_hash TEXT,
-            retention_policy TEXT,
-            retention_ttl_days INTEGER,
-            created_at TEXT,
-            updated_at TEXT
-        );
-        CREATE TABLE entity_aliases (
+        CREATE TABLE IF NOT EXISTS entity_aliases (
             entity_id TEXT NOT NULL,
             entity_type TEXT NOT NULL,
             alias TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (entity_id, alias),
             UNIQUE (entity_type, alias)
-        );
-        CREATE TABLE workflow_schemas (
-            entity_type TEXT PRIMARY KEY,
-            enum_values TEXT NOT NULL,
-            initial_state TEXT NOT NULL,
-            terminal_states TEXT
-        );
-        CREATE TABLE assertions (
-            id INTEGER PRIMARY KEY,
-            entity_id TEXT,
-            claim TEXT,
-            confidence TEXT,
-            confidence_score REAL,
-            evidence TEXT,
-            evidence_uris TEXT,
-            seeded_by TEXT,
-            derivation_type TEXT,
-            chunk_id INTEGER,
-            reasoning_summary TEXT,
-            is_atomic INTEGER DEFAULT 1,
-            is_decontextualized INTEGER DEFAULT 1,
-            observed_at TEXT,
-            valid_from TEXT,
-            valid_until TEXT,
-            superseded_by INTEGER,
-            review_status TEXT,
-            reviewer TEXT,
-            reviewed_at TEXT,
-            review_notes TEXT,
-            resolution_status TEXT,
-            fulfillment_assertion_id INTEGER,
-            quality_score REAL,
-            prospective_summary TEXT,
-            events_json TEXT,
-            artifact_uri TEXT,
-            artifact_storage TEXT DEFAULT 'inline',
-            entrenchment_score REAL,
-            predicate_form TEXT,
-            created_at TEXT
-        );
-        CREATE TABLE relationship_types (
-            type TEXT PRIMARY KEY,
-            description TEXT
-        );
-        CREATE TABLE relationships (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type TEXT NOT NULL,
-            from_entity TEXT NOT NULL,
-            to_entity TEXT NOT NULL,
-            role TEXT,
-            strength REAL DEFAULT 1.0,
-            evidence TEXT,
-            chunk_id INTEGER,
-            valid_from TEXT,
-            valid_until TEXT,
-            source_uri TEXT,
-            session_id TEXT,
-            agent TEXT,
-            active INTEGER DEFAULT 1,
-            created_at TEXT,
-            updated_at TEXT,
-            UNIQUE (from_entity, to_entity, type, active)
-        );
+        )
         """
     )
-    conn.execute(
-        "INSERT INTO relationship_types (type, description) VALUES (?, ?)",
-        ("child_of", "Model belongs to family"),
-    )
-    return conn
+    conn.commit()
+
+
+@pytest.fixture()
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    _seed_relationship_type(migrated_conn)
+    _ensure_entity_aliases_table(migrated_conn)
+    return migrated_conn
 
 
 def _patch_conn(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) -> None:
@@ -126,16 +57,16 @@ def _entity_ids(conn: sqlite3.Connection) -> set[str]:
 
 
 def test_entities_bulk_upsert_updates_and_syncs_aliases(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    conn = _conn()
     _patch_conn(monkeypatch, conn)
     conn.execute(
         """
         INSERT INTO entities (
-            id, type, name, status, aliases, attributes, created_at, updated_at
+            id, type, name, aliases, attributes, created_at, updated_at
         )
-        VALUES (?, ?, ?, 'confirmed', ?, ?, 't0', 't0')
+        VALUES (?, ?, ?, ?, ?, 't0', 't0')
         """,
         (
             "model:gpt-5.4",
@@ -178,23 +109,21 @@ def test_entities_bulk_upsert_updates_and_syncs_aliases(
         "suitable_for": ["analysis"],
         "unsuitable_for": ["bulk-write"],
     }
-    assert (
+    assert "openai/gpt-5.4" in json.loads(
         conn.execute(
-            "SELECT entity_id FROM entity_aliases WHERE alias = ?",
-            ("openai/gpt-5.4",),
+            "SELECT aliases FROM entities WHERE id = ?", ("model:gpt-5.4",)
         ).fetchone()[0]
-        == "model:gpt-5.4"
     )
 
 
 def test_entities_bulk_upsert_rolls_back_on_conflict(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    conn = _conn()
     _patch_conn(monkeypatch, conn)
     conn.execute(
-        "INSERT INTO entities (id, type, name, status, created_at, updated_at) "
-        "VALUES ('model:existing', 'model', 'Existing', 'confirmed', 't0', 't0')"
+        "INSERT INTO entities (id, type, name, created_at, updated_at) "
+        "VALUES ('model:existing', 'model', 'Existing', 't0', 't0')"
     )
     conn.commit()
 
@@ -211,9 +140,9 @@ def test_entities_bulk_upsert_rolls_back_on_conflict(
 
 
 def test_relationships_bulk_upsert_resolves_alias_and_updates_existing(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    conn = _conn()
     _patch_conn(monkeypatch, conn)
     _op_entities_bulk_upsert(
         entities=[

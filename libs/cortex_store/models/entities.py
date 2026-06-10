@@ -125,6 +125,7 @@ class CardAssertion(BaseModel):
     valid_from: str | None = None
     observed_at: str | None = None
     evidence_uris: list[str] | None = None
+    entrenchment_score: float | None = None
 
 
 class CardEdgeTypeCount(BaseModel):
@@ -142,6 +143,7 @@ class CardDebug(BaseModel):
     """§7.8 observability: emitted only when `?debug=1`."""
 
     fetch_plan_row_volume: int
+    prospective_summaries: list[str | None] | None = None
 
 
 class EntityCard(BaseModel):

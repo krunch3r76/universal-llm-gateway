@@ -221,6 +221,8 @@ Audit: grep `signal_name | factory_name` repo-wide; only the definition site mat
 
 #### `[quality:bug-class-sweep]` bug-class sweep
 
+Codified bug tickets: pass zoom-out duty (`consult-routing.md` § Codified bug reports) mandates this sweep in Phase 2 and touch-point inventory in Phase 1.
+
 ∀ bugfix B targeting code_pattern P in file F : declare_complete(B) ⇒ swept(scope(service(F) ∪ lib(F)), P).
 
 When a fix targets a specific code pattern — a wrong dict key, a mis-named response field, an unguarded None — grep the entire affected service/library for the same pattern before declaring the fix complete. A single-file fix that leaves siblings unswept ships the same bug under a different filename. Canonical failure case: the F3 `result.get("entities", …)` → `result.get("items", …)` fix was scoped to `_evidence_entity_ops.py`; the identical wrong-key pattern survived in `finance.py:226` (silent zero-result `op_status`) and `finance_reconcile.py:48` (dead `entities` fallback) because no sweep ran. Audit: grep the pattern service-wide, fix every instance in the same change, then declare complete.

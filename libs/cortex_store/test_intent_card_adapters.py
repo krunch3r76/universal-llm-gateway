@@ -21,7 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
-from cortex_store._intent_card_test_fixtures import insert_entity, make_conn
+from cortex_store._intent_card_test_fixtures import insert_entity
 from cortex_store.card import get_entity_card
 from cortex_store.card_adapters import (
     CaseAdapter,
@@ -95,9 +95,11 @@ def test_adapter_labels_differ_per_type() -> None:
     assert todo_label != default_label
 
 
-def test_card_uses_type_specific_status_summary_for_todo() -> None:
+def test_card_uses_type_specific_status_summary_for_todo(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     """End-to-end: a todo card carries todo-specific status_summary keys."""
-    conn = make_conn()
+    conn = migrated_conn
     insert_entity(
         conn,
         entity_id="todo:abc",
@@ -113,9 +115,9 @@ def test_card_uses_type_specific_status_summary_for_todo() -> None:
     assert status.get("workflow_state") == "open"
 
 
-def test_dispatch_op_card_happy_path() -> None:
+def test_dispatch_op_card_happy_path(migrated_conn: sqlite3.Connection) -> None:
     """Dispatch op end-to-end with intent=card returns a card-shaped payload."""
-    conn = make_conn()
+    conn = migrated_conn
     insert_entity(conn, entity_id="todo:dispatch", entity_type="todo")
 
     class _Ctx:

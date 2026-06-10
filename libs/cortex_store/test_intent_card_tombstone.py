@@ -6,16 +6,16 @@ Split from ``test_intent_card.py`` (SLOC waiver assertion 8521 on
 
 from __future__ import annotations
 
-from cortex_store._intent_card_test_fixtures import (
-    insert_assertion,
-    insert_entity,
-    make_conn,
-)
+import sqlite3
+
+from cortex_store._intent_card_test_fixtures import insert_assertion, insert_entity
 from cortex_store.card import get_entity_card
 
 
-def test_tombstone_collapses_to_summary_in_top_k() -> None:
-    conn = make_conn()
+def test_tombstone_collapses_to_summary_in_top_k(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    conn = migrated_conn
     insert_entity(conn, entity_id="todo:tombstoned", entity_type="todo")
     # The summary lives in a superseded row (it was the supersede-input
     # before pointers replaced it).
@@ -26,7 +26,7 @@ def test_tombstone_collapses_to_summary_in_top_k() -> None:
         superseded_by=None,
     )
     # Active rows are pure pointers — entity is tombstone-only.
-    insert_assertion(
+    pointer_id = insert_assertion(
         conn,
         entity_id="todo:tombstoned",
         claim=f"Compacted into archive summary {summary_id}",
@@ -37,8 +37,11 @@ def test_tombstone_collapses_to_summary_in_top_k() -> None:
         claim=f"Compacted into archive summary {summary_id}",
     )
 
-    # Mark the summary row superseded (as in real tombstoning).
-    conn.execute("UPDATE assertions SET superseded_by = -1 WHERE id = ?", (summary_id,))
+    # Mark the summary row superseded (FK-safe: point at a real assertion id).
+    conn.execute(
+        "UPDATE assertions SET superseded_by = ? WHERE id = ?",
+        (pointer_id, summary_id),
+    )
     conn.commit()
 
     # Now active rows are only pointers; rebuild card.

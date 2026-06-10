@@ -82,7 +82,7 @@ def test_empty_unchanged() -> None:
 def test_validate_args_accepts_missing_heading() -> None:
     # Heading presence is no longer a hard reject; only emptiness is.
     err = _validate_session_close_args(
-        session_id="cursor-2026-06-02-1400",
+        session_id="cursor-2026-06-02-140000-a01",
         agent="cursor",
         transcript_jsonl_path="/some/path.jsonl",
         session_summary_md="**Decisions:** stuff happened\n",
@@ -95,7 +95,7 @@ def test_validate_args_accepts_missing_heading() -> None:
 
 def test_validate_args_rejects_empty_summary() -> None:
     err = _validate_session_close_args(
-        session_id="cursor-2026-06-02-1400",
+        session_id="cursor-2026-06-02-140000-a01",
         agent="cursor",
         transcript_jsonl_path="/some/path.jsonl",
         session_summary_md="   ",
@@ -109,7 +109,7 @@ def test_validate_args_rejects_empty_summary() -> None:
 
 def test_source_missing_cursor_seat_hint() -> None:
     err = _validate_session_close_args(
-        session_id="gemini-cursor-2026-06-02-1400",
+        session_id="gemini-cursor-2026-06-02-140000-a02",
         agent="gemini-cursor",
         transcript_jsonl_path=None,
         session_summary_md="## Session Summary\nbody\n",
@@ -125,7 +125,7 @@ def test_source_missing_cursor_seat_hint() -> None:
 
 def test_source_missing_web_seat_hint() -> None:
     err = _validate_session_close_args(
-        session_id="claude-web-2026-06-02-1400",
+        session_id="claude-web-2026-06-02-140000-a03",
         agent="claude-web",
         transcript_jsonl_path=None,
         session_summary_md="## Session Summary\nbody\n",

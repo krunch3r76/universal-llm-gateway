@@ -10,15 +10,9 @@ import pytest
 from cortex_store.entity_aliases import resolve_entity_reference, sync_entity_aliases
 
 
-def _load_migration_036():
-    path = (
-        Path(__file__).resolve().parents[2]
-        / "services"
-        / "cortex-api"
-        / "migrations"
-        / "036_entity_aliases.py"
-    )
-    spec = importlib.util.spec_from_file_location("migration_036_entity_aliases", path)
+def _load_migration_056():
+    path = Path(__file__).resolve().parent / "migrations" / "056_entity_aliases.py"
+    spec = importlib.util.spec_from_file_location("migration_056_entity_aliases", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -34,7 +28,7 @@ def _conn() -> sqlite3.Connection:
 
 
 def test_entity_aliases_migration_backfills_unique_aliases() -> None:
-    migration = _load_migration_036()
+    migration = _load_migration_056()
     conn = _conn()
     try:
         conn.execute(
@@ -59,8 +53,8 @@ def test_entity_aliases_migration_backfills_unique_aliases() -> None:
         conn.close()
 
 
-def test_entity_aliases_migration_blocks_duplicate_aliases_within_type() -> None:
-    migration = _load_migration_036()
+def test_entity_aliases_migration_first_wins_cross_entity_collisions() -> None:
+    migration = _load_migration_056()
     conn = _conn()
     try:
         conn.execute(
@@ -72,8 +66,12 @@ def test_entity_aliases_migration_blocks_duplicate_aliases_within_type() -> None
             ("model:b", "model", json.dumps(["shared"])),
         )
 
-        with pytest.raises(RuntimeError, match="alias collisions"):
-            migration.migrate(conn)
+        migration.migrate(conn)
+
+        rows = conn.execute(
+            "SELECT entity_id, entity_type, alias FROM entity_aliases"
+        ).fetchall()
+        assert rows == [("model:a", "model", "shared")]
     finally:
         conn.close()
 

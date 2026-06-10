@@ -23,6 +23,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from fastapi import HTTPException
 from predicate_form import normalize_predicate_domain
 from predicate_form.entity_resolve import DBEntityResolver
 
@@ -33,9 +34,32 @@ from cortex_store.routes.assertions import _update_assertion_impl
 
 from .test_assertion_predicate_form_normalize import (
     _insert_assertion,
-    _make_conn,
     _patch_update,
 )
+
+# ---------------------------------------------------------------------------
+# Fixture — head schema via conftest ``migrated_conn`` (same as normalize tests)
+# ---------------------------------------------------------------------------
+
+_Q1_ENTITIES = [
+    ("person:camelia-mahmoudi", "person"),
+]
+
+
+def _seed_q1_entities(conn: sqlite3.Connection) -> None:
+    for eid, etype in _Q1_ENTITIES:
+        conn.execute(
+            "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, ?, ?)",
+            (eid, etype, eid.split(":")[-1]),
+        )
+    conn.commit()
+
+
+@pytest.fixture()
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    _seed_q1_entities(migrated_conn)
+    return migrated_conn
+
 
 # ---------------------------------------------------------------------------
 # Routes layer — envelope shape on PATCH
@@ -43,10 +67,10 @@ from .test_assertion_predicate_form_normalize import (
 
 
 def test_patch_surfaces_predicate_form_normalize_envelope(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """PATCH result dict carries the normalize envelope alongside the item."""
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 
@@ -67,10 +91,10 @@ def test_patch_surfaces_predicate_form_normalize_envelope(
 
 
 def test_patch_without_predicate_form_omits_envelope(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """No predicate_form in the PATCH body → no normalize envelope key fires."""
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 
@@ -80,10 +104,10 @@ def test_patch_without_predicate_form_omits_envelope(
 
 
 def test_patch_requires_human_review_envelope_carries_flag(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Class 6 review trigger → envelope.requires_human_review is True."""
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 
@@ -117,7 +141,7 @@ def _capture_records(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
     def _fake_record(signal: str, **payload: object) -> None:
         captured.append((signal, dict(payload)))
 
-    monkeypatch.setattr("cortex_store.dispatch_ops.ops_assertions.record", _fake_record)
+    monkeypatch.setattr("cortex_store.dispatch_ops._assertions_shared.record", _fake_record)
     return captured
 
 
@@ -188,12 +212,12 @@ def test_helper_noop_when_payload_absent(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_patch_422_never_emits_events(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_patch_422_never_emits_events(
+    conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Unparseable predicate_form → 422 raised before envelope/emission."""
-    from fastapi import HTTPException
-
     captured = _capture_records(monkeypatch)
-    conn: sqlite3.Connection = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 

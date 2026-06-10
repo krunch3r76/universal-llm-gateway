@@ -42,6 +42,18 @@ unless the operator says mechanical-only or a dense implement spec already exist
 4. **Secondary findings** — issues found during investigation → labeled in closeout;
    spin separate friction/handoff if they need their own cycle
 
+## Pass zoom-out duty
+
+∀ `type:bug` agent-bus pickup or bug handoff to **claude-web** / **claude-cursor**: **zoom out in the pass** — widen beyond the filed symptom before Phase 1 completes or Phase 2 is declared done. SOT detail: `consult-routing.md` § Codified bug reports → Pass zoom-out duty.
+
+| Pass phase | Mandatory zoom-out |
+|---|---|
+| **Phase 1** | Touch-point inventory; grep bug-class pattern service-wide; audit sibling call sites in the same subsystem |
+| **Phase 2** | `[quality:bug-class-sweep]` before `declare_complete` — fix every instance or defer with `SF{n}` |
+| **Closeout** | `## Secondary findings (labeled — separate cycle if pursued)` — `None observed.` if empty |
+
+Per finding: disposition `verify-now` | `flag-deferred` | `spin-ticket`. Zoom-out runs inside the bug cycle; it does not block the primary fix with an open-ended redesign.
+
 **NOT** a codified bug ticket: `agent_bus`-only thin ping; `friction()` without handoff when
 fix is required; redesign/graph-walk **before** Phase 1 investigate.
 
@@ -94,6 +106,7 @@ Categories: `tool_error`, `tool_mismatch`, `tool_absent`, `schema_gap`, `boot_dr
 
 ## Avoid
 
+- Fixing only the filed symptom without pass zoom-out (no touch-point sweep, no labeled secondary findings).
 - Treating `friction()` as submitting a fix-cycle ticket.
 - `cortex(tool="search", …)` for `[tool_error]` alone — prefer `frictions` / `assertions`.
 - Scraping `review_status=staged` — friction tickets are normal service assertions.

@@ -34,7 +34,7 @@ _BATCH_RETRY_ATTEMPTS = 3
 # Query-time embedding for hybrid search is best-effort: on failure, search
 # degrades cleanly to FTS-only. Fast-fail so callers (and MCP clients) don't
 # exceed their own deadlines waiting for an embedding the gateway can't serve.
-_QUERY_TIMEOUT_S = 10.0
+_QUERY_TIMEOUT_S = 2.0
 _QUERY_RETRY_ATTEMPTS = 1
 
 _INSTRUCTION = "Find relevant knowledge assertions about this topic"

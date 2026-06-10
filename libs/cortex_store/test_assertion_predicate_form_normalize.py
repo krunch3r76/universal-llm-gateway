@@ -35,56 +35,8 @@ from predicate_form.entity_resolve import DBEntityResolver
 from cortex_store.routes.assertions import _update_assertion_impl
 
 # ---------------------------------------------------------------------------
-# Schema + fixture helpers (mirrors test_assertion_update_predicate_form)
+# Fixture helpers — head schema via conftest ``migrated_conn``
 # ---------------------------------------------------------------------------
-
-_ASSERTIONS_DDL = """
-CREATE TABLE assertions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_id TEXT NOT NULL,
-    claim TEXT NOT NULL,
-    confidence TEXT NOT NULL,
-    confidence_score REAL,
-    evidence TEXT,
-    evidence_uris TEXT,
-    seeded_by TEXT,
-    derivation_type TEXT,
-    chunk_id INTEGER,
-    reasoning_summary TEXT,
-    is_atomic INTEGER DEFAULT 1,
-    is_decontextualized INTEGER DEFAULT 1,
-    observed_at TEXT,
-    valid_from TEXT,
-    valid_until TEXT,
-    superseded_by INTEGER,
-    review_status TEXT,
-    reviewer TEXT,
-    reviewed_at TEXT,
-    review_notes TEXT,
-    resolution_status TEXT,
-    fulfillment_assertion_id INTEGER,
-    quality_score REAL,
-    prospective_summary TEXT,
-    events_json TEXT,
-    artifact_uri TEXT,
-    artifact_storage TEXT DEFAULT 'inline',
-    entrenchment_score REAL,
-    predicate_form TEXT,
-    raw_predicate_form TEXT,
-    normalization_decision TEXT,
-    candidate_set_fingerprint TEXT,
-    normalizer_version TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT
-);
-"""
-
-_ENTITIES_DDL = """
-CREATE TABLE entities (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL
-);
-"""
 
 # Q1 entities — required for Class 2 slug→entity_id rewriting in normalize.
 _Q1_ENTITIES = [
@@ -100,14 +52,19 @@ _Q1_ENTITIES = [
 ]
 
 
-def _make_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(_ASSERTIONS_DDL + _ENTITIES_DDL)
+def _seed_q1_entities(conn: sqlite3.Connection) -> None:
     for eid, etype in _Q1_ENTITIES:
-        conn.execute("INSERT INTO entities (id, type) VALUES (?, ?)", (eid, etype))
+        conn.execute(
+            "INSERT OR IGNORE INTO entities (id, type, name) VALUES (?, ?, ?)",
+            (eid, etype, eid.split(":")[-1]),
+        )
     conn.commit()
-    return conn
+
+
+@pytest.fixture()
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    _seed_q1_entities(migrated_conn)
+    return migrated_conn
 
 
 def _insert_assertion(
@@ -119,9 +76,10 @@ def _insert_assertion(
     predicate_form: str | None = None,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form)"
-        " VALUES (?, ?, ?, ?)",
-        (entity_id, claim, confidence, predicate_form),
+        "INSERT INTO assertions (entity_id, claim, confidence, evidence, "
+        "created_at, updated_at, predicate_form)"
+        " VALUES (?, ?, ?, ?, datetime('now'), datetime('now'), ?)",
+        (entity_id, claim, confidence, "test evidence", predicate_form),
     )
     conn.commit()
     return cur.lastrowid  # type: ignore[return-value]
@@ -168,13 +126,13 @@ def _patch_update(monkeypatch: pytest.MonkeyPatch, conn: sqlite3.Connection) -> 
     ],
 )
 def test_patch_normalizes_legacy_to_canonical(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
     entity_id: str,
     legacy: str,
     expected_canonical: str,
 ) -> None:
     """Q5.4 always-re-normalize on PATCH — legacy form rewrites to canonical."""
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id=entity_id)
 
@@ -184,9 +142,10 @@ def test_patch_normalizes_legacy_to_canonical(
     assert _row(conn, aid)["predicate_form"] == expected_canonical
 
 
-def test_patch_canonical_input_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_patch_canonical_input_idempotent(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Already-canonical input survives re-normalize unchanged (Q5.4 idempotency)."""
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 
@@ -203,6 +162,7 @@ def test_patch_canonical_input_idempotent(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_patch_requires_human_review_flags_row(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Class 6 review trigger → row gains review_status='flagged' + a note.
@@ -211,7 +171,6 @@ def test_patch_requires_human_review_flags_row(
     generic-state predicate ("status") is a Class 6 review trigger. The
     PATCH must store the canonical form AND flag the row.
     """
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 
@@ -245,6 +204,7 @@ def test_patch_requires_human_review_flags_row(
 
 
 def test_patch_unparseable_predicate_form_422(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Garbage predicate_form must surface as 422, never 500.
@@ -253,7 +213,6 @@ def test_patch_unparseable_predicate_form_422(
     malformed input from upstream (e.g. occasional Stargate `predicate-extract`
     LLM writeback misfires) must not crash the route.
     """
-    conn = _make_conn()
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
 
@@ -316,14 +275,15 @@ _Q1_FIXTURES_FOR_IDEMPOTENCY = [
 
 
 @pytest.mark.parametrize("entity_id,legacy", _Q1_FIXTURES_FOR_IDEMPOTENCY)
-def test_function_level_idempotency(entity_id: str, legacy: str) -> None:
+def test_function_level_idempotency(
+    conn: sqlite3.Connection, entity_id: str, legacy: str
+) -> None:
     """`normalize(normalize(x)) == normalize(x)` — required by Q5.4 + §10.4.
 
     Idempotency under re-normalize is the load-bearing invariant for the §14.1
     backfill. If this fails, we cannot safely sweep NULL-row backfill through
     the same normalize-aware PATCH path.
     """
-    conn = _make_conn()
     resolver = DBEntityResolver(conn)
 
     once = normalize_predicate_domain(
@@ -409,41 +369,28 @@ def test_q1_canonicals_fixed_point_on_live_db(assertion_id: int) -> None:
 # synthesized predicate_form is status(self, rejected) while its tracked
 # workflow_state is 'accepted' must store status(self, accepted) and must NOT
 # be flagged for human review. Uses a dedicated fixture whose `entities` table
-# carries a workflow_state column (the shared _make_conn fixture predates it).
+# carries a workflow_state column on the head-schema fixture.
 # ---------------------------------------------------------------------------
 
 _DECISION_ID_1267 = "decision:bench-supergrok-heavy-reviewer-let-subscription-lapse"
 
 
-def _make_decision_conn() -> sqlite3.Connection:
-    """Like _make_conn but with a workflow_state-bearing entities table and a
-    single accepted decision entity (thread-1267 repro shape)."""
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(
-        _ASSERTIONS_DDL
-        + """
-        CREATE TABLE entities (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
-            workflow_state TEXT
-        );
-        """
-    )
+def _seed_decision_entity(conn: sqlite3.Connection) -> None:
     conn.execute(
-        "INSERT INTO entities (id, type, workflow_state) VALUES (?, 'decision', 'accepted')",
-        (_DECISION_ID_1267,),
+        "INSERT OR IGNORE INTO entities (id, type, name, workflow_state) "
+        "VALUES (?, 'decision', ?, 'accepted')",
+        (_DECISION_ID_1267, _DECISION_ID_1267.split(":")[-1]),
     )
     conn.commit()
-    return conn
 
 
 def test_patch_decision_self_status_polarity_corrected(
+    conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """thread 1267: status(self, rejected) on an accepted decision → corrected
     to status(self, accepted), row NOT flagged for review."""
-    conn = _make_decision_conn()
+    _seed_decision_entity(conn)
     _patch_update(monkeypatch, conn)
     aid = _insert_assertion(
         conn,
@@ -470,15 +417,61 @@ def test_patch_decision_self_status_missing_workflow_col_is_non_fatal(
     """Defensive: when the entities table has no workflow_state column (legacy
     fixtures / pre-migration DBs), the write path must not 500 — the guard
     simply no-ops and Class 6 behavior is preserved."""
-    conn = _make_conn()  # entities table here has no workflow_state column
-    _patch_update(monkeypatch, conn)
-    conn.execute(
-        "INSERT INTO entities (id, type) VALUES (?, 'decision')", (_DECISION_ID_1267,)
+    legacy = sqlite3.connect(":memory:")
+    legacy.row_factory = sqlite3.Row
+    legacy.executescript(
+        """
+        CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE assertions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity_id TEXT NOT NULL,
+            claim TEXT NOT NULL,
+            confidence TEXT NOT NULL,
+            confidence_score REAL,
+            evidence TEXT,
+            evidence_uris TEXT,
+            seeded_by TEXT,
+            derivation_type TEXT,
+            chunk_id INTEGER,
+            chunk_id_schema TEXT,
+            reasoning_summary TEXT,
+            is_atomic INTEGER DEFAULT 1,
+            is_decontextualized INTEGER DEFAULT 1,
+            observed_at TEXT,
+            valid_from TEXT,
+            valid_until TEXT,
+            superseded_by INTEGER,
+            review_status TEXT,
+            reviewer TEXT,
+            reviewed_at TEXT,
+            review_notes TEXT,
+            resolution_status TEXT,
+            fulfillment_assertion_id INTEGER,
+            quality_score REAL,
+            prospective_summary TEXT,
+            events_json TEXT,
+            artifact_uri TEXT,
+            artifact_storage TEXT DEFAULT 'inline',
+            entrenchment_score REAL,
+            predicate_form TEXT,
+            raw_predicate_form TEXT,
+            normalization_decision TEXT,
+            candidate_set_fingerprint TEXT,
+            normalizer_version TEXT,
+            attributes TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        """
     )
-    conn.commit()
-    aid = _insert_assertion(conn, entity_id=_DECISION_ID_1267, confidence="confirmed")
+    legacy.execute(
+        "INSERT INTO entities (id, type, name) VALUES (?, 'decision', ?)",
+        (_DECISION_ID_1267, "legacy-decision"),
+    )
+    legacy.commit()
+    _patch_update(monkeypatch, legacy)
+    aid = _insert_assertion(legacy, entity_id=_DECISION_ID_1267, confidence="confirmed")
 
-    # Must not raise; stored form is the un-corrected canonical (guard no-op).
     result = _update_assertion_impl(
         aid, {"predicate_form": f"status({_DECISION_ID_1267}, rejected)"}
     )

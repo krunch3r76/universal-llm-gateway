@@ -62,18 +62,48 @@ def snap_session_id(line: bytes | str) -> str | None:
     return sid if isinstance(sid, str) and sid else None
 
 
+def _tool_name_from_call(tc: dict[str, object]) -> str | None:
+    """Resolve a tool name from a polymorphic ``tool_call`` object.
+
+    cursor-agent emits exactly one variant key under ``tool_call`` that
+    identifies the tool family. Built-in tools use a ``<name>ToolCall`` key
+    (``readToolCall``, ``editToolCall``, ``shellToolCall``, …) whose ``args``
+    carry no name, so the variant key itself is the identity (suffix stripped:
+    ``readToolCall`` → ``read``). MCP tools use ``mcpToolCall`` whose
+    ``args.toolName`` is the bare tool name (``args.name`` is the
+    provider-prefixed form). Returns None when no variant resolves.
+    """
+    for variant, inner in tc.items():
+        if not isinstance(inner, dict):
+            continue
+        raw_args = inner.get("args")
+        args = raw_args if isinstance(raw_args, dict) else {}
+        name = args.get("toolName") or args.get("name")
+        if isinstance(name, str) and name:
+            return name
+        if variant == "mcpToolCall":
+            return None
+        if variant.endswith("ToolCall"):
+            return variant[: -len("ToolCall")]
+        return variant
+    return None
+
+
 def parse_tool_calls(stdout_bytes: bytes) -> list[dict[str, str]]:
     """Parse streaming-JSON lines and return tool call records with lifecycle.
 
-    Matches type=="tool_call". Extracts bare name from the nested path
-    tool_call.mcpToolCall.args.toolName (not the prefixed args.name).
-    Captures subtype ("started" | "completed") for lifecycle semantics.
-    Returns list of {"toolName": <bare>, "subtype": <str>} preserving order.
+    Matches type=="tool_call" and resolves a tool name across every
+    cursor-agent variant via :func:`_tool_name_from_call`: built-in
+    ``readToolCall`` / ``editToolCall`` / ``shellToolCall`` (and any future
+    ``*ToolCall``) yield the suffix-stripped name; ``mcpToolCall`` yields the
+    bare ``args.toolName``. Captures subtype ("started" | "completed") for
+    lifecycle semantics. Returns list of {"toolName": <name>, "subtype":
+    <str>} preserving order.
 
     Never raises — best-effort. Malformed JSON, bad nesting, or missing
     fields are skipped so a dispatch cannot be blocked by parse errors.
-    Rejected tool results (result.rejected present under mcpToolCall) are
-    tolerated without raising; name is still extracted when present.
+    Rejected tool results (result.rejected present under the variant) are
+    tolerated without raising; the name is still extracted.
     """
     tool_records: list[dict[str, str]] = []
     for raw in stdout_bytes.splitlines():
@@ -90,17 +120,12 @@ def parse_tool_calls(stdout_bytes: bytes) -> list[dict[str, str]]:
         tc = rec.get("tool_call")
         if not isinstance(tc, dict):
             continue
-        mcp = tc.get("mcpToolCall")
-        if not isinstance(mcp, dict):
+        name = _tool_name_from_call(tc)
+        if not name:
             continue
-        args = mcp.get("args") or {}
-        if not isinstance(args, dict):
-            continue
-        name = args.get("toolName")
-        if isinstance(name, str) and name:
-            subtype = rec.get("subtype")
-            subtype_str = subtype if isinstance(subtype, str) else ""
-            tool_records.append({"toolName": name, "subtype": subtype_str})
+        subtype = rec.get("subtype")
+        subtype_str = subtype if isinstance(subtype, str) else ""
+        tool_records.append({"toolName": name, "subtype": subtype_str})
     return tool_records
 
 

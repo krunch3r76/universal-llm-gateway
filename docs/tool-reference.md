@@ -753,7 +753,8 @@ RAG knowledge retrieval and index management.
 
 ## quality_gate
 
-Run ruff lint + compileall on specified files. Use after modifying code.
+Run ruff lint, compileall, import checks, and (conditionally) Lane A offline pytest. Use after
+modifying code.
 
 ### Args
 
@@ -761,7 +762,14 @@ Run ruff lint + compileall on specified files. Use after modifying code.
 
 ### Returns
 
-`{"passed": true/false, "ruff": {...}, "compile": {...}}`
+`{"passed": true/false, "ruff": {...}, "compile": {...}, "imports": {...}, "tests": {...}}`
+
+When any path in `files` touches `libs/llm_adapters/` or `libs/model_id/`, `tests` runs
+`pytest -m offline -q` over those trees. Otherwise `tests.passed` is true with output
+`"no offline-closure files touched; skipped"`.
+
+Outside Lane A, pytest is not invokable via this tool — use it for lint/compile/import closure;
+`claude-web` (lead seat) closes liveness via `manage` without a Cursor handoff for verify-only.
 
 ## retrieve
 

@@ -126,6 +126,22 @@ class ModelWrapper:
                     ),
                 )
             )
+        elif reasoning_effort:
+            reasoning = self.dispatch.reasoning
+            if reasoning is not None:
+                normalized = reasoning_effort.strip().lower()
+                if normalized not in reasoning.accepted_values:
+                    valid = ", ".join(sorted(reasoning.accepted_values))
+                    violations.append(
+                        KnobViolation(
+                            knob="reasoning.effort",
+                            reject_code="unsupported_by_model",
+                            message=(
+                                f"reasoning_effort={reasoning_effort!r} not in "
+                                f"accepted_values for model={model!r}; valid: {valid}"
+                            ),
+                        )
+                    )
         if violations:
             raise ProtocolError(violations)
 

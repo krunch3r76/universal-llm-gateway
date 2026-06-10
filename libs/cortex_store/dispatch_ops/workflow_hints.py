@@ -137,7 +137,8 @@ _FRICTION_TICKET_NEXT = (
     "Phase 2 execute (cursor: role=cursor-implement against the spec; web: inline fix). "
     "DEFAULT to Phase 1 unless operator says mechanical-only or a dense implement spec exists — "
     "do NOT make cursor-implement the first hop on a bug with open root cause/design. "
-    "Lifecycle: investigate → fix → report; secondary findings in closeout. "
+    "Lifecycle: investigate → fix → report; pass zoom-out duty (touch-point inventory, "
+    "bug-class grep, labeled secondary findings in closeout). "
     "Read: fs(cortex, agent-skills/consult-routing.md) § Codified bug reports or "
     "fs(workspaces, universal-llm-gateway/docs/agent-guides/skills/friction-review.md)."
 )

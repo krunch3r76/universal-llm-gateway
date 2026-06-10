@@ -228,7 +228,7 @@ def run_migrations(conn: sqlite3.Connection) -> list[int]:
             _apply_py_migration(conn, path, version)
 
         conn.execute(
-            "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)",
             (version, path.stem),
         )
         conn.commit()

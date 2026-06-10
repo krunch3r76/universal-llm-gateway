@@ -1,5 +1,5 @@
 <!-- target:* -->
-# MVW command map (≤10)
+# MVW command map (11 — cap exception: +`/overhaul`, thread 1415)
 
 Ratified MVW (`decision:agent-workflow-parity-mvw`). Slash commands are **Cursor
 affordances**; MCP seats use the equivalent tool calls directly. No-cortex seats
@@ -17,6 +17,7 @@ use only the **read/plan** column.
 | `/consult-plan` | `.cursor/commands/consult-plan.md` → `team_dispatch(generate)` or `handoff` per `agent-skills/consult-routing.md` | same; six-block packet (`docs/agent-guides/skills/handoff-packet-authoring.md`) | In scope — reviewer receives inlined packet |
 | `/consult-review` | `.cursor/commands/consult-review.md` → reviewer dispatch | same | In scope — primary connector job |
 | `/verify-implementation` | `.cursor/commands/verify-implementation.md` → checklist + gates | `fs` read-back + `observability` / dispatch as available | Read-only verification against named files |
+| `/overhaul` | `.cursor/commands/overhaul.md` → 12-step directory pass; read `docs/agent-guides/skills/overhaul-program.md` first | `fs` scan paths + `team_dispatch(handoff)` for splits/review + `scripts/modularize` / `doc-generate` when operator approves each call | Read/plan only: modularize scan output + propose split/review plan; no execution |
 
 **SOT:** this file. **Projection:** `docs/agent-guides/mvw-command-map.md` via
 `scripts/gen-rules --target command-map`. **Drift:** `scripts/agent-surface-check`.

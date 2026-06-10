@@ -79,39 +79,14 @@ def test_idempotent_rerun(conn: sqlite3.Connection) -> None:
     assert count == 1
 
 
-def test_correspondence_create_stamps_pending_review() -> None:
+def test_correspondence_create_stamps_pending_review(
+    migrated_conn: sqlite3.Connection,
+) -> None:
     """When workflow_schema exists, omitted workflow_state → initial_state."""
     from cortex_store.entity_crud import create_entity_impl
 
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    c.executescript(
-        """
-        CREATE TABLE entities (
-            id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT,
-            description TEXT, status TEXT, workflow_state TEXT,
-            aliases TEXT, attributes TEXT, notes TEXT, source_uri TEXT,
-            content_hash TEXT, retention_policy TEXT, retention_ttl_days INTEGER,
-            created_at TEXT, updated_at TEXT
-        );
-        CREATE TABLE workflow_schemas (
-            entity_type TEXT PRIMARY KEY, enum_values TEXT NOT NULL,
-            initial_state TEXT NOT NULL, terminal_states TEXT, notes TEXT
-        );
-        """
-    )
-    c.execute(
-        "INSERT INTO workflow_schemas VALUES (?, ?, ?, ?, ?)",
-        (
-            "correspondence",
-            '["pending_review","processed","dismissed"]',
-            "pending_review",
-            '["processed","dismissed"]',
-            None,
-        ),
-    )
     result = create_entity_impl(
-        c,
+        migrated_conn,
         {
             "id": "correspondence:test-1169",
             "type": "correspondence",
@@ -120,4 +95,4 @@ def test_correspondence_create_stamps_pending_review() -> None:
         },
     )
     assert result["workflow_state"] == "pending_review"
-    assert result["status"] == "unsubstantiated"
+    assert result.get("confidence_band") == "unsubstantiated"

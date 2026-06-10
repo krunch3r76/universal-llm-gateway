@@ -4,9 +4,9 @@ Three-tier aggregation strategy (Slice 4 cap-at-1 ratification, thread 907):
 
   Tier 0  mechanical join of predicate_forms already populated in top-K rows.
           Join order = card top-K query order (summary-first, pointer-last,
-          created_at DESC). Order is contract-stable for §5.5.4 cognitive
-          cache hashing — any future reorder must coordinate with cache-key
-          derivation.
+          COALESCE(entrenchment_score,0) DESC, created_at DESC). Order is
+          contract-stable for §5.5.4 cognitive cache hashing — any future
+          reorder must coordinate with cache-key derivation.
 
   Tier 1  opportunistic sync enrichment, capped at AT MOST ONE missing
           predicate_form per card read. Protects card-read latency: T1 is
@@ -112,8 +112,9 @@ def aggregate_predicate_summary(
     ∀ r ∈ top_k_assertions: r has at minimum keys ``id``, ``claim``,
     ``predicate_form`` (may be None for unenriched assertions).
 
-    Join order = card top-K query order. Do not sort or reorder: the join
-    is contract-stable for §5.5.4 cognitive cache hashing.
+    Join order = card top-K query order (summary-first, pointer-last,
+    COALESCE(entrenchment_score,0) DESC, created_at DESC). Do not sort or
+    reorder: the join is contract-stable for §5.5.4 cognitive cache hashing.
 
     *entity_id* is passed to the Tier 1 LLM prompt for context; "unknown"
     is used when omitted (graceful degradation, not a hard requirement).

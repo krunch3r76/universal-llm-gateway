@@ -6,13 +6,17 @@ Option B (assertion 13136): the deleted static maps are reshaped here, keyed by
 typed lookup; no adapter-local capability constant survives the G4 grep.
 
 Resolution is provider-surface scoped: the Anthropic max-output ceiling carries
-the per-model family table (reshaped ``_ANTHROPIC_MAX_OUTPUT_TOKENS``) with the
-8192 unknown-claude fail-closed ceiling; OpenAI/xAI (Responses) and Google
-carry surface-uniform floor/default. Reasoning dispatch is family-scoped
-(adaptive vs budget-mode vs effort-string).
+the per-model family table (reshaped ``_ANTHROPIC_MAX_OUTPUT_TOKENS``) — the
+family-level capability card; OpenAI/xAI (Responses) and Google carry
+surface-uniform floor/default. Reasoning dispatch is family-scoped (adaptive vs
+budget-mode vs effort-string).
 
-G13: a provider-uninferable model is a structural ``CatalogMissError`` — never a
-silent default. The in-surface unknown-claude ceiling is NOT a catalog-miss.
+G13: a model that resolves to no capability card is a structural
+``CatalogMissError`` — never a silent default. This covers a provider-uninferable
+model and an Anthropic family that matches no capability card
+(``miss_reason="no_capability_card"``): admission rejects rather than dispatching
+on a guessed ceiling and a guessed (mutually exclusive, unguessable) thinking
+surface.
 
 Adding a model: follow the gate checklist at
 ``libs/llm_adapters/capability_dispatch/MODEL_ADD_CHECKLIST.md`` (Lane A offline
@@ -40,6 +44,9 @@ _ALL_EFFORTS: tuple[str, ...] = tuple(sorted(VALID_REASONING_EFFORTS))
 # ── Anthropic max-output ceilings (reshaped _ANTHROPIC_MAX_OUTPUT_TOKENS) ──────
 # Ordered most-specific first; substring match reproduces the OLD helper.
 _ANTHROPIC_MAX_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
+    ("claude-fable-5", 128000),
+    ("claude-mythos-5", 128000),
+    ("claude-mythos-preview", 128000),
     ("claude-opus-4-8", 128000),
     ("claude-opus-4.8", 128000),
     ("claude-opus-4-7", 128000),
@@ -72,14 +79,12 @@ _ANTHROPIC_MAX_OUTPUT_CEILINGS: tuple[tuple[str, int], ...] = (
     ("claude-3-sonnet", 4096),
     ("claude-3-haiku", 4096),
 )
-# Fail-closed conservative ceiling for unknown claude models (within-surface,
-# NOT a catalog-miss).
-_ANTHROPIC_UNKNOWN_CEILING = 8192
-
 # ── Reasoning families (reshaped frontier_dispatch_request maps) ──────────────
 # Adaptive-capable Anthropic families (per adaptive-thinking.md).
 _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
     {
+        "claude-fable-5",
+        "claude-mythos-5",
         "claude-mythos-preview",
         "claude-opus-4-8",
         "claude-opus-4-7",
@@ -125,12 +130,20 @@ def _resolve_provider(model: str | ModelId) -> tuple[str, str]:
     return inferred, parsed.api_model_id
 
 
+def _anthropic_card_missing(bare_model: str) -> bool:
+    """True when no Anthropic capability card (ceiling marker) matches."""
+    normalized = bare_model.strip().lower()
+    return not any(
+        marker in normalized for marker, _ in _ANTHROPIC_MAX_OUTPUT_CEILINGS
+    )
+
+
 def _anthropic_ceiling(bare_model: str) -> int:
     normalized = bare_model.strip().lower()
     for marker, limit in _ANTHROPIC_MAX_OUTPUT_CEILINGS:
         if marker in normalized:
             return limit
-    return _ANTHROPIC_UNKNOWN_CEILING
+    raise CatalogMissError(bare_model, "no_capability_card")
 
 
 def _anthropic_uses_adaptive(bare_model: str) -> bool:
@@ -227,7 +240,9 @@ def resolve(model: str | ModelId) -> CapabilityDispatch:
     """Resolve the typed ``CapabilityDispatch`` for a cloud model.
 
     Lookup is keyed on the resolved provider/surface; the Anthropic ceiling is
-    drawn from the reshaped family table. G13: provider-uninferable → fail-fast.
+    drawn from the reshaped family table. G13: provider-uninferable → fail-fast;
+    an Anthropic family matching no capability card → ``CatalogMissError``
+    (``miss_reason="no_capability_card"``) rather than a guessed ceiling.
     """
     provider, bare = _resolve_provider(model)
     surface = _PROVIDER_SURFACE.get(provider)
@@ -235,6 +250,8 @@ def resolve(model: str | ModelId) -> CapabilityDispatch:
         raise CatalogMissError(
             str(model), f"no dispatch surface for provider={provider!r}"
         )
+    if provider == "anthropic" and _anthropic_card_missing(bare):
+        raise CatalogMissError(str(model), "no_capability_card")
     return CapabilityDispatch(
         api_surface=surface,
         max_output=_build_max_output(provider, bare),

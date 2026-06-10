@@ -26,7 +26,7 @@ from ..transcript_assembly import (
 )
 from ._shared import _FILES_ROOT, record
 from .ops_audit_detectors import run_detectors
-from .ops_review_gate import _run_session_audit_or_block
+from .ops_review_gate import _run_session_audit_or_block, summarize_audit_outcome
 
 logger = get_logger(__name__)
 
@@ -268,7 +268,7 @@ def _op_session_close_preflight(
     )
     preflight: dict[str, Any] = {
         "ok": True,
-        "audit": audit_outcome,
+        "audit": summarize_audit_outcome(audit_outcome),
         "turn_count": turn_count,
         "byte_count": (
             len(composed.encode("utf-8")) if transcript_depth != "none" else 0
@@ -287,6 +287,18 @@ def _op_session_close_preflight(
         )
         if timing_hint:
             preflight["warnings"] = [*structural_warnings, timing_hint]
+    if handoff_source_path or handoff_prompt:
+        handoff_preview = handoff_dry_run_preview(
+            files_root=_FILES_ROOT,
+            handoff_source_path=handoff_source_path,
+            handoff_source_section=None,
+            handoff_prompt=handoff_prompt,
+            session_id=session_id,
+        )
+        preflight.update(handoff_preview)
+        if not handoff_preview.get("handoff_valid", True):
+            preflight["ok"] = False
+            preflight["reason"] = "handoff.missing_transcript_anchor"
     return preflight
 
 
@@ -399,7 +411,7 @@ def _op_session_close(
             "dry_run": True,
             "would_succeed": True,
             "warnings": structural_warnings,
-            "audit": audit_outcome,
+            "audit": summarize_audit_outcome(audit_outcome),
             "turn_count": turn_count,
             "byte_count": (
                 len(composed.encode("utf-8")) if transcript_depth != "none" else 0
@@ -425,8 +437,13 @@ def _op_session_close(
                         expected_derived_handoff_prompt_sha256
                     ),
                     expected_source_file_sha256=expected_source_file_sha256,
+                    session_id=session_id,
                 )
             )
+            if not dry_payload.get("handoff_valid", True):
+                dry_payload.pop("would_succeed", None)
+                dry_payload["would_fail"] = True
+                dry_payload["reason"] = "handoff.missing_transcript_anchor"
         return dry_payload
 
     body: dict[str, Any] = {
@@ -483,7 +500,7 @@ def _op_session_close(
         return result
 
     if audit_outcome.get("warning"):
-        result["_warning"] = audit_outcome["warning"]
+        result["_warning"] = summarize_audit_outcome(audit_outcome)["warning"]
     _append_session_close_warnings(
         result,
         session_id=session_id,

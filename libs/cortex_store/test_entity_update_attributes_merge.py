@@ -12,56 +12,28 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from cortex_store.dispatch_ops._todo_closure_sidecar import render_closure_markdown
 from cortex_store.entity_crud import update_entity_impl
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.executescript(
-        """
-        CREATE TABLE entities (
-            id TEXT PRIMARY KEY,
-            type TEXT NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT,
-            status TEXT,
-            workflow_state TEXT,
-            aliases TEXT,
-            attributes TEXT,
-            notes TEXT,
-            source_uri TEXT,
-            content_hash TEXT,
-            created_at TEXT,
-            updated_at TEXT
-        );
-        CREATE TABLE assertions (
-            id INTEGER PRIMARY KEY, entity_id TEXT, claim TEXT, confidence TEXT,
-            confidence_score REAL, evidence TEXT, evidence_uris TEXT, seeded_by TEXT,
-            derivation_type TEXT, chunk_id TEXT, chunk_id_schema TEXT,
-            reasoning_summary TEXT, is_atomic INTEGER, is_decontextualized INTEGER,
-            observed_at TEXT, valid_from TEXT, valid_until TEXT, superseded_by INTEGER,
-            review_status TEXT, reviewer TEXT, reviewed_at TEXT, review_notes TEXT,
-            resolution_status TEXT, fulfillment_assertion_id INTEGER, quality_score REAL,
-            prospective_summary TEXT, events_json TEXT, artifact_uri TEXT,
-            artifact_storage TEXT, entrenchment_score REAL, predicate_form TEXT,
-            created_at TEXT, raw_predicate_form TEXT, normalization_decision TEXT,
-            candidate_set_fingerprint TEXT, normalizer_version TEXT
-        );
-        """
-    )
+def _seed_todo(conn: sqlite3.Connection) -> None:
     conn.execute(
-        "INSERT INTO entities (id, type, name, attributes, created_at) "
+        "INSERT OR IGNORE INTO entities (id, type, name, attributes, created_at) "
         "VALUES ('todo:x', 'todo', 'X', ?, '2026-06-03T00:00:00Z')",
         (json.dumps({"priority": "medium", "domain": "cortex"}),),
     )
     conn.commit()
-    return conn
 
 
-def test_partial_attributes_update_preserves_prior_keys() -> None:
-    conn = _conn()
+@pytest.fixture()
+def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
+    _seed_todo(migrated_conn)
+    return migrated_conn
+
+
+def test_partial_attributes_update_preserves_prior_keys(conn: sqlite3.Connection) -> None:
     update_entity_impl(
         conn,
         entity_id="todo:x",
@@ -76,8 +48,7 @@ def test_partial_attributes_update_preserves_prior_keys() -> None:
     }
 
 
-def test_attributes_update_overwrites_same_key() -> None:
-    conn = _conn()
+def test_attributes_update_overwrites_same_key(conn: sqlite3.Connection) -> None:
     update_entity_impl(
         conn, entity_id="todo:x", updates={"attributes": {"priority": "high"}}
     )
@@ -94,7 +65,7 @@ def test_render_closure_markdown_shape() -> None:
         reasoning_summary="Because.",
         references=[{"target": "todo:y", "role": "extends"}],
         agent="cursor",
-        session_id="cursor-2026-06-03-0010",
+        session_id="cursor-2026-06-03-001000-a01",
         closed_at="2026-06-03T00:10:00Z",
     )
     assert md.startswith("# Closure — todo:x")

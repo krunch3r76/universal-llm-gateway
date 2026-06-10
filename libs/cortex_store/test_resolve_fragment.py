@@ -4,13 +4,11 @@ Covers:
   * ``parse_cortex_uri`` extracts the fragment as ``pinpoint``.
   * No fragment → ``pinpoint`` is None (back-compat with pre-spec URIs).
   * Fragment + revision query both parse independently.
-  * ``_resolve_pinpoint_chunk`` returns the matching chunk row, or None
-    on miss (caller surfaces this as ``pinpoint_unresolved``).
+  * ``_resolve_pinpoint_chunk`` returns None after Phase E dropped chunk lookup
+    (migration 040 stub — pinpoint resolution deferred to Phase F+).
 """
 
 from __future__ import annotations
-
-import sqlite3
 
 from cortex_store.routes.resolve import (
     _resolve_pinpoint_chunk,
@@ -42,61 +40,16 @@ def test_parse_uri_assertion_special_form_no_fragment() -> None:
     assert parsed["pinpoint"] is None
 
 
-def _chunks_conn() -> sqlite3.Connection:
-    c = sqlite3.connect(":memory:")
-    c.row_factory = sqlite3.Row
-    c.execute(
-        "CREATE TABLE chunks ("
-        "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "  content TEXT,"
-        "  source_uri TEXT,"
-        "  source_date TEXT,"
-        "  observer TEXT,"
-        "  chunk_index INTEGER,"
-        "  token_count INTEGER,"
-        "  pinpoint TEXT"
-        ")"
-    )
-    c.execute(
-        "INSERT INTO chunks "
-        "(content, source_uri, source_date, observer, "
-        " chunk_index, token_count, pinpoint) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            "Notwithstanding subparagraph (A), a claim shall be deemed...",
-            "cortex://legal_source/rtc-63.2",
-            None,
-            "test",
-            0,
-            12,
-            "f-1-B",
-        ),
-    )
-    c.commit()
-    return c
-
-
 def test_resolve_pinpoint_chunk_hit() -> None:
-    c = _chunks_conn()
-    chunk = _resolve_pinpoint_chunk(
-        c, entity_id="legal_source:rtc-63.2", pinpoint="f-1-B"
-    )
-    assert chunk is not None
-    assert chunk["pinpoint"] == "f-1-B"
-    assert chunk["content"].startswith("Notwithstanding")
+    chunk = _resolve_pinpoint_chunk("legal_source:rtc-63.2", "f-1-B")
+    assert chunk is None
 
 
 def test_resolve_pinpoint_chunk_miss() -> None:
-    c = _chunks_conn()
-    chunk = _resolve_pinpoint_chunk(
-        c, entity_id="legal_source:rtc-63.2", pinpoint="z-99"
-    )
+    chunk = _resolve_pinpoint_chunk("legal_source:rtc-63.2", "z-99")
     assert chunk is None
 
 
 def test_resolve_pinpoint_chunk_wrong_entity_miss() -> None:
-    c = _chunks_conn()
-    chunk = _resolve_pinpoint_chunk(
-        c, entity_id="legal_source:rtc-1605", pinpoint="f-1-B"
-    )
+    chunk = _resolve_pinpoint_chunk("legal_source:rtc-1605", "f-1-B")
     assert chunk is None

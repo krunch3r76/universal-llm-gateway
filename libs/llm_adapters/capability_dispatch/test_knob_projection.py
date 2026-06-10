@@ -16,6 +16,25 @@ def test_project_knob_resolution_openai_mapped() -> None:
     assert result["parity"] == "not_claimed"
 
 
+def test_project_knob_resolution_includes_max_output_block() -> None:
+    result = project_knob_resolution(
+        resolved_model="openai/gpt-5.5",
+        requested_effort="high",
+        requested_max_output=4096,
+    )
+    max_output = result["max_output"]
+    assert set(max_output) == {
+        "requested",
+        "resolved",
+        "decision",
+        "floor",
+        "ceiling",
+    }
+    assert max_output["requested"] == 4096
+    assert max_output["resolved"] == 16384
+    assert max_output["decision"] == "floor_bump"
+
+
 def test_project_knob_resolution_anthropic_adaptive() -> None:
     result = project_knob_resolution(
         resolved_model="anthropic/claude-opus-4-8",
@@ -39,13 +58,17 @@ def test_project_knob_resolution_anthropic_token_budget_mapped() -> None:
     }
 
 
-def test_project_knob_resolution_anthropic_no_thinking() -> None:
+def test_project_knob_resolution_anthropic_token_budget_unmapped_rejects() -> None:
     result = project_knob_resolution(
         resolved_model="anthropic/claude-sonnet-4-5",
         requested_effort="minimal",
     )
-    assert result["status"] == "no_thinking"
-    assert result["reasoning_native"] is None
+    assert result["rejected"] is True
+    assert result["reject_kind"] == "protocol_error"
+    assert result["violations"]
+    assert any(v["knob"] == "reasoning.effort" for v in result["violations"])
+    assert any("valid:" in v["message"] for v in result["violations"])
+    assert "status" not in result
 
 
 def test_project_knob_resolution_xai_defaulted() -> None:
@@ -79,9 +102,12 @@ def test_resolved_event_fields_enriched() -> None:
 
     minimal_fields = resolve_dispatch(
         "anthropic/claude-sonnet-4-5",
-        reasoning_effort="minimal",
+        reasoning_effort="high",
     ).resolved_event_fields()
-    assert minimal_fields["reasoning_native"] is None
+    assert minimal_fields["reasoning_native"] == {
+        "type": "enabled",
+        "budget_tokens": 24000,
+    }
 
 
 def test_adaptive_event_overlay_fields() -> None:
