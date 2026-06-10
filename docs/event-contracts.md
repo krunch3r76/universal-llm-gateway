@@ -1778,6 +1778,7 @@ Emitted by the MCP server boot path (`_boot_data_fetch._fetch_rag_pipeline_state
 | `mcp.cortex.boot.fetch.failed` | `error`, `error_type` | Boot fetch recorder could not serialize a fetch result to JSON; the corresponding `FetchRecord.bytes` is set to `-1` (`BYTES_UNAVAILABLE`); distinct from `bytes=0` (legitimately empty payload) |
 | `mcp.cortex.boot.dump.written` | `session_id`, `path`, `bytes` | Per-boot audit dump written successfully to `/data/files/notes/system/audit/boots/`; `path` is the full dump file path (second-resolution filename decoupled from `session_id`); `bytes` is the UTF-8 byte count of the written file |
 | `mcp.cortex.boot.dump.failed` | `session_id`, `error`, `error_type`, `stage`, `path`? | Audit dump write failed; `stage` ∈ {`mkdir`, `write_text`}; `path` present for `write_text` stage only; boot itself succeeds (dump is best-effort) |
+| `mcp.cortex.boot.card.overbudget` | `agent`, `bytes`, `ceiling` | Delivered briefing card UTF-8 byte count exceeded per-seat ceiling (`web`: 19_000; `default`: 15_500); breach line appended to card before manifest assembly; per-block ledger in audit dump |
 
 ### Doc Generate Events
 

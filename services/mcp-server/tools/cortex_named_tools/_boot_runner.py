@@ -24,6 +24,11 @@ from ._boot_transcript import resolve_transcript
 
 _LA = ZoneInfo("America/Los_Angeles")
 _OPS_CONTEXT_DIR = Path("/data/files/notes/system/shared")
+# Per-seat delivered-card byte ceilings (UTF-8). Tripwire = projected max-load
+# size + ~0.5KB headroom (thread 1427 §A.3); breach self-announces on-card and
+# emits mcp.cortex.boot.card.overbudget. Declared intent: ratchet DOWN as fixed
+# doctrine graduates to skills.
+_CARD_BYTE_CEILINGS = {"web": 19_000, "default": 15_500}
 logger = get_logger(__name__)
 
 
@@ -326,6 +331,20 @@ def run_cortex_boot(
         agent=seat_slug,
         principal_context=extracted.get("principal_context") or None,
     )
+
+    card_bytes = len(card.encode("utf-8"))
+    ceiling = _CARD_BYTE_CEILINGS["web" if seat_slug.endswith("-web") else "default"]
+    if card_bytes > ceiling:
+        card += (
+            f"\n\n⚠ Card over budget: {card_bytes}B > {ceiling}B ceiling — "
+            "per-block ledger in the boot audit dump; trim per thread 1427 spec."
+        )
+        record(
+            "mcp.cortex.boot.card.overbudget",
+            agent=seat_slug,
+            bytes=card_bytes,
+            ceiling=ceiling,
+        )
 
     artifacts = _build_artifacts(
         agent=seat_slug,

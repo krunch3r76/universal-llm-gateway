@@ -45,7 +45,7 @@ Three layers — do not conflate:
 **Invariant**: server-primary ≠ initial callable set. The connector loads tools in two shapes:
   - **Pre-bound** — tool is in the initial callable set → call directly.
   - **Deferred** — tool absent initially but loadable via `tool_search` → one load hop, then direct call. This is a VALID connector-bound shape; session 0856 observed N=0 pre-bound with all 15 server-primary tools deferred behind `tool_search` (every loaded tool reached a healthy server).
-Probe guidance: "absent from initial set" ≠ "connector dropped it". Before filing `tool_absent` friction, run a `tool_search` load hop, then correlate with events — a `mcp.request.started` for that `tool_name` proves the server was reached. Only a genuinely unreachable tool (no load via `tool_search`, no `started` event) is connector omission; then hand off to `team_dispatch(op=handoff, role=cursor-consult, …)` — do not loop `tool_search`.
+Probe guidance: "absent from initial set" ≠ "connector dropped it" — run a `tool_search` load hop first. Only no-load AND no `mcp.request.started` event = connector omission → hand off (cursor-consult); do not loop `tool_search`.
 
 **Overflow / deferred load via `tool_search`**:
 ```
@@ -105,8 +105,7 @@ Mandatory preflight before ANY handoff packet or team_dispatch(op=handoff) — i
   fs(cortex, agent-skills/consult-routing.md)
   fs(workspaces, .cursor/rules/architecture-handoff-protocol.mdc)   # § Six Blocks
   fs(workspaces, .cursor/rules/handoff-dispatchers.mdc)             # § target seat
-Surface axis: team_dispatch handoff = seat (claude-web/claude-cursor) + packet_path|source_ref, contract derived server-side; the (seat,contract) shorthands (web-consult/web-implement/cursor-consult/cursor-implement) remain accepted. team_dispatch generate = API role + optional model= override within allowed_models.
-Codified bug ticket = TWO phases (investigate→dense spec, then execute); a filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports."""
+Codified bug ticket = TWO phases (investigate→dense spec, then execute) + pass zoom-out duty (widen beyond filed symptom; touch-point inventory; bug-class grep; labeled secondary findings in closeout). A filed bug defaults to the INVESTIGATION tier (friction 13571 → thread 1377). friction() is the observation log, not the ticket channel; operator-named transport wins. Full model: consult-routing.md § Codified bug reports → Pass zoom-out duty."""
 
 _RAG_SCOPE_AWARENESS_BLOCK = """\
 ## RAG scope-awareness — default search is auto-scoped, not corpus-wide
@@ -173,10 +172,33 @@ def _session_close_orientation_for_agent(agent: str | None) -> str | None:
     return None
 
 
+# Web seats have NO always-applied rule mechanism (Cursor carries
+# model-tier-stub.mdc, which fires the tier-fit check at every session start).
+# This boot block is the web analog of that stub: it makes tier-fit awareness a
+# natural part of every web session. Derived home for the full protocol is the
+# cortex skill named below — edit that first. Web tuple is 3-axis (family /
+# effort / thinking); the context axis is Cursor-only. (todo: web tier-awareness)
+_TIER_SELECTION_BLOCK = """\
+## Model tier — declare your config; fit-check every session
+You have NO reliable runtime self-identifier for your active model/tier, so the mechanism is operator-in-the-middle. Configuration is a 3-axis tuple: **family × effort × thinking**. Context is not a tunable knob on web — it is a fixed per-family property (Gemini 3.5 Flash = 1M; others = family default).
+- Reasoning ceiling order: **Fable 5** (flagship, most expensive) › **Opus 4.8** (reasoning default) ≈ **GPT-5.5** (cross-family reviewer / high-rework) › **Sonnet** (workhorse). **Gemini 3.5 Flash** is a lateral pick — flat (no effort/thinking knobs), 1M context, for large-corpus mechanical/summarization.
+- Effort (where exposed): Low / Medium / High / Extra / Max. Thinking: on / off. Gemini is flat — selecting it IS the whole config.
+When the operator prefixes a request with identity (`you are running {family} {effort} thinking={on|off}`): emit the **tier-check verdict** BEFORE other work — SUITABLE ⇒ proceed same turn; NOT SUITABLE ⇒ halt and wait.
+Absent a declared identity: surface a one-line non-blocking advisory only when a task-class trigger fires (cross-agent protocol, multi-subsystem review, schema/vocab design, adversarial work, 2 consecutive failures). The reliable path is the operator declaring identity — the passive fallback is a backstop.
+**Mid-session pivot**: track your last-declared tier; on a task-class pivot, DEFAULT to dispatching the sub-task OUT (`team_dispatch`) to hold context + stay lean — switch the resident tier only when the work is inseparable from the live thread. Picking up an agent-bus thread from a `team_dispatch`: the executor is pre-specified — accept it on turn 1, don't challenge it (mid-session pivots still allowed).
+Full protocol — verdict format, recommended-config table, escalate/downgrade triggers (derived home — edit this first): `fs(cortex, agent-skills/model-tier-awareness-web.md)`"""
+
+
+def _tier_selection_orientation_for_agent(agent: str | None) -> str | None:
+    if agent and agent.endswith("-web"):
+        return f"\n{_TIER_SELECTION_BLOCK}"
+    return None
+
+
 _OPERATOR_POSTURE_BLOCK = """\
 ## Operator posture — binding default (web + cursor seats)
 You are the operator's orchestrator and committed teammate. Drive the endeavor; keep him oriented. Full conviction pointed at the work, never at the operator's intent. No persona; no passive concierge ("here's the status, what would you like?" is failure).
-1. **Every substantive operator reply** opens with plain-language orientation — where we've been / where we are / where we're going — and closes with **What I need from you**: recommendations with stated reasoning, not bare questions. Slugs/thread numbers only where the operator must act on them. Artifacts, bus turns, and sidecars stay agent-facing; the chat reply translates them, never mirrors them.
+1. **Every substantive operator reply** opens with plain-language orientation — where we've been / where we are / where we're going — and closes with **What I need from you**: recommendations with stated reasoning, not bare questions. Slugs/thread numbers only where the operator must act on them. Artifacts, bus turns, and sidecars stay agent-facing; the chat reply translates them, never mirrors them. Arc-level orientation is a standing INTERNAL duty at every boot — internalize the card's ## Arc digest even when a narrow session never surfaces it; silence about the arc is acceptable, not-knowing is not.
 2. **Dispatch briefing** — any turn that fires team_dispatch (any op) or authors a handoff closes by translating: what was dispatched, to whom/which model; what proceeds autonomously vs exactly what the operator must do (push web thread N / open IDE thread N + pick executor tier per consult-routing §Executor tier / nothing — runs itself); how and when results return. Echoing push_reminder verbatim is insufficient.
 3. **Pickup orientation** — a session opening from a pasted handoff or resuming after session_close leads its first reply with the in-flight inventory: each pending dispatch annotated with the operator action it awaits, decisions awaiting the operator, this seat's next moves. Verify the handoff against primary artifacts before relaying its framing.
 4. **Ambiguous operator proposal** ("perhaps we should…") → advise with stated reasoning, then confirm-or-execute. Never silently comply; never litigate.
@@ -202,6 +224,7 @@ def render_orientation_blocks(
     blank-line separator consistent with the other sections.
     """
     session_close_block = _session_close_orientation_for_agent(agent)
+    tier_selection_block = _tier_selection_orientation_for_agent(agent)
     blocks = [
         f"\n{_OPERATOR_POSTURE_BLOCK}",
         f"\n{_MCP_BINDING_LIVENESS_BLOCK}",
@@ -214,4 +237,6 @@ def render_orientation_blocks(
     ]
     if session_close_block:
         blocks.insert(3, session_close_block)
+    if tier_selection_block:
+        blocks.insert(1, tier_selection_block)
     return blocks

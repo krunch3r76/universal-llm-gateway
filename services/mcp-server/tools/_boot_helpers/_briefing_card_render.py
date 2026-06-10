@@ -11,11 +11,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from ._skill_bodies import skill_relpath, skill_slug
+from ._time import relative_time
 
 # Reflective Journal / Your Notes preview length. Cap is the hard byte ceiling;
 # the truncator prefers the last sentence boundary at-or-before the cap so the
 # preview doesn't chop mid-sentence ("If I sit with —" was the canonical bug).
 PREVIEW_MAX_CHARS = 200
+# "Your Notes" carries operator directives during their pre-codification window —
+# wider preview than the reflective journal, plus an assertion-id recovery handle
+# rendered by the caller (thread 1427 F2).
+_NOTES_PREVIEW_MAX_CHARS = 320
 # Self-reflection recency cap. Older notes drift out of the boot card — agents
 # can re-fetch via /assertions if they're chasing a specific historical claim.
 _SELF_REFLECTION_MAX_AGE_DAYS = 14
@@ -291,48 +296,101 @@ def deadline_line(d: dict[str, Any], today: datetime) -> str:
     )
 
 
-_OPEN_ARC_CHILD_DISPLAY_CAP = 8
-
-
 def _short_entity_id(entity_id: str) -> str:
     if ":" in entity_id:
         return entity_id.split(":", 1)[1]
     return entity_id
 
 
-def _format_open_arc_line(arc: dict[str, Any]) -> str:
-    children = list(arc.get("children") or [])
-    n = len(children)
-    if n == 0:
-        child_suffix = "0 leaf todos"
-    else:
-        labels = [
-            _short_entity_id(c.get("id", "?"))
-            for c in children[:_OPEN_ARC_CHILD_DISPLAY_CAP]
-        ]
-        tail = (
-            f" +{n - _OPEN_ARC_CHILD_DISPLAY_CAP} more"
-            if n > _OPEN_ARC_CHILD_DISPLAY_CAP
+_ARC_SUMMARY_MAX = 240
+_ARC_OPEN_ITEMS_MAX = 2
+_ARC_RECOVERY = "cortex(tool='journal_read', arguments='{\"limit\": 1}')"
+
+
+def render_arc_section(
+    *,
+    continuity: dict[str, Any] | None,
+    last_session: dict[str, Any] | None,
+    open_arcs: list[dict[str, Any]] | None,
+    in_flight_todos: list[dict[str, Any]] | None,
+    deadlines: list[dict[str, Any]] | None,
+    now: datetime,
+) -> list[str]:
+    """Deterministic arc digest — been → are → going (directive 3 / 13717).
+
+    Absorbs the former Last Session + Continuity + Open arcs + Recent Work
+    blocks. Inputs are existing render params — zero new fetches. Child todo
+    slugs and completed plan phases live in the section manifest, not here.
+    """
+    if not (continuity or last_session or open_arcs or in_flight_todos or deadlines):
+        return []
+    lines: list[str] = ["\n## Arc — been → are → going"]
+
+    been_bits: list[str] = []
+    chain = (continuity or {}).get("continuity_chain") or []
+    if chain:
+        tail = " → ".join(chain[-3:]) + " → here"
+        continuations = (continuity or {}).get("continuations") or []
+        if continuations:
+            tail += f" (+{len(continuations)} continuation(s))"
+        been_bits.append(tail)
+    if last_session:
+        rel = relative_time(str(last_session.get("timestamp", "?")), now)
+        raw = str(last_session.get("summary", "No summary."))
+        cut = truncate_at_sentence(raw, _ARC_SUMMARY_MAX)
+        hint = (
+            f" [+{len(raw) - len(cut)}ch — `{_ARC_RECOVERY}`]"
+            if len(raw) > len(cut)
             else ""
         )
-        child_suffix = f"{n} leaf todos ({', '.join(labels)}{tail})"
-    state = arc.get("workflow_state", "?")
-    return f"- `{arc.get('id', '?')}` [{state}] — {child_suffix}"
+        been_bits.append(
+            f"last session ({last_session.get('agent', '?')}, {rel}): {cut}{hint}"
+        )
+    if been_bits:
+        lines.append("**Been**: " + " · ".join(been_bits))
 
+    are_bits: list[str] = []
+    for arc in open_arcs or []:
+        n = len(arc.get("children") or [])
+        are_bits.append(
+            f"`{arc.get('id', '?')}` [{arc.get('workflow_state', '?')}]({n})"
+        )
+    flight = [f"`{t.get('id', '?')}`" for t in in_flight_todos or []]
+    if flight:
+        are_bits.append("in-flight: " + ", ".join(flight))
+    if are_bits:
+        lines.append("**Are**: " + " · ".join(are_bits))
 
-def render_open_arcs_section(
-    open_arcs: list[dict[str, Any]],
-    *,
-    legend: str | None = None,
-) -> list[str]:
-    """Compact ## Open arcs block (ids + counts only)."""
-    if not open_arcs:
-        return []
-    header = "## Open arcs"
-    if legend:
-        header = f"{header}\n> {legend}"
-    lines = [f"\n{header}"]
-    lines.extend(_format_open_arc_line(arc) for arc in open_arcs)
+    going_bits: list[str] = []
+    items = (last_session or {}).get("open_items") or []
+    if items:
+        shown = "; ".join(
+            truncate_at_sentence(str(i), 110) for i in items[:_ARC_OPEN_ITEMS_MAX]
+        )
+        more = (
+            f" (+{len(items) - _ARC_OPEN_ITEMS_MAX} more)"
+            if len(items) > _ARC_OPEN_ITEMS_MAX
+            else ""
+        )
+        going_bits.append(f"open items: {shown}{more}")
+    else:
+        going_bits.append("no carried open items")
+    nearest: tuple[int, dict[str, Any]] | None = None
+    for d in deadlines or []:
+        ds = str(d.get("deadline_date") or "")
+        try:
+            delta = (datetime.strptime(ds[:10], "%Y-%m-%d").date() - now.date()).days
+        except ValueError:
+            continue
+        if delta >= 0 and (nearest is None or delta < nearest[0]):
+            nearest = (delta, d)
+    if nearest:
+        delta, d = nearest
+        going_bits.append(
+            f"next deadline: {d.get('deadline_date', '')} ({delta}d) — "
+            f"{d.get('deadline_name', '')}"
+        )
+    lines.append("**Going**: " + " · ".join(going_bits))
     return lines
 
 
@@ -341,10 +399,10 @@ __all__ = [
     "deadline_line",
     "filter_recent_self_reflections",
     "truncate_at_sentence",
+    "render_arc_section",
     "render_async_dispatch_section",
     "render_audit_alerts_section",
     "render_compact_block",
-    "render_open_arcs_section",
     "render_skills_section",
     "render_views_section",
 ]

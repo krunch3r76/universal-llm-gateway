@@ -8,13 +8,14 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ._briefing_card_render import (
+    _NOTES_PREVIEW_MAX_CHARS,
     PREVIEW_MAX_CHARS,
     deadline_line,
     filter_recent_self_reflections,
+    render_arc_section,
     render_async_dispatch_section,
     render_audit_alerts_section,
     render_compact_block,
-    render_open_arcs_section,
     render_skills_section,
     render_views_section,
     truncate_at_sentence,
@@ -25,17 +26,10 @@ from ._time import relative_time
 
 _LA = ZoneInfo("America/Los_Angeles")
 
-# Hard byte ceiling for last-session summary. The truncator seeks the last
-# sentence boundary in the back half of the window — avoids the mid-word cut
-# that primed confabulation in the canonical claude-web-lead-2026-05-12 boot.
-_LAST_SESSION_SUMMARY_MAX = 300
-_LAST_SESSION_RECOVERY = "cortex(tool='journal_read', arguments='{\"limit\": 1}')"
-
-# Cap dropbox-pending inline listing. Soft inline target for the full card
-# is ≤ ~8KB (render_briefing_card docstring); at HEAD with 250+ pending files
-# an unbounded dump pushes the card to ~37KB. First-N + count tail mirrors
+# Cap dropbox-pending inline listing. At HEAD with 250+ pending files an
+# unbounded dump pushes the card to ~37KB. First-N + count tail mirrors
 # the truncation pattern used elsewhere in this renderer.
-_DROPBOX_DISPLAY_MAX = 5
+_DROPBOX_DISPLAY_MAX = 3
 
 
 def render_briefing_card(
@@ -77,9 +71,11 @@ def render_briefing_card(
     sections stay as counts + fetch hints in the manifest per
     decision:boot-manifest-mode.
 
-    Soft inline target: ≤ ~8KB. Content that is session-stable, reference-only,
-    or recoverable on demand belongs in the manifest or a fetchable skill/doc,
-    not inline. Enforce via render-time logging when exceeded.
+    Per-seat delivered-card byte ceilings are enforced by the caller
+    (_boot_runner: on-card breach line + mcp.cortex.boot.card.overbudget
+    event); a per-block byte ledger lands in every boot audit dump. Content
+    that is session-stable, reference-only, or recoverable on demand belongs
+    in the manifest or a fetchable skill/doc, not inline.
     """
     now = datetime.now(UTC)
     local_now = now.astimezone(_LA)
@@ -138,6 +134,20 @@ def render_briefing_card(
     # Surface-aware: grok seats get the flat direct-call form; claude/gpt/gemini
     # get the dispatch-route (OVERFLOW) form (thread 1167, 2026-06-01).
     parts.extend(render_orientation_blocks(family=family, agent=agent))
+
+    # Arc digest — been → are → going (directive 3 / assertion 13717). Absorbs
+    # the former Last Session + Continuity + Open arcs + Recent Work blocks;
+    # all inputs are params already fetched for this render (zero new fetches).
+    parts.extend(
+        render_arc_section(
+            continuity=continuity if isinstance(continuity, dict) else None,
+            last_session=last_session,
+            open_arcs=open_arcs,
+            in_flight_todos=in_flight_todos,
+            deadlines=deadlines,
+            now=now,
+        )
+    )
 
     if skills:
         parts.extend(render_skills_section(skills, skills_unpartitioned_count))
@@ -203,6 +213,16 @@ def render_briefing_card(
             if compact_dedup_ids
             else temporal_active
         )
+        # One slot per entity: sibling snapshots (e.g. cumulative YTD rows never
+        # superseded upstream) otherwise crowd the 5-slot window. Presentation
+        # policy only — upstream non-supersession tracked separately (1427 F5).
+        by_entity: dict[str, dict[str, Any]] = {}
+        for a in scoped_active:
+            key = str(a.get("entity_name", a.get("entity_id", "?")))
+            prev = by_entity.get(key)
+            if prev is None or int(a.get("id") or 0) > int(prev.get("id") or 0):
+                by_entity[key] = a
+        scoped_active = list(by_entity.values())
         if scoped_active:
             parts.append(f"\n## Temporally Active ({len(scoped_active)})")
             for a in scoped_active[:5]:
@@ -247,86 +267,6 @@ def render_briefing_card(
             reason = item.get("reason", "")
             name = item.get("name", item.get("id", "?"))
             parts.append(f"- [{reason}] {name}")
-
-    if last_session:
-        agent = last_session.get("agent", "?")
-        ts = last_session.get("timestamp", "?")
-        rel = relative_time(str(ts), now)
-        parts.append(f"\n## Last Session — {agent} ({rel})")
-        chain = (
-            continuity.get("continuity_chain", [])
-            if isinstance(continuity, dict)
-            else []
-        )
-        continuations = (
-            continuity.get("continuations", []) if isinstance(continuity, dict) else []
-        )
-        # Handoffs are user-facing artifacts for manual copy-paste at end of chat;
-        # they MUST NOT auto-surface on subsequent boots (per assertion 8384,
-        # session web-2026-05-04-1057). The boot card surfaces only the
-        # last-session summary; absence of a handoff is not a gap.
-        _summary_raw = last_session.get("summary", "No summary.")
-        _summary_cut = truncate_at_sentence(_summary_raw, _LAST_SESSION_SUMMARY_MAX)
-        if len(_summary_raw) > len(_summary_cut):
-            parts.append(
-                f"{_summary_cut} "
-                f"[+{len(_summary_raw) - len(_summary_cut)} chars truncated — "
-                f"`{_LAST_SESSION_RECOVERY}` for full]"
-            )
-        else:
-            parts.append(_summary_cut)
-        if chain:
-            parts.append("")
-            parts.append("**Continuity**")
-            if continuations:
-                prefix = chain[:-1]
-                latest = chain[-1]
-                rendered = " → ".join(
-                    prefix
-                    + [
-                        f"[continuations: {', '.join(continuations + [latest])}]",
-                        "[you are here]",
-                    ]
-                )
-            else:
-                rendered = " → ".join(chain + ["[you are here]"])
-            parts.append(rendered)
-        open_items = last_session.get("open_items", [])
-        if open_items:
-            parts.append(f"**Open items** ({len(open_items)}):")
-            for item in open_items[:5]:
-                parts.append(f"- {item}")
-            if len(open_items) > 5:
-                parts.append(
-                    f"- *…{len(open_items) - 5} more — "
-                    f"`{_LAST_SESSION_RECOVERY}` for full list*"
-                )
-
-    if open_arcs:
-        parts.extend(
-            render_open_arcs_section(
-                open_arcs,
-                legend=(
-                    "task: = bounded arc of child_of todos; "
-                    "plan: = ordered phases; todo: = one unit"
-                ),
-            )
-        )
-
-    if plan_phases or in_flight_todos:
-        parts.append("\n## Recent Work")
-        if plan_phases:
-            parts.append("**Plan phases** (most recently active):")
-            for p in plan_phases:
-                state_tag = "🔄" if p.get("workflow_state") == "in_progress" else "✓"
-                name = p.get("name", p.get("id", "?"))
-                plan_tag = f" [{p['plan_id']}]" if p.get("plan_id") else ""
-                parts.append(f"- {state_tag} `{p.get('id', '?')}`{plan_tag} {name}")
-        if in_flight_todos:
-            parts.append("**In-flight todos**:")
-            for t in in_flight_todos:
-                domain_tag = f" [{t['domain']}]" if t.get("domain") else ""
-                parts.append(f"- `{t.get('id', '?')}`{domain_tag} {t.get('name', '')}")
 
     if todos:
         parts.append(f"\n## Todos — {todo_total} open")
@@ -382,10 +322,22 @@ def render_briefing_card(
                     if m:
                         tag = m.group()
                 session_tag = f"[{tag}] " if tag else ""
+                claim_raw = a.get("claim", "") or ""
                 claim_preview = truncate_at_sentence(
-                    a.get("claim", ""), PREVIEW_MAX_CHARS
+                    claim_raw, _NOTES_PREVIEW_MAX_CHARS
                 )
-                parts.append(f"- {session_tag}{claim_preview}")
+                handle = ""
+                if len(claim_preview) < len(claim_raw):
+                    aid = a.get("id")
+                    aid_part = f"a{aid} " if aid is not None else ""
+                    handle = (
+                        f" [{aid_part}+{len(claim_raw) - len(claim_preview)}ch]"
+                    )
+                parts.append(f"- {session_tag}{claim_preview}{handle}")
+            parts.append(
+                "  *full text by id: `cortex(tool='assertions', "
+                f"arguments='{{\"entity_id\": \"family:{family or 'claude'}\"}}')`*"
+            )
 
     if reflective_entries is not None:
         if reflective_entries:

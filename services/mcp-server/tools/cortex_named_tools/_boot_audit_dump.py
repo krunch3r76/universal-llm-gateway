@@ -14,6 +14,7 @@ entity-id uniqueness, while the audit dump uses `{agent}-%Y-%m-%d-%H%M%S`
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -109,6 +110,8 @@ def _render_dump(
         "```markdown",
         ops_context,
         "```",
+        "\n## Card Block Ledger",
+        _render_block_ledger(card),
         "\n## Fetch Ledger",
         _render_fetch_ledger(artifacts),
     ]
@@ -127,3 +130,16 @@ def _render_fetch_ledger(artifacts: list) -> str:
                 f"{fetch.bytes} | {fetch.duration_ms} |"
             )
     return "\n".join(lines) if len(lines) > 2 else "_(no fetches recorded)_"
+
+
+def _render_block_ledger(card: str) -> str:
+    """Per-`## `-block UTF-8 byte table — makes byte arguments one fs-read."""
+    total = len(card.encode("utf-8"))
+    lines = ["| Block | Bytes | % |", "|---|---|---|"]
+    for block in re.split(r"(?m)^(?=## )", card):
+        name = block.split("\n", 1)[0][:60] if block.startswith("##") else "(title)"
+        n = len(block.encode("utf-8"))
+        pct = (100 * n / total) if total else 0.0
+        lines.append(f"| {name} | {n} | {pct:.1f} |")
+    lines.append(f"| **TOTAL** | **{total}** | 100.0 |")
+    return "\n".join(lines)

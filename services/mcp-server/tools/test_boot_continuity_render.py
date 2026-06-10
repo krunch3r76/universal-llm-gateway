@@ -42,9 +42,10 @@ def test_render_last_session_with_handoff_shows_summary_not_prose() -> None:
 
     assert "**Handoff**" not in card
     assert "Start with the tests, then confirm the OpenAPI surface." not in card
+    assert "## Arc — been → are → going" in card
     assert "Reviewed the handoff-capture arc." in card
-    assert "**Continuity**" in card
-    assert "web-2026-05-03-1845 → web-2026-05-04-0049 → [you are here]" in card
+    assert "web-2026-05-03-1845 → web-2026-05-04-0049 → here" in card
+    assert "## Last Session" not in card
     assert {
         "section": "continuity",
         "hint": "GET /boot-continuity via cortex-api",
@@ -65,7 +66,7 @@ def test_render_last_session_without_handoff_no_hint() -> None:
     assert "Reviewed the handoff-capture arc." in card
     assert "_Hint: no_handoff_captured_" not in card
     assert "**Handoff**" not in card
-    assert "**Continuity**" in card
+    assert "## Arc — been → are → going" in card
     assert {
         "section": "continuity",
         "hint": "GET /boot-continuity via cortex-api",
@@ -146,7 +147,6 @@ def test_render_multi_continuation_siblings_still_renders_chain() -> None:
 
     assert "**Handoff**" not in card
     assert "Merge the final pass carefully." not in card
-    assert (
-        "web-2026-05-01-1845 → [continuations: web-2026-05-02-0900, web-2026-05-03-2351] → [you are here]"
-        in card
-    )
+    assert "## Arc — been → are → going" in card
+    assert "web-2026-05-01-1845" in card
+    assert "(+1 continuation(s))" in card
