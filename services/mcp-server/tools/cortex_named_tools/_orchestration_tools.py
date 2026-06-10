@@ -92,7 +92,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
                           synthesizer / artisan / skeptic / investigator (legacy).
                           Role does NOT change the seat slug — it annotates the session
                           and scopes the role memory anchor. The session_id is always
-                          {family}-{platform}-YYYY-MM-DD-HHMM regardless of role.
+                          {family}-{platform}-YYYY-MM-DD-HHMMSS-{3hex} regardless of role.
           transcript_id — if provided, loads continuation context for that transcript.
                           The transcript entity must already exist in Cortex, which means
                           the session it references must have already closed. When a
@@ -206,7 +206,7 @@ def register_orchestration_tools(mcp: FastMCP) -> None:
 
         Use:
         cortex(tool="session_close", arguments={
-          "session_id": "cursor-YYYY-MM-DD-HHMM",
+          "session_id": "cursor-YYYY-MM-DD-HHMMSS-abc",
           "agent": "cursor",
           "transcript_jsonl_path": "<path under CURSOR_AGENT_TRANSCRIPTS_ROOT>",
           "session_summary_md": "## Session Summary\\n\\n**Decisions:** ...",

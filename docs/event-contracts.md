@@ -2358,7 +2358,7 @@ Emitted by `libs/cortex_store/dispatch_ops/ops_journals.py` · `_op_session_clos
 
 | Reason | Triggered when | Agent fix |
 |---|---|---|
-| `session_id.invalid` | `session_id` does not match `{agent}-YYYY-MM-DD-HHMM` | Reformat the session_id with UTC timestamp. |
+| `session_id.invalid` | `session_id` does not match `{agent}-YYYY-MM-DD-HHMMSS-{3hex}` | Use the boot-held `session_id` or reformat with UTC second-resolution timestamp and 3-hex suffix. |
 | `summary.too_short` | `len(summary) < 20` | Extend the summary to ≥20 chars. |
 | `transcript_jsonl.invalid` | `transcript_jsonl_path` is missing, outside `CURSOR_AGENT_TRANSCRIPTS_ROOT`, or fails JSONL parse | Re-derive the path from `ls -lt $CURSOR_AGENT_TRANSCRIPTS_ROOT` (most recent UUID dir). |
 | `session_summary.invalid` | `session_summary_md` empty or missing `## Session Summary` heading | Compose the structural layer per `session-close.mdc` Step 1. |

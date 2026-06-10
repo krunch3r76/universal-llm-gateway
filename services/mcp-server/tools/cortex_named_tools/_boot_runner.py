@@ -10,6 +10,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from agent_seat.profiles import get_profile, resolve_seat
+from agent_seat.session_id import SessionMintMode, mint_session_id
 from mcp_events import record
 from universal_logging import get_logger
 
@@ -189,10 +190,10 @@ def run_cortex_boot(
         transcript_continuation = None
 
     t_boot = datetime.now(UTC)
-    session_id = (
-        f"{seat_slug}-{t_boot.strftime('%Y-%m-%d-%H%M')}"
-        if mode == BootMode.LIVE
-        else f"inspect-{seat_slug}-{t_boot.strftime('%Y-%m-%d-%H%M%S')}"
+    session_id = mint_session_id(
+        seat_slug,
+        mode=SessionMintMode.LIVE if mode == BootMode.LIVE else SessionMintMode.INSPECT,
+        at=t_boot,
     )
     # Build a profile dict compatible with build_futures_spec / extract_boot_results.
     # These helpers still expect a dict with specific keys; map from CapabilityProfile.

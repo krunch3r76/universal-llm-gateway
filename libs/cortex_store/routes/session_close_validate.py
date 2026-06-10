@@ -85,12 +85,12 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             hint=(
                 "Agent slugs may contain hyphens (e.g. claude-web, "
                 "api-claude) — the full slug must precede the "
-                "YYYY-MM-DD-HHMM timestamp."
+                "YYYY-MM-DD-HHMMSS-{3hex} timestamp."
             ),
             detail=(
                 f"session_id {body.session_id!r} does not match "
                 f"pattern {_SESSION_ID_RE_SOURCE} "
-                "({agent-slug}-YYYY-MM-DD-HHMM, lowercase)."
+                "({agent-slug}-YYYY-MM-DD-HHMMSS-{3hex}, lowercase)."
             ),
         )
         _raise_422(

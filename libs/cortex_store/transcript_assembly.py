@@ -39,6 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_seat.session_id import SessionMintMode, mint_session_id, session_id_time_base
 from universal_logging import get_logger
 
 logger = get_logger("cortex-api.transcript_assembly")
@@ -236,7 +237,7 @@ def assemble_verbatim_md(
 
     Args:
       jsonl_path: real, validated path under the agent-transcripts root.
-      session_id: full ``{agent}-YYYY-MM-DD-HHMM`` ID used in the H1 line.
+      session_id: full ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` ID used in the H1 line.
       assistant_label: heading label for assistant blocks; defaults to
         ``"Assistant"``.
 
@@ -276,19 +277,18 @@ def compose_full_transcript(verbatim_md: str, session_summary_md: str) -> str:
 
 
 def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str:
-    """Derive ``{agent}-YYYY-MM-DD-HHMM`` from when the JSONL file was created.
+    """Derive ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` from JSONL file birth time.
 
     Cursor agent-transcripts files are created at session start; their birth
     time (Linux ``st_birthtime``, else ``st_mtime``) is the canonical proxy when
-    the agent did not hold a ``cortex_boot`` ``session_id``.  Minute resolution
-    matches web-claude and ``_parse_opened_at`` on close.
+    the agent did not hold a ``cortex_boot`` ``session_id``.
     """
     st = jsonl_path.stat()
     started = getattr(st, "st_birthtime", None)
     if started is None or started <= 0:
         started = st.st_mtime
     dt = datetime.fromtimestamp(started, tz=UTC)
-    return f"{agent}-{dt.strftime('%Y-%m-%d-%H%M')}"
+    return mint_session_id(agent, mode=SessionMintMode.LIVE, at=dt)
 
 
 def session_id_timing_hint(
@@ -299,7 +299,7 @@ def session_id_timing_hint(
 ) -> str | None:
     """Advisory when ``session_id`` looks like close-time, not JSONL start."""
     from_jsonl = derive_session_id_from_jsonl_start(jsonl_path=jsonl_path, agent=agent)
-    if session_id == from_jsonl:
+    if session_id_time_base(session_id) == session_id_time_base(from_jsonl):
         return None
     return (
         f"session_id {session_id!r} differs from JSONL session-start "

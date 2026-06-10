@@ -705,13 +705,13 @@ Unified boot briefing for session start. Persona-scoped: each agent gets tailore
 
 | Field | Description |
 |---|---|
-| `session_id` | Server-minted session ID in format `{agent}-{YYYY-MM-DD}-{HHMM}` UTC. Hold in working memory; pass to all `edge_create` calls for the session duration. |
+| `session_id` | Server-minted session ID in format `{agent}-{YYYY-MM-DD}-{HHMMSS}-{3hex}` UTC. Hold in working memory; pass to all `edge_create` calls for the session duration. |
 | `boot_narrative` | Rendered Markdown briefing (salience sections, todos, threads, temporal). |
 | `continuation_state` | Recent decisions, service observations, open todos. |
 | `agent_bus` | Active threads and unread turns. |
 | `temporal` | Active and upcoming temporally-bounded assertions. |
 | `injected_artifacts` | List of `InjectedArtifact` objects — every byte-bearing source that reaches the agent's context. Each carries: `name`, `mode` (`inline`/`written_file`/`manifest_only`/`auto_postfile`), `source` (function or file path), `bytes` (rendered byte count; `0` for `manifest_only` — not yet fetched), `sha256` (raw bytes, no canonicalization), `path` (filesystem path if `mode == "written_file"`; `null` for `mode == "inline"` — including the same `operational_context` artifact name which appears as `written_file` under LIVE boots and `inline` under `boot_inspect`), `fetches` (list of `FetchRecord` provenance entries). `FetchRecord.bytes` is `-1` (`BYTES_UNAVAILABLE`) when the recorder could not serialize the fetch result — means measurement unavailable, not content absent; `mcp.cortex.boot.fetch.failed` event also fires. |
-| `audit_dump_path` | Path to the per-boot audit dump written to `/data/files/notes/system/audit/boots/` on each call; filename uses second-resolution timestamp (`{agent}-YYYY-MM-DD-HHMMSS.md`) decoupled from `session_id` (minute-resolution) for write-uniqueness within the same minute. `null` if the dump write failed (best-effort; boot still succeeds). Indexed under RAG scope `boot_snapshots` for historical drift queries. |
+| `audit_dump_path` | Path to the per-boot audit dump written to `/data/files/notes/system/audit/boots/` on each call; filename uses second-resolution timestamp (`{agent}-YYYY-MM-DD-HHMMSS.md`) decoupled from `session_id` (which adds a 3-hex entropy suffix) for filesystem write-key uniqueness. `null` if the dump write failed (best-effort; boot still succeeds). Indexed under RAG scope `boot_snapshots` for historical drift queries. |
 
 ## boot_inspect
 

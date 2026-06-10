@@ -5,10 +5,10 @@ containing the verbatim briefing card, operational context, manifest JSON,
 and a fetch ledger. Indexed by RAG under scope 'boot_snapshots' for
 historical drift queries.
 
-Filename is decoupled from session_id: session_id is `{agent}-%Y-%m-%d-%H%M`
-(minute resolution) for entity-id stability, while the audit dump uses
-`{agent}-%Y-%m-%d-%H%M%S` to guarantee write-uniqueness for the (rare but
-real) case of two boots within the same minute.
+Filename is decoupled from session_id: session_id is
+`{agent}-%Y-%m-%d-%H%M%S-{3hex}` (second resolution + entropy suffix) for
+entity-id uniqueness, while the audit dump uses `{agent}-%Y-%m-%d-%H%M%S`
+(second resolution only) as a filesystem-safe write key.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ def write_audit_dump(
         return None
 
     # Audit filename uses second-resolution timestamp, decoupled from
-    # session_id (which stays minute-resolution for entity stability).
+    # session_id (which carries a 3-hex entropy suffix for entity uniqueness).
     fname = f"{agent}-{boot_time.strftime('%Y-%m-%d-%H%M%S')}.md"
     out_path = AUDIT_DIR / fname
     body = _render_dump(

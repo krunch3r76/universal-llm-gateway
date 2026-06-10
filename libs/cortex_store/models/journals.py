@@ -87,7 +87,7 @@ class SessionCloseRequest(BaseModel):
     written for all depths. Only the transcript archival layer varies.
 
     Required fields:
-      session_id:         ``{agent}-YYYY-MM-DD-HHMM`` (UTC at session **start**;
+      session_id:         ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` (UTC at session **start**;
         boot ``session_id`` or JSONL birth time for Cursor — not close time).
       agent:              agent slug (cursor / web / orion / …).
       session_summary_md: agent-composed structural layer.  Non-empty; a

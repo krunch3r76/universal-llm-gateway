@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sqlite3
 from pathlib import Path
@@ -15,6 +16,14 @@ from cortex_store.routes import (
     session_close_persist,
     session_journals,
 )
+
+_MIG_PATH = Path(__file__).parent / "migrations" / "055_session_journals_source_ref.py"
+_spec = importlib.util.spec_from_file_location(
+    "migration_055_session_journals_source_ref", _MIG_PATH
+)
+assert _spec is not None and _spec.loader is not None
+migration_055 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(migration_055)
 
 
 def _install_schema(db_path: Path) -> None:
@@ -125,6 +134,7 @@ def _install_schema(db_path: Path) -> None:
             );
             """
         )
+        migration_055.migrate(conn)
         conn.commit()
     finally:
         conn.close()
@@ -695,6 +705,22 @@ def test_session_close_warns_when_prior_session_id_is_omitted(
 
 
 # ---- transcript_depth dial tests (Phase 1 of session-close-transcript-depth-dial) ----
+
+
+def test_close_accepts_new_format_session_id(session_env: dict[str, Path]) -> None:
+    """Post-13697 session IDs (HHMMSS + 3-hex suffix) pass validation and close."""
+    files_root = session_env["files_root"]
+    session_id = "claude-cursor-2026-06-10-012830-abc"
+    payload = _payload(
+        session_id=session_id,
+        agent="claude-cursor",
+        transcripts_root=session_env["transcripts_root"],
+    )
+    result = ops_journals._op_session_close(**payload)
+    assert "error" not in result, result
+    assert result["transcript_entity_id"] == f"transcript:{session_id}"
+    assert result["transcript_path"] is not None
+    assert (files_root / result["transcript_path"]).is_file()
 
 
 def test_close_verbatim_default_is_backward_compatible(

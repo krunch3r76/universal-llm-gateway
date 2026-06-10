@@ -36,7 +36,7 @@ def _op_assemble_transcript(
       jsonl_path: path under ``CURSOR_AGENT_TRANSCRIPTS_ROOT`` (absolute or
         relative to the root).  Sandbox-enforced — paths outside the root
         return ``{"error", "reason": "path_outside_root"}``.
-      session_id: ``{agent}-YYYY-MM-DD-HHMM`` — appears in the H1 line.
+      session_id: ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` — appears in the H1 line.
       agent: cosmetic; echoed in the response.
       assistant_label: heading label for assistant blocks; default
         ``"Assistant"``.

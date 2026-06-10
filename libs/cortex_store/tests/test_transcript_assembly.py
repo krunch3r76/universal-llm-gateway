@@ -189,7 +189,10 @@ def test_derive_session_id_from_jsonl_start_uses_mtime(
     jsonl.parent.mkdir(parents=True)
     jsonl.write_text("{}\n")
     derived = derive_session_id_from_jsonl_start(jsonl_path=jsonl, agent="cursor")
-    assert re.fullmatch(r"cursor-\d{4}-\d{2}-\d{2}-\d{4}", derived)
+    assert re.fullmatch(
+        r"cursor-\d{4}-\d{2}-\d{2}-\d{6}-[0-9a-f]{3}",
+        derived,
+    )
 
 
 def test_session_id_timing_hint_when_ids_differ(transcripts_root: Path) -> None:

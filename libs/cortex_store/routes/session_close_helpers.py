@@ -18,17 +18,22 @@ from ..dispatch_ops._shared import (
     _SESSION_ID_RE,
     _SESSION_ID_RE_SOURCE,
 )
+from agent_seat.session_id import derive_session_id_from_timestamp
+
 from ..session_close_validation import _emit_rejected, build_validation_error
 from ..status_trait_read import entity_has_trait_columns
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 
 
 def _parse_opened_at(transcript_id: str) -> str | None:
-    """Derive ``opened_at`` ISO 8601 from transcript ID (``{agent}-YYYY-MM-DD-HHMM``)."""
-    match = re.search(r"(\d{4})-(\d{2})-(\d{2})-(\d{2})(\d{2})$", transcript_id)
+    """Derive ``opened_at`` ISO 8601 from transcript ID (ignores 3-hex suffix)."""
+    match = re.search(
+        r"(\d{4})-(\d{2})-(\d{2})-(\d{6})(?:-[0-9a-f]{3})?$",
+        transcript_id,
+    )
     if match:
-        y, m, d, hh, mm = match.groups()
-        return f"{y}-{m}-{d}T{hh}:{mm}:00Z"
+        y, m, d, hhmmss = match.groups()
+        return f"{y}-{m}-{d}T{hhmmss[:2]}:{hhmmss[2:4]}:{hhmmss[4:6]}Z"
     return None
 
 
@@ -64,15 +69,10 @@ def _derive_session_id(agent: str, timestamp: str) -> str:
     """Derive a session ID from agent + timestamp string.
 
     Accepts ISO 8601 (``2026-04-08T23:11:00Z``) or any string containing
-    a ``YYYY-MM-DD`` date fragment.  Falls back to today if unparseable.
-    Format: ``{agent}-YYYY-MM-DD-HHMM``.
+    a ``YYYY-MM-DD`` date fragment.  Falls back to now if unparseable.
+    Format: ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}``.
     """
-    match = re.search(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):?(\d{2})", timestamp)
-    if match:
-        year, mon, day, hour, minute = match.groups()
-        return f"{agent}-{year}-{mon}-{day}-{hour}{minute}"
-    today = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
-    return f"{agent}-{today}"
+    return derive_session_id_from_timestamp(agent, timestamp)
 
 
 def _ensure_transcript_entity(

@@ -54,7 +54,7 @@ def upsert_session_handoff(
                 examples=_SESSION_ID_EXAMPLES,
                 hint=(
                     "Agent slugs may contain hyphens — the full slug must "
-                    "precede the YYYY-MM-DD-HHMM timestamp."
+                    "precede the YYYY-MM-DD-HHMMSS-{3hex} timestamp."
                 ),
                 detail=(
                     f"session_id {session_id!r} does not match pattern "

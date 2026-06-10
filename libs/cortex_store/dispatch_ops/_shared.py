@@ -44,17 +44,11 @@ _VALID_STATUS = frozenset(
 _CONFIDENCE_AXIS_STATUS = frozenset({"unsubstantiated", "confirmed", "provisional"})
 _LIFECYCLE_AXIS_STATUS = frozenset({"merged", "deprecated", "reaped"})
 _VALID_CONFIDENCE = frozenset({"confirmed", "believed", "suspected", "hypothesized"})
-# Agent slug may contain hyphens (e.g. ``claude-web``, ``api-claude``):
-# one or more lowercase-word segments separated by single hyphens, then the
-# ``YYYY-MM-DD-HHMM`` timestamp.  Pre-2026-05-17 the prefix was a single
-# ``[a-z]+`` word, which rejected hyphenated slugs and stranded web-claude
-# at session-close time (see this commit's motivating bug).
-_SESSION_ID_RE_SOURCE = r"^[a-z]+(-[a-z]+)*-\d{4}-\d{2}-\d{2}-\d{4}$"
-_SESSION_ID_RE = re.compile(_SESSION_ID_RE_SOURCE)
-_SESSION_ID_EXAMPLES = (
-    "cursor-2026-05-17-0458",
-    "claude-web-2026-05-17-0458",
-    "api-claude-2026-05-17-0458",
+from agent_seat.session_id import (
+    SESSION_ID_EXAMPLES as _SESSION_ID_EXAMPLES,
+    SESSION_ID_RE as _SESSION_ID_RE,
+    SESSION_ID_RE_SOURCE as _SESSION_ID_RE_SOURCE,
+    derive_session_id_from_timestamp,
 )
 
 # Agent slug: lowercase alnum + hyphens, must start with a letter.  Used as a
@@ -165,12 +159,7 @@ def _compute_content_hash(source_uri: str) -> str | None:
 
 def _derive_session_id_local(agent: str, timestamp: str) -> str:
     """Derive a session ID from agent + timestamp (mirrors cortex-api session_journals logic)."""
-    match = re.search(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):?(\d{2})", timestamp)
-    if match:
-        year, mon, day, hour, minute = match.groups()
-        return f"{agent}-{year}-{mon}-{day}-{hour}{minute}"
-    now = datetime.now(UTC).strftime("%Y-%m-%d-%H%M")
-    return f"{agent}-{now}"
+    return derive_session_id_from_timestamp(agent, timestamp)
 
 
 def _validate_canonical_sandbox_path(
