@@ -97,6 +97,15 @@ def repo_roots(root: Path) -> list[Path]:
     return repos or [root]
 
 
+def repo_base_for(root: Path, marker: str = "scripts/check-imports") -> Path:
+    """Return the repo under *root* whose *marker* path exists, else *root*."""
+    marker_path = Path(marker)
+    for repo in repo_roots(root):
+        if (repo / marker_path).exists():
+            return repo
+    return root
+
+
 def path_parts_without_anchor(path: Path) -> list[str]:
     return [part for part in path.parts if part not in {path.anchor, ""}]
 

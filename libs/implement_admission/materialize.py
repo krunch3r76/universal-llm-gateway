@@ -10,12 +10,30 @@ from implement_admission.admission_read import (
     compute_packet_sha256,
     replace_frontmatter_value,
 )
-from implement_admission.spec import ImplementSpec, implement_spec_hash
+from implement_admission.spec import ImplementSpec, SourceKind, implement_spec_hash
 
 _TOOL_SURFACE = (
     'fs(sandbox="workspaces"|"cortex", op="read"|"md_read", …), '
     "cortex, pipeline, observability, manage"
 )
+_EVENT_CATALOG_CRITERION = (
+    "Regenerate event catalog (`scripts/gen-event-catalog sync`) and "
+    "`scripts/gen-event-catalog check` passes; stage `docs/event-contracts.md`."
+)
+
+
+def _paths_touch_event_catalog(paths: list[str]) -> bool:
+    for path in paths:
+        if path.startswith("docs/event-contracts"):
+            return True
+        if not path.endswith(".py"):
+            continue
+        if not any(path.startswith(f"{root}/") for root in ("services", "libs", "systems")):
+            continue
+        parts = path.split("/")
+        if "events" in parts or parts[-1].startswith("events"):
+            return True
+    return False
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,9 +136,12 @@ def _render_task_guidance(spec: ImplementSpec) -> str:
             f"{routing.executor_style.value}"
         )
     skill_lines = [_skill_read(s) for s in spec.skills]
-    numbered = "\n".join(
-        f"{i}. {c}" for i, c in enumerate(spec.acceptance.criteria, start=1)
-    )
+    criteria = list(spec.acceptance.criteria)
+    if _paths_touch_event_catalog(spec.scope.files_expected) and not any(
+        "gen-event-catalog" in c or "event catalog" in c.lower() for c in criteria
+    ):
+        criteria.append(_EVENT_CATALOG_CRITERION)
+    numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(criteria, start=1))
     parts = [routing_line, *skill_lines, "## acceptance criteria", numbered]
     if _is_defaulted_acceptance(spec):
         parts.append(
@@ -138,23 +159,77 @@ def _render_mcp_capabilities(spec: ImplementSpec) -> str:
             f'"{f}"' for f in spec.scope.files_expected if f.endswith(".py")
         )
         lines.append(f'dispatch(tool="quality_gate", files=[{files}])')
+    if _paths_touch_event_catalog(spec.scope.files_expected):
+        lines.append(
+            "Event catalog: `scripts/gen-event-catalog sync` then "
+            "`scripts/gen-event-catalog check`; stage `docs/event-contracts.md`."
+        )
     return "\n".join(lines)
 
 
+_MAX_CORPUS_DECK_BYTES = 65_536
+_DECK_EMBED_DELIM = "--- PHASE DECK (verbatim) ---"
+_SIX_BLOCK_CLOSERS = (
+    "</scope>",
+    "</invariants>",
+    "</task_guidance>",
+    "</mcp_capabilities>",
+    "</output_format>",
+    "</corpus>",
+)
+
+
+def _sanitize_corpus_embed(text: str) -> tuple[str, int]:
+    """Neutralize stray six-block closing tags so deck content cannot prematurely
+    close the <corpus> block. Mutations are made VISIBLE (``</x>`` -> ``&lt;/x>``)
+    and counted so the caller can annotate them (spec §15 A3)."""
+    mutated = 0
+    out = text
+    for closer in _SIX_BLOCK_CLOSERS:
+        count = out.count(closer)
+        if count:
+            mutated += count
+            out = out.replace(closer, "&lt;" + closer[1:])
+    return out, mutated
+
+
 def _render_corpus(spec: ImplementSpec) -> str:
-    lines = [
+    header = [
         f"Source: {spec.source.canonical_ref}",
         f"Intent: {spec.intent.summary}",
     ]
     if spec.intent.description:
-        lines.append(f"Description: {spec.intent.description}")
+        header.append(f"Description: {spec.intent.description}")
     if spec.scope.files_expected:
         preview = spec.scope.files_expected[:8]
-        lines.append("Files expected: " + ", ".join(f"`{f}`" for f in preview))
+        header.append("Files expected: " + ", ".join(f"`{f}`" for f in preview))
         if len(spec.scope.files_expected) > 8:
-            lines.append(f"(+{len(spec.scope.files_expected) - 8} more)")
-    lines.append(f"Acceptance criteria count: {len(spec.acceptance.criteria)}")
-    return "\n".join(lines[:20])
+            header.append(f"(+{len(spec.scope.files_expected) - 8} more)")
+    header.append(f"Acceptance criteria count: {len(spec.acceptance.criteria)}")
+
+    # plan_phase: embed the resolved deck VERBATIM so the executor receives the
+    # BEFORE/AFTER task bodies. Bypass the metadata-only [:20] truncation; no outer
+    # code fence (decks carry nested ``` fences) — the deck rides inside <corpus>.
+    if spec.source.source_kind == SourceKind.PLAN_PHASE and spec.scope.deck_body:
+        body, mutated = _sanitize_corpus_embed(spec.scope.deck_body)
+        notes: list[str] = []
+        if mutated:
+            notes.append(
+                f"[corpus-sanitized: {mutated} six-block closing token(s) "
+                "neutralized as &lt;/...> to protect block structure]"
+            )
+        if len(body.encode("utf-8")) > _MAX_CORPUS_DECK_BYTES:
+            body = body.encode("utf-8")[: _MAX_CORPUS_DECK_BYTES - 2048].decode(
+                "utf-8", "ignore"
+            )
+            notes.append(
+                "[deck truncated for corpus size; read the complete phase deck via "
+                f"this packet's `source_ref: {spec.source.source_ref}` frontmatter]"
+            )
+        prefix = ("\n".join(notes) + "\n\n") if notes else ""
+        return "\n".join(header) + "\n\n" + _DECK_EMBED_DELIM + "\n\n" + prefix + body
+
+    return "\n".join(header[:20])
 
 
 def _render_packet(spec: ImplementSpec, *, spec_hash: str) -> str:

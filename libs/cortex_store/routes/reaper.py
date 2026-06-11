@@ -1,7 +1,8 @@
 """Reaper — sweep ephemeral entities past TTL with low entrenchment.
 
-Manual-only trigger initially. Soft-delete: sets valid_until on assertions,
-status='reaped' on entity, retires edges. Source files are NOT deleted.
+Manual-only trigger initially. Soft-delete: sets valid_until on assertions, lifecycle='reaped' on entity,
+retires session edges, deactivates touching relationships, drops salience cache.
+Source files are NOT deleted.
 
 Reaping criteria (ALL must be true):
 1. retention_policy = 'ephemeral'
@@ -19,6 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Query
 from universal_logging import get_logger
 
+from ..cascade_hygiene import apply_reap_consistency_hygiene
 from ..confidence_field import lifecycle_not_value_sql_predicate
 from ..db import cortex_conn, query
 from ..status_trait_write import write_entity_reaped
@@ -57,7 +59,7 @@ def _find_candidates(
         "SELECT id, name, type, retention_ttl_days, last_accessed_at, created_at "
         "FROM entities "
         f"WHERE retention_policy = 'ephemeral' AND {_NOT_REAPED}",
-        ("reaped", "reaped"),
+        ("reaped",),
     )
 
     now = datetime.now(UTC)
@@ -120,7 +122,7 @@ def _check_permanent_inbound(conn: object, entity_id: str) -> str | None:
         "WHERE se.to_node = ? AND se.valid_until IS NULL "
         f"AND e.retention_policy != 'ephemeral' AND {_NOT_REAPED_E} "
         "LIMIT 1",
-        (entity_id, "reaped", "reaped"),
+        (entity_id, "reaped"),
     )
     if rows:
         return rows[0]["from_node"]
@@ -131,9 +133,31 @@ def _check_permanent_inbound(conn: object, entity_id: str) -> str | None:
         "WHERE se.from_node = ? AND se.valid_until IS NULL "
         f"AND e.retention_policy != 'ephemeral' AND {_NOT_REAPED_E} "
         "LIMIT 1",
-        (entity_id, "reaped", "reaped"),
+        (entity_id, "reaped"),
     )
-    return rows[0]["to_node"] if rows else None
+    if rows:
+        return rows[0]["to_node"]
+    rows = query(
+        conn,
+        "SELECT r.from_entity FROM relationships r "
+        "JOIN entities e ON e.id = r.from_entity "
+        "WHERE r.to_entity = ? AND r.active = 1 "
+        f"AND e.retention_policy != 'ephemeral' AND {_NOT_REAPED_E} "
+        "LIMIT 1",
+        (entity_id, "reaped"),
+    )
+    if rows:
+        return rows[0]["from_entity"]
+    rows = query(
+        conn,
+        "SELECT r.to_entity FROM relationships r "
+        "JOIN entities e ON e.id = r.to_entity "
+        "WHERE r.from_entity = ? AND r.active = 1 "
+        f"AND e.retention_policy != 'ephemeral' AND {_NOT_REAPED_E} "
+        "LIMIT 1",
+        (entity_id, "reaped"),
+    )
+    return rows[0]["to_entity"] if rows else None
 
 
 def _reap_entity(conn: object, entity_id: str, now_iso: str) -> dict[str, int]:
@@ -152,7 +176,12 @@ def _reap_entity(conn: object, entity_id: str, now_iso: str) -> dict[str, int]:
         (now_iso, entity_id, entity_id),
     ).rowcount
 
-    return {"assertions_closed": a_count, "edges_retired": e_count}
+    hygiene = apply_reap_consistency_hygiene(conn, entity_id, now_iso)
+    return {
+        "assertions_closed": a_count,
+        "edges_retired": e_count,
+        **hygiene,
+    }
 
 
 @router.get("/preview")
@@ -228,11 +257,14 @@ def reaper_run(
                 }
             )
             logger.info(
-                "Reaped %s (%s): %d assertions closed, %d edges retired",
+                "Reaped %s (%s): %d assertions closed, %d edges retired, "
+                "%d relationships deactivated, %d salience rows dropped",
                 c.entity_id,
                 c.entity_name,
                 counts["assertions_closed"],
                 counts["edges_retired"],
+                counts["relationships_deactivated"],
+                counts["salience_rows_dropped"],
             )
 
         conn.commit()

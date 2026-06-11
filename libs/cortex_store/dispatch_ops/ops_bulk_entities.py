@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import HTTPException, status
 
 from ..db import cortex_conn, decode_row, query
+from ..entity_id_norm import canonicalize_entity_id
 from ._shared import (
     _ENTITY_MUTABLE,
     _VALID_STATUS,
@@ -106,6 +107,7 @@ def _bulk_upsert_entity(
 ) -> dict[str, Any]:
     ENTITY_JSON_FIELDS, create_entity_impl, update_entity_impl = _entity_crud()  # noqa: N806
     payload = _entity_payload(item)
+    payload["id"] = canonicalize_entity_id(str(payload["id"]), str(payload["type"]))
     entity_id = str(payload["id"])
     existing_rows = query(conn, "SELECT * FROM entities WHERE id = ?", (entity_id,))
     if not existing_rows:

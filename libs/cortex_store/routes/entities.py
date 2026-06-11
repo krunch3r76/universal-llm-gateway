@@ -18,7 +18,7 @@ from ..card import (
     CARD_TOP_K_DEFAULT,
     get_entity_card,
 )
-from ..db import cortex_conn
+from ..db import WRITE_LOCK, cortex_conn
 from ..db import query as db_query
 from ..entity_crud import (
     create_entity_impl,
@@ -26,6 +26,7 @@ from ..entity_crud import (
     update_entity_impl,
 )
 from ..entity_read import get_entity_impl
+from ..entity_rekey import entity_merge_impl, entity_rekey_impl
 from ..models import (
     EntityCreate,
     EntityDetail,
@@ -37,6 +38,15 @@ from ..models import (
 
 logger = get_logger("cortex-api.entities")
 router = APIRouter(prefix="/entities", tags=["entities"])
+
+
+class EntityRekeyRequest(BaseModel):
+    new_id: str
+
+
+class EntityMergeRequest(BaseModel):
+    source_id: str
+    target_id: str
 
 
 class SourcePathsResponse(BaseModel):
@@ -245,6 +255,20 @@ def update_entity(entity_id: str, body: EntityUpdate) -> EntityDetail:
     with cortex_conn() as conn:
         result = update_entity_impl(conn, entity_id=entity_id, updates=updates)
     return EntityDetail(**result)
+
+
+@router.post("/merge")
+def merge_entities(body: EntityMergeRequest) -> dict[str, object]:
+    """Fold source entity into target with dedup-before-repoint semantics."""
+    with WRITE_LOCK, cortex_conn() as conn:
+        return entity_merge_impl(conn, body.source_id, body.target_id)
+
+
+@router.post("/{old_id}/rekey")
+def rekey_entity(old_id: str, body: EntityRekeyRequest) -> dict[str, object]:
+    """Identity-preserving relabel: old_id becomes an alias of new_id."""
+    with WRITE_LOCK, cortex_conn() as conn:
+        return entity_rekey_impl(conn, old_id, body.new_id)
 
 
 @router.post("", response_model=EntityDetail, status_code=status.HTTP_201_CREATED)

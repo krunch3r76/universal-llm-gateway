@@ -10,6 +10,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
+from universal_logging import get_logger
+
 from implement_admission.admission_read import read_packet
 from implement_admission.closeout import flatten_evidence_uris
 from implement_admission.closeout_models import AdapterResult, ImplementCloseout
@@ -17,7 +19,6 @@ from implement_admission.closeout_runtime import get_runtime
 from implement_admission.normalize import normalize
 from implement_admission.source_ref import SourceRefError
 from implement_admission.spec import ImplementSpec, Source, implement_spec_hash
-from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -235,11 +236,22 @@ def _resolve_materialized_spec(
     )
 
 
+def _is_packet_closeout(source_ref: str) -> bool:
+    return source_ref.lower().startswith("packet:")
+
+
 def check_closeout_hash_drift(
     closeout: ImplementCloseout,
     *,
     workspaces_root: Path | None = None,
 ) -> DriftGateResult:
+    if _is_packet_closeout(closeout.source_ref):
+        return DriftGateResult(
+            gate_id="b",
+            tripped=False,
+            action="noop",
+            detail="closeout hash gate skipped: packet lane is pass-through",
+        )
     try:
         spec = _resolve_materialized_spec(
             closeout.source_ref, workspaces_root=workspaces_root

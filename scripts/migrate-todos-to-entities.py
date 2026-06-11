@@ -21,6 +21,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+from cortex_store.db import _connect
+
 CORTEX_DB = Path.home() / ".cortex" / "cortex.db"
 TODOS_DB = Path.home() / ".cortex" / "todos.db"
 SPECS_DIR = Path(__file__).resolve().parent.parent / "tasks" / "specs"
@@ -149,16 +151,36 @@ def _parse_description_to_spec(title: str, description: str) -> str:
 # ── Phase 1: Cleanup ─────────────────────────────────────────────────────
 
 
+_TODO_ENTITY_ID_SQL = "entity_id LIKE 'todo:%' OR entity_id LIKE 'event:todo_%'"
+_EVENT_CHAIN_EVENT_ID_SQL = "event_id LIKE 'event:todo_%'"
+
+
 def phase1_delete_stale_entities(
     cortex: sqlite3.Connection, *, dry_run: bool
 ) -> dict[str, int]:
-    """Delete v2.2 todo:*/event:todo_* entities, relationships, and cache."""
+    """Delete v2.2 todo:*/event:todo_* entities and all referencing child rows."""
     counts: dict[str, int] = {}
 
     for label, sql in [
         (
+            "assertions",
+            f"DELETE FROM assertions WHERE {_TODO_ENTITY_ID_SQL}",
+        ),
+        (
+            "surface_forms",
+            f"DELETE FROM surface_forms WHERE {_TODO_ENTITY_ID_SQL}",
+        ),
+        (
+            "tag_assignments",
+            f"DELETE FROM tag_assignments WHERE {_TODO_ENTITY_ID_SQL}",
+        ),
+        (
+            "event_chain_members",
+            f"DELETE FROM event_chain_members WHERE {_EVENT_CHAIN_EVENT_ID_SQL}",
+        ),
+        (
             "salience_cache",
-            "DELETE FROM entity_salience_cache WHERE entity_id LIKE 'todo:%' OR entity_id LIKE 'event:todo_%'",
+            f"DELETE FROM entity_salience_cache WHERE {_TODO_ENTITY_ID_SQL}",
         ),
         (
             "relationships",
@@ -356,8 +378,8 @@ def main() -> None:
         print(f"ERROR: todos.db not found at {TODOS_DB}", file=sys.stderr)
         sys.exit(1)
 
-    cortex = sqlite3.connect(str(CORTEX_DB))
-    todos = sqlite3.connect(str(TODOS_DB))
+    cortex = _connect(CORTEX_DB)
+    todos = _connect(TODOS_DB)
 
     try:
         if args.phase is None or args.phase == 1:

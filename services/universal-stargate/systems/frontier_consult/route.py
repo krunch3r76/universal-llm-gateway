@@ -14,24 +14,42 @@ from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
 )
+from implement_admission.source_ref import SourceRefError
 from pydantic import BaseModel, Field
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from .admission import resolve_handoff_seat, resolve_handoff_target
+from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
-from .events import FrontierHandoffCreated, FrontierHandoffRequested
+from .events import (
+    FrontierHandoffCreated,
+    FrontierHandoffExecutorOverride,
+    FrontierHandoffMaterializationIncomplete,
+    FrontierHandoffRequested,
+)
 from .handoff import (
+    _resolve_packet_file,
     _workspaces_root,
     build_pointer_body,
+    check_contract_ambiguity,
     create_handoff_thread,
     validate_packet,
 )
-from .handoff_response import build_handoff_result, build_push_reminder
-from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
+from .handoff_response import (
+    build_handoff_result,
+    build_push_reminder,
+    build_recommended_executor,
+    build_recommended_review,
+)
+from .executor_resolution import (
+    _read_packet_executor_inputs,
+    should_emit_executor_override_audit,
+)
 from .implement_admission_bridge import (
     BridgeResult,
     StargateCortexReader,
+    _executor_probe_root,
     resolve_source_ref_to_packet,
     verify_both_present_hash,
 )
@@ -301,6 +319,8 @@ class TeamHandoffBody(BaseModel):
 
     At least one of ``source_ref`` or ``packet_path`` must be present.
     ``source_ref`` triggers normalize→materialize (Phase 2 unified admission).
+    ``contract`` — optional explicit authority grant (``consult`` | ``implement``);
+    highest-priority signal in F1 derivation when set.
     """
 
     model_config = {"extra": "forbid"}
@@ -310,6 +330,10 @@ class TeamHandoffBody(BaseModel):
     seat: str | None = None
     packet_path: str | None = None
     source_ref: str | None = None
+    contract: Literal["consult", "implement"] | None = None
+    executor_override: str | None = None
+    executor_override_reason_code: str | None = None
+    executor_override_reason: str | None = None
     subject: str
     pointer_body: str | None = None
     tags: list[str] | None = None
@@ -364,14 +388,15 @@ async def team_handoff(
     implement_spec_hash_value: str | None = None
     warnings: list[str] = []
     frontmatter_source_ref: str | None = None
+    materialization_present: bool | None = None
 
     try:
-        if body.source_ref is not None:
-            await loop.run_in_executor(
-                None,
-                partial(require_decision_asserted, cortex=reader),
-            )
+        await loop.run_in_executor(
+            None,
+            partial(require_decision_asserted, cortex=reader),
+        )
 
+        if body.source_ref is not None:
             if packet_path is not None:
                 implement_spec_hash_value = await loop.run_in_executor(
                     None,
@@ -404,6 +429,8 @@ async def team_handoff(
                     }
                 packet_path = bridge_result.packet_path
                 implement_spec_hash_value = bridge_result.implement_spec_hash
+                materialization_present = bridge_result.materialization_present
+                warnings.extend(bridge_result.warnings)
 
         assert packet_path is not None
 
@@ -431,12 +458,20 @@ async def team_handoff(
         handoff_contract, contract_source = await loop.run_in_executor(
             None,
             lambda: derive_contract(
+                explicit_contract=body.contract,
                 source_ref=body.source_ref,
                 packet_path=packet_path,
                 role=body.role,
                 cortex=reader,
                 workspaces_root=workspaces_root,
             ),
+        )
+
+        check_contract_ambiguity(
+            request_id=request_id,
+            packet_path=packet_path,
+            contract_source=contract_source,
+            workspaces_root=workspaces_root,
         )
 
         validation = validate_packet(
@@ -460,12 +495,23 @@ async def team_handoff(
             )
         )
 
+        if materialization_present is False and body.source_ref is not None:
+            _publish(
+                FrontierHandoffMaterializationIncomplete(
+                    request_id=request_id,
+                    packet_path=packet_path,
+                    probe_root=str(_executor_probe_root(workspaces_root.resolve())),
+                    source_ref=body.source_ref,
+                )
+            )
+
         pointer = build_pointer_body(
             request_id=request_id,
             packet_path=packet_path,
             subject=body.subject,
             pointer_body=body.pointer_body,
             handoff_contract=handoff_contract,
+            materialization_fallback=materialization_present is False,
         )
 
         thread_id = await create_handoff_thread(
@@ -486,6 +532,57 @@ async def team_handoff(
             )
         )
 
+        packet_file = _resolve_packet_file(workspaces_root.resolve(), packet_path)
+        packet_text = (
+            packet_file.read_text(encoding="utf-8", errors="replace")
+            if packet_file is not None
+            else ""
+        )
+        executor_fields = build_recommended_executor(
+            handoff_contract=handoff_contract,
+            packet_text=packet_text,
+            executor_override=body.executor_override,
+            executor_override_reason_code=body.executor_override_reason_code,
+            executor_override_reason=body.executor_override_reason,
+        )
+        review_fields = build_recommended_review(handoff_contract=handoff_contract)
+        fm_override, _, _ = _read_packet_executor_inputs(packet_text)
+        override_supplied = (
+            body.executor_override is not None or fm_override is not None
+        )
+        if should_emit_executor_override_audit(
+            handoff_contract=handoff_contract,
+            recommended_executor=executor_fields.get("recommended_executor"),
+            override_supplied=override_supplied,
+        ):
+            _publish(
+                FrontierHandoffExecutorOverride(
+                    request_id=request_id,
+                    handoff_contract=handoff_contract,
+                    recommended_executor=executor_fields["recommended_executor"]
+                    or "composer",
+                    source=executor_fields["recommended_executor_source"] or "",
+                    reason_code=executor_fields.get("recommended_executor_reason_code"),
+                )
+            )
+
+    except SourceRefError as exc:
+        logger.warning(
+            "handoff rejected: request_id=%s field=source_ref code=%s reason=%s",
+            request_id,
+            exc.code,
+            exc,
+        )
+        return JSONResponse(
+            status_code=422,
+            content=FrontierEndpointError(
+                request_id=request_id,
+                field="source_ref",
+                reason=f"{exc.rule} ({exc.source_ref})",
+                status_code=422,
+                code=exc.code,
+            ).to_dict(),
+        )
     except DecisionNotAssertedError as exc:
         logger.warning(
             "handoff rejected: request_id=%s field=source_ref reason=%s",
@@ -520,9 +617,14 @@ async def team_handoff(
         "handoff_contract": handoff_contract,
         "handoff_contract_source": contract_source,
         "push_reminder": build_push_reminder(
-            thread_id=thread_id, to_agent=to_agent, platform=platform
+            thread_id=thread_id,
+            to_agent=to_agent,
+            platform=platform,
+            handoff_contract=handoff_contract,
         ),
         **build_handoff_result(thread_id=thread_id, to_agent=to_agent),
+        **executor_fields,
+        **review_fields,
     }
     if body.source_ref is not None:
         result["source_ref"] = body.source_ref
@@ -537,6 +639,8 @@ async def team_handoff(
     else:
         materialization_mode = "hand_authored"
     result["materialization_mode"] = materialization_mode
+    if materialization_present is False:
+        result["materialization_present"] = False
     if warnings:
         result["warnings"] = warnings
     return result

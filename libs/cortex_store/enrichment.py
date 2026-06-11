@@ -175,31 +175,65 @@ def _build_indexed_text(
     return "\n".join(parts)
 
 
+def reindex_assertion_fts_conn(conn: sqlite3.Connection, assertion_id: int) -> None:
+    """Rebuild the FTS5 row using the caller's connection (no commit)."""
+    row = conn.execute(
+        "SELECT claim, prospective_summary, events_json, entity_id "
+        "FROM assertions WHERE id = ?",
+        (assertion_id,),
+    ).fetchone()
+    if not row:
+        return
+    claim, prospective, events, eid = row
+    indexed = _build_indexed_text(claim, prospective, events, eid)
+    conn.execute(
+        "DELETE FROM assertions_fts WHERE assertion_id = ?",
+        (assertion_id,),
+    )
+    conn.execute(
+        "INSERT INTO assertions_fts (assertion_id, entity_id, indexed_text) "
+        "VALUES (?, ?, ?)",
+        (assertion_id, eid, indexed),
+    )
+
+
+def reindex_assertions_fts_batch(
+    conn: sqlite3.Connection, assertion_ids: list[int]
+) -> None:
+    """Batch FTS rebuild inside an open transaction."""
+    if not assertion_ids:
+        return
+    placeholders = ", ".join("?" for _ in assertion_ids)
+    conn.execute(
+        f"DELETE FROM assertions_fts WHERE assertion_id IN ({placeholders})",
+        tuple(assertion_ids),
+    )
+    rows = conn.execute(
+        f"SELECT id, claim, prospective_summary, events_json, entity_id "
+        f"FROM assertions WHERE id IN ({placeholders})",
+        tuple(assertion_ids),
+    ).fetchall()
+    conn.executemany(
+        "INSERT INTO assertions_fts (assertion_id, entity_id, indexed_text) "
+        "VALUES (?, ?, ?)",
+        [
+            (
+                row[0],
+                row[4],
+                _build_indexed_text(row[1], row[2], row[3], row[4]),
+            )
+            for row in rows
+        ],
+    )
+
+
 def reindex_assertion_fts(assertion_id: int) -> None:
     """Rebuild the FTS5 row for a single assertion from its current DB state."""
     from .db import WRITE_LOCK, cortex_conn
 
     try:
         with WRITE_LOCK, cortex_conn() as conn:
-            row = conn.execute(
-                "SELECT claim, prospective_summary, events_json, entity_id "
-                "FROM assertions WHERE id = ?",
-                (assertion_id,),
-            ).fetchone()
-            if not row:
-                return
-            claim, prospective, events, eid = row
-            indexed = _build_indexed_text(claim, prospective, events, eid)
-
-            conn.execute(
-                "DELETE FROM assertions_fts WHERE assertion_id = ?",
-                (assertion_id,),
-            )
-            conn.execute(
-                "INSERT INTO assertions_fts (assertion_id, entity_id, indexed_text) "
-                "VALUES (?, ?, ?)",
-                (assertion_id, eid, indexed),
-            )
+            reindex_assertion_fts_conn(conn, assertion_id)
             conn.commit()
     except Exception:
         logger.warning(

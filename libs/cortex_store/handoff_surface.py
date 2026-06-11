@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from .handoff_derivation import (
+    DERIVATION_AUTO_PERSISTED,
     DERIVATION_DETACHED_STRING,
     DERIVATION_SECTION,
     DERIVATION_SECTION_AMBIGUOUS,
@@ -33,6 +34,7 @@ def effective_handoff_derivation(provenance: dict[str, Any] | None) -> str:
         DERIVATION_SECTION_UNRESOLVED,
         DERIVATION_SECTION_AMBIGUOUS,
         DERIVATION_DETACHED_STRING,
+        DERIVATION_AUTO_PERSISTED,
     ):
         return str(raw)
     return DERIVATION_DETACHED_STRING
@@ -68,6 +70,12 @@ def _flag_reason(
         return (
             "Handoff was stored as detached_string without a file-backed "
             "marker extraction at close time."
+        )
+    if derivation == DERIVATION_AUTO_PERSISTED:
+        return (
+            "Handoff was auto-persisted from the inline close string — "
+            "file-backed for reload/tamper-detection, not independently "
+            "lead-authored marker extraction."
         )
     return "Handoff is not file-backed and marker-verified."
 
@@ -108,6 +116,10 @@ def build_handoff_surface(attributes: dict[str, Any] | None) -> dict[str, Any] |
     if provenance.get("source_file_sha256"):
         surface["source_file_sha256"] = provenance["source_file_sha256"]
 
+    verification = attributes.get("handoff_verification")
+    if isinstance(verification, dict):
+        surface["handoff_verification"] = verification
+
     if not verified:
         surface["flag"] = _FLAG_INVALID if invalid else _FLAG_UNVERIFIED
         surface["reason"] = _flag_reason(
@@ -121,6 +133,7 @@ def build_handoff_surface(attributes: dict[str, Any] | None) -> dict[str, Any] |
 def build_handoff_surface_preview(
     handoff_prompt: str | None,
     provenance: dict[str, Any] | None,
+    handoff_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Write-time mirror of the read-side ``handoff_surface``.
 
@@ -135,11 +148,21 @@ def build_handoff_surface_preview(
     The unverified classification is unchanged — this reuses the read-side
     builder rather than re-deriving the flag.
     """
-    surface = build_handoff_surface(
-        {"handoff_prompt": handoff_prompt, "handoff_provenance": provenance}
-    )
+    attrs: dict[str, Any] = {
+        "handoff_prompt": handoff_prompt,
+        "handoff_provenance": provenance,
+    }
+    if handoff_verification is not None:
+        attrs["handoff_verification"] = handoff_verification
+    surface = build_handoff_surface(attrs)
     if surface is None or surface.get("verified"):
         return None
+    verification = surface.get("handoff_verification")
+    if isinstance(verification, dict):
+        passed = int(verification.get("passed", 0))
+        total = int(verification.get("total", 0))
+        if total > 0 and passed >= total:
+            return None
     return surface
 
 

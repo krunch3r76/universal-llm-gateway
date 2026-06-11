@@ -137,6 +137,19 @@ when the handoff thread stays open and web must act (see `agent-bus-push-reminde
 `agent_bus(tool="fetch")` is a **fallback** for manual inspection of thread turns —
 not the primary handoff poll path.
 
+**Handoff response fields** (beyond the core `{thread_id, subject, to_agent, …}` set):
+
+| Field | When present | Meaning |
+|---|---|---|
+| `materialization_mode` | `source_ref` handoffs | `auto` (server materialized packet from source entity), `hand_authored` (caller `packet_path` only), or `hand_authored_traced` (both `source_ref` and `packet_path` with hash guard). |
+| `implement_spec_hash` | Bound implement / traced handoffs | Server-stamped hash of the normalized implement spec (`sha256:…`). |
+| `materialization_present` | `source_ref` materialize lane only, on miss | `false` when the materialized packet path is absent at the executor workspaces root (G-b probe). Omitted when probe passes. Handoff still admits (200) — graded warn, not 422. |
+| `warnings` | Non-empty admission warnings | Includes `materialization.executor_absent: …` on G-b probe miss. Merged with packet validation warnings. |
+
+Cross-mount probe activation: set Stargate env `HANDOFF_EXECUTOR_WORKSPACES_ROOT` to the
+executor's workspaces mount when it differs from Stargate's write root. Unset (default) probes
+the write root — zero regression on shared-mount deployments.
+
 **Anti-patterns** (handoff):
 
 - Calling `pipeline(op="result", execution_id=...)` — handoff returns no `execution_id`.

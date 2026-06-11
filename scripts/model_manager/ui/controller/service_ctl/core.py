@@ -25,14 +25,12 @@ from ..restart_drain import RestartDrainGate
 from ..service_config import (
     GATEWAY_DIR,
     NODES_DIR,
-    build_mcp_env,
     build_service_env,
     ensure_bind_mount_dirs,
     ensure_node_env,
     ensure_socket_dir,
     ensure_stargate_config,
     load_env_file,
-    mcp_browser_override_path,
 )
 from ..shutdown_gate import ManageShutdownGate
 from ..sidecar_ctl import SidecarController
@@ -42,6 +40,7 @@ from . import (
     cortex_api_service,
     event_service,
     git_integration_worker_service,
+    mcp_service,
     rag_service,
 )
 from .startup_probe import StartupOutcome, await_subprocess_started
@@ -63,7 +62,6 @@ _PGID_KILL_TIMEOUT = 5
 _GATEWAY_CRASH_DETECT_S = 5.0
 _GATEWAY_STOP_TIMEOUT_S = 3
 _MCP_HEALTH_POLL_INTERVAL_S = 1.0
-_MCP_STOP_GRACE_S = 30
 _BUILD_LOG_POLL_INTERVAL_S = 0.25
 _DEFAULT_STARGATE_SHUTDOWN_GRACE_S = 20.0
 _STARGATE_SHUTDOWN_BUFFER_S = 2.0
@@ -501,144 +499,21 @@ class ServiceController:
             self._service_state, self._root, self._kill_and_wait
         )
 
-    def _mcp_compose_args(self) -> tuple[list[str], Path] | None:
-        """Return (docker compose args, compose_path) or None if missing.
-
-        When browser tools are enabled in ~/.gateway/mcp.yaml, appends the
-        browser override file which applies the narrow seccomp relaxation.
-
-        Args:
-            self: The instance of ServiceController (implicitly uses self._root).
-
-        Returns:
-            (args, compose_path) for docker compose, or None if compose file absent.
-        """
-        compose_path = self._root / "docker" / "compose" / "mcp-server.yml"
-        if not compose_path.exists():
-            return None
-        args = ["docker", "compose", "-f", str(compose_path)]
-        override = mcp_browser_override_path(self._root)
-        if override is not None and override.exists():
-            args.extend(["-f", str(override)])
-        return args, compose_path
-
     async def start_mcp(self) -> str:
-        """Start MCP server container via docker compose with a graceful drain."""
-        base = self._mcp_compose_args()
-        if base is None:
-            return "Compose file not found: docker/compose/mcp-server.yml"
-        args, _ = base
-        env = build_mcp_env(self._root)
-
-        stop = await asyncio.create_subprocess_exec(
-            *args,
-            "stop",
-            "-t",
-            str(_MCP_STOP_GRACE_S),
-            "mcp-server",
-            stdin=_DETACHED_STDIN,
-            env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stop_output = await stop.communicate()
-        stop_text = stop_output[0].decode(errors="replace") if stop_output[0] else ""
-        if stop.returncode != 0:
-            logger.error(
-                "Failed to gracefully stop MCP server (exit %d):\n%s",
-                stop.returncode,
-                stop_text,
-            )
-            return (
-                f"Failed to gracefully stop MCP server (exit {stop.returncode}).\n"
-                f"{stop_text}"
-            )
-
-        result = await asyncio.create_subprocess_exec(
-            *args,
-            "up",
-            "-d",
-            "--force-recreate",
-            stdin=_DETACHED_STDIN,
-            env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        output = await result.communicate()
-        text = output[0].decode(errors="replace") if output[0] else ""
-        if result.returncode == 0:
-            details = "\n".join(
-                part for part in (stop_text.strip(), text.strip()) if part
-            )
-            return f"MCP server started.\n{details}"
-        logger.error(
-            "Failed to start MCP server (exit %d):\n%s", result.returncode, text
-        )
-        return f"Failed to start MCP server (exit {result.returncode}).\n{text}"
+        """Sync workspace source into MCP and start (canonical deploy path)."""
+        return await mcp_service.sync_and_restart_mcp(self._root)
 
     async def stop_mcp(self) -> str:
         """Stop and remove MCP server container."""
-        base = self._mcp_compose_args()
-        if base is None:
-            return "MCP server is not running (compose file missing)."
-        args, _ = base
-        env = build_mcp_env(self._root)
-
-        result = await asyncio.create_subprocess_exec(
-            *args,
-            "down",
-            stdin=_DETACHED_STDIN,
-            env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        output = await result.communicate()
-        text = output[0].decode(errors="replace") if output[0] else ""
-        if result.returncode == 0:
-            return f"MCP server stopped.\n{text}"
-        logger.error(
-            "Failed to stop MCP server (exit %d):\n%s", result.returncode, text
-        )
-        return f"Failed to stop MCP server (exit {result.returncode}).\n{text}"
+        return await mcp_service.stop_mcp(self._root)
 
     async def sync_restart_mcp(self, *, no_cache: bool = False) -> str:
-        """Sync MCP source into the container and restart via the canonical script.
-
-        Default: ``docker cp`` sync + graceful restart (no image rebuild).
-        ``no_cache=True``: full ``build-mcp.sh --no-cache`` — pip/Dockerfile changes only.
-        """
-        script = self._root / "scripts" / "sync-and-restart-mcp.sh"
-        if not script.is_file():
-            return f"Script not found: {script}"
-        if self._mcp_compose_args() is None:
-            return "Compose file not found: docker/compose/mcp-server.yml"
-        env = build_mcp_env(self._root)
-        cmd = ["bash", str(script)]
-        if no_cache:
-            cmd.append("--no-cache")
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdin=_DETACHED_STDIN,
-            env=env,
-            cwd=str(self._root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        out = await proc.communicate()
-        text = out[0].decode(errors="replace") if out[0] else ""
-        if proc.returncode != 0:
-            logger.error(
-                "MCP sync/restart failed (exit %d):\n%s", proc.returncode, text
-            )
-            return f"MCP sync/restart failed (exit {proc.returncode}).\n{text}"
-        return f"MCP server synced and restarted.\n{text}"
+        """Sync MCP source and restart — alias of ``start_mcp`` / fleet deploy path."""
+        return await mcp_service.sync_and_restart_mcp(self._root, no_cache=no_cache)
 
     async def rebuild_mcp(self, *, no_cache: bool = False) -> str:
-        """MCP image rebuild — prefer ``sync_restart_mcp`` for routine code deploys."""
-        return await self.sync_restart_mcp(no_cache=no_cache)
+        """MCP image rebuild — ``no_cache=True`` for pip/Dockerfile changes."""
+        return await mcp_service.sync_and_restart_mcp(self._root, no_cache=no_cache)
 
     async def start_cortex_api(self) -> str:
         """Start cortex-api as host subprocess."""

@@ -59,6 +59,15 @@ _CONFORMANT_PACKET = """\
 <output_format>Reply on thread.</output_format>
 """
 
+_CONSULT_ONLY_PACKET = """\
+<scope>Goal: x. Selection mode: targeted.</scope>
+<invariants>[scope] every changed line traces to task.</invariants>
+<task_guidance>Review questions and risks.</task_guidance>
+<corpus>the artifact</corpus>
+<mcp_capabilities>You have MCP. Cite tool calls.</mcp_capabilities>
+<output_format>Reply on thread.</output_format>
+"""
+
 # 1296-style improvised packet: numbered sections, missing <corpus> + <mcp_capabilities>.
 _BAD_1296_PACKET = """\
 <scope>Goal: improvised.</scope>
@@ -73,6 +82,24 @@ def _write_packet(root: Path, rel: str, text: str) -> None:
     dest = root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")
+
+
+def _route_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FastAPI:
+    """FastAPI app with team_router and mocked get_proxy."""
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    _patch_phase2_reader(monkeypatch)
+    _patch_gates_warn(monkeypatch)
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+    app = FastAPI()
+    app.include_router(team_router)
+    return app
 
 
 def _make_bus_transport(
@@ -120,6 +147,8 @@ def _handoff_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FastAPI:
     """
     monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
     _write_packet(tmp_path, _GOOD_PACKET, _CONFORMANT_PACKET)
+    _patch_phase2_reader(monkeypatch)
+    _patch_gates_warn(monkeypatch)
 
     mock_proxy = MagicMock()
     mock_proxy.event_bus = None
@@ -1015,14 +1044,26 @@ def test_pv_prefixed_path_when_project_root_is_repo(tmp_path: Path) -> None:
 def test_pv_repo_relative_path_when_project_root_is_repo(tmp_path: Path) -> None:
     repo_root = tmp_path / "universal-llm-gateway"
     rel = "tmp/reviews/pv-packet.md"
-    _write_packet(repo_root, rel, _CONFORMANT_PACKET)
-    validate_packet(
-        request_id="req-pv2c",
-        packet_path=rel,
-        to_agent="claude-cursor",
-        handoff_contract="implement",
-        workspaces_root=repo_root,
+    _write_packet(
+        repo_root,
+        rel,
+        _packet_with_source_ref_frontmatter("todo:pv", _CONFORMANT_PACKET),
     )
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        lambda gate_id: DriftGateState.WARN,
+    ):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        validate_packet(
+            request_id="req-pv2c",
+            packet_path=rel,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=repo_root,
+            source_ref="todo:pv",
+        )
 
 
 def test_pv_1296_shape_rejected_missing_tags(tmp_path: Path) -> None:
@@ -1098,14 +1139,26 @@ def test_pv_implement_without_acceptance_rejected(tmp_path: Path) -> None:
 
 
 def test_pv_implement_with_acceptance_passes(tmp_path: Path) -> None:
-    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
-    validate_packet(
-        request_id="req-pv6",
-        packet_path=_PV_REL,
-        to_agent="claude-cursor",
-        handoff_contract="implement",
-        workspaces_root=tmp_path,
+    _write_packet(
+        tmp_path,
+        _PV_REL,
+        _packet_with_source_ref_frontmatter("todo:pv", _CONFORMANT_PACKET),
     )
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        lambda gate_id: DriftGateState.WARN,
+    ):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        validate_packet(
+            request_id="req-pv6",
+            packet_path=_PV_REL,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+            source_ref="todo:pv",
+        )
 
 
 def test_pv_web_implement_without_acceptance_rejected(tmp_path: Path) -> None:
@@ -1156,15 +1209,26 @@ def test_drift_gate_a_consult_exempt(tmp_path: Path) -> None:
 
 
 def test_drift_gate_a_present_admits(tmp_path: Path) -> None:
-    _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
-    validate_packet(
-        request_id="req-dga-present",
-        packet_path=_PV_REL,
-        to_agent="claude-cursor",
-        handoff_contract="implement",
-        workspaces_root=tmp_path,
-        source_ref="todo:foo",
+    _write_packet(
+        tmp_path,
+        _PV_REL,
+        _packet_with_source_ref_frontmatter("todo:foo", _CONFORMANT_PACKET),
     )
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        lambda gate_id: DriftGateState.WARN,
+    ):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        validate_packet(
+            request_id="req-dga-present",
+            packet_path=_PV_REL,
+            to_agent="claude-cursor",
+            handoff_contract="implement",
+            workspaces_root=tmp_path,
+            source_ref="todo:foo",
+        )
 
 
 def test_drift_gate_a_enforce_missing_source_ref(tmp_path: Path) -> None:
@@ -1190,7 +1254,13 @@ def test_drift_gate_a_enforce_missing_source_ref(tmp_path: Path) -> None:
 
 def test_drift_gate_a_warn_missing_source_ref(tmp_path: Path) -> None:
     _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
-    with patch.dict(os.environ, {"UA_DRIFT_GATE_A": "warn"}, clear=False):
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        side_effect=lambda gate_id: {
+            "a": DriftGateState.WARN,
+            "a2": DriftGateState.OFF,
+        }.get(gate_id, DriftGateState.WARN),
+    ):
         from implement_admission.drift_gates import clear_gate_state_cache
 
         clear_gate_state_cache()
@@ -1268,6 +1338,17 @@ class _Phase2BelievedOnlyCortex(_Phase2StubCortex):
                 ],
             }
         return super().entity_get(entity_id, **kwargs)
+
+
+def _patch_gates_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermetic default — live config entity may have gates at enforce."""
+    monkeypatch.setattr(
+        "implement_admission.drift_gates.gate_state",
+        lambda gate_id: DriftGateState.WARN,
+    )
+    from implement_admission.drift_gates import clear_gate_state_cache
+
+    clear_gate_state_cache()
 
 
 def _patch_phase2_reader(
@@ -1390,11 +1471,33 @@ def test_p2_decision_not_asserted_on_source_ref_path(
     assert resp.json()["error"]["code"] == "decision_not_asserted"
 
 
-def test_p2_legacy_packet_path_unaffected_without_source_ref(
+def test_p2_packet_path_only_rejects_without_decision(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """packet_path-only handoff does not require decision lookup."""
+    """packet_path-only lane enforces require_decision_asserted (S3)."""
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _patch_phase2_reader(monkeypatch, _Phase2BelievedOnlyCortex())
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _GOOD_PACKET,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "decision_not_asserted"
+
+
+def test_p2_packet_path_only_admits_with_decision(
+    monkeypatch: pytest.MonkeyPatch,
+    _handoff_app: FastAPI,
+) -> None:
+    """packet_path-only handoff admits when decision is confirmed."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-legacy"))
 
@@ -1492,6 +1595,60 @@ def test_p2_both_present_hash_mismatch_rejected(
     )
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "implement_spec_hash_mismatch"
+
+
+def test_p2_both_present_hash_absent_stamps_and_admits(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Both present, frontmatter implement_spec_hash ABSENT → server stamps + admits.
+
+    A non-shell authoring seat cannot run normalize() to precompute the hash;
+    an absent stamp is trusted (server recomputes it here) rather than 422'd.
+    The 422 is reserved for a genuine mismatch (see the test above).
+    """
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    rel = "universal-llm-gateway/tmp/reviews/hash-absent.md"
+    source_ref = "todo:relay-bounded-single"
+    # Conformant six-block packet carrying source_ref frontmatter (gate_a2) but
+    # NO implement_spec_hash — the case a web/reasoning seat can actually produce.
+    _write_packet(
+        tmp_path,
+        rel,
+        f"---\nsource_ref: {source_ref}\n---\n" + _CONFORMANT_PACKET,
+    )
+    _patch_phase2_reader(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-p2-absent"))
+
+    mock_proxy = MagicMock()
+    mock_proxy.event_bus = None
+    fake_deps = types.ModuleType("systems.proxy.dependencies")
+    fake_deps.get_proxy = lambda: mock_proxy  # type: ignore[attr-defined]
+    if "systems.proxy" not in sys.modules:
+        proxy_pkg = types.ModuleType("systems.proxy")
+        monkeypatch.setitem(sys.modules, "systems.proxy", proxy_pkg)
+    monkeypatch.setitem(sys.modules, "systems.proxy.dependencies", fake_deps)
+
+    app = FastAPI()
+    app.include_router(team_router)
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": source_ref,
+            "packet_path": rel,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread_id"] == "bus-p2-absent"
+    assert body["materialization_mode"] == "hand_authored_traced"
+    # Server stamped the computed hash into the response.
+    assert body["implement_spec_hash"].startswith("sha256:")
 
 
 def test_p2_materialized_dual_root_projects_parent(
@@ -1630,6 +1787,52 @@ def test_phase2_source_ref_admits(
     assert body["implement_spec_hash"] == "abc123"
 
 
+def test_materialization_present_false_surfaces_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _handoff_app: FastAPI,
+) -> None:
+    materialized_rel = "universal-llm-gateway/tmp/implement-admission/materialized/x.md"
+    _write_packet(tmp_path, materialized_rel, _CONFORMANT_PACKET)
+    warning = (
+        "materialization.executor_absent: "
+        f"{materialized_rel} not visible at executor root /mnt/executor; "
+        "use source_ref fallback"
+    )
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.require_decision_asserted",
+        _noop_decision,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.route.resolve_source_ref_to_packet",
+        lambda source_ref, **kwargs: BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=materialized_rel,
+            implement_spec_hash="abc123",
+            materialization_present=False,
+            warnings=[warning],
+        ),
+    )
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-mat-absent"))
+
+    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": "todo:unified-admission-phase2-implement",
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["materialization_present"] is False
+    assert warning in body["warnings"]
+
+
 def test_phase2_gated_no_thread(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
@@ -1692,19 +1895,20 @@ def test_phase2_decision_not_asserted(
     assert resp.json()["error"]["code"] == "decision_not_asserted"
 
 
-def test_phase2_legacy_packet_path_unaffected(
+def test_phase2_packet_path_invokes_decision_gate(
     monkeypatch: pytest.MonkeyPatch,
     _handoff_app: FastAPI,
 ) -> None:
-    """packet_path-only handoff does not invoke the decision gate."""
+    """packet_path-only handoff runs require_decision_asserted (S3)."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    decision_calls: list[bool] = []
 
-    def _fail_decision(**kwargs: object) -> None:  # noqa: ARG001
-        raise AssertionError("decision gate must not run on legacy path")
+    def _track_decision(**kwargs: object) -> None:  # noqa: ARG001
+        decision_calls.append(True)
 
     monkeypatch.setattr(
         "systems.frontier_consult.route.require_decision_asserted",
-        _fail_decision,
+        _track_decision,
     )
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-legacy"))
 
@@ -1720,6 +1924,7 @@ def test_phase2_legacy_packet_path_unaffected(
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["thread_id"] == "bus-legacy"
+    assert decision_calls
 
 
 def test_phase2_hash_mismatch(
@@ -1780,13 +1985,16 @@ class _V2LaneCortex:
 
 def test_v2_seat_claude_cursor_admits(
     monkeypatch: pytest.MonkeyPatch,
-    _handoff_app: FastAPI,
+    tmp_path: Path,
 ) -> None:
     """seat=claude-cursor admits without roster role slug."""
     monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _GOOD_PACKET, _CONSULT_ONLY_PACKET)
     _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-v2-seat"))
 
-    client = TestClient(_handoff_app, raise_server_exceptions=False)
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
     resp = client.post(
         "/api/v1/team/handoff",
         json={
@@ -1962,7 +2170,13 @@ def test_gate_a2_consult_exempt(tmp_path: Path) -> None:
 
 def test_gate_a2_warn_missing_frontmatter(tmp_path: Path) -> None:
     _write_packet(tmp_path, _PV_REL, _CONFORMANT_PACKET)
-    with patch.dict(os.environ, {"UA_DRIFT_GATE_A2": "warn"}, clear=False):
+    with patch(
+        "implement_admission.drift_gates.gate_state",
+        side_effect=lambda gate_id: {
+            "a2": DriftGateState.WARN,
+            "a": DriftGateState.OFF,
+        }.get(gate_id, DriftGateState.WARN),
+    ):
         from implement_admission.drift_gates import clear_gate_state_cache
 
         clear_gate_state_cache()
@@ -2075,3 +2289,393 @@ def test_materialization_mode_packet_path_only_with_frontmatter(
     assert resp.status_code == 200, resp.text
     assert resp.json()["materialization_mode"] == "hand_authored_traced"
 
+
+# ---------------------------------------------------------------------------
+# Phase-2 — team-dispatch handoff DX (D1–D4, thread 1525)
+# ---------------------------------------------------------------------------
+
+_DX_REL = "universal-llm-gateway/tmp/reviews/dx-phase2-packet.md"
+_DX_REL_STRIPPED = "tmp/reviews/dx-phase2-packet.md"
+
+
+def test_d4_explicit_contract_param_beats_role_default(tmp_path: Path) -> None:
+    _write_packet(tmp_path, _DX_REL, _CONFORMANT_PACKET)
+    contract, source = derive_contract(
+        explicit_contract="implement",
+        source_ref=None,
+        packet_path=_DX_REL,
+        role="web-consult",
+        cortex=_V2LaneCortex(dispatch_lane="web-spec"),
+        workspaces_root=tmp_path,
+    )
+    assert contract == "implement"
+    assert source == "explicit_param"
+
+
+def test_d4_explicit_contract_param_admits_implement_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DX_REL, _IMPLEMENT_PACKET_FM)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-dx-explicit"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    with patch.dict(
+        os.environ, {"UA_DRIFT_GATE_A": "off", "UA_DRIFT_GATE_A2": "off"}, clear=False
+    ):
+        from implement_admission.drift_gates import clear_gate_state_cache
+
+        clear_gate_state_cache()
+        resp = client.post(
+            "/api/v1/team/handoff",
+            json={
+                "op": "handoff",
+                "role": "cursor-implement",
+                "packet_path": _DX_REL,
+                "contract": "implement",
+                "subject": _GOOD_SUBJECT,
+            },
+        )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["handoff_contract"] == "implement"
+    assert body["handoff_contract_source"] == "explicit_param"
+
+
+def test_d4_ambiguous_rejects_acceptance_without_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _write_packet(tmp_path, _DX_REL, _CONFORMANT_PACKET)
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "claude-cursor",
+            "packet_path": _DX_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"]["code"] == "handoff_contract_ambiguous"
+
+
+def test_d4_consult_packet_no_acceptance_admits_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DX_REL, _CONSULT_ONLY_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-dx-consult"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "seat": "claude-cursor",
+            "packet_path": _DX_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["handoff_contract"] == "consult"
+    assert body["handoff_contract_source"] == "default"
+
+
+def test_d2_packet_path_prefix_coercion_route(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DX_REL_STRIPPED, _CONSULT_ONLY_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-dx-prefix"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    for packet_path in (_DX_REL, _DX_REL_STRIPPED):
+        resp = client.post(
+            "/api/v1/team/handoff",
+            json={
+                "op": "handoff",
+                "seat": "claude-cursor",
+                "packet_path": packet_path,
+                "subject": _GOOD_SUBJECT,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+
+def test_d2_genuinely_missing_path_still_rejects(tmp_path: Path) -> None:
+    with pytest.raises(FrontierEndpointError) as exc_info:
+        validate_packet(
+            request_id="req-dx-missing",
+            packet_path="tmp/reviews/no-such-packet.md",
+            to_agent="claude-cursor",
+            handoff_contract="consult",
+            workspaces_root=tmp_path,
+        )
+    assert exc_info.value.code == "handoff_packet_missing"
+
+
+# ---------------------------------------------------------------------------
+# Phase-2 packet lane — E1a pass-through, E2a′ gate-B drop, S3/S4
+# ---------------------------------------------------------------------------
+
+_PACKET_RT_REL = "universal-llm-gateway/tmp/reviews/packet-roundtrip.md"
+
+
+def _patch_enforce_all_gates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "implement_admission.drift_gates.gate_state",
+        lambda gate_id: DriftGateState.ENFORCE,
+    )
+    from implement_admission.drift_gates import clear_gate_state_cache
+
+    clear_gate_state_cache()
+
+
+def _packet_with_source_ref_frontmatter(source_ref: str, body: str) -> str:
+    return f"---\nsource_ref: {source_ref}\n---\n{body}"
+
+
+def test_s4_packet_source_ref_passthrough_admits_enforce(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """packet: source_ref admits on first try with all gates at enforce (E1a)."""
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    source_ref = f"packet:{_PACKET_RT_REL}"
+    _write_packet(
+        tmp_path,
+        _PACKET_RT_REL,
+        _packet_with_source_ref_frontmatter(source_ref, _CONFORMANT_PACKET),
+    )
+    authored = (tmp_path / _PACKET_RT_REL).read_bytes()
+    _patch_phase2_reader(monkeypatch)
+    _patch_enforce_all_gates(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-packet-rt"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": source_ref,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["thread_id"] == "bus-packet-rt"
+    assert body["source_ref"] == source_ref
+    assert body["implement_spec_hash"].startswith("sha256:")
+    assert body["materialization_mode"] == "auto"
+    assert (tmp_path / _PACKET_RT_REL).read_bytes() == authored
+    materialized = (
+        tmp_path / "universal-llm-gateway/tmp/implement-admission/materialized"
+    )
+    assert not materialized.exists() or not any(materialized.iterdir())
+
+
+def test_s4_packet_lane_skips_gate_b_both_present(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Gate B removed for packet lane when source_ref and packet_path both present (E2a′)."""
+    from .implement_admission_bridge import verify_both_present_hash
+
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    rel = _PACKET_RT_REL
+    source_ref = f"packet:{rel}"
+    _write_packet(
+        tmp_path,
+        rel,
+        _packet_with_source_ref_frontmatter(source_ref, _CONFORMANT_PACKET),
+    )
+    _patch_enforce_all_gates(monkeypatch)
+
+    spec_hash = verify_both_present_hash(
+        request_id="req-gb-skip",
+        source_ref=source_ref,
+        packet_path=rel,
+        cortex=_Phase2StubCortex(),
+        workspaces_root=tmp_path,
+    )
+    assert spec_hash.startswith("sha256:")
+
+    _patch_phase2_reader(monkeypatch)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-packet-gb"))
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "source_ref": source_ref,
+            "packet_path": rel,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_s4_packet_path_only_decision_gate_enforced(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """require_decision_asserted runs on packet_path-only lane (S3)."""
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(
+        tmp_path,
+        _PACKET_RT_REL,
+        _packet_with_source_ref_frontmatter(
+            f"packet:{_PACKET_RT_REL}", _CONFORMANT_PACKET
+        ),
+    )
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    _patch_phase2_reader(monkeypatch, _Phase2BelievedOnlyCortex())
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "packet_path": _PACKET_RT_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "decision_not_asserted"
+
+
+def test_s4_resolve_packet_ref_no_materialize(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """resolve_source_ref_to_packet returns authored path without materializing."""
+    from .implement_admission_bridge import resolve_source_ref_to_packet
+
+    monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
+    _write_packet(tmp_path, _PACKET_RT_REL, _CONFORMANT_PACKET)
+    source_ref = f"packet:{_PACKET_RT_REL}"
+    result = resolve_source_ref_to_packet(
+        source_ref,
+        cortex=_Phase2StubCortex(),
+        workspaces_root=tmp_path,
+        request_id="req-no-mat",
+    )
+    assert not result.gated
+    assert result.packet_path == _PACKET_RT_REL
+    assert result.packet_sha256 is not None
+    materialized = (
+        tmp_path / "universal-llm-gateway/tmp/implement-admission/materialized"
+    )
+    assert not materialized.exists() or not any(materialized.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# Dispatch defaults bundle — executor + consult-review advisories (thread 1530)
+# ---------------------------------------------------------------------------
+
+_DD_REL = "universal-llm-gateway/tmp/reviews/dd-bundle-packet.md"
+
+
+def test_dd_implement_default_composer_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DD_REL, _CONFORMANT_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-dd-default"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "packet_path": _DD_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["recommended_executor"] == "composer"
+    assert body["recommended_executor_source"] == "server_default:contract_implement"
+    assert body["executor_bindable"] is True
+    assert body["recommended_review"] is None
+    assert "opus" not in body["push_reminder"].lower()
+    assert "composer" in body["push_reminder"].lower()
+
+
+def test_dd_consult_review_default_on(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    _write_packet(tmp_path, _DD_REL, _CONSULT_ONLY_PACKET)
+    _patch_bus(monkeypatch, _make_bus_transport(thread_id="bus-dd-consult"))
+
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "web-consult",
+            "packet_path": _DD_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["recommended_review"] == "cross-family-reconcile:default-on"
+    assert body.get("recommended_executor") is None
+
+
+def test_dd_acceptance_gate_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    packet = _CONFORMANT_PACKET.replace(
+        "## Acceptance criteria\n1. It works.", "Just do the work."
+    )
+    _write_packet(tmp_path, _DD_REL, packet)
+    client = TestClient(
+        _route_app(monkeypatch, tmp_path), raise_server_exceptions=False
+    )
+    resp = client.post(
+        "/api/v1/team/handoff",
+        json={
+            "op": "handoff",
+            "role": "cursor-implement",
+            "packet_path": _DD_REL,
+            "subject": _GOOD_SUBJECT,
+        },
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "handoff_packet_missing_acceptance"

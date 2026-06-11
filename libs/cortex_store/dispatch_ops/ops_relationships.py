@@ -24,8 +24,22 @@ def _op_relationships(
     entity_id: str | None = None,
     type_id: str | None = None,
     limit: int | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
+    if entity_id:
+        with cortex_conn() as conn:
+            try:
+                resolved = resolve_entity_reference(
+                    conn,
+                    entity_id,
+                    resolve_aliases=resolve_aliases,
+                    raw_id=raw_id,
+                )
+            except HTTPException as exc:
+                return {"error": exc.detail, "status_code": exc.status_code}
+        entity_id = resolved.entity_id if not raw_id else entity_id
     return _list_relationships_impl(
         entity_id=entity_id, type_id=type_id, limit=limit or 50
     )

@@ -118,7 +118,7 @@ def get_boot_skills(
     present the skill_binding axes (skill_class, tool_binding, binding_kind).
     Full SKILL.md bodies are loaded on demand via fs md_* (manifest-only card).
     """
-    params: list[Any] = ["deprecated", "deprecated"]
+    params: list[Any] = ["deprecated"]
     if for_agent:
         for_agent_filter = _FOR_AGENT_CLAUSE
         params.append(for_agent)
@@ -134,7 +134,7 @@ def get_boot_skills(
         # silently as Kaywan adds new and temp skills. Single SQL query, no
         # row data, ~30 bytes on the wire.
         unpartitioned_rows = db_query(
-            conn, _UNPARTITIONED_COUNT_SQL, ("deprecated", "deprecated")
+            conn, _UNPARTITIONED_COUNT_SQL, ("deprecated",)
         )
     finally:
         conn.close()

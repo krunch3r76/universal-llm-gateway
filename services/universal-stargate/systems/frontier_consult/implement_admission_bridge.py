@@ -5,15 +5,17 @@ from __future__ import annotations
 import hashlib
 import re
 import urllib.parse
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from admission_common.tree_probe import probe_working_tree
+from implement_admission.drift_gates import check_packet_hash_drift
 from implement_admission.materialize import materialize
 from implement_admission.normalize import normalize
-from implement_admission.drift_gates import check_packet_hash_drift
-from implement_admission.spec import ReadinessState, implement_spec_hash
-from admission_common.tree_probe import probe_working_tree
+from implement_admission.source_ref import parse_source_ref
+from implement_admission.spec import ReadinessState, SourceKind, implement_spec_hash
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 from .admission import FrontierEndpointError
@@ -32,6 +34,27 @@ class BridgeResult:
     packet_path: str | None = None
     implement_spec_hash: str | None = None
     packet_sha256: str | None = None
+    materialization_present: bool | None = None
+    warnings: list[str] = field(default_factory=list)
+
+
+def probe_packet_presence(
+    packet_path: str,
+    *,
+    workspaces_root: Path,
+    probe_root: Path | None = None,
+) -> bool:
+    """Return True when packet_path resolves to a file under probe_root."""
+    root = probe_root or workspaces_root
+    return _resolve_packet_file(root, packet_path) is not None
+
+
+def _executor_probe_root(workspaces_root: Path) -> Path:
+    """Resolve executor visibility root; defaults to Stargate workspaces_root."""
+    raw = os.environ.get("HANDOFF_EXECUTOR_WORKSPACES_ROOT", "").strip()
+    if not raw:
+        return workspaces_root
+    return Path(raw).resolve()
 
 
 class StargateCortexReader:
@@ -104,6 +127,10 @@ def _sha256_file(path: Path) -> str:
     return f"sha256:{digest}"
 
 
+def _is_packet_lane(source_ref: str) -> bool:
+    return parse_source_ref(source_ref).source_kind == SourceKind.PACKET.value
+
+
 def _enforce_gate_b_or_warn(
     *,
     request_id: str,
@@ -135,7 +162,16 @@ def verify_both_present_hash(
     enable_dirty_tree_risk: bool = False,
     cwd: str | None = None,
 ) -> str:
-    """Compare frontmatter implement_spec_hash to normalize(source_ref); return hash."""
+    """Compare frontmatter implement_spec_hash to normalize(source_ref); return hash.
+
+    Stamp-on-admit: an **absent** frontmatter ``implement_spec_hash`` is trusted
+    and stamped server-side (the server recomputes ``expected`` from
+    ``normalize(source_ref)`` here regardless — it is the hash authority). A
+    non-shell authoring seat cannot run ``normalize()`` to precompute the stamp,
+    so requiring it would force a downgrade to the consult wire. The 422 is
+    reserved for a genuine *mismatch*: a present hash that contradicts the
+    normalized spec.
+    """
     root = (workspaces_root or _workspaces_root()).resolve()
     candidate = _resolve_packet_file(root, packet_path)
     if candidate is None:
@@ -162,7 +198,7 @@ def verify_both_present_hash(
     )
     expected = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
 
-    if not frontmatter_hash or frontmatter_hash != expected:
+    if frontmatter_hash is not None and frontmatter_hash != expected:
         raise FrontierEndpointError(
             request_id=request_id,
             field="source_ref",
@@ -174,11 +210,12 @@ def verify_both_present_hash(
             status_code=422,
             code="implement_spec_hash_mismatch",
         )
-    _enforce_gate_b_or_warn(
-        request_id=request_id,
-        spec=spec,
-        packet_sha256=_sha256_file(candidate),
-    )
+    if not _is_packet_lane(source_ref):
+        _enforce_gate_b_or_warn(
+            request_id=request_id,
+            spec=spec,
+            packet_sha256=_sha256_file(candidate),
+        )
     return expected
 
 
@@ -211,10 +248,31 @@ def resolve_source_ref_to_packet(
             source_ref=source_ref,
         )
 
+    spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
+
+    if _is_packet_lane(source_ref):
+        packet_path_part = source_ref.split(":", 1)[1]
+        candidate = _resolve_packet_file(root, packet_path_part)
+        if candidate is None:
+            raise FrontierEndpointError(
+                request_id=request_id or "",
+                field="source_ref",
+                reason=f"Packet file not found for {source_ref!r}",
+                status_code=422,
+                code="handoff_packet_missing",
+            )
+        rel_path = _path_relative_to_workspaces(candidate, root)
+        return BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=rel_path,
+            implement_spec_hash=spec_hash,
+            packet_sha256=spec.source.source_version.packet_sha256,
+        )
+
     out_dir = _materialized_out_dir(root)
     mp = materialize(spec, out_dir=out_dir)
     rel_path = _path_relative_to_workspaces(Path(mp.path), root)
-    spec_hash = spec.provenance.implement_spec_hash or implement_spec_hash(spec)
     if request_id is not None:
         _enforce_gate_b_or_warn(
             request_id=request_id,
@@ -223,10 +281,24 @@ def resolve_source_ref_to_packet(
         )
     else:
         check_packet_hash_drift(spec, on_disk_sha256=mp.packet_sha256)
+
+    probe_root = _executor_probe_root(root)
+    present = probe_packet_presence(
+        rel_path, workspaces_root=root, probe_root=probe_root
+    )
+    bridge_warnings: list[str] = []
+    if not present:
+        bridge_warnings.append(
+            "materialization.executor_absent: "
+            f"{rel_path} not visible at executor root {probe_root}; "
+            "use source_ref fallback"
+        )
     return BridgeResult(
         gated=False,
         source_ref=source_ref,
         packet_path=rel_path,
         implement_spec_hash=spec_hash,
         packet_sha256=mp.packet_sha256,
+        materialization_present=present,
+        warnings=bridge_warnings,
     )

@@ -11,6 +11,8 @@ from agent_seat.registry import normalize_agent_slug
 
 from .handoff import _resolve_packet_file
 
+from .executor_resolution import derive_recommended_executor  # noqa: F401 — packet surface
+
 # F6 — explicit map; do not substring-match "implement" on lane names.
 _DISPATCH_LANE_TO_CONTRACT: dict[str, str] = {
     "cursor-implement": "implement",
@@ -64,6 +66,7 @@ def contract_from_role(role: str) -> tuple[str, str] | None:
 
 def derive_contract(
     *,
+    explicit_contract: str | None = None,
     source_ref: str | None,
     packet_path: str | None,
     role: str | None,
@@ -73,11 +76,15 @@ def derive_contract(
     """Derive handoff contract per F1 order + role fallback for roster-only handoffs.
 
     Order:
+      0. explicit ``contract`` request param (MCP / route body)
       1. ``source_ref`` → entity ``dispatch_lane`` via explicit map
       2. packet front-matter ``contract:`` (YAML or ``**Contract:**`` line)
       3. roster ``role`` → ``role_default`` (legacy path without grounded source)
       4. default ``consult``
     """
+    if explicit_contract is not None:
+        return explicit_contract, "explicit_param"
+
     if source_ref:
         try:
             entity = cortex.entity_get(source_ref)

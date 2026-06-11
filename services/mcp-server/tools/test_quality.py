@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tools import quality
@@ -167,3 +169,80 @@ def test_run_offline_tests_fail_closed_when_pytest_absent(monkeypatch: Any) -> N
     assert "pytest unavailable" in str(result["output"])
     assert len(commands) == 1
     assert commands[0] == [sys.executable, "-c", "import pytest"]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "output", "expected"),
+    [
+        (0, "anything", "passed"),
+        (
+            1,
+            "check-imports: path outside stargate/libs trees: /x/quality.py",
+            "skipped",
+        ),
+        (1, "check-imports: no Python files to check", "skipped"),
+        (1, "check-imports: FAILED systems.x: ImportError: ...", "failed"),
+        (1, "path outside stargate/libs trees ... FAILED mod: e", "failed"),
+        (1, "some unrecognised stderr", "failed"),
+    ],
+)
+def test_classify_import_check(returncode: int, output: str, expected: str) -> None:
+    assert quality._classify_import_check(returncode, output) == expected
+
+
+def test_run_import_check_skips_out_of_scope_path(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    repo = tmp_path / "universal-llm-gateway"
+    check_script = repo / "scripts" / "check-imports"
+    check_script.parent.mkdir(parents=True)
+    check_script.write_text("#!/usr/bin/env python3\n")
+    target = repo / "services" / "mcp-server" / "tools" / "quality.py"
+    target.parent.mkdir(parents=True)
+    target.write_text("pass\n")
+
+    quality._PROJECT_ROOT = repo
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command,
+            1,
+            stdout="",
+            stderr="check-imports: path outside stargate/libs trees: /x/quality.py",
+        )
+
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
+
+    result = quality._run_import_check([str(target)])
+
+    assert result["passed"] is True
+    assert result.get("skipped") is True
+
+
+def test_run_offline_tests_implement_admission_suite(monkeypatch: Any) -> None:
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="42 passed\n", stderr="")
+
+    monkeypatch.setattr(quality.subprocess, "run", fake_run)
+
+    result = quality._run_offline_tests(
+        ["/data/project/libs/implement_admission/materialize.py"]
+    )
+
+    assert result == {"passed": True, "output": "42 passed"}
+    assert len(commands) == 2
+    assert commands[0] == [sys.executable, "-c", "import pytest"]
+    pytest_cmd = commands[1]
+    assert pytest_cmd[:3] == [sys.executable, "-m", "pytest"]
+    assert pytest_cmd[3:5] == ["--import-mode", "importlib"]
+    assert "-m" not in pytest_cmd[5:]
+    assert (
+        "services/universal-stargate/systems/frontier_consult/test_team_handoff.py"
+        in pytest_cmd
+    )
+    assert (
+        len([p for p in pytest_cmd if p.startswith("services/universal-stargate")]) == 6
+    )

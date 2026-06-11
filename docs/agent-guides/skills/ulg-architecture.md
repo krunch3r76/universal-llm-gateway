@@ -133,6 +133,26 @@ MCP lifecycle rules:
 
 Formal rule: `∀ mcp_source_edit: path_under("services/mcp-server/") -> manage(action="sync_restart", service="mcp") AND verify(image_timestamp)`.
 
+### Cortex data safety
+
+`~/.cortex/cortex.db` is the live Cortex graph. Treat it as production data.
+
+Manual writes via the `sqlite3` CLI against `~/.cortex/cortex.db` are forbidden by
+default. If unavoidable: open the session with `PRAGMA foreign_keys=ON`, perform only
+the minimum change, and verify `PRAGMA foreign_key_check` returns zero rows before
+`COMMIT`.
+
+`foreign_keys=ON` is enforced per connection, not globally. Runtime code that opens
+`~/.cortex/cortex.db` must use `cortex_store.db.cortex_conn()` or `_connect()` —
+never a bare `sqlite3.connect()` without enabling foreign keys. Standalone scripts
+that touch the cortex DB must import and use that factory.
+
+Formal rules:
+
+- `∀ manual_sqlite3_edit(cortex.db): forbidden by default`.
+- `∀ unavoidable_manual_edit: foreign_keys=ON before writes AND foreign_key_check=0 before commit`.
+- `∀ standalone_script touching cortex.db: connection = cortex_store.db.cortex_conn() OR _connect(path)`.
+
 ### Sandbox routing
 
 Route file operations by sandbox.

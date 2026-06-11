@@ -8,12 +8,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Bootstrap dispatch_ops before handoff_resolution import chain (cycle breaker).
+import cortex_store.dispatch_ops.ops_journals as _ops_journals  # noqa: F401
+
+from cortex_store.handoff_audit import (
+    check_handoff_prompt_in_source,
+    format_cited_entity_state_snapshot,
+)
+from cortex_store.handoff_derivation import WRITE_PATH_SESSION_CLOSE
+from cortex_store.handoff_provenance import (
+    build_handoff_provenance,
+    compute_source_file_sha256,
+)
+from cortex_store.handoff_verification import build_handoff_verification
 from cortex_store.session_handoff import (
     WRITE_PATH_HANDOFF_UPSERT,
-    WRITE_PATH_SESSION_CLOSE,
-    build_handoff_provenance,
-    check_handoff_prompt_in_source,
-    compute_source_file_sha256,
     merge_handoff_attribute,
 )
 
@@ -129,3 +138,51 @@ def test_check_noop_when_no_prompt(tmp_path: Path) -> None:
         )
         is None
     )
+
+
+def test_entity_state_snapshot_annotates_type_phase() -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT, "
+        "workflow_state TEXT, attributes TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO entities VALUES (?, ?, ?, ?)",
+        (
+            "task:implement-dispatch-composer-default",
+            "task",
+            "done",
+            '{"phase": "investigate"}',
+        ),
+    )
+    prompt = (
+        "If task:implement-dispatch-composer-default is done, verify probe state."
+    )
+    snapshot = format_cited_entity_state_snapshot(
+        prompt,
+        session_id="claude-web-2026-06-10-220549-9ab",
+        conn=conn,
+    )
+    assert snapshot is not None
+    assert "task:implement-dispatch-composer-default state=done" in snapshot
+    assert "investigate-phase" in snapshot
+
+
+def test_build_handoff_verification_all_pass(tmp_path: Path) -> None:
+    session_id = "web-2026-06-10-1200-abc"
+    prompt = (
+        f"**Closing session:** transcript:{session_id}\n"
+        "Continue from the anchored inline handoff."
+    )
+    verification = build_handoff_verification(
+        session_id=session_id,
+        handoff_prompt=prompt,
+        handoff_source_path=None,
+        files_root=tmp_path,
+    )
+    assert verification is not None
+    assert verification["passed"] == verification["total"]
+    assert verification["passed"] >= 3

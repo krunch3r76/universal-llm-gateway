@@ -289,16 +289,22 @@ async def commit(req: CommitRequest, request: Request) -> IntegrateResponse:
     "/active-work",
     summary="Aggregate in-flight integrate count for drain-aware restart.",
 )
-async def get_active_work() -> JSONResponse:
+async def get_active_work():
     """Return gate occupancy so manage can defer restart during integrate."""
+    from services.git_integration_worker import cursor_dispatch_registry as cursor_reg
+
     running = _GATE.active_count
     queued = _GATE.queue_length
+    cursor = cursor_reg.CursorDispatchRegistry.instance().active_snapshot()
+    integrate_busy = running > 0 or queued > 0
+    cursor_busy = cursor["running"] > 0
     return JSONResponse(
         status_code=200,
         content={
             "running": running,
             "queued": queued,
-            "busy": running > 0 or queued > 0,
+            "cursor_dispatches": cursor,
+            "busy": integrate_busy or cursor_busy,
         },
     )
 

@@ -106,6 +106,28 @@ def FrontierHandoffRequested(  # noqa: N802
 
 
 @event_factory
+def FrontierHandoffExecutorOverride(  # noqa: N802
+    request_id: str,
+    handoff_contract: str,
+    recommended_executor: str,
+    source: str,
+    reason_code: str | None = None,
+) -> Event:
+    """Audit when implement handoff resolves a non-default executor advisory."""
+    return Event(
+        signal="frontier.handoff.executor.override",
+        payload={
+            "request_id": request_id,
+            "handoff_contract": handoff_contract,
+            "recommended_executor": recommended_executor,
+            "source": source,
+            "reason_code": reason_code,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierHandoffCreated(  # noqa: N802
     request_id: str,
     to_agent: str,
@@ -118,6 +140,26 @@ def FrontierHandoffCreated(  # noqa: N802
             "request_id": request_id,
             "to_agent": to_agent,
             "thread_id": thread_id,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierHandoffMaterializationIncomplete(  # noqa: N802
+    request_id: str,
+    packet_path: str,
+    probe_root: str,
+    source_ref: str,
+) -> Event:
+    """Materialized packet absent at executor workspaces root (G-b probe miss)."""
+    return Event(
+        signal="frontier.handoff.materialization.incomplete",
+        payload={
+            "request_id": request_id,
+            "packet_path": packet_path,
+            "probe_root": probe_root,
+            "source_ref": source_ref,
         },
         scope="node",
     )

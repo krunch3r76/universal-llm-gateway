@@ -16,6 +16,9 @@ from universal_logging import get_logger
 
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.events import publish_lib_signal
+from services.git_integration_worker.routes.cursor_sdk import (
+    router as cursor_sdk_router,
+)
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
 
@@ -83,6 +86,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(integrate_router)
+    app.include_router(cursor_sdk_router)
     return app
 
 

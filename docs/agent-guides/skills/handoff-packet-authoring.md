@@ -76,10 +76,29 @@ Author the packet in this order, in canonical XML tags (case-sensitive):
 **Implement contract**: acceptance criteria live in `<task_guidance>`; closeout
 evidence shape in `<output_format>`. The admission lint (`handoff.py`) rejects an
 `implement` packet whose `<task_guidance>` contains no `acceptance` keyword.
+Declare authority explicitly via front-matter `contract: implement` or the MCP
+`contract=` param on `team_dispatch(op=handoff)` — a packet with acceptance
+criteria but no contract signal is rejected (`handoff_contract_ambiguous`).
+
+**Executor override (implement):** optional front-matter or request fields —
+server resolves `recommended_executor` on the handoff response (advisory on
+manual seats until cursorbuild):
+
+```yaml
+executor_override: composer | composer-fast | composer-thinking | web-inline | <non-composer-tier>
+executor_override_reason_code: pure_cortex_doc_edit | capability_gap | protocol_heavy | design_judgment_remaining
+executor_override_reason: "short required text when reason_code demands it"
+```
+
+Silence → `recommended_executor=composer`. See `agent-skills/consult-routing.md`
+§ Executor tier for R1/R2 policy (reference, do not hand-copy).
 
 ## Skeleton
 
 ```
+---
+contract: consult   # or implement — explicit authority grant (optional; MCP contract= overrides)
+---
 <scope>
 Goal: <one-line>. Selection mode: <targeted | branch | path>.
 Primary artifacts: <paths>.  Out of scope: <...>.

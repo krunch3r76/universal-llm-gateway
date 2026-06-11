@@ -10,13 +10,17 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from fastapi import HTTPException
 from universal_logging import get_logger
 
+from ..db import cortex_conn
+from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl
 from ._assertions_shared import (
     _emit_predicate_form_normalize_events,
     _project_seeded_by,
 )
+from ._friction_close_impl import close_friction_assertion, validate_resolution_kind
 from ._shared import (
     _DEFAULT_USER_ENTITY,
     _FRICTION_CATEGORIES,
@@ -28,36 +32,31 @@ logger = get_logger("cortex-api.dispatch_ops.assertions")
 
 
 def _op_friction_close(
-    assertion_id: int | None = None, resolution_kind: str | None = None, **_: object
+    assertion_id: int | None = None,
+    resolution_kind: str | None = None,
+    agent: str | None = None,
+    session_id: str | None = None,
+    evidence: str | None = None,
+    resolution_note: str | None = None,
+    **_: object,
 ) -> dict[str, Any]:
-    """Stub for F5 friction_close — validates inputs but performs no write.
-
-    TODO: wire actual delegation — supersede(assertion_id) + relationship_create("resolves").
-    Until wired, no write is performed; callers must not treat a success response
-    as confirmation of any state change.
-    """
+    """Close an open friction by superseding it with a confirmed resolution row."""
     if not assertion_id:
         return {"error": "assertion_id required for friction_close"}
-    if not resolution_kind or resolution_kind not in {
-        "agent_skill:slug",
-        "workflow:slug",
-        "todo:slug",
-        "superseded",
-        "wontfix",
-    }:
-        return {
-            "error": f"Invalid resolution_kind={resolution_kind}. Must be one of: agent_skill:slug, workflow:slug, todo:slug, superseded, wontfix"
-        }
+    if not resolution_kind:
+        return {"error": "resolution_kind required for friction_close"}
+    kind_err = validate_resolution_kind(resolution_kind)
+    if kind_err:
+        return {"error": kind_err}
 
-    # Delegate to existing impls (REST-first, no direct DB)
-    # TODO: wire actual delegation — supersede(assertion_id) + relationship_create("resolves")
-    # Until wired, this is a stub: no write is performed. Do not treat a success response as confirmation.
-    return {
-        "status": "stub",
-        "message": f"friction_close for {assertion_id} with resolution_kind={resolution_kind} is not yet wired — no write performed.",
-        "resolution": resolution_kind,
-        "_next": "entity_get on the friction assertion to verify resolves edge; update cortex-deep-ref.mdc if protocol changes",
-    }
+    return close_friction_assertion(
+        assertion_id,
+        resolution_kind,
+        agent=agent or "unknown",
+        session_id=session_id or "friction-close",
+        evidence=evidence,
+        resolution_note=resolution_note,
+    )
 
 
 def _op_assert(
@@ -82,6 +81,8 @@ def _op_assert(
     supersedes_id: int | None = None,
     acknowledge_audit_gaps: list[str] | None = None,
     attributes: dict[str, Any] | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     required_fields = {
@@ -93,6 +94,19 @@ def _op_assert(
     for field, val in required_fields.items():
         if not val:
             return {"error": f"{field} is required"}
+    assert entity_id is not None
+    with cortex_conn() as conn:
+        try:
+            resolved = resolve_entity_reference(
+                conn,
+                entity_id,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+                label="entity",
+            )
+        except HTTPException as exc:
+            return {"error": exc.detail, "status_code": exc.status_code}
+    entity_id = resolved.entity_id if not raw_id else entity_id
     assert confidence is not None
     if confidence not in _VALID_CONFIDENCE:
         return {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from cortex_store.handoff_derivation import (
+    DERIVATION_AUTO_PERSISTED,
     DERIVATION_DETACHED_STRING,
     DERIVATION_SECTION,
     DERIVATION_SECTION_AMBIGUOUS,
@@ -134,3 +135,62 @@ def test_surface_preview_none_without_prompt() -> None:
     # No handoff supplied → no advisory regardless of provenance.
     assert build_handoff_surface_preview(None, None) is None
     assert build_handoff_surface_preview("", None) is None
+
+
+def test_auto_persisted_is_distinct_from_section() -> None:
+    surface = build_handoff_surface(
+        {
+            "handoff_prompt": "Inline persisted.",
+            "handoff_provenance": {
+                "derivation": DERIVATION_AUTO_PERSISTED,
+                "source_file": "notes/system/handoffs/web-2026-06-03-0100.md",
+                "source_file_sha256": "sha256:abc",
+            },
+        }
+    )
+    assert surface is not None
+    assert surface["derivation"] == DERIVATION_AUTO_PERSISTED
+    assert surface["verified"] is False
+    assert surface["flag"] == "unverified"
+
+
+def test_effective_derivation_preserves_auto_persisted() -> None:
+    assert (
+        effective_handoff_derivation({"derivation": DERIVATION_AUTO_PERSISTED})
+        == DERIVATION_AUTO_PERSISTED
+    )
+
+
+def test_surface_threads_handoff_verification() -> None:
+    verification = {
+        "checks": [{"name": "transcript_anchor_present", "status": "passed"}],
+        "passed": 1,
+        "total": 1,
+    }
+    surface = build_handoff_surface(
+        {
+            "handoff_prompt": "Continue.",
+            "handoff_provenance": {
+                "derivation": DERIVATION_AUTO_PERSISTED,
+                "source_file": "notes/system/handoffs/s.md",
+            },
+            "handoff_verification": verification,
+        }
+    )
+    assert surface is not None
+    assert surface["handoff_verification"] == verification
+
+
+def test_surface_preview_none_when_verification_all_passed() -> None:
+    verification = {"checks": [], "passed": 3, "total": 3}
+    assert (
+        build_handoff_surface_preview(
+            "Inline.",
+            {
+                "derivation": DERIVATION_AUTO_PERSISTED,
+                "source_file": "notes/system/handoffs/s.md",
+            },
+            handoff_verification=verification,
+        )
+        is None
+    )

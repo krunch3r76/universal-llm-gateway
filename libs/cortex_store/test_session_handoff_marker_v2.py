@@ -17,6 +17,7 @@ from cortex_store.routes import (
     session_close_persist,
     session_journals,
 )
+from cortex_store.handoff_derivation import DERIVATION_AUTO_PERSISTED
 from cortex_store.session_handoff import (
     DERIVATION_DETACHED_STRING,
     DERIVATION_SECTION,
@@ -186,14 +187,12 @@ def test_dry_run_section_handoff_valid(handoff_close_env: dict[str, Path]) -> No
     assert preview["derived_handoff_prompt_sha256"].startswith("sha256:")
 
 
-def test_dry_run_detached_string_surfaces_unverified(
+def test_dry_run_inline_auto_persisted_skips_advisory_when_checks_pass(
     handoff_close_env: dict[str, Path],
 ) -> None:
-    # AC: an inline handoff_prompt with no handoff_source_path must surface a
-    # write-time advisory naming the unverified outcome BEFORE close completes.
-    # depth="light" is the minimum handoff-compatible depth (none rejects a
-    # handoff with handoff.requires_transcript_entity).
-    summary = "Dry-run surfaces unverified advisory for detached handoff."
+    # Inline handoffs auto-persist under auto_persisted; when verification
+    # checks all pass the write-time advisory is suppressed (C4).
+    summary = "Dry-run inline handoff with passing verification."
     session_id = "web-2026-06-03-120200-a02"
     result = ops_journals._op_session_close(
         session_id=session_id,
@@ -203,16 +202,15 @@ def test_dry_run_detached_string_surfaces_unverified(
         transcript_depth="light",
         dry_run=True,
         handoff_prompt=_anchored_handoff(
-            session_id, "Inline detached handoff, no source file."
+            session_id, "Inline handoff, no source file."
         ),
     )
     assert result["dry_run"] is True
     assert result["handoff_valid"] is True
-    advisory = result["handoff_surface_preview"]
-    assert advisory is not None
-    assert advisory["flag"] == "unverified"
-    assert advisory["derivation"] == DERIVATION_DETACHED_STRING
-    assert advisory["verified"] is False
+    preview = result["handoff_provenance_preview"]
+    assert preview["derivation"] == DERIVATION_AUTO_PERSISTED
+    assert preview["source_file"] == f"notes/system/handoffs/{session_id}.md"
+    assert result["handoff_surface_preview"] is None
 
 
 def test_unresolved_does_not_keep_stale_prompt(

@@ -200,10 +200,9 @@ async def stop_local_services(
         stop_ops.append(("rag", ctl.stop_rag))
     if is_cloud_proxy_configured():
         stop_ops.append(("cloud_proxy", ctl.stop_cloud_proxy))
-    # MCP is intentionally excluded from the stop phase: sync_restart_mcp
-    # docker-cp-syncs into the running container then graceful-restarts in-place,
-    # keeping downtime to the few-second swap window. Pre-stopping extends the
-    # outage and causes Cursor's MCP connection to time out.
+    # MCP is intentionally excluded from the stop phase: start_mcp /
+    # sync_and_restart_mcp docker-cp-syncs into the running container then
+    # graceful-restarts in-place, keeping downtime to the few-second swap window.
     if is_cortex_configured():
         stop_ops.append(("cortex_api", ctl.stop_cortex_api))
     if is_agent_bus_configured():
@@ -248,12 +247,12 @@ def _build_start_ops(
     if is_cloud_proxy_configured():
         start_ops.append(("cloud_proxy", ctl.start_cloud_proxy))
     if is_mcp_configured(ws_root):
-        # sync_restart: docker cp source sync + graceful restart (no image rebuild).
+        # Canonical deploy: mcp_service.sync_and_restart_mcp (same as TUI Sync+Start MCP).
         # rebuild_deploy: full --no-cache image rebuild (pip/Dockerfile changes only).
         mcp_op: Callable[[], Awaitable[str]] = (
             (lambda: ctl.sync_restart_mcp(no_cache=True))
             if rebuild_supporting_services
-            else ctl.sync_restart_mcp
+            else ctl.start_mcp
         )
         start_ops.append(("mcp", mcp_op))
     if is_cortex_configured():

@@ -167,7 +167,9 @@ class ServicesScreen(Screen):
                 yield Button(
                     "Stop Events", id="btn-stop-events", variant="error", disabled=True
                 )
-                yield Button("Start MCP", id="btn-start-mcp", variant="success")
+                yield Button(
+                    "Sync + Start MCP", id="btn-start-mcp", variant="success"
+                )
                 yield Button(
                     "Stop MCP", id="btn-stop-mcp", variant="error", disabled=True
                 )

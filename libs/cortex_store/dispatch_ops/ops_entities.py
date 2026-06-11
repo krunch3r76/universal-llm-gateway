@@ -10,7 +10,9 @@ from universal_logging import get_logger
 
 from ..card import CARD_INTENTS_DEFERRED as _CARD_INTENTS_DEFERRED
 from ..card import CARD_TOP_K_DEFAULT as _CARD_TOP_K_DEFAULT
-from ..db import cortex_conn
+from ..db import WRITE_LOCK, cortex_conn
+from ..entity_aliases import resolve_entity_reference
+from ..entity_rekey import entity_merge_impl, entity_rekey_impl
 from ..trait_vocabulary import (
     ADOPTION_VALUES,
     CONFIDENCE_BAND_VALUES,
@@ -68,6 +70,31 @@ def _impls() -> tuple:
 logger = get_logger("cortex-api.dispatch_ops.entities")
 
 
+def _resolve_read_entity_id(
+    conn: sqlite3.Connection,
+    entity_id: str,
+    *,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
+    label: str = "entity",
+) -> str:
+    try:
+        resolved = resolve_entity_reference(
+            conn,
+            entity_id,
+            resolve_aliases=resolve_aliases,
+            raw_id=raw_id,
+            label=label,
+        )
+    except HTTPException as exc:
+        raise exc
+    return resolved.entity_id
+
+
+def _http_error_dict(exc: HTTPException) -> dict[str, Any]:
+    return {"error": exc.detail, "status_code": exc.status_code}
+
+
 def _op_entities(
     type: str | None = None,
     workflow_state: str | None = None,
@@ -119,6 +146,8 @@ def _op_entity_get(
     intent: str = "full",
     debug: bool = False,
     top_k: int = _CARD_TOP_K_DEFAULT,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     """Dispatch surface for entity_get (v2.4 §6.1).
@@ -144,16 +173,25 @@ def _op_entity_get(
         return {"error": "top_k must be int in [1, 50]"}
     _, _get_entity_card_impl, _get_entity_impl, _, _ = _impls()
     with cortex_conn() as conn:
+        try:
+            canonical_id = _resolve_read_entity_id(
+                conn,
+                entity_id,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        except HTTPException as exc:
+            return _http_error_dict(exc)
         if intent == "card":
             return _get_entity_card_impl(
                 conn,
-                entity_id=entity_id,
+                entity_id=canonical_id if not raw_id else entity_id,
                 top_k=top_k,
                 debug=debug,
             )
         return _get_entity_impl(
             conn,
-            entity_id=entity_id,
+            entity_id=canonical_id if not raw_id else entity_id,
             include_edges=include_edges,
             edge_limit=edge_limit,
             include_compaction_pointers=include_compaction_pointers,
@@ -250,6 +288,8 @@ def _op_entity_create(
 
 def _op_entity_update(
     entity_id: str | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **kwargs: object,
 ) -> dict[str, Any]:
     if not entity_id:
@@ -278,7 +318,54 @@ def _op_entity_update(
         return {"error": "No fields to update"}
     _, _, _, _, _update_entity_impl = _impls()
     with cortex_conn() as conn:
-        result = _update_entity_impl(conn, entity_id=entity_id, updates=updates)
+        try:
+            canonical_id = _resolve_read_entity_id(
+                conn,
+                entity_id,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        except HTTPException as exc:
+            return _http_error_dict(exc)
+        result = _update_entity_impl(
+            conn, entity_id=canonical_id if not raw_id else entity_id, updates=updates
+        )
     if "error" not in result:
         logger.info("cortex entity_update: %s", entity_id)
+    return result
+
+
+def _op_entity_rekey(
+    old_id: str | None = None,
+    new_id: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not old_id:
+        return {"error": "old_id is required"}
+    if not new_id:
+        return {"error": "new_id is required"}
+    try:
+        with WRITE_LOCK, cortex_conn() as conn:
+            result = entity_rekey_impl(conn, old_id, new_id)
+    except HTTPException as exc:
+        return _http_error_dict(exc)
+    logger.info("cortex entity_rekey: %s -> %s", old_id, result["new_id"])
+    return result
+
+
+def _op_entity_merge(
+    source_id: str | None = None,
+    target_id: str | None = None,
+    **_: object,
+) -> dict[str, Any]:
+    if not source_id:
+        return {"error": "source_id is required"}
+    if not target_id:
+        return {"error": "target_id is required"}
+    try:
+        with WRITE_LOCK, cortex_conn() as conn:
+            result = entity_merge_impl(conn, source_id, target_id)
+    except HTTPException as exc:
+        return _http_error_dict(exc)
+    logger.info("cortex entity_merge: %s -> %s", source_id, target_id)
     return result

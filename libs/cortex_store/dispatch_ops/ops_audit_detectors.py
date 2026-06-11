@@ -43,6 +43,7 @@ from ._detectors.entity import (
     detect_entity_source_uri_missing,
     detect_entity_source_uri_unresolved,
 )
+from ._detectors.fk_orphan import detect_foreign_key_orphan
 from ._detectors.forbidden_surfaces import detect_forbidden_surfaces
 from ._detectors.git_reconcile import detect_landed_claim_not_on_master
 from ._detectors.markdown_render import (
@@ -72,6 +73,7 @@ from ._detectors.workflow_coherence import (
 GRAPH_ONLY_KINDS = {
     "dangling_attribute_reference",
     "dangling_relationship_target",
+    "foreign_key_orphan",
     "entity_source_uri_missing",
     "entity_empty_description",
     "case_no_assertions",
@@ -133,6 +135,7 @@ def get_all_detectors() -> dict[str, Any]:
     return {
         "dangling_attribute_reference": lambda c, s=None: [],  # TODO: implement (attributes referencing missing entities)
         "dangling_relationship_target": detect_dangling_relationship_target,
+        "foreign_key_orphan": detect_foreign_key_orphan,
         "entity_source_uri_missing": detect_entity_source_uri_missing,
         "entity_empty_description": detect_entity_empty_description,
         "case_no_assertions": detect_case_no_assertions,

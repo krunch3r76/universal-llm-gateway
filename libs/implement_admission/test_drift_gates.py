@@ -23,6 +23,7 @@ from implement_admission.drift_gates import (
     apply_closeout_gate_c,
     check_bound_source_ref,
     check_closeout_evidence,
+    check_closeout_hash_drift,
     check_frontmatter_source_ref,
     check_packet_hash_drift,
     clear_gate_state_cache,
@@ -283,6 +284,18 @@ def test_gates_do_not_mutate_payload_fields() -> None:
     check_packet_hash_drift(spec)
     assert spec.source.source_ref == before_ref
     assert spec.provenance.implement_spec_hash == before_hash
+
+
+def test_check_closeout_hash_drift_skips_packet_lane() -> None:
+    closeout = ImplementCloseout(
+        status=CloseoutStatus.COMPLETE,
+        summary="x",
+        source_ref="packet:universal-llm-gateway/tmp/reviews/foo.md",
+    )
+    result = check_closeout_hash_drift(closeout)
+    assert result.action == "noop"
+    assert result.tripped is False
+    assert "pass-through" in (result.detail or "")
 
 
 def test_apply_gate_b_complete_to_partial(monkeypatch: pytest.MonkeyPatch) -> None:

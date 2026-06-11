@@ -42,10 +42,14 @@ class ReplayReport:
     cases: list[dict[str, Any]] = field(default_factory=list)
 
 
-def classify(case: ReplayCase, *, cortex: CortexReader, workspaces_root: Any = None) -> str:
+def classify(
+    case: ReplayCase, *, cortex: CortexReader, workspaces_root: Any = None
+) -> str:
     """Shadow-normalize and compare to legacy outcome."""
     try:
-        spec = normalize(case.source_ref, cortex=cortex, workspaces_root=workspaces_root)
+        spec = normalize(
+            case.source_ref, cortex=cortex, workspaces_root=workspaces_root
+        )
     except SourceRefError as exc:
         legacy_expects_error = case.legacy_route.get("expect_error")
         if legacy_expects_error and exc.code == legacy_expects_error:

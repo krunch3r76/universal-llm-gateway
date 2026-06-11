@@ -11,6 +11,15 @@ from .shadow_replay import ReplayCase, classify, run_replay
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "implement_admission"
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_WORKSPACES_ROOT = _REPO_ROOT.parent
+
+
+def _packet_workspaces_rel(name: str) -> str:
+    return (
+        "universal-llm-gateway/services/universal-stargate/systems/frontier_consult/"
+        f"fixtures/implement_admission/packets/{name}"
+    )
 
 
 class _StubCortex:
@@ -77,20 +86,21 @@ def test_passed_false_when_friction_above_threshold() -> None:
 
 
 def test_golden_fixtures_classify_match() -> None:
-    ws_root = Path("/mnt/torus/projects")
+    # Shadow replay uses stub cortex — not the dispatch-bound deck lane.
+    # workspaces_root=None keeps plan_phase refs on attr-only normalize (§15).
     cases = _load_fixtures()
     assert len(cases) >= 6
     for case in cases:
-        label = classify(case, cortex=_StubCortex(), workspaces_root=ws_root)
+        label = classify(case, cortex=_StubCortex(), workspaces_root=None)
         assert label == "match", f"{case.source_ref} got {label}"
 
 
 def test_admission_read_canonical_api() -> None:
     good = FIXTURE_DIR / "packets" / "good-with-acceptance.md"
-    rel = (
-        "universal-llm-gateway/services/universal-stargate/systems/frontier_consult/"
-        f"fixtures/implement_admission/packets/{good.name}"
+    assert good.is_file()
+    packet = read_packet(
+        _packet_workspaces_rel(good.name),
+        workspaces_root=_WORKSPACES_ROOT,
     )
-    packet = read_packet(rel, workspaces_root=Path("/mnt/torus/projects"))
     assert "acceptance" in packet.text.lower()
     assert packet.packet_sha256.startswith("sha256:")

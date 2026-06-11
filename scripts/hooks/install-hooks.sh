@@ -19,10 +19,15 @@ cat > "$HOOKS_DIR/pre-commit" << 'EOF'
 # Catalog validation pre-commit hook
 # Installed by scripts/hooks/install-hooks.sh
 
-python scripts/hooks/validate_catalog.py --staged || exit 1
-python -m scripts.gen_event_catalog check --staged || exit 1
-python scripts/check-rag-events-imports.py --staged || exit 1
-python scripts/lint-fastapi-annotations.py --staged
+PYTHON="${HOME}/.venvs/universal/bin/python3"
+
+"$PYTHON" scripts/hooks/validate_catalog.py --staged || exit 1
+# Regenerate catalog when staged event sources drift, then re-stage the doc.
+"$PYTHON" -m scripts.gen_event_catalog sync --staged || exit 1
+git add docs/event-contracts.md 2>/dev/null || true
+"$PYTHON" -m scripts.gen_event_catalog check --staged || exit 1
+"$PYTHON" scripts/check-rag-events-imports.py --staged || exit 1
+"$PYTHON" scripts/lint-fastapi-annotations.py --staged
 exit $?
 EOF
 

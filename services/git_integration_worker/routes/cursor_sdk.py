@@ -1,0 +1,180 @@
+"""Cursor SDK dispatch route — admits dispatches via cursor-sdk-bridge.
+
+In-memory idempotency registry state is lost on worker restart (Phase 1 scope).
+
+T2b probe (2026-06-11): concurrent local dispatches rewrite
+``~/.cursor/cli-config.json`` (cursor-agent token refresh). Phase 2 HOME
+isolation is **required** before production concurrent volume — see
+``tasks/specs/cursor-sdk-executor.md`` Phase 2.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+from cursor_sdk import Client
+from cursor_sdk.types import LocalAgentOptions
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from universal_logging import get_logger
+from universal_protocol import error_envelope
+
+from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_dispatch_registry import (
+    CursorDispatchRegistry,
+    DispatchConflict,
+)
+from services.git_integration_worker.cursor_models import (
+    build_model_selection,
+    resolve_cursor,
+)
+from services.git_integration_worker.models.cursor_api import (
+    CursorDispatchRequest,
+    CursorDispatchResponse,
+)
+
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/api/v1/cursor", tags=["cursor-sdk"])
+
+_CONFIG: WorkerConfig = load_config()
+_REG = CursorDispatchRegistry.instance()
+_SDK_BRIDGE_BIN = os.environ.get("CURSOR_SDK_BRIDGE_BIN", "").strip() or None
+_SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
+
+
+def _config(request: Request) -> WorkerConfig:
+    return getattr(request.app.state, "worker_config", _CONFIG)
+
+
+def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
+    if req.message:
+        return req.message
+    assert req.packet_path is not None
+    rel = req.packet_path.strip()
+    if rel.startswith("/") or ".." in Path(rel).parts:
+        raise ValueError(f"packet_path must be workspaces-relative: {rel!r}")
+    packet = (source_repo / rel).resolve()
+    if not str(packet).startswith(str(source_repo.resolve())):
+        raise ValueError(f"packet_path escapes source_repo: {rel!r}")
+    if not packet.is_file():
+        raise ValueError(f"packet_path not found: {rel!r}")
+    return packet.read_text(encoding="utf-8")
+
+
+def _run_sdk_sync(
+    *,
+    source_repo: Path,
+    prompt: str,
+    config_model_id: str,
+    selection_overrides: dict[str, str] | None,
+    dispatch_id: str,
+) -> str:
+    config = resolve_cursor(config_model_id)
+    selection = build_model_selection(config, selection_overrides)
+    client = Client.launch_bridge(
+        _SDK_BRIDGE_BIN,
+        workspace=str(source_repo),
+        timeout=_SDK_TIMEOUT_S,
+        local=LocalAgentOptions(cwd=str(source_repo)),
+    )
+    try:
+        agent = client.create_agent(model=selection)
+        run = agent.send(prompt, idempotency_key=dispatch_id)
+        result = run.wait()
+        return result.result
+    finally:
+        client.close()
+
+
+async def _run_sdk_dispatch(
+    *,
+    req: CursorDispatchRequest,
+    source_repo: Path,
+    bus: CursorBusClient,
+) -> None:
+    try:
+        prompt = _resolve_prompt(req, source_repo)
+        body = await asyncio.to_thread(
+            _run_sdk_sync,
+            source_repo=source_repo,
+            prompt=prompt,
+            config_model_id=req.model,
+            selection_overrides=None,
+            dispatch_id=req.dispatch_id,
+        )
+        bus_result = await bus.reply(
+            thread_id=req.thread_id,
+            to_agent="dispatch",
+            from_agent="cursor-sdk",
+            subject=f"cursor-sdk dispatch {req.dispatch_id}",
+            body=body,
+        )
+        if bus_result.status_code >= 400:
+            logger.error(
+                "cursor bus reply failed: status=%s body=%s",
+                bus_result.status_code,
+                bus_result.body,
+            )
+    except Exception:
+        logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
+
+
+@router.post("/dispatch", response_model=CursorDispatchResponse)
+async def cursor_dispatch(
+    req: CursorDispatchRequest, request: Request
+) -> CursorDispatchResponse:
+    cfg = _config(request)
+    try:
+        config = resolve_cursor(req.model)
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=error_envelope(
+                code="CURSOR_MODEL_UNTRUSTED",
+                message=str(exc),
+                source="gateway",
+            ),
+        )
+    try:
+        _resolve_prompt(req, cfg.source_repo)
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=422,
+            content=error_envelope(
+                code="CURSOR_PACKET_INVALID",
+                message=str(exc),
+                source="gateway",
+            ),
+        )
+
+    admission = CursorDispatchResponse(
+        admitted=True,
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        model_id=config.model_id,
+    )
+    fingerprint = _REG.fingerprint(req)
+    try:
+        cached = await _REG.admit(req.dispatch_id, fingerprint, admission)
+    except DispatchConflict as exc:
+        return JSONResponse(
+            status_code=409,
+            content=error_envelope(
+                code="CURSOR_DISPATCH_CONFLICT",
+                message=str(exc),
+                source="gateway",
+            ),
+        )
+    if cached is not None:
+        return cached
+
+    bus = CursorBusClient()
+    task = asyncio.create_task(
+        _run_sdk_dispatch(req=req, source_repo=cfg.source_repo, bus=bus)
+    )
+    _REG.attach_task(req.dispatch_id, task)
+    return admission

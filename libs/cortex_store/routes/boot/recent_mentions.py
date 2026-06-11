@@ -60,7 +60,8 @@ _RECENT_MENTIONS_DEFAULT_EXCLUDE = (
 #   [3] days_arg         — enriched_count subquery: created_at <= window boundary
 #   [4] days_arg         — LEFT JOIN: created_at > window
 #   [5] days_arg         — WHERE: entity created_at > window
-#   [6..N] excluded types (variable)
+#   [6] "deprecated"     — _DEPRECATED_EXCLUDE lifecycle predicate (ONE bind)
+#   [7..N] excluded types (variable)
 #   [N+1] days_arg       — HAVING: entity created_at > window
 #   [N+2] include_flag
 #   [N+3] limit
@@ -166,8 +167,7 @@ def get_boot_recent_mentions(
         days_arg,  # enriched_count subquery: created_at <= window
         days_arg,  # LEFT JOIN: created_at > window
         days_arg,  # WHERE: entity created_at > window
-        "deprecated",
-        "deprecated",  # lifecycle_not_value predicate (trait-native)
+        "deprecated",  # lifecycle_not_value predicate (trait-native; ONE bind)
     ]
     if excluded:
         placeholders = ",".join("?" * len(excluded))

@@ -7,8 +7,10 @@ and relationship alias resolution.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException, status
 
@@ -203,17 +205,51 @@ def sync_entity_aliases(
         raise
 
 
+def _merged_into_target(attributes_raw: str | None) -> str | None:
+    if not attributes_raw:
+        return None
+    try:
+        attrs: dict[str, Any] = json.loads(attributes_raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    merged_into = attrs.get("merged_into")
+    return str(merged_into) if merged_into else None
+
+
 def resolve_entity_reference(
     conn: sqlite3.Connection,
     ref: str,
     *,
-    resolve_aliases: bool,
-    label: str,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
+    label: str = "entity",
 ) -> ResolvedEntityRef:
-    """Return the canonical entity ID for *ref* or raise a precise 4xx error."""
-    if query(conn, "SELECT id FROM entities WHERE id = ?", (ref,)):
-        return ResolvedEntityRef(entity_id=ref)
-    if not resolve_aliases:
+    """Return the canonical entity ID for *ref* or raise a precise 4xx error.
+
+    Resolution order (unless ``raw_id``):
+      1. exact active entity row
+      2. exact merged tombstone → ``merged_into`` redirect
+      3. alias lookup (when ``resolve_aliases``)
+    """
+    rows = query(
+        conn,
+        "SELECT id, lifecycle, attributes FROM entities WHERE id = ?",
+        (ref,),
+    )
+    if rows:
+        row = rows[0]
+        if raw_id:
+            return ResolvedEntityRef(entity_id=str(row["id"]))
+        lifecycle = row.get("lifecycle")
+        if lifecycle == "merged":
+            target = _merged_into_target(
+                str(row["attributes"]) if row.get("attributes") else None
+            )
+            if target:
+                return ResolvedEntityRef(entity_id=target)
+        return ResolvedEntityRef(entity_id=str(row["id"]))
+
+    if raw_id or not resolve_aliases:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
             f"{label.title()} entity not found: {ref}",

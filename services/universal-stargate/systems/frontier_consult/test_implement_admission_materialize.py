@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
+import pytest
+from implement_admission.drift_gates import DriftGateState, clear_gate_state_cache
 from implement_admission.materialize import materialize
 from implement_admission.spec import (
     Acceptance,
@@ -23,6 +26,42 @@ from implement_admission.spec import (
 )
 
 from .handoff import validate_packet
+from .implement_admission_bridge import (
+    probe_packet_presence,
+    resolve_source_ref_to_packet,
+)
+
+
+class _MaterializeStubCortex:
+    def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
+        if entity_id == "decision:unified-implement-admission":
+            return {
+                "id": entity_id,
+                "assertions": [
+                    {
+                        "confidence": "confirmed",
+                        "superseded": False,
+                        "superseded_by": None,
+                    },
+                ],
+            }
+        return {
+            "id": entity_id,
+            "name": entity_id,
+            "attributes": {
+                "content_hash": "sha256:fixture",
+                "acceptance_criteria": ["AC1", "AC2"],
+                "files_expected": ["a.py"],
+            },
+        }
+
+
+def _patch_gates_warn(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "implement_admission.drift_gates.gate_state",
+        lambda gate_id: DriftGateState.WARN,
+    )
+    clear_gate_state_cache()
 
 
 def _sample_spec() -> ImplementSpec:
@@ -73,3 +112,64 @@ def test_materialized_packet_admitted_by_validate_packet(tmp_path: Path) -> None
         handoff_contract="implement",
         workspaces_root=ws_root,
     )
+
+
+def test_probe_packet_presence_true_when_file_exists(tmp_path: Path) -> None:
+    packet = tmp_path / "universal-llm-gateway" / "tmp" / "pkt.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("---\n---\n", encoding="utf-8")
+    rel = "universal-llm-gateway/tmp/pkt.md"
+    assert probe_packet_presence(rel, workspaces_root=tmp_path) is True
+
+
+def test_probe_packet_presence_false_cross_mount(tmp_path: Path) -> None:
+    write_root = tmp_path / "stargate"
+    executor_root = tmp_path / "executor"
+    write_root.mkdir()
+    executor_root.mkdir()
+    packet = write_root / "universal-llm-gateway" / "tmp" / "pkt.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text("---\n---\n", encoding="utf-8")
+    rel = "universal-llm-gateway/tmp/pkt.md"
+    assert (
+        probe_packet_presence(rel, workspaces_root=write_root, probe_root=executor_root)
+        is False
+    )
+
+
+def test_materialize_lane_shared_mount_no_probe_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_gates_warn(monkeypatch)
+    monkeypatch.delenv("HANDOFF_EXECUTOR_WORKSPACES_ROOT", raising=False)
+    result = resolve_source_ref_to_packet(
+        "todo:lint-proof",
+        cortex=_MaterializeStubCortex(),
+        workspaces_root=tmp_path,
+        request_id="req-shared",
+    )
+    assert result.materialization_present is True
+    assert result.warnings == []
+
+
+def test_materialize_lane_cross_mount_sets_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_gates_warn(monkeypatch)
+    write_root = tmp_path / "stargate"
+    executor_root = tmp_path / "executor"
+    write_root.mkdir()
+    executor_root.mkdir()
+    monkeypatch.setenv("HANDOFF_EXECUTOR_WORKSPACES_ROOT", str(executor_root))
+    result = resolve_source_ref_to_packet(
+        "todo:lint-proof",
+        cortex=_MaterializeStubCortex(),
+        workspaces_root=write_root,
+        request_id="req-cross",
+    )
+    assert result.materialization_present is False
+    assert len(result.warnings) == 1
+    assert "materialization.executor_absent" in result.warnings[0]
+    assert "use source_ref fallback" in result.warnings[0]

@@ -15,22 +15,24 @@ from fastapi import HTTPException, status
 
 from .db import json_encode
 from .handoff_audit import check_handoff_prompt_in_source
-from .handoff_derivation import WRITE_PATH_SESSION_CLOSE
-from .handoff_marker import ExtractResult, extract_handoff_marker_region
-from .handoff_provenance import build_handoff_provenance, compute_source_file_sha256
-from .handoff_resolution import (
+from .handoff_derivation import (
     DERIVATION_DETACHED_STRING,
     DERIVATION_SECTION,
     DERIVATION_SECTION_AMBIGUOUS,
     DERIVATION_SECTION_UNRESOLVED,
     HANDOFF_PROMPT_MAX_CHARS,
     HANDOFF_PROVENANCE_JSON_MAX_BYTES,
+    WRITE_PATH_SESSION_CLOSE,
+)
+from .handoff_marker import ExtractResult, extract_handoff_marker_region
+from .handoff_provenance import build_handoff_provenance, compute_source_file_sha256
+from .handoff_resolution import (
     HandoffResolution,
     handoff_dry_run_preview,
     handoff_post_close_findings,
-    read_handoff_source_file,
     resolve_handoff_for_write,
 )
+from .handoff_resolution_io import read_handoff_source_file
 
 WRITE_PATH_HANDOFF_UPSERT = "session_handoff_upsert"
 
@@ -63,6 +65,7 @@ def merge_handoff_attribute(
     attributes: dict[str, Any],
     handoff_prompt: str | None,
     provenance: dict[str, Any] | None = None,
+    handoff_verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return *attributes* with handoff fields set or removed."""
     merged = dict(attributes)
@@ -74,6 +77,10 @@ def merge_handoff_attribute(
         merged["handoff_provenance"] = provenance
     elif not handoff_prompt:
         merged.pop("handoff_provenance", None)
+    if handoff_verification is not None:
+        merged["handoff_verification"] = handoff_verification
+    elif not handoff_prompt:
+        merged.pop("handoff_verification", None)
     return merged
 
 
@@ -82,6 +89,7 @@ def mirror_handoff_to_transcript_entity(
     session_id: str,
     handoff_prompt: str | None,
     provenance: dict[str, Any] | None = None,
+    handoff_verification: dict[str, Any] | None = None,
 ) -> bool:
     """Upsert ``handoff_prompt`` (+ provenance) on the transcript entity."""
     entity_id = f"transcript:{session_id}"
@@ -93,7 +101,12 @@ def mirror_handoff_to_transcript_entity(
     existing: dict[str, Any] = (
         json.loads(row["attributes"]) if row["attributes"] else {}
     )
-    updated = merge_handoff_attribute(existing, handoff_prompt, provenance)
+    updated = merge_handoff_attribute(
+        existing,
+        handoff_prompt,
+        provenance,
+        handoff_verification=handoff_verification,
+    )
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     conn.execute(  # type: ignore[union-attr]
         "UPDATE entities SET attributes = ?, updated_at = ? WHERE id = ?",

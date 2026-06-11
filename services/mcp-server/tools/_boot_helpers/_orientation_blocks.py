@@ -88,7 +88,8 @@ A change is LIVE only when LOADED into the running process at its last deploy/re
 Before claiming a surface changed, ask three questions — do NOT read git for this:
   1. WHICH substrate?   2. Did its LOAD EVENT fire?   3. What does the LIVE PROBE say?
 Substrates: service behavior (sync_restart/rebuild → observability probe) · MCP tool surface (mcp restart → boot manifest + binding probe, ¬ tool_search alone) · routing+catalog (sync_restart → /v1/models) · agent-context (cortex_boot → this card).
-⚠ Salience trap: "commit" is the loudest done/durable signal, so it gets grabbed as a liveness proxy under load. It is not one. Verify against the load event + probe, never the tree."""
+⚠ Salience trap: "commit" is the loudest done/durable signal, so it gets grabbed as a liveness proxy under load. It is not one. Verify against the load event + probe, never the tree.
+⚠ Completion gate: commit is likewise NOT a completion gate. Agent dev work is done/handoffable when deliverables are durable in workspace + cortex and verification passes. Never gate, wait, or hand a task back "to commit", nor list "commit" as an outstanding action item — unless a named workflow defines a commit/merge/release step."""
 
 # Compact index — full playbook is agent-skills/consult-routing.md (current superset,
 # verified 2026-06-04). The two highest-frequency traps are kept inline; everything

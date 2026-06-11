@@ -56,7 +56,41 @@ def build_poll_hint_wait(*, thread_id: str, from_agent: str) -> dict[str, Any]:
     }
 
 
-def build_push_reminder(*, thread_id: str, to_agent: str, platform: str) -> str:
+def build_recommended_executor(
+    *,
+    handoff_contract: str,
+    packet_text: str,
+    executor_override: str | None = None,
+    executor_override_reason_code: str | None = None,
+    executor_override_reason: str | None = None,
+) -> dict[str, Any]:
+    """Assemble executor advisory fields for the handoff response."""
+    from .executor_resolution import derive_recommended_executor
+
+    return derive_recommended_executor(
+        handoff_contract,
+        packet_text,
+        executor_override=executor_override,
+        executor_override_reason_code=executor_override_reason_code,
+        executor_override_reason=executor_override_reason,
+    )
+
+
+def build_recommended_review(*, handoff_contract: str) -> dict[str, Any]:
+    """Consult adversarial-pass advisory (Q-sibling dual)."""
+    from .executor_resolution import derive_recommended_review
+
+    value = derive_recommended_review(handoff_contract)
+    return {"recommended_review": value}
+
+
+def build_push_reminder(
+    *,
+    thread_id: str,
+    to_agent: str,
+    platform: str,
+    handoff_contract: str | None = None,
+) -> str:
     """Operator-facing reminder.
 
     Web seats need a bus push; cursor seats need IDE attendance.
@@ -68,11 +102,17 @@ def build_push_reminder(*, thread_id: str, to_agent: str, platform: str) -> str:
         "reminder verbatim."
     )
     if platform == "cursor":
+        executor_hint = (
+            " Default executor for bound implement handoffs is Composer "
+            "(Thinking ≡ Fast); pick Composer in the model picker unless the "
+            "server advisory names a structured override."
+            if handoff_contract == "implement"
+            else ""
+        )
         return (
             f"**Action needed — attend agent-bus in Cursor**: handoff posted to thread "
             f"{thread_id}. Open the thread in Cursor (Multitask or /agent-bus) as "
-            f"{to_agent}; switch to Opus in the model picker when this handoff "
-            f"needs it."
+            f"{to_agent}.{executor_hint}"
             f"{seat_obligation}"
         )
     return (

@@ -187,13 +187,18 @@ def compute_all_salience(
             (entity_id_filter,),
         )
     else:
+        if force:
+            conn.execute(
+                "DELETE FROM entity_salience_cache "
+                "WHERE entity_id NOT IN (SELECT id FROM entities)"
+            )
         entities = query(
             conn,
             f"SELECT id, type, name, attributes FROM entities "
             f"WHERE {_NOT_REAPED} AND NOT ("
             "  type = 'todo' AND workflow_state != 'open'"
             ")",
-            ("reaped", "reaped"),
+            ("reaped",),
         )
 
     if not entities:

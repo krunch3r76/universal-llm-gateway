@@ -13,8 +13,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException
 from universal_logging import get_logger
 
+from ..db import cortex_conn
+from ..entity_aliases import resolve_entity_reference
 from ..models import ImpactAnalysisRequest
 from ..routes.assertions import (
     _list_assertions_impl,
@@ -68,8 +71,22 @@ def _op_assertions(
     superseded: bool | None = None,
     limit: int | None = None,
     include_compaction_pointers: bool = False,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
+    if entity_id:
+        with cortex_conn() as conn:
+            try:
+                resolved = resolve_entity_reference(
+                    conn,
+                    entity_id,
+                    resolve_aliases=resolve_aliases,
+                    raw_id=raw_id,
+                )
+            except HTTPException as exc:
+                return {"error": exc.detail, "status_code": exc.status_code}
+        entity_id = resolved.entity_id if not raw_id else entity_id
     return _list_assertions_impl(
         entity_id=entity_id,
         entity_id_prefix=entity_id_prefix,
@@ -143,10 +160,23 @@ def _op_analyze_impact(
     entity_id: str | None = None,
     claim: str | None = None,
     confidence: str | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if not entity_id:
         return {"error": "entity_id is required"}
+    with cortex_conn() as conn:
+        try:
+            resolved = resolve_entity_reference(
+                conn,
+                entity_id,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        except HTTPException as exc:
+            return {"error": exc.detail, "status_code": exc.status_code}
+    entity_id = resolved.entity_id if not raw_id else entity_id
     if not claim:
         return {"error": "claim is required"}
     if confidence is not None and confidence not in _VALID_CONFIDENCE:

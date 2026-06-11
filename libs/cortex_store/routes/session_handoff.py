@@ -82,6 +82,7 @@ def upsert_session_handoff(
         files_root=_FILES_ROOT,
         write_path=WRITE_PATH_HANDOFF_UPSERT,
         written_at=now,
+        session_id=session_id,
         handoff_source_path=body.handoff_source_path,
         handoff_source_section=body.handoff_source_section,
         handoff_prompt=body.handoff_prompt,
@@ -115,7 +116,11 @@ def upsert_session_handoff(
             (handoff_prompt, journal["id"]),
         )
         mirrored = mirror_handoff_to_transcript_entity(
-            conn, session_id, handoff_prompt, provenance
+            conn,
+            session_id,
+            handoff_prompt,
+            provenance,
+            handoff_verification=resolution.handoff_verification,
         )
         conn.commit()
     except HTTPException:

@@ -37,6 +37,12 @@ from mcp_events import record
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
+from ._frontier_intake import (
+    normalize_dispatch_model,
+    require_dispatch_thread_id,
+    validate_dispatch_messages,
+)
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -178,6 +184,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         subject: str | None = None,
         packet_path: str | None = None,
         source_ref: str | None = None,
+        contract: Literal["consult", "implement"] | None = None,
+        executor_override: str | None = None,
+        executor_override_reason_code: str | None = None,
+        executor_override_reason: str | None = None,
         pointer_body: str | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -187,14 +197,49 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         - ``seat="claude-web"`` → operator pushes bus message
         - ``seat="claude-cursor"`` → open IDE thread
-        Contract is derived server-side (``source_ref`` dispatch_lane → packet
-        front-matter ``contract:`` → default ``consult``). The
-        ``{platform}-{contract}`` shorthand slugs remain accepted and encode
+
+        **Contract (authority grant):** pass ``contract="consult"`` or
+        ``contract="implement"`` for an explicit authority grant — highest
+        priority in server-side derivation. When omitted, contract is derived:
+        explicit param → ``source_ref`` dispatch_lane → packet front-matter
+        ``contract:`` → role ``default_contract`` → default ``consult``.
+        A packet with acceptance criteria in ``<task_guidance>`` but no contract
+        signal resolves to ``handoff_contract_ambiguous`` (422) — never silent
+        consult admission.
+
+        **``source_ref``** — scheme-prefixed entity/pointer ref only:
+        ``todo:`` / ``plan:`` / ``plan_phase:`` / ``plan:{slug}/phase-N`` /
+        ``agent-bus:`` / ``packet:``. Bare filesystem paths are rejected
+        (``source_ref_unparseable``). **Filesystem packets go via
+        ``packet_path``, not ``source_ref``.**
+
+        **``packet_path``** — repo-relative path from the gateway checkout root
+        (``/mnt/torus/projects/universal-llm-gateway``): e.g.
+        ``tmp/reviews/my-packet.md``. Do **not** prefix with
+        ``universal-llm-gateway/`` (that prefix is for ``fs(sandbox=workspaces)``).
+        A leading ``universal-llm-gateway/`` is stripped before resolution.
+
+        **Packet shape:** six required XML blocks — ``<scope>``,
+        ``<invariants>``, ``<task_guidance>``, ``<corpus>``,
+        ``<mcp_capabilities>`` (MCP seats), ``<output_format>``. Author per
+        ``docs/agent-guides/skills/handoff-packet-authoring.md``.
+
+        The ``{platform}-{contract}`` shorthand slugs remain accepted and encode
         (seat, contract) — roster in the module docstring above.
 
         Requires ``subject``, at least one of ``seat`` | ``role``, and at least
         one of ``packet_path`` | ``source_ref``. Returns
-        ``{thread_id, resolved_model, to_agent, …}``.
+        ``{thread_id, resolved_model, to_agent, recommended_executor,
+        recommended_review, …}``.
+
+        **Executor override (implement only):** optional
+        ``executor_override`` + ``executor_override_reason_code`` +
+        ``executor_override_reason`` (request or packet front-matter). Silence
+        → server default ``recommended_executor=composer``. Structured
+        opt-out codes: ``pure_cortex_doc_edit`` (with ``web-inline``),
+        ``capability_gap`` / ``protocol_heavy`` (non-Composer tier), or
+        ``design_judgment_remaining`` (re-scope warning, coerced to composer).
+        Advisory on manual seats until cursorbuild binds the picker.
 
         **``op="generate"`` / ``op="to_thread"``** — API functional roles via
         ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
@@ -226,7 +271,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         - ``op="handoff"``: ``seat`` selects the destination; contract is derived server-side (the shorthand slugs still encode (seat, contract)).
           Returns
           ``{thread_id, subject, to_agent, resolved_model, push_reminder,
-          result_handle, handoff_status, poll_hint}``. Poll via
+          recommended_executor, recommended_executor_source,
+          recommended_review, result_handle, handoff_status, poll_hint}``. Poll via
           ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
           ``pipeline(op="result")``.
 
@@ -237,7 +283,10 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         ``dispatch_thread_id`` — required compaction key for server-owned
         thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
-        only). Prior turns are assembled from cortex; pass only the **latest**
+        only) — **required** and validated at intake: an empty value is
+        rejected with a descriptive 422 naming the field rather than failing
+        late in the pipeline. Prior turns are assembled from cortex; pass only
+        the **latest**
         user message in ``messages``. Distinct from ``thread`` (agent-bus
         delivery on ``op="to_thread"``) and ``transcript_id`` (provenance only).
 
@@ -302,7 +351,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 handoff_body["packet_path"] = packet_path
             if source_ref is not None:
                 handoff_body["source_ref"] = source_ref
+            if contract is not None:
+                handoff_body["contract"] = contract
             for key, val in (
+                ("executor_override", executor_override),
+                ("executor_override_reason_code", executor_override_reason_code),
+                ("executor_override_reason", executor_override_reason),
                 ("pointer_body", pointer_body),
                 ("tags", tags),
                 ("caller_agent", caller_agent),
@@ -329,6 +383,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "message": "role is required when op='generate' or op='to_thread'",
                 }
             }
+
+        # Intake normalization + validation (F16655/F16656/F16657) — see
+        # tools/_frontier_intake.py. Each guard returns an error envelope the
+        # caller surfaces verbatim; the model strip is applied before forwarding.
+        thread_id_err = require_dispatch_thread_id(op, dispatch_thread_id)
+        if thread_id_err is not None:
+            return thread_id_err
+        messages_err = validate_dispatch_messages(messages)
+        if messages_err is not None:
+            return messages_err
+        model = normalize_dispatch_model(model)
 
         body: dict[str, Any] = {
             "op": op,

@@ -82,6 +82,7 @@ def try_idempotent_session_close(
         files_root=_FILES_ROOT,
         write_path=WRITE_PATH_SESSION_CLOSE,
         written_at=ctx.now,
+        session_id=body.session_id,
         handoff_source_path=body.handoff_source_path,
         handoff_source_section=body.handoff_source_section,
         handoff_prompt=body.handoff_prompt,
@@ -134,7 +135,9 @@ def try_idempotent_session_close(
         byte_count=0,
         audit_warnings=None,
         handoff_surface_preview=build_handoff_surface_preview(
-            handoff_retry.handoff_prompt, handoff_retry.provenance
+            handoff_retry.handoff_prompt,
+            handoff_retry.provenance,
+            handoff_retry.handoff_verification,
         ),
         debrief_turn_number=debrief.debrief_turn_number,
         debrief_status=debrief.debrief_status,
@@ -151,6 +154,7 @@ def persist_session_close(
         files_root=_FILES_ROOT,
         write_path=WRITE_PATH_SESSION_CLOSE,
         written_at=ctx.now,
+        session_id=body.session_id,
         handoff_source_path=body.handoff_source_path,
         handoff_source_section=body.handoff_source_section,
         handoff_prompt=body.handoff_prompt,
@@ -228,6 +232,10 @@ def persist_session_close(
                 tx_attributes["handoff_prompt"] = handoff_prompt
             if handoff_provenance is not None:
                 tx_attributes["handoff_provenance"] = handoff_provenance
+            if handoff_resolution.handoff_verification is not None:
+                tx_attributes["handoff_verification"] = (
+                    handoff_resolution.handoff_verification
+                )
             if source_ref_resolution is not None:
                 tx_attributes["source_ref"] = source_ref_resolution.stamped_ref
                 tx_attributes["source_ref_provenance"] = (
@@ -381,7 +389,9 @@ def persist_session_close(
         byte_count=byte_count,
         audit_warnings=audit_warnings,
         handoff_surface_preview=build_handoff_surface_preview(
-            handoff_prompt, handoff_provenance
+            handoff_prompt,
+            handoff_provenance,
+            handoff_resolution.handoff_verification,
         ),
         debrief_turn_number=debrief.debrief_turn_number,
         debrief_status=debrief.debrief_status,

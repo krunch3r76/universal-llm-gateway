@@ -73,6 +73,75 @@ def test_render_last_session_without_handoff_no_hint() -> None:
     } in manifest
 
 
+def test_resuming_from_passing_verification_no_confirmation_gate() -> None:
+    """All verification checks pass → no cold-distrust / no-confirmation gate (C4)."""
+    card, _manifest = render_briefing_card(
+        transcript_continuation={
+            "entity_id": "transcript:claude-web-2026-06-10-220549-9ab",
+            "summary": "Handoff verification arc.",
+            "handoff_surface": {
+                "surfaced": True,
+                "verified": False,
+                "derivation": "auto_persisted",
+                "flag": "unverified",
+                "handoff_verification": {
+                    "checks": [
+                        {
+                            "name": "transcript_anchor_present",
+                            "status": "passed",
+                            "detail": "ok",
+                        },
+                        {
+                            "name": "cited_entity_state_snapshot",
+                            "status": "passed",
+                            "detail": (
+                                "task:implement-dispatch-composer-default "
+                                "state=done (note: investigate-phase)"
+                            ),
+                        },
+                    ],
+                    "passed": 3,
+                    "total": 3,
+                },
+            },
+        },
+    )
+
+    assert "verification 3/3 passed" in card
+    assert "investigate-phase" in card
+    assert "no confirmation writes" not in card
+    assert "re-derive from source before acting" not in card
+
+
+def test_resuming_from_failed_verification_surfaces_gate() -> None:
+    card, _manifest = render_briefing_card(
+        transcript_continuation={
+            "entity_id": "transcript:claude-web-2026-06-04-2112",
+            "summary": "Failed anchor check.",
+            "handoff_surface": {
+                "surfaced": True,
+                "verified": False,
+                "derivation": "auto_persisted",
+                "flag": "unverified",
+                "handoff_verification": {
+                    "checks": [
+                        {
+                            "name": "transcript_anchor_present",
+                            "status": "failed",
+                            "detail": "missing anchor",
+                        },
+                    ],
+                    "passed": 2,
+                    "total": 3,
+                },
+            },
+        },
+    )
+
+    assert "verification 2/3 passed" in card
+    assert "no confirmation writes" in card
+
+
 def test_resuming_from_unverified_handoff_surfaces_flag_not_prose() -> None:
     """Resuming from a detached_string handoff surfaces a flag-only caution.
 

@@ -53,6 +53,7 @@ class CloseoutStatus(StrEnum):
 class SourceVersion(BaseModel):
     content_hash: str | None = None
     packet_sha256: str | None = None
+    deck_sha256: str | None = None
 
 
 class Source(BaseModel):
@@ -72,6 +73,11 @@ class Intent(BaseModel):
 class Scope(BaseModel):
     files_expected: list[str] = Field(default_factory=list)
     bounded: bool = True
+    # Verbatim phase-deck text carried for the plan_phase corpus embed. Elided
+    # from implement_spec_hash (the compact source_version.deck_sha256 is the
+    # hash-bound fingerprint, computed from the same normalized bytes) — see
+    # implement_spec_hash below + spec plan-deck-handoff-packet-adapter §6/§15.
+    deck_body: str | None = None
 
 
 class Readiness(BaseModel):
@@ -148,6 +154,16 @@ def implement_spec_hash(spec: ImplementSpec) -> str:
     payload["provenance"]["created_at"] = None
     if payload.get("readiness") is not None:
         payload["readiness"]["freshness_checked_at"] = None
+    # deck_body is never hashed by bulk (deck_sha256 is the fingerprint). Pop it
+    # entirely so a deck-less spec hashes identically to the pre-deck schema —
+    # no spurious drift for todo/plan/packet specs.
+    if payload.get("scope") is not None:
+        payload["scope"].pop("deck_body", None)
+    # deck_sha256 binds the deck fingerprint when present; pop when None so
+    # deck-less specs are unaffected by the new field.
+    source_version = payload.get("source", {}).get("source_version")
+    if source_version is not None and source_version.get("deck_sha256") is None:
+        source_version.pop("deck_sha256", None)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"

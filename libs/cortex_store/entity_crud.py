@@ -32,6 +32,7 @@ from .entity_exhibit_lint import (
     enforce_exhibit_belongs_to,
     insert_exhibit_belongs_to_relationship,
 )
+from .entity_id_norm import canonicalize_entity_id
 from .event_publisher import cortex_entity_source_changed
 from .models import (
     AssertionItem,
@@ -532,6 +533,7 @@ def create_entity_impl(
     conn: sqlite3.Connection, payload: dict[str, object], commit: bool = True
 ) -> dict[str, object]:
     body = EntityCreate.model_validate(payload)
+    body = body.model_copy(update={"id": canonicalize_entity_id(body.id, body.type)})
     now = datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if body.type == "role":

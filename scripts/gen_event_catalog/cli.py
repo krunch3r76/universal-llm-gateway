@@ -20,13 +20,13 @@ from .doc_ops import (
     write_overlay,
 )
 from .extract import PROJECT_ROOT, WALK_ROOTS, extract_factories, load_exceptions
+from .paths import paths_touch_event_catalog
 from .render import render_json_sidecar, render_region
 
 _EXCEPTIONS = PROJECT_ROOT / "scripts" / "gen_event_catalog" / "exceptions.toml"
 _OVERLAY = PROJECT_ROOT / "docs" / "event-contracts.overlay.toml"
 _DOC = PROJECT_ROOT / "docs" / "event-contracts.md"
 _JSON_OUT = PROJECT_ROOT / "docs" / "event-contracts.catalog.json"
-_EVENT_FILE_ROOTS = tuple(f"{r}/" for r in WALK_ROOTS)
 
 
 def _inventory_sha(records) -> str:
@@ -62,17 +62,8 @@ def _staged_paths() -> set[str]:
     return {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
 
 
-def _is_event_source(path: str) -> bool:
-    if not path.endswith(".py") or not path.startswith(_EVENT_FILE_ROOTS):
-        return False
-    parts = path.split("/")
-    return "events" in parts or parts[-1].startswith("events")
-
-
 def _is_relevant(staged: set[str]) -> bool:
-    return any(
-        p.startswith("docs/event-contracts") or _is_event_source(p) for p in staged
-    )
+    return paths_touch_event_catalog(staged)
 
 
 def _rendered_region(
@@ -141,12 +132,33 @@ def _check_doc(records, overlay: dict[str, str], sha: str) -> int:
     return 0
 
 
+def _run_generate(records, overlay: dict[str, str], sha: str, grouped) -> int:
+    _JSON_OUT.write_text(render_json_sidecar(records), encoding="utf-8")
+
+    if _DOC.exists() and "<!-- GENERATED:START" in _DOC.read_text(encoding="utf-8"):
+        patch_doc(_DOC, records, overlay, sha)
+        print(
+            f"Regenerated GENERATED regions in {_DOC.relative_to(PROJECT_ROOT)}",
+            file=sys.stderr,
+        )
+    else:
+        for domain, recs in sorted(grouped.items()):
+            print(render_region(domain, recs, overlay, sha))
+            print()
+    print(
+        f"# {len(records)} factories, {len(grouped)} domains",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Generate / check the event-contracts catalog"
     )
     ap.add_argument(
-        "command", choices=["generate", "check", "migrate-overlay", "wrap-markers"]
+        "command",
+        choices=["generate", "check", "sync", "migrate-overlay", "wrap-markers"],
     )
     ap.add_argument("--staged", action="store_true")
     ap.add_argument(
@@ -183,26 +195,16 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "generate":
-        _JSON_OUT.write_text(render_json_sidecar(records), encoding="utf-8")
-
         if args.write_overlay and _DOC.exists():
             write_overlay(_OVERLAY, build_overlay(_DOC.read_text(encoding="utf-8")))
+        return _run_generate(records, overlay, sha, grouped)
 
-        if _DOC.exists() and "<!-- GENERATED:START" in _DOC.read_text(encoding="utf-8"):
-            patch_doc(_DOC, records, overlay, sha)
-            print(
-                f"Regenerated GENERATED regions in {_DOC.relative_to(PROJECT_ROOT)}",
-                file=sys.stderr,
-            )
-        else:
-            for domain, recs in sorted(grouped.items()):
-                print(render_region(domain, recs, overlay, sha))
-                print()
+    if args.command == "sync":
         print(
-            f"# {len(records)} factories, {len(grouped)} domains",
+            f"Synced event-contracts catalog ({len(records)} factories)",
             file=sys.stderr,
         )
-        return 0
+        return _run_generate(records, overlay, sha, grouped)
 
     return _check_doc(records, overlay, sha)
 

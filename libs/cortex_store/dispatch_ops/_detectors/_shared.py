@@ -19,6 +19,7 @@ from typing import Any
 SEVERITY = {
     "dangling_attribute_reference": "critical",
     "dangling_relationship_target": "critical",
+    "foreign_key_orphan": "critical",
     "agent_skill_not_in_canonical_sandbox": "critical",
     "case_attribute_skill_dangling": "critical",
     "entity_source_uri_unresolved": "critical",

@@ -12,6 +12,7 @@
 "cortex.audit.completed" = "Emitted at end of every `audit` / `case_audit` / `session_audit` run. `subject` is entity_id or `\"all\"`."
 "cortex.audit.gap.detected" = "One emission per finding. `kind` is in payload (never baked into signal name per C2). `audit_id` is a 12-char MD5 correlation key stable across runs for the same `kind:subject` pair. Auditor kinds include `attributes_json_parse_failed` (confirmed-attribute scan skipped because entity `attributes` JSON is malformed)."
 "cortex.composite.registered" = "Emitted on successful `register_skill_substrate` composite op. Phase 1a."
+"cortex.entity.purged" = "Hard-delete of a guarded disposable entity post-commit. `entity_id`, `entity_type`, `actor`, `reason`, `assertions_deleted`, `orphan_sweep` (dict from purge_fk_orphans). role=observation."
 "cortex.entity.source.changed" = "Entity `source_uri` set/changed/dropped on create/update. `change` ∈ {`set`, `changed`, `dropped`}. Drives RAG EntityAdmissionGate debounced refresh. role=observation."
 "cortex.entity_get.access_log.failed" = "`entity_get` access-log insert failed; read still returns 200."
 "cortex.entity_get.archives_to_lookup.failed" = "`archives_to` relationship lookup failed during compaction projection; read still returns 200."

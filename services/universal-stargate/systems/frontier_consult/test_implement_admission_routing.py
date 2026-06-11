@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from implement_admission.routing import derive_executor_style, derive_orchestration_mode, derive_routing
+from implement_admission.routing import (
+    derive_executor_style,
+    derive_orchestration_mode,
+    derive_routing,
+)
 from implement_admission.spec import ExecutorStyle, OrchestrationMode, SourceKind
 
 
@@ -17,7 +21,10 @@ def test_todo_bounded_single() -> None:
 
 
 def test_ambiguous_bus_no_mode() -> None:
-    assert derive_orchestration_mode(SourceKind.AGENT_BUS.value, ambiguous_bus=True) is None
+    assert (
+        derive_orchestration_mode(SourceKind.AGENT_BUS.value, ambiguous_bus=True)
+        is None
+    )
 
 
 def test_mechanical_style_dense_acs() -> None:

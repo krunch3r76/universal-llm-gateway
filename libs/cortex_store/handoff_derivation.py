@@ -10,6 +10,7 @@ DERIVATION_SECTION = "section"
 DERIVATION_SECTION_UNRESOLVED = "section_unresolved"
 DERIVATION_SECTION_AMBIGUOUS = "section_ambiguous"
 DERIVATION_DETACHED_STRING = "detached_string"
+DERIVATION_AUTO_PERSISTED = "auto_persisted"
 
 WRITE_PATH_SESSION_CLOSE = "session_close"
 

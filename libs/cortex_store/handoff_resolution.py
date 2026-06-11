@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,14 +14,18 @@ from .handoff_derivation import (
     DERIVATION_SECTION,
     DERIVATION_SECTION_AMBIGUOUS,
     DERIVATION_SECTION_UNRESOLVED,
-    HANDOFF_PROMPT_MAX_CHARS,
-    HANDOFF_PROVENANCE_JSON_MAX_BYTES,
     WRITE_PATH_SESSION_CLOSE,
 )
+from .handoff_inline_persist import build_inline_handoff_provenance
 from .handoff_marker import extract_handoff_marker_region
-from .handoff_paths import normalize_handoff_source_path, sha256_bytes, sha256_text
+from .handoff_paths import normalize_handoff_source_path, sha256_text
 from .handoff_provenance import build_handoff_provenance
+from .handoff_resolution_io import (
+    read_handoff_source_file,
+    validate_handoff_write_limits,
+)
 from .handoff_surface import build_handoff_surface_preview
+from .handoff_verification import build_handoff_verification
 from .session_close_validation import build_validation_error
 
 
@@ -35,112 +38,7 @@ class HandoffResolution:
     handoff_valid: bool
     findings: list[dict[str, Any]]
     derived_handoff_prompt: str | None
-
-
-def read_handoff_source_file(
-    files_root: Path,
-    source_path: str,
-) -> tuple[str, str]:
-    """Read sandboxed source bytes once; return ``(text, source_file_sha256)``."""
-    rel = normalize_handoff_source_path(source_path)
-    if rel is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=build_validation_error(
-                reason="handoff_source_path.invalid",
-                field="handoff_source_path",
-                received=source_path,
-                expected="non-empty cortex-relative path",
-                examples=["notes/system/sessions/cursor-2026-06-03-handoff.md"],
-                hint="Pass a path under the cortex files root.",
-                detail="handoff_source_path is empty after normalization.",
-            ),
-        )
-    try:
-        abs_path = (files_root / rel).resolve()
-        abs_path.relative_to(files_root.resolve())
-        raw = abs_path.read_bytes()
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=build_validation_error(
-                reason="handoff_source_path.sandbox_escape",
-                field="handoff_source_path",
-                received=source_path,
-                expected="path resolved under CORTEX_FILES_ROOT",
-                examples=["notes/system/sessions/handoff.md"],
-                hint="Do not use .. or absolute paths outside the sandbox.",
-                detail=str(exc),
-            ),
-        ) from exc
-    except OSError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=build_validation_error(
-                reason="handoff_source_path.unreadable",
-                field="handoff_source_path",
-                received=source_path,
-                expected="readable UTF-8 file under cortex files root",
-                examples=["notes/system/sessions/handoff.md"],
-                hint="Write the handoff file before close, or fix the path.",
-                detail=f"Could not read handoff source file: {exc}",
-            ),
-        ) from exc
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=build_validation_error(
-                reason="handoff_source_path.not_utf8",
-                field="handoff_source_path",
-                received=source_path,
-                expected="UTF-8 text",
-                examples=[],
-                hint="Handoff source files must be UTF-8 markdown.",
-                detail=str(exc),
-            ),
-        ) from exc
-    return text, sha256_bytes(raw)
-
-
-def validate_handoff_write_limits(
-    *,
-    handoff_prompt: str | None,
-    provenance: dict[str, Any] | None,
-) -> None:
-    """Binding #7 — reject oversize prompt / provenance before DB or attribute write."""
-    if handoff_prompt is not None and len(handoff_prompt) > HANDOFF_PROMPT_MAX_CHARS:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=build_validation_error(
-                reason="handoff_prompt.too_long",
-                field="handoff_prompt",
-                received=len(handoff_prompt),
-                expected=f"length <= {HANDOFF_PROMPT_MAX_CHARS}",
-                examples=[],
-                hint="Shorten the handoff region or split content across the source file.",
-                detail=(
-                    f"handoff_prompt length {len(handoff_prompt)} exceeds "
-                    f"{HANDOFF_PROMPT_MAX_CHARS}."
-                ),
-            ),
-        )
-    if provenance is not None:
-        encoded = json.dumps(provenance, ensure_ascii=False)
-        if len(encoded.encode("utf-8")) > HANDOFF_PROVENANCE_JSON_MAX_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=build_validation_error(
-                    reason="handoff_provenance.too_long",
-                    field="handoff_provenance",
-                    received=len(encoded.encode("utf-8")),
-                    expected=f"JSON size <= {HANDOFF_PROVENANCE_JSON_MAX_BYTES} bytes",
-                    examples=[],
-                    hint="Reduce provenance payload size.",
-                    detail="handoff_provenance JSON exceeds max encoded size.",
-                ),
-            )
+    handoff_verification: dict[str, Any] | None = None
 
 
 def _handoff_finding(kind: str, subject: str, detail: str) -> dict[str, Any]:
@@ -170,6 +68,31 @@ def _raise_handoff_conflict(
     )
 
 
+def _attach_handoff_verification(
+    resolution: HandoffResolution,
+    *,
+    session_id: str | None,
+    handoff_source_path: str | None,
+    files_root: Path,
+) -> HandoffResolution:
+    if not session_id or not resolution.handoff_prompt:
+        return resolution
+    verification = build_handoff_verification(
+        session_id=session_id,
+        handoff_prompt=resolution.handoff_prompt,
+        handoff_source_path=handoff_source_path,
+        files_root=files_root,
+    )
+    return HandoffResolution(
+        handoff_prompt=resolution.handoff_prompt,
+        provenance=resolution.provenance,
+        handoff_valid=resolution.handoff_valid,
+        findings=resolution.findings,
+        derived_handoff_prompt=resolution.derived_handoff_prompt,
+        handoff_verification=verification,
+    )
+
+
 def resolve_handoff_for_write(
     *,
     files_root: Path,
@@ -178,6 +101,7 @@ def resolve_handoff_for_write(
     handoff_source_path: str | None,
     handoff_source_section: str | None,
     handoff_prompt: str | None,
+    session_id: str | None = None,
     expected_handoff_prompt: str | None = None,
     expected_derived_handoff_prompt_sha256: str | None = None,
     expected_source_file_sha256: str | None = None,
@@ -229,12 +153,17 @@ def resolve_handoff_for_write(
                 )
             )
             validate_handoff_write_limits(handoff_prompt=None, provenance=prov)
-            return HandoffResolution(
-                handoff_prompt=None,
-                provenance=prov,
-                handoff_valid=False,
-                findings=findings,
-                derived_handoff_prompt=None,
+            return _attach_handoff_verification(
+                HandoffResolution(
+                    handoff_prompt=None,
+                    provenance=prov,
+                    handoff_valid=False,
+                    findings=findings,
+                    derived_handoff_prompt=None,
+                ),
+                session_id=session_id,
+                handoff_source_path=handoff_source_path,
+                files_root=files_root,
             )
         if extracted.status != "ok" or extracted.body is None:
             prov = build_handoff_provenance(
@@ -258,12 +187,17 @@ def resolve_handoff_for_write(
                 )
             )
             validate_handoff_write_limits(handoff_prompt=None, provenance=prov)
-            return HandoffResolution(
-                handoff_prompt=None,
-                provenance=prov,
-                handoff_valid=False,
-                findings=findings,
-                derived_handoff_prompt=None,
+            return _attach_handoff_verification(
+                HandoffResolution(
+                    handoff_prompt=None,
+                    provenance=prov,
+                    handoff_valid=False,
+                    findings=findings,
+                    derived_handoff_prompt=None,
+                ),
+                session_id=session_id,
+                handoff_source_path=handoff_source_path,
+                files_root=files_root,
             )
 
         derived = extracted.body
@@ -300,37 +234,52 @@ def resolve_handoff_for_write(
             derived_at=written_at,
         )
         validate_handoff_write_limits(handoff_prompt=derived, provenance=prov)
-        return HandoffResolution(
-            handoff_prompt=derived,
-            provenance=prov,
-            handoff_valid=True,
-            findings=findings,
-            derived_handoff_prompt=derived,
+        return _attach_handoff_verification(
+            HandoffResolution(
+                handoff_prompt=derived,
+                provenance=prov,
+                handoff_valid=True,
+                findings=findings,
+                derived_handoff_prompt=derived,
+            ),
+            session_id=session_id,
+            handoff_source_path=handoff_source_path,
+            files_root=files_root,
         )
 
     if prompt_in:
-        prov = build_handoff_provenance(
-            write_path=write_path,
-            source_path=None,
+        prov = build_inline_handoff_provenance(
             files_root=files_root,
+            session_id=session_id,
+            prompt=prompt_in,
+            write_path=write_path,
             written_at=written_at,
-            derivation=DERIVATION_DETACHED_STRING,
         )
         validate_handoff_write_limits(handoff_prompt=prompt_in, provenance=prov)
-        return HandoffResolution(
-            handoff_prompt=prompt_in,
-            provenance=prov,
-            handoff_valid=True,
-            findings=findings,
-            derived_handoff_prompt=prompt_in,
+        return _attach_handoff_verification(
+            HandoffResolution(
+                handoff_prompt=prompt_in,
+                provenance=prov,
+                handoff_valid=True,
+                findings=findings,
+                derived_handoff_prompt=prompt_in,
+            ),
+            session_id=session_id,
+            handoff_source_path=handoff_source_path,
+            files_root=files_root,
         )
 
-    return HandoffResolution(
-        handoff_prompt=None,
-        provenance=None,
-        handoff_valid=True,
-        findings=findings,
-        derived_handoff_prompt=None,
+    return _attach_handoff_verification(
+        HandoffResolution(
+            handoff_prompt=None,
+            provenance=None,
+            handoff_valid=True,
+            findings=findings,
+            derived_handoff_prompt=None,
+        ),
+        session_id=session_id,
+        handoff_source_path=handoff_source_path,
+        files_root=files_root,
     )
 
 
@@ -360,6 +309,7 @@ def handoff_dry_run_preview(
         handoff_source_path=handoff_source_path,
         handoff_source_section=handoff_source_section,
         handoff_prompt=handoff_prompt,
+        session_id=session_id,
         expected_handoff_prompt=expected_handoff_prompt,
         expected_derived_handoff_prompt_sha256=expected_derived_handoff_prompt_sha256,
         expected_source_file_sha256=expected_source_file_sha256,
@@ -385,7 +335,9 @@ def handoff_dry_run_preview(
         "derived_handoff_prompt": resolution.derived_handoff_prompt,
         "handoff_provenance_preview": resolution.provenance,
         "handoff_surface_preview": build_handoff_surface_preview(
-            resolution.handoff_prompt, resolution.provenance
+            resolution.handoff_prompt,
+            resolution.provenance,
+            resolution.handoff_verification,
         ),
         "handoff_valid": handoff_valid,
         "findings": findings,

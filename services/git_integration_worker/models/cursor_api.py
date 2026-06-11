@@ -1,0 +1,34 @@
+"""Pydantic models for ``POST /api/v1/cursor/dispatch``."""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, ConfigDict, model_validator
+
+
+class CursorDispatchRequest(BaseModel):
+    """Dispatch admission body — ``packet_path`` XOR ``message``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    thread_id: str
+    model: str
+    dispatch_id: str
+    packet_path: str | None = None
+    message: str | None = None
+
+    @model_validator(mode="after")
+    def _packet_xor_message(self) -> CursorDispatchRequest:
+        has_packet = bool(self.packet_path)
+        has_message = bool(self.message)
+        if has_packet == has_message:
+            raise ValueError("exactly one of packet_path or message is required")
+        return self
+
+
+class CursorDispatchResponse(BaseModel):
+    """Admission acknowledgement returned before background SDK run."""
+
+    admitted: bool
+    dispatch_id: str
+    thread_id: str
+    model_id: str

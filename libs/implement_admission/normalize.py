@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 from implement_admission.admission_read import read_packet
+from implement_admission.deck_resolver import NormalizedDeck, resolve_phase_deck
 from implement_admission.routing import derive_routing
 from implement_admission.source_ref import SourceRef, SourceRefError, parse_source_ref
 from implement_admission.spec import (
@@ -54,7 +56,11 @@ def normalize(
         )
 
     return _normalize_entity(
-        ref, cortex=cortex, now=now, dirty_tree_risk=dirty_tree_risk
+        ref,
+        cortex=cortex,
+        now=now,
+        dirty_tree_risk=dirty_tree_risk,
+        workspaces_root=workspaces_root,
     )
 
 
@@ -64,6 +70,7 @@ def _normalize_entity(
     cortex: CortexReader,
     now: datetime,
     dirty_tree_risk: bool = False,
+    workspaces_root: Any = None,
 ) -> ImplementSpec:
     entity_id = ref.canonical_ref
     try:
@@ -101,6 +108,7 @@ def _normalize_entity(
         if not multi_phase and not phases:
             gated_reason = "plan has no phases"
 
+    deck: NormalizedDeck | None = None
     if kind == SourceKind.PLAN_PHASE.value:
         phase_dir = attrs.get("phase_dir") or attrs.get("directory")
         if phase_dir is None and not attrs.get("phase_number"):
@@ -109,6 +117,17 @@ def _normalize_entity(
                 source_ref=ref.external_ref,
                 rule=f"plan_phase entity {entity_id!r} missing phase metadata",
             )
+        # Dispatch-bound lane (workspaces_root supplied) MUST resolve + read the
+        # deck or hard-fail — never degrade to attr-only, which would recreate the
+        # metadata-only packet this adapter exists to fix (spec §15 A1). The
+        # attr-only path is reserved for non-dispatch callers (workspaces_root is
+        # None), e.g. unit tests with no deck on disk.
+        if workspaces_root is not None:
+            deck = resolve_phase_deck(
+                ref,
+                workspaces_root=Path(workspaces_root),
+                entity_attrs=attrs,
+            )
 
     if kind == SourceKind.TODO.value:
         trips_threshold = bool(
@@ -116,7 +135,21 @@ def _normalize_entity(
         )
 
     files_expected = _files_from_entity(attrs)
-    acs = _acceptance_from_entity(attrs, name)
+    entity_acs = _acceptance_from_entity(attrs, name)
+    open_design = False
+    description: str | None = None
+
+    if deck is not None:
+        files_expected = _dedupe_preserve([*files_expected, *deck.files_expected])
+        if _entity_acs_defaulted(entity_acs, name) and deck.acceptance:
+            acs = deck.acceptance
+        else:
+            acs = _dedupe_preserve([*entity_acs, *deck.acceptance])
+        open_design = deck.open_design
+        description = deck.objective
+    else:
+        acs = entity_acs
+
     has_dense = len(acs) >= 1
     has_files = len(files_expected) >= 1
 
@@ -135,6 +168,7 @@ def _normalize_entity(
             trips_todo_plan_threshold=trips_threshold,
             has_complete_file_list=has_files,
             has_dense_acs=has_dense,
+            open_design=open_design,
             dirty_tree_risk=dirty_tree_risk,
         )
 
@@ -145,13 +179,20 @@ def _normalize_entity(
         parent_ref=ref.parent_ref,
         selector=ref.selector,
         source_kind=SourceKind(kind),
-        source_version=SourceVersion(content_hash=content_hash),
+        source_version=SourceVersion(
+            content_hash=content_hash,
+            deck_sha256=deck.sha256 if deck is not None else None,
+        ),
     )
 
     spec = ImplementSpec(
         source=source,
-        intent=Intent(summary=str(name)),
-        scope=Scope(files_expected=files_expected, bounded=True),
+        intent=Intent(summary=str(name), description=description),
+        scope=Scope(
+            files_expected=files_expected,
+            bounded=True,
+            deck_body=deck.body if deck is not None else None,
+        ),
         readiness=Readiness(
             state=readiness_state,
             gated_reason=gated_reason,
@@ -163,6 +204,20 @@ def _normalize_entity(
         closeout=Closeout(adapter=adapter),
     )
     return finalize_spec(spec)
+
+
+def _dedupe_preserve(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _entity_acs_defaulted(acs: list[str], name: str) -> bool:
+    return acs == [f"Complete {name}"]
 
 
 def infer_packet_legacy_route(text: str) -> dict[str, str]:

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from fastapi import HTTPException
 from universal_logging import get_logger
 
+from ..db import cortex_conn
+from ..entity_aliases import resolve_entity_reference
 from ..rag_resolver import ChunkIdMismatchError, resolve_assertion_chunk
 from ..routes.resolve import _resolve_cortex_uri_impl
 from ..routes.stats import _get_stats_impl
@@ -42,11 +45,32 @@ def _op_resolve(
     return _resolve_cortex_uri_impl(uri=uri, tag=tag)
 
 
+def _resolve_tag_entity_id(
+    entity_id: str,
+    *,
+    resolve_aliases: bool,
+    raw_id: bool,
+) -> str | dict[str, Any]:
+    with cortex_conn() as conn:
+        try:
+            resolved = resolve_entity_reference(
+                conn,
+                entity_id,
+                resolve_aliases=resolve_aliases,
+                raw_id=raw_id,
+            )
+        except HTTPException as exc:
+            return {"error": exc.detail, "status_code": exc.status_code}
+    return resolved.entity_id if not raw_id else entity_id
+
+
 def _op_tag_assign(
     tag_name: str | None = None,
     entity_id: str | None = None,
     assertion_id: int | None = None,
     agent: str | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     for field, val in [
@@ -57,9 +81,15 @@ def _op_tag_assign(
     ]:
         if not val and val != 0:
             return {"error": f"{field} is required"}
+    assert entity_id is not None
+    resolved_id = _resolve_tag_entity_id(
+        entity_id, resolve_aliases=resolve_aliases, raw_id=raw_id
+    )
+    if isinstance(resolved_id, dict):
+        return resolved_id
     body = {
         "tag_name": tag_name,
-        "entity_id": entity_id,
+        "entity_id": resolved_id,
         "assertion_id": assertion_id,
         "assigned_by": agent,
     }
@@ -80,22 +110,39 @@ def _op_tag_assign(
     return result
 
 
-def _op_tag_list(entity_id: str | None = None, **_: object) -> dict[str, Any]:
+def _op_tag_list(
+    entity_id: str | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
+    **_: object,
+) -> dict[str, Any]:
     if not entity_id:
         return {"error": "entity_id is required"}
-    return _list_tags_impl(entity_id=entity_id)
+    resolved_id = _resolve_tag_entity_id(
+        entity_id, resolve_aliases=resolve_aliases, raw_id=raw_id
+    )
+    if isinstance(resolved_id, dict):
+        return resolved_id
+    return _list_tags_impl(entity_id=resolved_id)
 
 
 def _op_tag_resolve(
     tag_name: str | None = None,
     entity_id: str | None = None,
+    resolve_aliases: bool = True,
+    raw_id: bool = False,
     **_: object,
 ) -> dict[str, Any]:
     if not tag_name:
         return {"error": "tag_name is required"}
     if not entity_id:
         return {"error": "entity_id is required"}
-    parts = entity_id.split(":", 1)
+    resolved_id = _resolve_tag_entity_id(
+        entity_id, resolve_aliases=resolve_aliases, raw_id=raw_id
+    )
+    if isinstance(resolved_id, dict):
+        return resolved_id
+    parts = resolved_id.split(":", 1)
     if len(parts) != 2:
         return {
             "error": f"Invalid entity_id format: {entity_id!r} (expected TYPE:SLUG)"

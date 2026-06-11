@@ -63,7 +63,24 @@ Prefer file-backed derivation when the handoff body is long:
 
 2. Pass `handoff_source_path=notes/system/transcripts/{session_id}.md` **only when** that file already exists pre-close, **or** use a pre-written cortex sidecar with markers.
 
-3. `session_close` derives `handoff_prompt` server-side → `handoff_provenance.derivation=file_markers` (verified surface).
+3. `session_close` derives `handoff_prompt` server-side → `handoff_provenance.derivation=section` (verified surface).
+
+## Inline handoff verification (write-time)
+
+Inline `handoff_prompt` (no `handoff_source_path`) is auto-persisted to
+`notes/system/handoffs/{session_id}.md` with `derivation=auto_persisted` —
+file-backed for reload/tamper-detection, **not** the independently-authored
+`section` tier (`verified` stays `derivation==section` only).
+
+At close/upsert the server stamps `handoff_verification` on the transcript
+attribute: `{checks:[{name,status,detail}], passed:N, total:M}` covering
+transcript anchor, cited-entity resolvability, cited-entity state snapshot
+(type/phase annotated), and `prompt_in_source` when a source path is also set.
+
+Boot renders the precomputed verification line. The "no confirmation writes"
+gate keys on **failed checks** (`passed < total`), not the legacy `¬verified`
+bit — a well-formed inline handoff with all checks passing boots without the
+cold-distrust gauntlet. Prose stays suppressed (assertion 8384).
 
 `handoff_prompt` without the anchor → **422 `handoff.missing_transcript_anchor`**
 (atomic rollback, enforced pre-commit). Add the anchor block and re-call. A

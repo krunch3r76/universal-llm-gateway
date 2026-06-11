@@ -110,7 +110,38 @@ def render_briefing_card(
         # auto-surfaces). The status data is on the transcript entity's
         # `handoff_surface` attribute (libs/cortex_store/handoff_surface.py).
         surface = tc.get("handoff_surface")
-        if (
+        verification = None
+        if isinstance(surface, dict):
+            verification = surface.get("handoff_verification")
+        if verification is None:
+            verification = tc.get("handoff_verification")
+        if isinstance(verification, dict) and verification.get("total"):
+            passed = int(verification.get("passed", 0))
+            total = int(verification.get("total", 0))
+            parts.append(f"> Handoff: verification {passed}/{total} passed.")
+            for check in verification.get("checks", []):
+                if not isinstance(check, dict):
+                    continue
+                if check.get("name") == "cited_entity_state_snapshot":
+                    detail = str(check.get("detail", ""))
+                    if detail and detail != "no cited entities":
+                        parts.append(f"> cited: {detail}")
+            if passed < total:
+                flag = "UNVERIFIED"
+                derivation = "?"
+                if isinstance(surface, dict):
+                    flag = str(surface.get("flag", "unverified")).upper()
+                    derivation = surface.get("derivation", "?")
+                parts.append(
+                    f"> ⚠ **Handoff {flag}** (derivation={derivation}) — "
+                    "re-derive failed checks before acting; no confirmation "
+                    "writes until the handoff is reviewed or falsified. "
+                    "Prose intentionally not inlined (decision 8384); pull "
+                    "the flagged surface via "
+                    f"`cortex(tool='entity_get', arguments='{{\"entity_id\": "
+                    f'"{entity_id}"}}\')`.'
+                )
+        elif (
             isinstance(surface, dict)
             and surface.get("surfaced")
             and not surface.get("verified")

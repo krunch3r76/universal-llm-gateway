@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import difflib
 import sqlite3
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
@@ -21,6 +22,29 @@ from ..relationship_sql import FROM_CLAUSE, SELECT_COLUMNS, SYMMETRIC_REL_TYPES
 
 logger = get_logger("cortex-api.relationships")
 router = APIRouter(prefix="/relationships", tags=["relationships"])
+
+
+def _relationship_type_not_found_message(conn: sqlite3.Connection, type_id: str) -> str:
+    if query(
+        conn,
+        "SELECT 1 FROM session_edge_types WHERE type = ?",
+        (type_id,),
+    ):
+        return (
+            f"Relationship type not found: {type_id!r}. "
+            f"{type_id!r} is an EDGE type (use edge_create); "
+            "the relationship analogue is 'related_to'."
+        )
+    rel_types = [
+        row["type"]
+        for row in query(conn, "SELECT type FROM relationship_types ORDER BY type", ())
+    ]
+    suggestion = difflib.get_close_matches(type_id, rel_types, n=1)
+    if suggestion:
+        return (
+            f"Relationship type not found: {type_id!r}. Did you mean {suggestion[0]!r}?"
+        )
+    return f"Relationship type not found: {type_id!r}."
 
 
 @router.get("", response_model=RelationshipList)
@@ -88,7 +112,7 @@ def create_relationship(
         ):
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
-                f"Relationship type not found: {body.type_id}",
+                _relationship_type_not_found_message(conn, body.type_id),
             )
 
         try:

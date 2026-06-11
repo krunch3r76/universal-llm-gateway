@@ -64,6 +64,7 @@ def check_near_duplicate(
             ") "
             "AND a.entity_id = ? "
             "AND a.superseded_by IS NULL "
+            "AND a.valid_until IS NULL "
             "AND a.id != ? "
             "LIMIT ?",
             (fts_query, entity_id, new_assertion_id, candidate_limit),

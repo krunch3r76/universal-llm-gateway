@@ -238,6 +238,41 @@ def validate_packet(
     return ValidatePacketResult(warnings=warnings)
 
 
+def check_contract_ambiguity(
+    *,
+    request_id: str,
+    packet_path: str,
+    contract_source: str,
+    workspaces_root: Path | None = None,
+) -> None:
+    """Reject default consult when packet task_guidance carries acceptance criteria."""
+    if contract_source != "default":
+        return
+
+    root = (workspaces_root or _workspaces_root()).resolve()
+    candidate = _resolve_packet_file(root, packet_path)
+    if candidate is None:
+        return
+
+    text = candidate.read_text(encoding="utf-8", errors="replace")
+    guidance = _extract_block(text, "task_guidance")
+    haystack = guidance if guidance is not None else text
+    if "acceptance" not in haystack.lower():
+        return
+
+    raise FrontierEndpointError(
+        request_id=request_id,
+        field="contract",
+        reason=(
+            "packet has acceptance criteria but no explicit contract — pass "
+            "contract=implement or add `contract:` front-matter. "
+            f"{_PROTOCOL_HINT}"
+        ),
+        status_code=422,
+        code="handoff_contract_ambiguous",
+    )
+
+
 def _extract_block(text: str, tag: str) -> str | None:
     """Return the inner body of ``<tag>…</tag>`` (case-sensitive), or None."""
     match = re.search(rf"<{tag}>(.*?)</{tag}>", text, flags=re.DOTALL)
@@ -277,6 +312,7 @@ def build_pointer_body(
     subject: str,
     pointer_body: str | None,
     handoff_contract: str,
+    materialization_fallback: bool = False,
 ) -> str:
     """Return the bus turn body.
 
@@ -293,6 +329,11 @@ def build_pointer_body(
             subject=f"{subject}\n{contract_line}" if contract_line else subject,
             packet_path=packet_path,
         )
+        if materialization_fallback:
+            body += (
+                "\n\nFallback: re-read via source_ref frontmatter if packet "
+                "absent locally."
+            )
     lines = body.splitlines()
     if len(lines) > _POINTER_MAX_LINES:
         raise FrontierEndpointError(

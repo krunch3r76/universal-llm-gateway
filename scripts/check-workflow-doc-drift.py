@@ -24,8 +24,8 @@ PIPELINES_ROOT = REPO_ROOT / "pipelines"
 LIBS_ROOT = REPO_ROOT / "libs"
 
 # Retired subsystem — gate fails if these appear outside explicit RETIRED markers.
-# Documented or stub ops not yet in public _OPS (see ops_assertions_write).
-PENDING_CORTEX_OPS = frozenset({"friction_close"})
+# Documented ops wired in dispatch_ops (see ops_assertions_write friction_close).
+PENDING_CORTEX_OPS = frozenset()
 
 RETIRED_CITATIONS = frozenset(
     {

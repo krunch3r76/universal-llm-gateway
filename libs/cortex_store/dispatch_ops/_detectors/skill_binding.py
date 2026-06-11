@@ -143,7 +143,7 @@ def detect_skill_binding_missing(
           AND {_DEPRECATED_EXCLUDE}
           AND json_extract(attributes, '$.skill_binding') IS NULL
     """
-    params: list[Any] = ["deprecated", "deprecated"]
+    params: list[Any] = ["deprecated"]
     if subject:
         sql += " AND id = ?"
         params.append(subject)
